@@ -67,6 +67,43 @@ func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (
 	return nextID, nil
 }
 
+// SyncCounterForPrefix synchronizes the counter to be at least the given value
+// This is used after importing issues with explicit IDs to prevent ID collisions
+// with subsequently auto-generated IDs
+func (s *SQLiteStorage) SyncCounterForPrefix(ctx context.Context, prefix string, minValue int) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO issue_counters (prefix, last_id)
+		VALUES (?, ?)
+		ON CONFLICT(prefix) DO UPDATE SET
+			last_id = MAX(last_id, ?)
+	`, prefix, minValue, minValue)
+	if err != nil {
+		return fmt.Errorf("failed to sync counter for prefix %s: %w", prefix, err)
+	}
+	return nil
+}
+
+// SyncAllCounters synchronizes all ID counters based on existing issues in the database
+// This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
+func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO issue_counters (prefix, last_id)
+		SELECT
+			substr(id, 1, instr(id, '-') - 1) as prefix,
+			MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
+		FROM issues
+		WHERE instr(id, '-') > 0
+		  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
+		GROUP BY prefix
+		ON CONFLICT(prefix) DO UPDATE SET
+			last_id = MAX(last_id, excluded.last_id)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to sync counters: %w", err)
+	}
+	return nil
+}
+
 // CreateIssue creates a new issue
 func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
 	// Validate issue before creating
