@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS config (
     value TEXT NOT NULL
 );
 
+-- Issue counters table (for atomic ID generation)
+CREATE TABLE IF NOT EXISTS issue_counters (
+    prefix TEXT PRIMARY KEY,
+    last_id INTEGER NOT NULL DEFAULT 0
+);
+
 -- Ready work view
 CREATE VIEW IF NOT EXISTS ready_issues AS
 SELECT i.*
