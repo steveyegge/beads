@@ -114,7 +114,7 @@ if err := InitializeMyAppSchema(dbPath); err != nil {
 }
 
 // Use bd to find ready work
-readyIssues, err := store.GetReadyWork(ctx, types.WorkFilter{Limit: 10})
+readyIssues, err := store.GetReadyWork(ctx, beads.WorkFilter{Limit: 10})
 if err != nil {
     log.Fatal(err)
 }
