@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -55,15 +56,11 @@ var rootCmd = &cobra.Command{
 
 		// Initialize storage
 		if dbPath == "" {
-			// Try to find database in order:
-			// 1. $BEADS_DB environment variable
-			// 2. .beads/*.db in current directory or ancestors
-			// 3. ~/.beads/default.db
-			if envDB := os.Getenv("BEADS_DB"); envDB != "" {
-				dbPath = envDB
-			} else if foundDB := findDatabase(); foundDB != "" {
+			// Use public API to find database (same logic as extensions)
+			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
+				// Fallback to default location (will be created by init command)
 				home, _ := os.UserHomeDir()
 				dbPath = filepath.Join(home, ".beads", "default.db")
 			}
@@ -156,37 +153,6 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// findDatabase searches for .beads/*.db in current directory and ancestors
-func findDatabase() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	// Walk up directory tree looking for .beads/ directory
-	for {
-		beadsDir := filepath.Join(dir, ".beads")
-		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-				// Return first .db file found
-				return matches[0]
-			}
-		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root
-			break
-		}
-		dir = parent
-	}
-
-	return ""
-}
-
 // outputJSON outputs data as pretty-printed JSON
 func outputJSON(v interface{}) {
 	encoder := json.NewEncoder(os.Stdout)
@@ -199,26 +165,19 @@ func outputJSON(v interface{}) {
 
 // findJSONLPath finds the JSONL file path for the current database
 func findJSONLPath() string {
-	// Get the directory containing the database
-	dbDir := filepath.Dir(dbPath)
+	// Use public API for path discovery
+	jsonlPath := beads.FindJSONLPath(dbPath)
 
 	// Ensure the directory exists (important for new databases)
+	// This is the only difference from the public API - we create the directory
+	dbDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		// If we can't create the directory, return default path anyway
+		// If we can't create the directory, return discovered path anyway
 		// (the subsequent write will fail with a clearer error)
-		return filepath.Join(dbDir, "issues.jsonl")
+		return jsonlPath
 	}
 
-	// Look for existing .jsonl files in the .beads directory
-	pattern := filepath.Join(dbDir, "*.jsonl")
-	matches, err := filepath.Glob(pattern)
-	if err == nil && len(matches) > 0 {
-		// Return the first .jsonl file found
-		return matches[0]
-	}
-
-	// Default to issues.jsonl
-	return filepath.Join(dbDir, "issues.jsonl")
+	return jsonlPath
 }
 
 // autoImportIfNewer checks if JSONL is newer than DB and imports if so

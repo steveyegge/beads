@@ -409,10 +409,17 @@ You can always access bd's database directly:
 import (
     "database/sql"
     _ "github.com/mattn/go-sqlite3"
+    "github.com/steveyegge/beads"
 )
 
+// Auto-discover bd's database path
+dbPath := beads.FindDatabasePath()
+if dbPath == "" {
+    log.Fatal("No bd database found. Run 'bd init' first.")
+}
+
 // Open the same database bd uses
-db, err := sql.Open("sqlite3", ".beads/myapp.db")
+db, err := sql.Open("sqlite3", dbPath)
 if err != nil {
     log.Fatal(err)
 }
@@ -428,6 +435,10 @@ err = db.QueryRow(`
 _, err = db.Exec(`
     INSERT INTO myapp_executions (issue_id, status) VALUES (?, ?)
 `, issueID, "running")
+
+// Find corresponding JSONL path (for git hooks, monitoring, etc.)
+jsonlPath := beads.FindJSONLPath(dbPath)
+fmt.Printf("BD exports to: %s\n", jsonlPath)
 ```
 
 ## Summary
