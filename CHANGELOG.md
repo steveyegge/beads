@@ -7,15 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2025-10-14
+
+### Added
+- **Incremental JSONL Export**: Major performance optimization
+  - Dirty issue tracking system to only export changed issues
+  - Auto-flush with 5-second debounce after CRUD operations
+  - Automatic import when JSONL is newer than database
+  - `--no-auto-flush` and `--no-auto-import` flags for manual control
+  - Comprehensive test coverage for auto-flush/import
+- **ID Space Partitioning**: Explicit ID assignment for parallel workers
+  - `bd create --id worker1-100` for controlling ID allocation
+  - Enables multiple agents to work without conflicts
+  - Documented in CLAUDE.md for agent workflows
+- **Auto-Migration System**: Seamless database schema upgrades
+  - Automatically adds dirty_issues table to existing databases
+  - Silent migration on first access after upgrade
+  - No manual intervention required
+
 ### Fixed
+- **Critical**: Race condition in dirty tracking (TOCTOU bug)
+  - Could cause data loss during concurrent operations
+  - Fixed by tracking specific exported IDs instead of clearing all
+- **Critical**: Export with filters cleared all dirty issues
+  - Status/priority filters would incorrectly mark non-matching issues as clean
+  - Now only clears issues that were actually exported
+- **Bug**: Malformed ID detection never worked
+  - SQLite CAST returns 0 for invalid strings, not NULL
+  - Now correctly detects non-numeric ID suffixes like "bd-abc"
+  - No false positives on legitimate zero-prefixed IDs
+- **Bug**: Inconsistent dependency dirty marking
+  - Duplicated 20+ lines of code in AddDependency/RemoveDependency
+  - Refactored to use shared markIssuesDirtyTx() helper
 - Fixed unchecked error in import.go when unmarshaling JSON
 - Fixed unchecked error returns in test cleanup code
 - Removed duplicate test code in dependencies_test.go
 - Fixed Go version in go.mod (was incorrectly set to 1.25.2)
 
-### Added
-- Added `bd version` command to display version information
-- Added CHANGELOG.md to track project changes
+### Changed
+- Export now tracks which specific issues were exported
+- ClearDirtyIssuesByID() added (ClearDirtyIssues() deprecated with race warning)
+- Dependency operations use shared dirty-marking helper (DRY)
+
+### Performance
+- Incremental export: Only writes changed issues (vs full export)
+- Regex caching in ID replacement: 1.9x performance improvement
+- Automatic debounced flush prevents excessive I/O
 
 ## [0.9.0] - 2025-10-12
 
@@ -85,10 +122,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.9.1** (2025-10-14): Performance optimization and critical bug fixes
 - **0.9.0** (2025-10-12): Pre-release polish and collision resolution
 - **0.1.0**: Initial development version
 
 ## Upgrade Guide
+
+### Upgrading to 0.9.1
+
+No breaking changes. All changes are backward compatible:
+- **Auto-migration**: The dirty_issues table is automatically added to existing databases
+- **Auto-flush/import**: Enabled by default, improves workflow (can disable with flags if needed)
+- **ID partitioning**: Optional feature, use `--id` flag only if needed for parallel workers
+
+If you're upgrading from 0.9.0, simply pull the latest version. Your existing database will be automatically migrated on first use.
 
 ### Upgrading to 0.9.0
 

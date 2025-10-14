@@ -48,6 +48,11 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	// Migrate existing databases to add dirty_issues table if missing
+	if err := migrateDirtyIssuesTable(db); err != nil {
+		return nil, fmt.Errorf("failed to migrate dirty_issues table: %w", err)
+	}
+
 	// Get next ID
 	nextID := getNextID(db)
 
@@ -55,6 +60,41 @@ func New(path string) (*SQLiteStorage, error) {
 		db:     db,
 		nextID: nextID,
 	}, nil
+}
+
+// migrateDirtyIssuesTable checks if the dirty_issues table exists and creates it if missing.
+// This ensures existing databases created before the incremental export feature get migrated automatically.
+func migrateDirtyIssuesTable(db *sql.DB) error {
+	// Check if dirty_issues table exists
+	var tableName string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='table' AND name='dirty_issues'
+	`).Scan(&tableName)
+
+	if err == sql.ErrNoRows {
+		// Table doesn't exist, create it
+		_, err := db.Exec(`
+			CREATE TABLE dirty_issues (
+				issue_id TEXT PRIMARY KEY,
+				marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_dirty_issues_marked_at ON dirty_issues(marked_at);
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create dirty_issues table: %w", err)
+		}
+		// Table created successfully - no need to log, happens silently
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to check for dirty_issues table: %w", err)
+	}
+
+	// Table exists, no migration needed
+	return nil
 }
 
 // getNextID determines the next issue ID to use
@@ -81,13 +121,15 @@ func getNextID(db *sql.DB) int {
 	}
 
 	// Check for malformed IDs (non-numeric suffixes) and warn
-	// These are silently ignored by CAST but indicate data quality issues
+	// SQLite's CAST returns 0 for invalid integers, never NULL
+	// So we detect malformed IDs by checking if CAST returns 0 AND suffix doesn't start with '0'
 	malformedQuery := `
 		SELECT id FROM issues
 		WHERE id LIKE ? || '-%'
-		AND CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER) IS NULL
+		AND CAST(SUBSTR(id, LENGTH(?) + 2) AS INTEGER) = 0
+		AND SUBSTR(id, LENGTH(?) + 2, 1) != '0'
 	`
-	rows, err := db.Query(malformedQuery, prefix, prefix)
+	rows, err := db.Query(malformedQuery, prefix, prefix, prefix)
 	if err == nil {
 		defer rows.Close()
 		var malformedIDs []string
@@ -171,6 +213,16 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	`, issue.ID, types.EventCreated, actor, eventDataStr)
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, issue.ID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	return tx.Commit()
@@ -336,6 +388,16 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, id, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
 	return tx.Commit()
 }
 
@@ -364,6 +426,16 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	`, id, types.EventClosed, actor, reason)
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, id, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	return tx.Commit()

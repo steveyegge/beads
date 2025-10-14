@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS config (
     value TEXT NOT NULL
 );
 
+-- Dirty issues table (for incremental JSONL export)
+-- Tracks which issues have changed since last export
+CREATE TABLE IF NOT EXISTS dirty_issues (
+    issue_id TEXT PRIMARY KEY,
+    marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dirty_issues_marked_at ON dirty_issues(marked_at);
+
 -- Ready work view
 CREATE VIEW IF NOT EXISTS ready_issues AS
 SELECT i.*

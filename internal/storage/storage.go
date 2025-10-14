@@ -43,6 +43,15 @@ type Storage interface {
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
 
+	// Dirty tracking (for incremental JSONL export)
+	GetDirtyIssues(ctx context.Context) ([]string, error)
+	ClearDirtyIssues(ctx context.Context) error // WARNING: Race condition (bd-52), use ClearDirtyIssuesByID
+	ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error
+
+	// Config
+	SetConfig(ctx context.Context, key, value string) error
+	GetConfig(ctx context.Context, key string) (string, error)
+
 	// Lifecycle
 	Close() error
 }

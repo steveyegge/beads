@@ -110,6 +110,12 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// Mark both issues as dirty for incremental export
+	// (dependencies are exported with each issue, so both need updating)
+	if err := markIssuesDirtyTx(ctx, tx, []string{dep.IssueID, dep.DependsOnID}); err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 
@@ -135,6 +141,11 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 		fmt.Sprintf("Removed dependency on %s", dependsOnID))
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark both issues as dirty for incremental export
+	if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
+		return err
 	}
 
 	return tx.Commit()

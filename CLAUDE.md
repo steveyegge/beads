@@ -17,6 +17,9 @@ bd ready --json
 # Create new issue
 bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
+# Create with explicit ID (for parallel workers)
+bd create "Issue title" --id worker1-100 -p 1 --json
+
 # Update issue status
 bd update <id> --status in_progress --json
 
@@ -236,6 +239,7 @@ bd dep tree bd-8  # Show 1.0 epic dependencies
 - Priority 0-1 issues are usually more important than 2-4
 - Use `--dry-run` to preview import collisions before resolving
 - Use `--resolve-collisions` for safe automatic branch merges
+- Use `--id` flag with `bd create` to partition ID space for parallel workers (e.g., `worker1-100`, `worker2-500`)
 
 ## Building and Testing
 

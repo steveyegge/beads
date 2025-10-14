@@ -154,6 +154,9 @@ bd create "Fix bug" -d "Description" -p 1 -t bug
 bd create "Add feature" --description "Long description" --priority 2 --type feature
 bd create "Task" -l "backend,urgent" --assignee alice
 
+# Explicit ID (useful for parallel workers to avoid conflicts)
+bd create "Worker task" --id worker1-100 -p 1
+
 # Get JSON output for programmatic use
 bd create "Fix bug" -d "Description" --json
 ```
@@ -164,6 +167,7 @@ Options:
 - `-t, --type` - Type (bug|feature|task|epic|chore)
 - `-a, --assignee` - Assign to user
 - `-l, --labels` - Comma-separated labels
+- `--id` - Explicit issue ID (e.g., `worker1-100` for ID space partitioning)
 - `--json` - Output in JSON format
 
 ### Viewing Issues

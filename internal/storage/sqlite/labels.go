@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -31,6 +32,16 @@ func (s *SQLiteStorage) AddLabel(ctx context.Context, issueID, label, actor stri
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, issueID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
 	return tx.Commit()
 }
 
@@ -55,6 +66,16 @@ func (s *SQLiteStorage) RemoveLabel(ctx context.Context, issueID, label, actor s
 	`, issueID, types.EventLabelRemoved, actor, fmt.Sprintf("Removed label: %s", label))
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, issueID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
 	return tx.Commit()

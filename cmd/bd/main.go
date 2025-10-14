@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -25,13 +27,15 @@ var (
 	jsonOutput bool
 
 	// Auto-flush state
-	autoFlushEnabled = true // Can be disabled with --no-auto-flush
-	isDirty          = false
-	flushMutex       sync.Mutex
-	flushTimer       *time.Timer
-	flushDebounce    = 5 * time.Second
-	storeMutex       sync.Mutex // Protects store access from background goroutine
-	storeActive      = false    // Tracks if store is available
+	autoFlushEnabled  = true // Can be disabled with --no-auto-flush
+	isDirty           = false
+	flushMutex        sync.Mutex
+	flushTimer        *time.Timer
+	flushDebounce     = 5 * time.Second
+	storeMutex        sync.Mutex // Protects store access from background goroutine
+	storeActive       = false    // Tracks if store is available
+	flushFailureCount = 0        // Consecutive flush failures
+	lastFlushError    error      // Last flush error for debugging
 
 	// Auto-import state
 	autoImportEnabled = true // Can be disabled with --no-auto-import
@@ -55,15 +59,11 @@ var rootCmd = &cobra.Command{
 
 		// Initialize storage
 		if dbPath == "" {
-			// Try to find database in order:
-			// 1. $BEADS_DB environment variable
-			// 2. .beads/*.db in current directory or ancestors
-			// 3. ~/.beads/default.db
-			if envDB := os.Getenv("BEADS_DB"); envDB != "" {
-				dbPath = envDB
-			} else if foundDB := findDatabase(); foundDB != "" {
+			// Use public API to find database (same logic as extensions)
+			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
+				// Fallback to default location (will be created by init command)
 				home, _ := os.UserHomeDir()
 				dbPath = filepath.Join(home, ".beads", "default.db")
 			}
@@ -115,76 +115,14 @@ var rootCmd = &cobra.Command{
 		flushMutex.Unlock()
 
 		if needsFlush {
-			// Flush without checking isDirty again (we already cleared it)
-			jsonlPath := findJSONLPath()
-			ctx := context.Background()
-			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-			if err == nil {
-				sort.Slice(issues, func(i, j int) bool {
-					return issues[i].ID < issues[j].ID
-				})
-				allDeps, err := store.GetAllDependencyRecords(ctx)
-				if err == nil {
-					for _, issue := range issues {
-						issue.Dependencies = allDeps[issue.ID]
-					}
-					tempPath := jsonlPath + ".tmp"
-					f, err := os.Create(tempPath)
-					if err == nil {
-						encoder := json.NewEncoder(f)
-						hasError := false
-						for _, issue := range issues {
-							if err := encoder.Encode(issue); err != nil {
-								hasError = true
-								break
-							}
-						}
-						f.Close()
-						if !hasError {
-							os.Rename(tempPath, jsonlPath)
-						} else {
-							os.Remove(tempPath)
-						}
-					}
-				}
-			}
+			// Call the shared flush function (no code duplication)
+			flushToJSONL()
 		}
 
 		if store != nil {
 			_ = store.Close()
 		}
 	},
-}
-
-// findDatabase searches for .beads/*.db in current directory and ancestors
-func findDatabase() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	// Walk up directory tree looking for .beads/ directory
-	for {
-		beadsDir := filepath.Join(dir, ".beads")
-		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-				// Return first .db file found
-				return matches[0]
-			}
-		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root
-			break
-		}
-		dir = parent
-	}
-
-	return ""
 }
 
 // outputJSON outputs data as pretty-printed JSON
@@ -199,26 +137,19 @@ func outputJSON(v interface{}) {
 
 // findJSONLPath finds the JSONL file path for the current database
 func findJSONLPath() string {
-	// Get the directory containing the database
-	dbDir := filepath.Dir(dbPath)
+	// Use public API for path discovery
+	jsonlPath := beads.FindJSONLPath(dbPath)
 
 	// Ensure the directory exists (important for new databases)
+	// This is the only difference from the public API - we create the directory
+	dbDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		// If we can't create the directory, return default path anyway
+		// If we can't create the directory, return discovered path anyway
 		// (the subsequent write will fail with a clearer error)
-		return filepath.Join(dbDir, "issues.jsonl")
+		return jsonlPath
 	}
 
-	// Look for existing .jsonl files in the .beads directory
-	pattern := filepath.Join(dbDir, "*.jsonl")
-	matches, err := filepath.Glob(pattern)
-	if err == nil && len(matches) > 0 {
-		// Return the first .jsonl file found
-		return matches[0]
-	}
-
-	// Default to issues.jsonl
-	return filepath.Join(dbDir, "issues.jsonl")
+	return jsonlPath
 }
 
 // autoImportIfNewer checks if JSONL is newer than DB and imports if so
@@ -230,6 +161,9 @@ func autoImportIfNewer() {
 	jsonlInfo, err := os.Stat(jsonlPath)
 	if err != nil {
 		// JSONL doesn't exist or can't be accessed, skip import
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, JSONL not found: %v\n", err)
+		}
 		return
 	}
 
@@ -237,6 +171,9 @@ func autoImportIfNewer() {
 	dbInfo, err := os.Stat(dbPath)
 	if err != nil {
 		// DB doesn't exist (new init?), skip import
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, DB not found: %v\n", err)
+		}
 		return
 	}
 
@@ -361,7 +298,26 @@ func markDirtyAndScheduleFlush() {
 	})
 }
 
-// flushToJSONL exports all issues to JSONL if dirty
+// clearAutoFlushState cancels pending flush and marks DB as clean (after manual export)
+func clearAutoFlushState() {
+	flushMutex.Lock()
+	defer flushMutex.Unlock()
+
+	// Cancel pending timer
+	if flushTimer != nil {
+		flushTimer.Stop()
+		flushTimer = nil
+	}
+
+	// Clear dirty flag
+	isDirty = false
+
+	// Reset failure counter (manual export succeeded)
+	flushFailureCount = 0
+	lastFlushError = nil
+}
+
+// flushToJSONL exports dirty issues to JSONL using incremental updates
 func flushToJSONL() {
 	// Check if store is still active (not closed)
 	storeMutex.Lock()
@@ -389,34 +345,110 @@ func flushToJSONL() {
 	}
 	storeMutex.Unlock()
 
-	// Get all issues
+	// Helper to record failure
+	recordFailure := func(err error) {
+		flushMutex.Lock()
+		flushFailureCount++
+		lastFlushError = err
+		failCount := flushFailureCount
+		flushMutex.Unlock()
+
+		// Always show the immediate warning
+		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
+
+		// Show prominent warning after 3+ consecutive failures
+		if failCount >= 3 {
+			red := color.New(color.FgRed, color.Bold).SprintFunc()
+			fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+			fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+		}
+	}
+
+	// Helper to record success
+	recordSuccess := func() {
+		flushMutex.Lock()
+		flushFailureCount = 0
+		lastFlushError = nil
+		flushMutex.Unlock()
+	}
+
 	ctx := context.Background()
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+
+	// Get dirty issue IDs (bd-39: incremental export optimization)
+	dirtyIDs, err := store.GetDirtyIssues(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get issues: %v\n", err)
+		recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
 		return
 	}
 
-	// Sort by ID for consistent output
+	// No dirty issues? Nothing to do!
+	if len(dirtyIDs) == 0 {
+		recordSuccess()
+		return
+	}
+
+	// Read existing JSONL into a map
+	issueMap := make(map[string]*types.Issue)
+	if existingFile, err := os.Open(jsonlPath); err == nil {
+		scanner := bufio.NewScanner(existingFile)
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var issue types.Issue
+			if err := json.Unmarshal([]byte(line), &issue); err == nil {
+				issueMap[issue.ID] = &issue
+			} else {
+				// Warn about malformed JSONL lines
+				fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+			}
+		}
+		existingFile.Close()
+	}
+
+	// Fetch only dirty issues from DB
+	for _, issueID := range dirtyIDs {
+		issue, err := store.GetIssue(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get issue %s: %w", issueID, err))
+			return
+		}
+		if issue == nil {
+			// Issue was deleted, remove from map
+			delete(issueMap, issueID)
+			continue
+		}
+
+		// Get dependencies for this issue
+		deps, err := store.GetDependencyRecords(ctx, issueID)
+		if err != nil {
+			recordFailure(fmt.Errorf("failed to get dependencies for %s: %w", issueID, err))
+			return
+		}
+		issue.Dependencies = deps
+
+		// Update map
+		issueMap[issueID] = issue
+	}
+
+	// Convert map to sorted slice
+	issues := make([]*types.Issue, 0, len(issueMap))
+	for _, issue := range issueMap {
+		issues = append(issues, issue)
+	}
 	sort.Slice(issues, func(i, j int) bool {
 		return issues[i].ID < issues[j].ID
 	})
-
-	// Populate dependencies for all issues
-	allDeps, err := store.GetAllDependencyRecords(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to get dependencies: %v\n", err)
-		return
-	}
-	for _, issue := range issues {
-		issue.Dependencies = allDeps[issue.ID]
-	}
 
 	// Write to temp file first, then rename (atomic)
 	tempPath := jsonlPath + ".tmp"
 	f, err := os.Create(tempPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to create temp file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to create temp file: %w", err))
 		return
 	}
 
@@ -425,23 +457,32 @@ func flushToJSONL() {
 		if err := encoder.Encode(issue); err != nil {
 			f.Close()
 			os.Remove(tempPath)
-			fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to encode issue %s: %v\n", issue.ID, err)
+			recordFailure(fmt.Errorf("failed to encode issue %s: %w", issue.ID, err))
 			return
 		}
 	}
 
 	if err := f.Close(); err != nil {
 		os.Remove(tempPath)
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to close temp file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to close temp file: %w", err))
 		return
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempPath, jsonlPath); err != nil {
 		os.Remove(tempPath)
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed to rename file: %v\n", err)
+		recordFailure(fmt.Errorf("failed to rename file: %w", err))
 		return
 	}
+
+	// Clear only the dirty issues that were actually exported (fixes bd-52 race condition)
+	if err := store.ClearDirtyIssuesByID(ctx, dirtyIDs); err != nil {
+		// Don't fail the whole flush for this, but warn
+		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
+	}
+
+	// Success!
+	recordSuccess()
 }
 
 var (
@@ -470,8 +511,25 @@ var createCmd = &cobra.Command{
 		issueType, _ := cmd.Flags().GetString("type")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		labels, _ := cmd.Flags().GetStringSlice("labels")
+		explicitID, _ := cmd.Flags().GetString("id")
+
+		// Validate explicit ID format if provided (prefix-number)
+		if explicitID != "" {
+			// Check format: must contain hyphen and have numeric suffix
+			parts := strings.Split(explicitID, "-")
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (expected format: prefix-number, e.g., 'bd-42')\n", explicitID)
+				os.Exit(1)
+			}
+			// Validate numeric suffix
+			if _, err := fmt.Sscanf(parts[1], "%d", new(int)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (numeric suffix required, e.g., 'bd-42')\n", explicitID)
+				os.Exit(1)
+			}
+		}
 
 		issue := &types.Issue{
+			ID:                 explicitID, // Set explicit ID if provided (empty string if not)
 			Title:              title,
 			Description:        description,
 			Design:             design,
@@ -518,6 +576,7 @@ func init() {
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
 	createCmd.Flags().StringP("assignee", "a", "", "Assignee")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
+	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -655,7 +714,7 @@ var listCmd = &cobra.Command{
 
 		fmt.Printf("\nFound %d issues:\n\n", len(issues))
 		for _, issue := range issues {
-			fmt.Printf("%s [P%d] %s\n", issue.ID, issue.Priority, issue.Status)
+			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", issue.Title)
 			if issue.Assignee != "" {
 				fmt.Printf("  Assignee: %s\n", issue.Assignee)
