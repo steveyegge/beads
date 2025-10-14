@@ -82,7 +82,8 @@ var quickstartCmd = &cobra.Command{
 		fmt.Printf("  Applications can extend bd's SQLite database:\n")
 		fmt.Printf("    • Add your own tables (e.g., %s)\n", cyan("myapp_executions"))
 		fmt.Printf("    • Join with %s table for powerful queries\n", cyan("issues"))
-		fmt.Printf("    • See %s for integration patterns\n\n", cyan("EXTENDING.md"))
+		fmt.Printf("    • See database extension docs for integration patterns:\n")
+		fmt.Printf("      %s\n\n", cyan("https://github.com/steveyegge/beads/blob/main/EXTENDING.md"))
 
 		fmt.Printf("%s\n", green("Ready to start!"))
 		fmt.Printf("Run %s to create your first issue.\n\n", cyan("bd create \"My first issue\""))
