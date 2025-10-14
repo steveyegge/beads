@@ -99,12 +99,11 @@ func InitializeMyAppSchema(dbPath string) error {
 
 ```go
 import (
-    "github.com/steveyegge/beads/internal/storage/sqlite"
-    "github.com/steveyegge/beads/internal/types"
+    "github.com/steveyegge/beads"
 )
 
 // Open bd's storage
-store, err := sqlite.New(dbPath)
+store, err := beads.NewSQLiteStorage(dbPath)
 if err != nil {
     log.Fatal(err)
 }
@@ -115,7 +114,7 @@ if err := InitializeMyAppSchema(dbPath); err != nil {
 }
 
 // Use bd to find ready work
-readyIssues, err := store.GetReady(ctx, types.IssueFilter{Limit: 10})
+readyIssues, err := store.GetReadyWork(ctx, types.WorkFilter{Limit: 10})
 if err != nil {
     log.Fatal(err)
 }
