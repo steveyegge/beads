@@ -66,7 +66,12 @@ var rootCmd = &cobra.Command{
 				dbPath = foundDB
 			} else {
 				// Fallback to default location (will be created by init command)
-				home, _ := os.UserHomeDir()
+				home, err := os.UserHomeDir()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not determine home directory: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Using current directory for default database\n")
+					home = "."
+				}
 				dbPath = filepath.Join(home, ".beads", "default.db")
 			}
 		}
@@ -345,7 +350,9 @@ func autoImportIfNewer() {
 				updates["closed_at"] = nil
 			}
 
-			_ = store.UpdateIssue(ctx, issue.ID, updates, "auto-import")
+			if err := store.UpdateIssue(ctx, issue.ID, updates, "auto-import"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: auto-import failed to update %s: %v\n", issue.ID, err)
+			}
 		} else {
 			// Create new issue - enforce invariant before creation
 			if issue.Status == "closed" {
@@ -356,7 +363,9 @@ func autoImportIfNewer() {
 			} else {
 				issue.ClosedAt = nil
 			}
-			_ = store.CreateIssue(ctx, issue, "auto-import")
+			if err := store.CreateIssue(ctx, issue, "auto-import"); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: auto-import failed to create %s: %v\n", issue.ID, err)
+			}
 		}
 	}
 
@@ -388,7 +397,9 @@ func autoImportIfNewer() {
 			}
 
 			if !exists {
-				_ = store.AddDependency(ctx, dep, "auto-import")
+				if err := store.AddDependency(ctx, dep, "auto-import"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: auto-import failed to add dependency %s -> %s: %v\n", issue.ID, dep.DependsOnID, err)
+				}
 			}
 		}
 	}
@@ -423,20 +434,27 @@ func autoImportIfNewer() {
 		// Add missing labels
 		for _, label := range issue.Labels {
 			if !existingLabelMap[label] {
-				_ = store.AddLabel(ctx, issue.ID, label, "auto-import")
+				if err := store.AddLabel(ctx, issue.ID, label, "auto-import"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: auto-import failed to add label %s to %s: %v\n", label, issue.ID, err)
+				}
 			}
 		}
 
 		// Remove labels not in imported data
 		for _, label := range existingLabels {
 			if !importedLabelMap[label] {
-				_ = store.RemoveLabel(ctx, issue.ID, label, "auto-import")
+				if err := store.RemoveLabel(ctx, issue.ID, label, "auto-import"); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: auto-import failed to remove label %s from %s: %v\n", label, issue.ID, err)
+				}
 			}
 		}
 	}
 
 	// Store new hash after successful import
-	_ = store.SetMetadata(ctx, "last_import_hash", currentHash)
+	if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to store import hash: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Auto-import may re-run unnecessarily. Run 'bd export' to fix.\n")
+	}
 }
 
 // checkVersionMismatch checks if the binary version matches the database version
@@ -1015,9 +1033,19 @@ var showCmd = &cobra.Command{
 				Dependents   []*types.Issue `json:"dependents,omitempty"`
 			}
 			details := &IssueDetails{Issue: issue}
-			details.Labels, _ = store.GetLabels(ctx, issue.ID)
-			details.Dependencies, _ = store.GetDependencies(ctx, issue.ID)
-			details.Dependents, _ = store.GetDependents(ctx, issue.ID)
+			var err error
+			details.Labels, err = store.GetLabels(ctx, issue.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to fetch labels: %v\n", err)
+			}
+			details.Dependencies, err = store.GetDependencies(ctx, issue.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to fetch dependencies: %v\n", err)
+			}
+			details.Dependents, err = store.GetDependents(ctx, issue.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to fetch dependents: %v\n", err)
+			}
 			outputJSON(details)
 			return
 		}
