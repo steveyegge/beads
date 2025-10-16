@@ -14,6 +14,7 @@ from beads_mcp.tools import (
     beads_list_issues,
     beads_quickstart,
     beads_ready_work,
+    beads_reopen_issue,
     beads_show_issue,
     beads_stats,
     beads_update_issue,
@@ -166,6 +167,66 @@ async def test_beads_close_issue(sample_issue):
     assert len(issues) == 1
     assert issues[0].status == "closed"
     mock_client.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_beads_reopen_issue(sample_issue):
+    """Test beads_reopen_issue tool."""
+    reopened_issue = sample_issue.model_copy(
+        update={"status": "open", "closed_at": None}
+    )
+    mock_client = AsyncMock()
+    mock_client.reopen = AsyncMock(return_value=[reopened_issue])
+
+    with patch("beads_mcp.tools._get_client", return_value=mock_client):
+        issues = await beads_reopen_issue(issue_ids=["bd-1"])
+
+    assert len(issues) == 1
+    assert issues[0].status == "open"
+    assert issues[0].closed_at is None
+    mock_client.reopen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_beads_reopen_multiple_issues(sample_issue):
+    """Test beads_reopen_issue with multiple issues."""
+    reopened_issue1 = sample_issue.model_copy(
+        update={"id": "bd-1", "status": "open", "closed_at": None}
+    )
+    reopened_issue2 = sample_issue.model_copy(
+        update={"id": "bd-2", "status": "open", "closed_at": None}
+    )
+    mock_client = AsyncMock()
+    mock_client.reopen = AsyncMock(return_value=[reopened_issue1, reopened_issue2])
+
+    with patch("beads_mcp.tools._get_client", return_value=mock_client):
+        issues = await beads_reopen_issue(issue_ids=["bd-1", "bd-2"])
+
+    assert len(issues) == 2
+    assert issues[0].status == "open"
+    assert issues[1].status == "open"
+    assert all(issue.closed_at is None for issue in issues)
+    mock_client.reopen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_beads_reopen_issue_with_reason(sample_issue):
+    """Test beads_reopen_issue with reason parameter."""
+    reopened_issue = sample_issue.model_copy(
+        update={"status": "open", "closed_at": None}
+    )
+    mock_client = AsyncMock()
+    mock_client.reopen = AsyncMock(return_value=[reopened_issue])
+
+    with patch("beads_mcp.tools._get_client", return_value=mock_client):
+        issues = await beads_reopen_issue(
+            issue_ids=["bd-1"], reason="Found regression"
+        )
+
+    assert len(issues) == 1
+    assert issues[0].status == "open"
+    assert issues[0].closed_at is None
+    mock_client.reopen.assert_called_once()
 
 
 @pytest.mark.asyncio

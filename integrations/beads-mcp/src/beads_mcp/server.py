@@ -14,6 +14,7 @@ from beads_mcp.tools import (
     beads_list_issues,
     beads_quickstart,
     beads_ready_work,
+    beads_reopen_issue,
     beads_show_issue,
     beads_stats,
     beads_update_issue,
@@ -151,6 +152,15 @@ async def update_issue(
 async def close_issue(issue_id: str, reason: str = "Completed") -> list[Issue]:
     """Close (complete) an issue."""
     return await beads_close_issue(issue_id=issue_id, reason=reason)
+
+
+@mcp.tool(
+    name="reopen",
+    description="Reopen one or more closed issues. Sets status to 'open' and clears closed_at timestamp.",
+)
+async def reopen_issue(issue_ids: list[str], reason: str | None = None) -> list[Issue]:
+    """Reopen one or more closed issues."""
+    return await beads_reopen_issue(issue_ids=issue_ids, reason=reason)
 
 
 @mcp.tool(

@@ -86,6 +86,13 @@ class CloseIssueParams(BaseModel):
     reason: str = "Completed"
 
 
+class ReopenIssueParams(BaseModel):
+    """Parameters for reopening issues."""
+
+    issue_ids: list[str]
+    reason: str | None = None
+
+
 class AddDependencyParams(BaseModel):
     """Parameters for adding a dependency."""
 

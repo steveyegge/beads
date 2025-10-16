@@ -222,6 +222,96 @@ async def test_close_issue_tool(mcp_client):
 
 
 @pytest.mark.asyncio
+async def test_reopen_issue_tool(mcp_client):
+    """Test reopen_issue tool."""
+    import json
+
+    # Create and close issue
+    create_result = await mcp_client.call_tool(
+        "create", {"title": "Issue to reopen", "priority": 1, "issue_type": "bug"}
+    )
+    created = json.loads(create_result.content[0].text)
+    issue_id = created["id"]
+
+    await mcp_client.call_tool(
+        "close", {"issue_id": issue_id, "reason": "Done"}
+    )
+
+    # Reopen issue
+    reopen_result = await mcp_client.call_tool(
+        "reopen", {"issue_ids": [issue_id]}
+    )
+
+    reopened_issues = json.loads(reopen_result.content[0].text)
+    assert len(reopened_issues) >= 1
+    reopened = reopened_issues[0]
+    assert reopened["id"] == issue_id
+    assert reopened["status"] == "open"
+    assert reopened["closed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_reopen_multiple_issues_tool(mcp_client):
+    """Test reopening multiple issues via MCP tool."""
+    import json
+
+    # Create and close two issues
+    issue1_result = await mcp_client.call_tool(
+        "create", {"title": "Issue 1 to reopen", "priority": 1, "issue_type": "task"}
+    )
+    issue1 = json.loads(issue1_result.content[0].text)
+
+    issue2_result = await mcp_client.call_tool(
+        "create", {"title": "Issue 2 to reopen", "priority": 1, "issue_type": "task"}
+    )
+    issue2 = json.loads(issue2_result.content[0].text)
+
+    await mcp_client.call_tool("close", {"issue_id": issue1["id"], "reason": "Done"})
+    await mcp_client.call_tool("close", {"issue_id": issue2["id"], "reason": "Done"})
+
+    # Reopen both issues
+    reopen_result = await mcp_client.call_tool(
+        "reopen", {"issue_ids": [issue1["id"], issue2["id"]]}
+    )
+
+    reopened_issues = json.loads(reopen_result.content[0].text)
+    assert len(reopened_issues) == 2
+    reopened_ids = {issue["id"] for issue in reopened_issues}
+    assert issue1["id"] in reopened_ids
+    assert issue2["id"] in reopened_ids
+    assert all(issue["status"] == "open" for issue in reopened_issues)
+    assert all(issue["closed_at"] is None for issue in reopened_issues)
+
+
+@pytest.mark.asyncio
+async def test_reopen_with_reason_tool(mcp_client):
+    """Test reopening issue with reason parameter via MCP tool."""
+    import json
+
+    # Create and close issue
+    create_result = await mcp_client.call_tool(
+        "create", {"title": "Issue to reopen with reason", "priority": 1, "issue_type": "bug"}
+    )
+    created = json.loads(create_result.content[0].text)
+    issue_id = created["id"]
+
+    await mcp_client.call_tool("close", {"issue_id": issue_id, "reason": "Done"})
+
+    # Reopen with reason
+    reopen_result = await mcp_client.call_tool(
+        "reopen",
+        {"issue_ids": [issue_id], "reason": "Found regression"}
+    )
+
+    reopened_issues = json.loads(reopen_result.content[0].text)
+    assert len(reopened_issues) >= 1
+    reopened = reopened_issues[0]
+    assert reopened["id"] == issue_id
+    assert reopened["status"] == "open"
+    assert reopened["closed_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_ready_work_tool(mcp_client):
     """Test ready_work tool."""
     import json

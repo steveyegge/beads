@@ -15,6 +15,7 @@ from .models import (
     IssueType,
     ListIssuesParams,
     ReadyWorkParams,
+    ReopenIssueParams,
     ShowIssueParams,
     Stats,
     UpdateIssueParams,
@@ -175,6 +176,20 @@ async def beads_close_issue(
     client = await _get_client()
     params = CloseIssueParams(issue_id=issue_id, reason=reason)
     return await client.close(params)
+
+
+async def beads_reopen_issue(
+    issue_ids: Annotated[list[str], "Issue IDs to reopen (e.g., ['bd-1', 'bd-2'])"],
+    reason: Annotated[str | None, "Reason for reopening"] = None,
+) -> list[Issue]:
+    """Reopen one or more closed issues.
+
+    Sets status to 'open' and clears the closed_at timestamp.
+    More explicit than 'update --status open'.
+    """
+    client = await _get_client()
+    params = ReopenIssueParams(issue_ids=issue_ids, reason=reason)
+    return await client.reopen(params)
 
 
 async def beads_add_dependency(

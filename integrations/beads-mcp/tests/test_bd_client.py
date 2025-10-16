@@ -12,6 +12,7 @@ from beads_mcp.models import (
     CreateIssueParams,
     ListIssuesParams,
     ReadyWorkParams,
+    ReopenIssueParams,
     ShowIssueParams,
     UpdateIssueParams,
 )
@@ -435,6 +436,110 @@ async def test_close_invalid_response(bd_client, mock_process):
     ):
         params = CloseIssueParams(issue_id="bd-1", reason="Test")
         await bd_client.close(params)
+
+
+@pytest.mark.asyncio
+async def test_reopen(bd_client, mock_process):
+    """Test reopen method."""
+    issues_data = [
+        {
+            "id": "bd-1",
+            "title": "Reopened issue",
+            "status": "open",
+            "priority": 1,
+            "issue_type": "bug",
+            "created_at": "2025-01-25T00:00:00Z",
+            "updated_at": "2025-01-25T02:00:00Z",
+            "closed_at": None,
+        }
+    ]
+    mock_process.communicate = AsyncMock(return_value=(json.dumps(issues_data).encode(), b""))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        params = ReopenIssueParams(issue_ids=["bd-1"])
+        issues = await bd_client.reopen(params)
+
+    assert len(issues) == 1
+    assert issues[0].id == "bd-1"
+    assert issues[0].status == "open"
+    assert issues[0].closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_reopen_multiple_issues(bd_client, mock_process):
+    """Test reopen method with multiple issues."""
+    issues_data = [
+        {
+            "id": "bd-1",
+            "title": "Reopened issue 1",
+            "status": "open",
+            "priority": 1,
+            "issue_type": "bug",
+            "created_at": "2025-01-25T00:00:00Z",
+            "updated_at": "2025-01-25T02:00:00Z",
+            "closed_at": None,
+        },
+        {
+            "id": "bd-2",
+            "title": "Reopened issue 2",
+            "status": "open",
+            "priority": 2,
+            "issue_type": "feature",
+            "created_at": "2025-01-25T00:00:00Z",
+            "updated_at": "2025-01-25T02:00:00Z",
+            "closed_at": None,
+        },
+    ]
+    mock_process.communicate = AsyncMock(return_value=(json.dumps(issues_data).encode(), b""))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        params = ReopenIssueParams(issue_ids=["bd-1", "bd-2"])
+        issues = await bd_client.reopen(params)
+
+    assert len(issues) == 2
+    assert issues[0].id == "bd-1"
+    assert issues[1].id == "bd-2"
+
+
+@pytest.mark.asyncio
+async def test_reopen_with_reason(bd_client, mock_process):
+    """Test reopen method with reason parameter."""
+    issues_data = [
+        {
+            "id": "bd-1",
+            "title": "Reopened with reason",
+            "status": "open",
+            "priority": 1,
+            "issue_type": "bug",
+            "created_at": "2025-01-25T00:00:00Z",
+            "updated_at": "2025-01-25T02:00:00Z",
+            "closed_at": None,
+        }
+    ]
+    mock_process.communicate = AsyncMock(return_value=(json.dumps(issues_data).encode(), b""))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+        params = ReopenIssueParams(issue_ids=["bd-1"], reason="Found regression")
+        issues = await bd_client.reopen(params)
+
+    assert len(issues) == 1
+    assert issues[0].id == "bd-1"
+    assert issues[0].status == "open"
+
+
+@pytest.mark.asyncio
+async def test_reopen_invalid_response(bd_client, mock_process):
+    """Test reopen method with invalid response type."""
+    mock_process.communicate = AsyncMock(
+        return_value=(json.dumps({"error": "not a list"}).encode(), b"")
+    )
+
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_process),
+        pytest.raises(BdCommandError, match="Invalid response for reopen"),
+    ):
+        params = ReopenIssueParams(issue_ids=["bd-1"])
+        await bd_client.reopen(params)
 
 
 @pytest.mark.asyncio

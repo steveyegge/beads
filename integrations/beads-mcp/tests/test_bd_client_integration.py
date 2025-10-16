@@ -14,6 +14,7 @@ from beads_mcp.models import (
     CreateIssueParams,
     ListIssuesParams,
     ReadyWorkParams,
+    ReopenIssueParams,
     ShowIssueParams,
     UpdateIssueParams,
 )
@@ -179,20 +180,82 @@ async def test_close_issue(bd_client):
 
 
 @pytest.mark.asyncio
+async def test_reopen_issue(bd_client):
+    """Test reopening a closed issue with real bd."""
+    # Create issue
+    create_params = CreateIssueParams(
+        title="BG's issue to reopen",
+        priority=1,
+        issue_type="bug",
+    )
+    created = await bd_client.create(create_params)
+
+    # Close issue
+    close_params = CloseIssueParams(issue_id=created.id, reason="Testing complete")
+    await bd_client.close(close_params)
+
+    # Reopen issue
+    reopen_params = ReopenIssueParams(issue_ids=[created.id])
+    reopened_issues = await bd_client.reopen(reopen_params)
+
+    assert len(reopened_issues) >= 1
+    reopened = reopened_issues[0]
+    assert reopened.id == created.id
+    assert reopened.status == "open"
+    assert reopened.closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_reopen_multiple_issues(bd_client):
+    """Test reopening multiple closed issues with real bd."""
+    # Create and close two issues
+    issue1 = await bd_client.create(CreateIssueParams(title="Issue 1 to reopen", priority=1, issue_type="task"))
+    issue2 = await bd_client.create(CreateIssueParams(title="Issue 2 to reopen", priority=1, issue_type="task"))
+
+    await bd_client.close(CloseIssueParams(issue_id=issue1.id, reason="Done"))
+    await bd_client.close(CloseIssueParams(issue_id=issue2.id, reason="Done"))
+
+    # Reopen both issues
+    reopen_params = ReopenIssueParams(issue_ids=[issue1.id, issue2.id])
+    reopened_issues = await bd_client.reopen(reopen_params)
+
+    assert len(reopened_issues) == 2
+    reopened_ids = {issue.id for issue in reopened_issues}
+    assert issue1.id in reopened_ids
+    assert issue2.id in reopened_ids
+    assert all(issue.status == "open" for issue in reopened_issues)
+    assert all(issue.closed_at is None for issue in reopened_issues)
+
+
+@pytest.mark.asyncio
+async def test_reopen_with_reason(bd_client):
+    """Test reopening an issue with reason parameter."""
+    # Create and close issue
+    created = await bd_client.create(
+        CreateIssueParams(title="Issue to reopen with reason", priority=1, issue_type="bug")
+    )
+    await bd_client.close(CloseIssueParams(issue_id=created.id, reason="Done"))
+
+    # Reopen with reason
+    reopen_params = ReopenIssueParams(issue_ids=[created.id], reason="BG found a regression in production")
+    reopened_issues = await bd_client.reopen(reopen_params)
+
+    assert len(reopened_issues) >= 1
+    reopened = reopened_issues[0]
+    assert reopened.id == created.id
+    assert reopened.status == "open"
+    assert reopened.closed_at is None
+
+
+@pytest.mark.asyncio
 async def test_add_dependency(bd_client):
     """Test adding dependencies with real bd."""
     # Create two issues
-    issue1 = await bd_client.create(
-        CreateIssueParams(title="Issue 1", priority=1, issue_type="task")
-    )
-    issue2 = await bd_client.create(
-        CreateIssueParams(title="Issue 2", priority=1, issue_type="task")
-    )
+    issue1 = await bd_client.create(CreateIssueParams(title="Issue 1", priority=1, issue_type="task"))
+    issue2 = await bd_client.create(CreateIssueParams(title="Issue 2", priority=1, issue_type="task"))
 
     # Add dependency: issue2 blocks issue1
-    params = AddDependencyParams(
-        from_id=issue1.id, to_id=issue2.id, dep_type="blocks"
-    )
+    params = AddDependencyParams(from_id=issue1.id, to_id=issue2.id, dep_type="blocks")
     await bd_client.add_dependency(params)
 
     # Verify dependency by showing issue1
@@ -207,17 +270,13 @@ async def test_add_dependency(bd_client):
 async def test_ready_work(bd_client):
     """Test getting ready work with real bd."""
     # Create issue with no dependencies (should be ready)
-    ready_issue = await bd_client.create(
-        CreateIssueParams(title="Ready issue", priority=1, issue_type="task")
-    )
+    ready_issue = await bd_client.create(CreateIssueParams(title="Ready issue", priority=1, issue_type="task"))
 
     # Create blocked issue
     blocking_issue = await bd_client.create(
         CreateIssueParams(title="Blocking issue", priority=1, issue_type="task")
     )
-    blocked_issue = await bd_client.create(
-        CreateIssueParams(title="Blocked issue", priority=1, issue_type="task")
-    )
+    blocked_issue = await bd_client.create(CreateIssueParams(title="Blocked issue", priority=1, issue_type="task"))
 
     # Add blocking dependency
     await bd_client.add_dependency(
@@ -329,17 +388,11 @@ async def test_invalid_issue_id(bd_client):
 @pytest.mark.asyncio
 async def test_dependency_types(bd_client):
     """Test different dependency types."""
-    issue1 = await bd_client.create(
-        CreateIssueParams(title="Issue 1", priority=1, issue_type="task")
-    )
-    issue2 = await bd_client.create(
-        CreateIssueParams(title="Issue 2", priority=1, issue_type="task")
-    )
+    issue1 = await bd_client.create(CreateIssueParams(title="Issue 1", priority=1, issue_type="task"))
+    issue2 = await bd_client.create(CreateIssueParams(title="Issue 2", priority=1, issue_type="task"))
 
     # Test related dependency
-    params = AddDependencyParams(
-        from_id=issue1.id, to_id=issue2.id, dep_type="related"
-    )
+    params = AddDependencyParams(from_id=issue1.id, to_id=issue2.id, dep_type="related")
     await bd_client.add_dependency(params)
 
     # Verify
@@ -380,8 +433,9 @@ async def test_init_creates_beads_directory(bd_executable):
         # Verify database file was created with correct prefix
         db_files = list(beads_dir.glob("*.db"))
         assert len(db_files) > 0, "No database file created in .beads/"
-        assert any("test" in str(db.name) for db in db_files), \
+        assert any("test" in str(db.name) for db in db_files), (
             f"Database file doesn't contain prefix 'test': {[db.name for db in db_files]}"
+        )
 
         # Verify success message
         assert "initialized" in result.lower() or "created" in result.lower()

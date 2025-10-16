@@ -79,6 +79,7 @@ Then use in Claude Desktop config:
 - `dep` - Add dependency (blocks, related, parent-child, discovered-from)
 - `blocked` - Get blocked issues
 - `stats` - Get project statistics
+- `reopen` - Reopen a closed issue with optional reason
 
 
 ## Development

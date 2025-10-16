@@ -15,6 +15,7 @@ from .models import (
     Issue,
     ListIssuesParams,
     ReadyWorkParams,
+    ReopenIssueParams,
     ShowIssueParams,
     Stats,
     UpdateIssueParams,
@@ -378,6 +379,26 @@ class BdClient:
         data = await self._run_command(*args)
         if not isinstance(data, list):
             raise BdCommandError(f"Invalid response for close {params.issue_id}")
+
+        return [Issue.model_validate(issue) for issue in data]
+
+    async def reopen(self, params: ReopenIssueParams) -> list[Issue]:
+        """Reopen one or more closed issues.
+
+        Args:
+            params: Reopen parameters
+
+        Returns:
+            List of reopened issues
+        """
+        args = ["reopen", *params.issue_ids]
+
+        if params.reason:
+            args.extend(["--reason", params.reason])
+
+        data = await self._run_command(*args)
+        if not isinstance(data, list):
+            raise BdCommandError(f"Invalid response for reopen {params.issue_ids}")
 
         return [Issue.model_validate(issue) for issue in data]
 
