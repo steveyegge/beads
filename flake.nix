@@ -27,7 +27,7 @@
           subPackages = [ "cmd/bd" ];
 
           # Go module dependencies hash (computed via nix build)
-          vendorHash = "sha256-WvwT48izxMxx9qQmZp/6zwv7hHgTVd9KmOJFm7RWvrI=";
+          vendorHash = null;
 
           meta = with pkgs.lib; {
             description = "beads (bd) - An issue tracker designed for AI-supervised coding workflows";
