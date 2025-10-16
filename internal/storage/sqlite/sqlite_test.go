@@ -989,7 +989,7 @@ func TestParallelIssueCreation(t *testing.T) {
 	ids := make(chan string, numIssues)
 
 	for i := 0; i < numIssues; i++ {
-		go func(num int) {
+		go func() {
 			issue := &types.Issue{
 				Title:     "Parallel test issue",
 				Status:    types.StatusOpen,
@@ -1003,7 +1003,7 @@ func TestParallelIssueCreation(t *testing.T) {
 			}
 			ids <- issue.ID
 			errors <- nil
-		}(i)
+		}()
 	}
 
 	// Collect results
