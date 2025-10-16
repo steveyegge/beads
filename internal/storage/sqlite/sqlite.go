@@ -307,42 +307,6 @@ func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (
 	return nextID, nil
 }
 
-// ensureCounterInitialized checks if a counter exists for the given prefix,
-// and initializes it from existing issues if needed. This is lazy initialization
-// to avoid scanning the entire issues table on every CreateIssue call.
-func (s *SQLiteStorage) ensureCounterInitialized(ctx context.Context, prefix string) error {
-	// Check if counter already exists for this prefix
-	var exists int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT 1 FROM issue_counters WHERE prefix = ?`, prefix).Scan(&exists)
-
-	if err == nil {
-		// Counter exists, we're good
-		return nil
-	}
-
-	if err != sql.ErrNoRows {
-		// Unexpected error
-		return fmt.Errorf("failed to check counter existence: %w", err)
-	}
-
-	// Counter doesn't exist, initialize it from existing issues with this prefix
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
-		FROM issues
-		WHERE id LIKE ? || '-%'
-		  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = MAX(last_id, excluded.last_id)
-	`, prefix, prefix, prefix, prefix)
-	if err != nil {
-		return fmt.Errorf("failed to initialize counter for prefix %s: %w", prefix, err)
-	}
-
-	return nil
-}
-
 // SyncAllCounters synchronizes all ID counters based on existing issues in the database
 // This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
 func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
@@ -397,11 +361,11 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}
 
 	// Track commit state for defer cleanup
-	// Use context.Background() for ROLLBACK to ensure cleanup happens even if ctx is cancelled
+	// Use context.Background() for ROLLBACK to ensure cleanup happens even if ctx is canceled
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(context.Background(), "ROLLBACK")
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
 		}
 	}()
 
@@ -625,7 +589,10 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 	// Auto-manage closed_at when status changes (enforce invariant)
 	if statusVal, ok := updates["status"]; ok {
-		newStatus := statusVal.(string)
+		newStatus, ok := statusVal.(string)
+		if !ok {
+			return fmt.Errorf("status must be a string")
+		}
 		if newStatus == string(types.StatusClosed) {
 			// Changing to closed: ensure closed_at is set
 			if _, hasClosedAt := updates["closed_at"]; !hasClosedAt {

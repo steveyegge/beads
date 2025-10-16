@@ -9,6 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const limitClause = " LIMIT ?"
+
 // AddComment adds a comment to an issue
 func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -52,7 +54,7 @@ func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int
 	args := []interface{}{issueID}
 	limitSQL := ""
 	if limit > 0 {
-		limitSQL = " LIMIT ?"
+		limitSQL = limitClause
 		args = append(args, limit)
 	}
 
