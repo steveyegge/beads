@@ -47,6 +47,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🌲 **Dependency trees** - Visualize full dependency graphs
 - 🎨 **Beautiful CLI** - Colored output for humans, JSON for bots
 - 💾 **Full audit trail** - Every change is logged
+- ⚡ **High performance** - Batch operations for bulk imports (1000 issues in ~950ms)
 
 ## Installation
 

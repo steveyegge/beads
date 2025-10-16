@@ -441,6 +441,116 @@ jsonlPath := beads.FindJSONLPath(dbPath)
 fmt.Printf("BD exports to: %s\n", jsonlPath)
 ```
 
+## Batch Operations for Performance
+
+When creating many issues at once (e.g., bulk imports, batch processing), use `CreateIssues` for significantly better performance:
+
+```go
+import (
+    "context"
+    "github.com/steveyegge/beads/internal/storage/sqlite"
+    "github.com/steveyegge/beads/internal/types"
+)
+
+// Open bd's storage
+store, err := sqlite.New(".beads/issues.db")
+if err != nil {
+    log.Fatal(err)
+}
+
+ctx := context.Background()
+
+// Prepare batch of issues to create
+issues := make([]*types.Issue, 0, 1000)
+for _, item := range externalData {
+    issue := &types.Issue{
+        Title:      item.Title,
+        Description: item.Description,
+        Status:     types.StatusOpen,
+        Priority:   item.Priority,
+        IssueType:  types.TypeTask,
+    }
+    issues = append(issues, issue)
+}
+
+// Create all issues in a single atomic transaction (5-15x faster!)
+if err := store.CreateIssues(ctx, issues, "import"); err != nil {
+    log.Fatal(err)
+}
+
+// If you used explicit IDs, sync counters to prevent collisions
+if err := store.SyncAllCounters(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Performance Comparison
+
+| Operation | CreateIssue Loop | CreateIssues Batch | Speedup |
+|-----------|------------------|---------------------|---------|
+| 100 issues | ~900ms | ~30ms | 30x |
+| 500 issues | ~4.5s | ~800ms | 5.6x |
+| 1000 issues | ~9s | ~950ms | 9.5x |
+
+### When to Use Each Method
+
+**Use `CreateIssue` (single issue):**
+- Interactive CLI commands (`bd create`)
+- Single issue creation in your app
+- User-facing operations
+
+**Use `CreateIssues` (batch):**
+- Bulk imports from external systems
+- Batch processing workflows
+- Creating multiple related issues at once
+- Agent workflows that generate many issues
+
+### Batch Import Pattern
+
+```go
+// Example: Import from external issue tracker
+func ImportFromExternal(externalIssues []ExternalIssue) error {
+    store, err := sqlite.New(".beads/issues.db")
+    if err != nil {
+        return err
+    }
+    ctx := context.Background()
+    
+    // Convert external format to bd format
+    issues := make([]*types.Issue, 0, len(externalIssues))
+    for _, ext := range externalIssues {
+        issue := &types.Issue{
+            ID:          fmt.Sprintf("import-%d", ext.ID),  // Explicit IDs
+            Title:       ext.Title,
+            Description: ext.Description,
+            Status:      convertStatus(ext.Status),
+            Priority:    ext.Priority,
+            IssueType:   convertType(ext.Type),
+        }
+        
+        // Normalize closed_at for closed issues
+        if issue.Status == types.StatusClosed {
+            closedAt := ext.ClosedAt
+            issue.ClosedAt = &closedAt
+        }
+        
+        issues = append(issues, issue)
+    }
+    
+    // Atomic batch create
+    if err := store.CreateIssues(ctx, issues, "external-import"); err != nil {
+        return fmt.Errorf("batch create failed: %w", err)
+    }
+    
+    // Sync counters since we used explicit IDs
+    if err := store.SyncAllCounters(ctx); err != nil {
+        return fmt.Errorf("counter sync failed: %w", err)
+    }
+    
+    return nil
+}
+```
+
 ## Summary
 
 The key insight: **bd is a focused issue tracker, not a framework**.

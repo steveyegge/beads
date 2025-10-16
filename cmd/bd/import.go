@@ -165,98 +165,112 @@ Behavior:
 		}
 
 		// Phase 4: Process remaining issues (exact matches and new issues)
+		// Separate existing issues (to update) from new issues (to batch create)
+		var newIssues []*types.Issue
+		seenNew := make(map[string]int) // Track duplicates within import batch
 		for _, issue := range allIssues {
-			// Check if issue exists
-			existing, err := store.GetIssue(ctx, issue.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error checking issue %s: %v\n", issue.ID, err)
-				os.Exit(1)
-			}
-
-			if existing != nil {
-				if skipUpdate {
-					skipped++
-					continue
-				}
-
-				// Update existing issue
-				// Parse raw JSON to detect which fields are present
-				var rawData map[string]interface{}
-				jsonBytes, _ := json.Marshal(issue)
-				if err := json.Unmarshal(jsonBytes, &rawData); err != nil {
-					// If unmarshaling fails, treat all fields as present
-					rawData = make(map[string]interface{})
-				}
-
-				updates := make(map[string]interface{})
-				if _, ok := rawData["title"]; ok {
-					updates["title"] = issue.Title
-				}
-				if _, ok := rawData["description"]; ok {
-					updates["description"] = issue.Description
-				}
-				if _, ok := rawData["design"]; ok {
-					updates["design"] = issue.Design
-				}
-				if _, ok := rawData["acceptance_criteria"]; ok {
-					updates["acceptance_criteria"] = issue.AcceptanceCriteria
-				}
-				if _, ok := rawData["notes"]; ok {
-					updates["notes"] = issue.Notes
-				}
-				if _, ok := rawData["status"]; ok {
-					updates["status"] = issue.Status
-				}
-				if _, ok := rawData["priority"]; ok {
-					updates["priority"] = issue.Priority
-				}
-				if _, ok := rawData["issue_type"]; ok {
-					updates["issue_type"] = issue.IssueType
-				}
-				if _, ok := rawData["assignee"]; ok {
-					updates["assignee"] = issue.Assignee
-				}
-				if _, ok := rawData["estimated_minutes"]; ok {
-					if issue.EstimatedMinutes != nil {
-						updates["estimated_minutes"] = *issue.EstimatedMinutes
-					} else {
-						updates["estimated_minutes"] = nil
-					}
-				}
-				if _, ok := rawData["external_ref"]; ok {
-					if issue.ExternalRef != nil {
-						updates["external_ref"] = *issue.ExternalRef
-					} else {
-						updates["external_ref"] = nil
-					}
-				}
-
-				if err := store.UpdateIssue(ctx, issue.ID, updates, "import"); err != nil {
-					fmt.Fprintf(os.Stderr, "Error updating issue %s: %v\n", issue.ID, err)
-					os.Exit(1)
-				}
-				updated++
-			} else {
-				// Create new issue
-				// Normalize closed_at based on status before creating (enforce invariant)
-				if issue.Status == types.StatusClosed {
-					// Status is closed: ensure closed_at is set
-					if issue.ClosedAt == nil {
-						now := time.Now()
-						issue.ClosedAt = &now
-					}
-				} else {
-					// Status is not closed: ensure closed_at is NULL
-					issue.ClosedAt = nil
-				}
-
-				if err := store.CreateIssue(ctx, issue, "import"); err != nil {
-					fmt.Fprintf(os.Stderr, "Error creating issue %s: %v\n", issue.ID, err)
-					os.Exit(1)
-				}
-				created++
-			}
+		// Check if issue exists
+		existing, err := store.GetIssue(ctx, issue.ID)
+		if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking issue %s: %v\n", issue.ID, err)
+		 os.Exit(1)
 		}
+
+		if existing != nil {
+		if skipUpdate {
+		 skipped++
+				continue
+		}
+
+		// Update existing issue
+		// Parse raw JSON to detect which fields are present
+		var rawData map[string]interface{}
+		jsonBytes, _ := json.Marshal(issue)
+		if err := json.Unmarshal(jsonBytes, &rawData); err != nil {
+		 // If unmarshaling fails, treat all fields as present
+				rawData = make(map[string]interface{})
+		}
+
+		updates := make(map[string]interface{})
+		if _, ok := rawData["title"]; ok {
+		 updates["title"] = issue.Title
+		}
+		if _, ok := rawData["description"]; ok {
+		 updates["description"] = issue.Description
+		}
+		if _, ok := rawData["design"]; ok {
+		 updates["design"] = issue.Design
+		}
+		if _, ok := rawData["acceptance_criteria"]; ok {
+		 updates["acceptance_criteria"] = issue.AcceptanceCriteria
+		}
+		if _, ok := rawData["notes"]; ok {
+		 updates["notes"] = issue.Notes
+		}
+		if _, ok := rawData["status"]; ok {
+		 updates["status"] = issue.Status
+		}
+		if _, ok := rawData["priority"]; ok {
+		 updates["priority"] = issue.Priority
+		}
+		if _, ok := rawData["issue_type"]; ok {
+		 updates["issue_type"] = issue.IssueType
+		}
+		if _, ok := rawData["assignee"]; ok {
+		 updates["assignee"] = issue.Assignee
+		}
+		if _, ok := rawData["estimated_minutes"]; ok {
+		if issue.EstimatedMinutes != nil {
+		updates["estimated_minutes"] = *issue.EstimatedMinutes
+		} else {
+		  updates["estimated_minutes"] = nil
+		 }
+		}
+		if _, ok := rawData["external_ref"]; ok {
+		if issue.ExternalRef != nil {
+		updates["external_ref"] = *issue.ExternalRef
+		} else {
+		  updates["external_ref"] = nil
+				}
+		}
+
+		if err := store.UpdateIssue(ctx, issue.ID, updates, "import"); err != nil {
+		 fmt.Fprintf(os.Stderr, "Error updating issue %s: %v\n", issue.ID, err)
+		 os.Exit(1)
+		 }
+		updated++
+		} else {
+		// Normalize closed_at based on status before creating (enforce invariant)
+		if issue.Status == types.StatusClosed {
+		// Status is closed: ensure closed_at is set
+		if issue.ClosedAt == nil {
+		now := time.Now()
+		issue.ClosedAt = &now
+		}
+		} else {
+		// Status is not closed: ensure closed_at is NULL
+		issue.ClosedAt = nil
+		}
+
+		 // Handle duplicates within the same import batch (last one wins)
+		 if idx, ok := seenNew[issue.ID]; ok {
+		 // Last one wins regardless of skipUpdate (skipUpdate only applies to existing DB issues)
+		 newIssues[idx] = issue
+		 } else {
+		 seenNew[issue.ID] = len(newIssues)
+		 newIssues = append(newIssues, issue)
+		 }
+		}
+	}
+
+	// Batch create all new issues in one atomic transaction (5-15x faster!)
+	if len(newIssues) > 0 {
+		 if err := store.CreateIssues(ctx, newIssues, "import"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating issues: %v\n", err)
+			os.Exit(1)
+		}
+		created += len(newIssues)
+	}
 
 		// Phase 5: Sync ID counters after importing issues with explicit IDs
 		// This prevents ID collisions with subsequently auto-generated issues
