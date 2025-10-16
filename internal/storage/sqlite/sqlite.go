@@ -858,6 +858,124 @@ var allowedUpdateFields = map[string]bool{
 	"external_ref":        true,
 }
 
+// validatePriority validates a priority value
+func validatePriority(value interface{}) error {
+	if priority, ok := value.(int); ok {
+		if priority < 0 || priority > 4 {
+			return fmt.Errorf("priority must be between 0 and 4 (got %d)", priority)
+		}
+	}
+	return nil
+}
+
+// validateStatus validates a status value
+func validateStatus(value interface{}) error {
+	if status, ok := value.(string); ok {
+		if !types.Status(status).IsValid() {
+			return fmt.Errorf("invalid status: %s", status)
+		}
+	}
+	return nil
+}
+
+// validateIssueType validates an issue type value
+func validateIssueType(value interface{}) error {
+	if issueType, ok := value.(string); ok {
+		if !types.IssueType(issueType).IsValid() {
+			return fmt.Errorf("invalid issue type: %s", issueType)
+		}
+	}
+	return nil
+}
+
+// validateTitle validates a title value
+func validateTitle(value interface{}) error {
+	if title, ok := value.(string); ok {
+		if len(title) == 0 || len(title) > 500 {
+			return fmt.Errorf("title must be 1-500 characters")
+		}
+	}
+	return nil
+}
+
+// validateEstimatedMinutes validates an estimated_minutes value
+func validateEstimatedMinutes(value interface{}) error {
+	if mins, ok := value.(int); ok {
+		if mins < 0 {
+			return fmt.Errorf("estimated_minutes cannot be negative")
+		}
+	}
+	return nil
+}
+
+// fieldValidators maps field names to their validation functions
+var fieldValidators = map[string]func(interface{}) error{
+	"priority":           validatePriority,
+	"status":             validateStatus,
+	"issue_type":         validateIssueType,
+	"title":              validateTitle,
+	"estimated_minutes":  validateEstimatedMinutes,
+}
+
+// validateFieldUpdate validates a field update value
+func validateFieldUpdate(key string, value interface{}) error {
+	if validator, ok := fieldValidators[key]; ok {
+		return validator(value)
+	}
+	return nil
+}
+
+// determineEventType determines the event type for an update based on old and new status
+func determineEventType(oldIssue *types.Issue, updates map[string]interface{}) types.EventType {
+	statusVal, hasStatus := updates["status"]
+	if !hasStatus {
+		return types.EventUpdated
+	}
+
+	newStatus, ok := statusVal.(string)
+	if !ok {
+		return types.EventUpdated
+	}
+
+	if newStatus == string(types.StatusClosed) {
+		return types.EventClosed
+	}
+	if oldIssue.Status == types.StatusClosed {
+		return types.EventReopened
+	}
+	return types.EventStatusChanged
+}
+
+// manageClosedAt automatically manages the closed_at field based on status changes
+func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setClauses []string, args []interface{}) ([]string, []interface{}) {
+	statusVal, hasStatus := updates["status"]
+	if !hasStatus {
+		return setClauses, args
+	}
+
+	newStatus, ok := statusVal.(string)
+	if !ok {
+		return setClauses, args
+	}
+
+	if newStatus == string(types.StatusClosed) {
+		// Changing to closed: ensure closed_at is set
+		if _, hasClosedAt := updates["closed_at"]; !hasClosedAt {
+			now := time.Now()
+			updates["closed_at"] = now
+			setClauses = append(setClauses, "closed_at = ?")
+			args = append(args, now)
+		}
+	} else if oldIssue.Status == types.StatusClosed {
+		// Changing from closed to something else: clear closed_at
+		updates["closed_at"] = nil
+		setClauses = append(setClauses, "closed_at = ?")
+		args = append(args, nil)
+	}
+
+	return setClauses, args
+}
+
 // UpdateIssue updates fields on an issue
 func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	// Get old issue for event
@@ -880,37 +998,8 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		}
 
 		// Validate field values
-		switch key {
-		case "priority":
-			if priority, ok := value.(int); ok {
-				if priority < 0 || priority > 4 {
-					return fmt.Errorf("priority must be between 0 and 4 (got %d)", priority)
-				}
-			}
-		case "status":
-			if status, ok := value.(string); ok {
-				if !types.Status(status).IsValid() {
-					return fmt.Errorf("invalid status: %s", status)
-				}
-			}
-		case "issue_type":
-			if issueType, ok := value.(string); ok {
-				if !types.IssueType(issueType).IsValid() {
-					return fmt.Errorf("invalid issue type: %s", issueType)
-				}
-			}
-		case "title":
-			if title, ok := value.(string); ok {
-				if len(title) == 0 || len(title) > 500 {
-					return fmt.Errorf("title must be 1-500 characters")
-				}
-			}
-		case "estimated_minutes":
-			if mins, ok := value.(int); ok {
-				if mins < 0 {
-					return fmt.Errorf("estimated_minutes cannot be negative")
-				}
-			}
+		if err := validateFieldUpdate(key, value); err != nil {
+			return err
 		}
 
 		setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
@@ -918,26 +1007,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	}
 
 	// Auto-manage closed_at when status changes (enforce invariant)
-	if statusVal, ok := updates["status"]; ok {
-		newStatus, ok := statusVal.(string)
-		if !ok {
-			return fmt.Errorf("status must be a string")
-		}
-		if newStatus == string(types.StatusClosed) {
-			// Changing to closed: ensure closed_at is set
-			if _, hasClosedAt := updates["closed_at"]; !hasClosedAt {
-				now := time.Now()
-				updates["closed_at"] = now
-				setClauses = append(setClauses, "closed_at = ?")
-				args = append(args, now)
-			}
-		} else if oldIssue.Status == types.StatusClosed {
-			// Changing from closed to something else: clear closed_at
-			updates["closed_at"] = nil
-			setClauses = append(setClauses, "closed_at = ?")
-			args = append(args, nil)
-		}
-	}
+	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
 
 	args = append(args, id)
 
@@ -969,17 +1039,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	oldDataStr := string(oldData)
 	newDataStr := string(newData)
 
-	eventType := types.EventUpdated
-	if statusVal, ok := updates["status"]; ok {
-		if statusVal == string(types.StatusClosed) {
-			eventType = types.EventClosed
-		} else if oldIssue.Status == types.StatusClosed {
-			// Reopening a closed issue
-			eventType = types.EventReopened
-		} else {
-			eventType = types.EventStatusChanged
-		}
-	}
+	eventType := determineEventType(oldIssue, updates)
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, old_value, new_value)
