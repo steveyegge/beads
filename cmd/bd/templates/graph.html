@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Issue.ID}} - Dependency Graph</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/viz.js@2.1.2/viz.js"></script>
+    <script src="https://unpkg.com/viz.js@2.1.2/full.render.js"></script>
+</head>
+<body>
+    <header>
+        <h1><a href="/">🔗 beads</a></h1>
+    </header>
+
+    <main class="detail">
+        <div class="issue-header">
+            <h2>Dependency Graph: {{.Issue.ID}}</h2>
+            <a href="/issue/{{.Issue.ID}}">← Back to issue</a>
+        </div>
+
+        <div id="graph" style="text-align: center; padding: 2rem;"></div>
+
+        <script>
+            const dot = `{{.DotGraph}}`;
+            
+            const viz = new Viz();
+            viz.renderSVGElement(dot)
+                .then(function(element) {
+                    document.getElementById('graph').appendChild(element);
+                })
+                .catch(error => {
+                    document.getElementById('graph').innerHTML = '<p>Error rendering graph: ' + error + '</p>';
+                });
+        </script>
+    </main>
+</body>
+</html>

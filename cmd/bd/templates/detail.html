@@ -18,6 +18,7 @@
                 <span class="badge status-{{.Issue.Status}}">{{.Issue.Status}}</span>
                 <span class="badge priority-{{.Issue.Priority}}">P{{.Issue.Priority}}</span>
                 <span class="badge type-{{.Issue.IssueType}}">{{.Issue.IssueType}}</span>
+                {{if .HasDeps}}<a href="/graph/{{.Issue.ID}}" class="graph-link">📊 View Graph</a>{{end}}
             </div>
         </div>
 

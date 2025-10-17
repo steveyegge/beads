@@ -32,6 +32,7 @@ var serveCmd = &cobra.Command{
 		
 		http.HandleFunc("/", handleIndex)
 		http.HandleFunc("/issue/", handleIssueDetail)
+		http.HandleFunc("/graph/", handleGraph)
 		http.HandleFunc("/api/issues", handleAPIIssues)
 		http.HandleFunc("/api/issue/", handleAPIIssue)
 		http.HandleFunc("/api/stats", handleAPIStats)
@@ -117,11 +118,111 @@ func handleIssueDetail(w http.ResponseWriter, r *http.Request) {
 		"Dependents": dependents,
 		"Labels":     labels,
 		"Events":     events,
+		"HasDeps":    len(deps) > 0 || len(dependents) > 0,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func handleGraph(w http.ResponseWriter, r *http.Request) {
+	issueID := strings.TrimPrefix(r.URL.Path, "/graph/")
+	if issueID == "" {
+		http.Error(w, "Issue ID required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	tree, err := store.GetDependencyTree(ctx, issueID, 10)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	dotGraph := generateDotGraph(issue, tree)
+
+	tmpl, err := template.ParseFS(embedFS, "templates/graph.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Issue":    issue,
+		"DotGraph": dotGraph,
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func generateDotGraph(root *types.Issue, tree []*types.TreeNode) string {
+	var sb strings.Builder
+	sb.WriteString("digraph G {\n")
+	sb.WriteString("  rankdir=TB;\n")
+	sb.WriteString("  node [shape=box, style=filled];\n\n")
+
+	// Build node and edge maps to avoid duplicates
+	nodes := make(map[string]*types.Issue)
+	edges := make(map[string]bool)
+	
+	// Add root
+	nodes[root.ID] = root
+	
+	// Get dependencies and dependents to build relationships
+	ctx := context.Background()
+	deps, _ := store.GetDependencies(ctx, root.ID)
+	dependents, _ := store.GetDependents(ctx, root.ID)
+	
+	// Add all dependencies as nodes and edges
+	for _, dep := range deps {
+		nodes[dep.ID] = dep
+		edgeKey := fmt.Sprintf("%s->%s", root.ID, dep.ID)
+		edges[edgeKey] = true
+	}
+	
+	// Add all dependents as nodes and edges
+	for _, dependent := range dependents {
+		nodes[dependent.ID] = dependent
+		edgeKey := fmt.Sprintf("%s->%s", dependent.ID, root.ID)
+		edges[edgeKey] = true
+	}
+	
+	// Render all nodes
+	for _, issue := range nodes {
+		color := "#7b9e87" // open
+		if issue.Status == "closed" {
+			color = "#8a8175"
+		} else if issue.Status == "in_progress" {
+			color = "#c17a3c"
+		}
+		
+		label := fmt.Sprintf("%s\\n%s\\nP%d", issue.ID, 
+			strings.ReplaceAll(issue.Title, "\"", "'"), 
+			issue.Priority)
+		
+		sb.WriteString(fmt.Sprintf("  \"%s\" [label=\"%s\", fillcolor=\"%s\", fontcolor=\"white\"];\n",
+			issue.ID, label, color))
+	}
+	
+	sb.WriteString("\n")
+	
+	// Render all edges
+	for edge := range edges {
+		parts := strings.Split(edge, "->")
+		sb.WriteString(fmt.Sprintf("  \"%s\" -> \"%s\";\n", parts[0], parts[1]))
+	}
+
+	sb.WriteString("}\n")
+	return sb.String()
 }
 
 func handleAPIIssues(w http.ResponseWriter, r *http.Request) {

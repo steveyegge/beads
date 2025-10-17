@@ -167,6 +167,22 @@ a:hover {
 .issue-meta {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
+}
+
+.graph-link {
+    margin-left: 1rem;
+    padding: 0.25rem 0.75rem;
+    background: #6b8896;
+    color: white;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.graph-link:hover {
+    background: #5a7d6e;
+    text-decoration: none;
 }
 
 .section {
