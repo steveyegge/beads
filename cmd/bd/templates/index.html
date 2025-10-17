@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>beads - Issue Tracker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>🔗 beads</h1>
+        <div class="stats">
+            <span class="stat">Open: {{.Stats.OpenIssues}}</span>
+            <span class="stat">In Progress: {{.Stats.InProgressIssues}}</span>
+            <span class="stat">Closed: {{.Stats.ClosedIssues}}</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="filters">
+            <input type="text" id="search" placeholder="Search issues...">
+            <select id="status-filter">
+                <option value="">All Statuses</option>
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="closed">Closed</option>
+            </select>
+            <select id="priority-filter">
+                <option value="">All Priorities</option>
+                <option value="0">P0 - Critical</option>
+                <option value="1">P1 - High</option>
+                <option value="2">P2 - Medium</option>
+                <option value="3">P3 - Low</option>
+                <option value="4">P4 - Backlog</option>
+            </select>
+        </div>
+
+        <table class="issues-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Priority</th>
+                    <th>Type</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Issues}}
+                <tr class="issue-row status-{{.Status}} priority-{{.Priority}}">
+                    <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
+                    <td class="title">{{.Title}}</td>
+                    <td><span class="badge status-{{.Status}}">{{.Status}}</span></td>
+                    <td><span class="badge priority-{{.Priority}}">P{{.Priority}}</span></td>
+                    <td><span class="badge type-{{.IssueType}}">{{.IssueType}}</span></td>
+                    <td class="timestamp">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

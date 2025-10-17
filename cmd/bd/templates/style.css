@@ -1,0 +1,254 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background: #f5f5f5;
+}
+
+header {
+    background: #2c3e50;
+    color: white;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+header h1 {
+    font-size: 1.5rem;
+}
+
+header h1 a {
+    color: white;
+    text-decoration: none;
+}
+
+.stats {
+    display: flex;
+    gap: 2rem;
+}
+
+.stat {
+    font-size: 0.9rem;
+}
+
+main {
+    max-width: 1400px;
+    margin: 2rem auto;
+    padding: 0 2rem;
+}
+
+.filters {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    display: flex;
+    gap: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.filters input,
+.filters select {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.filters input {
+    flex: 1;
+}
+
+.issues-table {
+    width: 100%;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.issues-table th {
+    background: #34495e;
+    color: white;
+    text-align: left;
+    padding: 1rem;
+    font-weight: 600;
+}
+
+.issues-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #eee;
+}
+
+.issue-row:hover {
+    background: #f9f9f9;
+}
+
+.issue-row.hidden {
+    display: none;
+}
+
+.title {
+    font-weight: 500;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-open { background: #3498db; color: white; }
+.status-in_progress { background: #f39c12; color: white; }
+.status-closed { background: #95a5a6; color: white; }
+
+.priority-0 { background: #e74c3c; color: white; }
+.priority-1 { background: #e67e22; color: white; }
+.priority-2 { background: #f39c12; color: white; }
+.priority-3 { background: #3498db; color: white; }
+.priority-4 { background: #95a5a6; color: white; }
+
+.type-bug { background: #e74c3c; color: white; }
+.type-feature { background: #9b59b6; color: white; }
+.type-task { background: #3498db; color: white; }
+.type-epic { background: #16a085; color: white; }
+.type-chore { background: #7f8c8d; color: white; }
+
+.label {
+    background: #ecf0f1;
+    color: #34495e;
+}
+
+.timestamp {
+    color: #7f8c8d;
+    font-size: 0.85rem;
+}
+
+a {
+    color: #3498db;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Detail page */
+.detail {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.issue-header {
+    border-bottom: 2px solid #ecf0f1;
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
+}
+
+.issue-header h2 {
+    margin-bottom: 0.5rem;
+    color: #2c3e50;
+}
+
+.issue-meta {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.section {
+    margin-bottom: 2rem;
+}
+
+.section h3 {
+    color: #34495e;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+.description {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    border-left: 3px solid #3498db;
+    white-space: pre-wrap;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+}
+
+.labels {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.dep-list {
+    list-style: none;
+    padding: 0;
+}
+
+.dep-list li {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.events {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+}
+
+.event {
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background: white;
+    border-radius: 4px;
+    border-left: 3px solid #3498db;
+}
+
+.event-actor {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.event-type {
+    color: #7f8c8d;
+    font-size: 0.85rem;
+    margin-left: 0.5rem;
+}
+
+.event-comment {
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    background: #ecf0f1;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.metadata {
+    color: #7f8c8d;
+    font-size: 0.9rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ecf0f1;
+}
+
+.metadata div {
+    margin-bottom: 0.25rem;
+}

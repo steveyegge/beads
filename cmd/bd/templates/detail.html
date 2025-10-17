@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Issue.ID}} - {{.Issue.Title}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1><a href="/">🔗 beads</a></h1>
+    </header>
+
+    <main class="detail">
+        <div class="issue-header">
+            <h2>{{.Issue.ID}}: {{.Issue.Title}}</h2>
+            <div class="issue-meta">
+                <span class="badge status-{{.Issue.Status}}">{{.Issue.Status}}</span>
+                <span class="badge priority-{{.Issue.Priority}}">P{{.Issue.Priority}}</span>
+                <span class="badge type-{{.Issue.IssueType}}">{{.Issue.IssueType}}</span>
+            </div>
+        </div>
+
+        <div class="issue-body">
+            <section class="section">
+                <h3>Description</h3>
+                <pre class="description">{{.Issue.Description}}</pre>
+            </section>
+
+            {{if .Labels}}
+            <section class="section">
+                <h3>Labels</h3>
+                <div class="labels">
+                    {{range .Labels}}
+                    <span class="badge label">{{.}}</span>
+                    {{end}}
+                </div>
+            </section>
+            {{end}}
+
+            {{if .Deps}}
+            <section class="section">
+                <h3>Depends On ({{len .Deps}})</h3>
+                <ul class="dep-list">
+                    {{range .Deps}}
+                    <li><a href="/issue/{{.ID}}">{{.ID}}</a> - {{.Title}} <span class="badge status-{{.Status}}">{{.Status}}</span></li>
+                    {{end}}
+                </ul>
+            </section>
+            {{end}}
+
+            {{if .Dependents}}
+            <section class="section">
+                <h3>Blocked By This ({{len .Dependents}})</h3>
+                <ul class="dep-list">
+                    {{range .Dependents}}
+                    <li><a href="/issue/{{.ID}}">{{.ID}}</a> - {{.Title}} <span class="badge status-{{.Status}}">{{.Status}}</span></li>
+                    {{end}}
+                </ul>
+            </section>
+            {{end}}
+
+            {{if .Events}}
+            <section class="section">
+                <h3>Activity</h3>
+                <div class="events">
+                    {{range .Events}}
+                    <div class="event">
+                        <span class="event-actor">{{.Actor}}</span>
+                        <span class="event-type">{{.EventType}}</span>
+                        {{if .Comment}}<pre class="event-comment">{{.Comment}}</pre>{{end}}
+                        <span class="timestamp">{{.Timestamp.Format "2006-01-02 15:04:05"}}</span>
+                    </div>
+                    {{end}}
+                </div>
+            </section>
+            {{end}}
+
+            <section class="section metadata">
+                <div><strong>Created:</strong> {{.Issue.CreatedAt.Format "2006-01-02 15:04:05"}}</div>
+                <div><strong>Updated:</strong> {{.Issue.UpdatedAt.Format "2006-01-02 15:04:05"}}</div>
+                {{if .Issue.Assignee}}<div><strong>Assignee:</strong> {{.Issue.Assignee}}</div>{{end}}
+            </section>
+        </div>
+    </main>
+</body>
+</html>
