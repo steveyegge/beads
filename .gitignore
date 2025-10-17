@@ -13,6 +13,10 @@
 # Go workspace file
 go.work
 
+# Nix
+result
+result-*
+
 # IDE
 .vscode/
 .idea/
