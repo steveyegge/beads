@@ -256,6 +256,29 @@ No PostgreSQL instance. No MySQL server. No hosted service. Just install bd, clo
 
 ## Usage
 
+### Web UI
+
+Launch a local web interface to browse and visualize issues:
+
+```bash
+bd serve           # Starts server on localhost:8080
+bd serve 3000      # Custom port
+```
+
+The web UI provides:
+- **Issue list** with real-time filtering (search, status, priority)
+- **Issue detail** pages with dependencies and activity
+- **Dependency graphs** visualized with Graphviz (click "📊 View Graph" on any issue with dependencies)
+- **Statistics** dashboard showing open/closed/in-progress counts
+
+**Features:**
+- 🔄 **htmx-powered** - Dynamic filtering without page reloads
+- 🎨 **Autumn palette** - Muted, tasteful colors
+- 🪶 **Lightweight** - No external dependencies, embedded templates
+- 📊 **Graph visualization** - See dependency relationships visually
+
+The web UI is read-only (safe for browsing). Use CLI for creating/updating issues.
+
 ### Creating Issues
 
 ```bash
