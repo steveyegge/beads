@@ -87,7 +87,7 @@ func TestIsDaemonRunning_StalePIDFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "test.pid")
 
-	if err := os.WriteFile(pidFile, []byte("99999"), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte("99999"), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestIsDaemonRunning_CurrentProcess(t *testing.T) {
 	pidFile := filepath.Join(tmpDir, "test.pid")
 
 	currentPID := os.Getpid()
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(currentPID)), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(currentPID)), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestDaemonPIDFileManagement(t *testing.T) {
 	pidFile := filepath.Join(tmpDir, "daemon.pid")
 
 	testPID := 12345
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(testPID)), 0644); err != nil {
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(testPID)), 0600); err != nil {
 		t.Fatalf("Failed to write PID file: %v", err)
 	}
 

@@ -42,7 +42,7 @@ func createTestDBWithIssues(t *testing.T, issues []*types.Issue) (string, *sqlit
 }
 
 // Helper function to write JSONL file
-func writeJSONLFile(t *testing.T, dir string, issues []*types.Issue) string {
+func writeJSONLFile(t *testing.T, dir string, issues []*types.Issue) {
 	t.Helper()
 	jsonlPath := filepath.Join(dir, "issues.jsonl")
 	f, err := os.Create(jsonlPath)
@@ -57,8 +57,6 @@ func writeJSONLFile(t *testing.T, dir string, issues []*types.Issue) string {
 			t.Fatalf("Failed to encode issue %s: %v", issue.ID, err)
 		}
 	}
-
-	return jsonlPath
 }
 
 // Helper function to capture stderr output
@@ -469,7 +467,7 @@ func TestAutoImportParseError(t *testing.T) {
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
 	os.WriteFile(jsonlPath, []byte(`{"id":"test-pe-1","title":"Good issue","status":"open","priority":1,"issue_type":"task","created_at":"2025-10-16T00:00:00Z","updated_at":"2025-10-16T00:00:00Z"}
 {invalid json here}
-`), 0644)
+`), 0600)
 
 	// Run auto-import (should skip due to parse error)
 	stderrOutput := captureStderr(t, autoImportIfNewer)
@@ -501,7 +499,7 @@ func TestAutoImportEmptyJSONL(t *testing.T) {
 
 	// Create empty JSONL
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
-	os.WriteFile(jsonlPath, []byte(""), 0644)
+	os.WriteFile(jsonlPath, []byte(""), 0600)
 
 	// Run auto-import
 	autoImportIfNewer()

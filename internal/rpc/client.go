@@ -67,17 +67,17 @@ func (c *Client) Execute(req *Request) (*Response, error) {
 	reqJSON = append(reqJSON, '\n')
 
 	if _, err := c.conn.Write(reqJSON); err != nil {
-		c.reconnect()
+		_ = c.reconnect()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
 	scanner := bufio.NewScanner(c.conn)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			c.reconnect()
+			_ = c.reconnect()
 			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
-		c.reconnect()
+		_ = c.reconnect()
 		return nil, fmt.Errorf("connection closed")
 	}
 

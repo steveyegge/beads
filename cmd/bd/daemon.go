@@ -290,6 +290,93 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 	fmt.Fprintf(os.Stderr, "Check log file: %s\n", logPath)
 }
 
+// createPIDFile creates a PID file for the daemon with stale file detection
+func createPIDFile(pidFile string, myPID int, log func(string, ...interface{})) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(pidFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err == nil {
+			fmt.Fprintf(f, "%d", myPID)
+			f.Close()
+			return nil
+		}
+
+		if errors.Is(err, fs.ErrExist) {
+			if isRunning, pid := isDaemonRunning(pidFile); isRunning {
+				log("Daemon already running (PID %d), exiting", pid)
+				return fmt.Errorf("daemon already running (PID %d)", pid)
+			}
+			log("Stale PID file detected, removing and retrying")
+			os.Remove(pidFile)
+			continue
+		}
+
+		log("Error creating PID file: %v", err)
+		return fmt.Errorf("error creating PID file: %w", err)
+	}
+
+	log("Failed to create PID file after retries")
+	return fmt.Errorf("failed to create PID file after retries")
+}
+
+// executeSyncCycle performs a single sync cycle (export, commit, pull, import, push)
+func executeSyncCycle(ctx context.Context, autoCommit, autoPush bool, log func(string, ...interface{})) {
+	syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer syncCancel()
+
+	log("Starting sync cycle...")
+
+	jsonlPath := findJSONLPath()
+	if jsonlPath == "" {
+		log("Error: JSONL path not found")
+		return
+	}
+
+	if err := exportToJSONL(syncCtx, jsonlPath); err != nil {
+		log("Export failed: %v", err)
+		return
+	}
+	log("Exported to JSONL")
+
+	if autoCommit {
+		hasChanges, err := gitHasChanges(syncCtx, jsonlPath)
+		if err != nil {
+			log("Error checking git status: %v", err)
+			return
+		}
+
+		if hasChanges {
+			message := fmt.Sprintf("bd daemon sync: %s", time.Now().Format("2006-01-02 15:04:05"))
+			if err := gitCommit(syncCtx, jsonlPath, message); err != nil {
+				log("Commit failed: %v", err)
+				return
+			}
+			log("Committed changes")
+		}
+	}
+
+	if err := gitPull(syncCtx); err != nil {
+		log("Pull failed: %v", err)
+		return
+	}
+	log("Pulled from remote")
+
+	if err := importFromJSONL(syncCtx, jsonlPath); err != nil {
+		log("Import failed: %v", err)
+		return
+	}
+	log("Imported from JSONL")
+
+	if autoPush && autoCommit {
+		if err := gitPush(syncCtx); err != nil {
+			log("Push failed: %v", err)
+			return
+		}
+		log("Pushed to remote")
+	}
+
+	log("Sync cycle complete")
+}
+
 func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, pidFile string) {
 	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -304,37 +391,11 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		fmt.Fprintf(logF, "[%s] %s\n", timestamp, msg)
 	}
 
+	// Create PID file with stale file detection
 	myPID := os.Getpid()
-	pidFileCreated := false
-	
-	for attempt := 0; attempt < 2; attempt++ {
-		f, err := os.OpenFile(pidFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err == nil {
-			fmt.Fprintf(f, "%d", myPID)
-			f.Close()
-			pidFileCreated = true
-			break
-		}
-		
-		if errors.Is(err, fs.ErrExist) {
-			if isRunning, pid := isDaemonRunning(pidFile); isRunning {
-				log("Daemon already running (PID %d), exiting", pid)
-				os.Exit(1)
-			}
-			log("Stale PID file detected, removing and retrying")
-			os.Remove(pidFile)
-			continue
-		}
-		
-		log("Error creating PID file: %v", err)
+	if err := createPIDFile(pidFile, myPID, log); err != nil {
 		os.Exit(1)
 	}
-	
-	if !pidFileCreated {
-		log("Failed to create PID file after retries")
-		os.Exit(1)
-	}
-	
 	defer os.Remove(pidFile)
 
 	log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
@@ -348,73 +409,17 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	doSync := func() {
-		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer syncCancel()
-		
-		log("Starting sync cycle...")
-		
-		jsonlPath := findJSONLPath()
-		if jsonlPath == "" {
-			log("Error: JSONL path not found")
-			return
-		}
+	// Execute initial sync
+	executeSyncCycle(ctx, autoCommit, autoPush, log)
 
-		if err := exportToJSONL(syncCtx, jsonlPath); err != nil {
-			log("Export failed: %v", err)
-			return
-		}
-		log("Exported to JSONL")
-
-		if autoCommit {
-			hasChanges, err := gitHasChanges(syncCtx, jsonlPath)
-			if err != nil {
-				log("Error checking git status: %v", err)
-				return
-			}
-
-			if hasChanges {
-				message := fmt.Sprintf("bd daemon sync: %s", time.Now().Format("2006-01-02 15:04:05"))
-				if err := gitCommit(syncCtx, jsonlPath, message); err != nil {
-					log("Commit failed: %v", err)
-					return
-				}
-				log("Committed changes")
-			}
-		}
-
-		if err := gitPull(syncCtx); err != nil {
-			log("Pull failed: %v", err)
-			return
-		}
-		log("Pulled from remote")
-
-		if err := importFromJSONL(syncCtx, jsonlPath); err != nil {
-			log("Import failed: %v", err)
-			return
-		}
-		log("Imported from JSONL")
-
-		if autoPush && autoCommit {
-			if err := gitPush(syncCtx); err != nil {
-				log("Push failed: %v", err)
-				return
-			}
-			log("Pushed to remote")
-		}
-
-		log("Sync cycle complete")
-	}
-
-	doSync()
-
+	// Main event loop
 	for {
 		select {
 		case <-ticker.C:
 			if ctx.Err() != nil {
 				return
 			}
-			doSync()
+			executeSyncCycle(ctx, autoCommit, autoPush, log)
 		case sig := <-sigChan:
 			if sig == syscall.SIGHUP {
 				log("Received SIGHUP, ignoring (daemon continues running)")
@@ -424,7 +429,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			cancel()
 			return
 		case <-ctx.Done():
-			log("Context cancelled, shutting down")
+			log("Context canceled, shutting down")
 			return
 		}
 	}

@@ -7,13 +7,11 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -157,32 +155,64 @@ Risks:
 }
 
 func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string]string, issues []*types.Issue) error {
-	// Step 0: Get all dependencies BEFORE renaming (while IDs still match)
-	allDepsByIssue, err := store.GetAllDependencyRecords(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get dependency records: %w", err)
+	// Step 1: Collect all dependencies before renumbering (needed for step 4)
+	allDepsByIssue := make(map[string][]*types.Dependency)
+	for _, issue := range issues {
+		deps, err := store.GetDependencyRecords(ctx, issue.ID)
+		if err == nil && len(deps) > 0 {
+			allDepsByIssue[issue.ID] = deps
+		}
 	}
-	
-	// Step 1: Rename all issues to temporary UUIDs to avoid collisions
+
+	// Step 2: Rename all issues to temporary IDs to avoid collisions
+	tempMapping, err := renameToTempIDs(ctx, prefix, issues)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Rename from temp IDs to final IDs (still don't update text)
+	if err := renameToFinalIDs(ctx, tempMapping, idMapping, issues); err != nil {
+		return err
+	}
+
+	// Step 4: Now update all text references using the original old->new mapping
+	if err := updateTextReferences(ctx, idMapping, issues); err != nil {
+		return err
+	}
+
+	// Step 5: Update all dependency links
+	if err := renumberDependencies(ctx, idMapping, allDepsByIssue); err != nil {
+		return fmt.Errorf("failed to update dependencies: %w", err)
+	}
+
+	return nil
+}
+
+// renameToTempIDs renames all issues to temporary IDs to avoid collisions.
+func renameToTempIDs(ctx context.Context, prefix string, issues []*types.Issue) (map[string]string, error) {
 	tempMapping := make(map[string]string)
-	
+
 	for _, issue := range issues {
 		oldID := issue.ID
 		// Use UUID to guarantee uniqueness (no collision possible)
 		tempID := fmt.Sprintf("temp-%s", uuid.New().String())
 		tempMapping[oldID] = tempID
-		
+
 		// Rename to temp ID (don't update text yet)
 		issue.ID = tempID
 		if err := store.UpdateIssueID(ctx, oldID, tempID, issue, actor); err != nil {
-			return fmt.Errorf("failed to rename %s to temp ID: %w", oldID, err)
+			return nil, fmt.Errorf("failed to rename %s to temp ID: %w", oldID, err)
 		}
 	}
-	
-	// Step 2: Rename from temp IDs to final IDs (still don't update text)
+
+	return tempMapping, nil
+}
+
+// renameToFinalIDs renames all issues from temp IDs to final IDs.
+func renameToFinalIDs(ctx context.Context, tempMapping, idMapping map[string]string, issues []*types.Issue) error {
 	for _, issue := range issues {
 		tempID := issue.ID // Currently has temp ID
-		
+
 		// Find original ID
 		var oldOriginalID string
 		for origID, tID := range tempMapping {
@@ -192,22 +222,26 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 			}
 		}
 		finalID := idMapping[oldOriginalID]
-		
+
 		// Just update the ID, not text yet
 		issue.ID = finalID
 		if err := store.UpdateIssueID(ctx, tempID, finalID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", tempID, err)
 		}
 	}
-	
-	// Step 3: Now update all text references using the original old->new mapping
+
+	return nil
+}
+
+// updateTextReferences updates all text references in issues using the ID mapping.
+func updateTextReferences(ctx context.Context, idMapping map[string]string, issues []*types.Issue) error {
 	// Build regex to match any OLD issue ID (before renumbering)
 	oldIDs := make([]string, 0, len(idMapping))
 	for oldID := range idMapping {
 		oldIDs = append(oldIDs, regexp.QuoteMeta(oldID))
 	}
 	oldPattern := regexp.MustCompile(`\b(` + strings.Join(oldIDs, "|") + `)\b`)
-	
+
 	replaceFunc := func(match string) string {
 		if newID, ok := idMapping[match]; ok {
 			return newID
@@ -217,74 +251,65 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 
 	// Update text references in all issues
 	for _, issue := range issues {
-		changed := false
-		
-		newTitle := oldPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
-		if newTitle != issue.Title {
-			issue.Title = newTitle
-			changed = true
-		}
-		
-		newDesc := oldPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
-		if newDesc != issue.Description {
-			issue.Description = newDesc
-			changed = true
-		}
-		
-		if issue.Design != "" {
-			newDesign := oldPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
-			if newDesign != issue.Design {
-				issue.Design = newDesign
-				changed = true
-			}
-		}
-		
-		if issue.AcceptanceCriteria != "" {
-			newAC := oldPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
-			if newAC != issue.AcceptanceCriteria {
-				issue.AcceptanceCriteria = newAC
-				changed = true
-			}
-		}
-		
-		if issue.Notes != "" {
-			newNotes := oldPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
-			if newNotes != issue.Notes {
-				issue.Notes = newNotes
-				changed = true
-			}
-		}
-		
-		// Only update if text changed
-		if changed {
-			if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
-				"title":               issue.Title,
-				"description":         issue.Description,
-				"design":              issue.Design,
-				"acceptance_criteria": issue.AcceptanceCriteria,
-				"notes":               issue.Notes,
-			}, actor); err != nil {
-				return fmt.Errorf("failed to update text references in %s: %w", issue.ID, err)
-			}
+		if err := updateIssueTextFields(ctx, issue, oldPattern, replaceFunc); err != nil {
+			return err
 		}
 	}
 
-	// Update all dependency links (use the deps we fetched before renaming)
-	if err := renumberDependencies(ctx, idMapping, allDepsByIssue); err != nil {
-		return fmt.Errorf("failed to update dependencies: %w", err)
+	return nil
+}
+
+// updateIssueTextFields updates text fields in a single issue.
+func updateIssueTextFields(ctx context.Context, issue *types.Issue, pattern *regexp.Regexp, replaceFunc func(string) string) error {
+	changed := false
+
+	newTitle := pattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
+	if newTitle != issue.Title {
+		issue.Title = newTitle
+		changed = true
 	}
 
-	// Update the counter to the highest renumbered ID so next issue gets correct number
-	// After renumbering to bd-1..bd-N, set counter to N so next issue is bd-(N+1)
-	// We need to FORCE set it (not MAX) because counter may be higher from deleted issues
-	// Strategy: Reset (delete) the counter row, then SyncAllCounters recreates it from actual max ID
-	sqliteStore := store.(*sqlite.SQLiteStorage)
-	if err := sqliteStore.ResetCounter(ctx, prefix); err != nil {
-		return fmt.Errorf("failed to reset counter: %w", err)
+	newDesc := pattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
+	if newDesc != issue.Description {
+		issue.Description = newDesc
+		changed = true
 	}
-	// Now sync will recreate it from the actual max ID in the database
-	if err := sqliteStore.SyncAllCounters(ctx); err != nil {
-		return fmt.Errorf("failed to sync counter: %w", err)
+
+	if issue.Design != "" {
+		newDesign := pattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
+		if newDesign != issue.Design {
+			issue.Design = newDesign
+			changed = true
+		}
+	}
+
+	if issue.AcceptanceCriteria != "" {
+		newAC := pattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
+		if newAC != issue.AcceptanceCriteria {
+			issue.AcceptanceCriteria = newAC
+			changed = true
+		}
+	}
+
+	if issue.Notes != "" {
+		newNotes := pattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
+		if newNotes != issue.Notes {
+			issue.Notes = newNotes
+			changed = true
+		}
+	}
+
+	// Only update if text changed
+	if changed {
+		if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
+			"title":               issue.Title,
+			"description":         issue.Description,
+			"design":              issue.Design,
+			"acceptance_criteria": issue.AcceptanceCriteria,
+			"notes":               issue.Notes,
+		}, actor); err != nil {
+			return fmt.Errorf("failed to update text references in %s: %w", issue.ID, err)
+		}
 	}
 
 	return nil
@@ -325,7 +350,7 @@ func renumberDependencies(ctx context.Context, idMapping map[string]string, allD
 		// Remove old dependency (may not exist if IDs already updated)
 		_ = store.RemoveDependency(ctx, oldDep.IssueID, oldDep.DependsOnID, "renumber")
 	}
-	
+
 	// Then add all new dependencies
 	for _, newDep := range newDeps {
 		// Add new dependency
@@ -340,12 +365,6 @@ func renumberDependencies(ctx context.Context, idMapping map[string]string, allD
 	}
 
 	return nil
-}
-
-// Helper to extract numeric part from issue ID
-func extractNumber(issueID, prefix string) (int, error) {
-	numStr := strings.TrimPrefix(issueID, prefix+"-")
-	return strconv.Atoi(numStr)
 }
 
 func init() {

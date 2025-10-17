@@ -128,12 +128,9 @@ func (s *SQLiteStorage) GetTier2Candidates(ctx context.Context) ([]*CompactionCa
 		daysStr = "90"
 	}
 
-	depthStr, err := s.GetConfig(ctx, "compact_tier2_dep_levels")
+	_, err = s.GetConfig(ctx, "compact_tier2_dep_levels")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get compact_tier2_dep_levels: %w", err)
-	}
-	if depthStr == "" {
-		depthStr = "5"
 	}
 
 	commitsStr, err := s.GetConfig(ctx, "compact_tier2_commits")
@@ -230,15 +227,6 @@ func (s *SQLiteStorage) CheckEligibility(ctx context.Context, issueID string, ti
 	if tier == 1 {
 		if compactionLevel != 0 {
 			return false, "issue is already compacted", nil
-		}
-		
-		// Check if closed long enough
-		daysStr, err := s.GetConfig(ctx, "compact_tier1_days")
-		if err != nil {
-			return false, "", fmt.Errorf("failed to get compact_tier1_days: %w", err)
-		}
-		if daysStr == "" {
-			daysStr = "30"
 		}
 		
 		// Check if it appears in tier1 candidates

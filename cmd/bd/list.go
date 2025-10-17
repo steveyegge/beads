@@ -12,6 +12,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const (
+	statusClosed = "closed"
+)
+
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List issues",
@@ -123,7 +127,7 @@ func outputDotFormat(ctx context.Context, store storage.Storage, issues []*types
 		fontColor := "black"
 
 		switch issue.Status {
-		case "closed":
+		case statusClosed:
 			fillColor = "lightgray"
 			fontColor = "dimgray"
 		case "in_progress":

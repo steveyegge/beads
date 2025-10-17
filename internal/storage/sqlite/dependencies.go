@@ -17,82 +17,83 @@ const (
 	maxDependencyDepth = 100
 )
 
-// AddDependency adds a dependency between issues with cycle prevention
-func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+// validateDependency performs validation checks on a dependency before adding it
+func (s *SQLiteStorage) validateDependency(ctx context.Context, dep *types.Dependency) (*types.Issue, *types.Issue, error) {
 	// Validate dependency type
 	if !dep.Type.IsValid() {
-		return fmt.Errorf("invalid dependency type: %s (must be blocks, related, parent-child, or discovered-from)", dep.Type)
+		return nil, nil, fmt.Errorf("invalid dependency type: %s (must be blocks, related, parent-child, or discovered-from)", dep.Type)
 	}
 
 	// Validate that both issues exist
 	issueExists, err := s.GetIssue(ctx, dep.IssueID)
 	if err != nil {
-		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
+		return nil, nil, fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
 	}
 	if issueExists == nil {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
+		return nil, nil, fmt.Errorf("issue %s not found", dep.IssueID)
 	}
 
 	dependsOnExists, err := s.GetIssue(ctx, dep.DependsOnID)
 	if err != nil {
-		return fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
+		return nil, nil, fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
 	}
 	if dependsOnExists == nil {
-		return fmt.Errorf("dependency target %s not found", dep.DependsOnID)
+		return nil, nil, fmt.Errorf("dependency target %s not found", dep.DependsOnID)
 	}
 
 	// Prevent self-dependency
 	if dep.IssueID == dep.DependsOnID {
-		return fmt.Errorf("issue cannot depend on itself")
+		return nil, nil, fmt.Errorf("issue cannot depend on itself")
 	}
 
-	// Validate parent-child dependency direction
+	return issueExists, dependsOnExists, nil
+}
+
+// validateParentChildDirection validates parent-child dependency direction
+func validateParentChildDirection(dep *types.Dependency, issueExists, dependsOnExists *types.Issue) error {
+	if dep.Type != types.DepParentChild {
+		return nil
+	}
+
 	// In parent-child relationships: child depends on parent (child is part of parent)
 	// Parent should NOT depend on child (semantically backwards)
 	// Consistent with dependency semantics: IssueID depends on DependsOnID
-	if dep.Type == types.DepParentChild {
-		// issueExists is the dependent (the one that depends on something)
-		// dependsOnExists is what it depends on
-		// Correct: Task (child) depends on Epic (parent) - child belongs to parent
-		// Incorrect: Epic (parent) depends on Task (child) - backwards
-		if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
-			return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
-				dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
-		}
+	// issueExists is the dependent (the one that depends on something)
+	// dependsOnExists is what it depends on
+	// Correct: Task (child) depends on Epic (parent) - child belongs to parent
+	// Incorrect: Epic (parent) depends on Task (child) - backwards
+	if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
+		return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
+			dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
 	}
+	return nil
+}
 
-	dep.CreatedAt = time.Now()
-	dep.CreatedBy = actor
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Cycle Detection and Prevention
-	//
-	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
-	// to maintain a directed acyclic graph (DAG). This is critical for:
-	//
-	// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
-	//    appear blocked when they're actually part of a circular dependency.
-	//
-	// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
-	//    DAG structure. Cycles would require special handling and could cause confusion.
-	//
-	// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
-	//    on B and B depends on A (directly or through other issues), which should be done first?
-	//
-	// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
-	// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
-	// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
-	// are just as problematic as single-type cycles.
-	//
-	// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
-	// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
+// checkCycleTx checks if adding a dependency would create a cycle
+// Cycle Detection and Prevention
+//
+// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
+// to maintain a directed acyclic graph (DAG). This is critical for:
+//
+// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
+//    appear blocked when they're actually part of a circular dependency.
+//
+// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
+//    DAG structure. Cycles would require special handling and could cause confusion.
+//
+// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
+//    on B and B depends on A (directly or through other issues), which should be done first?
+//
+// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
+// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
+// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
+// are just as problematic as single-type cycles.
+//
+// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
+// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
+func (s *SQLiteStorage) checkCycleTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency) error {
 	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		WITH RECURSIVE paths AS (
 			SELECT
 				issue_id,
@@ -124,6 +125,35 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	if cycleExists {
 		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
 			dep.IssueID, dep.DependsOnID, dep.IssueID)
+	}
+
+	return nil
+}
+
+// AddDependency adds a dependency between issues with cycle prevention
+func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	issueExists, dependsOnExists, err := s.validateDependency(ctx, dep)
+	if err != nil {
+		return err
+	}
+
+	// Validate parent-child dependency direction
+	if err := validateParentChildDirection(dep, issueExists, dependsOnExists); err != nil {
+		return err
+	}
+
+	dep.CreatedAt = time.Now()
+	dep.CreatedBy = actor
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Check for cycles before adding dependency
+	if err := s.checkCycleTx(ctx, tx, dep); err != nil {
+		return err
 	}
 
 	// Insert dependency
@@ -161,31 +191,9 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 // - Self-dependency prevention
 // - Cycle detection
 func (s *SQLiteStorage) addDependencyUnchecked(ctx context.Context, dep *types.Dependency, actor string) error {
-	// Validate dependency type
-	if !dep.Type.IsValid() {
-		return fmt.Errorf("invalid dependency type: %s", dep.Type)
-	}
-
-	// Validate that both issues exist
-	issueExists, err := s.GetIssue(ctx, dep.IssueID)
+	_, _, err := s.validateDependency(ctx, dep)
 	if err != nil {
-		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
-	}
-	if issueExists == nil {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
-	}
-
-	dependsOnExists, err := s.GetIssue(ctx, dep.DependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
-	}
-	if dependsOnExists == nil {
-		return fmt.Errorf("dependency target %s not found", dep.DependsOnID)
-	}
-
-	// Prevent self-dependency
-	if dep.IssueID == dep.DependsOnID {
-		return fmt.Errorf("issue cannot depend on itself")
+		return err
 	}
 
 	// NOTE: We skip parent-child direction validation here because during import/remap,
@@ -200,40 +208,9 @@ func (s *SQLiteStorage) addDependencyUnchecked(ctx context.Context, dep *types.D
 	}
 	defer tx.Rollback()
 
-	// Cycle detection (same as AddDependency)
-	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
-		WITH RECURSIVE paths AS (
-			SELECT
-				issue_id,
-				depends_on_id,
-				1 as depth
-			FROM dependencies
-			WHERE issue_id = ?
-
-			UNION ALL
-
-			SELECT
-				d.issue_id,
-				d.depends_on_id,
-				p.depth + 1
-			FROM dependencies d
-			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
-		)
-		SELECT EXISTS(
-			SELECT 1 FROM paths
-			WHERE depends_on_id = ?
-		)
-	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
-
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
-	}
-
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
+	// Check for cycles before adding dependency
+	if err := s.checkCycleTx(ctx, tx, dep); err != nil {
+		return err
 	}
 
 	// Insert dependency

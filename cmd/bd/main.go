@@ -163,34 +163,30 @@ func findJSONLPath() string {
 	return jsonlPath
 }
 
-// autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
-// Fixes bd-84: Hash-based comparison is git-proof (mtime comparison fails after git pull)
-// Fixes bd-228: Now uses collision detection to prevent silently overwriting local changes
-func autoImportIfNewer() {
-	// Find JSONL path
-	jsonlPath := findJSONLPath()
+// validateJSONLHash reads JSONL and checks if it has changed since last import
+func validateJSONLHash() (jsonlPath string, jsonlData []byte, currentHash string, shouldImport bool) {
+	jsonlPath = findJSONLPath()
 
 	// Read JSONL file
-	jsonlData, err := os.ReadFile(jsonlPath)
+	data, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		// JSONL doesn't exist or can't be accessed, skip import
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, JSONL not found: %v\n", err)
 		}
-		return
+		return "", nil, "", false
 	}
 
 	// Compute current JSONL hash
 	hasher := sha256.New()
-	hasher.Write(jsonlData)
-	currentHash := hex.EncodeToString(hasher.Sum(nil))
+	hasher.Write(data)
+	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// Get last import hash from DB metadata
 	ctx := context.Background()
 	lastHash, err := store.GetMetadata(ctx, "last_import_hash")
 	if err != nil {
 		// Metadata error - treat as first import rather than skipping (bd-663)
-		// This allows auto-import to recover from corrupt/missing metadata
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: metadata read failed (%v), treating as first import\n", err)
 		}
@@ -198,20 +194,22 @@ func autoImportIfNewer() {
 	}
 
 	// Compare hashes
-	if currentHash == lastHash {
-		// Content unchanged, skip import
+	if hash == lastHash {
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: auto-import skipped, JSONL unchanged (hash match)\n")
 		}
-		return
+		return "", nil, "", false
 	}
 
 	if os.Getenv("BD_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "Debug: auto-import triggered (hash changed)\n")
 	}
 
-	// Check for Git merge conflict markers (bd-270)
-	// Only match if they appear as standalone lines (not embedded in JSON strings)
+	return jsonlPath, data, hash, true
+}
+
+// checkMergeConflicts scans JSONL for git merge conflict markers (bd-270)
+func checkMergeConflicts(jsonlPath string, jsonlData []byte) bool {
 	lines := bytes.Split(jsonlData, []byte("\n"))
 	for _, line := range lines {
 		trimmed := bytes.TrimSpace(line)
@@ -226,11 +224,14 @@ func autoImportIfNewer() {
 			fmt.Fprintf(os.Stderr, "  2. Export from database to regenerate clean JSONL:\n")
 			fmt.Fprintf(os.Stderr, "     bd export -o %s\n\n", jsonlPath)
 			fmt.Fprintf(os.Stderr, "After resolving, commit the fixed JSONL file.\n")
-			return
+			return true
 		}
 	}
+	return false
+}
 
-	// Content changed - parse all issues
+// parseJSONLIssues parses all issues from JSONL data
+func parseJSONLIssues(jsonlData []byte) ([]*types.Issue, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(jsonlData)))
 	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB buffer for large JSON lines
 	var allIssues []*types.Issue
@@ -245,111 +246,114 @@ func autoImportIfNewer() {
 
 		var issue types.Issue
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			// Parse error, skip this import
 			snippet := line
 			if len(snippet) > 80 {
 				snippet = snippet[:80] + "..."
 			}
-			fmt.Fprintf(os.Stderr, "Auto-import skipped: parse error at line %d: %v\nSnippet: %s\n", lineNo, err, snippet)
-			return
+			return nil, fmt.Errorf("parse error at line %d: %w\nSnippet: %s", lineNo, err, snippet)
 		}
 
 		allIssues = append(allIssues, &issue)
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "Auto-import skipped: scanner error: %v\n", err)
-		return
+		return nil, fmt.Errorf("scanner error: %w", err)
 	}
 
-	// Detect collisions before importing (bd-228 fix)
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		// Not SQLite - skip auto-import to avoid silent data loss without collision detection
-		fmt.Fprintf(os.Stderr, "Auto-import disabled for non-SQLite backend (no collision detection).\n")
-		fmt.Fprintf(os.Stderr, "To import manually, run: bd import -i %s\n", jsonlPath)
-		return
-	}
+	return allIssues, nil
+}
 
+// handleCollisions detects and resolves ID collisions, returning filtered issue list
+func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, allIssues []*types.Issue) ([]*types.Issue, error) {
 	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, allIssues)
 	if err != nil {
-		// Collision detection failed, skip import to be safe
-		fmt.Fprintf(os.Stderr, "Auto-import skipped: collision detection error: %v\n", err)
-		return
+		return nil, fmt.Errorf("collision detection error: %w", err)
 	}
 
-	// If collisions detected, auto-resolve them by remapping to new IDs
-	if len(collisionResult.Collisions) > 0 {
-		// Get all existing issues for scoring
-		allExistingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Auto-import failed: error getting existing issues: %v\n", err)
-			return
-		}
+	// No collisions - return original list
+	if len(collisionResult.Collisions) == 0 {
+		return allIssues, nil
+	}
 
-		// Score collisions
-		if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
-			fmt.Fprintf(os.Stderr, "Auto-import failed: error scoring collisions: %v\n", err)
-			return
-		}
+	// Get all existing issues for scoring
+	allExistingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("error getting existing issues: %w", err)
+	}
 
-		// Remap collisions
-		idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Auto-import failed: error remapping collisions: %v\n", err)
-			return
+	// Score collisions
+	if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
+		return nil, fmt.Errorf("error scoring collisions: %w", err)
+	}
+
+	// Remap collisions
+	idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
+	if err != nil {
+		return nil, fmt.Errorf("error remapping collisions: %w", err)
+	}
+
+	// Show concise notification
+	showCollisionRemapping(idMapping, collisionResult.Collisions)
+
+	// Remove colliding issues from allIssues (they were already created with new IDs)
+	return filterCollidingIssues(allIssues, collisionResult.Collisions), nil
+}
+
+// showCollisionRemapping prints a summary of remapped collision IDs
+func showCollisionRemapping(idMapping map[string]string, collisions []*sqlite.CollisionDetail) {
+	maxShow := 10
+	numRemapped := len(idMapping)
+	if numRemapped < maxShow {
+		maxShow = numRemapped
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAuto-import: remapped %d colliding issue(s) to new IDs:\n", numRemapped)
+	i := 0
+	for oldID, newID := range idMapping {
+		if i >= maxShow {
+			break
 		}
-		
-		// Show concise notification
-		maxShow := 10
-		numRemapped := len(idMapping)
-		if numRemapped < maxShow {
-			maxShow = numRemapped
-		}
-		
-		fmt.Fprintf(os.Stderr, "\nAuto-import: remapped %d colliding issue(s) to new IDs:\n", numRemapped)
-		i := 0
-		for oldID, newID := range idMapping {
-			if i >= maxShow {
+		// Find the collision detail to get title
+		var title string
+		for _, collision := range collisions {
+			if collision.ID == oldID {
+				title = collision.IncomingIssue.Title
 				break
 			}
-			// Find the collision detail to get title
-			var title string
-			for _, collision := range collisionResult.Collisions {
-				if collision.ID == oldID {
-					title = collision.IncomingIssue.Title
-					break
-				}
-			}
-			fmt.Fprintf(os.Stderr, "  %s → %s (%s)\n", oldID, newID, title)
-			i++
 		}
-		if numRemapped > maxShow {
-			fmt.Fprintf(os.Stderr, "  ... and %d more\n", numRemapped-maxShow)
-		}
-		fmt.Fprintf(os.Stderr, "\n")
-		
-		// Remove colliding issues from allIssues (they were already created with new IDs by RemapCollisions)
-		collidingIDs := make(map[string]bool)
-		for _, collision := range collisionResult.Collisions {
-			collidingIDs[collision.ID] = true
-		}
-		filteredIssues := make([]*types.Issue, 0)
-		for _, issue := range allIssues {
-			if !collidingIDs[issue.ID] {
-				filteredIssues = append(filteredIssues, issue)
-			}
-		}
-		allIssues = filteredIssues
+		fmt.Fprintf(os.Stderr, "  %s → %s (%s)\n", oldID, newID, title)
+		i++
+	}
+	if numRemapped > maxShow {
+		fmt.Fprintf(os.Stderr, "  ... and %d more\n", numRemapped-maxShow)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+}
+
+// filterCollidingIssues removes colliding issues from the list
+func filterCollidingIssues(allIssues []*types.Issue, collisions []*sqlite.CollisionDetail) []*types.Issue {
+	collidingIDs := make(map[string]bool)
+	for _, collision := range collisions {
+		collidingIDs[collision.ID] = true
 	}
 
+	filteredIssues := make([]*types.Issue, 0)
+	for _, issue := range allIssues {
+		if !collidingIDs[issue.ID] {
+			filteredIssues = append(filteredIssues, issue)
+		}
+	}
+	return filteredIssues
+}
+
+// importIssuesFromJSONL imports or updates issues from JSONL
+func importIssuesFromJSONL(ctx context.Context, allIssues []*types.Issue) error {
 	// Batch fetch all existing issues to avoid N+1 query pattern (bd-666)
 	allExistingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auto-import failed: error fetching existing issues: %v\n", err)
-		return
+		return fmt.Errorf("error fetching existing issues: %w", err)
 	}
-	
+
 	// Build map for O(1) lookup
 	existingByID := make(map[string]*types.Issue)
 	for _, issue := range allExistingIssues {
@@ -362,54 +366,70 @@ func autoImportIfNewer() {
 
 		if existing != nil {
 			// Update existing issue
-			updates := make(map[string]interface{})
-			updates["title"] = issue.Title
-			updates["description"] = issue.Description
-			updates["design"] = issue.Design
-			updates["acceptance_criteria"] = issue.AcceptanceCriteria
-			updates["notes"] = issue.Notes
-			updates["status"] = issue.Status
-			updates["priority"] = issue.Priority
-			updates["issue_type"] = issue.IssueType
-			updates["assignee"] = issue.Assignee
-			if issue.EstimatedMinutes != nil {
-				updates["estimated_minutes"] = *issue.EstimatedMinutes
-			}
-			if issue.ExternalRef != nil {
-				updates["external_ref"] = *issue.ExternalRef
-			}
-
-			// Enforce status/closed_at invariant (bd-226)
-			if issue.Status == "closed" {
-				// Issue is closed - ensure closed_at is set
-				if issue.ClosedAt != nil {
-					updates["closed_at"] = *issue.ClosedAt
-				} else if !issue.UpdatedAt.IsZero() {
-					updates["closed_at"] = issue.UpdatedAt
-				} else {
-					updates["closed_at"] = time.Now().UTC()
-				}
-			} else {
-				// Issue is not closed - ensure closed_at is null
-				updates["closed_at"] = nil
-			}
-
+			updates := buildIssueUpdates(issue)
 			_ = store.UpdateIssue(ctx, issue.ID, updates, "auto-import")
 		} else {
 			// Create new issue - enforce invariant before creation
-			if issue.Status == "closed" {
-				if issue.ClosedAt == nil {
-					now := time.Now().UTC()
-					issue.ClosedAt = &now
-				}
-			} else {
-				issue.ClosedAt = nil
-			}
+			enforceClosedAtInvariant(issue)
 			_ = store.CreateIssue(ctx, issue, "auto-import")
 		}
 	}
 
-	// Import dependencies
+	return nil
+}
+
+// buildIssueUpdates creates an update map for an issue with status/closed_at invariant
+func buildIssueUpdates(issue *types.Issue) map[string]interface{} {
+	updates := make(map[string]interface{})
+	updates["title"] = issue.Title
+	updates["description"] = issue.Description
+	updates["design"] = issue.Design
+	updates["acceptance_criteria"] = issue.AcceptanceCriteria
+	updates["notes"] = issue.Notes
+	updates["status"] = issue.Status
+	updates["priority"] = issue.Priority
+	updates["issue_type"] = issue.IssueType
+	updates["assignee"] = issue.Assignee
+
+	if issue.EstimatedMinutes != nil {
+		updates["estimated_minutes"] = *issue.EstimatedMinutes
+	}
+	if issue.ExternalRef != nil {
+		updates["external_ref"] = *issue.ExternalRef
+	}
+
+	// Enforce status/closed_at invariant (bd-226)
+	if issue.Status == "closed" {
+		// Issue is closed - ensure closed_at is set
+		if issue.ClosedAt != nil {
+			updates["closed_at"] = *issue.ClosedAt
+		} else if !issue.UpdatedAt.IsZero() {
+			updates["closed_at"] = issue.UpdatedAt
+		} else {
+			updates["closed_at"] = time.Now().UTC()
+		}
+	} else {
+		// Issue is not closed - ensure closed_at is null
+		updates["closed_at"] = nil
+	}
+
+	return updates
+}
+
+// enforceClosedAtInvariant ensures closed_at is set correctly based on status
+func enforceClosedAtInvariant(issue *types.Issue) {
+	if issue.Status == "closed" {
+		if issue.ClosedAt == nil {
+			now := time.Now().UTC()
+			issue.ClosedAt = &now
+		}
+	} else {
+		issue.ClosedAt = nil
+	}
+}
+
+// importDependenciesFromJSONL imports dependencies for all issues
+func importDependenciesFromJSONL(ctx context.Context, allIssues []*types.Issue) {
 	for _, issue := range allIssues {
 		if len(issue.Dependencies) == 0 {
 			continue
@@ -436,6 +456,55 @@ func autoImportIfNewer() {
 			}
 		}
 	}
+}
+
+// autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
+// Fixes bd-84: Hash-based comparison is git-proof (mtime comparison fails after git pull)
+// Fixes bd-228: Now uses collision detection to prevent silently overwriting local changes
+func autoImportIfNewer() {
+	// Validate hash and check if import needed
+	jsonlPath, jsonlData, currentHash, shouldImport := validateJSONLHash()
+	if !shouldImport {
+		return
+	}
+
+	// Check for merge conflicts
+	if checkMergeConflicts(jsonlPath, jsonlData) {
+		return
+	}
+
+	// Parse all issues from JSONL
+	allIssues, err := parseJSONLIssues(jsonlData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-import skipped: %v\n", err)
+		return
+	}
+
+	ctx := context.Background()
+
+	// Detect collisions before importing (bd-228 fix)
+	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Auto-import disabled for non-SQLite backend (no collision detection).\n")
+		fmt.Fprintf(os.Stderr, "To import manually, run: bd import -i %s\n", jsonlPath)
+		return
+	}
+
+	// Handle collisions and get filtered issue list
+	allIssues, err = handleCollisions(ctx, sqliteStore, allIssues)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-import failed: %v\n", err)
+		return
+	}
+
+	// Import issues
+	if err := importIssuesFromJSONL(ctx, allIssues); err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-import failed: %v\n", err)
+		return
+	}
+
+	// Import dependencies
+	importDependenciesFromJSONL(ctx, allIssues)
 
 	// Store new hash after successful import
 	if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
@@ -556,6 +625,121 @@ func clearAutoFlushState() {
 	lastFlushError = nil
 }
 
+// recordFlushFailure records a flush failure and shows appropriate warnings
+func recordFlushFailure(err error) {
+	flushMutex.Lock()
+	flushFailureCount++
+	lastFlushError = err
+	failCount := flushFailureCount
+	flushMutex.Unlock()
+
+	// Always show the immediate warning
+	fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
+
+	// Show prominent warning after 3+ consecutive failures
+	if failCount >= 3 {
+		red := color.New(color.FgRed, color.Bold).SprintFunc()
+		fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+		fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
+		fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+	}
+}
+
+// recordFlushSuccess clears flush failure counters
+func recordFlushSuccess() {
+	flushMutex.Lock()
+	flushFailureCount = 0
+	lastFlushError = nil
+	flushMutex.Unlock()
+}
+
+// readExistingJSONL reads existing JSONL file into an issue map
+func readExistingJSONL(jsonlPath string) map[string]*types.Issue {
+	issueMap := make(map[string]*types.Issue)
+	existingFile, err := os.Open(jsonlPath)
+	if err != nil {
+		return issueMap
+	}
+	defer existingFile.Close()
+
+	scanner := bufio.NewScanner(existingFile)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err == nil {
+			issueMap[issue.ID] = &issue
+		} else {
+			// Warn about malformed JSONL lines
+			fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+		}
+	}
+	return issueMap
+}
+
+// fetchAndUpdateDirtyIssues fetches dirty issues from DB and updates the issue map
+func fetchAndUpdateDirtyIssues(ctx context.Context, dirtyIDs []string, issueMap map[string]*types.Issue) error {
+	for _, issueID := range dirtyIDs {
+		issue, err := store.GetIssue(ctx, issueID)
+		if err != nil {
+			return fmt.Errorf("failed to get issue %s: %w", issueID, err)
+		}
+		if issue == nil {
+			// Issue was deleted, remove from map
+			delete(issueMap, issueID)
+			continue
+		}
+
+		// Get dependencies for this issue
+		deps, err := store.GetDependencyRecords(ctx, issueID)
+		if err != nil {
+			return fmt.Errorf("failed to get dependencies for %s: %w", issueID, err)
+		}
+		issue.Dependencies = deps
+
+		// Update map
+		issueMap[issueID] = issue
+	}
+	return nil
+}
+
+// writeJSONLAtomically writes issues to JSONL atomically using temp file + rename
+func writeJSONLAtomically(jsonlPath string, issues []*types.Issue) error {
+	// Write to temp file first, then rename (atomic)
+	// Use PID in filename to avoid collisions between concurrent bd commands (bd-306)
+	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
+	f, err := os.Create(tempPath)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	encoder := json.NewEncoder(f)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			f.Close()
+			os.Remove(tempPath)
+			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to rename file: %w", err)
+	}
+
+	return nil
+}
+
 // flushToJSONL exports dirty issues to JSONL using incremental updates
 func flushToJSONL() {
 	// Check if store is still active (not closed)
@@ -572,7 +756,8 @@ func flushToJSONL() {
 		return
 	}
 	isDirty = false
-	fullExport := needsFullExport
+	// TODO: fullExport flag not yet used - will be needed for full re-export after renumber
+	_ = needsFullExport     // Acknowledge the flag exists
 	needsFullExport = false // Reset flag
 	flushMutex.Unlock()
 
@@ -586,113 +771,28 @@ func flushToJSONL() {
 	}
 	storeMutex.Unlock()
 
-	// Helper to record failure
-	recordFailure := func(err error) {
-		flushMutex.Lock()
-		flushFailureCount++
-		lastFlushError = err
-		failCount := flushFailureCount
-		flushMutex.Unlock()
-
-		// Always show the immediate warning
-		fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
-
-		// Show prominent warning after 3+ consecutive failures
-		if failCount >= 3 {
-			red := color.New(color.FgRed, color.Bold).SprintFunc()
-			fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
-			fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
-			fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
-		}
-	}
-
-	// Helper to record success
-	recordSuccess := func() {
-		flushMutex.Lock()
-		flushFailureCount = 0
-		lastFlushError = nil
-		flushMutex.Unlock()
-	}
-
 	ctx := context.Background()
 
-	// Determine which issues to export
-	var dirtyIDs []string
-	var err error
-	
-	if fullExport {
-		// Full export: get ALL issues (needed after ID-changing operations like renumber)
-		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get all issues: %w", err))
-			return
-		}
-		dirtyIDs = make([]string, len(allIssues))
-		for i, issue := range allIssues {
-			dirtyIDs[i] = issue.ID
-		}
-	} else {
-		// Incremental export: get only dirty issue IDs (bd-39 optimization)
-		dirtyIDs, err = store.GetDirtyIssues(ctx)
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
-			return
-		}
-
-		// No dirty issues? Nothing to do!
-		if len(dirtyIDs) == 0 {
-			recordSuccess()
-			return
-		}
+	// Get dirty issue IDs (bd-39: incremental export optimization)
+	dirtyIDs, err := store.GetDirtyIssues(ctx)
+	if err != nil {
+		recordFlushFailure(fmt.Errorf("failed to get dirty issues: %w", err))
+		return
 	}
 
-	// Read existing JSONL into a map (skip for full export - we'll rebuild from scratch)
-	issueMap := make(map[string]*types.Issue)
-	if !fullExport {
-		if existingFile, err := os.Open(jsonlPath); err == nil {
-			scanner := bufio.NewScanner(existingFile)
-			lineNum := 0
-			for scanner.Scan() {
-				lineNum++
-				line := scanner.Text()
-				if line == "" {
-					continue
-				}
-				var issue types.Issue
-				if err := json.Unmarshal([]byte(line), &issue); err == nil {
-					issueMap[issue.ID] = &issue
-				} else {
-					// Warn about malformed JSONL lines
-					fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
-				}
-			}
-			existingFile.Close()
-		}
+	// No dirty issues? Nothing to do!
+	if len(dirtyIDs) == 0 {
+		recordFlushSuccess()
+		return
 	}
 
-	// Fetch only dirty issues from DB
-	for _, issueID := range dirtyIDs {
-		issue, err := store.GetIssue(ctx, issueID)
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get issue %s: %w", issueID, err))
-			return
-		}
-		if issue == nil {
-			// Issue was deleted, remove from map
-			delete(issueMap, issueID)
-			continue
-		}
+	// Read existing JSONL into a map
+	issueMap := readExistingJSONL(jsonlPath)
 
-		// Get dependencies for this issue
-		deps, err := store.GetDependencyRecords(ctx, issueID)
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get dependencies for %s: %w", issueID, err))
-			return
-		}
-		issue.Dependencies = deps
-
-		// Update map
-		issueMap[issueID] = issue
+	// Fetch only dirty issues from DB and update map
+	if err := fetchAndUpdateDirtyIssues(ctx, dirtyIDs, issueMap); err != nil {
+		recordFlushFailure(err)
+		return
 	}
 
 	// Convert map to sorted slice
@@ -704,35 +804,9 @@ func flushToJSONL() {
 		return issues[i].ID < issues[j].ID
 	})
 
-	// Write to temp file first, then rename (atomic)
-	// Use PID in filename to avoid collisions between concurrent bd commands (bd-306)
-	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
-	f, err := os.Create(tempPath)
-	if err != nil {
-		recordFailure(fmt.Errorf("failed to create temp file: %w", err))
-		return
-	}
-
-	encoder := json.NewEncoder(f)
-	for _, issue := range issues {
-		if err := encoder.Encode(issue); err != nil {
-			f.Close()
-			os.Remove(tempPath)
-			recordFailure(fmt.Errorf("failed to encode issue %s: %w", issue.ID, err))
-			return
-		}
-	}
-
-	if err := f.Close(); err != nil {
-		os.Remove(tempPath)
-		recordFailure(fmt.Errorf("failed to close temp file: %w", err))
-		return
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
-		os.Remove(tempPath)
-		recordFailure(fmt.Errorf("failed to rename file: %w", err))
+	// Write atomically
+	if err := writeJSONLAtomically(jsonlPath, issues); err != nil {
+		recordFlushFailure(err)
 		return
 	}
 
@@ -754,7 +828,7 @@ func flushToJSONL() {
 	}
 
 	// Success!
-	recordSuccess()
+	recordFlushSuccess()
 }
 
 var (
@@ -770,8 +844,58 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 }
 
+// addLabelsToIssue adds labels to an issue, logging warnings on failures
+func addLabelsToIssue(ctx context.Context, issueID string, labels []string) {
+	for _, label := range labels {
+		if err := store.AddLabel(ctx, issueID, label, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, issueID, err)
+		}
+	}
+}
+
+// addDependenciesToIssue parses and adds dependencies to an issue
+func addDependenciesToIssue(ctx context.Context, issueID string, dependencies []string) {
+	for _, depSpec := range dependencies {
+		depSpec = strings.TrimSpace(depSpec)
+		if depSpec == "" {
+			continue
+		}
+
+		var depType types.DependencyType
+		var dependsOnID string
+
+		// Parse format: "type:id" or just "id" (defaults to "blocks")
+		if strings.Contains(depSpec, ":") {
+			parts := strings.SplitN(depSpec, ":", 2)
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s' for %s\n", depSpec, issueID)
+				continue
+			}
+			depType = types.DependencyType(strings.TrimSpace(parts[0]))
+			dependsOnID = strings.TrimSpace(parts[1])
+		} else {
+			depType = types.DepBlocks
+			dependsOnID = depSpec
+		}
+
+		if !depType.IsValid() {
+			fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' for %s\n", depType, issueID)
+			continue
+		}
+
+		dep := &types.Dependency{
+			IssueID:     issueID,
+			DependsOnID: dependsOnID,
+			Type:        depType,
+		}
+		if err := store.AddDependency(ctx, dep, actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issueID, dependsOnID, err)
+		}
+	}
+}
+
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues
-func createIssuesFromMarkdown(cmd *cobra.Command, filepath string) {
+func createIssuesFromMarkdown(filepath string) {
 	// Parse markdown file
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {
@@ -808,50 +932,10 @@ func createIssuesFromMarkdown(cmd *cobra.Command, filepath string) {
 		}
 
 		// Add labels
-		for _, label := range template.Labels {
-			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s to %s: %v\n", label, issue.ID, err)
-			}
-		}
+		addLabelsToIssue(ctx, issue.ID, template.Labels)
 
 		// Add dependencies
-		for _, depSpec := range template.Dependencies {
-			depSpec = strings.TrimSpace(depSpec)
-			if depSpec == "" {
-				continue
-			}
-
-			var depType types.DependencyType
-			var dependsOnID string
-
-			// Parse format: "type:id" or just "id" (defaults to "blocks")
-			if strings.Contains(depSpec, ":") {
-				parts := strings.SplitN(depSpec, ":", 2)
-				if len(parts) != 2 {
-					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s' for %s\n", depSpec, issue.ID)
-					continue
-				}
-				depType = types.DependencyType(strings.TrimSpace(parts[0]))
-				dependsOnID = strings.TrimSpace(parts[1])
-			} else {
-				depType = types.DepBlocks
-				dependsOnID = depSpec
-			}
-
-			if !depType.IsValid() {
-				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' for %s\n", depType, issue.ID)
-				continue
-			}
-
-			dep := &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: dependsOnID,
-				Type:        depType,
-			}
-			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
-			}
-		}
+		addDependenciesToIssue(ctx, issue.ID, template.Dependencies)
 
 		createdIssues = append(createdIssues, issue)
 	}
@@ -894,7 +978,7 @@ var createCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: cannot specify both title and --file flag\n")
 				os.Exit(1)
 			}
-			createIssuesFromMarkdown(cmd, file)
+			createIssuesFromMarkdown(file)
 			return
 		}
 
@@ -1055,7 +1139,7 @@ var showCmd = &cobra.Command{
 			// Include labels and dependencies in JSON output
 			type IssueDetails struct {
 				*types.Issue
-				Labels      []string       `json:"labels,omitempty"`
+				Labels       []string       `json:"labels,omitempty"`
 				Dependencies []*types.Issue `json:"dependencies,omitempty"`
 				Dependents   []*types.Issue `json:"dependents,omitempty"`
 			}
@@ -1068,7 +1152,7 @@ var showCmd = &cobra.Command{
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
-		
+
 		// Add compaction emoji to title line
 		tierEmoji := ""
 		statusSuffix := ""
@@ -1080,7 +1164,7 @@ var showCmd = &cobra.Command{
 		if issue.CompactionLevel > 0 {
 			statusSuffix = fmt.Sprintf(" (compacted L%d)", issue.CompactionLevel)
 		}
-		
+
 		fmt.Printf("\n%s: %s%s\n", cyan(issue.ID), issue.Title, tierEmoji)
 		fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
 		fmt.Printf("Priority: P%d\n", issue.Priority)
@@ -1101,14 +1185,14 @@ var showCmd = &cobra.Command{
 				tierEmoji = "📦"
 			}
 			tierName := fmt.Sprintf("Tier %d", issue.CompactionLevel)
-			
+
 			fmt.Println()
 			if issue.OriginalSize > 0 {
 				currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
 				saved := issue.OriginalSize - currentSize
 				if saved > 0 {
 					reduction := float64(saved) / float64(issue.OriginalSize) * 100
-					fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n", 
+					fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n",
 						issue.OriginalSize, currentSize, reduction)
 				}
 			}

@@ -22,16 +22,41 @@ type Server struct {
 	wg       sync.WaitGroup
 	mu       sync.Mutex // Protects shutdown state
 	shutdown bool
+	handlers map[string]func(context.Context, *Request) *Response
 }
 
 // NewServer creates a new RPC server.
 func NewServer(store storage.Storage, sockPath string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Server{
+	s := &Server{
 		storage:  store,
 		sockPath: sockPath,
 		ctx:      ctx,
 		cancel:   cancel,
+	}
+	s.initHandlers()
+	return s
+}
+
+// initHandlers initializes the operation handler map.
+func (s *Server) initHandlers() {
+	s.handlers = map[string]func(context.Context, *Request) *Response{
+		OpBatch:        s.handleBatch,
+		OpCreate:       s.handleCreate,
+		OpUpdate:       s.handleUpdate,
+		OpClose:        s.handleClose,
+		OpList:         s.handleList,
+		OpShow:         s.handleShow,
+		OpReady:        s.handleReady,
+		OpBlocked:      s.handleBlocked,
+		OpStats:        s.handleStats,
+		OpDepAdd:       s.handleDepAdd,
+		OpDepRemove:    s.handleDepRemove,
+		OpDepTree:      s.handleDepTree,
+		OpLabelAdd:     s.handleLabelAdd,
+		OpLabelRemove:  s.handleLabelRemove,
+		OpLabelList:    s.handleLabelList,
+		OpLabelListAll: s.handleLabelListAll,
 	}
 }
 
@@ -161,105 +186,75 @@ func (s *Server) sendResponse(writer *bufio.Writer, resp *Response) {
 func (s *Server) handleRequest(req *Request) *Response {
 	ctx := context.Background()
 
-	switch req.Operation {
-	case OpBatch:
-		return s.handleBatch(ctx, req)
-	case OpCreate:
-		return s.handleCreate(ctx, req)
-	case OpUpdate:
-		return s.handleUpdate(ctx, req)
-	case OpClose:
-		return s.handleClose(ctx, req)
-	case OpList:
-		return s.handleList(ctx, req)
-	case OpShow:
-		return s.handleShow(ctx, req)
-	case OpReady:
-		return s.handleReady(ctx, req)
-	case OpBlocked:
-		return s.handleBlocked(ctx, req)
-	case OpStats:
-		return s.handleStats(ctx, req)
-	case OpDepAdd:
-		return s.handleDepAdd(ctx, req)
-	case OpDepRemove:
-		return s.handleDepRemove(ctx, req)
-	case OpDepTree:
-		return s.handleDepTree(ctx, req)
-	case OpLabelAdd:
-		return s.handleLabelAdd(ctx, req)
-	case OpLabelRemove:
-		return s.handleLabelRemove(ctx, req)
-	case OpLabelList:
-		return s.handleLabelList(ctx, req)
-	case OpLabelListAll:
-		return s.handleLabelListAll(ctx, req)
-	default:
+	handler, ok := s.handlers[req.Operation]
+	if !ok {
 		return NewErrorResponse(fmt.Errorf("unknown operation: %s", req.Operation))
 	}
+
+	return handler(ctx, req)
 }
 
 // Placeholder handlers - will be implemented in future commits
-func (s *Server) handleBatch(ctx context.Context, req *Request) *Response {
+func (s *Server) handleBatch(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("batch operation not yet implemented"))
 }
 
-func (s *Server) handleCreate(ctx context.Context, req *Request) *Response {
+func (s *Server) handleCreate(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("create operation not yet implemented"))
 }
 
-func (s *Server) handleUpdate(ctx context.Context, req *Request) *Response {
+func (s *Server) handleUpdate(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("update operation not yet implemented"))
 }
 
-func (s *Server) handleClose(ctx context.Context, req *Request) *Response {
+func (s *Server) handleClose(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("close operation not yet implemented"))
 }
 
-func (s *Server) handleList(ctx context.Context, req *Request) *Response {
+func (s *Server) handleList(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("list operation not yet implemented"))
 }
 
-func (s *Server) handleShow(ctx context.Context, req *Request) *Response {
+func (s *Server) handleShow(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("show operation not yet implemented"))
 }
 
-func (s *Server) handleReady(ctx context.Context, req *Request) *Response {
+func (s *Server) handleReady(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("ready operation not yet implemented"))
 }
 
-func (s *Server) handleBlocked(ctx context.Context, req *Request) *Response {
+func (s *Server) handleBlocked(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("blocked operation not yet implemented"))
 }
 
-func (s *Server) handleStats(ctx context.Context, req *Request) *Response {
+func (s *Server) handleStats(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("stats operation not yet implemented"))
 }
 
-func (s *Server) handleDepAdd(ctx context.Context, req *Request) *Response {
+func (s *Server) handleDepAdd(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("dep_add operation not yet implemented"))
 }
 
-func (s *Server) handleDepRemove(ctx context.Context, req *Request) *Response {
+func (s *Server) handleDepRemove(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("dep_remove operation not yet implemented"))
 }
 
-func (s *Server) handleDepTree(ctx context.Context, req *Request) *Response {
+func (s *Server) handleDepTree(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("dep_tree operation not yet implemented"))
 }
 
-func (s *Server) handleLabelAdd(ctx context.Context, req *Request) *Response {
+func (s *Server) handleLabelAdd(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("label_add operation not yet implemented"))
 }
 
-func (s *Server) handleLabelRemove(ctx context.Context, req *Request) *Response {
+func (s *Server) handleLabelRemove(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("label_remove operation not yet implemented"))
 }
 
-func (s *Server) handleLabelList(ctx context.Context, req *Request) *Response {
+func (s *Server) handleLabelList(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("label_list operation not yet implemented"))
 }
 
-func (s *Server) handleLabelListAll(ctx context.Context, req *Request) *Response {
+func (s *Server) handleLabelListAll(_ context.Context, _ *Request) *Response {
 	return NewErrorResponse(fmt.Errorf("label_list_all operation not yet implemented"))
 }

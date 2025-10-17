@@ -76,7 +76,7 @@ Examples:
 			os.Exit(1)
 		}
 
-		config := &compact.CompactConfig{
+		config := &compact.Config{
 			APIKey:      apiKey,
 			Concurrency: compactWorkers,
 			DryRun:      compactDryRun,
@@ -188,15 +188,14 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 	markDirtyAndScheduleFlush()
 }
 
-func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sqlite.SQLiteStorage) {
-	start := time.Now()
-
+// getCandidatesForTier retrieves candidate issue IDs for the specified compaction tier
+func getCandidatesForTier(ctx context.Context, store *sqlite.SQLiteStorage, tier int) ([]string, error) {
 	var candidates []string
-	if compactTier == 1 {
+
+	if tier == 1 {
 		tier1, err := store.GetTier1Candidates(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("failed to get Tier 1 candidates: %w", err)
 		}
 		for _, c := range tier1 {
 			candidates = append(candidates, c.IssueID)
@@ -204,71 +203,47 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	} else {
 		tier2, err := store.GetTier2Candidates(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get candidates: %v\n", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("failed to get Tier 2 candidates: %w", err)
 		}
 		for _, c := range tier2 {
 			candidates = append(candidates, c.IssueID)
 		}
 	}
 
-	if len(candidates) == 0 {
-		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"success": true,
-				"count":   0,
-				"message": "No eligible candidates",
-			})
-			return
+	return candidates, nil
+}
+
+// handleDryRunMode shows a preview of compaction without performing it
+func handleDryRunMode(ctx context.Context, store *sqlite.SQLiteStorage, candidates []string, tier int) {
+	totalSize := 0
+	for _, id := range candidates {
+		issue, err := store.GetIssue(ctx, id)
+		if err != nil {
+			continue
 		}
-		fmt.Println("No eligible candidates for compaction")
+		totalSize += len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
+	}
+
+	if jsonOutput {
+		output := map[string]interface{}{
+			"dry_run":             true,
+			"tier":                tier,
+			"candidate_count":     len(candidates),
+			"total_size_bytes":    totalSize,
+			"estimated_reduction": "70-80%",
+		}
+		outputJSON(output)
 		return
 	}
 
-	if compactDryRun {
-		totalSize := 0
-		for _, id := range candidates {
-			issue, err := store.GetIssue(ctx, id)
-			if err != nil {
-				continue
-			}
-			totalSize += len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
-		}
+	fmt.Printf("DRY RUN - Tier %d compaction\n\n", tier)
+	fmt.Printf("Candidates: %d issues\n", len(candidates))
+	fmt.Printf("Total size: %d bytes\n", totalSize)
+	fmt.Printf("Estimated reduction: 70-80%%\n")
+}
 
-		if jsonOutput {
-			output := map[string]interface{}{
-				"dry_run":             true,
-				"tier":                compactTier,
-				"candidate_count":     len(candidates),
-				"total_size_bytes":    totalSize,
-				"estimated_reduction": "70-80%",
-			}
-			outputJSON(output)
-			return
-		}
-
-		fmt.Printf("DRY RUN - Tier %d compaction\n\n", compactTier)
-		fmt.Printf("Candidates: %d issues\n", len(candidates))
-		fmt.Printf("Total size: %d bytes\n", totalSize)
-		fmt.Printf("Estimated reduction: 70-80%%\n")
-		return
-	}
-
-	if !jsonOutput {
-		fmt.Printf("Compacting %d issues (Tier %d)...\n\n", len(candidates), compactTier)
-	}
-
-	results, err := compactor.CompactTier1Batch(ctx, candidates)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: batch compaction failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	successCount := 0
-	failCount := 0
-	totalSaved := 0
-	totalOriginal := 0
-
+// processCompactionResults analyzes compaction results and returns summary statistics
+func processCompactionResults(results []*compact.Result) (successCount, failCount, totalSaved, totalOriginal int) {
 	for i, result := range results {
 		if !jsonOutput {
 			fmt.Printf("[%s] %d/%d\r", progressBar(i+1, len(results)), i+1, len(results))
@@ -282,9 +257,55 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 			totalSaved += (result.OriginalSize - result.CompactedSize)
 		}
 	}
+	return
+}
 
+func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sqlite.SQLiteStorage) {
+	start := time.Now()
+
+	// Get candidates for the specified tier
+	candidates, err := getCandidatesForTier(ctx, store, compactTier)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Handle empty candidate list
+	if len(candidates) == 0 {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"success": true,
+				"count":   0,
+				"message": "No eligible candidates",
+			})
+			return
+		}
+		fmt.Println("No eligible candidates for compaction")
+		return
+	}
+
+	// Handle dry run mode
+	if compactDryRun {
+		handleDryRunMode(ctx, store, candidates, compactTier)
+		return
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Compacting %d issues (Tier %d)...\n\n", len(candidates), compactTier)
+	}
+
+	// Execute batch compaction
+	results, err := compactor.CompactTier1Batch(ctx, candidates)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: batch compaction failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process results and gather statistics
+	successCount, failCount, totalSaved, totalOriginal := processCompactionResults(results)
 	elapsed := time.Since(start)
 
+	// Output results
 	if jsonOutput {
 		output := map[string]interface{}{
 			"success":       true,

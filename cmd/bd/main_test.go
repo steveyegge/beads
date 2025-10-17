@@ -1031,7 +1031,7 @@ func TestAutoImportMergeConflict(t *testing.T) {
 {"id":"test-conflict-1","title":"Incoming version","status":"in_progress","priority":2,"issue_type":"bug","created_at":"2025-10-16T00:00:00Z","updated_at":"2025-10-16T00:00:00Z"}
 >>>>>>> incoming-branch
 `
-	if err := os.WriteFile(jsonlPath, []byte(conflictContent), 0644); err != nil {
+	if err := os.WriteFile(jsonlPath, []byte(conflictContent), 0600); err != nil {
 		t.Fatalf("Failed to create conflicted JSONL: %v", err)
 	}
 
