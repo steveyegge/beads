@@ -1,0 +1,10 @@
+{{range .}}
+<tr class="issue-row">
+    <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
+    <td class="title">{{.Title}}</td>
+    <td><span class="badge status-{{.Status}}">{{.Status}}</span></td>
+    <td><span class="badge priority-{{.Priority}}">P{{.Priority}}</span></td>
+    <td><span class="badge type-{{.IssueType}}">{{.IssueType}}</span></td>
+    <td class="timestamp">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td>
+</tr>
+{{end}}

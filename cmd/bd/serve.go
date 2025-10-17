@@ -128,6 +128,7 @@ func handleAPIIssues(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	
 	filter := types.IssueFilter{Limit: 1000}
+	searchQuery := ""
 	
 	if status := r.URL.Query().Get("status"); status != "" {
 		s := types.Status(status)
@@ -139,13 +140,32 @@ func handleAPIIssues(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(priority, "%d", &p)
 		filter.Priority = &p
 	}
+	
+	if search := r.URL.Query().Get("search"); search != "" {
+		searchQuery = search
+	}
 
-	issues, err := store.SearchIssues(ctx, "", filter)
+	issues, err := store.SearchIssues(ctx, searchQuery, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Check if htmx request (return partial HTML)
+	if r.Header.Get("HX-Request") == "true" {
+		tmpl, err := template.ParseFS(embedFS, "templates/issues_tbody.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		if err := tmpl.Execute(w, issues); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Regular JSON response
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(issues)
 }

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>beads - Issue Tracker</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
     <header>
@@ -17,15 +18,19 @@
     </header>
 
     <main>
-        <div class="filters">
-            <input type="text" id="search" placeholder="Search issues...">
-            <select id="status-filter">
+        <div class="filters" 
+             hx-get="/api/issues" 
+             hx-trigger="change, keyup delay:300ms from:#search"
+             hx-target="#issues-tbody"
+             hx-include="[name='status'],[name='priority'],[name='search']">
+            <input type="text" name="search" placeholder="Search issues...">
+            <select name="status">
                 <option value="">All Statuses</option>
                 <option value="open">Open</option>
                 <option value="in_progress">In Progress</option>
                 <option value="closed">Closed</option>
             </select>
-            <select id="priority-filter">
+            <select name="priority">
                 <option value="">All Priorities</option>
                 <option value="0">P0 - Critical</option>
                 <option value="1">P1 - High</option>
@@ -46,9 +51,9 @@
                     <th>Updated</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="issues-tbody">
                 {{range .Issues}}
-                <tr class="issue-row status-{{.Status}} priority-{{.Priority}}">
+                <tr class="issue-row">
                     <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
                     <td class="title">{{.Title}}</td>
                     <td><span class="badge status-{{.Status}}">{{.Status}}</span></td>
@@ -60,7 +65,5 @@
             </tbody>
         </table>
     </main>
-
-    <script src="/static/app.js"></script>
 </body>
 </html>
