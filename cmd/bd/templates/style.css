@@ -7,13 +7,13 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     line-height: 1.6;
-    color: #333;
-    background: #f5f5f5;
+    color: #3a3226;
+    background: #faf8f5;
 }
 
 header {
-    background: #2c3e50;
-    color: white;
+    background: #5a4a3a;
+    color: #f5f1ea;
     padding: 1rem 2rem;
     display: flex;
     justify-content: space-between;
@@ -26,7 +26,7 @@ header h1 {
 }
 
 header h1 a {
-    color: white;
+    color: #f5f1ea;
     text-decoration: none;
 }
 
@@ -76,8 +76,8 @@ main {
 }
 
 .issues-table th {
-    background: #34495e;
-    color: white;
+    background: #6b5746;
+    color: #f5f1ea;
     text-align: left;
     padding: 1rem;
     font-weight: 600;
@@ -89,7 +89,7 @@ main {
 }
 
 .issue-row:hover {
-    background: #f9f9f9;
+    background: #f0ebe3;
 }
 
 .issue-row.hidden {
@@ -109,38 +109,39 @@ main {
     text-transform: uppercase;
 }
 
-.status-open { background: #3498db; color: white; }
-.status-in_progress { background: #f39c12; color: white; }
-.status-closed { background: #95a5a6; color: white; }
+.status-open { background: #7b9e87; color: white; }
+.status-in_progress { background: #c17a3c; color: white; }
+.status-closed { background: #8a8175; color: white; }
 
-.priority-0 { background: #e74c3c; color: white; }
-.priority-1 { background: #e67e22; color: white; }
-.priority-2 { background: #f39c12; color: white; }
-.priority-3 { background: #3498db; color: white; }
-.priority-4 { background: #95a5a6; color: white; }
+.priority-0 { background: #a64b3a; color: white; }
+.priority-1 { background: #b56841; color: white; }
+.priority-2 { background: #c17a3c; color: white; }
+.priority-3 { background: #7b9e87; color: white; }
+.priority-4 { background: #9a9288; color: white; }
 
-.type-bug { background: #e74c3c; color: white; }
-.type-feature { background: #9b59b6; color: white; }
-.type-task { background: #3498db; color: white; }
-.type-epic { background: #16a085; color: white; }
-.type-chore { background: #7f8c8d; color: white; }
+.type-bug { background: #a64b3a; color: white; }
+.type-feature { background: #7a6b91; color: white; }
+.type-task { background: #6b8896; color: white; }
+.type-epic { background: #5a7d6e; color: white; }
+.type-chore { background: #8a8175; color: white; }
 
 .label {
-    background: #ecf0f1;
-    color: #34495e;
+    background: #e8dfd0;
+    color: #5a4a3a;
 }
 
 .timestamp {
-    color: #7f8c8d;
+    color: #8a8175;
     font-size: 0.85rem;
 }
 
 a {
-    color: #3498db;
+    color: #6b8896;
     text-decoration: none;
 }
 
 a:hover {
+    color: #5a7d6e;
     text-decoration: underline;
 }
 
@@ -153,14 +154,14 @@ a:hover {
 }
 
 .issue-header {
-    border-bottom: 2px solid #ecf0f1;
+    border-bottom: 2px solid #e8dfd0;
     padding-bottom: 1rem;
     margin-bottom: 2rem;
 }
 
 .issue-header h2 {
     margin-bottom: 0.5rem;
-    color: #2c3e50;
+    color: #3a3226;
 }
 
 .issue-meta {
@@ -173,16 +174,16 @@ a:hover {
 }
 
 .section h3 {
-    color: #34495e;
+    color: #5a4a3a;
     margin-bottom: 1rem;
     font-size: 1.1rem;
 }
 
 .description {
-    background: #f8f9fa;
+    background: #f5f1ea;
     padding: 1rem;
     border-radius: 4px;
-    border-left: 3px solid #3498db;
+    border-left: 3px solid #7b9e87;
     white-space: pre-wrap;
     font-family: 'Courier New', monospace;
     font-size: 0.9rem;
@@ -202,7 +203,7 @@ a:hover {
 .dep-list li {
     padding: 0.5rem;
     margin-bottom: 0.5rem;
-    background: #f8f9fa;
+    background: #f5f1ea;
     border-radius: 4px;
     display: flex;
     gap: 0.5rem;
@@ -210,7 +211,7 @@ a:hover {
 }
 
 .events {
-    background: #f8f9fa;
+    background: #f5f1ea;
     padding: 1rem;
     border-radius: 4px;
 }
@@ -220,16 +221,16 @@ a:hover {
     margin-bottom: 0.75rem;
     background: white;
     border-radius: 4px;
-    border-left: 3px solid #3498db;
+    border-left: 3px solid #7b9e87;
 }
 
 .event-actor {
     font-weight: 600;
-    color: #2c3e50;
+    color: #3a3226;
 }
 
 .event-type {
-    color: #7f8c8d;
+    color: #8a8175;
     font-size: 0.85rem;
     margin-left: 0.5rem;
 }
@@ -237,16 +238,16 @@ a:hover {
 .event-comment {
     margin: 0.5rem 0;
     padding: 0.5rem;
-    background: #ecf0f1;
+    background: #e8dfd0;
     border-radius: 4px;
     font-size: 0.85rem;
 }
 
 .metadata {
-    color: #7f8c8d;
+    color: #8a8175;
     font-size: 0.9rem;
     padding-top: 1rem;
-    border-top: 1px solid #ecf0f1;
+    border-top: 1px solid #e8dfd0;
 }
 
 .metadata div {
