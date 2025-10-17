@@ -32,7 +32,8 @@ func New(path string) (*SQLiteStorage, error) {
 	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
 	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
 	// Higher timeout helps with parallel issue creation from multiple processes
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(30000)")
+	// _time_format=sqlite uses SQLite's native time format for DATETIME columns
+	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=ON&_pragma=busy_timeout(30000)&_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
