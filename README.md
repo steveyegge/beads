@@ -261,8 +261,8 @@ No PostgreSQL instance. No MySQL server. No hosted service. Just install bd, clo
 Launch a local web interface to browse and visualize issues:
 
 ```bash
-bd serve           # Starts server on localhost:8080
-bd serve 3000      # Custom port
+bd ui              # Starts server on localhost:8080
+bd ui 3000         # Custom port
 ```
 
 The web UI provides:

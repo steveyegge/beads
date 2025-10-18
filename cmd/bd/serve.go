@@ -18,7 +18,7 @@ import (
 var embedFS embed.FS
 
 var serveCmd = &cobra.Command{
-	Use:   "serve [port]",
+	Use:   "ui [port]",
 	Short: "Start web UI server",
 	Long:  `Start a local web server for browsing issues in a graphical interface.`,
 	Args:  cobra.MaximumNArgs(1),
