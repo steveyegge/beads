@@ -373,16 +373,22 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 
 type IssueWithLabels struct {
 	*types.Issue
-	Labels []string
+	Labels        []string
+	DepsCount     int
+	BlockersCount int
 }
 
 func enrichIssuesWithLabels(ctx context.Context, issues []*types.Issue) []*IssueWithLabels {
 	result := make([]*IssueWithLabels, len(issues))
 	for i, issue := range issues {
 		labels, _ := store.GetLabels(ctx, issue.ID)
+		deps, _ := store.GetDependencies(ctx, issue.ID)
+		dependents, _ := store.GetDependents(ctx, issue.ID)
 		result[i] = &IssueWithLabels{
-			Issue:  issue,
-			Labels: labels,
+			Issue:         issue,
+			Labels:        labels,
+			DepsCount:     len(deps),
+			BlockersCount: len(dependents),
 		}
 	}
 	return result

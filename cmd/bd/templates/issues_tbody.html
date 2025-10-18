@@ -2,6 +2,16 @@
 <tr class="issue-row">
     <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
     <td class="title">{{.Title}}</td>
+    <td class="deps-cell">
+        {{if or .DepsCount .BlockersCount}}
+        <a href="/graph/{{.ID}}" class="deps-link" title="View dependency graph">
+            {{if .DepsCount}}<span class="dep-indicator">↓{{.DepsCount}}</span>{{end}}
+            {{if .BlockersCount}}<span class="blocker-indicator">↑{{.BlockersCount}}</span>{{end}}
+        </a>
+        {{else}}
+        <span class="no-deps">—</span>
+        {{end}}
+    </td>
     <td class="labels-cell">
         {{range .Labels}}
         <span class="badge label">{{.}}</span>

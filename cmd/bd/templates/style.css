@@ -250,6 +250,40 @@ main {
     flex-wrap: wrap;
 }
 
+.deps-cell {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.deps-link {
+    display: inline-flex;
+    gap: 0.25rem;
+    text-decoration: none;
+}
+
+.dep-indicator,
+.blocker-indicator {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+}
+
+.dep-indicator {
+    background: #7b9e87;
+    color: white;
+}
+
+.blocker-indicator {
+    background: #c17a3c;
+    color: white;
+}
+
+.no-deps {
+    color: #d0c9bf;
+    font-size: 0.9rem;
+}
+
 a {
     color: #6b8896;
     text-decoration: none;
