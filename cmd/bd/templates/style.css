@@ -160,8 +160,20 @@ main {
     font-size: 0.9rem;
 }
 
-.filters input {
+.filters input[type="text"] {
     flex: 1;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.checkbox-label input[type="checkbox"] {
+    cursor: pointer;
 }
 
 .issues-table {

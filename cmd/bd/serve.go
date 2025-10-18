@@ -313,7 +313,28 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issuesWithLabels := enrichIssuesWithLabels(ctx, ready)
+	// Filter out issues with excluded labels
+	excludeLabel := r.URL.Query().Get("exclude")
+	var filtered []*types.Issue
+	if excludeLabel != "" {
+		for _, issue := range ready {
+			labels, _ := store.GetLabels(ctx, issue.ID)
+			hasExcluded := false
+			for _, label := range labels {
+				if label == excludeLabel {
+					hasExcluded = true
+					break
+				}
+			}
+			if !hasExcluded {
+				filtered = append(filtered, issue)
+			}
+		}
+	} else {
+		filtered = ready
+	}
+
+	issuesWithLabels := enrichIssuesWithLabels(ctx, filtered)
 	stats, _ := store.GetStatistics(ctx)
 
 	tmpl, err := template.ParseFS(embedFS, "templates/ready.html")
@@ -323,8 +344,9 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Issues": issuesWithLabels,
-		"Stats":  stats,
+		"Issues":       issuesWithLabels,
+		"Stats":        stats,
+		"ExcludeLabel": excludeLabel,
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {

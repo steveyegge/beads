@@ -27,6 +27,26 @@
             <p>Issues with no open blockers - ready to start</p>
         </div>
 
+        <div class="filters">
+            <label class="checkbox-label">
+                <input type="checkbox" id="hide-demo" onchange="toggleDemo()" {{if eq .ExcludeLabel "demo-data"}}checked{{end}}>
+                Hide demo data
+            </label>
+        </div>
+
+        <script>
+        function toggleDemo() {
+            const checkbox = document.getElementById('hide-demo');
+            const url = new URL(window.location);
+            if (checkbox.checked) {
+                url.searchParams.set('exclude', 'demo-data');
+            } else {
+                url.searchParams.delete('exclude');
+            }
+            window.location = url;
+        }
+        </script>
+
         {{if .Issues}}
         <table class="issues-table">
             <thead>
