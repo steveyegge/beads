@@ -232,6 +232,12 @@ main {
     font-size: 0.85rem;
 }
 
+.labels-cell {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
 a {
     color: #6b8896;
     text-decoration: none;

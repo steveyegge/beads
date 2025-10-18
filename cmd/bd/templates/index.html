@@ -50,6 +50,7 @@
                 <tr>
                     <th>ID</th>
                     <th>Title</th>
+                    <th>Labels</th>
                     <th>Status</th>
                     <th>Priority</th>
                     <th>Type</th>
@@ -61,6 +62,11 @@
                 <tr class="issue-row">
                     <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
                     <td class="title">{{.Title}}</td>
+                    <td class="labels-cell">
+                        {{range .Labels}}
+                        <span class="badge label">{{.}}</span>
+                        {{end}}
+                    </td>
                     <td><span class="badge status-{{.Status}}">{{.Status}}</span></td>
                     <td><span class="badge priority-{{.Priority}}">P{{.Priority}}</span></td>
                     <td><span class="badge type-{{.IssueType}}">{{.IssueType}}</span></td>

@@ -73,6 +73,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch labels for each issue
+	issuesWithLabels := enrichIssuesWithLabels(ctx, issues)
+
 	stats, err := store.GetStatistics(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -80,7 +83,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Issues": issues,
+		"Issues": issuesWithLabels,
 		"Stats":  stats,
 	}
 
@@ -256,13 +259,14 @@ func handleAPIIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Check if htmx request (return partial HTML)
 	if r.Header.Get("HX-Request") == "true" {
+		issuesWithLabels := enrichIssuesWithLabels(ctx, issues)
 		tmpl, err := template.ParseFS(embedFS, "templates/issues_tbody.html")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
-		if err := tmpl.Execute(w, issues); err != nil {
+		if err := tmpl.Execute(w, issuesWithLabels); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
@@ -309,6 +313,7 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	issuesWithLabels := enrichIssuesWithLabels(ctx, ready)
 	stats, _ := store.GetStatistics(ctx)
 
 	tmpl, err := template.ParseFS(embedFS, "templates/ready.html")
@@ -318,7 +323,7 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Issues": ready,
+		"Issues": issuesWithLabels,
 		"Stats":  stats,
 	}
 
@@ -352,6 +357,23 @@ func handleBlocked(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+type IssueWithLabels struct {
+	*types.Issue
+	Labels []string
+}
+
+func enrichIssuesWithLabels(ctx context.Context, issues []*types.Issue) []*IssueWithLabels {
+	result := make([]*IssueWithLabels, len(issues))
+	for i, issue := range issues {
+		labels, _ := store.GetLabels(ctx, issue.ID)
+		result[i] = &IssueWithLabels{
+			Issue:  issue,
+			Labels: labels,
+		}
+	}
+	return result
 }
 
 func handleStatic(w http.ResponseWriter, r *http.Request) {
