@@ -31,6 +31,8 @@ var serveCmd = &cobra.Command{
 		addr := fmt.Sprintf("localhost:%s", port)
 		
 		http.HandleFunc("/", handleIndex)
+		http.HandleFunc("/ready", handleReady)
+		http.HandleFunc("/blocked", handleBlocked)
 		http.HandleFunc("/issue/", handleIssueDetail)
 		http.HandleFunc("/graph/", handleGraph)
 		http.HandleFunc("/api/issues", handleAPIIssues)
@@ -295,6 +297,61 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	
+	filter := types.WorkFilter{}
+	ready, err := store.GetReadyWork(ctx, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stats, _ := store.GetStatistics(ctx)
+
+	tmpl, err := template.ParseFS(embedFS, "templates/ready.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Issues": ready,
+		"Stats":  stats,
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func handleBlocked(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	
+	blocked, err := store.GetBlockedIssues(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stats, _ := store.GetStatistics(ctx)
+
+	tmpl, err := template.ParseFS(embedFS, "templates/blocked.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Blocked": blocked,
+		"Stats":   stats,
+	}
+
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func handleStatic(w http.ResponseWriter, r *http.Request) {

@@ -3,16 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>beads - Issue Tracker</title>
+    <title>Ready Work - beads</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
     <header>
         <h1><a href="/">🔗 beads</a></h1>
         <nav class="nav-menu">
-            <a href="/" class="active">All Issues</a>
-            <a href="/ready">Ready Work</a>
+            <a href="/">All Issues</a>
+            <a href="/ready" class="active">Ready Work</a>
             <a href="/blocked">Blocked</a>
         </nav>
         <div class="stats">
@@ -23,28 +22,12 @@
     </header>
 
     <main>
-        <div class="filters" 
-             hx-get="/api/issues" 
-             hx-trigger="change, keyup delay:300ms from:#search"
-             hx-target="#issues-tbody"
-             hx-include="[name='status'],[name='priority'],[name='search']">
-            <input type="text" name="search" placeholder="Search issues...">
-            <select name="status">
-                <option value="">All Statuses</option>
-                <option value="open">Open</option>
-                <option value="in_progress">In Progress</option>
-                <option value="closed">Closed</option>
-            </select>
-            <select name="priority">
-                <option value="">All Priorities</option>
-                <option value="0">P0 - Critical</option>
-                <option value="1">P1 - High</option>
-                <option value="2">P2 - Medium</option>
-                <option value="3">P3 - Low</option>
-                <option value="4">P4 - Backlog</option>
-            </select>
+        <div class="page-header">
+            <h2>✅ Ready Work</h2>
+            <p>Issues with no open blockers - ready to start</p>
         </div>
 
+        {{if .Issues}}
         <table class="issues-table">
             <thead>
                 <tr>
@@ -56,7 +39,7 @@
                     <th>Updated</th>
                 </tr>
             </thead>
-            <tbody id="issues-tbody">
+            <tbody>
                 {{range .Issues}}
                 <tr class="issue-row">
                     <td><a href="/issue/{{.ID}}">{{.ID}}</a></td>
@@ -69,6 +52,11 @@
                 {{end}}
             </tbody>
         </table>
+        {{else}}
+        <div class="empty-state">
+            <p>🎉 No unblocked issues! Everything is either blocked or completed.</p>
+        </div>
+        {{end}}
     </main>
 </body>
 </html>
