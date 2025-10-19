@@ -218,7 +218,7 @@ var depTreeCmd = &cobra.Command{
 
 		if hasTruncation {
 			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("\n%s Warning: Tree truncated at depth %d (safety limit)\n",
+			fmt.Printf("\n%s Warning: Tree truncated at depth %d\n",
 				yellow("⚠"), maxDepth)
 		}
 		fmt.Println()
