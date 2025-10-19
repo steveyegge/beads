@@ -277,7 +277,7 @@ var depCyclesCmd = &cobra.Command{
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
-	depTreeCmd.Flags().Int("max-depth", 50, "Max depth of the dependency tree (default 50)")
+	depTreeCmd.Flags().Int("max-depth", 50, "Max depth of the dependency tree")
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)
