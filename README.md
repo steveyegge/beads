@@ -19,7 +19,7 @@ Drop Beads into any project where you're using a coding agent, and you'll enjoy 
 Instant start:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 ```
 
 Then tell your coding agent to start using the `bd` tool instead of markdown for all new work, somewhere in your `AGENTS.md` or `CLAUDE.md`. That's all there is to it!
@@ -72,7 +72,7 @@ brew install bd
 ### Quick Install Script (All Platforms)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 ```
 
 The installer will:
