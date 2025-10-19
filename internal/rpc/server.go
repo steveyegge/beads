@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,7 +19,13 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"golang.org/x/mod/semver"
 )
+
+// ServerVersion is the version of this RPC server
+// This should match the bd CLI version for proper compatibility checks
+// It's set as a var so it can be initialized from main
+var ServerVersion = "0.9.10"
 
 // StorageCacheEntry holds a cached storage with metadata for eviction
 type StorageCacheEntry struct {
@@ -288,7 +295,70 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 }
 
+// checkVersionCompatibility validates client version against server version
+// Returns error if versions are incompatible
+func (s *Server) checkVersionCompatibility(clientVersion string) error {
+	// Allow empty client version (old clients before this feature)
+	if clientVersion == "" {
+		return nil
+	}
+	
+	// Normalize versions to semver format (add 'v' prefix if missing)
+	serverVer := ServerVersion
+	if !strings.HasPrefix(serverVer, "v") {
+		serverVer = "v" + serverVer
+	}
+	clientVer := clientVersion
+	if !strings.HasPrefix(clientVer, "v") {
+		clientVer = "v" + clientVer
+	}
+	
+	// Validate versions are valid semver
+	if !semver.IsValid(serverVer) || !semver.IsValid(clientVer) {
+		// If either version is invalid, allow connection (dev builds, etc)
+		return nil
+	}
+	
+	// Extract major versions
+	serverMajor := semver.Major(serverVer)
+	clientMajor := semver.Major(clientVer)
+	
+	// Major version must match
+	if serverMajor != clientMajor {
+		cmp := semver.Compare(serverVer, clientVer)
+		if cmp < 0 {
+			// Daemon is older - needs upgrade
+			return fmt.Errorf("incompatible major versions: client %s, daemon %s. Daemon is older; upgrade and restart daemon: 'bd daemon --stop && bd daemon'", 
+				clientVersion, ServerVersion)
+		}
+		// Daemon is newer - client needs upgrade
+		return fmt.Errorf("incompatible major versions: client %s, daemon %s. Client is older; upgrade the bd CLI to match the daemon's major version", 
+			clientVersion, ServerVersion)
+	}
+	
+	// Compare full versions - daemon should be >= client for backward compatibility
+	cmp := semver.Compare(serverVer, clientVer)
+	if cmp < 0 {
+		// Server is older than client within same major version - may be missing features
+		return fmt.Errorf("version mismatch: daemon %s is older than client %s. Upgrade and restart daemon: 'bd daemon --stop && bd daemon'", 
+			ServerVersion, clientVersion)
+	}
+	
+	// Client is same version or older - OK (daemon supports backward compat within major version)
+	return nil
+}
+
 func (s *Server) handleRequest(req *Request) Response {
+	// Check version compatibility (skip for ping/health to allow version checks)
+	if req.Operation != OpPing && req.Operation != OpHealth {
+		if err := s.checkVersionCompatibility(req.ClientVersion); err != nil {
+			return Response{
+				Success: false,
+				Error:   err.Error(),
+			}
+		}
+	}
+	
 	switch req.Operation {
 	case OpPing:
 		return s.handlePing(req)
@@ -391,7 +461,7 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 func (s *Server) handlePing(_ *Request) Response {
 	data, _ := json.Marshal(PingResponse{
 		Message: "pong",
-		Version: "0.9.8",
+		Version: ServerVersion,
 	})
 	return Response{
 		Success: true,
@@ -406,7 +476,7 @@ func (s *Server) handleHealth(req *Request) Response {
 	if err != nil {
 		data, _ := json.Marshal(HealthResponse{
 			Status:  "unhealthy",
-			Version: "0.9.8",
+			Version: ServerVersion,
 			Uptime:  time.Since(s.startTime).Seconds(),
 			Error:   fmt.Sprintf("storage error: %v", err),
 		})
@@ -437,9 +507,19 @@ func (s *Server) handleHealth(req *Request) Response {
 	cacheSize := len(s.storageCache)
 	s.cacheMu.RUnlock()
 
+	// Check version compatibility
+	compatible := true
+	if req.ClientVersion != "" {
+		if err := s.checkVersionCompatibility(req.ClientVersion); err != nil {
+			compatible = false
+		}
+	}
+
 	health := HealthResponse{
 		Status:         status,
-		Version:        "0.9.8",
+		Version:        ServerVersion,
+		ClientVersion:  req.ClientVersion,
+		Compatible:     compatible,
 		Uptime:         time.Since(s.startTime).Seconds(),
 		CacheSize:      cacheSize,
 		CacheHits:      atomic.LoadInt64(&s.cacheHits),
@@ -874,11 +954,12 @@ func (s *Server) handleBatch(req *Request) Response {
 
 	for _, op := range batchArgs.Operations {
 		subReq := &Request{
-			Operation: op.Operation,
-			Args:      op.Args,
-			Actor:     req.Actor,
-			RequestID: req.RequestID,
-			Cwd:       req.Cwd, // Pass through context
+			Operation:     op.Operation,
+			Args:          op.Args,
+			Actor:         req.Actor,
+			RequestID:     req.RequestID,
+			Cwd:           req.Cwd,           // Pass through context
+			ClientVersion: req.ClientVersion, // Pass through version for compatibility checks
 		}
 
 		resp := s.handleRequest(subReq)

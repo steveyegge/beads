@@ -523,7 +523,23 @@ bd --db ~/otherproject/.beads/other.db list
 - `BEADS_DB` - Override database path
 - `BEADS_AUTO_START_DAEMON` - Enable/disable automatic daemon start (default: `true`). Set to `false` or `0` to disable.
 - `BD_ACTOR` - Set actor name for change tracking (defaults to `$USER`)
-- `BD_DEBUG` - Enable debug logging for troubleshooting
+- `BD_DEBUG` - Enable debug logging (connection attempts, auto-start timing, health checks)
+- `BD_VERBOSE` - Show warnings when falling back from daemon to direct mode
+
+### Version Compatibility
+
+The daemon and CLI check version compatibility automatically:
+- **Major version** must match (e.g., 1.x.x client requires 1.x.x daemon)
+- **Minor version** backward compatible (e.g., daemon 1.2.x supports client 1.1.x)
+- **Patch version** always compatible
+
+When versions mismatch, you'll see a clear error message with instructions to restart the daemon.
+
+Check daemon version and compatibility:
+```bash
+bd version --daemon                   # Show daemon and client versions
+bd version --daemon --json            # JSON output with compatibility info
+```
 
 ## Dependency Model
 
@@ -927,6 +943,7 @@ bd daemon --status                    # Show daemon status
 bd daemon --stop                      # Stop running daemon
 bd daemon --global                    # Run as global daemon (see below)
 bd daemon --migrate-to-global         # Migrate from local to global daemon
+bd version --daemon                   # Check daemon version and compatibility
 ```
 
 Log rotation is automatic and configurable via environment variables:

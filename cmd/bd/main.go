@@ -29,11 +29,36 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// DaemonStatus captures daemon connection state for the current command
+type DaemonStatus struct {
+	Mode               string `json:"mode"`                          // "daemon" or "direct"
+	Connected          bool   `json:"connected"`
+	Degraded           bool   `json:"degraded"`
+	SocketPath         string `json:"socket_path,omitempty"`
+	AutoStartEnabled   bool   `json:"auto_start_enabled"`
+	AutoStartAttempted bool   `json:"auto_start_attempted"`
+	AutoStartSucceeded bool   `json:"auto_start_succeeded"`
+	FallbackReason     string `json:"fallback_reason,omitempty"` // "none","flag_no_daemon","connect_failed","health_failed","auto_start_disabled","auto_start_failed"
+	Detail             string `json:"detail,omitempty"`           // short diagnostic
+	Health             string `json:"health,omitempty"`           // "healthy","degraded","unhealthy"
+}
+
+// Fallback reason constants
+const (
+	FallbackNone              = "none"
+	FallbackFlagNoDaemon      = "flag_no_daemon"
+	FallbackConnectFailed     = "connect_failed"
+	FallbackHealthFailed      = "health_failed"
+	FallbackAutoStartDisabled = "auto_start_disabled"
+	FallbackAutoStartFailed   = "auto_start_failed"
+)
+
 var (
-	dbPath     string
-	actor      string
-	store      storage.Storage
-	jsonOutput bool
+	dbPath       string
+	actor        string
+	store        storage.Storage
+	jsonOutput   bool
+	daemonStatus DaemonStatus // Tracks daemon connection state for current command
 	
 	// Daemon mode
 	daemonClient *rpc.Client // RPC client when daemon is running
@@ -96,38 +121,145 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
+		// Initialize daemon status
+		socketPath := getSocketPath()
+		daemonStatus = DaemonStatus{
+			Mode:             "direct",
+			Connected:        false,
+			Degraded:         true,
+			SocketPath:       socketPath,
+			AutoStartEnabled: shouldAutoStartDaemon(),
+			FallbackReason:   FallbackNone,
+		}
+
 		// Try to connect to daemon first (unless --no-daemon flag is set)
-		if !noDaemon {
-			socketPath := getSocketPath()
+		if noDaemon {
+			daemonStatus.FallbackReason = FallbackFlagNoDaemon
+			if os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Debug: --no-daemon flag set, using direct mode\n")
+			}
+		} else {
+			// Attempt daemon connection
 			client, err := rpc.TryConnect(socketPath)
 			if err == nil && client != nil {
-				daemonClient = client
-				if os.Getenv("BD_DEBUG") != "" {
-					fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s\n", socketPath)
-				}
-				return // Skip direct storage initialization
-			}
-			
-			// Daemon not running - try auto-start if enabled
-			if shouldAutoStartDaemon() {
-				if os.Getenv("BD_DEBUG") != "" {
-					fmt.Fprintf(os.Stderr, "Debug: attempting to auto-start daemon\n")
-				}
-				if tryAutoStartDaemon(socketPath) {
-					// Retry connection after auto-start
-					client, err := rpc.TryConnect(socketPath)
-					if err == nil && client != nil {
-						daemonClient = client
+				// Perform health check
+				health, healthErr := client.Health()
+				if healthErr == nil && health.Status == "healthy" {
+					// Daemon is healthy - use it
+					daemonClient = client
+					daemonStatus.Mode = "daemon"
+					daemonStatus.Connected = true
+					daemonStatus.Degraded = false
+					daemonStatus.Health = health.Status
+					if os.Getenv("BD_DEBUG") != "" {
+						fmt.Fprintf(os.Stderr, "Debug: connected to daemon at %s (health: %s)\n", socketPath, health.Status)
+					}
+					return // Skip direct storage initialization
+				} else {
+					// Health check failed or daemon unhealthy
+					client.Close()
+					daemonStatus.FallbackReason = FallbackHealthFailed
+					if healthErr != nil {
+						daemonStatus.Detail = healthErr.Error()
 						if os.Getenv("BD_DEBUG") != "" {
-							fmt.Fprintf(os.Stderr, "Debug: connected to auto-started daemon at %s\n", socketPath)
+							fmt.Fprintf(os.Stderr, "Debug: daemon health check failed: %v\n", healthErr)
 						}
-						return // Skip direct storage initialization
+					} else {
+						daemonStatus.Health = health.Status
+						daemonStatus.Detail = health.Error
+						if os.Getenv("BD_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "Debug: daemon unhealthy (status=%s): %s\n", health.Status, health.Error)
+						}
+					}
+				}
+			} else {
+				// Connection failed
+				daemonStatus.FallbackReason = FallbackConnectFailed
+				if err != nil {
+					daemonStatus.Detail = err.Error()
+					if os.Getenv("BD_DEBUG") != "" {
+						fmt.Fprintf(os.Stderr, "Debug: daemon connect failed at %s: %v\n", socketPath, err)
 					}
 				}
 			}
 			
+			// Daemon not running or unhealthy - try auto-start if enabled
+			if daemonStatus.AutoStartEnabled {
+				daemonStatus.AutoStartAttempted = true
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: attempting to auto-start daemon\n")
+				}
+				startTime := time.Now()
+				if tryAutoStartDaemon(socketPath) {
+					// Retry connection after auto-start
+					client, err := rpc.TryConnect(socketPath)
+					if err == nil && client != nil {
+						// Check health of auto-started daemon
+						health, healthErr := client.Health()
+						if healthErr == nil && health.Status == "healthy" {
+							daemonClient = client
+							daemonStatus.Mode = "daemon"
+							daemonStatus.Connected = true
+							daemonStatus.Degraded = false
+							daemonStatus.AutoStartSucceeded = true
+							daemonStatus.Health = health.Status
+							daemonStatus.FallbackReason = FallbackNone
+							if os.Getenv("BD_DEBUG") != "" {
+								elapsed := time.Since(startTime).Milliseconds()
+								fmt.Fprintf(os.Stderr, "Debug: auto-start succeeded; connected at %s in %dms\n", socketPath, elapsed)
+							}
+							return // Skip direct storage initialization
+						} else {
+							// Auto-started daemon is unhealthy
+							client.Close()
+							daemonStatus.FallbackReason = FallbackHealthFailed
+							if healthErr != nil {
+								daemonStatus.Detail = healthErr.Error()
+							} else {
+								daemonStatus.Health = health.Status
+								daemonStatus.Detail = health.Error
+							}
+							if os.Getenv("BD_DEBUG") != "" {
+								fmt.Fprintf(os.Stderr, "Debug: auto-started daemon is unhealthy; falling back to direct mode\n")
+							}
+						}
+					} else {
+						// Auto-start completed but connection still failed
+						daemonStatus.FallbackReason = FallbackAutoStartFailed
+						if err != nil {
+							daemonStatus.Detail = err.Error()
+						}
+						if os.Getenv("BD_DEBUG") != "" {
+							fmt.Fprintf(os.Stderr, "Debug: auto-start did not yield a running daemon; falling back to direct mode\n")
+						}
+					}
+				} else {
+					// Auto-start itself failed
+					daemonStatus.FallbackReason = FallbackAutoStartFailed
+					if os.Getenv("BD_DEBUG") != "" {
+						fmt.Fprintf(os.Stderr, "Debug: auto-start failed; falling back to direct mode\n")
+					}
+				}
+			} else {
+				// Auto-start disabled - only override if we don't already have a health failure
+				if daemonStatus.FallbackReason != FallbackHealthFailed {
+					// For connect failures, mention that auto-start was disabled
+					if daemonStatus.FallbackReason == FallbackConnectFailed {
+						daemonStatus.FallbackReason = FallbackAutoStartDisabled
+					}
+				}
+				if os.Getenv("BD_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "Debug: auto-start disabled by BEADS_AUTO_START_DAEMON\n")
+				}
+			}
+			
+			// Emit BD_VERBOSE warning if falling back to direct mode
+			if os.Getenv("BD_VERBOSE") != "" {
+				emitVerboseWarning()
+			}
+			
 			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: daemon not available, using direct mode\n")
+				fmt.Fprintf(os.Stderr, "Debug: using direct mode (reason: %s)\n", daemonStatus.FallbackReason)
 			}
 		}
 
@@ -209,6 +341,23 @@ func getDebounceDuration() time.Duration {
 }
 
 // shouldAutoStartDaemon checks if daemon auto-start is enabled
+// emitVerboseWarning prints a one-line warning when falling back to direct mode
+func emitVerboseWarning() {
+	switch daemonStatus.FallbackReason {
+	case FallbackConnectFailed:
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon --status\n", daemonStatus.SocketPath)
+	case FallbackHealthFailed:
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon --health\n")
+	case FallbackAutoStartDisabled:
+		fmt.Fprintf(os.Stderr, "Warning: Auto-start disabled (BEADS_AUTO_START_DAEMON=false). Running in direct mode. Hint: bd daemon\n")
+	case FallbackAutoStartFailed:
+		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon --status\n")
+	case FallbackFlagNoDaemon:
+		// Don't warn when user explicitly requested --no-daemon
+		return
+	}
+}
+
 func shouldAutoStartDaemon() bool {
 	// Check environment variable (default: true)
 	autoStart := strings.ToLower(strings.TrimSpace(os.Getenv("BEADS_AUTO_START_DAEMON")))

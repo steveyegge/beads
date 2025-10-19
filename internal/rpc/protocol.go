@@ -31,11 +31,12 @@ const (
 
 // Request represents an RPC request from client to daemon
 type Request struct {
-	Operation string          `json:"operation"`
-	Args      json.RawMessage `json:"args"`
-	Actor     string          `json:"actor,omitempty"`
-	RequestID string          `json:"request_id,omitempty"`
-	Cwd       string          `json:"cwd,omitempty"` // Working directory for database discovery
+	Operation     string          `json:"operation"`
+	Args          json.RawMessage `json:"args"`
+	Actor         string          `json:"actor,omitempty"`
+	RequestID     string          `json:"request_id,omitempty"`
+	Cwd           string          `json:"cwd,omitempty"`      // Working directory for database discovery
+	ClientVersion string          `json:"client_version,omitempty"` // Client version for compatibility checks
 }
 
 // Response represents an RPC response from daemon to client
@@ -141,7 +142,9 @@ type PingResponse struct {
 // HealthResponse is the response for a health check operation
 type HealthResponse struct {
 	Status          string  `json:"status"`           // "healthy", "degraded", "unhealthy"
-	Version         string  `json:"version"`
+	Version         string  `json:"version"`          // Server/daemon version
+	ClientVersion   string  `json:"client_version,omitempty"`  // Client version from request
+	Compatible      bool    `json:"compatible"`       // Whether versions are compatible
 	Uptime          float64 `json:"uptime_seconds"`
 	CacheSize       int     `json:"cache_size"`
 	CacheHits       int64   `json:"cache_hits"`

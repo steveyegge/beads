@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// ClientVersion is the version of this RPC client
+// This should match the bd CLI version for proper compatibility checks
+var ClientVersion = "0.9.10"
+
 // Client represents an RPC client that connects to the daemon
 type Client struct {
 	conn       net.Conn
@@ -86,8 +90,9 @@ func (c *Client) Execute(operation string, args interface{}) (*Response, error) 
 	}
 
 	req := Request{
-		Operation: operation,
-		Args:      argsJSON,
+		Operation:     operation,
+		Args:          argsJSON,
+		ClientVersion: ClientVersion,
 	}
 
 	reqJSON, err := json.Marshal(req)
