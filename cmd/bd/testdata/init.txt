@@ -4,4 +4,10 @@ stdout 'initialized successfully'
 exists .beads/test.db
 exists .beads/.gitignore
 grep '^\*\.db$' .beads/.gitignore
-grep '^\*\.db-\*$' .beads/.gitignore
+grep '^\*\.db-journal$' .beads/.gitignore
+grep '^\*\.db-wal$' .beads/.gitignore
+grep '^\*\.db-shm$' .beads/.gitignore
+grep '^daemon\.log$' .beads/.gitignore
+grep '^daemon\.pid$' .beads/.gitignore
+grep '^bd\.sock$' .beads/.gitignore
+grep '^!\*\.jsonl$' .beads/.gitignore
