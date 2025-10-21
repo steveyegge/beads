@@ -113,6 +113,31 @@ func TestInitCommand(t *testing.T) {
 				t.Error(".beads directory was not created")
 			}
 
+			// Verify .gitignore was created with proper content
+			gitignorePath := filepath.Join(beadsDir, ".gitignore")
+			gitignoreContent, err := os.ReadFile(gitignorePath)
+			if err != nil {
+				t.Errorf(".gitignore file was not created: %v", err)
+			} else {
+				// Check for essential patterns
+				gitignoreStr := string(gitignoreContent)
+				expectedPatterns := []string{
+					"*.db",
+					"*.db-journal",
+					"*.db-wal",
+					"*.db-shm",
+					"daemon.log",
+					"daemon.pid",
+					"bd.sock",
+					"!*.jsonl",
+				}
+				for _, pattern := range expectedPatterns {
+					if !strings.Contains(gitignoreStr, pattern) {
+						t.Errorf(".gitignore missing expected pattern: %s", pattern)
+					}
+				}
+			}
+
 			// Verify database was created
 			var dbPath string
 			if tt.prefix != "" {
