@@ -88,7 +88,7 @@ Behavior:
 		}
 
 		result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
-		
+
 		// Handle errors and special cases
 		if err != nil {
 			// Check if it's a collision error when not resolving
@@ -124,7 +124,7 @@ Behavior:
 		if len(result.IDMapping) > 0 {
 			fmt.Fprintf(os.Stderr, "\n=== Remapping Report ===\n")
 			fmt.Fprintf(os.Stderr, "Issues remapped: %d\n\n", len(result.IDMapping))
-			
+
 			// Sort by old ID for consistent output
 			type mapping struct {
 				oldID string
@@ -137,7 +137,7 @@ Behavior:
 			sort.Slice(mappings, func(i, j int) bool {
 				return mappings[i].oldID < mappings[j].oldID
 			})
-			
+
 			fmt.Fprintf(os.Stderr, "Remappings:\n")
 			for _, m := range mappings {
 				fmt.Fprintf(os.Stderr, "  %s → %s\n", m.oldID, m.newID)

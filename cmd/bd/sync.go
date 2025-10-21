@@ -161,7 +161,7 @@ func gitHasUnmergedPaths() (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
 	}
-	
+
 	// Check for unmerged status codes (DD, AU, UD, UA, DU, AA, UU)
 	for _, line := range strings.Split(string(out), "\n") {
 		if len(line) >= 2 {
@@ -171,12 +171,12 @@ func gitHasUnmergedPaths() (bool, error) {
 			}
 		}
 	}
-	
+
 	// Check if MERGE_HEAD exists (merge in progress)
 	if exec.Command("git", "rev-parse", "-q", "--verify", "MERGE_HEAD").Run() == nil {
 		return true, nil
 	}
-	
+
 	return false, nil
 }
 
@@ -335,7 +335,7 @@ func importFromJSONL(ctx context.Context, jsonlPath string) error {
 	if err != nil {
 		return fmt.Errorf("cannot resolve current executable: %w", err)
 	}
-	
+
 	// Run import command with --resolve-collisions to automatically handle conflicts
 	cmd := exec.CommandContext(ctx, exe, "import", "-i", jsonlPath, "--resolve-collisions")
 	output, err := cmd.CombinedOutput()

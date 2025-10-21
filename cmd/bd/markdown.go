@@ -156,33 +156,35 @@ func validateMarkdownPath(path string) (string, error) {
 
 // parseMarkdownFile parses a markdown file and extracts issue templates.
 // Expected format:
-//   ## Issue Title
-//   Description text...
 //
-//   ### Priority
-//   2
+//	## Issue Title
+//	Description text...
 //
-//   ### Type
-//   feature
+//	### Priority
+//	2
 //
-//   ### Description
-//   Detailed description...
+//	### Type
+//	feature
 //
-//   ### Design
-//   Design notes...
+//	### Description
+//	Detailed description...
 //
-//   ### Acceptance Criteria
-//   - Criterion 1
-//   - Criterion 2
+//	### Design
+//	Design notes...
 //
-//   ### Assignee
-//   username
+//	### Acceptance Criteria
+//	- Criterion 1
+//	- Criterion 2
 //
-//   ### Labels
-//   label1, label2
+//	### Assignee
+//	username
 //
-//   ### Dependencies
-//   bd-10, bd-20
+//	### Labels
+//	label1, label2
+//
+//	### Dependencies
+//	bd-10, bd-20
+//
 // markdownParseState holds state for parsing markdown files
 type markdownParseState struct {
 	issues         []*IssueTemplate

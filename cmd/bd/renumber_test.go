@@ -36,7 +36,7 @@ func TestRenumberWithGaps(t *testing.T) {
 		title string
 	}{
 		{"bd-1", "Issue 1"},
-		{"bd-4", "Issue 4"},    // Gap here (2, 3 missing)
+		{"bd-4", "Issue 4"},     // Gap here (2, 3 missing)
 		{"bd-100", "Issue 100"}, // Large gap
 		{"bd-200", "Issue 200"}, // Another large gap
 		{"bd-344", "Issue 344"}, // Final issue

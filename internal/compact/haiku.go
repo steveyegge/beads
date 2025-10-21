@@ -22,6 +22,8 @@ const (
 	initialBackoff = 1 * time.Second
 )
 
+var ErrAPIKeyRequired = errors.New("API key required")
+
 // HaikuClient wraps the Anthropic API for issue summarization.
 type HaikuClient struct {
 	client         anthropic.Client
@@ -39,7 +41,7 @@ func NewHaikuClient(apiKey string) (*HaikuClient, error) {
 		apiKey = envKey
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("API key required: set ANTHROPIC_API_KEY environment variable or provide via config")
+		return nil, fmt.Errorf("%w: set ANTHROPIC_API_KEY environment variable or provide via config", ErrAPIKeyRequired)
 	}
 
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))

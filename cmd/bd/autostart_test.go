@@ -125,19 +125,19 @@ func TestDaemonStartFailureTracking(t *testing.T) {
 			{3, 20 * time.Second},
 			{4, 40 * time.Second},
 			{5, 80 * time.Second},
-			{6, 120 * time.Second}, // Capped
+			{6, 120 * time.Second},  // Capped
 			{10, 120 * time.Second}, // Still capped
 		}
 
 		for _, tc := range testCases {
 			daemonStartFailures = tc.failures
 			lastDaemonStartAttempt = time.Now()
-			
+
 			// Should not allow retry immediately
 			if canRetryDaemonStart() {
 				t.Errorf("Failures=%d: Expected immediate retry to be blocked", tc.failures)
 			}
-			
+
 			// Should allow retry after expected duration
 			lastDaemonStartAttempt = time.Now().Add(-(tc.expected + time.Second))
 			if !canRetryDaemonStart() {
@@ -174,7 +174,7 @@ func TestGetSocketPath(t *testing.T) {
 
 	t.Run("prefers local socket when it exists", func(t *testing.T) {
 		localSocket := filepath.Join(beadsDir, "bd.sock")
-		
+
 		// Create local socket file
 		if err := os.WriteFile(localSocket, []byte{}, 0644); err != nil {
 			t.Fatalf("Failed to create socket file: %v", err)
@@ -202,7 +202,7 @@ func TestGetSocketPath(t *testing.T) {
 			t.Fatalf("Failed to create global beads directory: %v", err)
 		}
 		globalSocket := filepath.Join(globalBeadsDir, "bd.sock")
-		
+
 		if err := os.WriteFile(globalSocket, []byte{}, 0644); err != nil {
 			t.Fatalf("Failed to create global socket file: %v", err)
 		}
@@ -218,7 +218,7 @@ func TestGetSocketPath(t *testing.T) {
 		// Ensure no sockets exist
 		localSocket := filepath.Join(beadsDir, "bd.sock")
 		os.Remove(localSocket)
-		
+
 		home, err := os.UserHomeDir()
 		if err != nil {
 			t.Skip("Cannot get home directory")

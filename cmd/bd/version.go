@@ -21,12 +21,12 @@ var versionCmd = &cobra.Command{
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
 		checkDaemon, _ := cmd.Flags().GetBool("daemon")
-		
+
 		if checkDaemon {
 			showDaemonVersion()
 			return
 		}
-		
+
 		if jsonOutput {
 			outputJSON(map[string]string{
 				"version": Version,
@@ -47,7 +47,7 @@ func showDaemonVersion() {
 			dbPath = foundDB
 		}
 	}
-	
+
 	socketPath := getSocketPath()
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil || client == nil {
@@ -56,19 +56,19 @@ func showDaemonVersion() {
 		os.Exit(1)
 	}
 	defer client.Close()
-	
+
 	health, err := client.Health()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error checking daemon health: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
-			"daemon_version":  health.Version,
-			"client_version":  Version,
-			"compatible":      health.Compatible,
-			"daemon_uptime":   health.Uptime,
+			"daemon_version": health.Version,
+			"client_version": Version,
+			"compatible":     health.Compatible,
+			"daemon_uptime":  health.Uptime,
 		})
 	} else {
 		fmt.Printf("Daemon version: %s\n", health.Version)
@@ -80,7 +80,7 @@ func showDaemonVersion() {
 		}
 		fmt.Printf("Daemon uptime: %.1f seconds\n", health.Uptime)
 	}
-	
+
 	if !health.Compatible {
 		os.Exit(1)
 	}

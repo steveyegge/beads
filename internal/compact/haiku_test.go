@@ -17,6 +17,9 @@ func TestNewHaikuClient_RequiresAPIKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when API key is missing")
 	}
+	if !errors.Is(err, ErrAPIKeyRequired) {
+		t.Fatalf("expected ErrAPIKeyRequired, got %v", err)
+	}
 	if !strings.Contains(err.Error(), "API key required") {
 		t.Errorf("unexpected error message: %v", err)
 	}
@@ -53,13 +56,13 @@ func TestRenderTier1Prompt(t *testing.T) {
 	}
 
 	issue := &types.Issue{
-		ID:          "bd-1",
-		Title:       "Fix authentication bug",
-		Description: "Users can't log in with OAuth",
-		Design:      "Add error handling to OAuth flow",
+		ID:                 "bd-1",
+		Title:              "Fix authentication bug",
+		Description:        "Users can't log in with OAuth",
+		Design:             "Add error handling to OAuth flow",
 		AcceptanceCriteria: "Users can log in successfully",
-		Notes:       "Related to issue bd-2",
-		Status:      types.StatusClosed,
+		Notes:              "Related to issue bd-2",
+		Status:             types.StatusClosed,
 	}
 
 	prompt, err := client.renderTier1Prompt(issue)

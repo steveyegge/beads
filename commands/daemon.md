@@ -10,6 +10,8 @@ Run a background daemon that manages database connections and optionally syncs w
 - **Local daemon**: Socket at `.beads/bd.sock` (per-repository)
 - **Global daemon**: Socket at `~/.beads/bd.sock` (all repositories)
 
+> On Windows these files store the daemon’s loopback TCP endpoint metadata—leave them in place so bd can reconnect.
+
 ## Common Operations
 
 - **Start**: `bd daemon` or `bd daemon --global`

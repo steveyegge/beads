@@ -83,11 +83,11 @@ func setupAutoImportTest(t *testing.T, testStore *sqlite.SQLiteStorage, tmpDir s
 	t.Helper()
 	store = testStore
 	dbPath = filepath.Join(tmpDir, "test.db")
-	
+
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-	
+
 	t.Cleanup(func() {
 		storeMutex.Lock()
 		storeActive = false
@@ -100,7 +100,7 @@ func TestAutoImportMultipleCollisionsRemapped(t *testing.T) {
 	// Create 5 issues in DB with local modifications
 	now := time.Now().UTC()
 	closedTime := now.Add(-1 * time.Hour)
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-mc-1",
@@ -269,7 +269,7 @@ func TestAutoImportMultipleCollisionsRemapped(t *testing.T) {
 func TestAutoImportAllCollisionsRemapped(t *testing.T) {
 	now := time.Now().UTC()
 	closedTime := now.Add(-1 * time.Hour)
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-ac-1",
@@ -345,7 +345,7 @@ func TestAutoImportAllCollisionsRemapped(t *testing.T) {
 // TestAutoImportExactMatchesOnly tests happy path with no conflicts
 func TestAutoImportExactMatchesOnly(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-em-1",
@@ -408,7 +408,7 @@ func TestAutoImportExactMatchesOnly(t *testing.T) {
 // TestAutoImportHashUnchanged tests fast path when JSONL hasn't changed
 func TestAutoImportHashUnchanged(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-hu-1",
@@ -429,9 +429,9 @@ func TestAutoImportHashUnchanged(t *testing.T) {
 	// Run auto-import first time
 	os.Setenv("BD_DEBUG", "1")
 	defer os.Unsetenv("BD_DEBUG")
-	
+
 	stderrOutput1 := captureStderr(t, autoImportIfNewer)
-	
+
 	// Should trigger import on first run
 	if !strings.Contains(stderrOutput1, "auto-import triggered") && !strings.Contains(stderrOutput1, "hash changed") {
 		t.Logf("First run: %s", stderrOutput1)
@@ -449,7 +449,7 @@ func TestAutoImportHashUnchanged(t *testing.T) {
 // TestAutoImportParseError tests that parse errors are handled gracefully
 func TestAutoImportParseError(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-pe-1",
@@ -483,7 +483,7 @@ func TestAutoImportParseError(t *testing.T) {
 // TestAutoImportEmptyJSONL tests behavior with empty JSONL file
 func TestAutoImportEmptyJSONL(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-ej-1",
@@ -518,7 +518,7 @@ func TestAutoImportEmptyJSONL(t *testing.T) {
 // TestAutoImportNewIssuesOnly tests importing only new issues
 func TestAutoImportNewIssuesOnly(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-ni-1",
@@ -584,7 +584,7 @@ func TestAutoImportNewIssuesOnly(t *testing.T) {
 func TestAutoImportUpdatesExactMatches(t *testing.T) {
 	now := time.Now().UTC()
 	oldTime := now.Add(-24 * time.Hour)
-	
+
 	dbIssues := []*types.Issue{
 		{
 			ID:        "test-um-1",
@@ -670,7 +670,7 @@ func TestAutoImportJSONLNotFound(t *testing.T) {
 // TestAutoImportCollisionRemapMultipleFields tests remapping with different field conflicts
 func TestAutoImportCollisionRemapMultipleFields(t *testing.T) {
 	now := time.Now().UTC()
-	
+
 	// Create issue with many fields set
 	dbIssues := []*types.Issue{
 		{

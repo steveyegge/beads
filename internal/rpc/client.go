@@ -23,17 +23,27 @@ type Client struct {
 // TryConnect attempts to connect to the daemon socket
 // Returns nil if no daemon is running or unhealthy
 func TryConnect(socketPath string) (*Client, error) {
-	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+	return TryConnectWithTimeout(socketPath, 2*time.Second)
+}
+
+// TryConnectWithTimeout attempts to connect to the daemon socket using the provided dial timeout.
+// Returns nil if no daemon is running or unhealthy.
+func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Client, error) {
+	if !endpointExists(socketPath) {
 		if os.Getenv("BD_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "Debug: socket does not exist: %s\n", socketPath)
+			fmt.Fprintf(os.Stderr, "Debug: RPC endpoint does not exist: %s\n", socketPath)
 		}
 		return nil, nil
 	}
 
-	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
+	if dialTimeout <= 0 {
+		dialTimeout = 2 * time.Second
+	}
+
+	conn, err := dialRPC(socketPath, dialTimeout)
 	if err != nil {
 		if os.Getenv("BD_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "Debug: failed to dial socket: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Debug: failed to connect to RPC endpoint: %v\n", err)
 		}
 		return nil, nil
 	}
@@ -233,6 +243,16 @@ func (c *Client) AddLabel(args *LabelAddArgs) (*Response, error) {
 // RemoveLabel removes a label via the daemon
 func (c *Client) RemoveLabel(args *LabelRemoveArgs) (*Response, error) {
 	return c.Execute(OpLabelRemove, args)
+}
+
+// ListComments retrieves comments for an issue via the daemon
+func (c *Client) ListComments(args *CommentListArgs) (*Response, error) {
+	return c.Execute(OpCommentList, args)
+}
+
+// AddComment adds a comment to an issue via the daemon
+func (c *Client) AddComment(args *CommentAddArgs) (*Response, error) {
+	return c.Execute(OpCommentAdd, args)
 }
 
 // Batch executes multiple operations atomically

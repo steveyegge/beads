@@ -123,10 +123,10 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 	if compactDryRun {
 		if jsonOutput {
 			output := map[string]interface{}{
-				"dry_run":       true,
-				"tier":          compactTier,
-				"issue_id":      issueID,
-				"original_size": originalSize,
+				"dry_run":             true,
+				"tier":                compactTier,
+				"issue_id":            issueID,
+				"original_size":       originalSize,
 				"estimated_reduction": "70-80%",
 			}
 			outputJSON(output)

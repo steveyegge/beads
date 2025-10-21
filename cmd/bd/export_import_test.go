@@ -252,10 +252,10 @@ func TestExportEmpty(t *testing.T) {
 
 func TestImportInvalidJSON(t *testing.T) {
 	invalidJSON := []string{
-		`{"id":"test-1"`,                    // Incomplete JSON
-		`{"id":"test-1","title":}`,          // Invalid syntax
-		`not json at all`,                   // Not JSON
-		`{"id":"","title":"No ID"}`,         // Empty ID
+		`{"id":"test-1"`,            // Incomplete JSON
+		`{"id":"test-1","title":}`,  // Invalid syntax
+		`not json at all`,           // Not JSON
+		`{"id":"","title":"No ID"}`, // Empty ID
 	}
 
 	for i, line := range invalidJSON {

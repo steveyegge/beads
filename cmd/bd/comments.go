@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 var commentsCmd = &cobra.Command{
@@ -30,13 +33,42 @@ Examples:
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		issueID := args[0]
-		ctx := context.Background()
 
-		// Get comments
-		comments, err := store.GetIssueComments(ctx, issueID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
-			os.Exit(1)
+		var comments []*types.Comment
+		usedDaemon := false
+		if daemonClient != nil {
+			resp, err := daemonClient.ListComments(&rpc.CommentListArgs{ID: issueID})
+			if err != nil {
+				if isUnknownOperationError(err) {
+					if err := fallbackToDirectMode("daemon does not support comment_list RPC"); err != nil {
+						fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
+						os.Exit(1)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				if err := json.Unmarshal(resp.Data, &comments); err != nil {
+					fmt.Fprintf(os.Stderr, "Error decoding comments: %v\n", err)
+					os.Exit(1)
+				}
+				usedDaemon = true
+			}
+		}
+
+		if !usedDaemon {
+			if err := ensureStoreActive(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
+				os.Exit(1)
+			}
+			ctx := context.Background()
+			result, err := store.GetIssueComments(ctx, issueID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
+				os.Exit(1)
+			}
+			comments = result
 		}
 
 		if jsonOutput {
@@ -108,12 +140,45 @@ Examples:
 			}
 		}
 
-		ctx := context.Background()
+		var comment *types.Comment
+		if daemonClient != nil {
+			resp, err := daemonClient.AddComment(&rpc.CommentAddArgs{
+				ID:     issueID,
+				Author: author,
+				Text:   commentText,
+			})
+			if err != nil {
+				if isUnknownOperationError(err) {
+					if err := fallbackToDirectMode("daemon does not support comment_add RPC"); err != nil {
+						fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
+						os.Exit(1)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				var parsed types.Comment
+				if err := json.Unmarshal(resp.Data, &parsed); err != nil {
+					fmt.Fprintf(os.Stderr, "Error decoding comment: %v\n", err)
+					os.Exit(1)
+				}
+				comment = &parsed
+			}
+		}
 
-		comment, err := store.AddIssueComment(ctx, issueID, author, commentText)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
-			os.Exit(1)
+		if comment == nil {
+			if err := ensureStoreActive(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
+				os.Exit(1)
+			}
+			ctx := context.Background()
+			var err error
+			comment, err = store.AddIssueComment(ctx, issueID, author, commentText)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		if jsonOutput {
@@ -134,4 +199,11 @@ func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	rootCmd.AddCommand(commentsCmd)
+}
+
+func isUnknownOperationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "unknown operation")
 }

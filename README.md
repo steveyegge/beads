@@ -84,7 +84,7 @@ The installer will:
 ### Manual Install
 
 ```bash
-# Using go install (requires Go 1.23+)
+# Using go install (requires Go 1.24+)
 go install github.com/steveyegge/beads/cmd/bd@latest
 
 # Or build from source
@@ -162,22 +162,41 @@ For other MCP clients, refer to their documentation for how to configure MCP ser
 See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for detailed MCP server documentation.
 
 #### Windows 11
-For Windows you must build from source.
-Assumes git, go-lang and mingw-64 installed and in path.
+
+Beads now ships with native Windows support-no MSYS or MinGW required. Make sure you have:
+
+- [Go 1.24+](https://go.dev/dl/) installed (add `%USERPROFILE%\go\bin` to your `PATH`)
+- Git for Windows
+
+Install via PowerShell:
+
+```pwsh
+irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
+```
+
+Install with `go install`:
+
+```pwsh
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+After installation, confirm `bd.exe` is discoverable:
+
+```pwsh
+bd version
+```
+
+Or build from source:
 
 ```pwsh
 git clone https://github.com/steveyegge/beads
 cd beads
-$env:CGO_ENABLED=1
 go build -o bd.exe ./cmd/bd
-mv bd.exe $env:USERPROFILE/.local/bin/ # or anywhere in your PATH
+Move-Item bd.exe $env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\
+# or copy anywhere on your PATH
 ```
 
-Tested with mingw64 from https://github.com/niXman/mingw-builds-binaries
-- version: `1.5.20`
-- architecture: `64 bit`
-- thread model: `posix`
-- C runtime: `ucrt`
+The background daemon listens on a loopback TCP endpoint recorded in `.beads\bd.sock`. Keep that metadata file intact and allow `bd.exe` loopback traffic through any host firewall.
 
 
 ## Quick Start
@@ -1044,6 +1063,8 @@ bd daemon --migrate-to-global
 |------|----------------|----------|
 | **Local** (default) | `.beads/bd.sock` | Single project, per-repo daemon |
 | **Global** (`--global`) | `~/.beads/bd.sock` | Multiple projects, system-wide daemon |
+
+> ℹ️ On Windows these paths refer to metadata files that record the daemon’s loopback TCP endpoint; leave them in place so clients can discover the daemon.
 
 **When to use global daemon:**
 - ✅ Working on multiple beads-enabled projects

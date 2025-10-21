@@ -12,7 +12,7 @@ import (
 
 func TestStorageCacheEviction_TTL(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -82,7 +82,7 @@ func TestStorageCacheEviction_TTL(t *testing.T) {
 
 func TestStorageCacheEviction_LRU(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -94,7 +94,7 @@ func TestStorageCacheEviction_LRU(t *testing.T) {
 	// Create server with small cache size
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	server := NewServer(socketPath, mainStore)
-	server.maxCacheSize = 2 // Only keep 2 entries
+	server.maxCacheSize = 2         // Only keep 2 entries
 	server.cacheTTL = 1 * time.Hour // Long TTL so we test LRU
 	defer server.Stop()
 
@@ -167,7 +167,7 @@ func TestStorageCacheEviction_LRU(t *testing.T) {
 
 func TestStorageCacheEviction_LastAccessUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -225,7 +225,7 @@ func TestStorageCacheEviction_LastAccessUpdate(t *testing.T) {
 
 func TestStorageCacheEviction_EnvVars(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -257,7 +257,7 @@ func TestStorageCacheEviction_EnvVars(t *testing.T) {
 
 func TestStorageCacheEviction_CleanupOnStop(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -309,7 +309,7 @@ func TestStorageCacheEviction_CleanupOnStop(t *testing.T) {
 
 func TestStorageCacheEviction_CanonicalKey(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -362,7 +362,7 @@ func TestStorageCacheEviction_CanonicalKey(t *testing.T) {
 
 func TestStorageCacheEviction_ImmediateLRU(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -410,7 +410,7 @@ func TestStorageCacheEviction_ImmediateLRU(t *testing.T) {
 
 func TestStorageCacheEviction_InvalidTTL(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -437,7 +437,7 @@ func TestStorageCacheEviction_InvalidTTL(t *testing.T) {
 
 func TestStorageCacheEviction_ReopenAfterEviction(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)
@@ -499,7 +499,7 @@ func TestStorageCacheEviction_ReopenAfterEviction(t *testing.T) {
 
 func TestStorageCacheEviction_StopIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create main DB
 	mainDB := filepath.Join(tmpDir, "main.db")
 	mainStore, err := sqlite.New(mainDB)

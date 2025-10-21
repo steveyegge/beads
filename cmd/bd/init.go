@@ -20,7 +20,7 @@ and database file. Optionally specify a custom issue prefix.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
-		
+
 		if prefix == "" {
 			// Auto-detect from directory name
 			cwd, err := os.Getwd()

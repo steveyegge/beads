@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -12,7 +14,11 @@ import (
 
 func TestScripts(t *testing.T) {
 	// Build the bd binary
-	exe := t.TempDir() + "/bd"
+	exeName := "bd"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	exe := filepath.Join(t.TempDir(), exeName)
 	if err := exec.Command("go", "build", "-o", exe, ".").Run(); err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ bd daemon --global
 
 **How it works:**
 The single MCP server instance automatically:
-1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace
+1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace (Windows note: this file stores the loopback TCP endpoint used by the daemon)
 2. Falls back to global daemon socket (`~/.beads/bd.sock`)
 3. Routes requests to the correct database based on your current working directory
 4. Auto-starts the daemon if it's not running (with exponential backoff on failures)

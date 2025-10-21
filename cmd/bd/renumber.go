@@ -161,9 +161,9 @@ Risks:
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"total_issues":    len(issues),
-				"changed":         changed,
-				"unchanged":       len(issues) - changed,
+				"total_issues": len(issues),
+				"changed":      changed,
+				"unchanged":    len(issues) - changed,
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -178,27 +178,27 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 	if err != nil {
 		return fmt.Errorf("failed to get dependency records: %w", err)
 	}
-	
+
 	// Step 1: Rename all issues to temporary UUIDs to avoid collisions
 	tempMapping := make(map[string]string)
-	
+
 	for _, issue := range issues {
 		oldID := issue.ID
 		// Use UUID to guarantee uniqueness (no collision possible)
 		tempID := fmt.Sprintf("temp-%s", uuid.New().String())
 		tempMapping[oldID] = tempID
-		
+
 		// Rename to temp ID (don't update text yet)
 		issue.ID = tempID
 		if err := store.UpdateIssueID(ctx, oldID, tempID, issue, actor); err != nil {
 			return fmt.Errorf("failed to rename %s to temp ID: %w", oldID, err)
 		}
 	}
-	
+
 	// Step 2: Rename from temp IDs to final IDs (still don't update text)
 	for _, issue := range issues {
 		tempID := issue.ID // Currently has temp ID
-		
+
 		// Find original ID
 		var oldOriginalID string
 		for origID, tID := range tempMapping {
@@ -208,14 +208,14 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 			}
 		}
 		finalID := idMapping[oldOriginalID]
-		
+
 		// Just update the ID, not text yet
 		issue.ID = finalID
 		if err := store.UpdateIssueID(ctx, tempID, finalID, issue, actor); err != nil {
 			return fmt.Errorf("failed to update issue %s: %w", tempID, err)
 		}
 	}
-	
+
 	// Step 3: Now update all text references using the original old->new mapping
 	// Build regex to match any OLD issue ID (before renumbering)
 	oldIDs := make([]string, 0, len(idMapping))
@@ -223,7 +223,7 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 		oldIDs = append(oldIDs, regexp.QuoteMeta(oldID))
 	}
 	oldPattern := regexp.MustCompile(`\b(` + strings.Join(oldIDs, "|") + `)\b`)
-	
+
 	replaceFunc := func(match string) string {
 		if newID, ok := idMapping[match]; ok {
 			return newID
@@ -234,19 +234,19 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 	// Update text references in all issues
 	for _, issue := range issues {
 		changed := false
-		
+
 		newTitle := oldPattern.ReplaceAllStringFunc(issue.Title, replaceFunc)
 		if newTitle != issue.Title {
 			issue.Title = newTitle
 			changed = true
 		}
-		
+
 		newDesc := oldPattern.ReplaceAllStringFunc(issue.Description, replaceFunc)
 		if newDesc != issue.Description {
 			issue.Description = newDesc
 			changed = true
 		}
-		
+
 		if issue.Design != "" {
 			newDesign := oldPattern.ReplaceAllStringFunc(issue.Design, replaceFunc)
 			if newDesign != issue.Design {
@@ -254,7 +254,7 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 				changed = true
 			}
 		}
-		
+
 		if issue.AcceptanceCriteria != "" {
 			newAC := oldPattern.ReplaceAllStringFunc(issue.AcceptanceCriteria, replaceFunc)
 			if newAC != issue.AcceptanceCriteria {
@@ -262,7 +262,7 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 				changed = true
 			}
 		}
-		
+
 		if issue.Notes != "" {
 			newNotes := oldPattern.ReplaceAllStringFunc(issue.Notes, replaceFunc)
 			if newNotes != issue.Notes {
@@ -270,7 +270,7 @@ func renumberIssuesInDB(ctx context.Context, prefix string, idMapping map[string
 				changed = true
 			}
 		}
-		
+
 		// Only update if text changed
 		if changed {
 			if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
@@ -341,15 +341,15 @@ func renumberDependencies(ctx context.Context, idMapping map[string]string, allD
 		// Remove old dependency (may not exist if IDs already updated)
 		_ = store.RemoveDependency(ctx, oldDep.IssueID, oldDep.DependsOnID, "renumber")
 	}
-	
+
 	// Then add all new dependencies
 	for _, newDep := range newDeps {
 		// Add new dependency
 		if err := store.AddDependency(ctx, newDep, "renumber"); err != nil {
 			// Ignore duplicate and validation errors (parent-child direction might be swapped)
 			if !strings.Contains(err.Error(), "UNIQUE constraint failed") &&
-			   !strings.Contains(err.Error(), "duplicate") &&
-			   !strings.Contains(err.Error(), "invalid parent-child") {
+				!strings.Contains(err.Error(), "duplicate") &&
+				!strings.Contains(err.Error(), "invalid parent-child") {
 				return fmt.Errorf("failed to add dependency %s -> %s: %w", newDep.IssueID, newDep.DependsOnID, err)
 			}
 		}

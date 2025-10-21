@@ -107,14 +107,15 @@ Default threshold: 300 seconds (5 minutes)`,
 
 // getStaleIssues queries for issues with execution_state where executor is dead/stopped
 func getStaleIssues(thresholdSeconds int) ([]*StaleIssueInfo, error) {
-	// If daemon is running but doesn't support this command, use direct storage
-	if daemonClient != nil && store == nil {
-		var err error
-		store, err = sqlite.New(dbPath)
-		if err != nil {
+	// Ensure we have a direct store when daemon lacks stale support
+	if daemonClient != nil {
+		if err := ensureDirectMode("daemon does not support stale command"); err != nil {
 			return nil, fmt.Errorf("failed to open database: %w", err)
 		}
-		defer store.Close()
+	} else if store == nil {
+		if err := ensureStoreActive(); err != nil {
+			return nil, fmt.Errorf("failed to open database: %w", err)
+		}
 	}
 
 	ctx := context.Background()
@@ -196,14 +197,15 @@ func getStaleIssues(thresholdSeconds int) ([]*StaleIssueInfo, error) {
 
 // releaseStaleIssues releases all stale issues by deleting execution state and resetting status
 func releaseStaleIssues(staleIssues []*StaleIssueInfo) (int, error) {
-	// If daemon is running but doesn't support this command, use direct storage
-	if daemonClient != nil && store == nil {
-		var err error
-		store, err = sqlite.New(dbPath)
-		if err != nil {
+	// Ensure we have a direct store when daemon lacks stale support
+	if daemonClient != nil {
+		if err := ensureDirectMode("daemon does not support stale command"); err != nil {
 			return 0, fmt.Errorf("failed to open database: %w", err)
 		}
-		defer store.Close()
+	} else if store == nil {
+		if err := ensureStoreActive(); err != nil {
+			return 0, fmt.Errorf("failed to open database: %w", err)
+		}
 	}
 
 	ctx := context.Background()

@@ -142,7 +142,7 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	// the database in a mixed state with some issues renamed and others not.
 	// For production use, consider implementing a single atomic RenamePrefix() method
 	// in the storage layer that wraps all updates in one transaction.
-	
+
 	oldPrefixPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(oldPrefix) + `-(\d+)\b`)
 
 	replaceFunc := func(match string) string {

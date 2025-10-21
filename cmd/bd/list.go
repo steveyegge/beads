@@ -163,7 +163,7 @@ var listCmd = &cobra.Command{
 		for _, issue := range issues {
 			// Load labels for display
 			labels, _ := store.GetLabels(ctx, issue.ID)
-			
+
 			fmt.Printf("%s [P%d] [%s] %s\n", issue.ID, issue.Priority, issue.IssueType, issue.Status)
 			fmt.Printf("  %s\n", issue.Title)
 			if issue.Assignee != "" {

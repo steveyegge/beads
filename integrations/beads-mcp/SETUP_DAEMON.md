@@ -32,7 +32,7 @@ bd daemon start
 ```
 
 The daemon will:
-- Listen on `.beads/bd.sock`
+- Listen on `.beads/bd.sock` (Windows: file stores loopback TCP metadata)
 - Route operations to correct database based on request cwd
 - Handle multiple repos simultaneously
 

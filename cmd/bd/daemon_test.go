@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,23 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+func makeSocketTempDir(t testing.TB) string {
+	t.Helper()
+
+	base := "/tmp"
+	if runtime.GOOS == "windows" {
+		base = os.TempDir()
+	} else if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+
+	tmpDir, err := os.MkdirTemp(base, "bd-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	return tmpDir
+}
 
 func TestGetPIDFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -32,7 +50,7 @@ func TestGetPIDFilePath(t *testing.T) {
 	if pidFile != expected {
 		t.Errorf("Expected PID file %s, got %s", expected, pidFile)
 	}
-	
+
 	if _, err := os.Stat(filepath.Dir(pidFile)); os.IsNotExist(err) {
 		t.Error("Expected beads directory to be created")
 	}
@@ -40,37 +58,43 @@ func TestGetPIDFilePath(t *testing.T) {
 
 func TestGetLogFilePath(t *testing.T) {
 	tests := []struct {
-		name     string
-		userPath string
-		dbPath   string
-		expected string
+		name string
+		set  func(t *testing.T) (userPath, dbFile, expected string)
 	}{
 		{
-			name:     "user specified path",
-			userPath: "/var/log/bd.log",
-			dbPath:   "/tmp/.beads/test.db",
-			expected: "/var/log/bd.log",
+			name: "user specified path",
+			set: func(t *testing.T) (string, string, string) {
+				userDir := t.TempDir()
+				dbDir := t.TempDir()
+				userPath := filepath.Join(userDir, "bd.log")
+				dbFile := filepath.Join(dbDir, ".beads", "test.db")
+				return userPath, dbFile, userPath
+			},
 		},
 		{
-			name:     "default with dbPath",
-			userPath: "",
-			dbPath:   "/tmp/.beads/test.db",
-			expected: "/tmp/.beads/daemon.log",
+			name: "default with dbPath",
+			set: func(t *testing.T) (string, string, string) {
+				dbDir := t.TempDir()
+				dbFile := filepath.Join(dbDir, ".beads", "test.db")
+				return "", dbFile, filepath.Join(dbDir, ".beads", "daemon.log")
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			userPath, dbFile, expected := tt.set(t)
+
 			oldDBPath := dbPath
 			defer func() { dbPath = oldDBPath }()
-			dbPath = tt.dbPath
+			dbPath = dbFile
 
-			result, err := getLogFilePath(tt.userPath, false) // test local daemon
+			result, err := getLogFilePath(userPath, false) // test local daemon
 			if err != nil {
 				t.Fatalf("getLogFilePath failed: %v", err)
 			}
-			if result != tt.expected {
-				t.Errorf("Expected %s, got %s", tt.expected, result)
+			if result != expected {
+				t.Errorf("Expected %s, got %s", expected, result)
 			}
 		})
 	}
@@ -318,7 +342,7 @@ func TestDaemonConcurrentOperations(t *testing.T) {
 	defer testStore.Close()
 
 	ctx := context.Background()
-	
+
 	numGoroutines := 10
 	errChan := make(chan error, numGoroutines)
 	var wg sync.WaitGroup
@@ -327,7 +351,7 @@ func TestDaemonConcurrentOperations(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			
+
 			issue := &types.Issue{
 				Title:       fmt.Sprintf("Concurrent issue %d", n),
 				Description: "Test concurrent operations",
@@ -335,12 +359,12 @@ func TestDaemonConcurrentOperations(t *testing.T) {
 				Priority:    1,
 				IssueType:   types.TypeTask,
 			}
-			
+
 			if err := testStore.CreateIssue(ctx, issue, "test"); err != nil {
 				errChan <- fmt.Errorf("goroutine %d create failed: %w", n, err)
 				return
 			}
-			
+
 			updates := map[string]interface{}{
 				"status": types.StatusInProgress,
 			}
@@ -373,13 +397,9 @@ func TestDaemonSocketCleanupOnShutdown(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Use /tmp directly to avoid macOS socket path length limits (104 chars)
-	tmpDir, err := os.MkdirTemp("/tmp", "bd-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	tmpDir := makeSocketTempDir(t)
 	defer os.RemoveAll(tmpDir)
-	
+
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	testDBPath := filepath.Join(tmpDir, "test.db")
 
@@ -391,7 +411,7 @@ func TestDaemonSocketCleanupOnShutdown(t *testing.T) {
 	server := newMockDaemonServer(socketPath, testStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	serverDone := make(chan error, 1)
 	go func() {
 		serverDone <- server.Start(ctx)
@@ -401,7 +421,7 @@ func TestDaemonSocketCleanupOnShutdown(t *testing.T) {
 	if err := server.WaitReady(2 * time.Second); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Verify socket exists (with retry for filesystem sync)
 	var socketFound bool
 	var lastErr error
@@ -419,7 +439,7 @@ func TestDaemonSocketCleanupOnShutdown(t *testing.T) {
 	}
 
 	cancel()
-	
+
 	select {
 	case <-serverDone:
 	case <-time.After(2 * time.Second):
@@ -440,13 +460,9 @@ func TestDaemonServerStartFailureSocketExists(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Use /tmp directly to avoid macOS socket path length limits (104 chars)
-	tmpDir, err := os.MkdirTemp("/tmp", "bd-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	tmpDir := makeSocketTempDir(t)
 	defer os.RemoveAll(tmpDir)
-	
+
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	testDBPath := filepath.Join(tmpDir, "test.db")
 
@@ -462,12 +478,12 @@ func TestDaemonServerStartFailureSocketExists(t *testing.T) {
 	defer cancel1()
 
 	go server1.Start(ctx1)
-	
+
 	// Wait for server to be ready
 	if err := server1.WaitReady(2 * time.Second); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Verify socket exists (with retry for filesystem sync)
 	var socketFound bool
 	for i := 0; i < 10; i++ {
@@ -514,13 +530,9 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Use /tmp directly to avoid macOS socket path length limits (104 chars)
-	tmpDir, err := os.MkdirTemp("/tmp", "bd-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	tmpDir := makeSocketTempDir(t)
 	defer os.RemoveAll(tmpDir)
-	
+
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	testDBPath := filepath.Join(tmpDir, "test.db")
 
@@ -532,10 +544,10 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 	server := newMockDaemonServer(socketPath, testStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	serverDone := make(chan error, 1)
 	startTime := time.Now()
-	
+
 	go func() {
 		serverDone <- server.Start(ctx)
 	}()
@@ -547,21 +559,21 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 	select {
 	case err := <-serverDone:
 		shutdownDuration := time.Since(startTime)
-		
+
 		if err != nil && err != context.Canceled {
 			t.Errorf("Server returned unexpected error: %v", err)
 		}
-		
+
 		if shutdownDuration > 3*time.Second {
 			t.Errorf("Shutdown took too long: %v", shutdownDuration)
 		}
-		
+
 		testStore.Close()
-		
+
 		if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
 			t.Error("Socket should be cleaned up after graceful shutdown")
 		}
-		
+
 	case <-time.After(5 * time.Second):
 		t.Fatal("Server did not shut down gracefully within timeout")
 	}
@@ -619,10 +631,10 @@ func (s *mockDaemonServer) Start(ctx context.Context) error {
 		s.ready <- startErr
 		return startErr
 	}
-	
+
 	// Signal that server is ready
 	s.ready <- nil
-	
+
 	// Set up cleanup before accepting connections
 	defer func() {
 		s.listener.Close()

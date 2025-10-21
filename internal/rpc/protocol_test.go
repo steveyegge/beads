@@ -115,6 +115,8 @@ func TestAllOperations(t *testing.T) {
 		OpDepTree,
 		OpLabelAdd,
 		OpLabelRemove,
+		OpCommentList,
+		OpCommentAdd,
 	}
 
 	for _, op := range operations {

@@ -51,7 +51,7 @@ func TestInitCommand(t *testing.T) {
 			rootCmd.SetArgs([]string{})
 			initCmd.Flags().Set("prefix", "")
 			initCmd.Flags().Set("quiet", "false")
-			
+
 			tmpDir := t.TempDir()
 			originalWd, err := os.Getwd()
 			if err != nil {
@@ -80,12 +80,12 @@ func TestInitCommand(t *testing.T) {
 			if tt.quiet {
 				args = append(args, "--quiet")
 			}
-			
+
 			rootCmd.SetArgs(args)
 
 			// Run command
 			err = rootCmd.Execute()
-			
+
 			// Restore stdout and read output
 			w.Close()
 			buf.ReadFrom(r)

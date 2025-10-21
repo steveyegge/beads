@@ -69,12 +69,12 @@ check_go() {
         log_info "Go detected: $(go version)"
 
         # Extract major and minor version numbers
-        local major=$(echo "$go_version" | cut -d. -f1)
-        local minor=$(echo "$go_version" | cut -d. -f2)
+    local major=$(echo "$go_version" | cut -d. -f1)
+    local minor=$(echo "$go_version" | cut -d. -f2)
 
-        # Check if Go version is 1.23 or later
-        if [ "$major" -eq 1 ] && [ "$minor" -lt 23 ]; then
-            log_error "Go 1.23 or later is required (found: $go_version)"
+    # Check if Go version is 1.24 or later
+    if [ "$major" -eq 1 ] && [ "$minor" -lt 24 ]; then
+        log_error "Go 1.24 or later is required (found: $go_version)"
             echo ""
             echo "Please upgrade Go:"
             echo "  - Download from https://go.dev/dl/"
@@ -175,7 +175,7 @@ build_from_source() {
 offer_go_installation() {
     log_warning "Go is not installed"
     echo ""
-    echo "bd requires Go 1.23 or later. You can:"
+        echo "bd requires Go 1.24 or later. You can:"
     echo "  1. Install Go from https://go.dev/dl/"
     echo "  2. Use your package manager:"
     echo "     - macOS: brew install go"

@@ -8,25 +8,27 @@ import (
 
 // Operation constants for all bd commands
 const (
-	OpPing           = "ping"
-	OpHealth         = "health"
-	OpMetrics        = "metrics"
-	OpCreate         = "create"
-	OpUpdate         = "update"
-	OpClose          = "close"
-	OpList           = "list"
-	OpShow           = "show"
-	OpReady          = "ready"
-	OpStats          = "stats"
-	OpDepAdd         = "dep_add"
-	OpDepRemove      = "dep_remove"
-	OpDepTree        = "dep_tree"
-	OpLabelAdd       = "label_add"
-	OpLabelRemove    = "label_remove"
-	OpBatch          = "batch"
-	OpReposList      = "repos_list"
-	OpReposReady     = "repos_ready"
-	OpReposStats     = "repos_stats"
+	OpPing            = "ping"
+	OpHealth          = "health"
+	OpMetrics         = "metrics"
+	OpCreate          = "create"
+	OpUpdate          = "update"
+	OpClose           = "close"
+	OpList            = "list"
+	OpShow            = "show"
+	OpReady           = "ready"
+	OpStats           = "stats"
+	OpDepAdd          = "dep_add"
+	OpDepRemove       = "dep_remove"
+	OpDepTree         = "dep_tree"
+	OpLabelAdd        = "label_add"
+	OpLabelRemove     = "label_remove"
+	OpCommentList     = "comment_list"
+	OpCommentAdd      = "comment_add"
+	OpBatch           = "batch"
+	OpReposList       = "repos_list"
+	OpReposReady      = "repos_ready"
+	OpReposStats      = "repos_stats"
 	OpReposClearCache = "repos_clear_cache"
 )
 
@@ -36,7 +38,7 @@ type Request struct {
 	Args          json.RawMessage `json:"args"`
 	Actor         string          `json:"actor,omitempty"`
 	RequestID     string          `json:"request_id,omitempty"`
-	Cwd           string          `json:"cwd,omitempty"`      // Working directory for database discovery
+	Cwd           string          `json:"cwd,omitempty"`            // Working directory for database discovery
 	ClientVersion string          `json:"client_version,omitempty"` // Client version for compatibility checks
 }
 
@@ -86,8 +88,8 @@ type ListArgs struct {
 	Priority  *int     `json:"priority,omitempty"`
 	IssueType string   `json:"issue_type,omitempty"`
 	Assignee  string   `json:"assignee,omitempty"`
-	Label     string   `json:"label,omitempty"`     // Deprecated: use Labels
-	Labels    []string `json:"labels,omitempty"`    // AND semantics
+	Label     string   `json:"label,omitempty"`      // Deprecated: use Labels
+	Labels    []string `json:"labels,omitempty"`     // AND semantics
 	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
 	Limit     int      `json:"limit,omitempty"`
 }
@@ -136,6 +138,18 @@ type LabelRemoveArgs struct {
 	Label string `json:"label"`
 }
 
+// CommentListArgs represents arguments for listing comments on an issue
+type CommentListArgs struct {
+	ID string `json:"id"`
+}
+
+// CommentAddArgs represents arguments for adding a comment to an issue
+type CommentAddArgs struct {
+	ID     string `json:"id"`
+	Author string `json:"author"`
+	Text   string `json:"text"`
+}
+
 // PingResponse is the response for a ping operation
 type PingResponse struct {
 	Message string `json:"message"`
@@ -144,19 +158,19 @@ type PingResponse struct {
 
 // HealthResponse is the response for a health check operation
 type HealthResponse struct {
-	Status          string  `json:"status"`           // "healthy", "degraded", "unhealthy"
-	Version         string  `json:"version"`          // Server/daemon version
-	ClientVersion   string  `json:"client_version,omitempty"`  // Client version from request
-	Compatible      bool    `json:"compatible"`       // Whether versions are compatible
-	Uptime          float64 `json:"uptime_seconds"`
-	CacheSize       int     `json:"cache_size"`
-	CacheHits       int64   `json:"cache_hits"`
-	CacheMisses     int64   `json:"cache_misses"`
-	DBResponseTime  float64 `json:"db_response_ms"`
-	ActiveConns     int32   `json:"active_connections"`
-	MaxConns        int     `json:"max_connections"`
-	MemoryAllocMB   uint64  `json:"memory_alloc_mb"`
-	Error           string  `json:"error,omitempty"`
+	Status         string  `json:"status"`                   // "healthy", "degraded", "unhealthy"
+	Version        string  `json:"version"`                  // Server/daemon version
+	ClientVersion  string  `json:"client_version,omitempty"` // Client version from request
+	Compatible     bool    `json:"compatible"`               // Whether versions are compatible
+	Uptime         float64 `json:"uptime_seconds"`
+	CacheSize      int     `json:"cache_size"`
+	CacheHits      int64   `json:"cache_hits"`
+	CacheMisses    int64   `json:"cache_misses"`
+	DBResponseTime float64 `json:"db_response_ms"`
+	ActiveConns    int32   `json:"active_connections"`
+	MaxConns       int     `json:"max_connections"`
+	MemoryAllocMB  uint64  `json:"memory_alloc_mb"`
+	Error          string  `json:"error,omitempty"`
 }
 
 // BatchArgs represents arguments for batch operations
@@ -200,7 +214,7 @@ type RepoInfo struct {
 
 // RepoReadyWork represents ready work for a single repository
 type RepoReadyWork struct {
-	RepoPath string `json:"repo_path"`
+	RepoPath string         `json:"repo_path"`
 	Issues   []*types.Issue `json:"issues"`
 }
 

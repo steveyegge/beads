@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -152,12 +151,12 @@ func getGlobalBeadsDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot get home directory: %w", err)
 	}
-	
+
 	beadsDir := filepath.Join(home, ".beads")
 	if err := os.MkdirAll(beadsDir, 0700); err != nil {
 		return "", fmt.Errorf("cannot create global beads directory: %w", err)
 	}
-	
+
 	return beadsDir, nil
 }
 
@@ -211,13 +210,13 @@ func getEnvBool(key string, defaultValue bool) bool {
 func getPIDFilePath(global bool) (string, error) {
 	var beadsDir string
 	var err error
-	
+
 	if global {
 		beadsDir, err = getGlobalBeadsDir()
 	} else {
 		beadsDir, err = ensureBeadsDir()
 	}
-	
+
 	if err != nil {
 		return "", err
 	}
@@ -228,16 +227,16 @@ func getLogFilePath(userPath string, global bool) (string, error) {
 	if userPath != "" {
 		return userPath, nil
 	}
-	
+
 	var beadsDir string
 	var err error
-	
+
 	if global {
 		beadsDir, err = getGlobalBeadsDir()
 	} else {
 		beadsDir, err = ensureBeadsDir()
 	}
-	
+
 	if err != nil {
 		return "", err
 	}
@@ -255,13 +254,7 @@ func isDaemonRunning(pidFile string) (bool, int) {
 		return false, 0
 	}
 
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false, 0
-	}
-
-	err = process.Signal(syscall.Signal(0))
-	if err != nil {
+	if !isProcessRunning(pid) {
 		return false, 0
 	}
 
@@ -293,12 +286,12 @@ func showDaemonStatus(pidFile string, global bool) {
 		if global {
 			scope = "global"
 		}
-		fmt.Printf("✓ Daemon is running (PID %d, %s)\n", pid, scope)
-		
+		fmt.Printf("Daemon is running (PID %d, %s)\n", pid, scope)
+
 		if info, err := os.Stat(pidFile); err == nil {
 			fmt.Printf("  Started: %s\n", info.ModTime().Format("2006-01-02 15:04:05"))
 		}
-		
+
 		logPath, err := getLogFilePath("", global)
 		if err == nil {
 			if _, err := os.Stat(logPath); err == nil {
@@ -306,7 +299,7 @@ func showDaemonStatus(pidFile string, global bool) {
 			}
 		}
 	} else {
-		fmt.Println("✗ Daemon is not running")
+		fmt.Println("Daemon is not running")
 	}
 }
 
@@ -327,56 +320,50 @@ func showDaemonHealth(global bool) {
 		}
 		socketPath = filepath.Join(beadsDir, "bd.sock")
 	}
-	
+
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if client == nil {
-		fmt.Println("✗ Daemon is not running")
+		fmt.Println("Daemon is not running")
 		os.Exit(1)
 	}
 	defer client.Close()
-	
+
 	health, err := client.Health()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error checking health: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if jsonOutput {
 		data, _ := json.MarshalIndent(health, "", "  ")
 		fmt.Println(string(data))
 		return
 	}
-	
-	statusIcon := "✓"
-	if health.Status == "unhealthy" {
-		statusIcon = "✗"
-	} else if health.Status == "degraded" {
-		statusIcon = "⚠"
-	}
-	
-	fmt.Printf("%s Daemon Health: %s\n", statusIcon, health.Status)
+
+	fmt.Printf("Daemon Health: %s\n", strings.ToUpper(health.Status))
+
 	fmt.Printf("  Version: %s\n", health.Version)
 	fmt.Printf("  Uptime: %s\n", formatUptime(health.Uptime))
 	fmt.Printf("  Cache Size: %d databases\n", health.CacheSize)
 	fmt.Printf("  Cache Hits: %d\n", health.CacheHits)
 	fmt.Printf("  Cache Misses: %d\n", health.CacheMisses)
-	
+
 	if health.CacheHits+health.CacheMisses > 0 {
 		hitRate := float64(health.CacheHits) / float64(health.CacheHits+health.CacheMisses) * 100
 		fmt.Printf("  Cache Hit Rate: %.1f%%\n", hitRate)
 	}
-	
+
 	fmt.Printf("  DB Response Time: %.2f ms\n", health.DBResponseTime)
-	
+
 	if health.Error != "" {
 		fmt.Printf("  Error: %s\n", health.Error)
 	}
-	
+
 	if health.Status == "unhealthy" {
 		os.Exit(1)
 	}
@@ -399,38 +386,38 @@ func showDaemonMetrics(global bool) {
 		}
 		socketPath = filepath.Join(beadsDir, "bd.sock")
 	}
-	
+
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error connecting to daemon: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if client == nil {
-		fmt.Println("✗ Daemon is not running")
+		fmt.Println("Daemon is not running")
 		os.Exit(1)
 	}
 	defer client.Close()
-	
+
 	metrics, err := client.Metrics()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching metrics: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if jsonOutput {
 		data, _ := json.MarshalIndent(metrics, "", "  ")
 		fmt.Println(string(data))
 		return
 	}
-	
+
 	// Human-readable output
 	fmt.Printf("Daemon Metrics\n")
 	fmt.Printf("==============\n\n")
-	
+
 	fmt.Printf("Uptime: %.1f seconds (%.1f minutes)\n", metrics.UptimeSeconds, metrics.UptimeSeconds/60)
 	fmt.Printf("Timestamp: %s\n\n", metrics.Timestamp.Format(time.RFC3339))
-	
+
 	// Cache metrics
 	fmt.Printf("Cache Metrics:\n")
 	fmt.Printf("  Size: %d databases\n", metrics.CacheSize)
@@ -441,19 +428,19 @@ func showDaemonMetrics(global bool) {
 		fmt.Printf("  Hit Rate: %.1f%%\n", hitRate)
 	}
 	fmt.Printf("  Evictions: %d\n\n", metrics.CacheEvictions)
-	
+
 	// Connection metrics
 	fmt.Printf("Connection Metrics:\n")
 	fmt.Printf("  Total: %d\n", metrics.TotalConns)
 	fmt.Printf("  Active: %d\n", metrics.ActiveConns)
 	fmt.Printf("  Rejected: %d\n\n", metrics.RejectedConns)
-	
+
 	// System metrics
 	fmt.Printf("System Metrics:\n")
 	fmt.Printf("  Memory Alloc: %d MB\n", metrics.MemoryAllocMB)
 	fmt.Printf("  Memory Sys: %d MB\n", metrics.MemorySysMB)
 	fmt.Printf("  Goroutines: %d\n\n", metrics.GoroutineCount)
-	
+
 	// Operation metrics
 	if len(metrics.Operations) > 0 {
 		fmt.Printf("Operation Metrics:\n")
@@ -462,7 +449,7 @@ func showDaemonMetrics(global bool) {
 			fmt.Printf("    Total Requests: %d\n", op.TotalCount)
 			fmt.Printf("    Successful: %d\n", op.SuccessCount)
 			fmt.Printf("    Errors: %d\n", op.ErrorCount)
-			
+
 			if op.Latency.AvgMS > 0 {
 				fmt.Printf("    Latency:\n")
 				fmt.Printf("      Min: %.3f ms\n", op.Latency.MinMS)
@@ -482,10 +469,10 @@ func migrateToGlobalDaemon() {
 		fmt.Fprintf(os.Stderr, "Error: cannot get home directory: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	localPIDFile := filepath.Join(".beads", "daemon.pid")
 	globalPIDFile := filepath.Join(home, ".beads", "daemon.pid")
-	
+
 	// Check if local daemon is running
 	localRunning, localPID := isDaemonRunning(localPIDFile)
 	if !localRunning {
@@ -494,21 +481,21 @@ func migrateToGlobalDaemon() {
 		fmt.Printf("Stopping local daemon (PID %d)...\n", localPID)
 		stopDaemon(localPIDFile)
 	}
-	
+
 	// Check if global daemon is already running
 	globalRunning, globalPID := isDaemonRunning(globalPIDFile)
 	if globalRunning {
-		fmt.Printf("✓ Global daemon already running (PID %d)\n", globalPID)
+		fmt.Printf("Global daemon already running (PID %d)\n", globalPID)
 		return
 	}
-	
+
 	// Start global daemon
 	fmt.Println("Starting global daemon...")
 	binPath, err := os.Executable()
 	if err != nil {
 		binPath = os.Args[0]
 	}
-	
+
 	cmd := exec.Command(binPath, "daemon", "--global")
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err == nil {
@@ -517,23 +504,20 @@ func migrateToGlobalDaemon() {
 		cmd.Stdin = devNull
 		defer devNull.Close()
 	}
-	
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-	
+
+	configureDaemonProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to start global daemon: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	go cmd.Wait()
-	
+
 	// Wait for daemon to be ready
 	time.Sleep(2 * time.Second)
-	
+
 	if isRunning, pid := isDaemonRunning(globalPIDFile); isRunning {
-		fmt.Printf("✓ Global daemon started successfully (PID %d)\n", pid)
+		fmt.Printf("Global daemon started successfully (PID %d)\n", pid)
 		fmt.Println()
 		fmt.Println("Migration complete! The global daemon will now serve all your beads repositories.")
 		fmt.Println("Set BEADS_PREFER_GLOBAL_DAEMON=1 in your shell to make this permanent.")
@@ -549,34 +533,33 @@ func stopDaemon(pidFile string) {
 		return
 	} else {
 		fmt.Printf("Stopping daemon (PID %d)...\n", pid)
-		
+
 		process, err := os.FindProcess(pid)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error finding process: %v\n", err)
 			os.Exit(1)
 		}
 
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			fmt.Fprintf(os.Stderr, "Error sending SIGTERM: %v\n", err)
+		if err := sendStopSignal(process); err != nil {
+			fmt.Fprintf(os.Stderr, "Error signaling daemon: %v\n", err)
 			os.Exit(1)
 		}
 
 		for i := 0; i < 50; i++ {
 			time.Sleep(100 * time.Millisecond)
 			if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
-				fmt.Println("✓ Daemon stopped")
+				fmt.Println("Daemon stopped")
 				return
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, sending SIGKILL\n")
-		
-		// Check one more time before SIGKILL to avoid race condition
+		fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, forcing termination\n")
+
+		// Check one more time before killing the process to avoid a race.
 		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
-			fmt.Println("✓ Daemon stopped")
+			fmt.Println("Daemon stopped")
 			return
 		}
-		
 		if err := process.Kill(); err != nil {
 			// Ignore "process already finished" errors
 			if !strings.Contains(err.Error(), "process already finished") {
@@ -584,7 +567,7 @@ func stopDaemon(pidFile string) {
 			}
 		}
 		os.Remove(pidFile)
-		fmt.Println("✓ Daemon killed")
+		fmt.Println("Daemon killed")
 	}
 }
 
@@ -625,18 +608,18 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 	cmd := exec.Command(exe, args...)
 	cmd.Env = append(os.Environ(), "BD_DAEMON_FOREGROUND=1")
 	configureDaemonProcess(cmd)
-	
+
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening /dev/null: %v\n", err)
 		os.Exit(1)
 	}
 	defer devNull.Close()
-	
+
 	cmd.Stdin = devNull
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
-	
+
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting daemon: %v\n", err)
 		os.Exit(1)
@@ -652,7 +635,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 		time.Sleep(100 * time.Millisecond)
 		if data, err := os.ReadFile(pidFile); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid == expectedPID {
-				fmt.Printf("✓ Daemon started (PID %d)\n", expectedPID)
+				fmt.Printf("Daemon started (PID %d)\n", expectedPID)
 				return
 			}
 		}
@@ -710,7 +693,7 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tempPath := tempFile.Name()
-	
+
 	// Use defer pattern for proper cleanup
 	var writeErr error
 	defer func() {
@@ -769,13 +752,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	maxBackups := getEnvInt("BEADS_DAEMON_LOG_MAX_BACKUPS", 3)
 	maxAgeDays := getEnvInt("BEADS_DAEMON_LOG_MAX_AGE", 7)
 	compress := getEnvBool("BEADS_DAEMON_LOG_COMPRESS", true)
-	
+
 	logF := &lumberjack.Logger{
 		Filename:   logPath,
-		MaxSize:    maxSizeMB,    // MB
-		MaxBackups: maxBackups,   // number of rotated files
-		MaxAge:     maxAgeDays,   // days
-		Compress:   compress,     // compress old logs
+		MaxSize:    maxSizeMB,  // MB
+		MaxBackups: maxBackups, // number of rotated files
+		MaxAge:     maxAgeDays, // days
+		Compress:   compress,   // compress old logs
 	}
 	defer logF.Close()
 
@@ -787,7 +770,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 
 	myPID := os.Getpid()
 	pidFileCreated := false
-	
+
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(pidFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err == nil {
@@ -796,7 +779,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			pidFileCreated = true
 			break
 		}
-		
+
 		if errors.Is(err, fs.ErrExist) {
 			if isRunning, pid := isDaemonRunning(pidFile); isRunning {
 				log("Daemon already running (PID %d), exiting", pid)
@@ -806,16 +789,16 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			os.Remove(pidFile)
 			continue
 		}
-		
+
 		log("Error creating PID file: %v", err)
 		os.Exit(1)
 	}
-	
+
 	if !pidFileCreated {
 		log("Failed to create PID file after retries")
 		os.Exit(1)
 	}
-	
+
 	defer os.Remove(pidFile)
 
 	log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
@@ -828,13 +811,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			os.Exit(1)
 		}
 		socketPath := filepath.Join(globalDir, "bd.sock")
-		
+
 		// Create server with nil storage - uses per-request routing
 		server := rpc.NewServer(socketPath, nil)
-		
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		
+
 		// Start RPC server in background
 		serverErrChan := make(chan error, 1)
 		go func() {
@@ -844,7 +827,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 				serverErrChan <- err
 			}
 		}()
-		
+
 		// Wait for server to be ready or fail
 		select {
 		case err := <-serverErrChan:
@@ -855,20 +838,20 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 		case <-time.After(5 * time.Second):
 			log("WARNING: Server didn't signal ready after 5 seconds (may still be starting)")
 		}
-		
+
 		// Wait for shutdown signal
 		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-		
+		signal.Notify(sigChan, daemonSignals...)
+
 		sig := <-sigChan
 		log("Received signal: %v", sig)
 		log("Shutting down global daemon...")
-		
+
 		cancel()
 		if err := server.Stop(); err != nil {
 			log("Error stopping server: %v", err)
 		}
-		
+
 		log("Global daemon stopped")
 		return
 	}
@@ -886,9 +869,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			os.Exit(1)
 		}
 	}
-	
+
 	log("Using database: %s", daemonDBPath)
-	
+
 	store, err := sqlite.New(daemonDBPath)
 	if err != nil {
 		log("Error: cannot open database: %v", err)
@@ -900,10 +883,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	// Start RPC server
 	socketPath := filepath.Join(filepath.Dir(daemonDBPath), "bd.sock")
 	server := rpc.NewServer(socketPath, store)
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// Start RPC server in background
 	serverErrChan := make(chan error, 1)
 	go func() {
@@ -913,7 +896,6 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			serverErrChan <- err
 		}
 	}()
-	
 	// Wait for server to be ready or fail
 	select {
 	case err := <-serverErrChan:
@@ -926,7 +908,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	signal.Notify(sigChan, daemonSignals...)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -934,9 +916,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 	doSync := func() {
 		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer syncCancel()
-		
+
 		log("Starting sync cycle...")
-		
+
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
 			log("Error: JSONL path not found")
@@ -999,8 +981,8 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush bool, logPath, p
 			}
 			doSync()
 		case sig := <-sigChan:
-			if sig == syscall.SIGHUP {
-				log("Received SIGHUP, ignoring (daemon continues running)")
+			if isReloadSignal(sig) {
+				log("Received reload signal, ignoring (daemon continues running)")
 				continue
 			}
 			log("Received signal %v, shutting down gracefully...", sig)

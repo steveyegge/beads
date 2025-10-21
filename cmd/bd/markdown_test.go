@@ -149,7 +149,7 @@ Just a title and description.
 				{
 					Title:       "Minimal Issue",
 					Description: "Just a title and description.",
-					Priority:    2,    // default
+					Priority:    2,      // default
 					IssueType:   "task", // default
 				},
 			},

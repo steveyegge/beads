@@ -80,7 +80,7 @@ bd daemon --global
 The MCP server automatically detects the global daemon and routes requests based on your working directory. No configuration changes needed!
 
 **How it works:**
-1. MCP server checks for local daemon socket (`.beads/bd.sock`)
+1. MCP server checks for local daemon socket (`.beads/bd.sock`) — on Windows this file contains the TCP endpoint metadata
 2. Falls back to global daemon socket (`~/.beads/bd.sock`)
 3. Routes requests to correct database based on working directory
 4. Each project keeps its own database at `.beads/*.db`

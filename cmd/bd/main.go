@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -31,7 +29,7 @@ import (
 
 // DaemonStatus captures daemon connection state for the current command
 type DaemonStatus struct {
-	Mode               string `json:"mode"`                          // "daemon" or "direct"
+	Mode               string `json:"mode"` // "daemon" or "direct"
 	Connected          bool   `json:"connected"`
 	Degraded           bool   `json:"degraded"`
 	SocketPath         string `json:"socket_path,omitempty"`
@@ -39,8 +37,8 @@ type DaemonStatus struct {
 	AutoStartAttempted bool   `json:"auto_start_attempted"`
 	AutoStartSucceeded bool   `json:"auto_start_succeeded"`
 	FallbackReason     string `json:"fallback_reason,omitempty"` // "none","flag_no_daemon","connect_failed","health_failed","auto_start_disabled","auto_start_failed"
-	Detail             string `json:"detail,omitempty"`           // short diagnostic
-	Health             string `json:"health,omitempty"`           // "healthy","degraded","unhealthy"
+	Detail             string `json:"detail,omitempty"`          // short diagnostic
+	Health             string `json:"health,omitempty"`          // "healthy","degraded","unhealthy"
 }
 
 // Fallback reason constants
@@ -51,6 +49,7 @@ const (
 	FallbackHealthFailed      = "health_failed"
 	FallbackAutoStartDisabled = "auto_start_disabled"
 	FallbackAutoStartFailed   = "auto_start_failed"
+	FallbackDaemonUnsupported = "daemon_unsupported"
 )
 
 var (
@@ -59,10 +58,10 @@ var (
 	store        storage.Storage
 	jsonOutput   bool
 	daemonStatus DaemonStatus // Tracks daemon connection state for current command
-	
+
 	// Daemon mode
 	daemonClient *rpc.Client // RPC client when daemon is running
-	noDaemon     bool         // Force direct mode (no daemon)
+	noDaemon     bool        // Force direct mode (no daemon)
 
 	// Auto-flush state
 	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
@@ -182,7 +181,7 @@ var rootCmd = &cobra.Command{
 					}
 				}
 			}
-			
+
 			// Daemon not running or unhealthy - try auto-start if enabled
 			if daemonStatus.AutoStartEnabled {
 				daemonStatus.AutoStartAttempted = true
@@ -252,12 +251,12 @@ var rootCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Debug: auto-start disabled by BEADS_AUTO_START_DAEMON\n")
 				}
 			}
-			
+
 			// Emit BD_VERBOSE warning if falling back to direct mode
 			if os.Getenv("BD_VERBOSE") != "" {
 				emitVerboseWarning()
 			}
-			
+
 			if os.Getenv("BD_DEBUG") != "" {
 				fmt.Fprintf(os.Stderr, "Debug: using direct mode (reason: %s)\n", daemonStatus.FallbackReason)
 			}
@@ -330,13 +329,13 @@ func getDebounceDuration() time.Duration {
 	if envVal == "" {
 		return 5 * time.Second
 	}
-	
+
 	duration, err := time.ParseDuration(envVal)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: invalid BEADS_FLUSH_DEBOUNCE value '%s', using default 5s\n", envVal)
 		return 5 * time.Second
 	}
-	
+
 	return duration
 }
 
@@ -352,6 +351,8 @@ func emitVerboseWarning() {
 		fmt.Fprintf(os.Stderr, "Warning: Auto-start disabled (BEADS_AUTO_START_DAEMON=false). Running in direct mode. Hint: bd daemon\n")
 	case FallbackAutoStartFailed:
 		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon --status\n")
+	case FallbackDaemonUnsupported:
+		fmt.Fprintf(os.Stderr, "Warning: Daemon does not support this command yet. Running in direct mode. Hint: update daemon or use local mode.\n")
 	case FallbackFlagNoDaemon:
 		// Don't warn when user explicitly requested --no-daemon
 		return
@@ -479,7 +480,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 		}
 		return false
 	}
-	
+
 	// Fast path: check if daemon is already healthy
 	client, err := rpc.TryConnect(socketPath)
 	if err == nil && client != nil {
@@ -489,7 +490,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 		}
 		return true
 	}
-	
+
 	// Use lockfile to prevent multiple processes from starting daemon simultaneously
 	lockPath := socketPath + ".startlock"
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -501,7 +502,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 		if waitForSocketReadiness(socketPath, 5*time.Second) {
 			return true
 		}
-		
+
 		// Socket still not ready - check if lock is stale
 		if lockPID, err := readPIDFromFile(lockPath); err == nil {
 			if !isPIDAlive(lockPID) {
@@ -515,12 +516,12 @@ func tryAutoStartDaemon(socketPath string) bool {
 		}
 		return false
 	}
-	
+
 	// Write our PID to lockfile
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 	lockFile.Close()
 	defer os.Remove(lockPath)
-	
+
 	// Under lock: check for stale socket and clean up if necessary
 	if _, err := os.Stat(socketPath); err == nil {
 		// Socket exists - check if it's truly stale by trying a quick connect
@@ -531,7 +532,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 			}
 			return true
 		}
-		
+
 		// Socket exists but not responding - check if PID is alive before removing
 		pidFile := getPIDFileForSocket(socketPath)
 		if pidFile != "" {
@@ -543,7 +544,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 				return waitForSocketReadiness(socketPath, 5*time.Second)
 			}
 		}
-		
+
 		// Socket is stale (connect failed and PID dead/missing) - safe to remove
 		if os.Getenv("BD_DEBUG") != "" {
 			fmt.Fprintf(os.Stderr, "Debug: socket is stale, cleaning up\n")
@@ -553,7 +554,7 @@ func tryAutoStartDaemon(socketPath string) bool {
 			os.Remove(pidFile)
 		}
 	}
-	
+
 	// Determine if we should start global or local daemon
 	// If requesting local socket, check if we should suggest global instead
 	isGlobal := false
@@ -571,21 +572,21 @@ func tryAutoStartDaemon(socketPath string) bool {
 			}
 		}
 	}
-	
+
 	// Build daemon command using absolute path for security
 	binPath, err := os.Executable()
 	if err != nil {
 		binPath = os.Args[0] // Fallback
 	}
-	
+
 	args := []string{"daemon"}
 	if isGlobal {
 		args = append(args, "--global")
 	}
-	
+
 	// Start daemon in background with proper I/O redirection
 	cmd := exec.Command(binPath, args...)
-	
+
 	// Redirect stdio to /dev/null to prevent daemon output in foreground
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err == nil {
@@ -594,17 +595,14 @@ func tryAutoStartDaemon(socketPath string) bool {
 		cmd.Stdin = devNull
 		defer devNull.Close()
 	}
-	
+
 	// Set working directory to database directory for local daemon
 	if !isGlobal && dbPath != "" {
 		cmd.Dir = filepath.Dir(dbPath)
 	}
-	
+
 	// Detach from parent process
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-	
+	configureDaemonProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		recordDaemonStartFailure()
 		if os.Getenv("BD_DEBUG") != "" {
@@ -612,16 +610,16 @@ func tryAutoStartDaemon(socketPath string) bool {
 		}
 		return false
 	}
-	
+
 	// Reap the process to avoid zombies
 	go cmd.Wait()
-	
+
 	// Wait for socket to be ready with actual connection test
 	if waitForSocketReadiness(socketPath, 5*time.Second) {
 		recordDaemonStartSuccess()
 		return true
 	}
-	
+
 	recordDaemonStartFailure()
 	if os.Getenv("BD_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "Debug: daemon socket not ready after 5 seconds\n")
@@ -654,21 +652,16 @@ func isPIDAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	return isProcessRunning(pid)
 }
 
 // canDialSocket attempts a quick dial to the socket with a timeout
 func canDialSocket(socketPath string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("unix", socketPath, timeout)
-	if err != nil {
+	client, err := rpc.TryConnectWithTimeout(socketPath, timeout)
+	if err != nil || client == nil {
 		return false
 	}
-	conn.Close()
+	client.Close()
 	return true
 }
 
@@ -676,14 +669,8 @@ func canDialSocket(socketPath string, timeout time.Duration) bool {
 func waitForSocketReadiness(socketPath string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		// Use quick dial with short timeout per attempt
 		if canDialSocket(socketPath, 200*time.Millisecond) {
-			// Socket is dialable - do a final health check
-			client, err := rpc.TryConnect(socketPath)
-			if err == nil && client != nil {
-				client.Close()
-				return true
-			}
+			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -700,13 +687,13 @@ func canRetryDaemonStart() bool {
 	if daemonStartFailures == 0 {
 		return true
 	}
-	
+
 	// Exponential backoff: 5s, 10s, 20s, 40s, 80s, 120s (capped at 120s)
 	backoff := time.Duration(5*(1<<uint(daemonStartFailures-1))) * time.Second
 	if backoff > 120*time.Second {
 		backoff = 120 * time.Second
 	}
-	
+
 	return time.Since(lastDaemonStartAttempt) > backoff
 }
 
@@ -728,7 +715,7 @@ func getSocketPath() string {
 	if _, err := os.Stat(localSocket); err == nil {
 		return localSocket
 	}
-	
+
 	// Fall back to global socket at ~/.beads/bd.sock
 	if home, err := os.UserHomeDir(); err == nil {
 		globalSocket := filepath.Join(home, ".beads", "bd.sock")
@@ -736,7 +723,7 @@ func getSocketPath() string {
 			return globalSocket
 		}
 	}
-	
+
 	// Default to local socket even if it doesn't exist
 	return localSocket
 }
@@ -884,18 +871,18 @@ func autoImportIfNewer() {
 
 	// Use shared import logic (bd-157)
 	opts := ImportOptions{
-		ResolveCollisions: true,  // Auto-import always resolves collisions
+		ResolveCollisions: true, // Auto-import always resolves collisions
 		DryRun:            false,
 		SkipUpdate:        false,
 		Strict:            false,
 	}
-	
+
 	result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Auto-import failed: %v\n", err)
 		return
 	}
-	
+
 	// Show collision remapping notification if any occurred
 	if len(result.IDMapping) > 0 {
 		// Build title lookup map to avoid O(n^2) search
@@ -903,7 +890,7 @@ func autoImportIfNewer() {
 		for _, issue := range allIssues {
 			titleByID[issue.ID] = issue.Title
 		}
-		
+
 		// Sort remappings by old ID for consistent output
 		type mapping struct {
 			oldID string
@@ -916,13 +903,13 @@ func autoImportIfNewer() {
 		sort.Slice(mappings, func(i, j int) bool {
 			return mappings[i].oldID < mappings[j].oldID
 		})
-		
+
 		maxShow := 10
 		numRemapped := len(mappings)
 		if numRemapped < maxShow {
 			maxShow = numRemapped
 		}
-		
+
 		fmt.Fprintf(os.Stderr, "\nAuto-import: remapped %d colliding issue(s) to new IDs:\n", numRemapped)
 		for i := 0; i < maxShow; i++ {
 			m := mappings[i]
@@ -984,10 +971,10 @@ func checkVersionMismatch() {
 		// Use semantic version comparison (requires v prefix)
 		binaryVer := "v" + Version
 		dbVer := "v" + dbVersion
-		
+
 		// semver.Compare returns -1 if binaryVer < dbVer, 0 if equal, 1 if binaryVer > dbVer
 		cmp := semver.Compare(binaryVer, dbVer)
-		
+
 		if cmp < 0 {
 			// Binary is older than database
 			fmt.Fprintf(os.Stderr, "%s\n", yellow("⚠️  Your binary appears to be OUTDATED."))
@@ -1169,7 +1156,7 @@ func flushToJSONL() {
 	// Determine which issues to export
 	var dirtyIDs []string
 	var err error
-	
+
 	if fullExport {
 		// Full export: get ALL issues (needed after ID-changing operations like renumber)
 		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
@@ -1481,12 +1468,12 @@ var createCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (numeric suffix required, e.g., 'bd-42')\n", explicitID)
 				os.Exit(1)
 			}
-			
+
 			// Validate prefix matches database prefix (unless --force is used)
 			if !forceCreate {
 				requestedPrefix := parts[0]
 				ctx := context.Background()
-				
+
 				// Get database prefix from config
 				var dbPrefix string
 				if daemonClient != nil {
@@ -1496,7 +1483,7 @@ var createCmd = &cobra.Command{
 					// Direct mode - check config
 					dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
 				}
-				
+
 				if dbPrefix != "" && dbPrefix != requestedPrefix {
 					fmt.Fprintf(os.Stderr, "Error: prefix mismatch detected\n")
 					fmt.Fprintf(os.Stderr, "  This database uses prefix '%s-', but you specified '%s-'\n", dbPrefix, requestedPrefix)
@@ -1689,7 +1676,7 @@ var showCmd = &cobra.Command{
 				issue := &details.Issue
 
 				cyan := color.New(color.FgCyan).SprintFunc()
-				
+
 				// Format output (same as direct mode below)
 				tierEmoji := ""
 				statusSuffix := ""
@@ -1701,7 +1688,7 @@ var showCmd = &cobra.Command{
 				if issue.CompactionLevel > 0 {
 					statusSuffix = fmt.Sprintf(" (compacted L%d)", issue.CompactionLevel)
 				}
-				
+
 				fmt.Printf("\n%s: %s%s\n", cyan(issue.ID), issue.Title, tierEmoji)
 				fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
 				fmt.Printf("Priority: P%d\n", issue.Priority)
@@ -1723,7 +1710,7 @@ var showCmd = &cobra.Command{
 						saved := issue.OriginalSize - currentSize
 						if saved > 0 {
 							reduction := float64(saved) / float64(issue.OriginalSize) * 100
-							fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n", 
+							fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n",
 								issue.OriginalSize, currentSize, reduction)
 						}
 					}
@@ -1805,7 +1792,7 @@ var showCmd = &cobra.Command{
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
-		
+
 		// Add compaction emoji to title line
 		tierEmoji := ""
 		statusSuffix := ""
@@ -1817,7 +1804,7 @@ var showCmd = &cobra.Command{
 		if issue.CompactionLevel > 0 {
 			statusSuffix = fmt.Sprintf(" (compacted L%d)", issue.CompactionLevel)
 		}
-		
+
 		fmt.Printf("\n%s: %s%s\n", cyan(issue.ID), issue.Title, tierEmoji)
 		fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
 		fmt.Printf("Priority: P%d\n", issue.Priority)
@@ -1838,14 +1825,14 @@ var showCmd = &cobra.Command{
 				tierEmoji = "📦"
 			}
 			tierName := fmt.Sprintf("Tier %d", issue.CompactionLevel)
-			
+
 			fmt.Println()
 			if issue.OriginalSize > 0 {
 				currentSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
 				saved := issue.OriginalSize - currentSize
 				if saved > 0 {
 					reduction := float64(saved) / float64(issue.OriginalSize) * 100
-					fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n", 
+					fmt.Printf("📊 Original: %d bytes | Compressed: %d bytes (%.0f%% reduction)\n",
 						issue.OriginalSize, currentSize, reduction)
 				}
 			}
@@ -1958,7 +1945,7 @@ var updateCmd = &cobra.Command{
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			updateArgs := &rpc.UpdateArgs{ID: args[0]}
-			
+
 			// Map updates to RPC args
 			if status, ok := updates["status"].(string); ok {
 				updateArgs.Status = &status
@@ -2053,7 +2040,7 @@ var closeCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 					continue
 				}
-				
+
 				if jsonOutput {
 					var issue types.Issue
 					if err := json.Unmarshal(resp.Data, &issue); err == nil {

@@ -49,7 +49,7 @@ func TestRenamePrefixCommand(t *testing.T) {
 	defer testStore.Close()
 
 	ctx := context.Background()
-	
+
 	store = testStore
 	actor = "test"
 	defer func() {

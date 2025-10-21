@@ -23,7 +23,7 @@ var labelCmd = &cobra.Command{
 // executeLabelCommand executes a label operation and handles output
 func executeLabelCommand(issueID, label, operation string, operationFunc func(context.Context, string, string, string) error) {
 	ctx := context.Background()
-	
+
 	// Use daemon if available
 	if daemonClient != nil {
 		var err error
@@ -38,7 +38,7 @@ func executeLabelCommand(issueID, label, operation string, operationFunc func(co
 				Label: label,
 			})
 		}
-		
+
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -100,7 +100,7 @@ var labelListCmd = &cobra.Command{
 
 		ctx := context.Background()
 		var labels []string
-		
+
 		// Use daemon if available
 		if daemonClient != nil {
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
@@ -108,7 +108,7 @@ var labelListCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			
+
 			var issue types.Issue
 			if err := json.Unmarshal(resp.Data, &issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
@@ -156,7 +156,7 @@ var labelListAllCmd = &cobra.Command{
 
 		var issues []*types.Issue
 		var err error
-		
+
 		// Use daemon if available
 		if daemonClient != nil {
 			resp, err := daemonClient.List(&rpc.ListArgs{})
@@ -164,7 +164,7 @@ var labelListAllCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			
+
 			if err := json.Unmarshal(resp.Data, &issues); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 				os.Exit(1)

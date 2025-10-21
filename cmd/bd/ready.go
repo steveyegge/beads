@@ -22,7 +22,7 @@ var readyCmd = &cobra.Command{
 
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
-			Limit:  limit,
+			Limit: limit,
 		}
 		// Use Changed() to properly handle P0 (priority=0)
 		if cmd.Flags().Changed("priority") {
@@ -246,12 +246,12 @@ var statsCmd = &cobra.Command{
 		fmt.Printf("Blocked:                %d\n", stats.BlockedIssues)
 		fmt.Printf("Ready:                  %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
 		if stats.EpicsEligibleForClosure > 0 {
-		fmt.Printf("Epics Ready to Close:   %s\n", green(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
+			fmt.Printf("Epics Ready to Close:   %s\n", green(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
 		}
 		if stats.AverageLeadTime > 0 {
-		fmt.Printf("Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
-	}
-	fmt.Println()
+			fmt.Printf("Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
+		}
+		fmt.Println()
 	},
 }
 

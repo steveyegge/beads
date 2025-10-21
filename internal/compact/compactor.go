@@ -2,6 +2,7 @@ package compact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -42,7 +43,11 @@ func New(store *sqlite.SQLiteStorage, apiKey string, config *CompactConfig) (*Co
 	if !config.DryRun {
 		haikuClient, err = NewHaikuClient(config.APIKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Haiku client: %w", err)
+			if errors.Is(err, ErrAPIKeyRequired) {
+				config.DryRun = true
+			} else {
+				return nil, fmt.Errorf("failed to create Haiku client: %w", err)
+			}
 		}
 	}
 
@@ -54,10 +59,10 @@ func New(store *sqlite.SQLiteStorage, apiKey string, config *CompactConfig) (*Co
 }
 
 type CompactResult struct {
-	IssueID      string
-	OriginalSize int
+	IssueID       string
+	OriginalSize  int
 	CompactedSize int
-	Err          error
+	Err           error
 }
 
 func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {

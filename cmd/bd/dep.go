@@ -59,8 +59,8 @@ var depAddCmd = &cobra.Command{
 
 		ctx := context.Background()
 		if err := store.AddDependency(ctx, dep, actor); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
 		// Schedule auto-flush
@@ -69,41 +69,41 @@ var depAddCmd = &cobra.Command{
 		// Check for cycles after adding dependency
 		cycles, err := store.DetectCycles(ctx)
 		if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
 		} else if len(cycles) > 0 {
-		yellow := color.New(color.FgYellow).SprintFunc()
-		fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", yellow("⚠"))
-		fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
-		 fmt.Fprintf(os.Stderr, "Cycle path:\n")
-		for _, cycle := range cycles {
-		  for j, issue := range cycle {
-		   if j == 0 {
-		   fmt.Fprintf(os.Stderr, "  %s", issue.ID)
-				} else {
-					fmt.Fprintf(os.Stderr, " → %s", issue.ID)
+			yellow := color.New(color.FgYellow).SprintFunc()
+			fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", yellow("⚠"))
+			fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
+			fmt.Fprintf(os.Stderr, "Cycle path:\n")
+			for _, cycle := range cycles {
+				for j, issue := range cycle {
+					if j == 0 {
+						fmt.Fprintf(os.Stderr, "  %s", issue.ID)
+					} else {
+						fmt.Fprintf(os.Stderr, " → %s", issue.ID)
+					}
 				}
+				if len(cycle) > 0 {
+					fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
 			}
-			if len(cycle) > 0 {
-				fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
-			}
-			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
 		}
-		fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
-	}
 
-	if jsonOutput {
-		outputJSON(map[string]interface{}{
-			"status":       "added",
-			"issue_id":     args[0],
-			"depends_on_id": args[1],
-			"type":         depType,
-		})
-		return
-	}
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"status":        "added",
+				"issue_id":      args[0],
+				"depends_on_id": args[1],
+				"type":          depType,
+			})
+			return
+		}
 
-	green := color.New(color.FgGreen).SprintFunc()
-	fmt.Printf("%s Added dependency: %s depends on %s (%s)\n",
-		green("✓"), args[0], args[1], depType)
+		green := color.New(color.FgGreen).SprintFunc()
+		fmt.Printf("%s Added dependency: %s depends on %s (%s)\n",
+			green("✓"), args[0], args[1], depType)
 	},
 }
 
@@ -148,8 +148,8 @@ var depRemoveCmd = &cobra.Command{
 
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"status":       "removed",
-				"issue_id":     args[0],
+				"status":        "removed",
+				"issue_id":      args[0],
 				"depends_on_id": args[1],
 			})
 			return
@@ -179,12 +179,12 @@ var depTreeCmd = &cobra.Command{
 
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
 		maxDepth, _ := cmd.Flags().GetInt("max-depth")
-		
+
 		if maxDepth < 1 {
 			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
 			os.Exit(1)
 		}
-		
+
 		ctx := context.Background()
 		tree, err := store.GetDependencyTree(ctx, args[0], maxDepth, showAllPaths)
 		if err != nil {
