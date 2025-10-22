@@ -258,6 +258,11 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	}
 
 	// Direct mode: access store directly
+	// Ensure store is initialized
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+
 	// Get all issues
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
