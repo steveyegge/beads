@@ -1705,13 +1705,58 @@ var showCmd = &cobra.Command{
 
 Examples:
   bd show bd-42                  # Show single issue
-  bd show bd-1 bd-2 bd-3         # Show multiple issues`,
-	Args: cobra.MinimumNArgs(1),
+  bd show bd-1 bd-2 bd-3         # Show multiple issues
+  bd show --all-issues           # Show all issues (may be expensive)`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		allIssues, _ := cmd.Flags().GetBool("all-issues")
+		if !allIssues && len(args) == 0 {
+			return fmt.Errorf("requires at least 1 issue ID or --all-issues flag")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
+		allIssues, _ := cmd.Flags().GetBool("all-issues")
+
+		// Build list of issue IDs to show
+		var issueIDs []string
+
+		// If --all-issues is used, fetch all issues
+		if allIssues {
+			ctx := context.Background()
+
+			if daemonClient != nil {
+				// Daemon mode - not yet supported
+				fmt.Fprintf(os.Stderr, "Error: --all-issues not yet supported in daemon mode\n")
+				fmt.Fprintf(os.Stderr, "Use --no-daemon flag or specify issue IDs directly\n")
+				os.Exit(1)
+			} else {
+				// Direct mode - fetch all issues
+				filter := types.IssueFilter{}
+				issues, err := store.SearchIssues(ctx, "", filter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error searching issues: %v\n", err)
+					os.Exit(1)
+				}
+
+				// Extract IDs
+				for _, issue := range issues {
+					issueIDs = append(issueIDs, issue.ID)
+				}
+
+				// Warn if showing many issues
+				if len(issueIDs) > 20 && !jsonOutput {
+					yellow := color.New(color.FgYellow).SprintFunc()
+					fmt.Fprintf(os.Stderr, "%s Showing %d issues (this may take a while)\n\n", yellow("⚠"), len(issueIDs))
+				}
+			}
+		} else {
+			// Use provided IDs
+			issueIDs = args
+		}
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			allDetails := []interface{}{}
-			for idx, id := range args {
+			for idx, id := range issueIDs {
 				showArgs := &rpc.ShowArgs{ID: id}
 				resp, err := daemonClient.Show(showArgs)
 				if err != nil {
@@ -1848,7 +1893,7 @@ Examples:
 		// Direct mode
 		ctx := context.Background()
 		allDetails := []interface{}{}
-		for idx, id := range args {
+		for idx, id := range issueIDs {
 			issue, err := store.GetIssue(ctx, id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
@@ -1989,6 +2034,7 @@ Examples:
 }
 
 func init() {
+	showCmd.Flags().Bool("all-issues", false, "Show all issues (WARNING: may be expensive for large databases)")
 	rootCmd.AddCommand(showCmd)
 }
 
