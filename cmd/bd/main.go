@@ -2134,6 +2134,201 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
+var editCmd = &cobra.Command{
+	Use:   "edit [id]",
+	Short: "Edit an issue field in $EDITOR",
+	Long: `Edit an issue field using your configured $EDITOR.
+
+By default, edits the description. Use flags to edit other fields.
+
+Examples:
+  bd edit bd-42                    # Edit description
+  bd edit bd-42 --title            # Edit title
+  bd edit bd-42 --design           # Edit design notes
+  bd edit bd-42 --notes            # Edit notes
+  bd edit bd-42 --acceptance       # Edit acceptance criteria`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		id := args[0]
+		ctx := context.Background()
+
+		// Determine which field to edit
+		fieldToEdit := "description"
+		if cmd.Flags().Changed("title") {
+			fieldToEdit = "title"
+		} else if cmd.Flags().Changed("design") {
+			fieldToEdit = "design"
+		} else if cmd.Flags().Changed("notes") {
+			fieldToEdit = "notes"
+		} else if cmd.Flags().Changed("acceptance") {
+			fieldToEdit = "acceptance_criteria"
+		}
+
+		// Get the editor from environment
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = os.Getenv("VISUAL")
+		}
+		if editor == "" {
+			// Try common defaults
+			for _, defaultEditor := range []string{"vim", "vi", "nano", "emacs"} {
+				if _, err := exec.LookPath(defaultEditor); err == nil {
+					editor = defaultEditor
+					break
+				}
+			}
+		}
+		if editor == "" {
+			fmt.Fprintf(os.Stderr, "Error: No editor found. Set $EDITOR or $VISUAL environment variable.\n")
+			os.Exit(1)
+		}
+
+		// Get the current issue
+		var issue *types.Issue
+		var err error
+
+		if daemonClient != nil {
+			// Daemon mode
+			showArgs := &rpc.ShowArgs{ID: id}
+			resp, err := daemonClient.Show(showArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error fetching issue %s: %v\n", id, err)
+				os.Exit(1)
+			}
+
+			issue = &types.Issue{}
+			if err := json.Unmarshal(resp.Data, issue); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing issue data: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Direct mode
+			issue, err = store.GetIssue(ctx, id)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error fetching issue %s: %v\n", id, err)
+				os.Exit(1)
+			}
+			if issue == nil {
+				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				os.Exit(1)
+			}
+		}
+
+		// Get the current field value
+		var currentValue string
+		switch fieldToEdit {
+		case "title":
+			currentValue = issue.Title
+		case "description":
+			currentValue = issue.Description
+		case "design":
+			currentValue = issue.Design
+		case "notes":
+			currentValue = issue.Notes
+		case "acceptance_criteria":
+			currentValue = issue.AcceptanceCriteria
+		}
+
+		// Create a temporary file with the current value
+		tmpFile, err := os.CreateTemp("", fmt.Sprintf("bd-edit-%s-*.txt", fieldToEdit))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating temp file: %v\n", err)
+			os.Exit(1)
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+
+		// Write current value to temp file
+		if _, err := tmpFile.WriteString(currentValue); err != nil {
+			tmpFile.Close()
+			fmt.Fprintf(os.Stderr, "Error writing to temp file: %v\n", err)
+			os.Exit(1)
+		}
+		tmpFile.Close()
+
+		// Open the editor
+		editorCmd := exec.Command(editor, tmpPath)
+		editorCmd.Stdin = os.Stdin
+		editorCmd.Stdout = os.Stdout
+		editorCmd.Stderr = os.Stderr
+
+		if err := editorCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running editor: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read the edited content
+		editedContent, err := os.ReadFile(tmpPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading edited file: %v\n", err)
+			os.Exit(1)
+		}
+
+		newValue := string(editedContent)
+
+		// Check if the value changed
+		if newValue == currentValue {
+			fmt.Println("No changes made")
+			return
+		}
+
+		// Validate title if editing title
+		if fieldToEdit == "title" && strings.TrimSpace(newValue) == "" {
+			fmt.Fprintf(os.Stderr, "Error: title cannot be empty\n")
+			os.Exit(1)
+		}
+
+		// Update the issue
+		updates := map[string]interface{}{
+			fieldToEdit: newValue,
+		}
+
+		if daemonClient != nil {
+			// Daemon mode
+			updateArgs := &rpc.UpdateArgs{ID: id}
+
+			switch fieldToEdit {
+			case "title":
+				updateArgs.Title = &newValue
+			case "description":
+				updateArgs.Description = &newValue
+			case "design":
+				updateArgs.Design = &newValue
+			case "notes":
+				updateArgs.Notes = &newValue
+			case "acceptance_criteria":
+				updateArgs.AcceptanceCriteria = &newValue
+			}
+
+			_, err := daemonClient.Update(updateArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating issue: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Direct mode
+			if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating issue: %v\n", err)
+				os.Exit(1)
+			}
+			markDirtyAndScheduleFlush()
+		}
+
+		green := color.New(color.FgGreen).SprintFunc()
+		fieldName := strings.ReplaceAll(fieldToEdit, "_", " ")
+		fmt.Printf("%s Updated %s for issue: %s\n", green("✓"), fieldName, id)
+	},
+}
+
+func init() {
+	editCmd.Flags().Bool("title", false, "Edit the title")
+	editCmd.Flags().Bool("description", false, "Edit the description (default)")
+	editCmd.Flags().Bool("design", false, "Edit the design notes")
+	editCmd.Flags().Bool("notes", false, "Edit the notes")
+	editCmd.Flags().Bool("acceptance", false, "Edit the acceptance criteria")
+	rootCmd.AddCommand(editCmd)
+}
+
 var closeCmd = &cobra.Command{
 	Use:   "close [id...]",
 	Short: "Close one or more issues",
