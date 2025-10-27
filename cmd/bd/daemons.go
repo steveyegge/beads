@@ -323,7 +323,7 @@ func tailFollow(filePath string) {
 	defer file.Close()
 
 	// Seek to end
-	file.Seek(0, io.SeekEnd)
+	_, _ = file.Seek(0, io.SeekEnd) // Ignore errors, best effort
 
 	reader := bufio.NewReader(file)
 	for {

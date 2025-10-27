@@ -896,7 +896,12 @@ func canRetryDaemonStart() bool {
 	}
 
 	// Exponential backoff: 5s, 10s, 20s, 40s, 80s, 120s (capped at 120s)
-	backoff := time.Duration(5*(1<<uint(daemonStartFailures-1))) * time.Second
+	// Calculate shift value ensuring it doesn't overflow
+	shift := daemonStartFailures - 1
+	if shift > 5 {
+		shift = 5 // Cap to prevent overflow
+	}
+	backoff := time.Duration(5*(1<<shift)) * time.Second
 	if backoff > 120*time.Second {
 		backoff = 120 * time.Second
 	}

@@ -252,9 +252,9 @@ This command:
 					}
 					fmt.Print("\nRemove these files? [y/N] ")
 					var response string
-					fmt.Scanln(&response)
+					_, _ = fmt.Scanln(&response) // Ignore errors, default to empty string
 					if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
-						fmt.Println("Cleanup cancelled")
+						fmt.Println("Cleanup canceled")
 						return
 					}
 				}
@@ -459,9 +459,9 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		fmt.Printf("New repo ID:     %s\n\n", newRepoID[:8])
 		fmt.Printf("Continue? [y/N] ")
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response) // Ignore errors, default to empty string
 		if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
-			fmt.Println("Cancelled")
+			fmt.Println("Canceled")
 			return
 		}
 	}

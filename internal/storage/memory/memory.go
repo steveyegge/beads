@@ -30,7 +30,8 @@ type MemoryStorage struct {
 	counters     map[string]int                // Prefix -> Last ID
 
 	// For tracking
-	dirty map[string]bool // IssueIDs that have been modified
+	dirty       map[string]bool   // IssueIDs that have been modified
+	exportHash  map[string]string // IssueID -> content hash (for export dedup)
 
 	jsonlPath string // Path to source JSONL file (for reference)
 	closed    bool
@@ -48,6 +49,7 @@ func New(jsonlPath string) *MemoryStorage {
 		metadata:     make(map[string]string),
 		counters:     make(map[string]int),
 		dirty:        make(map[string]bool),
+		exportHash:   make(map[string]string),
 		jsonlPath:    jsonlPath,
 	}
 }
@@ -907,5 +909,44 @@ func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) erro
 	defer m.mu.Unlock()
 
 	m.dirty[issueID] = true
+	return nil
+}
+
+// GetDirtyIssueHash returns the content hash for a dirty issue (for timestamp-only dedup, bd-164)
+// In memory storage, we don't track hashes for dirty issues, so this returns empty string
+func (m *MemoryStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Check if issue is dirty
+	if !m.dirty[issueID] {
+		return "", nil // Not dirty
+	}
+
+	// In memory mode, we don't track content hashes for dirty issues
+	// This is acceptable since memory mode is for --no-db where the entire
+	// state is rewritten to JSONL after each command
+	return "", nil
+}
+
+// GetExportHash returns the content hash for an exported issue (for timestamp-only dedup, bd-164)
+func (m *MemoryStorage) GetExportHash(ctx context.Context, issueID string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	hash, exists := m.exportHash[issueID]
+	if !exists {
+		return "", nil // No hash stored yet
+	}
+
+	return hash, nil
+}
+
+// SetExportHash sets the content hash for an exported issue (for timestamp-only dedup, bd-164)
+func (m *MemoryStorage) SetExportHash(ctx context.Context, issueID, contentHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.exportHash[issueID] = contentHash
 	return nil
 }

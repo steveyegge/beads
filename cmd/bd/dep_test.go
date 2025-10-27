@@ -8,22 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestDepAdd(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sqliteStore := newTestStore(t, dbPath)
 	defer sqliteStore.Close()
 
 	ctx := context.Background()
@@ -84,15 +80,12 @@ func TestDepAdd(t *testing.T) {
 func TestDepTypes(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sqliteStore := newTestStore(t, dbPath)
 	defer sqliteStore.Close()
 
 	ctx := context.Background()
@@ -141,15 +134,12 @@ func TestDepTypes(t *testing.T) {
 func TestDepCycleDetection(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sqliteStore := newTestStore(t, dbPath)
 	defer sqliteStore.Close()
 
 	ctx := context.Background()
@@ -234,15 +224,12 @@ func TestDepCommandsInit(t *testing.T) {
 func TestDepRemove(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	
+
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	sqliteStore, err := sqlite.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sqliteStore := newTestStore(t, dbPath)
 	defer sqliteStore.Close()
 
 	ctx := context.Background()

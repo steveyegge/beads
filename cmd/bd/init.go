@@ -108,7 +108,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			// Create empty issues.jsonl file
 			jsonlPath := filepath.Join(localBeadsDir, "issues.jsonl")
 			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-				if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+				if err := os.WriteFile(jsonlPath, []byte{}, 0600); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", err)
 					os.Exit(1)
 				}

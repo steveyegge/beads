@@ -76,7 +76,6 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: latest
-          args: --timeout=5m
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
