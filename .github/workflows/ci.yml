@@ -61,22 +61,24 @@ jobs:
       - name: Test
         run: go test -v ./...
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # lint:
+  #   name: Lint
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
+  #     - name: Set up Go
+  #       uses: actions/setup-go@v5
+  #       with:
+  #         go-version: '1.24'
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: latest
-          args: --timeout=5m
+  #     - name: golangci-lint
+  #       uses: golangci/golangci-lint-action@v6
+  #       with:
+  #         version: v1.62.2
+  #         args: --timeout=5m
+  # TODO: Re-enable after migrating .golangci.yml to v2 format
+  # See: https://golangci-lint.run/docs/product/migration-guide/
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest

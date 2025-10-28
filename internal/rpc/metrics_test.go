@@ -65,6 +65,10 @@ func TestMetricsSnapshot(t *testing.T) {
 	m.RecordConnection()
 	m.RecordRejectedConnection()
 
+	// Ensure measurable time has passed for uptime calculation
+	// This prevents flaky failures on fast CI runners (especially Windows)
+	time.Sleep(10 * time.Millisecond)
+
 	// Take snapshot
 	snapshot := m.Snapshot(3)
 
