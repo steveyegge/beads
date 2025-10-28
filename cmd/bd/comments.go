@@ -127,17 +127,20 @@ Examples:
 			commentText = args[1]
 		}
 
-		// Get author from environment or system
-		author := os.Getenv("BD_AUTHOR")
+		// Get author from author flag, BD_ACTOR var, or system USER var
+		author, _ := cmd.Flags().GetString("author")
 		if author == "" {
-			author = os.Getenv("USER")
-		}
-		if author == "" {
-			if u, err := user.Current(); err == nil {
-				author = u.Username
-			} else {
-				author = "unknown"
-			}
+            author := os.Getenv("BD_ACTOR")
+            if author == "" {
+                author = os.Getenv("USER")
+            }
+            if author == "" {
+                if u, err := user.Current(); err == nil {
+                    author = u.Username
+                } else {
+                    author = "unknown"
+                }
+            }
 		}
 
 		var comment *types.Comment
@@ -198,6 +201,7 @@ Examples:
 func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
+	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
 	rootCmd.AddCommand(commentsCmd)
 }
 
