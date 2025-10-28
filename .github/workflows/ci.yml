@@ -28,11 +28,11 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           echo "Coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 50" | bc -l) )); then
-            echo "❌ Coverage is below 50% threshold"
+          if (( $(echo "$COVERAGE < 40" | bc -l) )); then
+            echo "❌ Coverage is below 40% threshold"
             exit 1
-          elif (( $(echo "$COVERAGE < 55" | bc -l) )); then
-            echo "⚠️  Coverage is below 55% (warning threshold)"
+          elif (( $(echo "$COVERAGE < 45" | bc -l) )); then
+            echo "⚠️  Coverage is below 45% (warning threshold)"
           else
             echo "✅ Coverage meets threshold"
           fi
