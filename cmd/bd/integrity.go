@@ -77,15 +77,15 @@ func checkDuplicateIDs(ctx context.Context, store storage.Storage) error {
 	}
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, COUNT(*) as cnt 
-		FROM issues 
-		GROUP BY id 
+		SELECT id, COUNT(*) as cnt
+		FROM issues
+		GROUP BY id
 		HAVING cnt > 1
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to check for duplicate IDs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var duplicates []string
 	for rows.Next() {
@@ -128,20 +128,20 @@ func checkOrphanedDeps(ctx context.Context, store storage.Storage) ([]string, er
 
 	// Check both sides: dependencies where either issue_id or depends_on_id doesn't exist
 	rows, err := db.QueryContext(ctx, `
-		SELECT DISTINCT d.issue_id 
-		FROM dependencies d 
-		LEFT JOIN issues i ON d.issue_id = i.id 
+		SELECT DISTINCT d.issue_id
+		FROM dependencies d
+		LEFT JOIN issues i ON d.issue_id = i.id
 		WHERE i.id IS NULL
 		UNION
-		SELECT DISTINCT d.depends_on_id 
-		FROM dependencies d 
-		LEFT JOIN issues i ON d.depends_on_id = i.id 
+		SELECT DISTINCT d.depends_on_id
+		FROM dependencies d
+		LEFT JOIN issues i ON d.depends_on_id = i.id
 		WHERE i.id IS NULL
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for orphaned dependencies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var orphaned []string
 	for rows.Next() {

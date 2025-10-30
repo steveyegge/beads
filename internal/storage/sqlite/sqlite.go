@@ -555,7 +555,7 @@ func migrateContentHashColumn(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("failed to query existing issues: %w", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		// Collect issues and compute hashes
 		updates := make(map[string]string) // id -> content_hash
@@ -590,13 +590,13 @@ func migrateContentHashColumn(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		stmt, err := tx.Prepare(`UPDATE issues SET content_hash = ? WHERE id = ?`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare update statement: %w", err)
 		}
-		defer stmt.Close()
+		defer func() { _ = stmt.Close() }()
 
 		for id, hash := range updates {
 			if _, err := stmt.Exec(hash, id); err != nil {

@@ -65,7 +65,7 @@ func NewFileWatcher(jsonlPath string, onChanged func()) (*FileWatcher, error) {
 
 	// Watch the JSONL file
 	if err := watcher.Add(jsonlPath); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		if fallbackDisabled {
 			return nil, fmt.Errorf("failed to watch JSONL and BEADS_WATCHER_FALLBACK is disabled: %w", err)
 		}
@@ -113,7 +113,7 @@ func (fw *FileWatcher) Start(ctx context.Context, log daemonLogger) {
 				// Handle JSONL removal/rename (e.g., git checkout)
 				if event.Name == fw.jsonlPath && (event.Op&fsnotify.Remove != 0 || event.Op&fsnotify.Rename != 0) {
 					log.log("JSONL removed/renamed, re-establishing watch")
-					fw.watcher.Remove(fw.jsonlPath)
+					_ = fw.watcher.Remove(fw.jsonlPath)
 					// Brief wait for file to be recreated
 					time.Sleep(100 * time.Millisecond)
 					if err := fw.watcher.Add(fw.jsonlPath); err != nil {

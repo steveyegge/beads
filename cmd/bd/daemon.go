@@ -776,7 +776,7 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	if err != nil {
 		return fmt.Errorf("failed to open JSONL: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	
 	// Parse all issues
 	var issues []*types.Issue

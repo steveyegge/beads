@@ -266,7 +266,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	if err != nil {
 		return fmt.Errorf("failed to create JSONL file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoder := json.NewEncoder(file)
 	for _, issue := range allIssues {

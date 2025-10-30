@@ -79,7 +79,7 @@ func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var issues []*types.Issue
 	scanner := bufio.NewScanner(file)

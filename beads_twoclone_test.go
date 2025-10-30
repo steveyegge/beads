@@ -171,18 +171,23 @@ func TestTwoCloneCollision(t *testing.T) {
 		t.Log("Clone B hit merge conflict (expected - both clones applied rename)")
 		t.Log("Resolving via bd export - aborting rebase, taking our DB as truth")
 		runCmd(t, cloneB, "git", "rebase", "--abort")
-		
+
 		// Fetch remote changes without merging
 		runCmd(t, cloneB, "git", "fetch", "origin")
-		
+
 		// Use our JSONL (from our DB) by exporting and committing
 		runCmd(t, cloneB, "./bd", "export", "-o", ".beads/issues.jsonl")
 		runCmd(t, cloneB, "git", "add", ".beads/issues.jsonl")
-		runCmd(t, cloneB, "git", "commit", "-m", "Resolve conflict: use our DB state")
-		
+
+		// Only commit if there are changes
+		status := runCmdOutputAllowError(t, cloneB, "git", "status", "--porcelain")
+		if strings.TrimSpace(filterTrackedChanges(status)) != "" {
+			runCmd(t, cloneB, "git", "commit", "-m", "Resolve conflict: use our DB state")
+		}
+
 		// Force merge with ours strategy
 		runCmdOutputAllowError(t, cloneB, "git", "merge", "origin/master", "-X", "ours")
-		
+
 		// Push
 		runCmd(t, cloneB, "git", "push", "origin", "master")
 	}
