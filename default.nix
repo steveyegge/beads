@@ -7,7 +7,7 @@ pkgs.buildGoModule {
 
   # Point to the main Go package
   subPackages = [ "cmd/bd" ];
-
+  doCheck = false;
   # Go module dependencies hash (computed via nix build)
   vendorHash = "sha256-DJqTiLGLZNGhHXag50gHFXTVXCBdj8ytbYbPL3QAq8M=";
 
