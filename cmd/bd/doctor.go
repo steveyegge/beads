@@ -218,6 +218,25 @@ func checkIDFormat(path string) doctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
+	// Check if using JSONL-only mode
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		// Check if JSONL exists (--no-db mode)
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if _, err := os.Stat(jsonlPath); err == nil {
+			return doctorCheck{
+				Name:    "Issue IDs",
+				Status:  statusOK,
+				Message: "N/A (JSONL-only mode)",
+			}
+		}
+		// No database and no JSONL
+		return doctorCheck{
+			Name:    "Issue IDs",
+			Status:  statusOK,
+			Message: "No issues yet (will use hash-based IDs)",
+		}
+	}
+
 	// Open database
 	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
