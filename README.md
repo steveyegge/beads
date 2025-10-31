@@ -275,49 +275,7 @@ bd info
 
 ### Health Check
 
-Check your beads installation health with the doctor command:
-
-```bash
-bd doctor              # Check current directory
-bd doctor /path/to/repo # Check specific repository
-bd doctor --json       # Machine-readable output
-```
-
-The doctor command checks:
-- ✓ Installation (`.beads/` directory exists)
-- ✓ Database version and schema compatibility
-- ✓ Issue ID format (hash-based vs sequential)
-- ✓ CLI version (compares against latest GitHub release)
-
-Example output:
-
-```
-Diagnostics
- ├ Installation: .beads/ directory found
- ├ Database: version 0.20.1
- │   Storage: SQLite
- ├ Issue IDs: hash-based ✓
- └ CLI Version: 0.20.1 (latest)
-
-✓ All checks passed
-```
-
-If issues are found, doctor provides actionable fixes:
-
-```
-Diagnostics
- ├ Installation: .beads/ directory found
- ├ Database: version 0.19.0 (CLI: 0.20.1) ⚠
- │   Storage: SQLite
- ├ Issue IDs: sequential (e.g., bd-1, bd-2, ...) ⚠
- └ CLI Version: 0.20.0
-
-⚠ Warning: version 0.19.0 (CLI: 0.20.1)
-  Fix: Run 'bd migrate' to sync database with CLI version
-
-⚠ Warning: sequential (e.g., bd-1, bd-2, ...)
-  Fix: Run 'bd migrate --to-hash-ids' to upgrade (prevents ID collisions in multi-worker scenarios)
-```
+Check installation health: `bd doctor` validates your `.beads/` setup, database version, ID format, and CLI version. Provides actionable fixes for any issues found.
 
 ### Creating Issues
 
