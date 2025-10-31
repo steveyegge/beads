@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -273,6 +274,7 @@ var depTreeCmd = &cobra.Command{
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
 		maxDepth, _ := cmd.Flags().GetInt("max-depth")
 		reverse, _ := cmd.Flags().GetBool("reverse")
+		formatStr, _ := cmd.Flags().GetString("format")
 
 		if maxDepth < 1 {
 			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
@@ -283,6 +285,12 @@ var depTreeCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Handle mermaid format
+		if formatStr == "mermaid" {
+			outputMermaidTree(tree, args[0])
+			return
 		}
 
 		if jsonOutput {
@@ -383,11 +391,63 @@ var depCyclesCmd = &cobra.Command{
 	},
 }
 
+// outputMermaidTree outputs a dependency tree in Mermaid.js flowchart format
+func outputMermaidTree(tree []*types.TreeNode, rootID string) {
+	if len(tree) == 0 {
+		fmt.Println("flowchart TD")
+		fmt.Printf("  %s[\"No dependencies\"]\n", rootID)
+		return
+	}
+
+	fmt.Println("flowchart TD")
+
+	// Output nodes
+	nodesSeen := make(map[string]bool)
+	for _, node := range tree {
+		if !nodesSeen[node.ID] {
+			emoji := getStatusEmoji(node.Status)
+			label := fmt.Sprintf("%s %s: %s", emoji, node.ID, node.Title)
+			// Escape quotes and backslashes in label
+			label = strings.ReplaceAll(label, "\\", "\\\\")
+			label = strings.ReplaceAll(label, "\"", "\\\"")
+			fmt.Printf("  %s[\"%s\"]\n", node.ID, label)
+
+			nodesSeen[node.ID] = true
+		}
+	}
+
+	fmt.Println()
+
+	// Output edges - use explicit parent relationships from ParentID
+	for _, node := range tree {
+		if node.ParentID != "" && node.ParentID != node.ID {
+			fmt.Printf("  %s --> %s\n", node.ParentID, node.ID)
+		}
+	}
+}
+
+// getStatusEmoji returns a symbol indicator for a given status
+func getStatusEmoji(status types.Status) string {
+	switch status {
+	case types.StatusOpen:
+		return "☐" // U+2610 Ballot Box
+	case types.StatusInProgress:
+		return "◧" // U+25E7 Square Left Half Black
+	case types.StatusBlocked:
+		return "⚠" // U+26A0 Warning Sign
+	case types.StatusClosed:
+		return "☑" // U+2611 Ballot Box with Check
+	default:
+		return "?"
+	}
+}
+
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
 	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (what was discovered from this) instead of dependency tree (what blocks this)")
+	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)
