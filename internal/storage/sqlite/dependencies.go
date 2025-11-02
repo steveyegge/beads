@@ -199,42 +199,74 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 	return tx.Commit()
 }
 
-// GetDependencies returns issues that this issue depends on
-func (s *SQLiteStorage) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
+// GetDependenciesWithMetadata returns issues that this issue depends on, including dependency type
+func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref,
+		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
 		WHERE d.issue_id = ?
 		ORDER BY i.priority ASC
 	`, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies: %w", err)
+		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return s.scanIssues(ctx, rows)
+	return s.scanIssuesWithDependencyType(ctx, rows)
 }
 
-// GetDependents returns issues that depend on this issue
-func (s *SQLiteStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
+// GetDependentsWithMetadata returns issues that depend on this issue, including dependency type
+func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref,
+		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?
 		ORDER BY i.priority ASC
 	`, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependents: %w", err)
+		return nil, fmt.Errorf("failed to get dependents with metadata: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return s.scanIssues(ctx, rows)
+	return s.scanIssuesWithDependencyType(ctx, rows)
+}
+
+// GetDependencies returns issues that this issue depends on
+func (s *SQLiteStorage) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
+	issuesWithMeta, err := s.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to plain Issue slice for backward compatibility
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issues[i] = &iwm.Issue
+	}
+	return issues, nil
+}
+
+// GetDependents returns issues that depend on this issue
+func (s *SQLiteStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
+	issuesWithMeta, err := s.GetDependentsWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to plain Issue slice for backward compatibility
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issues[i] = &iwm.Issue
+	}
+	return issues, nil
 }
 
 // GetDependencyCounts returns dependency and dependent counts for multiple issues in a single query
@@ -672,4 +704,61 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 	}
 
 	return issues, nil
+}
+
+// Helper function to scan issues with dependency type from rows
+func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *sql.Rows) ([]*types.IssueWithDependencyMetadata, error) {
+	var results []*types.IssueWithDependencyMetadata
+	for rows.Next() {
+		var issue types.Issue
+		var contentHash sql.NullString
+		var closedAt sql.NullTime
+		var estimatedMinutes sql.NullInt64
+		var assignee sql.NullString
+		var externalRef sql.NullString
+		var depType types.DependencyType
+
+		err := rows.Scan(
+			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
+			&depType,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan issue with dependency type: %w", err)
+		}
+
+		if contentHash.Valid {
+			issue.ContentHash = contentHash.String
+		}
+		if closedAt.Valid {
+			issue.ClosedAt = &closedAt.Time
+		}
+		if estimatedMinutes.Valid {
+			mins := int(estimatedMinutes.Int64)
+			issue.EstimatedMinutes = &mins
+		}
+		if assignee.Valid {
+			issue.Assignee = assignee.String
+		}
+		if externalRef.Valid {
+			issue.ExternalRef = &externalRef.String
+		}
+
+		// Fetch labels for this issue
+		labels, err := s.GetLabels(ctx, issue.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get labels for issue %s: %w", issue.ID, err)
+		}
+		issue.Labels = labels
+
+		result := &types.IssueWithDependencyMetadata{
+			Issue:          issue,
+			DependencyType: depType,
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
 }

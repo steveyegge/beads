@@ -153,6 +153,13 @@ type DependencyCounts struct {
 	DependentCount  int `json:"dependent_count"`  // Number of issues that depend on this issue
 }
 
+// IssueWithDependencyMetadata extends Issue with dependency relationship type
+// Note: We explicitly include all Issue fields to ensure proper JSON marshaling
+type IssueWithDependencyMetadata struct {
+	Issue
+	DependencyType DependencyType `json:"dependency_type"`
+}
+
 // IssueWithCounts extends Issue with dependency relationship counts
 type IssueWithCounts struct {
 	*Issue
