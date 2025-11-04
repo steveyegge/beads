@@ -825,40 +825,6 @@ func TestMetadataOperations(t *testing.T) {
 	}
 }
 
-func TestSyncAllCounters(t *testing.T) {
-	store := New("")
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Load issues with different prefixes
-	issues := []*types.Issue{
-		{ID: "bd-5", Title: "Test 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
-		{ID: "bd-10", Title: "Test 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
-		{ID: "custom-3", Title: "Test 3", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
-	}
-
-	if err := store.LoadFromIssues(issues); err != nil {
-		t.Fatalf("LoadFromIssues failed: %v", err)
-	}
-
-	// Manually corrupt counter
-	store.counters["bd"] = 1
-
-	// Sync counters
-	if err := store.SyncAllCounters(ctx); err != nil {
-		t.Fatalf("SyncAllCounters failed: %v", err)
-	}
-
-	// Verify corrected
-	if store.counters["bd"] != 10 {
-		t.Errorf("Expected bd counter to be 10, got %d", store.counters["bd"])
-	}
-
-	if store.counters["custom"] != 3 {
-		t.Errorf("Expected custom counter to be 3, got %d", store.counters["custom"])
-	}
-}
 
 func TestThreadSafety(t *testing.T) {
 	store := setupTestMemory(t)

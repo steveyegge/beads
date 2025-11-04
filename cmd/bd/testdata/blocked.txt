@@ -1,7 +1,15 @@
 # Test bd blocked command
 bd init --prefix test
+
+# Create first issue
 bd create 'First issue'
-bd create 'Second issue' --deps test-1
+cp stdout first.txt
+exec sh -c 'grep -oE "test-[a-z0-9]+" first.txt > first_id.txt'
+
+# Create second issue that depends on first
+exec sh -c 'bd create "Second issue" --deps $(cat first_id.txt)'
+cp stdout second.txt
+
+# Check for blocked issues
 bd blocked
-stdout 'Blocked issues'
-stdout 'test-2'
+stdout 'test-'

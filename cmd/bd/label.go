@@ -1,6 +1,5 @@
 // Package main implements the bd CLI label management commands.
 package main
-
 import (
 	"context"
 	"encoding/json"
@@ -8,24 +7,21 @@ import (
 	"os"
 	"sort"
 	"strings"
-
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
-
 var labelCmd = &cobra.Command{
 	Use:   "label",
 	Short: "Manage issue labels",
 }
-
 // Helper function to process label operations for multiple issues
-func processBatchLabelOperation(issueIDs []string, label string, operation string, 
+func processBatchLabelOperation(issueIDs []string, label string, operation string, jsonOut bool,
 	daemonFunc func(string, string) error, storeFunc func(context.Context, string, string, string) error) {
 	ctx := context.Background()
 	results := []map[string]interface{}{}
-
 	for _, issueID := range issueIDs {
 		var err error
 		if daemonClient != nil {
@@ -33,13 +29,11 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 		} else {
 			err = storeFunc(ctx, issueID, label, actor)
 		}
-
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error %s label %s %s: %v\n", operation, operation, issueID, err)
 			continue
 		}
-
-		if jsonOutput {
+		if jsonOut {
 			results = append(results, map[string]interface{}{
 				"status":   operation,
 				"issue_id": issueID,
@@ -56,30 +50,54 @@ func processBatchLabelOperation(issueIDs []string, label string, operation strin
 			fmt.Printf("%s %s label '%s' %s %s\n", green("✓"), verb, label, prep, issueID)
 		}
 	}
-
 	if len(issueIDs) > 0 && daemonClient == nil {
 		markDirtyAndScheduleFlush()
 	}
-
-	if jsonOutput && len(results) > 0 {
+	if jsonOut && len(results) > 0 {
 		outputJSON(results)
 	}
 }
-
 func parseLabelArgs(args []string) (issueIDs []string, label string) {
 	label = args[len(args)-1]
 	issueIDs = args[:len(args)-1]
 	return
 }
-
 //nolint:dupl // labelAddCmd and labelRemoveCmd are similar but serve different operations
 var labelAddCmd = &cobra.Command{
 	Use:   "add [issue-id...] [label]",
 	Short: "Add a label to one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Use global jsonOutput set by PersistentPreRun
 		issueIDs, label := parseLabelArgs(args)
-		processBatchLabelOperation(issueIDs, label, "added",
+		// Resolve partial IDs
+		ctx := context.Background()
+		resolvedIDs := make([]string, 0, len(issueIDs))
+		for _, id := range issueIDs {
+			var fullID string
+			var err error
+			if daemonClient != nil {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
+				if err := json.Unmarshal(resp.Data, &fullID); err != nil {
+					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+					continue
+				}
+			} else {
+				fullID, err = utils.ResolvePartialID(ctx, store, id)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
+			}
+			resolvedIDs = append(resolvedIDs, fullID)
+		}
+		issueIDs = resolvedIDs
+		processBatchLabelOperation(issueIDs, label, "added", jsonOutput,
 			func(issueID, lbl string) error {
 				_, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: issueID, Label: lbl})
 				return err
@@ -89,15 +107,42 @@ var labelAddCmd = &cobra.Command{
 			})
 	},
 }
-
 //nolint:dupl // labelRemoveCmd and labelAddCmd are similar but serve different operations
 var labelRemoveCmd = &cobra.Command{
 	Use:   "remove [issue-id...] [label]",
 	Short: "Remove a label from one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Use global jsonOutput set by PersistentPreRun
 		issueIDs, label := parseLabelArgs(args)
-		processBatchLabelOperation(issueIDs, label, "removed",
+		// Resolve partial IDs
+		ctx := context.Background()
+		resolvedIDs := make([]string, 0, len(issueIDs))
+		for _, id := range issueIDs {
+			var fullID string
+			var err error
+			if daemonClient != nil {
+				resolveArgs := &rpc.ResolveIDArgs{ID: id}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
+				if err := json.Unmarshal(resp.Data, &fullID); err != nil {
+					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+					continue
+				}
+			} else {
+				fullID, err = utils.ResolvePartialID(ctx, store, id)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+					continue
+				}
+			}
+			resolvedIDs = append(resolvedIDs, fullID)
+		}
+		issueIDs = resolvedIDs
+		processBatchLabelOperation(issueIDs, label, "removed", jsonOutput,
 			func(issueID, lbl string) error {
 				_, err := daemonClient.RemoveLabel(&rpc.LabelRemoveArgs{ID: issueID, Label: lbl})
 				return err
@@ -107,17 +152,35 @@ var labelRemoveCmd = &cobra.Command{
 			})
 	},
 }
-
 var labelListCmd = &cobra.Command{
 	Use:   "list [issue-id]",
 	Short: "List labels for an issue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		issueID := args[0]
-
+		// Use global jsonOutput set by PersistentPreRun
 		ctx := context.Background()
+		// Resolve partial ID first
+		var issueID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &issueID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			var err error
+			issueID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+		}
 		var labels []string
-
 		// Use daemon if available
 		if daemonClient != nil {
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
@@ -125,7 +188,6 @@ var labelListCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-
 			var issue types.Issue
 			if err := json.Unmarshal(resp.Data, &issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
@@ -141,7 +203,6 @@ var labelListCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		}
-
 		if jsonOutput {
 			// Always output array, even if empty
 			if labels == nil {
@@ -150,12 +211,10 @@ var labelListCmd = &cobra.Command{
 			outputJSON(labels)
 			return
 		}
-
 		if len(labels) == 0 {
 			fmt.Printf("\n%s has no labels\n", issueID)
 			return
 		}
-
 		cyan := color.New(color.FgCyan).SprintFunc()
 		fmt.Printf("\n%s Labels for %s:\n", cyan("🏷"), issueID)
 		for _, label := range labels {
@@ -164,16 +223,14 @@ var labelListCmd = &cobra.Command{
 		fmt.Println()
 	},
 }
-
 var labelListAllCmd = &cobra.Command{
 	Use:   "list-all",
 	Short: "List all unique labels in the database",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Use global jsonOutput set by PersistentPreRun
 		ctx := context.Background()
-
 		var issues []*types.Issue
 		var err error
-
 		// Use daemon if available
 		if daemonClient != nil {
 			resp, err := daemonClient.List(&rpc.ListArgs{})
@@ -181,7 +238,6 @@ var labelListAllCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-
 			if err := json.Unmarshal(resp.Data, &issues); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 				os.Exit(1)
@@ -194,7 +250,6 @@ var labelListAllCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		}
-
 		// Collect unique labels with counts
 		labelCounts := make(map[string]int)
 		for _, issue := range issues {
@@ -215,7 +270,6 @@ var labelListAllCmd = &cobra.Command{
 				}
 			}
 		}
-
 		if len(labelCounts) == 0 {
 			if jsonOutput {
 				outputJSON([]string{})
@@ -224,14 +278,12 @@ var labelListAllCmd = &cobra.Command{
 			}
 			return
 		}
-
 		// Sort labels alphabetically
 		labels := make([]string, 0, len(labelCounts))
 		for label := range labelCounts {
 			labels = append(labels, label)
 		}
 		sort.Strings(labels)
-
 		if jsonOutput {
 			// Output as array of {label, count} objects
 			type labelInfo struct {
@@ -248,10 +300,8 @@ var labelListAllCmd = &cobra.Command{
 			outputJSON(result)
 			return
 		}
-
 		cyan := color.New(color.FgCyan).SprintFunc()
 		fmt.Printf("\n%s All labels (%d unique):\n", cyan("🏷"), len(labels))
-
 		// Find longest label for alignment
 		maxLen := 0
 		for _, label := range labels {
@@ -259,7 +309,6 @@ var labelListAllCmd = &cobra.Command{
 				maxLen = len(label)
 			}
 		}
-
 		for _, label := range labels {
 			padding := strings.Repeat(" ", maxLen-len(label))
 			fmt.Printf("  %s%s  (%d issues)\n", label, padding, labelCounts[label])
@@ -267,7 +316,6 @@ var labelListAllCmd = &cobra.Command{
 		fmt.Println()
 	},
 }
-
 func init() {
 	labelCmd.AddCommand(labelAddCmd)
 	labelCmd.AddCommand(labelRemoveCmd)

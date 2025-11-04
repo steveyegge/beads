@@ -7,8 +7,24 @@ import (
 
 // newTestStore creates a SQLiteStorage with issue_prefix configured (bd-166)
 // This prevents "database not initialized" errors in tests
+//
+// Test Isolation Pattern (bd-2e80):
+// By default, uses "file::memory:?mode=memory&cache=private" for proper test isolation.
+// The standard ":memory:" creates a SHARED database across all tests in the same process,
+// which can cause test interference and flaky behavior. The private mode ensures each
+// test gets its own isolated in-memory database.
+//
+// To override (e.g., for file-based tests), pass a custom dbPath:
+//   - For temp files: t.TempDir()+"/test.db"
+//   - For shared memory (not recommended): ":memory:"
 func newTestStore(t *testing.T, dbPath string) *SQLiteStorage {
 	t.Helper()
+	
+	// Default to temp file for test isolation
+	// File-based databases are more reliable than in-memory for connection pool scenarios
+	if dbPath == "" {
+		dbPath = t.TempDir() + "/test.db"
+	}
 	
 	store, err := New(dbPath)
 	if err != nil {
@@ -18,7 +34,7 @@ func newTestStore(t *testing.T, dbPath string) *SQLiteStorage {
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
 	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
-		store.Close()
+		_ = store.Close()
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 	

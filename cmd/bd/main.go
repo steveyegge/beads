@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // DaemonStatus captures daemon connection state for the current command
@@ -59,7 +60,7 @@ var (
 	// Auto-flush state
 	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
 	isDirty           = false // Tracks if DB has changes needing export
-	needsFullExport   = false // Set to true when IDs change (renumber, rename-prefix)
+	needsFullExport   = false // Set to true when IDs change (e.g., rename-prefix)
 	flushMutex        sync.Mutex
 	flushTimer        *time.Timer
 	storeMutex        sync.Mutex // Protects store access from background goroutine
@@ -77,6 +78,23 @@ var (
 	sandboxMode  bool
 	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
 )
+
+func init() {
+	// Initialize viper configuration
+	if err := config.Initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+	}
+
+	// Register persistent flags
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
+	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR or $USER)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
+	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
+	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
+	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
+	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "bd",
@@ -111,7 +129,8 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip database initialization for commands that don't need a database
-		if cmd.Name() == "init" || cmd.Name() == cmdDaemon || cmd.Name() == "help" || cmd.Name() == "version" || cmd.Name() == "quickstart" {
+		noDbCommands := []string{"init", cmdDaemon, "help", "version", "quickstart", "doctor"}
+		if slices.Contains(noDbCommands, cmd.Name()) {
 			return
 		}
 
@@ -152,44 +171,16 @@ var rootCmd = &cobra.Command{
 
 		// Initialize database path
 		if dbPath == "" {
-			cwd, err := os.Getwd()
-			localBeadsDir := ""
-			if err == nil {
-				localBeadsDir = filepath.Join(cwd, ".beads")
-			}
-
 			// Use public API to find database (same logic as extensions)
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
-
-				// Special case for import: if we found a database but there's a local .beads/
-				// directory without a database, prefer creating a local database
-				if cmd.Name() == cmdImport && localBeadsDir != "" {
-					if _, err := os.Stat(localBeadsDir); err == nil {
-						// Check if found database is NOT in the local .beads/ directory
-						if !strings.HasPrefix(dbPath, localBeadsDir+string(filepath.Separator)) {
-							// Use local .beads/vc.db instead for import
-							dbPath = filepath.Join(localBeadsDir, "vc.db")
-						}
-					}
-				}
 			} else {
-				// For import command, allow creating database if .beads/ directory exists
-				if cmd.Name() == cmdImport && localBeadsDir != "" {
-					if _, err := os.Stat(localBeadsDir); err == nil {
-						// .beads/ directory exists - set dbPath for import to create
-						dbPath = filepath.Join(localBeadsDir, "vc.db")
-					}
-				}
-
-				// If dbPath still not set, error out
-				if dbPath == "" {
-					// No database found - error out instead of falling back to ~/.beads
-					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
-					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
-					fmt.Fprintf(os.Stderr, "      or set BEADS_DB environment variable to specify a database\n")
-					os.Exit(1)
-				}
+				// No database found - error out instead of falling back to ~/.beads
+				fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+				fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+				fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
+				fmt.Fprintf(os.Stderr, "      or set BEADS_DB to point to your database file (deprecated)\n")
+				os.Exit(1)
 			}
 		}
 
@@ -368,6 +359,15 @@ var rootCmd = &cobra.Command{
 						if err != nil {
 							daemonStatus.Detail = err.Error()
 						}
+						// Check for daemon-error file to provide better error message
+						if beadsDir := filepath.Dir(socketPath); beadsDir != "" {
+							errFile := filepath.Join(beadsDir, "daemon-error")
+							// nolint:gosec // G304: errFile is derived from secure beads directory
+							if errMsg, readErr := os.ReadFile(errFile); readErr == nil && len(errMsg) > 0 {
+								fmt.Fprintf(os.Stderr, "\n%s\n", string(errMsg))
+								daemonStatus.Detail = string(errMsg)
+							}
+						}
 						if os.Getenv("BD_DEBUG") != "" {
 							fmt.Fprintf(os.Stderr, "Debug: auto-start did not yield a running daemon; falling back to direct mode\n")
 						}
@@ -380,13 +380,9 @@ var rootCmd = &cobra.Command{
 					}
 				}
 			} else {
-				// Auto-start disabled - only override if we don't already have a health failure
-				if daemonStatus.FallbackReason != FallbackHealthFailed {
-					// For connect failures, mention that auto-start was disabled
-					if daemonStatus.FallbackReason == FallbackConnectFailed {
-						daemonStatus.FallbackReason = FallbackAutoStartDisabled
-					}
-				}
+				// Auto-start disabled - preserve the actual failure reason
+				// Don't override connect_failed or health_failed with auto_start_disabled
+				// This preserves important diagnostic info (daemon crashed vs not running)
 				if os.Getenv("BD_DEBUG") != "" {
 					fmt.Fprintf(os.Stderr, "Debug: auto-start disabled by BEADS_AUTO_START_DAEMON\n")
 				}
@@ -444,13 +440,21 @@ var rootCmd = &cobra.Command{
 		// Handle --no-db mode: write memory storage back to JSONL
 		if noDb {
 			if store != nil {
-				cwd, err := os.Getwd()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-					os.Exit(1)
+				// Determine beads directory (respect BEADS_DIR)
+				var beadsDir string
+				if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
+					// Canonicalize the path
+					beadsDir = utils.CanonicalizePath(envDir)
+				} else {
+					// Fall back to current directory
+					cwd, err := os.Getwd()
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+						os.Exit(1)
+					}
+					beadsDir = filepath.Join(cwd, ".beads")
 				}
 
-				beadsDir := filepath.Join(cwd, ".beads")
 				if memStore, ok := store.(*memory.MemoryStorage); ok {
 					if err := writeIssuesToJSONL(memStore, beadsDir); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: failed to write JSONL: %v\n", err)

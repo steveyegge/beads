@@ -631,10 +631,7 @@ if err := store.CreateIssues(ctx, issues, "import"); err != nil {
     log.Fatal(err)
 }
 
-// If you used explicit IDs, sync counters to prevent collisions
-if err := store.SyncAllCounters(ctx); err != nil {
-    log.Fatal(err)
-}
+// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 ```
 
 ### Performance Comparison
@@ -695,10 +692,7 @@ func ImportFromExternal(externalIssues []ExternalIssue) error {
         return fmt.Errorf("batch create failed: %w", err)
     }
     
-    // Sync counters since we used explicit IDs
-    if err := store.SyncAllCounters(ctx); err != nil {
-        return fmt.Errorf("counter sync failed: %w", err)
-    }
+    // REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
     
     return nil
 }

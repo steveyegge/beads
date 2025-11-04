@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // CanonicalDatabaseName is the required database filename for all beads repositories
@@ -117,18 +119,72 @@ func NewSQLiteStorage(dbPath string) (Storage, error) {
 }
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
-//  1. $BEADS_DB environment variable
-//  2. .beads/*.db in current directory or ancestors
+//  1. $BEADS_DIR environment variable (points to .beads directory)
+//  2. $BEADS_DB environment variable (points directly to database file, deprecated)
+//  3. .beads/*.db in current directory or ancestors
 //
 // Returns empty string if no database is found.
 func FindDatabasePath() string {
-	// 1. Check environment variable
-	if envDB := os.Getenv("BEADS_DB"); envDB != "" {
-		return envDB
+	// 1. Check BEADS_DIR environment variable (preferred)
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		// Canonicalize the path to prevent nested .beads directories
+		absBeadsDir := utils.CanonicalizePath(beadsDir)
+
+		// Check for config.json first (single source of truth)
+		if cfg, err := configfile.Load(absBeadsDir); err == nil && cfg != nil {
+			dbPath := cfg.DatabasePath(absBeadsDir)
+			if _, err := os.Stat(dbPath); err == nil {
+				return dbPath
+			}
+		}
+
+		// Fall back to canonical beads.db for backward compatibility
+		canonicalDB := filepath.Join(absBeadsDir, CanonicalDatabaseName)
+		if _, err := os.Stat(canonicalDB); err == nil {
+			return canonicalDB
+		}
+
+		// Look for any .db file in the beads directory
+		matches, err := filepath.Glob(filepath.Join(absBeadsDir, "*.db"))
+		if err == nil && len(matches) > 0 {
+			// Filter out backup files and vc.db
+			var validDBs []string
+			for _, match := range matches {
+				baseName := filepath.Base(match)
+				if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+					validDBs = append(validDBs, match)
+				}
+			}
+			if len(validDBs) > 0 {
+				return validDBs[0]
+			}
+		}
+
+		// BEADS_DIR is set but no database found - this is OK for --no-db mode
+		// Return empty string and let the caller handle it
 	}
 
-	// 2. Search for .beads/*.db in current directory and ancestors
+	// 2. Check BEADS_DB environment variable (deprecated but still supported)
+	if envDB := os.Getenv("BEADS_DB"); envDB != "" {
+		// Canonicalize the path to prevent nested .beads directories
+		if absDB, err := filepath.Abs(envDB); err == nil {
+			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
+				return canonical
+			}
+			return absDB // Return absolute path even if symlink resolution fails
+		}
+		return envDB // Fallback to original if Abs fails
+	}
+
+	// 3. Search for .beads/*.db in current directory and ancestors
 	if foundDB := findDatabaseInTree(); foundDB != "" {
+		// Canonicalize found path
+		if absDB, err := filepath.Abs(foundDB); err == nil {
+			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
+				return canonical
+			}
+			return absDB
+		}
 		return foundDB
 	}
 
@@ -177,6 +233,12 @@ func findDatabaseInTree() string {
 		return ""
 	}
 
+	// Resolve symlinks in working directory to ensure consistent path handling
+	// This prevents issues when repos are accessed via symlinks (e.g. /Users/user/Code -> /Users/user/Documents/Code)
+	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolvedDir
+	}
+
 	// Walk up directory tree
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
@@ -198,12 +260,12 @@ func findDatabaseInTree() string {
 			// Found .beads/ directory, look for *.db files
 			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
 			if err == nil && len(matches) > 0 {
-			// Filter out backup files
+			// Filter out backup files and vc.db
 			var validDBs []string
 			for _, match := range matches {
 			baseName := filepath.Base(match)
-			// Skip backup files (e.g., beads.db.backup, bd.db.backup)
-			if filepath.Ext(baseName) != ".backup" {
+			// Skip backup files (contains ".backup" in name) and vc.db
+			if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
 			validDBs = append(validDBs, match)
 			}
 			}

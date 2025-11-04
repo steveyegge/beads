@@ -129,11 +129,22 @@ class BdClientBase(ABC):
         """Initialize a new beads database."""
         pass
 
+    @abstractmethod
+    async def inspect_migration(self) -> dict:
+        """Get migration plan and database state for agent analysis."""
+        pass
+
+    @abstractmethod
+    async def get_schema_info(self) -> dict:
+        """Get current database schema for inspection."""
+        pass
+
 
 class BdCliClient(BdClientBase):
     """Client for calling bd CLI commands and parsing JSON output."""
 
     bd_path: str
+    beads_dir: str | None
     beads_db: str | None
     actor: str | None
     no_auto_flush: bool
@@ -143,6 +154,7 @@ class BdCliClient(BdClientBase):
     def __init__(
         self,
         bd_path: str | None = None,
+        beads_dir: str | None = None,
         beads_db: str | None = None,
         actor: str | None = None,
         no_auto_flush: bool | None = None,
@@ -153,7 +165,8 @@ class BdCliClient(BdClientBase):
 
         Args:
             bd_path: Path to bd executable (optional, loads from config if not provided)
-            beads_db: Path to beads database file (optional, loads from config if not provided)
+            beads_dir: Path to .beads directory (optional, loads from config if not provided)
+            beads_db: Path to beads database file (deprecated, optional, loads from config if not provided)
             actor: Actor name for audit trail (optional, loads from config if not provided)
             no_auto_flush: Disable automatic JSONL sync (optional, loads from config if not provided)
             no_auto_import: Disable automatic JSONL import (optional, loads from config if not provided)
@@ -161,6 +174,7 @@ class BdCliClient(BdClientBase):
         """
         config = load_config()
         self.bd_path = bd_path if bd_path is not None else config.beads_path
+        self.beads_dir = beads_dir if beads_dir is not None else config.beads_dir
         self.beads_db = beads_db if beads_db is not None else config.beads_db
         self.actor = actor if actor is not None else config.beads_actor
         self.no_auto_flush = no_auto_flush if no_auto_flush is not None else config.beads_no_auto_flush
@@ -185,8 +199,8 @@ class BdCliClient(BdClientBase):
             List of global flag arguments
         """
         flags = []
-        if self.beads_db:
-            flags.extend(["--db", self.beads_db])
+        # NOTE: --db flag removed in v0.20.1, bd now auto-discovers database via cwd
+        # We pass cwd via _run_command instead
         if self.actor:
             flags.extend(["--actor", self.actor])
         if self.no_auto_flush:
@@ -215,7 +229,12 @@ class BdCliClient(BdClientBase):
         # Log database routing for debugging
         import sys
         working_dir = self._get_working_dir()
-        db_info = self.beads_db if self.beads_db else "auto-discover"
+        if self.beads_dir:
+            db_info = f"BEADS_DIR={self.beads_dir}"
+        elif self.beads_db:
+            db_info = f"BEADS_DB={self.beads_db} (deprecated)"
+        else:
+            db_info = "auto-discover"
         print(f"[beads-mcp] Running bd command: {' '.join(args)}", file=sys.stderr)
         print(f"[beads-mcp]   Database: {db_info}", file=sys.stderr)
         print(f"[beads-mcp]   Working dir: {working_dir}", file=sys.stderr)
@@ -575,6 +594,28 @@ class BdCliClient(BdClientBase):
 
         return [BlockedIssue.model_validate(issue) for issue in data]
 
+    async def inspect_migration(self) -> dict:
+        """Get migration plan and database state for agent analysis.
+
+        Returns:
+            Migration plan dict with registered_migrations, warnings, etc.
+        """
+        data = await self._run_command("migrate", "--inspect")
+        if not isinstance(data, dict):
+            raise BdCommandError("Invalid response for inspect_migration")
+        return data
+
+    async def get_schema_info(self) -> dict:
+        """Get current database schema for inspection.
+
+        Returns:
+            Schema info dict with tables, version, config, sample IDs, etc.
+        """
+        data = await self._run_command("info", "--schema")
+        if not isinstance(data, dict):
+            raise BdCommandError("Invalid response for get_schema_info")
+        return data
+
     async def init(self, params: InitParams | None = None) -> str:
         """Initialize bd in current directory.
 
@@ -624,6 +665,7 @@ BdClient = BdCliClient
 def create_bd_client(
     prefer_daemon: bool = False,
     bd_path: Optional[str] = None,
+    beads_dir: Optional[str] = None,
     beads_db: Optional[str] = None,
     actor: Optional[str] = None,
     no_auto_flush: Optional[bool] = None,
@@ -635,7 +677,8 @@ def create_bd_client(
     Args:
         prefer_daemon: If True, attempt to use daemon client first, fall back to CLI
         bd_path: Path to bd executable (for CLI client)
-        beads_db: Path to beads database (for CLI client)
+        beads_dir: Path to .beads directory (for CLI client)
+        beads_db: Path to beads database (deprecated, for CLI client)
         actor: Actor name for audit trail
         no_auto_flush: Disable auto-flush (CLI only)
         no_auto_import: Disable auto-import (CLI only)
@@ -700,6 +743,7 @@ def create_bd_client(
     # Use CLI client
     return BdCliClient(
         bd_path=bd_path,
+        beads_dir=beads_dir,
         beads_db=beads_db,
         actor=actor,
         no_auto_flush=no_auto_flush,

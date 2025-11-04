@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -109,6 +111,55 @@ func TestValidatePreExport(t *testing.T) {
 		err := validatePreExport(ctx, store, jsonlPath)
 		if err == nil {
 			t.Error("Expected error for empty DB over unreadable non-empty JSONL, got nil")
+		}
+	})
+
+	t.Run("JSONL newer than DB fails", func(t *testing.T) {
+		// Create temp directory
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("Failed to create .beads dir: %v", err)
+		}
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+
+		// Create database with issue
+		store := newTestStoreWithPrefix(t, dbPath, "bd")
+		ctx := context.Background()
+		issue := &types.Issue{
+			ID:          "bd-1",
+			Title:       "Test",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeTask,
+			Description: "Test issue",
+		}
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("Failed to create issue: %v", err)
+		}
+
+		// Create JSONL file with newer timestamp
+		jsonlContent := `{"id":"bd-1","title":"Test","status":"open","priority":1}
+`
+		if err := os.WriteFile(jsonlPath, []byte(jsonlContent), 0600); err != nil {
+			t.Fatalf("Failed to write JSONL: %v", err)
+		}
+
+		// Touch JSONL to make it newer than DB
+		// (in real scenario, this happens when git pull updates JSONL but daemon hasn't imported yet)
+		futureTime := time.Now().Add(1 * time.Second)
+		if err := os.Chtimes(jsonlPath, futureTime, futureTime); err != nil {
+			t.Fatalf("Failed to touch JSONL: %v", err)
+		}
+
+		// Should fail validation (JSONL is newer, must import first)
+		err := validatePreExport(ctx, store, jsonlPath)
+		if err == nil {
+			t.Error("Expected error for JSONL newer than DB, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "JSONL is newer than database") {
+			t.Errorf("Expected 'JSONL is newer' error, got: %v", err)
 		}
 	})
 }

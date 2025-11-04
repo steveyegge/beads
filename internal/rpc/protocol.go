@@ -16,6 +16,7 @@ const (
 	OpList            = "list"
 	OpShow            = "show"
 	OpReady           = "ready"
+	OpStale           = "stale"
 	OpStats           = "stats"
 	OpDepAdd          = "dep_add"
 	OpDepRemove       = "dep_remove"
@@ -25,6 +26,7 @@ const (
 	OpCommentList     = "comment_list"
 	OpCommentAdd      = "comment_add"
 	OpBatch           = "batch"
+	OpResolveID       = "resolve_id"
 
 	OpCompact         = "compact"
 	OpCompactStats    = "compact_stats"
@@ -104,12 +106,26 @@ type ShowArgs struct {
 	ID string `json:"id"`
 }
 
+// ResolveIDArgs represents arguments for the resolve_id operation
+type ResolveIDArgs struct {
+	ID string `json:"id"`
+}
+
 // ReadyArgs represents arguments for the ready operation
 type ReadyArgs struct {
-	Assignee   string `json:"assignee,omitempty"`
-	Priority   *int   `json:"priority,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	SortPolicy string `json:"sort_policy,omitempty"`
+	Assignee   string   `json:"assignee,omitempty"`
+	Priority   *int     `json:"priority,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
+	SortPolicy string   `json:"sort_policy,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
+	LabelsAny  []string `json:"labels_any,omitempty"`
+}
+
+// StaleArgs represents arguments for the stale command
+type StaleArgs struct {
+	Days   int    `json:"days,omitempty"`
+	Status string `json:"status,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency

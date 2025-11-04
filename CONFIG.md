@@ -166,6 +166,9 @@ Configuration keys use dot-notation namespaces to organize settings:
 
 - `compact_*` - Compaction settings (see EXTENDING.md)
 - `issue_prefix` - Issue ID prefix (managed by `bd init`)
+- `max_collision_prob` - Maximum collision probability for adaptive hash IDs (default: 0.25)
+- `min_hash_length` - Minimum hash ID length (default: 4)
+- `max_hash_length` - Maximum hash ID length (default: 8)
 
 ### Integration Namespaces
 
@@ -175,6 +178,26 @@ Use these namespaces for external integrations:
 - `linear.*` - Linear integration settings
 - `github.*` - GitHub integration settings
 - `custom.*` - Custom integration settings
+
+### Example: Adaptive Hash ID Configuration
+
+```bash
+# Configure adaptive ID lengths (see docs/ADAPTIVE_IDS.md)
+# Default: 25% max collision probability
+bd config set max_collision_prob "0.25"
+
+# Start with 4-char IDs, scale up as database grows
+bd config set min_hash_length "4"
+bd config set max_hash_length "8"
+
+# Stricter collision tolerance (1%)
+bd config set max_collision_prob "0.01"
+
+# Force minimum 5-char IDs for consistency
+bd config set min_hash_length "5"
+```
+
+See [docs/ADAPTIVE_IDS.md](docs/ADAPTIVE_IDS.md) for detailed documentation.
 
 ### Example: Jira Integration
 

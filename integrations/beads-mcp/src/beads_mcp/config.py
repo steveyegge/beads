@@ -32,6 +32,7 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     beads_path: str = Field(default_factory=_default_beads_path)
+    beads_dir: str | None = None
     beads_db: str | None = None
     beads_actor: str | None = None
     beads_no_auto_flush: bool = False
@@ -72,6 +73,35 @@ class Config(BaseSettings):
 
         if not os.access(v, os.X_OK):
             raise ValueError(f"bd executable at {v} is not executable.\nPlease check file permissions.")
+
+        return v
+
+    @field_validator("beads_dir")
+    @classmethod
+    def validate_beads_dir(cls, v: str | None) -> str | None:
+        """Validate BEADS_DIR points to an existing .beads directory.
+
+        Args:
+            v: Path to .beads directory or None
+
+        Returns:
+            Validated path or None
+
+        Raises:
+            ValueError: If path is set but directory doesn't exist
+        """
+        if v is None:
+            return v
+
+        path = Path(v)
+        if not path.exists():
+            raise ValueError(
+                f"BEADS_DIR points to non-existent directory: {v}\n"
+                + "Please verify the .beads directory path is correct."
+            )
+
+        if not path.is_dir():
+            raise ValueError(f"BEADS_DIR must point to a directory, not a file: {v}")
 
         return v
 
@@ -129,7 +159,8 @@ def load_config() -> Config:
             + "After installation, restart Claude Code.\n\n"
             + "Advanced configuration (optional):\n"
             + f"  BEADS_PATH            - Path to bd executable (default: {default_path})\n"
-            + "  BEADS_DB              - Path to beads database file (default: auto-discover)\n"
+            + "  BEADS_DIR             - Path to .beads directory (default: auto-discover)\n"
+            + "  BEADS_DB              - Path to database file (deprecated, use BEADS_DIR)\n"
             + "  BEADS_WORKING_DIR     - Working directory for bd commands (default: $PWD or cwd)\n"
             + "  BEADS_ACTOR           - Actor name for audit trail (default: $USER)\n"
             + "  BEADS_NO_AUTO_FLUSH   - Disable automatic JSONL sync (default: false)\n"

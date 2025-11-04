@@ -135,7 +135,13 @@ bd info --json
 # Find ready work (no blockers)
 bd ready --json
 
+# Find stale issues (not updated recently)
+bd stale --days 30 --json                    # Default: 30 days
+bd stale --days 90 --status in_progress --json  # Filter by status
+bd stale --limit 20 --json                   # Limit results
+
 # Create new issue
+# IMPORTANT: Always quote titles and descriptions with double quotes
 bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
 # Create with explicit ID (for parallel workers)
@@ -144,8 +150,18 @@ bd create "Issue title" --id worker1-100 -p 1 --json
 # Create with labels
 bd create "Issue title" -t bug -p 1 -l bug,critical --json
 
+# Examples with special characters (all require quoting):
+bd create "Fix: auth doesn't validate tokens" -t bug -p 1 --json
+bd create "Add support for OAuth 2.0" -d "Implement RFC 6749 (OAuth 2.0 spec)" --json
+
 # Create multiple issues from markdown file
 bd create -f feature-plan.md --json
+
+# Create epic with hierarchical child tasks
+bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
+bd create "Login UI" -p 1 --json                     # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1 --json           # Auto-assigned: bd-a3f8e9.2
+bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.3
 
 # Update one or more issues
 bd update <id> [<id>...] --status in_progress --json
@@ -192,10 +208,10 @@ bd rename-prefix kw- --json     # Apply rename
 # Restore compacted issue from git history
 bd restore <id>  # View full history at time of compaction
 
-# Import with collision detection
-bd import -i .beads/issues.jsonl --dry-run             # Preview only
-bd import -i .beads/issues.jsonl --resolve-collisions  # Auto-resolve
-bd import -i .beads/issues.jsonl --resolve-collisions --dedupe-after  # Auto-resolve + detect duplicates
+# Import issues from JSONL
+bd import -i .beads/issues.jsonl --dry-run      # Preview changes
+bd import -i .beads/issues.jsonl                # Import and update issues
+bd import -i .beads/issues.jsonl --dedupe-after # Import + detect duplicates
 
 # Find and merge duplicate issues
 bd duplicates                                          # Show all duplicates
@@ -210,7 +226,25 @@ bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
 bd migrate                                             # Detect and migrate old databases
 bd migrate --dry-run                                   # Preview migration
 bd migrate --cleanup --yes                             # Migrate and remove old files
+
+# AI-supervised migration (check before running bd migrate)
+bd migrate --inspect --json                            # Show migration plan for AI agents
+bd info --schema --json                                # Get schema, tables, config, sample IDs
+
+# Workflow: AI agents should inspect first, then migrate
+# 1. Run --inspect to see pending migrations and warnings
+# 2. Check for missing_config (like issue_prefix)
+# 3. Review invariants_to_check for safety guarantees
+# 4. If warnings exist, fix config issues first
+# 5. Then run bd migrate safely
 ```
+
+**Migration safety:** The system verifies data integrity invariants after migrations:
+- **required_config_present**: Ensures issue_prefix and schema_version are set
+- **foreign_keys_valid**: No orphaned dependencies or labels
+- **issue_count_stable**: Issue count doesn't decrease unexpectedly
+
+These invariants prevent data loss and would have caught issues like GH #201 (missing issue_prefix after migration).
 
 ### Managing Daemons
 
@@ -321,7 +355,7 @@ bd daemons killall  # Restart with default (poll) mode
 
 ### Workflow
 
-1. **Check for ready work**: Run `bd ready` to see what's unblocked
+1. **Check for ready work**: Run `bd ready` to see what's unblocked (or `bd stale` to find forgotten issues)
 2. **Claim your task**: `bd update <id> --status in_progress`
 3. **Work on it**: Implement, test, document
 4. **Discover new work**: If you find bugs or TODOs, create issues:
@@ -335,8 +369,10 @@ bd daemons killall  # Restart with default (poll) mode
 - `bug` - Something broken that needs fixing
 - `feature` - New functionality
 - `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature composed of multiple issues
+- `epic` - Large feature composed of multiple issues (supports hierarchical children)
 - `chore` - Maintenance work (dependencies, tooling)
+
+**Hierarchical children:** Epics can have child issues with dotted IDs (e.g., `bd-a3f8e9.1`, `bd-a3f8e9.2`). Children are auto-numbered sequentially. Up to 3 levels of nesting supported. The parent hash ensures unique namespace - no coordination needed between agents working on different epics.
 
 ### Priorities
 
@@ -371,8 +407,8 @@ bd duplicates --auto-merge
 # Preview what would be merged
 bd duplicates --dry-run
 
-# During import (after collision resolution)
-bd import -i issues.jsonl --resolve-collisions --dedupe-after
+# During import
+bd import -i issues.jsonl --dedupe-after
 ```
 
 **Detection strategies:**
@@ -472,6 +508,57 @@ beads/
 
 The 30-second debounce provides a **transaction window** for batch operations - multiple issue changes within 30 seconds get flushed together, avoiding commit spam.
 
+### Protected Branch Workflow
+
+**If your repository uses protected branches (GitHub, GitLab, etc.)**, beads can commit to a separate branch instead of `main`:
+
+```bash
+# Initialize with separate sync branch
+bd init --branch beads-metadata
+
+# Or configure existing setup
+bd config set sync.branch beads-metadata
+```
+
+**How it works:**
+- Beads commits issue updates to `beads-metadata` instead of `main`
+- Uses git worktrees (lightweight checkouts) in `.git/beads-worktrees/`
+- Your main working directory is never affected
+- Periodically merge `beads-metadata` back to `main` via pull request
+
+**Daily workflow (unchanged for agents):**
+
+```bash
+# Agents work normally - no changes needed!
+bd create "Fix authentication" -t bug -p 1
+bd update bd-a1b2 --status in_progress
+bd close bd-a1b2 "Fixed"
+```
+
+All changes automatically commit to `beads-metadata` branch (if daemon is running with `--auto-commit`).
+
+**Merging to main (humans):**
+
+```bash
+# Check what's changed
+bd sync --status
+
+# Option 1: Create pull request
+git push origin beads-metadata
+# Then create PR on GitHub/GitLab
+
+# Option 2: Direct merge (if allowed)
+bd sync --merge
+```
+
+**Benefits:**
+- ✅ Works with protected `main` branches
+- ✅ No disruption to agent workflows
+- ✅ Platform-agnostic (works on any git platform)
+- ✅ Backward compatible (opt-in via config)
+
+**See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for complete setup guide, troubleshooting, and examples.**
+
 ### Agent Session Workflow
 
 **IMPORTANT for AI agents:** When you finish making issue changes, always run:
@@ -506,16 +593,20 @@ bd sync
 - User might think you pushed but JSONL is still dirty
 - `bd sync` forces immediate flush/commit/push
 
-**Alternative**: Install git hooks for automatic flush on commit:
+**STRONGLY RECOMMENDED: Install git hooks for automatic sync** (prevents stale JSONL problems):
 
 ```bash
-# One-time setup
+# One-time setup - run this in each beads workspace
 ./examples/git-hooks/install.sh
 ```
 
 This installs:
 - **pre-commit** - Flushes pending changes immediately before commit (bypasses 30s debounce)
 - **post-merge** - Imports updated JSONL after pull/merge (guaranteed sync)
+- **pre-push** - Exports database to JSONL before push (prevents stale JSONL from reaching remote)
+
+**Why git hooks matter:**
+Without the pre-push hook, you can have database changes committed locally but stale JSONL pushed to remote, causing multi-workspace divergence. The hooks guarantee DB ↔ JSONL consistency.
 
 See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details.
 
@@ -557,42 +648,40 @@ bd automatically detects when you're in a worktree and shows a prominent warning
 **Why It Matters:**
 The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch, leading to confusion and incorrect git history.
 
-### Handling Import Collisions
+### Handling Git Merge Conflicts
 
-When merging branches or pulling changes, you may encounter ID collisions (same ID, different content). bd detects and safely handles these:
+**With hash-based IDs (v0.20.1+), ID collisions are eliminated!** Different issues get different hash IDs, so most git merges succeed cleanly.
 
-**Check for collisions after merge:**
+**When git merge conflicts occur:**
+Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on both branches (different timestamps/fields). This is a **same-issue update conflict**, not an ID collision. Conflicts are rare in practice since hash IDs prevent structural collisions.
+
+**Automatic detection:**
+bd automatically detects conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and shows clear resolution steps:
+- `bd import` rejects files with conflict markers and shows resolution commands
+- `bd validate --checks=conflicts` scans for conflicts in JSONL
+
+**Resolution workflow:**
 ```bash
-# After git merge or pull
-bd import -i .beads/issues.jsonl --dry-run
+# After git merge creates conflict in .beads/beads.jsonl
 
-# Output shows:
-# === Collision Detection Report ===
-# Exact matches (idempotent): 15
-# New issues: 5
-# COLLISIONS DETECTED: 3
-#
-# Colliding issues:
-#   bd-10: Fix authentication (conflicting fields: [title, priority])
-#   bd-12: Add feature (conflicting fields: [description, status])
+# Option 1: Accept their version (remote)
+git checkout --theirs .beads/beads.jsonl
+bd import -i .beads/beads.jsonl
+
+# Option 2: Keep our version (local)
+git checkout --ours .beads/beads.jsonl  
+bd import -i .beads/beads.jsonl
+
+# Option 3: Manual resolution in editor
+# Edit .beads/beads.jsonl to remove conflict markers
+bd import -i .beads/beads.jsonl
+
+# Commit the merge
+git add .beads/beads.jsonl
+git commit
 ```
 
-**Resolve collisions automatically:**
-```bash
-# Let bd resolve collisions by remapping incoming issues to new IDs
-bd import -i .beads/issues.jsonl --resolve-collisions
-
-# bd will:
-# - Keep existing issues unchanged
-# - Assign new IDs to colliding issues (bd-25, bd-26, etc.)
-# - Update ALL text references and dependencies automatically
-# - Report the remapping with reference counts
-```
-
-**Important**: The `--resolve-collisions` flag is safe and recommended for branch merges. It preserves the existing database and only renumbers the incoming colliding issues. All text mentions like "see bd-10" and dependency links are automatically updated to use the new IDs.
-
-**Manual resolution** (alternative):
-If you prefer manual control, resolve the Git conflict in `.beads/issues.jsonl` directly, then import normally without `--resolve-collisions`.
+**Note:** `bd import` automatically handles updates - same ID with different content is a normal update operation. No special flags needed. If you accidentally modified the same issue in both branches, just pick whichever version is more complete.
 
 ### Advanced: Intelligent Merge Tools
 
@@ -604,9 +693,7 @@ For Git merge conflicts in `.beads/issues.jsonl`, consider using **[beads-merge]
 - Leaves remaining conflicts for manual resolution
 - Works as a Git/jujutsu merge driver
 
-**Two types of conflicts, two tools:**
-- **Git merge conflicts** (same issue modified in two branches) → Use beads-merge during git merge
-- **ID collisions** (different issues with same ID) → Use `bd import --resolve-collisions` after merge
+**Beads-merge** helps with intelligent field-level merging during git merge. After resolving, just `bd import` to update your database.
 
 ## Current Project Status
 
@@ -709,9 +796,39 @@ rm .beads/.exclusive-lock
 - Use `--no-auto-flush` or `--no-auto-import` to disable automatic sync if needed
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4
-- Use `--dry-run` to preview import collisions before resolving
-- Use `--resolve-collisions` for safe automatic branch merges
+- Use `--dry-run` to preview import changes before applying
+- Hash IDs eliminate collisions - same ID with different content is a normal update
 - Use `--id` flag with `bd create` to partition ID space for parallel workers (e.g., `worker1-100`, `worker2-500`)
+
+### Checking GitHub Issues and PRs
+
+**IMPORTANT**: When asked to check GitHub issues or PRs, use command-line tools like `gh` instead of browser/playwright tools.
+
+**Preferred approach:**
+```bash
+# List open issues with details
+gh issue list --limit 30
+
+# List open PRs
+gh pr list --limit 30
+
+# View specific issue
+gh issue view 201
+```
+
+**Then provide an in-conversation summary** highlighting:
+- Urgent/critical issues (regressions, bugs, broken builds)
+- Common themes or patterns
+- Feature requests with high engagement
+- Items that need immediate attention
+
+**Why this matters:**
+- Browser tools consume more tokens and are slower
+- CLI summaries are easier to scan and discuss
+- Keeps the conversation focused and efficient
+- Better for quick triage and prioritization
+
+**Do NOT use:** `browser_navigate`, `browser_snapshot`, or other playwright tools for GitHub PR/issue reviews unless specifically requested by the user.
 
 ## Building and Testing
 
@@ -884,15 +1001,45 @@ Add to MCP config (e.g., `~/.config/claude/config.json`):
 
 Then use `mcp__beads__*` functions instead of CLI commands.
 
+### Managing AI-Generated Planning Documents
+
+AI assistants often create planning and design documents during development:
+- PLAN.md, IMPLEMENTATION.md, ARCHITECTURE.md
+- DESIGN.md, CODEBASE_SUMMARY.md, INTEGRATION_PLAN.md
+- TESTING_GUIDE.md, TECHNICAL_DESIGN.md, and similar files
+
+**Best Practice: Use a dedicated directory for these ephemeral files**
+
+**Recommended approach:**
+- Create a `history/` directory in the project root
+- Store ALL AI-generated planning/design docs in `history/`
+- Keep the repository root clean and focused on permanent project files
+- Only access `history/` when explicitly asked to review past planning
+
+**Example .gitignore entry (optional):**
+```
+# AI planning documents (ephemeral)
+history/
+```
+
+**Benefits:**
+- ✅ Clean repository root
+- ✅ Clear separation between ephemeral and permanent documentation
+- ✅ Easy to exclude from version control if desired
+- ✅ Preserves planning history for archaeological research
+- ✅ Reduces noise when browsing the project
+
 ### Important Rules
 
 - ✅ Use bd for ALL task tracking
 - ✅ Always use `--json` flag for programmatic use
 - ✅ Link discovered work with `discovered-from` dependencies
 - ✅ Check `bd ready` before asking "what should I work on?"
+- ✅ Store AI planning docs in `history/` directory
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT use external issue trackers
 - ❌ Do NOT duplicate tracking systems
+- ❌ Do NOT clutter repo root with planning documents
 
 For more details, see README.md and QUICKSTART.md.
 <!-- /bd onboard section -->

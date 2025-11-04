@@ -85,8 +85,12 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 	
 	// Test 1: Validate with matching hash (should succeed)
 	t.Run("MatchingHash", func(t *testing.T) {
-		if err := validateJSONLIntegrity(ctx, jsonlPath); err != nil {
+		needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+		if err != nil {
 			t.Fatalf("validation failed with matching hash: %v", err)
+		}
+		if needsFullExport {
+			t.Fatalf("expected needsFullExport=false for matching hash")
 		}
 	})
 	
@@ -103,8 +107,12 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		}
 		
 		// Validate should detect mismatch and clear export_hashes
-		if err := validateJSONLIntegrity(ctx, jsonlPath); err != nil {
+		needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+		if err != nil {
 			t.Fatalf("validation failed: %v", err)
+		}
+		if !needsFullExport {
+			t.Fatalf("expected needsFullExport=true after clearing export_hashes")
 		}
 		
 		// Verify export_hashes were cleared
@@ -135,8 +143,12 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		}
 		
 		// Validate should detect missing file and clear export_hashes
-		if err := validateJSONLIntegrity(ctx, jsonlPath); err != nil {
+		needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+		if err != nil {
 			t.Fatalf("validation failed: %v", err)
+		}
+		if !needsFullExport {
+			t.Fatalf("expected needsFullExport=true after clearing export_hashes")
 		}
 		
 		// Verify export_hashes were cleared
@@ -214,7 +226,7 @@ func TestImportClearsExportHashes(t *testing.T) {
 	}
 	
 	opts := ImportOptions{
-		ResolveCollisions:    false,
+
 		DryRun:               false,
 		SkipUpdate:           false,
 		Strict:               false,

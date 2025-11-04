@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -14,6 +15,20 @@ import (
 // validatePreExport performs integrity checks before exporting database to JSONL.
 // Returns error if critical issues found that would cause data loss.
 func validatePreExport(ctx context.Context, store storage.Storage, jsonlPath string) error {
+	// Check if JSONL is newer than database - if so, must import first
+	jsonlInfo, jsonlStatErr := os.Stat(jsonlPath)
+	if jsonlStatErr == nil {
+		beadsDir := filepath.Dir(jsonlPath)
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbInfo, dbStatErr := os.Stat(dbPath)
+		if dbStatErr == nil {
+			// If JSONL is newer, refuse export - caller must import first
+			if jsonlInfo.ModTime().After(dbInfo.ModTime()) {
+				return fmt.Errorf("refusing to export: JSONL is newer than database (import first to avoid data loss)")
+			}
+		}
+	}
+
 	// Get database issue count (fast path with COUNT(*) if available)
 	dbCount, err := countDBIssuesFast(ctx, store)
 	if err != nil {
@@ -22,13 +37,12 @@ func validatePreExport(ctx context.Context, store storage.Storage, jsonlPath str
 
 	// Get JSONL issue count
 	jsonlCount := 0
-	fileInfo, statErr := os.Stat(jsonlPath)
-	if statErr == nil {
+	if jsonlStatErr == nil {
 		jsonlCount, err = countIssuesInJSONL(jsonlPath)
 		if err != nil {
 			// Conservative: if JSONL exists with content but we can't count it,
 			// and DB is empty, refuse to export (potential data loss)
-			if dbCount == 0 && fileInfo.Size() > 0 {
+			if dbCount == 0 && jsonlInfo.Size() > 0 {
 				return fmt.Errorf("refusing to export empty DB over existing JSONL whose contents couldn't be verified: %w", err)
 			}
 			// Warning for other cases

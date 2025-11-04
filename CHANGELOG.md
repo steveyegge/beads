@@ -7,6 +7,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.7] - 2025-11-04
+
+### Fixed
+
+- **Memory Database Connection Pool** (bd-b121): Fixed `:memory:` database handling to use single shared connection
+  - Prevents "no such table" errors when using in-memory databases
+  - Ensures connection pool reuses the same in-memory instance
+  - Critical fix for event-driven daemon mode tests
+
+- **Test Suite Stability**: Fixed event-driven test flakiness
+  - Added `waitFor` helper for event-driven testing
+  - Improved timing-dependent test reliability
+
+## [0.21.6] - 2025-11-04
+
+### Added
+
+- **npm Package** (bd-febc): Created `@beads/bd` npm package for Node.js/Claude Code for Web integration
+  - Native binary downloads from GitHub releases
+  - Integration tests and release documentation
+  - Postinstall script for platform-specific binary installation
+
+- **Template Support** (bd-164b): Issue creation from markdown templates
+  - Create multiple issues from a single file
+  - Structured format for bulk issue creation
+
+- **`bd comment` Alias** (bd-d3f0): Convenient shorthand for `bd comments add`
+
+### Changed
+
+- **Base36 Issue IDs** (GH #213): Switched from hex to Base36 encoding for shorter, more readable IDs
+  - Reduces ID length while maintaining uniqueness
+  - More human-friendly format
+
+### Fixed
+
+- **SQLite URI Handling** (bd-c54b): Fixed `file://` URI scheme to prevent query params in filename
+  - Prevents database corruption from malformed URIs
+  - Fixed `:memory:` database connection strings
+
+- **`bd init --no-db` Behavior** (GH #210): Now correctly creates `metadata.json` and `config.yaml`
+  - Previously failed to set `no-db: true` flag
+  - Improved metadata-only initialization workflow
+
+- **Symlink Path Resolution**: Fixed `findDatabaseInTree` to properly resolve symlinks
+- **Epic Hierarchy Display**: Fixed `bd show` command to correctly display epic child relationships
+- **CI Stability**: Fixed performance thresholds, test eligibility, and lint errors
+
+### Dependencies
+
+- Bumped `github.com/anthropics/anthropic-sdk-go` from 1.14.0 to 1.16.0
+- Bumped `fastmcp` from 2.13.0.1 to 2.13.0.2
+
+## [0.21.5] - 2025-11-02
+
+### Fixed
+
+- **Critical Double JSON Encoding Bug** (bd-1048, bd-4ec8): Fixed widespread bug in daemon RPC calls where `ResolveID` responses were incorrectly converted using `string(resp.Data)` instead of `json.Unmarshal`. This caused IDs to become double-quoted (`"\"bd-1048\""`) and database lookups to fail. Affected commands:
+  - `bd show` - nil pointer dereference and 3 instances of double encoding
+  - `bd dep add/remove/tree` - 5 instances
+  - `bd label add/remove/list` - 3 instances  
+  - `bd reopen` - 1 instance
+  
+  All 12 instances fixed with proper JSON unmarshaling.
+
+## [0.21.4] - 2025-11-02
+
+### Added
+
+- **New Commands**:
+  - `bd status` - Database overview command showing issue counts and stats (bd-28db)
+  - `bd comment` - Convenient alias for `bd comments add` (bd-d3f0)
+  - `bd daemons restart` - Restart specific daemon without manual kill/start
+  - `--json` flag for `bd stale` command
+
+- **Protected Branch Workflow**:
+  - `BEADS_DIR` environment variable for custom database location (bd-e16b)
+  - `sync.branch` configuration for protected branch workflows (bd-b7d2)
+  - Git worktree management with sparse checkout for sync branches (bd-a4b5)
+    - Only checks out `.beads/` in worktrees, minimal disk usage
+    - Only used when `sync.branch` is configured, not for default users
+  - Comprehensive protected branch documentation
+
+- **Migration & Validation**:
+  - Migration inspection tools for AI agents (bd-627d)
+  - Conflict marker detection in `bd import` and `bd validate`
+  - Git hooks health check in `bd doctor`
+  - External reference (`external_ref`) UNIQUE constraint and validation
+  - `external_ref` now primary matching key for import updates (bd-1022)
+
+### Fixed
+
+- **Critical Fixes**:
+  - Daemon corruption from git conflicts (bd-8931)
+  - MCP `set_context` hangs with stdio transport (GH #153)
+  - Double-release race condition in `importInProgress` flag
+  - Critical daemon race condition causing stale exports
+
+- **Configuration & Migration**:
+  - `bd migrate` now detects and sets missing `issue_prefix` config
+  - Config system refactored (renamed `config.json` → `metadata.json`)
+  - Config version update in migrate command
+
+- **Daemon & RPC**:
+  - `bd doctor --json` flag not working (bd-6049)
+  - `bd import` now flushes JSONL immediately for daemon visibility (bd-47f1)
+  - Panic recovery in RPC `handleConnection` (bd-1048)
+  - Daemon auto-upgrades database version instead of exiting
+
+- **Windows Compatibility**:
+  - Windows test failures (path handling, bd binary references)
+  - Windows CI: forward slashes in git hook shell scripts
+  - TestMetricsSnapshot/uptime flakiness on Windows
+
+- **Code Quality**:
+  - All golangci-lint errors fixed - linter now passes cleanly
+  - All gosec, misspell, and unparam linter warnings resolved
+  - Tightened file permissions and added security exclusions
+
+### Changed
+
+- Daemon automatically upgrades database schema version instead of exiting
+- Git worktree management for sync branches uses sparse checkout (`.beads/` only)
+- Improved test isolation and performance optimization
+
+## [0.21.2] - 2025-11-01
+
+### Changed
+- Homebrew formula now auto-published in main repo via GoReleaser
+- Deprecated separate homebrew-beads tap repository
+
+## [0.21.1] - 2025-10-31
+
+### Changed
+- Version bump for consistency across CLI, MCP server, and plugin
+
+## [0.20.1] - 2025-10-31
+
+### Breaking Changes
+
+- **Hash-Based IDs Now Default**: Sequential IDs (bd-1, bd-2) replaced with hash-based IDs (bd-a1b2, bd-f14c)
+  - 4-character hashes for 0-500 issues
+  - 5-character hashes for 500-1,500 issues  
+  - 6-character hashes for 1,500-10,000 issues
+  - Progressive length extension prevents collisions with birthday paradox math
+  - **Migration required**: Run `bd migrate` to upgrade schema (removes `issue_counters` table)
+  - Existing databases continue working - migration is opt-in
+  - Dramatically reduces merge conflicts in multi-worker/multi-branch workflows
+  - Eliminates ID collision issues when multiple agents create issues concurrently
+
+### Removed
+
+- **Sequential ID Generation**: Removed `SyncAllCounters()`, `AllocateNextID()`, and collision remapping logic (bd-c7af, bd-8e05, bd-4c74)
+  - Hash IDs handle collisions by extending hash length, not remapping
+  - `issue_counters` table removed from schema
+  - `--resolve-collisions` flag removed from import (no longer needed)
+  - 400+ lines of obsolete collision handling code removed
+
+### Changed
+
+- **Collision Handling**: Automatic hash extension on collision instead of ID remapping
+  - Much simpler and more reliable than sequential remapping
+  - No cross-branch coordination needed
+  - Birthday paradox ensures extremely low collision rates
+
+### Migration Notes
+
+**For users upgrading from 0.20.0 or earlier:**
+
+1. Run `bd migrate` to detect and upgrade old database schemas
+2. Database continues to work without migration, but you'll see warnings
+3. Hash IDs provide better multi-worker reliability at the cost of non-numeric IDs
+4. Old sequential IDs like `bd-152` become hash IDs like `bd-f14c`
+
+See README.md for hash ID format details and birthday paradox collision analysis.
+
+## [0.20.0] - 2025-10-30
+
+### Added
+- **Hash-Based IDs**: New collision-resistant ID system (bd-168, bd-166, bd-167)
+  - 6-character hash IDs with progressive 7/8-char fallback on collision
+  - Opt-in via `.beads/config.toml` with `id_mode = "hash"`
+  - Migration tool: `bd migrate --to-hash-ids` for existing databases
+  - Prefix-optional ID parsing (e.g., `bd-abc123` or just `abc123`)
+  - Hierarchical child ID generation for discovered-from relationships
+- **Substring ID Matching**: All bd commands now support partial ID matching (bd-170)
+  - `bd show abc` matches any ID containing "abc" (e.g., `bd-abc123`)
+  - Ambiguous matches show helpful error with all candidates
+- **Daemon Registry**: Multi-daemon management for multiple workspaces (bd-07b8c8)
+  - `bd daemons list` shows all running daemons across workspaces
+  - `bd daemons health` detects version mismatches and stale sockets
+  - `bd daemons logs <workspace>` for per-daemon log viewing
+  - `bd daemons killall` to restart all daemons after upgrades
+
+### Fixed
+- **Test Stability**: Deprecated sequence-ID collision tests
+  - Kept `TestFiveCloneCollision` for hash-ID multi-clone testing
+  - Fixed `TestTwoCloneCollision` to use merge instead of rebase
+- **Linting**: golangci-lint v2.5.0 compatibility
+  - Added `version: 2` field to `.golangci.yml`
+  - Renamed `exclude` to `exclude-patterns` for v3 format
+
+### Changed
+- **Multiple bd Detection**: Warning when multiple bd binaries in PATH (PR #182)
+  - Prevents confusion from version conflicts
+  - Shows locations of all bd binaries found
+
 ## [0.17.7] - 2025-10-26
 
 ### Fixed

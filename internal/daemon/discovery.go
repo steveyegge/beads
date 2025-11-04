@@ -68,9 +68,28 @@ type DaemonInfo struct {
 	Error               string
 }
 
-// DiscoverDaemons scans the filesystem for running bd daemons
-// It searches common locations and uses the Status RPC endpoint to gather metadata
+// DiscoverDaemons discovers running bd daemons using the registry
+// Falls back to filesystem scanning if searchRoots is explicitly provided (for compatibility)
 func DiscoverDaemons(searchRoots []string) ([]DaemonInfo, error) {
+	// If searchRoots is explicitly provided, use legacy filesystem scan
+	// This maintains compatibility for any callers that explicitly specify paths
+	if len(searchRoots) > 0 {
+		return discoverDaemonsLegacy(searchRoots)
+	}
+
+	// Use registry-based discovery (instant, no filesystem scanning)
+	registry, err := NewRegistry()
+	if err != nil {
+		// Fall back to legacy discovery if registry unavailable
+		return discoverDaemonsLegacy(nil)
+	}
+
+	return registry.List()
+}
+
+// discoverDaemonsLegacy scans the filesystem for running bd daemons (legacy method)
+// It searches common locations and uses the Status RPC endpoint to gather metadata
+func discoverDaemonsLegacy(searchRoots []string) ([]DaemonInfo, error) {
 	var daemons []DaemonInfo
 	seen := make(map[string]bool)
 
@@ -130,13 +149,21 @@ func discoverDaemon(socketPath string) DaemonInfo {
 	client, err := rpc.TryConnectWithTimeout(socketPath, 500*time.Millisecond)
 	if err != nil {
 		daemon.Error = fmt.Sprintf("failed to connect: %v", err)
+		// Check for daemon-error file
+		if errMsg := checkDaemonErrorFile(socketPath); errMsg != "" {
+			daemon.Error = errMsg
+		}
 		return daemon
 	}
 	if client == nil {
 		daemon.Error = "daemon not responding or unhealthy"
+		// Check for daemon-error file
+		if errMsg := checkDaemonErrorFile(socketPath); errMsg != "" {
+			daemon.Error = errMsg
+		}
 		return daemon
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Get status
 	status, err := client.Status()
@@ -185,6 +212,20 @@ func FindDaemonByWorkspace(workspacePath string) (*DaemonInfo, error) {
 	return nil, fmt.Errorf("no daemon found for workspace: %s", workspacePath)
 }
 
+// checkDaemonErrorFile checks for a daemon-error file in the .beads directory
+func checkDaemonErrorFile(socketPath string) string {
+	// Socket path is typically .beads/bd.sock, so get the parent dir
+	beadsDir := filepath.Dir(socketPath)
+	errFile := filepath.Join(beadsDir, "daemon-error")
+	
+	data, err := os.ReadFile(errFile)
+	if err != nil {
+		return ""
+	}
+	
+	return string(data)
+}
+
 // CleanupStaleSockets removes socket files and PID files for dead daemons
 func CleanupStaleSockets(daemons []DaemonInfo) (int, error) {
 	cleaned := 0
@@ -223,7 +264,7 @@ func StopDaemon(daemon DaemonInfo) error {
 	// Try graceful shutdown via RPC first
 	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 500*time.Millisecond)
 	if err == nil && client != nil {
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		if err := client.Shutdown(); err == nil {
 			// Wait a bit for daemon to shut down
 			time.Sleep(200 * time.Millisecond)
@@ -293,7 +334,7 @@ func stopDaemonWithTimeout(daemon DaemonInfo) error {
 	// Try RPC shutdown first (2 second timeout)
 	client, err := rpc.TryConnectWithTimeout(daemon.SocketPath, 2*time.Second)
 	if err == nil && client != nil {
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		if err := client.Shutdown(); err == nil {
 			// Wait and verify process died
 			time.Sleep(500 * time.Millisecond)

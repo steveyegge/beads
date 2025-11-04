@@ -224,11 +224,18 @@ bd ready --assignee alice    # Filter by assignee
 ```
 
 **Create new issue:**
+
+**IMPORTANT**: Always quote title and description arguments with double quotes, especially when containing spaces or special characters.
+
 ```bash
 bd create "Fix login bug"
 bd create "Add OAuth" -p 0 -t feature
 bd create "Write tests" -d "Unit tests for auth module" --assignee alice
 bd create "Research caching" --design "Evaluate Redis vs Memcached"
+
+# Examples with special characters (requires quoting):
+bd create "Fix: auth doesn't handle edge cases" -p 1
+bd create "Refactor auth module" -d "Split auth.go into separate files (handlers, middleware, utils)"
 ```
 
 **Update issue status:**

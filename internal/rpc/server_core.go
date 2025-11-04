@@ -51,9 +51,17 @@ type Server struct {
 	droppedEvents   atomic.Int64 // Counter for dropped mutation events
 }
 
+// Mutation event types
+const (
+	MutationCreate  = "create"
+	MutationUpdate  = "update"
+	MutationDelete  = "delete"
+	MutationComment = "comment"
+)
+
 // MutationEvent represents a database mutation for event-driven sync
 type MutationEvent struct {
-	Type      string    // "create", "update", "delete", "comment"
+	Type      string    // One of: MutationCreate, MutationUpdate, MutationDelete, MutationComment
 	IssueID   string    // e.g., "bd-42"
 	Timestamp time.Time
 }
@@ -76,6 +84,14 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		}
 	}
 
+	mutationBufferSize := 512 // default (increased from 100 for better burst handling)
+	if env := os.Getenv("BEADS_MUTATION_BUFFER"); env != "" {
+		var bufSize int
+		if _, err := fmt.Sscanf(env, "%d", &bufSize); err == nil && bufSize > 0 {
+			mutationBufferSize = bufSize
+		}
+	}
+
 	s := &Server{
 		socketPath:     socketPath,
 		workspacePath:  workspacePath,
@@ -89,7 +105,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		connSemaphore:  make(chan struct{}, maxConns),
 		requestTimeout: requestTimeout,
 		readyChan:      make(chan struct{}),
-		mutationChan:   make(chan MutationEvent, 100), // Buffered to avoid blocking
+		mutationChan:   make(chan MutationEvent, mutationBufferSize), // Configurable buffer
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s

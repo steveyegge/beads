@@ -47,12 +47,16 @@ func runEventDrivenLoop(
 	watcher, err := NewFileWatcher(jsonlPath, func() {
 		importDebouncer.Trigger()
 	})
+	var fallbackTicker *time.Ticker
 	if err != nil {
-		log.log("WARNING: File watcher unavailable (%v), mutations will trigger export only", err)
+		log.log("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
 		watcher = nil
+		// Fallback ticker to check for remote changes when watcher unavailable
+		fallbackTicker = time.NewTicker(60 * time.Second)
+		defer fallbackTicker.Stop()
 	} else {
 		watcher.Start(ctx, log)
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 	}
 
 	// Handle mutation events from RPC server
@@ -60,7 +64,12 @@ func runEventDrivenLoop(
 	go func() {
 		for {
 			select {
-			case event := <-mutationChan:
+			case event, ok := <-mutationChan:
+				if !ok {
+					// Channel closed (should never happen, but handle defensively)
+					log.log("Mutation channel closed; exiting listener")
+					return
+				}
 				log.log("Mutation detected: %s %s", event.Type, event.IssueID)
 				exportDebouncer.Trigger()
 
@@ -70,22 +79,37 @@ func runEventDrivenLoop(
 		}
 	}()
 
-	// Optional: Periodic health check and dropped events safety net
+	// Periodic health check
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Dropped events safety net (faster recovery than health check)
+	droppedEventsTicker := time.NewTicker(1 * time.Second)
+	defer droppedEventsTicker.Stop()
+
 	for {
 		select {
-		case <-healthTicker.C:
-			// Periodic health validation (not sync)
-			checkDaemonHealth(ctx, store, log)
-			
-			// Safety net: check for dropped mutation events
+		case <-droppedEventsTicker.C:
+			// Check for dropped mutation events every second
 			dropped := server.ResetDroppedEventsCount()
 			if dropped > 0 {
 				log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
 				exportDebouncer.Trigger()
 			}
+
+		case <-healthTicker.C:
+			// Periodic health validation (not sync)
+			checkDaemonHealth(ctx, store, log)
+
+		case <-func() <-chan time.Time {
+			if fallbackTicker != nil {
+				return fallbackTicker.C
+			}
+			// Never fire if watcher is available
+			return make(chan time.Time)
+		}():
+			log.log("Fallback ticker: checking for remote changes")
+			importDebouncer.Trigger()
 
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {
@@ -100,22 +124,25 @@ func runEventDrivenLoop(
 			return
 
 		case <-ctx.Done():
-			log.log("Context canceled, shutting down")
-			if watcher != nil {
-				watcher.Close()
-			}
+		log.log("Context canceled, shutting down")
+		if watcher != nil {
+		_ = watcher.Close()
+		}
 			if err := server.Stop(); err != nil {
 				log.log("Error stopping server: %v", err)
 			}
 			return
 
 		case err := <-serverErrChan:
-			log.log("RPC server failed: %v", err)
-			cancel()
-			if watcher != nil {
-				watcher.Close()
-			}
-			return
+		log.log("RPC server failed: %v", err)
+		cancel()
+		if watcher != nil {
+		_ = watcher.Close()
+		}
+		if stopErr := server.Stop(); stopErr != nil {
+			log.log("Error stopping server: %v", stopErr)
+		}
+		return
 		}
 	}
 }

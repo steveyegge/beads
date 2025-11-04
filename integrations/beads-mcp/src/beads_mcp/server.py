@@ -18,7 +18,9 @@ from beads_mcp.tools import (
     beads_blocked,
     beads_close_issue,
     beads_create_issue,
+    beads_get_schema_info,
     beads_init,
+    beads_inspect_migration,
     beads_list_issues,
     beads_quickstart,
     beads_ready_work,
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,  # Ensure logs don't pollute stdio protocol
 )
 
 T = TypeVar("T")
@@ -228,8 +231,20 @@ async def set_context(workspace_root: str) -> str:
     Returns:
         Confirmation message with resolved paths
     """
-    # Resolve to git repo root if possible
-    resolved_root = _resolve_workspace_root(workspace_root)
+    # Resolve to git repo root if possible (run in thread to avoid blocking event loop)
+    try:
+        resolved_root = await asyncio.wait_for(
+            asyncio.to_thread(_resolve_workspace_root, workspace_root),
+            timeout=5.0,  # Longer timeout to handle slow git operations
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Git detection timed out after 5s for: {workspace_root}")
+        return (
+            f"Error: Git repository detection timed out.\n"
+            f"  Provided path: {workspace_root}\n"
+            f"  This may indicate a slow filesystem or git configuration issue.\n"
+            f"  Please ensure the path is correct and git is responsive."
+        )
     
     # Always set working directory and context flag
     os.environ["BEADS_WORKING_DIR"] = resolved_root
@@ -497,6 +512,39 @@ async def debug_env(workspace_root: str | None = None) -> str:
         if not key.startswith("_"):  # Skip internal vars
             info.append(f"{key}={value}\n")
     return "".join(info)
+
+
+@mcp.tool(
+    name="inspect_migration",
+    description="Get migration plan and database state for agent analysis.",
+)
+@with_workspace
+async def inspect_migration(workspace_root: str | None = None) -> dict:
+    """Get migration plan and database state for agent analysis.
+    
+    AI agents should:
+    1. Review registered_migrations to understand what will run
+    2. Check warnings array for issues (missing config, version mismatch)
+    3. Verify missing_config is empty before migrating
+    4. Check invariants_to_check to understand safety guarantees
+    
+    Returns migration plan, current db state, warnings, and invariants.
+    """
+    return await beads_inspect_migration()
+
+
+@mcp.tool(
+    name="get_schema_info",
+    description="Get current database schema for inspection.",
+)
+@with_workspace
+async def get_schema_info(workspace_root: str | None = None) -> dict:
+    """Get current database schema for inspection.
+    
+    Returns tables, schema version, config, sample issue IDs, and detected prefix.
+    Useful for verifying database state before migrations.
+    """
+    return await beads_get_schema_info()
 
 
 async def async_main() -> None:

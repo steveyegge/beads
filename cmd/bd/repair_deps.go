@@ -125,7 +125,7 @@ Interactive mode with --interactive prompts for each orphan.`,
 			for _, o := range orphans {
 				fmt.Printf("Remove dependency %s → %s (%s)? [y/N]: ", o.issueID, o.dependsOnID, o.depType)
 				var response string
-				fmt.Scanln(&response)
+				_, _ = fmt.Scanln(&response)
 				if response == "y" || response == "Y" {
 					// Use direct SQL to remove orphaned dependencies
 					// RemoveDependency tries to mark the depends_on issue as dirty, which fails for orphans
@@ -171,5 +171,6 @@ Interactive mode with --interactive prompts for each orphan.`,
 func init() {
 	repairDepsCmd.Flags().Bool("fix", false, "Automatically remove orphaned dependencies")
 	repairDepsCmd.Flags().Bool("interactive", false, "Interactively review each orphaned dependency")
+	repairDepsCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output repair results in JSON format")
 	rootCmd.AddCommand(repairDepsCmd)
 }

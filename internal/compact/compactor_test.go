@@ -24,7 +24,8 @@ func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("failed to set issue_prefix: %v", err)
 	}
-	if err := store.SetConfig(ctx, "compact_tier1_days", "0"); err != nil {
+	// Use 7 days minimum for Tier 1 compaction to ensure tests check eligibility properly
+	if err := store.SetConfig(ctx, "compact_tier1_days", "7"); err != nil {
 		t.Fatalf("failed to set config: %v", err)
 	}
 	if err := store.SetConfig(ctx, "compact_tier1_dep_levels", "2"); err != nil {
@@ -46,7 +47,8 @@ func createClosedIssue(t *testing.T, store *sqlite.SQLiteStorage, id string) *ty
 	}
 	
 	now := time.Now()
-	closedAt := now.Add(-1 * time.Second)
+	// Issue closed 8 days ago (beyond 7-day threshold for Tier 1)
+	closedAt := now.Add(-8 * 24 * time.Hour)
 	issue := &types.Issue{
 		ID:    id,
 		Title: "Test Issue",

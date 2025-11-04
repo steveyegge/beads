@@ -63,13 +63,15 @@ The hook is silent on success, fast (no git operations), and safe (fails commit 
 After a git pull or merge, the hook runs:
 
 ```bash
-bd import -i .beads/issues.jsonl --resolve-collisions
+bd import -i .beads/issues.jsonl
 ```
 
 This ensures your local database reflects the merged state. The hook:
 - Only runs if `.beads/issues.jsonl` exists
-- Automatically resolves ID collisions from branch merges
+- Imports any new issues or updates from the merge
 - Warns on failure but doesn't block the merge
+
+**Note:** With hash-based IDs (v0.20.1+), ID collisions don't occur - different issues get different hash IDs.
 
 ## Compatibility
 

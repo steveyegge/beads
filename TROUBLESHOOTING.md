@@ -29,6 +29,37 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
+### Wrong version of bd running / Multiple bd binaries in PATH
+
+If `bd version` shows an unexpected version (e.g., older than what you just installed), you likely have multiple `bd` binaries in your PATH.
+
+**Diagnosis:**
+```bash
+# Check all bd binaries in PATH
+which -a bd
+
+# Example output showing conflict:
+# /Users/you/go/bin/bd        <- From go install (older)
+# /opt/homebrew/bin/bd        <- From Homebrew (newer)
+```
+
+**Solution:**
+```bash
+# Remove old go install version
+rm ~/go/bin/bd
+
+# Or remove mise-managed Go installs
+rm ~/.local/share/mise/installs/go/*/bin/bd
+
+# Verify you're using the correct version
+which bd        # Should show /opt/homebrew/bin/bd or your package manager path
+bd version      # Should show the expected version
+```
+
+**Why this happens:** If you previously installed bd via `go install`, the binary was placed in `~/go/bin/`. When you later install via Homebrew or another package manager, the old `~/go/bin/bd` may appear earlier in your PATH, causing the wrong version to run.
+
+**Recommendation:** Choose one installation method (Homebrew recommended) and stick with it. Avoid mixing `go install` with package managers.
+
 ### `zsh: killed bd` or crashes on macOS
 
 Some users report crashes when running `bd init` or other commands on macOS. This is typically caused by CGO/SQLite compatibility issues.
@@ -146,7 +177,8 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 1. **If you have nested projects** (intentional):
    - This is fine! bd is designed to support this
    - Just be aware which database you're using
-   - Set `BEADS_DB` environment variable if you want to override the default selection
+   - Set `BEADS_DIR` environment variable to point to your `.beads` directory if you want to override the default selection
+   - Or use `BEADS_DB` (deprecated) to point directly to the database file
 
 2. **If you have accidental duplicates** (unintentional):
    - Decide which database to keep
@@ -156,10 +188,14 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
 
 3. **Override database selection**:
    ```bash
-   # Temporarily use specific database
-   BEADS_DB=/path/to/.beads/issues.db bd list
+   # Temporarily use specific .beads directory (recommended)
+   BEADS_DIR=/path/to/.beads bd list
 
    # Or add to shell config for permanent override
+   export BEADS_DIR=/path/to/.beads
+
+   # Legacy method (deprecated, points to database file directly)
+   BEADS_DB=/path/to/.beads/issues.db bd list
    export BEADS_DB=/path/to/.beads/issues.db
    ```
 
@@ -187,19 +223,24 @@ bd import -i .beads/issues.jsonl  # Sync to SQLite
 
 See [ADVANCED.md](ADVANCED.md) for detailed merge strategies.
 
-### ID collisions after branch merge
+### Git merge conflicts in JSONL
 
-When merging branches where different issues were created with the same ID:
+**With hash-based IDs (v0.20.1+), ID collisions don't occur.** Different issues get different hash IDs.
+
+If git shows a conflict in `.beads/issues.jsonl`, it's because the same issue was modified on both branches:
 
 ```bash
-# Check for collisions
+# Preview what will be updated
 bd import -i .beads/issues.jsonl --dry-run
 
-# Automatically resolve collisions
-bd import -i .beads/issues.jsonl --resolve-collisions
+# Resolve git conflict (keep newer version or manually merge)
+git checkout --theirs .beads/issues.jsonl  # Or --ours, or edit manually
+
+# Import updates the database
+bd import -i .beads/issues.jsonl
 ```
 
-See [ADVANCED.md#handling-import-collisions](ADVANCED.md#handling-import-collisions) for details.
+See [ADVANCED.md#handling-git-merge-conflicts](ADVANCED.md#handling-git-merge-conflicts) for details.
 
 ### Permission denied on git hooks
 

@@ -389,3 +389,91 @@ func TestInitWithCustomDBPath(t *testing.T) {
 		}
 	})
 }
+
+func TestInitNoDbMode(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	origNoDb := noDb
+	defer func() { 
+		dbPath = origDBPath
+		noDb = origNoDb
+	}()
+	dbPath = ""
+	noDb = false
+	
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// Initialize with --no-db flag
+	rootCmd.SetArgs([]string{"init", "--no-db", "--no-daemon", "--prefix", "test", "--quiet"})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with --no-db failed: %v", err)
+	}
+
+	// Verify issues.jsonl was created
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		t.Error("issues.jsonl was not created in --no-db mode")
+	}
+
+	// Verify config.yaml was created with no-db: true
+	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+	configContent, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml: %v", err)
+	}
+
+	configStr := string(configContent)
+	if !strings.Contains(configStr, "no-db: true") {
+		t.Error("config.yaml should contain 'no-db: true' in --no-db mode")
+	}
+
+	// Verify subsequent command works without --no-db flag
+	rootCmd.SetArgs([]string{"create", "test issue", "--json"})
+
+	// Capture output to verify it worked
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = rootCmd.Execute()
+
+	// Restore stdout and read output
+	w.Close()
+	buf.ReadFrom(r)
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("create command failed in no-db mode: %v", err)
+	}
+
+	// Verify issue was written to JSONL
+	jsonlContent, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("Failed to read issues.jsonl: %v", err)
+	}
+
+	if len(jsonlContent) == 0 {
+		t.Error("issues.jsonl should not be empty after creating issue")
+	}
+
+	if !strings.Contains(string(jsonlContent), "test issue") {
+		t.Error("issues.jsonl should contain the created issue")
+	}
+
+	// Verify no SQLite database was created
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		t.Error("SQLite database should not be created in --no-db mode")
+	}
+}

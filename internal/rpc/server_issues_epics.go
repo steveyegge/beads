@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
@@ -160,7 +162,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("create", issue.ID)
+	s.emitMutation(MutationCreate, issue.ID)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -194,7 +196,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", updateArgs.ID)
+	s.emitMutation(MutationUpdate, updateArgs.ID)
 
 	issue, err := store.GetIssue(ctx, updateArgs.ID)
 	if err != nil {
@@ -231,7 +233,7 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", closeArgs.ID)
+	s.emitMutation(MutationUpdate, closeArgs.ID)
 
 	issue, _ := store.GetIssue(ctx, closeArgs.ID)
 	data, _ := json.Marshal(issue)
@@ -312,7 +314,53 @@ func (s *Server) handleList(req *Request) Response {
 		issue.Labels = labels
 	}
 
-	data, _ := json.Marshal(issues)
+	// Get dependency counts in bulk (single query instead of N queries)
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+
+	// Build response with counts
+	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+	for i, issue := range issues {
+		counts := depCounts[issue.ID]
+		if counts == nil {
+			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
+		}
+		issuesWithCounts[i] = &types.IssueWithCounts{
+			Issue:           issue,
+			DependencyCount: counts.DependencyCount,
+			DependentCount:  counts.DependentCount,
+		}
+	}
+
+	data, _ := json.Marshal(issuesWithCounts)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleResolveID(req *Request) Response {
+	var args ResolveIDArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid resolve_id args: %v", err),
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	resolvedID, err := utils.ResolvePartialID(ctx, s.storage, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve ID: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(resolvedID)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -338,18 +386,46 @@ func (s *Server) handleShow(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get issue: %v", err),
 		}
 	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue not found: %s", showArgs.ID),
+		}
+	}
 
-	// Populate labels, dependencies, and dependents
+	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	deps, _ := store.GetDependencies(ctx, issue.ID)
-	dependents, _ := store.GetDependents(ctx, issue.ID)
+	
+	// Get dependencies and dependents with metadata (including dependency type)
+	var deps []*types.IssueWithDependencyMetadata
+	var dependents []*types.IssueWithDependencyMetadata
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		deps, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+		dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+	} else {
+		// Fallback for non-SQLite storage (won't have dependency type metadata)
+		regularDeps, _ := store.GetDependencies(ctx, issue.ID)
+		for _, d := range regularDeps {
+			deps = append(deps, &types.IssueWithDependencyMetadata{
+				Issue:          *d,
+				DependencyType: types.DepBlocks, // default
+			})
+		}
+		regularDependents, _ := store.GetDependents(ctx, issue.ID)
+		for _, d := range regularDependents {
+			dependents = append(dependents, &types.IssueWithDependencyMetadata{
+				Issue:          *d,
+				DependencyType: types.DepBlocks, // default
+			})
+		}
+	}
 
 	// Create detailed response with related data
 	type IssueDetails struct {
 		*types.Issue
-		Labels       []string       `json:"labels,omitempty"`
-		Dependencies []*types.Issue `json:"dependencies,omitempty"`
-		Dependents   []*types.Issue `json:"dependents,omitempty"`
+		Labels       []string                              `json:"labels,omitempty"`
+		Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+		Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 	}
 
 	details := &IssueDetails{
@@ -382,6 +458,8 @@ func (s *Server) handleReady(req *Request) Response {
 		Priority:   readyArgs.Priority,
 		Limit:      readyArgs.Limit,
 		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
+		Labels:     normalizeLabels(readyArgs.Labels),
+		LabelsAny:  normalizeLabels(readyArgs.LabelsAny),
 	}
 	if readyArgs.Assignee != "" {
 		wf.Assignee = &readyArgs.Assignee
@@ -393,6 +471,39 @@ func (s *Server) handleReady(req *Request) Response {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to get ready work: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(issues)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleStale(req *Request) Response {
+	var staleArgs StaleArgs
+	if err := json.Unmarshal(req.Args, &staleArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid stale args: %v", err),
+		}
+	}
+
+	store := s.storage
+
+	filter := types.StaleFilter{
+		Days:   staleArgs.Days,
+		Status: staleArgs.Status,
+		Limit:  staleArgs.Limit,
+	}
+
+	ctx := s.reqCtx(req)
+	issues, err := store.GetStaleIssues(ctx, filter)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get stale issues: %v", err),
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 var initCmd = &cobra.Command{
@@ -25,6 +26,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
+		branch, _ := cmd.Flags().GetString("branch")
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -108,10 +110,24 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			// Create empty issues.jsonl file
 			jsonlPath := filepath.Join(localBeadsDir, "issues.jsonl")
 			if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-				if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+			// nolint:gosec // G306: JSONL file needs to be readable by other tools
+			if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to create issues.jsonl: %v\n", err)
 					os.Exit(1)
 				}
+			}
+
+			// Create metadata.json for --no-db mode
+			cfg := configfile.DefaultConfig(Version)
+			if err := cfg.Save(localBeadsDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
+				// Non-fatal - continue anyway
+			}
+
+			// Create config.yaml with no-db: true
+			if err := createConfigYaml(localBeadsDir, true); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
+				// Non-fatal - continue anyway
 			}
 
 			if !quiet {
@@ -148,6 +164,7 @@ bd.db
 
 # Keep JSONL exports and config (source of truth for git)
 !*.jsonl
+!metadata.json
 !config.json
 `
 			if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0600); err != nil {
@@ -175,6 +192,18 @@ bd.db
 		_ = store.Close()
 		os.Exit(1)
 		}
+
+	// Set sync.branch if specified
+	if branch != "" {
+		if err := syncbranch.Set(ctx, store, branch); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to set sync branch: %v\n", err)
+			_ = store.Close()
+			os.Exit(1)
+		}
+		if !quiet {
+			fmt.Printf("  Sync branch: %s\n", branch)
+		}
+	}
 
 		// Store the bd version in metadata (for version mismatch detection)
 		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
@@ -210,36 +239,42 @@ bd.db
 		}
 	}
 
-		// Create config.json for explicit configuration
-		if useLocalBeads {
-			cfg := configfile.DefaultConfig(Version)
-			if err := cfg.Save(localBeadsDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to create config.json: %v\n", err)
-				// Non-fatal - continue anyway
-			}
+	// Create metadata.json for database metadata
+	if useLocalBeads {
+		cfg := configfile.DefaultConfig(Version)
+		if err := cfg.Save(localBeadsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
+			// Non-fatal - continue anyway
 		}
+		
+		// Create config.yaml template
+		if err := createConfigYaml(localBeadsDir, false); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
+			// Non-fatal - continue anyway
+		}
+	}
 
-		// Check if git has existing issues to import (fresh clone scenario)
-		issueCount, jsonlPath := checkGitForIssues()
-		if issueCount > 0 {
+	// Check if git has existing issues to import (fresh clone scenario)
+	issueCount, jsonlPath := checkGitForIssues()
+	if issueCount > 0 {
 		if !quiet {
-		fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
+			fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
 		}
 		
 		if err := importFromGit(ctx, initDBPath, store, jsonlPath); err != nil {
-		if !quiet {
-		fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
-		}
-		// Non-fatal - continue with empty database
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
+			}
+			// Non-fatal - continue with empty database
 		} else if !quiet {
-		fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
+			fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
 		}
-}
+	}
 
-if err := store.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
-}
+	}
 
 // Check if we're in a git repo and hooks aren't installed
 // Do this BEFORE quiet mode return so hooks get installed for agents
@@ -295,6 +330,7 @@ if quiet {
 func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
+	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -404,9 +440,9 @@ fi
 # Import the updated JSONL
 # The auto-import feature should handle this, but we force it here
 # to ensure immediate sync after merge
-if ! bd import -i .beads/issues.jsonl --resolve-collisions >/dev/null 2>&1; then
+if ! bd import -i .beads/issues.jsonl >/dev/null 2>&1; then
     echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i .beads/issues.jsonl --resolve-collisions' manually" >&2
+    echo "Run 'bd import -i .beads/issues.jsonl' manually" >&2
     # Don't fail the merge, just warn
 fi
 
@@ -502,6 +538,77 @@ func migrateOldDatabases(targetPath string, quiet bool) error {
 	
 	if !quiet {
 		fmt.Fprintf(os.Stderr, "✓ Database migration complete\n\n")
+	}
+	
+	return nil
+}
+
+// createConfigYaml creates the config.yaml template in the specified directory
+func createConfigYaml(beadsDir string, noDbMode bool) error {
+	configYamlPath := filepath.Join(beadsDir, "config.yaml")
+	
+	// Skip if already exists
+	if _, err := os.Stat(configYamlPath); err == nil {
+		return nil
+	}
+	
+	noDbLine := "# no-db: false"
+	if noDbMode {
+		noDbLine = "no-db: true  # JSONL-only mode, no SQLite database"
+	}
+	
+	configYamlTemplate := fmt.Sprintf(`# Beads Configuration File
+# This file configures default behavior for all bd commands in this repository
+# All settings can also be set via environment variables (BD_* prefix)
+# or overridden with command-line flags
+
+# Issue prefix for this repository (used by bd init)
+# If not set, bd init will auto-detect from directory name
+# Example: issue-prefix: "myproject" creates issues like "myproject-1", "myproject-2", etc.
+# issue-prefix: ""
+
+# Use no-db mode: load from JSONL, no SQLite, write back after each command
+# When true, bd will use .beads/issues.jsonl as the source of truth
+# instead of SQLite database
+%s
+
+# Disable daemon for RPC communication (forces direct database access)
+# no-daemon: false
+
+# Disable auto-flush of database to JSONL after mutations
+# no-auto-flush: false
+
+# Disable auto-import from JSONL when it's newer than database
+# no-auto-import: false
+
+# Enable JSON output by default
+# json: false
+
+# Default actor for audit trails (overridden by BD_ACTOR or --actor)
+# actor: ""
+
+# Path to database (overridden by BEADS_DB or --db)
+# db: ""
+
+# Auto-start daemon if not running (can also use BEADS_AUTO_START_DAEMON)
+# auto-start-daemon: true
+
+# Debounce interval for auto-flush (can also use BEADS_FLUSH_DEBOUNCE)
+# flush-debounce: "5s"
+
+# Integration settings (access with 'bd config get/set')
+# These are stored in the database, not in this file:
+# - jira.url
+# - jira.project
+# - linear.url
+# - linear.api-key
+# - github.org
+# - github.repo
+# - sync.branch - Git branch for beads commits (use BEADS_SYNC_BRANCH env var or bd config set)
+`, noDbLine)
+	
+	if err := os.WriteFile(configYamlPath, []byte(configYamlTemplate), 0600); err != nil {
+		return fmt.Errorf("failed to write config.yaml: %w", err)
 	}
 	
 	return nil

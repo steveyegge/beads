@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +72,14 @@ func TestExportIntegrityAfterJSONLTruncation(t *testing.T) {
 		t.Fatalf("failed to read JSONL: %v", err)
 	}
 	
+	// Compute and store the JSONL file hash
+	hasher := sha256.New()
+	hasher.Write(jsonlData)
+	fileHash := hex.EncodeToString(hasher.Sum(nil))
+	if err := testStore.SetJSONLFileHash(ctx, fileHash); err != nil {
+		t.Fatalf("failed to set JSONL file hash: %v", err)
+	}
+	
 	initialSize := len(jsonlData)
 	
 	// Step 2: Simulate git operation that truncates JSONL (the bd-160 scenario)
@@ -92,8 +102,12 @@ func TestExportIntegrityAfterJSONLTruncation(t *testing.T) {
 	defer func() { store = oldStore }()
 	
 	// This should detect the mismatch and clear export_hashes
-	if err := validateJSONLIntegrity(ctx, jsonlPath); err != nil {
+	needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+	if err != nil {
 		t.Fatalf("integrity validation failed: %v", err)
+	}
+	if !needsFullExport {
+		t.Fatalf("expected needsFullExport=true after truncation")
 	}
 	
 	// Step 4: Export all issues again
@@ -180,7 +194,16 @@ func TestExportIntegrityAfterJSONLDeletion(t *testing.T) {
 	}
 	
 	// Store JSONL hash (would happen in real export)
-	_ , _ = os.ReadFile(jsonlPath)
+	jsonlData, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("failed to read JSONL: %v", err)
+	}
+	hasher := sha256.New()
+	hasher.Write(jsonlData)
+	fileHash := hex.EncodeToString(hasher.Sum(nil))
+	if err := testStore.SetJSONLFileHash(ctx, fileHash); err != nil {
+		t.Fatalf("failed to set JSONL file hash: %v", err)
+	}
 	
 	// Set global store
 	oldStore := store
@@ -194,11 +217,15 @@ func TestExportIntegrityAfterJSONLDeletion(t *testing.T) {
 	
 	// Integrity validation should detect missing file
 	// (In real system, this happens before next export)
-	if err := validateJSONLIntegrity(ctx, jsonlPath); err != nil {
+	needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+	if err != nil {
 		// Error is OK if file doesn't exist
 		if !os.IsNotExist(err) {
 			t.Fatalf("unexpected error: %v", err)
 		}
+	}
+	if !needsFullExport {
+		t.Fatalf("expected needsFullExport=true after JSONL deletion")
 	}
 	
 	// Export again should recreate JSONL

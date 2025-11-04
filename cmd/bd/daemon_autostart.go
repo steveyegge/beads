@@ -212,6 +212,7 @@ func isDaemonHealthy(socketPath string) bool {
 }
 
 func acquireStartLock(lockPath, socketPath string) bool {
+	// nolint:gosec // G304: lockPath is derived from secure beads directory
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		debugLog("another process is starting daemon, waiting for readiness")
@@ -340,6 +341,7 @@ func getPIDFileForSocket(socketPath string) string {
 
 // readPIDFromFile reads a PID from a file
 func readPIDFromFile(path string) (int, error) {
+	// nolint:gosec // G304: path is derived from secure beads directory
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err

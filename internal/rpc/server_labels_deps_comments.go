@@ -35,7 +35,7 @@ func (s *Server) handleDepAdd(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", depArgs.FromID)
+	s.emitMutation(MutationUpdate, depArgs.FromID)
 
 	return Response{Success: true}
 }
@@ -61,7 +61,7 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", issueID)
+	s.emitMutation(MutationUpdate, issueID)
 
 	return Response{Success: true}
 }
@@ -135,7 +135,7 @@ func (s *Server) handleCommentAdd(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("comment", commentArgs.ID)
+	s.emitMutation(MutationComment, commentArgs.ID)
 
 	data, _ := json.Marshal(comment)
 	return Response{

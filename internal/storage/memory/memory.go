@@ -278,6 +278,35 @@ func (m *MemoryStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	return &issueCopy, nil
 }
 
+// GetIssueByExternalRef retrieves an issue by external reference
+func (m *MemoryStorage) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Linear search through all issues to find match by external_ref
+	for _, issue := range m.issues {
+		if issue.ExternalRef != nil && *issue.ExternalRef == externalRef {
+			// Return a copy to avoid mutations
+			issueCopy := *issue
+
+			// Attach dependencies
+			if deps, ok := m.dependencies[issue.ID]; ok {
+				issueCopy.Dependencies = deps
+			}
+
+			// Attach labels
+			if labels, ok := m.labels[issue.ID]; ok {
+				issueCopy.Labels = labels
+			}
+
+			return &issueCopy, nil
+		}
+	}
+
+	// Not found
+	return nil, nil
+}
+
 // UpdateIssue updates fields on an issue
 func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	m.mu.Lock()
@@ -555,6 +584,46 @@ func (m *MemoryStorage) GetDependents(ctx context.Context, issueID string) ([]*t
 	return results, nil
 }
 
+// GetDependencyCounts returns dependency and dependent counts for multiple issues
+func (m *MemoryStorage) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]*types.DependencyCounts)
+
+	// Initialize all requested IDs with zero counts
+	for _, id := range issueIDs {
+		result[id] = &types.DependencyCounts{
+			DependencyCount: 0,
+			DependentCount:  0,
+		}
+	}
+
+	// Build a set for quick lookup
+	idSet := make(map[string]bool)
+	for _, id := range issueIDs {
+		idSet[id] = true
+	}
+
+	// Count dependencies (issues that this issue depends on)
+	for _, id := range issueIDs {
+		if deps, exists := m.dependencies[id]; exists {
+			result[id].DependencyCount = len(deps)
+		}
+	}
+
+	// Count dependents (issues that depend on this issue)
+	for _, deps := range m.dependencies {
+		for _, dep := range deps {
+			if idSet[dep.DependsOnID] {
+				result[dep.DependsOnID].DependentCount++
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // GetDependencyRecords gets dependency records for an issue
 func (m *MemoryStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
 	m.mu.RLock()
@@ -616,6 +685,7 @@ func (m *MemoryStorage) SetJSONLFileHash(ctx context.Context, fileHash string) e
 // GetDependencyTree gets the dependency tree for an issue
 func (m *MemoryStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
 	// Simplified implementation - just return direct dependencies
+	// Note: reverse parameter is accepted for interface compatibility but not fully implemented in memory storage
 	deps, err := m.GetDependencies(ctx, issueID)
 	if err != nil {
 		return nil, err
@@ -730,6 +800,37 @@ func (m *MemoryStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*type
 	return nil, nil
 }
 
+func (m *MemoryStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cutoff := time.Now().AddDate(0, 0, -filter.Days)
+	var stale []*types.Issue
+
+	for _, issue := range m.issues {
+		if issue.Status == types.StatusClosed {
+			continue
+		}
+		if filter.Status != "" && string(issue.Status) != filter.Status {
+			continue
+		}
+		if issue.UpdatedAt.Before(cutoff) {
+			stale = append(stale, issue)
+		}
+	}
+
+	// Sort by updated_at ascending (oldest first)
+	sort.Slice(stale, func(i, j int) bool {
+		return stale[i].UpdatedAt.Before(stale[j].UpdatedAt)
+	})
+
+	if filter.Limit > 0 && len(stale) > filter.Limit {
+		stale = stale[:filter.Limit]
+	}
+
+	return stale, nil
+}
+
 func (m *MemoryStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	return nil
 }
@@ -827,6 +928,32 @@ func (m *MemoryStorage) ClearDirtyIssuesByID(ctx context.Context, issueIDs []str
 	return nil
 }
 
+// ID Generation
+func (m *MemoryStorage) GetNextChildID(ctx context.Context, parentID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Validate parent exists
+	if _, exists := m.issues[parentID]; !exists {
+		return "", fmt.Errorf("parent issue %s does not exist", parentID)
+	}
+
+	// Calculate depth (count dots)
+	depth := strings.Count(parentID, ".")
+	if depth >= 3 {
+		return "", fmt.Errorf("maximum hierarchy depth (3) exceeded for parent %s", parentID)
+	}
+
+	// Get or initialize counter for this parent
+	counter := m.counters[parentID]
+	counter++
+	m.counters[parentID] = counter
+
+	// Format as parentID.counter
+	childID := fmt.Sprintf("%s.%d", parentID, counter)
+	return childID, nil
+}
+
 // Config
 func (m *MemoryStorage) SetConfig(ctx context.Context, key, value string) error {
 	m.mu.Lock()
@@ -916,26 +1043,7 @@ func (m *MemoryStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return nil, fmt.Errorf("UnderlyingConn not available in memory storage")
 }
 
-// SyncAllCounters synchronizes ID counters based on existing issues
-func (m *MemoryStorage) SyncAllCounters(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Reset counters
-	m.counters = make(map[string]int)
-
-	// Recompute from issues
-	for _, issue := range m.issues {
-		prefix, num := extractPrefixAndNumber(issue.ID)
-		if prefix != "" && num > 0 {
-			if m.counters[prefix] < num {
-				m.counters[prefix] = num
-			}
-		}
-	}
-
-	return nil
-}
+// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
 // MarkIssueDirty marks an issue as dirty for export
 func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) error {

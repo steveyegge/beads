@@ -197,42 +197,52 @@ bd automatically detects when you're in a worktree and shows a prominent warning
 **Why It Matters:**
 The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch, leading to confusion and incorrect git history.
 
-## Handling Import Collisions
+## Handling Git Merge Conflicts
 
-When merging branches or pulling changes, you may encounter ID collisions (same ID, different content). bd detects and safely handles these:
+**With hash-based IDs (v0.20.1+), ID collisions are eliminated.** Different issues get different hash IDs, so concurrent creation doesn't cause conflicts.
 
-**Check for collisions after merge:**
+### Understanding Same-ID Scenarios
+
+When you encounter the same ID during import, it's an **update operation**, not a collision:
+
+- Hash IDs are content-based and remain stable across updates
+- Same ID + different fields = normal update to existing issue
+- bd automatically applies updates when importing
+
+**Preview changes before importing:**
 ```bash
 # After git merge or pull
 bd import -i .beads/issues.jsonl --dry-run
 
 # Output shows:
-# === Collision Detection Report ===
 # Exact matches (idempotent): 15
 # New issues: 5
-# COLLISIONS DETECTED: 3
+# Updates: 3
 #
-# Colliding issues:
-#   bd-10: Fix authentication (conflicting fields: [title, priority])
-#   bd-12: Add feature (conflicting fields: [description, status])
+# Issues to be updated:
+#   bd-a3f2: Fix authentication (changed: priority, status)
+#   bd-b8e1: Add feature (changed: description)
 ```
 
-**Resolve collisions automatically:**
+### Git Merge Conflicts
+
+The conflicts you'll encounter are **git merge conflicts** in the JSONL file when the same issue was modified on both branches (different timestamps/fields). This is not an ID collision.
+
+**Resolution:**
 ```bash
-# Let bd resolve collisions by remapping incoming issues to new IDs
-bd import -i .beads/issues.jsonl --resolve-collisions
+# After git merge creates conflict
+git checkout --theirs .beads/beads.jsonl  # Accept remote version
+# OR
+git checkout --ours .beads/beads.jsonl    # Keep local version
+# OR manually resolve in editor (keep line with newer updated_at)
 
-# bd will:
-# - Keep existing issues unchanged
-# - Assign new IDs to colliding issues (bd-25, bd-26, etc.)
-# - Update ALL text references and dependencies automatically
-# - Report the remapping with reference counts
+# Import the resolved JSONL
+bd import -i .beads/beads.jsonl
+
+# Commit the merge
+git add .beads/beads.jsonl
+git commit
 ```
-
-**Important**: The `--resolve-collisions` flag is safe and recommended for branch merges. It preserves the existing database and only renumbers the incoming colliding issues. All text mentions like "see bd-10" and dependency links are automatically updated to use the new IDs.
-
-**Manual resolution** (alternative):
-If you prefer manual control, resolve the Git conflict in `.beads/issues.jsonl` directly, then import normally without `--resolve-collisions`.
 
 ### Advanced: Intelligent Merge Tools
 
@@ -244,9 +254,7 @@ For Git merge conflicts in `.beads/issues.jsonl`, consider using **[beads-merge]
 - Leaves remaining conflicts for manual resolution
 - Works as a Git/jujutsu merge driver
 
-**Two types of conflicts, two tools:**
-- **Git merge conflicts** (same issue modified in two branches) → Use beads-merge during git merge
-- **ID collisions** (different issues with same ID) → Use `bd import --resolve-collisions` after merge
+After using beads-merge to resolve the git conflict, just run `bd import` to update your database.
 
 ## Custom Git Hooks
 

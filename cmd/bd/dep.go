@@ -3,14 +3,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 var depCmd = &cobra.Command{
@@ -25,11 +28,52 @@ var depAddCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		depType, _ := cmd.Flags().GetString("type")
 
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var fromID, toID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &fromID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+			
+			resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
+			resp, err = daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &toID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			var err error
+			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			
+			toID, err = utils.ResolvePartialID(ctx, store, args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			depArgs := &rpc.DepAddArgs{
-				FromID:  args[0],
-				ToID:    args[1],
+				FromID:  fromID,
+				ToID:    toID,
 				DepType: depType,
 			}
 
@@ -52,12 +96,11 @@ var depAddCmd = &cobra.Command{
 
 		// Direct mode
 		dep := &types.Dependency{
-			IssueID:     args[0],
-			DependsOnID: args[1],
+			IssueID:     fromID,
+			DependsOnID: toID,
 			Type:        types.DependencyType(depType),
 		}
 
-		ctx := context.Background()
 		if err := store.AddDependency(ctx, dep, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -94,8 +137,8 @@ var depAddCmd = &cobra.Command{
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"status":        "added",
-				"issue_id":      args[0],
-				"depends_on_id": args[1],
+				"issue_id":      fromID,
+				"depends_on_id": toID,
 				"type":          depType,
 			})
 			return
@@ -103,7 +146,7 @@ var depAddCmd = &cobra.Command{
 
 		green := color.New(color.FgGreen).SprintFunc()
 		fmt.Printf("%s Added dependency: %s depends on %s (%s)\n",
-			green("✓"), args[0], args[1], depType)
+			green("✓"), fromID, toID, depType)
 	},
 }
 
@@ -112,11 +155,52 @@ var depRemoveCmd = &cobra.Command{
 	Short: "Remove a dependency",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		
+		// Resolve partial IDs first
+		var fromID, toID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &fromID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+			
+			resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
+			resp, err = daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &toID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			var err error
+			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			
+			toID, err = utils.ResolvePartialID(ctx, store, args[1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
+				os.Exit(1)
+			}
+		}
+
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			depArgs := &rpc.DepRemoveArgs{
-				FromID: args[0],
-				ToID:   args[1],
+				FromID: fromID,
+				ToID:   toID,
 			}
 
 			resp, err := daemonClient.RemoveDependency(depArgs)
@@ -132,13 +216,15 @@ var depRemoveCmd = &cobra.Command{
 
 			green := color.New(color.FgGreen).SprintFunc()
 			fmt.Printf("%s Removed dependency: %s no longer depends on %s\n",
-				green("✓"), args[0], args[1])
+				green("✓"), fromID, toID)
 			return
 		}
 
 		// Direct mode
-		ctx := context.Background()
-		if err := store.RemoveDependency(ctx, args[0], args[1], actor); err != nil {
+		fullFromID := fromID
+		fullToID := toID
+		
+		if err := store.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -149,15 +235,15 @@ var depRemoveCmd = &cobra.Command{
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"status":        "removed",
-				"issue_id":      args[0],
-				"depends_on_id": args[1],
+				"issue_id":      fullFromID,
+				"depends_on_id": fullToID,
 			})
 			return
 		}
 
 		green := color.New(color.FgGreen).SprintFunc()
 		fmt.Printf("%s Removed dependency: %s no longer depends on %s\n",
-			green("✓"), args[0], args[1])
+			green("✓"), fullFromID, fullToID)
 	},
 }
 
@@ -166,6 +252,30 @@ var depTreeCmd = &cobra.Command{
 	Short: "Show dependency tree",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		
+		// Resolve partial ID first
+		var fullID string
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			var err error
+			fullID, err = utils.ResolvePartialID(ctx, store, args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
+				os.Exit(1)
+			}
+		}
+		
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
@@ -180,17 +290,23 @@ var depTreeCmd = &cobra.Command{
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
 		maxDepth, _ := cmd.Flags().GetInt("max-depth")
 		reverse, _ := cmd.Flags().GetBool("reverse")
+		formatStr, _ := cmd.Flags().GetString("format")
 
 		if maxDepth < 1 {
 			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
 			os.Exit(1)
 		}
-
-		ctx := context.Background()
-		tree, err := store.GetDependencyTree(ctx, args[0], maxDepth, showAllPaths, reverse)
+		
+		tree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, reverse)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Handle mermaid format
+		if formatStr == "mermaid" {
+			outputMermaidTree(tree, args[0])
+			return
 		}
 
 		if jsonOutput {
@@ -204,18 +320,18 @@ var depTreeCmd = &cobra.Command{
 
 		if len(tree) == 0 {
 			if reverse {
-				fmt.Printf("\n%s has no dependents\n", args[0])
+				fmt.Printf("\n%s has no dependents\n", fullID)
 			} else {
-				fmt.Printf("\n%s has no dependencies\n", args[0])
+				fmt.Printf("\n%s has no dependencies\n", fullID)
 			}
 			return
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
 		if reverse {
-			fmt.Printf("\n%s Dependent tree for %s:\n\n", cyan("🌲"), args[0])
+			fmt.Printf("\n%s Dependent tree for %s:\n\n", cyan("🌲"), fullID)
 		} else {
-			fmt.Printf("\n%s Dependency tree for %s:\n\n", cyan("🌲"), args[0])
+			fmt.Printf("\n%s Dependency tree for %s:\n\n", cyan("🌲"), fullID)
 		}
 
 		hasTruncation := false
@@ -291,11 +407,71 @@ var depCyclesCmd = &cobra.Command{
 	},
 }
 
+// outputMermaidTree outputs a dependency tree in Mermaid.js flowchart format
+func outputMermaidTree(tree []*types.TreeNode, rootID string) {
+	if len(tree) == 0 {
+		fmt.Println("flowchart TD")
+		fmt.Printf("  %s[\"No dependencies\"]\n", rootID)
+		return
+	}
+
+	fmt.Println("flowchart TD")
+
+	// Output nodes
+	nodesSeen := make(map[string]bool)
+	for _, node := range tree {
+		if !nodesSeen[node.ID] {
+			emoji := getStatusEmoji(node.Status)
+			label := fmt.Sprintf("%s %s: %s", emoji, node.ID, node.Title)
+			// Escape quotes and backslashes in label
+			label = strings.ReplaceAll(label, "\\", "\\\\")
+			label = strings.ReplaceAll(label, "\"", "\\\"")
+			fmt.Printf("  %s[\"%s\"]\n", node.ID, label)
+
+			nodesSeen[node.ID] = true
+		}
+	}
+
+	fmt.Println()
+
+	// Output edges - use explicit parent relationships from ParentID
+	for _, node := range tree {
+		if node.ParentID != "" && node.ParentID != node.ID {
+			fmt.Printf("  %s --> %s\n", node.ParentID, node.ID)
+		}
+	}
+}
+
+// getStatusEmoji returns a symbol indicator for a given status
+func getStatusEmoji(status types.Status) string {
+	switch status {
+	case types.StatusOpen:
+		return "☐" // U+2610 Ballot Box
+	case types.StatusInProgress:
+		return "◧" // U+25E7 Square Left Half Black
+	case types.StatusBlocked:
+		return "⚠" // U+26A0 Warning Sign
+	case types.StatusClosed:
+		return "☑" // U+2611 Ballot Box with Check
+	default:
+		return "?"
+	}
+}
+
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
+	// Note: --json flag is defined as a persistent flag in main.go, not here
+
+	// Note: --json flag is defined as a persistent flag in main.go, not here
+
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
 	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (what was discovered from this) instead of dependency tree (what blocks this)")
+	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
+	// Note: --json flag is defined as a persistent flag in main.go, not here
+
+	// Note: --json flag is defined as a persistent flag in main.go, not here
+
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)
 	depCmd.AddCommand(depTreeCmd)

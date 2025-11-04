@@ -2,6 +2,7 @@
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/steveyegge/beads)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/steveyegge/beads)](https://github.com/steveyegge/beads/releases)
+[![npm version](https://img.shields.io/npm/v/@beads/bd)](https://www.npmjs.com/package/@beads/bd)
 [![CI](https://img.shields.io/github/actions/workflow/status/steveyegge/beads/ci.yml?branch=main&label=tests)](https://github.com/steveyegge/beads/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/steveyegge/beads)](https://goreportcard.com/report/github.com/steveyegge/beads)
 [![License](https://img.shields.io/github/license/steveyegge/beads)](LICENSE)
@@ -9,18 +10,17 @@
 
 **Give your coding agent a memory upgrade**
 
-> ## 🚨 **CRITICAL: SOLO WORKFLOWS ONLY UNTIL 1.0.0** 🚨
+> ## 🎉 **v0.20.1: Multi-Worker Support Unlocked!** 🎉
 >
-> **DO NOT USE BEADS FOR MULTI-REPO OR MULTI-CLONE WORKFLOWS.**
+> **Hash-based IDs eliminate merge conflicts and collision issues!**
 >
-> Beads has critical bugs when used across multiple clones or repositories. The import collision resolution system incorrectly treats normal updates as conflicts, creating duplicate issues and database corruption.
+> Previous versions used sequential IDs (bd-1, bd-2, bd-3...) which caused frequent collisions when multiple agents or branches created issues concurrently. Version 0.20.1 switches to **hash-based IDs** (bd-a1b2, bd-f14c, bd-3e7a...) that are collision-resistant and merge-friendly.
 >
-> **What works:** ✅ Single developer, single clone, solo agent workflows  
-> **What's broken:** ❌ Multiple clones, multiple agents, team workflows
+> **What's new:** ✅ Multi-clone, multi-branch, multi-agent workflows now work reliably  
+> **What changed:** Issue IDs are now short hashes instead of sequential numbers  
+> **Migration:** Run `bd migrate` to upgrade existing databases (optional - old DBs still work)
 >
-> While AI agents can resolve collisions, it's painful and error-prone. We're working on a complete rearchitecture using hash-based IDs to eliminate these issues.
->
-> **Use Beads for solo projects only.** Multi-repo support will be available in 1.0.0.
+> Hash IDs use progressive length scaling (4/5/6 characters) with birthday paradox math to keep collisions extremely rare while maintaining human readability. See "Hash-Based Issue IDs" section below for details.
 
 > **⚠️ Alpha Status**: This project is in active development. The core features work well, but expect API changes before 1.0. Use for development/internal projects first.
 
@@ -58,6 +58,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🤖 **Agent-friendly** - `--json` flags for programmatic integration
 - 📦 **Git-versioned** - JSONL records stored in git, synced across machines
 - 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
+- 🔐 **Protected branch support** - Works with GitHub/GitLab protected branches via separate sync branch
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
 - 🔍 **Multi-project isolation** - Each project gets its own database, auto-discovered by directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
@@ -67,6 +68,11 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🗜️ **Memory decay** - Semantic compaction gracefully reduces old closed issues
 
 ## Installation
+
+**npm (Node.js environments, Claude Code for Web):**
+```bash
+npm install -g @beads/bd
+```
 
 **Quick install (all platforms):**
 ```bash
@@ -83,6 +89,8 @@ brew install bd
 
 **IDE Integration:** See [INSTALLING.md](INSTALLING.md) for Claude Code plugin and MCP server setup.
 
+**Claude Code for Web:** See [npm-package/CLAUDE_CODE_WEB.md](npm-package/CLAUDE_CODE_WEB.md) for SessionStart hook setup.
+
 ## Quick Start
 
 ### For Humans
@@ -94,6 +102,9 @@ Beads is designed for **AI coding agents** to use on your behalf. Setup takes 30
 # In your project root:
 bd init
 
+# For protected branches (GitHub/GitLab):
+bd init --branch beads-metadata
+
 # bd will:
 # - Create .beads/ directory with database
 # - Import existing issues from git (if any)
@@ -103,6 +114,8 @@ bd init
 # Then tell your agent about bd:
 echo "BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
 ```
+
+**Protected branches?** If your `main` branch is protected, use `bd init --branch beads-metadata` to commit issue updates to a separate branch. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for details.
 
 **Your agent does the rest:** Next time your agent starts, it will:
 1. Run `bd onboard` and receive integration instructions
@@ -174,11 +187,11 @@ bd automatically syncs your local database with git:
 **Making changes (auto-export):**
 ```bash
 bd create "Fix bug" -p 1
-bd update bd-42 --status in_progress
+bd update bd-a1b2 --status in_progress
 # bd automatically exports to .beads/issues.jsonl after 5 seconds
 
 git add .beads/issues.jsonl
-git commit -m "Working on bd-42"
+git commit -m "Working on bd-a1b2"
 git push
 ```
 
@@ -211,7 +224,121 @@ bd --no-auto-flush create "Issue"   # Skip auto-export
 bd --no-auto-import list            # Skip auto-import check
 ```
 
+## Hash-Based Issue IDs
+
+**Version 0.20.1 introduces collision-resistant hash-based IDs** to enable reliable multi-worker and multi-branch workflows.
+
+### ID Format
+
+Issue IDs now use short hexadecimal hashes instead of sequential numbers:
+
+- **Before (v0.20.0):** `bd-1`, `bd-2`, `bd-152` (sequential numbers)
+- **After (v0.20.1):** `bd-a1b2`, `bd-f14c`, `bd-3e7a` (4-6 character hashes)
+
+Hash IDs use **progressive length scaling** based on database size:
+- **0-500 issues:** 4-character hashes (e.g., `bd-a1b2`)
+- **500-1,500 issues:** 5-character hashes (e.g., `bd-f14c3`)
+- **1,500-10,000 issues:** 6-character hashes (e.g., `bd-3e7a5b`)
+
+### Why Hash IDs?
+
+**The problem with sequential IDs:**
+When multiple agents or branches create issues concurrently, sequential IDs collide:
+- Agent A creates `bd-10` on branch `feature-auth`
+- Agent B creates `bd-10` on branch `feature-payments`
+- Git merge creates duplicate IDs → collision resolution required
+
+**How hash IDs solve this:**
+Hash IDs are generated from random data, making concurrent creation collision-free:
+- Agent A creates `bd-a1b2` (hash of random UUID)
+- Agent B creates `bd-f14c` (different hash, different UUID)
+- Git merge succeeds cleanly → no collision resolution needed
+
+### Birthday Paradox Math
+
+Hash IDs use **birthday paradox probability** to determine length:
+
+| Hash Length | Total Space | 50% Collision at N Issues | 1% Collision at N Issues |
+|-------------|-------------|---------------------------|--------------------------|
+| 4 chars     | 65,536      | ~304 issues               | ~38 issues               |
+| 5 chars     | 1,048,576   | ~1,217 issues             | ~153 issues              |
+| 6 chars     | 16,777,216  | ~4,869 issues             | ~612 issues              |
+
+**Our thresholds are conservative:** We switch from 4→5 chars at 500 issues (way before the 1% collision point at ~1,217) and from 5→6 chars at 1,500 issues.
+
+**Progressive extension on collision:** If a hash collision does occur, bd automatically extends the hash to 7 or 8 characters instead of remapping to a new ID.
+
+### Migration
+
+**Existing databases continue to work** - no forced migration. Run `bd migrate` when ready:
+
+```bash
+# Inspect migration plan (for AI agents)
+bd migrate --inspect --json
+
+# Check schema and config state
+bd info --schema --json
+
+# Preview migration
+bd migrate --dry-run
+
+# Migrate database schema (removes obsolete issue_counters table)
+bd migrate
+
+# Show current database info
+bd info
+```
+
+**AI-supervised migrations:** The `--inspect` flag provides migration plan analysis for AI agents. The system verifies data integrity invariants (required config keys, foreign key constraints, issue counts) before committing migrations.
+
+**Note:** Hash IDs require schema version 9+. The `bd migrate` command detects old schemas and upgrades automatically.
+
+### Hierarchical Child IDs
+
+Hash IDs support **hierarchical children** for natural work breakdown structures. Child IDs use dot notation:
+
+```
+bd-a3f8e9      [epic] Auth System
+bd-a3f8e9.1    [task] Design login UI
+bd-a3f8e9.2    [task] Backend validation
+bd-a3f8e9.3    [epic] Password Reset
+bd-a3f8e9.3.1  [task] Email templates
+bd-a3f8e9.3.2  [task] Reset flow tests
+```
+
+**Benefits:**
+- **Collision-free**: Parent hash ensures unique namespace
+- **Human-readable**: Clear parent-child relationships
+- **Flexible depth**: Up to 3 levels of nesting
+- **No coordination needed**: Each epic owns its child ID space
+
+**Common patterns:**
+- 1 level: Epic → tasks (most projects)
+- 2 levels: Epic → features → tasks (large projects)
+- 3 levels: Epic → features → stories → tasks (complex projects)
+
+**Example workflow:**
+```bash
+# Create parent epic (generates hash ID automatically)
+bd create "Auth System" -t epic -p 1
+# Returns: bd-a3f8e9
+
+# Create child tasks
+bd create "Design login UI" -p 1       # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1    # Auto-assigned: bd-a3f8e9.2
+
+# Create nested epic with its own children
+bd create "Password Reset" -t epic -p 1  # Auto-assigned: bd-a3f8e9.3
+bd create "Email templates" -p 1          # Auto-assigned: bd-a3f8e9.3.1
+```
+
+**Note:** Child IDs are automatically assigned sequentially within each parent's namespace. No need to specify parent manually - bd tracks context from git branch/working directory.
+
 ## Usage
+
+### Health Check
+
+Check installation health: `bd doctor` validates your `.beads/` setup, database version, ID format, and CLI version. Provides actionable fixes for any issues found.
 
 ### Creating Issues
 
@@ -223,12 +350,21 @@ bd create "Task" -l "backend,urgent" --assignee alice
 # Get JSON output for programmatic use
 bd create "Fix bug" -d "Description" --json
 
+# Create from templates (built-in: epic, bug, feature)
+bd create --from-template epic "Q4 Platform Improvements"
+bd create --from-template bug "Auth token validation fails"
+bd create --from-template feature "Add OAuth support"
+
+# Override template defaults
+bd create --from-template bug "Critical issue" -p 0  # Override priority
+
 # Create multiple issues from a markdown file
 bd create -f feature-plan.md
 ```
 
 Options:
 - `-f, --file` - Create multiple issues from markdown file
+- `--from-template` - Use template (epic, bug, feature, or custom)
 - `-d, --description` - Issue description
 - `-p, --priority` - Priority (0-4, 0=highest, default=2)
 - `-t, --type` - Type (bug|feature|task|epic|chore, default=task)
@@ -237,11 +373,13 @@ Options:
 - `--id` - Explicit issue ID (e.g., `worker1-100` for ID space partitioning)
 - `--json` - Output in JSON format
 
+See `bd template list` for available templates and `bd help template` for managing custom templates.
+
 ### Viewing Issues
 
 ```bash
 bd info                                    # Show database path and daemon status
-bd show bd-1                               # Show full details
+bd show bd-a1b2                            # Show full details
 bd list                                    # List all issues
 bd list --status open                      # Filter by status
 bd list --priority 1                       # Filter by priority
@@ -252,34 +390,34 @@ bd list --label-any=frontend,backend       # Filter by labels (OR)
 # JSON output for agents
 bd info --json
 bd list --json
-bd show bd-1 --json
+bd show bd-a1b2 --json
 ```
 
 ### Updating Issues
 
 ```bash
-bd update bd-1 --status in_progress
-bd update bd-1 --priority 2
-bd update bd-1 --assignee bob
-bd close bd-1 --reason "Completed"
-bd close bd-1 bd-2 bd-3   # Close multiple
+bd update bd-a1b2 --status in_progress
+bd update bd-a1b2 --priority 2
+bd update bd-a1b2 --assignee bob
+bd close bd-a1b2 --reason "Completed"
+bd close bd-a1b2 bd-f14c bd-3e7a   # Close multiple
 
 # JSON output
-bd update bd-1 --status in_progress --json
+bd update bd-a1b2 --status in_progress --json
 ```
 
 ### Dependencies
 
 ```bash
-# Add dependency (bd-2 depends on bd-1)
-bd dep add bd-2 bd-1
-bd dep add bd-3 bd-1 --type blocks
+# Add dependency (bd-f14c depends on bd-a1b2)
+bd dep add bd-f14c bd-a1b2
+bd dep add bd-3e7a bd-a1b2 --type blocks
 
 # Remove dependency
-bd dep remove bd-2 bd-1
+bd dep remove bd-f14c bd-a1b2
 
 # Show dependency tree
-bd dep tree bd-2
+bd dep tree bd-f14c
 
 # Detect cycles
 bd dep cycles
@@ -327,11 +465,11 @@ Add flexible metadata to issues for filtering and organization:
 bd create "Fix auth bug" -t bug -p 1 -l auth,backend,urgent
 
 # Add/remove labels
-bd label add bd-42 security
-bd label remove bd-42 urgent
+bd label add bd-a1b2 security
+bd label remove bd-a1b2 urgent
 
 # List labels
-bd label list bd-42              # Labels on one issue
+bd label list bd-a1b2            # Labels on one issue
 bd label list-all                # All labels with counts
 
 # Filter by labels
@@ -345,19 +483,19 @@ bd list --label-any frontend,ui  # OR: must have AT LEAST ONE
 
 ```bash
 # Single issue deletion (preview mode)
-bd delete bd-1
+bd delete bd-a1b2
 
 # Force single deletion
-bd delete bd-1 --force
+bd delete bd-a1b2 --force
 
 # Batch deletion
-bd delete bd-1 bd-2 bd-3 --force
+bd delete bd-a1b2 bd-f14c bd-3e7a --force
 
 # Delete from file (one ID per line)
 bd delete --from-file deletions.txt --force
 
 # Cascade deletion (recursively delete dependents)
-bd delete bd-1 --cascade --force
+bd delete bd-a1b2 --cascade --force
 ```
 
 The delete operation removes all dependency links, updates text references to `[deleted:ID]`, and removes the issue from database and JSONL.

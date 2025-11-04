@@ -12,20 +12,30 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // initializeNoDbMode sets up in-memory storage from JSONL file
 // This is called when --no-db flag is set
 func initializeNoDbMode() error {
 	// Find .beads directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+	var beadsDir string
+
+	// Check BEADS_DIR environment variable first
+	if envDir := os.Getenv("BEADS_DIR"); envDir != "" {
+		// Canonicalize the path
+		beadsDir = utils.CanonicalizePath(envDir)
+	} else {
+		// Fall back to current directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		beadsDir = filepath.Join(cwd, ".beads")
 	}
 
-	beadsDir := filepath.Join(cwd, ".beads")
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return fmt.Errorf("no .beads directory found (hint: run 'bd init' first)")
+		return fmt.Errorf("no .beads directory found (hint: run 'bd init' first or set BEADS_DIR)")
 	}
 
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
@@ -75,6 +85,7 @@ func initializeNoDbMode() error {
 
 // loadIssuesFromJSONL reads all issues from a JSONL file
 func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
+	// nolint:gosec // G304: path is validated JSONL file from findJSONLPath
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -114,7 +125,7 @@ func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
 // 1. issue-prefix from config.yaml (if set)
 // 2. Common prefix from existing issues (if all share same prefix)
 // 3. Current directory name (fallback)
-func detectPrefix(beadsDir string, memStore *memory.MemoryStorage) (string, error) {
+func detectPrefix(_ string, memStore *memory.MemoryStorage) (string, error) {
 	// Check config.yaml for issue-prefix
 	configPrefix := config.GetString("issue-prefix")
 	if configPrefix != "" {
@@ -173,11 +184,11 @@ func detectPrefix(beadsDir string, memStore *memory.MemoryStorage) (string, erro
 
 // extractIssuePrefix extracts the prefix from an issue ID like "bd-123" -> "bd"
 func extractIssuePrefix(issueID string) string {
-	parts := strings.SplitN(issueID, "-", 2)
-	if len(parts) < 2 {
+	idx := strings.LastIndex(issueID, "-")
+	if idx <= 0 {
 		return ""
 	}
-	return parts[0]
+	return issueID[:idx]
 }
 
 // writeIssuesToJSONL writes all issues from memory storage to JSONL file atomically

@@ -78,7 +78,12 @@ release:
     
     ### Installation
     
-    **macOS/Linux:**
+    **Homebrew (macOS/Linux):**
+    ```bash
+    brew install steveyegge/beads/bd
+    ```
+    
+    **Quick Install (macOS/Linux):**
     ```bash
     curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
     ```
@@ -90,6 +95,22 @@ release:
     
     **Manual Install:**
     Download the appropriate binary for your platform below, extract it, and place it in your PATH.
+
+# Homebrew tap
+brews:
+  - name: bd
+    repository:
+      owner: steveyegge
+      name: beads
+      branch: main
+    directory: Formula
+    homepage: https://github.com/steveyegge/beads
+    description: "AI-supervised issue tracker for coding workflows"
+    license: MIT
+    test: |
+      system "#{bin}/bd", "version"
+    install: |
+      bin.install "bd"
 
 # Announce the release
 announce:
