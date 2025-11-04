@@ -213,9 +213,18 @@ func TestUpdateIssue(t *testing.T) {
 	json.Unmarshal(createResp.Data, &issue)
 
 	newTitle := "Updated Title"
+	notes := "Some important notes"
+	design := "Design details"
+	assignee := "alice"
+	acceptance := "Acceptance criteria"
+
 	updateArgs := &UpdateArgs{
-		ID:    issue.ID,
-		Title: &newTitle,
+		ID:                 issue.ID,
+		Title:              &newTitle,
+		Notes:              &notes,
+		Design:             &design,
+		Assignee:           &assignee,
+		AcceptanceCriteria: &acceptance,
 	}
 
 	updateResp, err := client.Update(updateArgs)
@@ -228,6 +237,18 @@ func TestUpdateIssue(t *testing.T) {
 
 	if updatedIssue.Title != newTitle {
 		t.Errorf("Expected title %s, got %s", newTitle, updatedIssue.Title)
+	}
+	if updatedIssue.Notes != notes {
+		t.Errorf("Expected notes %s, got %s", notes, updatedIssue.Notes)
+	}
+	if updatedIssue.Design != design {
+		t.Errorf("Expected design %s, got %s", design, updatedIssue.Design)
+	}
+	if updatedIssue.Assignee != assignee {
+		t.Errorf("Expected assignee %s, got %s", assignee, updatedIssue.Assignee)
+	}
+	if updatedIssue.AcceptanceCriteria != acceptance {
+		t.Errorf("Expected acceptance criteria %s, got %s", acceptance, updatedIssue.AcceptanceCriteria)
 	}
 }
 

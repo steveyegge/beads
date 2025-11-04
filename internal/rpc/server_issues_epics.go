@@ -50,16 +50,16 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 		u["priority"] = *a.Priority
 	}
 	if a.Design != nil {
-		u["design"] = a.Design
+		u["design"] = *a.Design
 	}
 	if a.AcceptanceCriteria != nil {
-		u["acceptance_criteria"] = a.AcceptanceCriteria
+		u["acceptance_criteria"] = *a.AcceptanceCriteria
 	}
 	if a.Notes != nil {
-		u["notes"] = a.Notes
+		u["notes"] = *a.Notes
 	}
 	if a.Assignee != nil {
-		u["assignee"] = a.Assignee
+		u["assignee"] = *a.Assignee
 	}
 	return u
 }
