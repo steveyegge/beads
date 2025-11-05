@@ -1135,13 +1135,15 @@ func checkGitHooks(path string) doctorCheck {
 		}
 	}
 
+	hookInstallMsg := "See https://github.com/steveyegge/beads/tree/main/examples/git-hooks for installation instructions"
+
 	if len(installedHooks) > 0 {
 		return doctorCheck{
 			Name:    "Git Hooks",
 			Status:  statusWarning,
 			Message: fmt.Sprintf("Missing %d recommended hook(s)", len(missingHooks)),
 			Detail:  fmt.Sprintf("Missing: %s", strings.Join(missingHooks, ", ")),
-			Fix:     "Run './examples/git-hooks/install.sh' to install recommended git hooks",
+			Fix:     hookInstallMsg,
 		}
 	}
 
@@ -1150,7 +1152,7 @@ func checkGitHooks(path string) doctorCheck {
 		Status:  statusWarning,
 		Message: "No recommended git hooks installed",
 		Detail:  fmt.Sprintf("Recommended: %s", strings.Join([]string{"pre-commit", "post-merge", "pre-push"}, ", ")),
-		Fix:     "Run './examples/git-hooks/install.sh' to install recommended git hooks",
+		Fix:     hookInstallMsg,
 	}
 }
 
