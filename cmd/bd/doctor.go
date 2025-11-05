@@ -925,7 +925,8 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 
 // countJSONLIssues counts issues in the JSONL file and returns the count, prefixes, and any error.
 func countJSONLIssues(jsonlPath string) (int, map[string]int, error) {
-	file, err := os.Open(jsonlPath)
+	// jsonlPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
+	file, err := os.Open(jsonlPath) //nolint:gosec
 	if err != nil {
 		return 0, nil, fmt.Errorf("failed to open JSONL file: %w", err)
 	}

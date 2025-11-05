@@ -271,8 +271,12 @@ func isBoundary(c byte) bool {
 }
 
 func isNumeric(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	// Accept base36 characters (0-9, a-z) for hash-based suffixes
 	for _, c := range s {
-		if c < '0' || c > '9' {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
 			return false
 		}
 	}

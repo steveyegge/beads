@@ -398,14 +398,18 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 		}
 	})
 
-	t.Run("error on non-numeric suffix", func(t *testing.T) {
+	t.Run("hash-based suffix rename", func(t *testing.T) {
+		// Hash-based IDs (base36) are now valid and should be renamed
 		issues := []*types.Issue{
-			{ID: "old-abc", Title: "Invalid"},
+			{ID: "old-a3f8", Title: "Hash suffix issue"},
 		}
 
 		err := RenameImportedIssuePrefixes(issues, "new")
-		if err == nil {
-			t.Error("Expected error for non-numeric suffix")
+		if err != nil {
+			t.Errorf("Unexpected error for hash-based suffix: %v", err)
+		}
+		if issues[0].ID != "new-a3f8" {
+			t.Errorf("Expected ID 'new-a3f8', got %q", issues[0].ID)
 		}
 	})
 
@@ -522,13 +526,20 @@ func TestIsNumeric(t *testing.T) {
 		s    string
 		want bool
 	}{
+		// Numeric suffixes (traditional)
 		{"123", true},
 		{"0", true},
 		{"999", true},
-		{"abc", false},
-		{"12a", false},
-		{"", true}, // Empty string returns true (edge case in implementation)
-		{"1.5", false},
+		// Hash-based suffixes (base36: 0-9, a-z)
+		{"a3f8e9", true},
+		{"09ea", true},
+		{"abc123", true},
+		{"zzz", true},
+		// Invalid suffixes
+		{"", false},      // Empty string now returns false
+		{"1.5", false},   // Non-base36 characters
+		{"A3F8", false},  // Uppercase not allowed
+		{"@#$!", false},  // Special characters not allowed
 	}
 
 	for _, tt := range tests {
