@@ -781,9 +781,22 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 		}
 	}
 
+	// Try to read JSONL first (doesn't depend on database)
+	jsonlCount, jsonlPrefixes, jsonlErr := countJSONLIssues(jsonlPath)
+
 	// Single database open for all queries (instead of 3 separate opens)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
+		// Database can't be opened. If JSONL has issues, suggest recovery.
+		if jsonlErr == nil && jsonlCount > 0 {
+			return doctorCheck{
+				Name:    "DB-JSONL Sync",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Database cannot be opened but JSONL contains %d issues", jsonlCount),
+				Detail:  err.Error(),
+				Fix:     fmt.Sprintf("Run 'bd import -i %s --rename-on-import' to recover issues from JSONL", filepath.Base(jsonlPath)),
+			}
+		}
 		return doctorCheck{
 			Name:    "DB-JSONL Sync",
 			Status:  statusWarning,
@@ -797,6 +810,16 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 	var dbCount int
 	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&dbCount)
 	if err != nil {
+		// Database opened but can't query. If JSONL has issues, suggest recovery.
+		if jsonlErr == nil && jsonlCount > 0 {
+			return doctorCheck{
+				Name:    "DB-JSONL Sync",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Database cannot be queried but JSONL contains %d issues", jsonlCount),
+				Detail:  err.Error(),
+				Fix:     fmt.Sprintf("Run 'bd import -i %s --rename-on-import' to recover issues from JSONL", filepath.Base(jsonlPath)),
+			}
+		}
 		return doctorCheck{
 			Name:    "DB-JSONL Sync",
 			Status:  statusWarning,
@@ -817,14 +840,13 @@ func checkDatabaseJSONLSync(path string) doctorCheck {
 		}
 	}
 
-	// Count JSONL issues and extract prefixes
-	jsonlCount, jsonlPrefixes, err := countJSONLIssues(jsonlPath)
-	if err != nil {
+	// Use JSONL error if we got it earlier
+	if jsonlErr != nil {
 		return doctorCheck{
 			Name:    "DB-JSONL Sync",
 			Status:  statusWarning,
 			Message: "Unable to read JSONL file",
-			Detail:  err.Error(),
+			Detail:  jsonlErr.Error(),
 		}
 	}
 
