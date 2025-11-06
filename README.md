@@ -427,6 +427,46 @@ bd daemons killall --force  # Force kill if graceful fails
 
 See [commands/daemons.md](commands/daemons.md) for complete documentation.
 
+### Web Interface
+
+bd includes a built-in web interface for real-time issue monitoring and visualization:
+
+```bash
+# Start web UI on localhost:8080
+bd monitor
+
+# Custom port and host
+bd monitor --port 3000
+bd monitor --host 0.0.0.0 --port 8080  # Listen on all interfaces
+```
+
+The monitor provides:
+- **Real-time table view** of all issues with filtering by status and priority
+- **Click-through details** - Click any issue to view full details in a modal
+- **Live updates** - WebSocket connection for real-time changes (when daemon is running)
+- **Responsive design** - Mobile-friendly card view on small screens
+- **Statistics dashboard** - Quick overview of issue counts and ready work
+- **Clean UI** - Simple, fast interface styled with milligram.css
+
+**Options:**
+- `--port` - Port for web server (default: 8080)
+- `--host` - Host to bind to (default: localhost)
+
+**Example workflow:**
+```bash
+# Start the monitor in one terminal
+bd monitor
+
+# In your browser, open http://localhost:8080
+# Keep it running while working on issues to see real-time updates
+```
+
+The monitor is particularly useful for:
+- **Team visibility** - Share a dashboard view of project status
+- **AI agent supervision** - Watch your coding agent create and update issues in real-time
+- **Quick browsing** - Faster than CLI for exploring issue details
+- **Mobile access** - Check project status from your phone
+
 ## Examples
 
 Check out the **[examples/](examples/)** directory for:

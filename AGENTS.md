@@ -248,6 +248,36 @@ bd daemons killall --force --json  # Force kill if graceful fails
 
 See [commands/daemons.md](commands/daemons.md) for detailed documentation.
 
+### Web Interface (Monitor)
+
+**Note for AI Agents:** The monitor is primarily for human visualization and supervision. Agents should continue using the CLI with `--json` flags.
+
+bd includes a built-in web interface for real-time issue monitoring:
+
+```bash
+bd monitor                           # Start on localhost:8080
+bd monitor --port 3000               # Custom port
+bd monitor --host 0.0.0.0 --port 80  # Public access
+```
+
+**Features:**
+- Real-time issue table with filtering (status, priority)
+- Click-through to detailed issue view
+- WebSocket updates (when daemon is running)
+- Responsive mobile design
+- Statistics dashboard
+
+**When humans might use it:**
+- Supervising AI agent work in real-time
+- Quick project status overview
+- Mobile access to issue tracking
+- Team dashboard for shared visibility
+
+**AI agents should NOT:**
+- Parse HTML from the monitor (use `--json` flags instead)
+- Try to interact with the web UI programmatically
+- Use monitor for data retrieval (use CLI commands)
+
 ### Workflow
 
 1. **Check for ready work**: Run `bd ready` to see what's unblocked

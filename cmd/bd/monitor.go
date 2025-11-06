@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
@@ -62,6 +63,11 @@ func runMonitor(cmd *cobra.Command, args []string) {
 	// Start WebSocket broadcaster
 	go handleWebSocketBroadcast()
 
+	// Start mutation polling if daemon is available
+	if daemonClient != nil {
+		go pollMutations()
+	}
+
 	// Set up HTTP routes
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/api/issues", handleAPIIssues)
@@ -94,12 +100,107 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
     <style>
         body { padding: 2rem; }
-        .header { margin-bottom: 2rem; }
+        .header {
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .connection-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.4rem;
+            font-size: 1.2rem;
+        }
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .connection-dot.connected {
+            background: #28a745;
+            animation: pulse 2s infinite;
+        }
+        .connection-dot.disconnected {
+            background: #dc3545;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
         .stats { margin-bottom: 2rem; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
         .stat-card { padding: 1rem; background: #f4f5f6; border-radius: 0.4rem; }
         .stat-value { font-size: 2.4rem; font-weight: bold; color: #9b4dca; }
         .stat-label { font-size: 1.2rem; color: #606c76; }
+
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #9b4dca;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 2rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+        }
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        /* Error message */
+        .error-message {
+            display: none;
+            padding: 1rem;
+            margin: 1rem 0;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 0.4rem;
+            color: #721c24;
+        }
+        .error-message.active {
+            display: block;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #606c76;
+        }
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Table styles */
         table { width: 100%; }
         tbody tr { cursor: pointer; }
         tbody tr:hover { background: #f4f5f6; }
@@ -109,19 +210,102 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
         .priority-1 { color: #ff4136; font-weight: bold; }
         .priority-2 { color: #ff851b; }
         .priority-3 { color: #ffdc00; }
-        .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+
+        /* Modal styles */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
         .modal-content { background-color: #fefefe; margin: 5% auto; padding: 2rem; border-radius: 0.4rem; width: 80%; max-width: 800px; }
         .close { color: #aaa; float: right; font-size: 2.8rem; font-weight: bold; line-height: 2rem; cursor: pointer; }
         .close:hover, .close:focus { color: #000; }
+
         .filter-controls { margin-bottom: 2rem; }
         .filter-controls select { margin-right: 1rem; }
+
+        /* Responsive design for mobile */
+        @media screen and (max-width: 768px) {
+            body { padding: 1rem; }
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .connection-status {
+                margin-top: 1rem;
+            }
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .filter-controls {
+                display: flex;
+                flex-direction: column;
+            }
+            .filter-controls select {
+                margin-right: 0;
+                margin-bottom: 1rem;
+            }
+
+            /* Hide table, show card view on mobile */
+            table { display: none; }
+            .issues-card-view { display: block; }
+
+            .issue-card {
+                background: #fff;
+                border: 1px solid #d1d1d1;
+                border-radius: 0.4rem;
+                padding: 1.5rem;
+                margin-bottom: 1rem;
+                cursor: pointer;
+                transition: box-shadow 0.2s;
+            }
+            .issue-card:hover {
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            .issue-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: start;
+                margin-bottom: 1rem;
+            }
+            .issue-card-id {
+                font-weight: bold;
+                color: #9b4dca;
+            }
+            .issue-card-title {
+                font-size: 1.6rem;
+                margin: 0.5rem 0;
+            }
+            .issue-card-meta {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1rem;
+                font-size: 1.2rem;
+            }
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
+            }
+        }
+
+        @media screen and (min-width: 769px) {
+            .issues-card-view { display: none; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>bd monitor</h1>
-        <p>Real-time issue tracking dashboard</p>
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
     </div>
+
+    <div class="header">
+        <div>
+            <h1>bd monitor</h1>
+            <p>Real-time issue tracking dashboard</p>
+        </div>
+        <div class="connection-status disconnected" id="connection-status">
+            <span class="connection-dot disconnected" id="connection-dot"></span>
+            <span id="connection-text">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="error-message" id="error-message"></div>
 
     <div class="stats">
         <h2>Statistics</h2>
@@ -179,9 +363,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
             </tr>
         </thead>
         <tbody id="issues-tbody">
-            <tr><td colspan="6">Loading...</td></tr>
+            <tr><td colspan="6"><div class="spinner"></div></td></tr>
         </tbody>
     </table>
+
+    <!-- Mobile card view -->
+    <div class="issues-card-view" id="issues-card-view">
+        <div class="spinner"></div>
+    </div>
 
     <!-- Modal for issue details -->
     <div id="issue-modal" class="modal">
@@ -235,8 +424,39 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
         // Update connection status indicator
         function updateConnectionStatus(connected) {
-            // Could add a visual indicator here
-            console.log('Connection status:', connected ? 'connected' : 'disconnected');
+            const statusEl = document.getElementById('connection-status');
+            const dotEl = document.getElementById('connection-dot');
+            const textEl = document.getElementById('connection-text');
+
+            if (connected) {
+                statusEl.className = 'connection-status connected';
+                dotEl.className = 'connection-dot connected';
+                textEl.textContent = 'Connected';
+            } else {
+                statusEl.className = 'connection-status disconnected';
+                dotEl.className = 'connection-dot disconnected';
+                textEl.textContent = 'Disconnected';
+            }
+        }
+
+        // Show/hide loading overlay
+        function setLoading(isLoading) {
+            const overlay = document.getElementById('loading-overlay');
+            if (isLoading) {
+                overlay.classList.add('active');
+            } else {
+                overlay.classList.remove('active');
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorEl = document.getElementById('error-message');
+            errorEl.textContent = message;
+            errorEl.classList.add('active');
+            setTimeout(() => {
+                errorEl.classList.remove('active');
+            }, 5000);
         }
 
         // Handle mutation event
@@ -251,6 +471,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
         async function loadStats() {
             try {
                 const response = await fetch('/api/stats');
+                if (!response.ok) throw new Error('Failed to load statistics');
                 const stats = await response.json();
                 document.getElementById('stat-total').textContent = stats.total || 0;
                 document.getElementById('stat-open').textContent = stats.by_status?.open || 0;
@@ -258,10 +479,12 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
                 // Load ready count separately
                 const readyResponse = await fetch('/api/ready');
+                if (!readyResponse.ok) throw new Error('Failed to load ready count');
                 const readyIssues = await readyResponse.json();
                 document.getElementById('stat-ready').textContent = readyIssues.length;
             } catch (error) {
                 console.error('Error loading statistics:', error);
+                showError('Failed to load statistics: ' + error.message);
             }
         }
 
@@ -269,26 +492,53 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
         async function loadIssues() {
             try {
                 const response = await fetch('/api/issues');
+                if (!response.ok) throw new Error('Failed to load issues');
                 allIssues = await response.json();
                 renderIssues(allIssues);
             } catch (error) {
                 console.error('Error loading issues:', error);
-                document.getElementById('issues-tbody').innerHTML = '<tr><td colspan="6">Error loading issues</td></tr>';
+                showError('Failed to load issues: ' + error.message);
+                document.getElementById('issues-tbody').innerHTML = '<tr><td colspan="6" style="text-align: center; color: #721c24;">Error loading issues</td></tr>';
+                document.getElementById('issues-card-view').innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Error loading issues</p></div>';
             }
         }
 
         // Render issues table
         function renderIssues(issues) {
             const tbody = document.getElementById('issues-tbody');
+            const cardView = document.getElementById('issues-card-view');
+
             if (!issues || issues.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6">No issues found</td></tr>';
+                const emptyState = '<div class="empty-state"><div class="empty-state-icon">📋</div><h3>No issues found</h3><p>Create your first issue to get started!</p></div>';
+                tbody.innerHTML = '<tr><td colspan="6">' + emptyState + '</td></tr>';
+                cardView.innerHTML = emptyState;
                 return;
             }
 
+            // Render table view
             tbody.innerHTML = issues.map(issue => {
                 const statusClass = 'status-' + (issue.status || 'open').toLowerCase().replace('_', '-');
                 const priorityClass = 'priority-' + (issue.priority || 2);
                 return '<tr onclick="showIssueDetail(\'' + issue.id + '\')"><td>' + issue.id + '</td><td>' + issue.title + '</td><td class="' + statusClass + '">' + (issue.status || 'open') + '</td><td class="' + priorityClass + '">P' + (issue.priority || 2) + '</td><td>' + (issue.issue_type || 'task') + '</td><td>' + (issue.assignee || '-') + '</td></tr>';
+            }).join('');
+
+            // Render card view for mobile
+            cardView.innerHTML = issues.map(issue => {
+                const statusClass = 'status-' + (issue.status || 'open').toLowerCase().replace('_', '-');
+                const priorityClass = 'priority-' + (issue.priority || 2);
+                let html = '<div class="issue-card" onclick="showIssueDetail(\'' + issue.id + '\')">';
+                html += '<div class="issue-card-header">';
+                html += '<span class="issue-card-id">' + issue.id + '</span>';
+                html += '<span class="' + priorityClass + '">P' + (issue.priority || 2) + '</span>';
+                html += '</div>';
+                html += '<h3 class="issue-card-title">' + issue.title + '</h3>';
+                html += '<div class="issue-card-meta">';
+                html += '<span class="' + statusClass + '">● ' + (issue.status || 'open') + '</span>';
+                html += '<span>Type: ' + (issue.issue_type || 'task') + '</span>';
+                if (issue.assignee) html += '<span>👤 ' + issue.assignee + '</span>';
+                html += '</div>';
+                html += '</div>';
+                return html;
             }).join('');
         }
 
@@ -314,10 +564,11 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
             modal.style.display = 'block';
             modalTitle.textContent = 'Loading...';
-            modalBody.innerHTML = '<p>Loading issue details...</p>';
+            modalBody.innerHTML = '<div class="spinner"></div>';
 
             try {
                 const response = await fetch('/api/issues/' + issueId);
+                if (!response.ok) throw new Error('Issue not found');
                 const issue = await response.json();
 
                 modalTitle.textContent = issue.id + ': ' + issue.title;
@@ -334,7 +585,8 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 modalBody.innerHTML = html;
             } catch (error) {
                 console.error('Error loading issue details:', error);
-                modalBody.innerHTML = '<p>Error loading issue details</p>';
+                showError('Failed to load issue details: ' + error.message);
+                modalBody.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><p>Error loading issue details</p></div>';
             }
         }
 
@@ -587,5 +839,46 @@ func handleWebSocketBroadcast() {
 			}
 		}
 		wsClientsMu.Unlock()
+	}
+}
+
+// pollMutations polls the daemon for mutations and broadcasts them to WebSocket clients
+func pollMutations() {
+	lastPollTime := int64(0) // Start from beginning
+
+	ticker := time.NewTicker(2 * time.Second) // Poll every 2 seconds
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if daemonClient == nil {
+			continue
+		}
+
+		// Call GetMutations RPC
+		resp, err := daemonClient.GetMutations(&rpc.GetMutationsArgs{
+			Since: lastPollTime,
+		})
+		if err != nil {
+			// Daemon might be down or restarting, just skip this poll
+			continue
+		}
+
+		var mutations []rpc.MutationEvent
+		if err := json.Unmarshal(resp.Data, &mutations); err != nil {
+			fmt.Fprintf(os.Stderr, "Error unmarshaling mutations: %v\n", err)
+			continue
+		}
+
+		// Broadcast each mutation to WebSocket clients
+		for _, mutation := range mutations {
+			data, _ := json.Marshal(mutation)
+			wsBroadcast <- data
+
+			// Update last poll time to this mutation's timestamp
+			mutationTimeMillis := mutation.Timestamp.UnixMilli()
+			if mutationTimeMillis > lastPollTime {
+				lastPollTime = mutationTimeMillis
+			}
+		}
 	}
 }
