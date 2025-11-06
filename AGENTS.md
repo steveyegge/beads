@@ -315,6 +315,10 @@ bd daemons health --json
 bd daemons stop /path/to/workspace --json
 bd daemons stop 12345 --json  # By PID
 
+# Restart a specific daemon
+bd daemons restart /path/to/workspace --json
+bd daemons restart 12345 --json  # By PID
+
 # View daemon logs
 bd daemons logs /path/to/workspace -n 100
 bd daemons logs 12345 -f  # Follow mode

@@ -634,6 +634,10 @@ bd daemons health
 bd daemons stop /path/to/workspace
 bd daemons stop 12345  # By PID
 
+# Restart a specific daemon
+bd daemons restart /path/to/workspace
+bd daemons restart 12345  # By PID
+
 # View daemon logs
 bd daemons logs /path/to/workspace -n 100
 bd daemons logs 12345 -f  # Follow mode

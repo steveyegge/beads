@@ -77,6 +77,30 @@ bd daemons stop 12345
 bd daemons stop /Users/me/projects/myapp --json
 ```
 
+### restart
+
+Restart a specific daemon gracefully.
+
+```bash
+bd daemons restart <workspace-path|pid> [--search DIRS] [--json]
+```
+
+Stops the daemon gracefully, then starts a new one in its place. Useful after upgrading bd or when a daemon needs to be refreshed.
+
+**Arguments:**
+- `<workspace-path|pid>` - Workspace path or PID of daemon to restart
+
+**Flags:**
+- `--search` - Directories to search for daemons
+- `--json` - Output in JSON format
+
+**Example:**
+```bash
+bd daemons restart /Users/me/projects/myapp
+bd daemons restart 12345
+bd daemons restart /Users/me/projects/myapp --json
+```
+
 ### logs
 
 View logs for a specific daemon.
@@ -136,6 +160,9 @@ After upgrading bd, restart all daemons to use the new version:
 bd daemons health  # Check for version mismatches
 bd daemons killall # Stop all old daemons
 # Daemons will auto-start with new version on next bd command
+
+# Or restart a specific daemon
+bd daemons restart /path/to/workspace
 ```
 
 ### Debugging
