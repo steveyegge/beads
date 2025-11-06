@@ -95,7 +95,7 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-      - run: nix run .#default help > help.txt
+      - run: nix run .#default > help.txt
       - name: Verify help text
         run: |
           FIRST_LINE=$(head -n 1 help.txt)
