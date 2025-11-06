@@ -141,7 +141,8 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip database initialization for commands that don't need a database
-		noDbCommands := []string{"init", cmdDaemon, "help", "version", "quickstart", "doctor"}
+		// monitor is included because it requires daemon and should never open direct SQLite connection
+		noDbCommands := []string{"init", cmdDaemon, "help", "version", "quickstart", "doctor", "monitor"}
 		if slices.Contains(noDbCommands, cmd.Name()) {
 			return
 		}

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -47,13 +49,71 @@ Example:
   bd monitor                    # Start on localhost:8080
   bd monitor --port 3000        # Start on custom port
   bd monitor --host 0.0.0.0     # Listen on all interfaces`,
-	Run: runMonitor,
+	PreRun: validateDaemonForMonitor,
+	Run:    runMonitor,
 }
 
 func init() {
 	monitorCmd.Flags().Int("port", 8080, "Port for web server")
 	monitorCmd.Flags().String("host", "localhost", "Host to bind to")
 	rootCmd.AddCommand(monitorCmd)
+}
+
+// validateDaemonForMonitor ensures daemon is running before starting monitor
+// This prevents SQLite locking conflicts by ensuring monitor only uses RPC
+func validateDaemonForMonitor(cmd *cobra.Command, args []string) {
+	// Find database path first (needed by getSocketPath)
+	if dbPath == "" {
+		if foundDB := beads.FindDatabasePath(); foundDB != "" {
+			dbPath = foundDB
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+			os.Exit(1)
+		}
+	}
+
+	// Attempt to connect to daemon
+	socketPath := getSocketPath()
+	client, err := rpc.TryConnect(socketPath)
+
+	if err != nil || client == nil {
+		fmt.Fprintf(os.Stderr, "Error: bd monitor requires the daemon to be running\n\n")
+		fmt.Fprintf(os.Stderr, "The monitor uses the daemon's RPC interface to avoid database locking conflicts.\n")
+		fmt.Fprintf(os.Stderr, "Please start the daemon first:\n\n")
+		fmt.Fprintf(os.Stderr, "  bd daemon\n\n")
+		fmt.Fprintf(os.Stderr, "Then start the monitor:\n\n")
+		fmt.Fprintf(os.Stderr, "  bd monitor\n\n")
+		os.Exit(1)
+	}
+
+	// Check daemon health
+	health, err := client.Health()
+	if err != nil || health.Status != "healthy" {
+		_ = client.Close()
+		fmt.Fprintf(os.Stderr, "Error: daemon is not healthy\n")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Health check failed: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Daemon status: %s\n", health.Status)
+			if health.Error != "" {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", health.Error)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\nTry restarting the daemon:\n")
+		fmt.Fprintf(os.Stderr, "  bd daemon --stop\n")
+		fmt.Fprintf(os.Stderr, "  bd daemon\n\n")
+		os.Exit(1)
+	}
+
+	// Set database path for validation
+	absDBPath, _ := filepath.Abs(dbPath)
+	client.SetDatabasePath(absDBPath)
+
+	// Store client in global for monitor to use
+	daemonClient = client
+
+	fmt.Printf("✓ Connected to daemon (version %s)\n", health.Version)
 }
 
 func runMonitor(cmd *cobra.Command, args []string) {
