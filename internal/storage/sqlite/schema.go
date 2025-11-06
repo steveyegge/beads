@@ -30,6 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
+CREATE INDEX IF NOT EXISTS idx_issues_external_ref ON issues(external_ref);
 
 -- Dependencies table
 CREATE TABLE IF NOT EXISTS dependencies (
@@ -129,10 +130,12 @@ CREATE TABLE IF NOT EXISTS export_hashes (
     FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
--- Issue counters table (for atomic ID generation)
-CREATE TABLE IF NOT EXISTS issue_counters (
-    prefix TEXT PRIMARY KEY,
-    last_id INTEGER NOT NULL DEFAULT 0
+-- Child counters table (for hierarchical ID generation)
+-- Tracks sequential child numbers per parent issue
+CREATE TABLE IF NOT EXISTS child_counters (
+    parent_id TEXT PRIMARY KEY,
+    last_child INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
 -- Issue snapshots table (for compaction)
@@ -162,6 +165,17 @@ CREATE TABLE IF NOT EXISTS compaction_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_comp_snap_issue_level_created ON compaction_snapshots(issue_id, compaction_level, created_at DESC);
+
+-- Repository mtimes table (for multi-repo hydration optimization)
+-- Tracks modification times of JSONL files to skip unchanged repos
+CREATE TABLE IF NOT EXISTS repo_mtimes (
+    repo_path TEXT PRIMARY KEY,  -- Absolute path to the repository root
+    jsonl_path TEXT NOT NULL,    -- Absolute path to the .beads/issues.jsonl file
+    mtime_ns INTEGER NOT NULL,   -- Modification time in nanoseconds since epoch
+    last_checked DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_mtimes_checked ON repo_mtimes(last_checked);
 
 -- Ready work view (with hierarchical blocking)
 -- Uses recursive CTE to propagate blocking through parent-child hierarchy

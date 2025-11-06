@@ -16,6 +16,7 @@ const (
 	OpList            = "list"
 	OpShow            = "show"
 	OpReady           = "ready"
+	OpStale           = "stale"
 	OpStats           = "stats"
 	OpDepAdd          = "dep_add"
 	OpDepRemove       = "dep_remove"
@@ -25,6 +26,7 @@ const (
 	OpCommentList     = "comment_list"
 	OpCommentAdd      = "comment_add"
 	OpBatch           = "batch"
+	OpResolveID       = "resolve_id"
 
 	OpCompact         = "compact"
 	OpCompactStats    = "compact_stats"
@@ -56,6 +58,7 @@ type Response struct {
 // CreateArgs represents arguments for the create operation
 type CreateArgs struct {
 	ID                 string   `json:"id,omitempty"`
+	Parent             string   `json:"parent,omitempty"` // Parent ID for hierarchical issues
 	Title              string   `json:"title"`
 	Description        string   `json:"description,omitempty"`
 	IssueType          string   `json:"issue_type"`
@@ -98,6 +101,28 @@ type ListArgs struct {
 	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
 	IDs       []string `json:"ids,omitempty"`        // Filter by specific issue IDs
 	Limit     int      `json:"limit,omitempty"`
+	
+	// Pattern matching
+	TitleContains       string `json:"title_contains,omitempty"`
+	DescriptionContains string `json:"description_contains,omitempty"`
+	NotesContains       string `json:"notes_contains,omitempty"`
+	
+	// Date ranges (ISO 8601 format)
+	CreatedAfter  string `json:"created_after,omitempty"`
+	CreatedBefore string `json:"created_before,omitempty"`
+	UpdatedAfter  string `json:"updated_after,omitempty"`
+	UpdatedBefore string `json:"updated_before,omitempty"`
+	ClosedAfter   string `json:"closed_after,omitempty"`
+	ClosedBefore  string `json:"closed_before,omitempty"`
+	
+	// Empty/null checks
+	EmptyDescription bool `json:"empty_description,omitempty"`
+	NoAssignee       bool `json:"no_assignee,omitempty"`
+	NoLabels         bool `json:"no_labels,omitempty"`
+	
+	// Priority range
+	PriorityMin *int `json:"priority_min,omitempty"`
+	PriorityMax *int `json:"priority_max,omitempty"`
 }
 
 // ShowArgs represents arguments for the show operation
@@ -105,12 +130,26 @@ type ShowArgs struct {
 	ID string `json:"id"`
 }
 
+// ResolveIDArgs represents arguments for the resolve_id operation
+type ResolveIDArgs struct {
+	ID string `json:"id"`
+}
+
 // ReadyArgs represents arguments for the ready operation
 type ReadyArgs struct {
-	Assignee   string `json:"assignee,omitempty"`
-	Priority   *int   `json:"priority,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	SortPolicy string `json:"sort_policy,omitempty"`
+	Assignee   string   `json:"assignee,omitempty"`
+	Priority   *int     `json:"priority,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
+	SortPolicy string   `json:"sort_policy,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
+	LabelsAny  []string `json:"labels_any,omitempty"`
+}
+
+// StaleArgs represents arguments for the stale command
+type StaleArgs struct {
+	Days   int    `json:"days,omitempty"`
+	Status string `json:"status,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency

@@ -13,14 +13,28 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// OrphanHandling is an alias to sqlite.OrphanHandling for convenience
+type OrphanHandling = sqlite.OrphanHandling
+
+const (
+	// OrphanStrict fails import on missing parent (safest)
+	OrphanStrict = sqlite.OrphanStrict
+	// OrphanResurrect auto-resurrects missing parents from JSONL history
+	OrphanResurrect = sqlite.OrphanResurrect
+	// OrphanSkip skips orphaned issues with warning
+	OrphanSkip = sqlite.OrphanSkip
+	// OrphanAllow imports orphans without validation (default, works around bugs)
+	OrphanAllow = sqlite.OrphanAllow
+)
+
 // Options contains import configuration
 type Options struct {
-	ResolveCollisions    bool // Auto-resolve collisions by remapping to new IDs
-	DryRun               bool // Preview changes without applying them
-	SkipUpdate           bool // Skip updating existing issues (create-only mode)
-	Strict               bool // Fail on any error (dependencies, labels, etc.)
-	RenameOnImport       bool // Rename imported issues to match database prefix
-	SkipPrefixValidation bool // Skip prefix validation (for auto-import)
+	DryRun               bool           // Preview changes without applying them
+	SkipUpdate           bool           // Skip updating existing issues (create-only mode)
+	Strict               bool           // Fail on any error (dependencies, labels, etc.)
+	RenameOnImport       bool           // Rename imported issues to match database prefix
+	SkipPrefixValidation bool           // Skip prefix validation (for auto-import)
+	OrphanHandling       OrphanHandling // How to handle missing parent issues (default: allow)
 }
 
 // Result contains statistics about the import operation
@@ -62,10 +76,9 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	}
 
 	// Compute content hashes for all incoming issues (bd-95)
+	// Always recompute to avoid stale/incorrect JSONL hashes (bd-1231)
 	for _, issue := range issues {
-		if issue.ContentHash == "" {
-			issue.ContentHash = issue.ComputeContentHash()
-		}
+		issue.ContentHash = issue.ComputeContentHash()
 	}
 
 	// Get or create SQLite store
@@ -76,14 +89,32 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	if needCloseStore {
 		defer func() { _ = sqliteStore.Close() }()
 	}
+	
+	// Clear export_hashes before import to prevent staleness (bd-160)
+	// Import operations may add/update issues, so export_hashes entries become invalid
+	if !opts.DryRun {
+		if err := sqliteStore.ClearAllExportHashes(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
+		}
+	}
+	
+	// Read orphan handling from config if not explicitly set
+	if opts.OrphanHandling == "" {
+		opts.OrphanHandling = sqliteStore.GetOrphanHandling(ctx)
+	}
 
 	// Check and handle prefix mismatches
 	if err := handlePrefixMismatch(ctx, sqliteStore, issues, opts, result); err != nil {
 		return result, err
 	}
 
+	// Validate no duplicate external_ref values in batch
+	if err := validateNoDuplicateExternalRefs(issues); err != nil {
+		return result, err
+	}
+
 	// Detect and resolve collisions
-	issues, err = handleCollisions(ctx, sqliteStore, issues, opts, result)
+	issues, err = detectUpdates(ctx, sqliteStore, issues, opts, result)
 	if err != nil {
 		return result, err
 	}
@@ -121,7 +152,7 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 }
 
 // getOrCreateStore returns an existing storage or creates a new one
-func getOrCreateStore(ctx context.Context, dbPath string, store storage.Storage) (*sqlite.SQLiteStorage, bool, error) {
+func getOrCreateStore(_ context.Context, dbPath string, store storage.Storage) (*sqlite.SQLiteStorage, bool, error) {
 	if store != nil {
 		sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 		if !ok {
@@ -186,8 +217,8 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 	return nil
 }
 
-// handleCollisions detects and resolves ID collisions
-func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
+// detectUpdates detects same-ID scenarios (which are updates with hash IDs, not collisions)
+func detectUpdates(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
 	// Phase 1: Detect (read-only)
 	collisionResult, err := sqlite.DetectCollisions(ctx, sqliteStore, issues)
 	if err != nil {
@@ -199,61 +230,15 @@ func handleCollisions(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, is
 		result.CollisionIDs = append(result.CollisionIDs, collision.ID)
 	}
 
-	// Handle collisions
-	if len(collisionResult.Collisions) > 0 {
-		if opts.DryRun {
-			return issues, nil
-		}
+	// With hash IDs, "collisions" (same ID, different content) are actually UPDATES
+	// Hash IDs are based on creation content and remain stable across updates
+	// So same ID + different fields = normal update operation, not a collision
+	// The collisionResult.Collisions list represents issues that *may* be updated
+	// Note: We don't pre-count updates here - upsertIssues will count them after
+	// checking timestamps to ensure we only update when incoming is newer (bd-e55c)
 
-		if !opts.ResolveCollisions {
-			return nil, fmt.Errorf("collision detected for issues: %v (use --resolve-collisions to auto-resolve)", result.CollisionIDs)
-		}
-
-		// Resolve collisions by scoring and remapping
-		allExistingIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get existing issues for collision resolution: %w", err)
-		}
-
-		// Phase 2: Score collisions
-		if err := sqlite.ScoreCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues); err != nil {
-			return nil, fmt.Errorf("failed to score collisions: %w", err)
-		}
-
-		// Phase 3: Remap collisions
-		idMapping, err := sqlite.RemapCollisions(ctx, sqliteStore, collisionResult.Collisions, allExistingIssues)
-		if err != nil {
-			return nil, fmt.Errorf("failed to remap collisions: %w", err)
-		}
-
-		result.IDMapping = idMapping
-		result.Created = len(collisionResult.Collisions)
-
-		// Remove colliding issues from the list (they're already processed)
-		filteredIssues := make([]*types.Issue, 0)
-		collidingIDs := make(map[string]bool)
-		for _, collision := range collisionResult.Collisions {
-			collidingIDs[collision.ID] = true
-		}
-		for _, issue := range issues {
-			if !collidingIDs[issue.ID] {
-				filteredIssues = append(filteredIssues, issue)
-			}
-		}
-		return filteredIssues, nil
-	}
-
-	// Phase 4: Apply renames (deletions of old IDs) if any were detected
-	if len(collisionResult.Renames) > 0 && !opts.DryRun {
-		// Build mapping for renames: oldID -> newID
-		renameMapping := make(map[string]string)
-		for _, rename := range collisionResult.Renames {
-			renameMapping[rename.OldID] = rename.NewID
-		}
-		if err := sqlite.ApplyCollisionResolution(ctx, sqliteStore, collisionResult, renameMapping); err != nil {
-			return nil, fmt.Errorf("failed to apply rename resolutions: %w", err)
-		}
-	}
+	// Phase 4: Renames removed - obsolete with hash IDs (bd-8e05)
+	// Hash-based IDs are content-addressed, so renames don't occur
 
 	if opts.DryRun {
 		result.Created = len(collisionResult.NewIssues) + len(collisionResult.Renames)
@@ -284,62 +269,143 @@ func buildIDMap(issues []*types.Issue) map[string]*types.Issue {
 }
 
 // handleRename handles content match with different IDs (rename detected)
-func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.Issue, incoming *types.Issue) error {
+// Returns the old ID that was deleted (if any), or empty string if no deletion occurred
+func handleRename(ctx context.Context, s *sqlite.SQLiteStorage, existing *types.Issue, incoming *types.Issue) (string, error) {
+	// Check if target ID already exists with the same content (race condition)
+	// This can happen when multiple clones import the same rename simultaneously
+	targetIssue, err := s.GetIssue(ctx, incoming.ID)
+	if err == nil && targetIssue != nil {
+		// Target ID exists - check if it has the same content
+		if targetIssue.ComputeContentHash() == incoming.ComputeContentHash() {
+			// Same content - check if old ID still exists and delete it
+			deletedID := ""
+			existingCheck, checkErr := s.GetIssue(ctx, existing.ID)
+			if checkErr == nil && existingCheck != nil {
+				if err := s.DeleteIssue(ctx, existing.ID); err != nil {
+					return "", fmt.Errorf("failed to delete old ID %s: %w", existing.ID, err)
+				}
+				deletedID = existing.ID
+			}
+			// The rename is already complete in the database
+			return deletedID, nil
+		}
+		// With hash IDs, same content should produce same ID. If we find same content
+		// with different IDs, treat it as an update to the existing ID (not a rename).
+		// This handles edge cases like test data, legacy data, or data corruption.
+		// Keep the existing ID and update fields if incoming has newer timestamp.
+		if incoming.UpdatedAt.After(existing.UpdatedAt) {
+			// Update existing issue with incoming's fields
+			updates := map[string]interface{}{
+				"title":               incoming.Title,
+				"description":         incoming.Description,
+				"design":              incoming.Design,
+				"acceptance_criteria": incoming.AcceptanceCriteria,
+				"notes":               incoming.Notes,
+				"external_ref":        incoming.ExternalRef,
+				"status":              incoming.Status,
+				"priority":            incoming.Priority,
+				"issue_type":          incoming.IssueType,
+				"assignee":            incoming.Assignee,
+			}
+			if err := s.UpdateIssue(ctx, existing.ID, updates, "importer"); err != nil {
+				return "", fmt.Errorf("failed to update issue %s: %w", existing.ID, err)
+			}
+		}
+		return "", nil
+		
+		/* OLD CODE REMOVED (bd-8e05)
+		// Different content - this is a collision during rename
+		// Allocate a new ID for the incoming issue instead of using the desired ID
+		prefix, err := s.GetConfig(ctx, "issue_prefix")
+		if err != nil || prefix == "" {
+			prefix = "bd"
+		}
+		
+		oldID := existing.ID
+		
+		// Retry up to 3 times to handle concurrent ID allocation
+		const maxRetries = 3
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			newID, err := s.AllocateNextID(ctx, prefix)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate new ID for rename collision: %w", err)
+			}
+			
+			// Update incoming issue to use the new ID
+			incoming.ID = newID
+			
+			// Delete old ID (only on first attempt)
+			if attempt == 0 {
+				if err := s.DeleteIssue(ctx, oldID); err != nil {
+					return "", fmt.Errorf("failed to delete old ID %s: %w", oldID, err)
+				}
+			}
+			
+			// Create with new ID
+			err = s.CreateIssue(ctx, incoming, "import-rename-collision")
+			if err == nil {
+				// Success!
+				return oldID, nil
+			}
+			
+			// Check if it's a UNIQUE constraint error
+			if !sqlite.IsUniqueConstraintError(err) {
+				// Not a UNIQUE constraint error, fail immediately
+				return "", fmt.Errorf("failed to create renamed issue with collision resolution %s: %w", newID, err)
+			}
+			
+			// UNIQUE constraint error - retry with new ID
+			if attempt == maxRetries-1 {
+				// Last attempt failed
+				return "", fmt.Errorf("failed to create renamed issue with collision resolution after %d retries: %w", maxRetries, err)
+			}
+		}
+		
+		// Note: We don't update text references here because it would be too expensive
+		// to scan all issues during every import. Text references to the old ID will
+		// eventually be cleaned up by manual reference updates or remain as stale.
+		// This is acceptable because the old ID no longer exists in the system.
+		
+		return oldID, nil
+		*/
+	}
+
+	// Check if old ID still exists (it might have been deleted by another clone)
+	existingCheck, checkErr := s.GetIssue(ctx, existing.ID)
+	if checkErr != nil || existingCheck == nil {
+		// Old ID doesn't exist - the rename must have been completed by another clone
+		// Verify that target exists with correct content
+		targetCheck, targetErr := s.GetIssue(ctx, incoming.ID)
+		if targetErr == nil && targetCheck != nil && targetCheck.ComputeContentHash() == incoming.ComputeContentHash() {
+			return "", nil
+		}
+		return "", fmt.Errorf("old ID %s doesn't exist and target ID %s is not as expected", existing.ID, incoming.ID)
+	}
+
 	// Delete old ID
-	if err := s.DeleteIssue(ctx, existing.ID); err != nil {
-		return fmt.Errorf("failed to delete old ID %s: %w", existing.ID, err)
+	oldID := existing.ID
+	if err := s.DeleteIssue(ctx, oldID); err != nil {
+		return "", fmt.Errorf("failed to delete old ID %s: %w", oldID, err)
 	}
 
 	// Create with new ID
 	if err := s.CreateIssue(ctx, incoming, "import-rename"); err != nil {
-		return fmt.Errorf("failed to create renamed issue %s: %w", incoming.ID, err)
-	}
-
-	// Update references from old ID to new ID
-	idMapping := map[string]string{existing.ID: incoming.ID}
-	cache, err := sqlite.BuildReplacementCache(idMapping)
-	if err != nil {
-		return fmt.Errorf("failed to build replacement cache: %w", err)
-	}
-
-	// Get all issues to update references
-	dbIssues, err := s.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		return fmt.Errorf("failed to get issues for reference update: %w", err)
-	}
-
-	// Update text field references in all issues
-	for _, issue := range dbIssues {
-		updates := make(map[string]interface{})
-
-		newDesc := sqlite.ReplaceIDReferencesWithCache(issue.Description, cache)
-		if newDesc != issue.Description {
-			updates["description"] = newDesc
-		}
-
-		newDesign := sqlite.ReplaceIDReferencesWithCache(issue.Design, cache)
-		if newDesign != issue.Design {
-			updates["design"] = newDesign
-		}
-
-		newNotes := sqlite.ReplaceIDReferencesWithCache(issue.Notes, cache)
-		if newNotes != issue.Notes {
-			updates["notes"] = newNotes
-		}
-
-		newAC := sqlite.ReplaceIDReferencesWithCache(issue.AcceptanceCriteria, cache)
-		if newAC != issue.AcceptanceCriteria {
-			updates["acceptance_criteria"] = newAC
-		}
-
-		if len(updates) > 0 {
-			if err := s.UpdateIssue(ctx, issue.ID, updates, "import-rename"); err != nil {
-				return fmt.Errorf("failed to update references in issue %s: %w", issue.ID, err)
+		// If UNIQUE constraint error, it's likely another clone created it concurrently
+		if sqlite.IsUniqueConstraintError(err) {
+			// Check if target exists with same content
+			targetIssue, getErr := s.GetIssue(ctx, incoming.ID)
+			if getErr == nil && targetIssue != nil && targetIssue.ComputeContentHash() == incoming.ComputeContentHash() {
+				// Same content - rename already complete, this is OK
+				return oldID, nil
 			}
 		}
+		return "", fmt.Errorf("failed to create renamed issue %s: %w", incoming.ID, err)
 	}
 
-	return nil
+	// Reference updates removed - obsolete with hash IDs (bd-8e05)
+	// Hash-based IDs are deterministic, so no reference rewriting needed
+
+	return oldID, nil
 }
 
 // upsertIssues creates new issues or updates existing ones using content-first matching
@@ -352,6 +418,14 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 	
 	dbByHash := buildHashMap(dbIssues)
 	dbByID := buildIDMap(dbIssues)
+	
+	// Build external_ref map for O(1) lookup
+	dbByExternalRef := make(map[string]*types.Issue)
+	for _, issue := range dbIssues {
+		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
+			dbByExternalRef[*issue.ExternalRef] = issue
+		}
+	}
 
 	// Track what we need to create
 	var newIssues []*types.Issue
@@ -371,8 +445,61 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			continue
 		}
 		seenHashes[hash] = true
+		
+		// Phase 0: Match by external_ref first (if present)
+		// This enables re-syncing from external systems (Jira, GitHub, Linear)
+		if incoming.ExternalRef != nil && *incoming.ExternalRef != "" {
+			if existing, found := dbByExternalRef[*incoming.ExternalRef]; found {
+				// Found match by external_ref - update the existing issue
+				if !opts.SkipUpdate {
+					// Check timestamps - only update if incoming is newer (bd-e55c)
+					if !incoming.UpdatedAt.After(existing.UpdatedAt) {
+						// Local version is newer or same - skip update
+						result.Unchanged++
+						continue
+					}
+					
+					// Build updates map
+					updates := make(map[string]interface{})
+					updates["title"] = incoming.Title
+					updates["description"] = incoming.Description
+					updates["status"] = incoming.Status
+					updates["priority"] = incoming.Priority
+					updates["issue_type"] = incoming.IssueType
+					updates["design"] = incoming.Design
+					updates["acceptance_criteria"] = incoming.AcceptanceCriteria
+					updates["notes"] = incoming.Notes
+					updates["closed_at"] = incoming.ClosedAt
+					
+					if incoming.Assignee != "" {
+					 updates["assignee"] = incoming.Assignee
+					} else {
+					 updates["assignee"] = nil
+					}
+					
+					if incoming.ExternalRef != nil && *incoming.ExternalRef != "" {
+					 updates["external_ref"] = *incoming.ExternalRef
+					} else {
+					 updates["external_ref"] = nil
+				}
+					
+					// Only update if data actually changed
+					if IssueDataChanged(existing, updates) {
+						if err := sqliteStore.UpdateIssue(ctx, existing.ID, updates, "import"); err != nil {
+							return fmt.Errorf("error updating issue %s (matched by external_ref): %w", existing.ID, err)
+						}
+						result.Updated++
+					} else {
+						result.Unchanged++
+					}
+				} else {
+					result.Skipped++
+				}
+				continue
+			}
+		}
 
-		// Phase 1: Match by content hash first
+		// Phase 1: Match by content hash
 		if existing, found := dbByHash[hash]; found {
 			// Same content exists
 			if existing.ID == incoming.ID {
@@ -381,8 +508,13 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			} else {
 				// Same content, different ID - rename detected
 				if !opts.SkipUpdate {
-					if err := handleRename(ctx, sqliteStore, existing, incoming); err != nil {
+					deletedID, err := handleRename(ctx, sqliteStore, existing, incoming)
+					if err != nil {
 						return fmt.Errorf("failed to handle rename %s -> %s: %w", existing.ID, incoming.ID, err)
+					}
+					// Remove the deleted ID from the map to prevent stale references
+					if deletedID != "" {
+						delete(dbByID, deletedID)
 					}
 					result.Updated++
 				} else {
@@ -395,9 +527,16 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		// Phase 2: New content - check for ID collision
 		if existingWithID, found := dbByID[incoming.ID]; found {
 			// ID exists but different content - this is a collision
-			// The collision should have been handled earlier by handleCollisions
+			// The update should have been detected earlier by detectUpdates
 			// If we reach here, it means collision wasn't resolved - treat as update
 			if !opts.SkipUpdate {
+				// Check timestamps - only update if incoming is newer (bd-e55c)
+				if !incoming.UpdatedAt.After(existingWithID.UpdatedAt) {
+					// Local version is newer or same - skip update
+					result.Unchanged++
+					continue
+				}
+				
 				// Build updates map
 				updates := make(map[string]interface{})
 				updates["title"] = incoming.Title
@@ -408,18 +547,19 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 				updates["design"] = incoming.Design
 				updates["acceptance_criteria"] = incoming.AcceptanceCriteria
 				updates["notes"] = incoming.Notes
+			updates["closed_at"] = incoming.ClosedAt
 
 				if incoming.Assignee != "" {
-					updates["assignee"] = incoming.Assignee
+				 updates["assignee"] = incoming.Assignee
 				} else {
-					updates["assignee"] = nil
-				}
+				 updates["assignee"] = nil
+			}
 
 				if incoming.ExternalRef != nil && *incoming.ExternalRef != "" {
-					updates["external_ref"] = *incoming.ExternalRef
+				 updates["external_ref"] = *incoming.ExternalRef
 				} else {
-					updates["external_ref"] = nil
-				}
+				 updates["external_ref"] = nil
+			}
 
 				// Only update if data actually changed
 				if IssueDataChanged(existingWithID, updates) {
@@ -439,18 +579,36 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		}
 	}
 
-	// Batch create all new issues
-	if len(newIssues) > 0 {
-		if err := sqliteStore.CreateIssues(ctx, newIssues, "import"); err != nil {
-			return fmt.Errorf("error creating issues: %w", err)
+// Batch create all new issues
+// Sort by hierarchy depth to ensure parents are created before children
+if len(newIssues) > 0 {
+ sort.Slice(newIssues, func(i, j int) bool {
+  depthI := strings.Count(newIssues[i].ID, ".")
+ depthJ := strings.Count(newIssues[j].ID, ".")
+			if depthI != depthJ {
+  return depthI < depthJ // Shallower first
+ }
+ return newIssues[i].ID < newIssues[j].ID // Stable sort
+})
+
+// Create in batches by depth level (max depth 3)
+		for depth := 0; depth <= 3; depth++ {
+   var batchForDepth []*types.Issue
+   for _, issue := range newIssues {
+    if strings.Count(issue.ID, ".") == depth {
+    batchForDepth = append(batchForDepth, issue)
+				}
+			}
+			if len(batchForDepth) > 0 {
+				if err := sqliteStore.CreateIssuesWithOptions(ctx, batchForDepth, "import", opts.OrphanHandling); err != nil {
+					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
+				}
+				result.Created += len(batchForDepth)
+			}
 		}
-		result.Created += len(newIssues)
 	}
 
-	// Sync counters after batch import
-	if err := sqliteStore.SyncAllCounters(ctx); err != nil {
-		return fmt.Errorf("error syncing counters: %w", err)
-	}
+	// REMOVED (bd-c7af): Counter sync after import - no longer needed with hash IDs
 
 	return nil
 }
@@ -581,4 +739,29 @@ func GetPrefixList(prefixes map[string]int) []string {
 		result = append(result, fmt.Sprintf("%s- (%d issues)", prefix, count))
 	}
 	return result
+}
+
+func validateNoDuplicateExternalRefs(issues []*types.Issue) error {
+	seen := make(map[string][]string)
+	
+	for _, issue := range issues {
+		if issue.ExternalRef != nil && *issue.ExternalRef != "" {
+			ref := *issue.ExternalRef
+			seen[ref] = append(seen[ref], issue.ID)
+		}
+	}
+
+	var duplicates []string
+	for ref, issueIDs := range seen {
+		if len(issueIDs) > 1 {
+			duplicates = append(duplicates, fmt.Sprintf("external_ref '%s' appears in issues: %v", ref, issueIDs))
+		}
+	}
+
+	if len(duplicates) > 0 {
+		sort.Strings(duplicates)
+		return fmt.Errorf("batch import contains duplicate external_ref values:\n%s", strings.Join(duplicates, "\n"))
+	}
+
+	return nil
 }

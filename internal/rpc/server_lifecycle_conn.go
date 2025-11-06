@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
@@ -177,7 +178,17 @@ func (s *Server) handleSignals() {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	defer func() { 
+		_ = conn.Close() 
+	}()
+
+	// Recover from panics to prevent daemon crash (bd-1048)
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "PANIC in handleConnection: %v\n", r)
+			fmt.Fprintf(os.Stderr, "Stack trace:\n%s\n", debug.Stack())
+		}
+	}()
 
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)

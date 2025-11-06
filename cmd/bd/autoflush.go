@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/types"
 	"golang.org/x/mod/semver"
 )
@@ -46,7 +46,7 @@ func findJSONLPath() string {
 	// Ensure the directory exists (important for new databases)
 	// This is the only difference from the public API - we create the directory
 	dbDir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
+	if err := os.MkdirAll(dbDir, 0750); err != nil {
 		// If we can't create the directory, return discovered path anyway
 		// (the subsequent write will fail with a clearer error)
 		return jsonlPath
@@ -160,9 +160,15 @@ func autoImportIfNewer() {
 		return
 	}
 
+	// Clear export_hashes before import to prevent staleness (bd-160)
+	// Import operations may add/update issues, so export_hashes entries become invalid
+	if err := store.ClearAllExportHashes(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
+	}
+	
 	// Use shared import logic (bd-157)
 	opts := ImportOptions{
-		ResolveCollisions:    true, // Auto-import always resolves collisions
+
 		DryRun:               false,
 		SkipUpdate:           false,
 		Strict:               false,
@@ -384,53 +390,54 @@ func clearAutoFlushState() {
 //
 // Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
 // Thread-safe: No shared state access. Safe to call from multiple goroutines.
-// computeIssueContentHash computes a SHA256 hash of an issue's content, excluding timestamps.
-// This is used for detecting timestamp-only changes during export deduplication (bd-159).
-func computeIssueContentHash(issue *types.Issue) (string, error) {
-	// Clone issue and zero out timestamps to exclude them from hash
-	normalized := *issue
-	normalized.CreatedAt = time.Time{}
-	normalized.UpdatedAt = time.Time{}
-	
-	// Also zero out ClosedAt if present
-	if normalized.ClosedAt != nil {
-		zeroTime := time.Time{}
-		normalized.ClosedAt = &zeroTime
-	}
-	
-	// Serialize to JSON
-	data, err := json.Marshal(normalized)
+// validateJSONLIntegrity checks if JSONL file hash matches stored hash.
+// If mismatch detected, clears export_hashes and logs warning (bd-160).
+// Returns (needsFullExport, error) where needsFullExport=true if export_hashes was cleared.
+func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error) {
+	// Get stored JSONL file hash
+	storedHash, err := store.GetJSONLFileHash(ctx)
 	if err != nil {
-		return "", err
+		return false, fmt.Errorf("failed to get stored JSONL hash: %w", err)
 	}
 	
-	// SHA256 hash
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
-}
-
-// shouldSkipExport checks if an issue should be skipped during export because
-// it only has timestamp changes (no actual content changes) (bd-159).
-func shouldSkipExport(ctx context.Context, issue *types.Issue) (bool, error) {
-	// Get the stored hash from export_hashes table (last exported state)
-	storedHash, err := store.GetExportHash(ctx, issue.ID)
-	if err != nil {
-		return false, err
-	}
-	
-	// If no hash stored, we must export (first export)
+	// If no hash stored, this is first export - skip validation
 	if storedHash == "" {
 		return false, nil
 	}
 	
-	// Compute current hash
-	currentHash, err := computeIssueContentHash(issue)
+	// Read current JSONL file
+	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
-		return false, err
+		if os.IsNotExist(err) {
+			// JSONL doesn't exist but we have a stored hash - clear export_hashes
+			fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file missing but export_hashes exist. Clearing export_hashes.\n")
+			if err := store.ClearAllExportHashes(ctx); err != nil {
+				return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+			}
+			return true, nil // Signal full export needed
+		}
+		return false, fmt.Errorf("failed to read JSONL file: %w", err)
 	}
 	
-	// If hashes match, only timestamps changed - skip export
-	return currentHash == storedHash, nil
+	// Compute current JSONL hash
+	hasher := sha256.New()
+	hasher.Write(jsonlData)
+	currentHash := hex.EncodeToString(hasher.Sum(nil))
+	
+	// Compare hashes
+	if currentHash != storedHash {
+		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected (bd-160)\n")
+		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
+		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
+		
+		// Clear export_hashes to force full re-export
+		if err := store.ClearAllExportHashes(ctx); err != nil {
+			return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+		}
+		return true, nil // Signal full export needed
+	}
+	
+	return false, nil
 }
 
 func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error) {
@@ -454,43 +461,40 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 		}
 	}()
 
-	// Write all issues as JSONL (with timestamp-only deduplication for bd-159)
-	ctx := context.Background()
+	// Write all issues as JSONL (timestamp-only deduplication DISABLED - bd-160)
 	encoder := json.NewEncoder(f)
 	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
 	
 	for _, issue := range issues {
-		// Check if this is only a timestamp change (bd-159)
-		skip, err := shouldSkipExport(ctx, issue)
-		if err != nil {
-			// Log warning but continue - don't fail export on hash check errors
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to check if %s should skip: %v\n", issue.ID, err)
-			}
-			skip = false
-		}
-		
-		if skip {
-			skippedCount++
-			continue
-		}
+		// DISABLED: timestamp-only deduplication causes data loss (bd-160)
+		// skip, err := shouldSkipExport(ctx, issue)
+		// if err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to check if %s should skip: %v\n", issue.ID, err)
+		// 	}
+		// 	skip = false
+		// }
+		// if skip {
+		// 	skippedCount++
+		// 	continue
+		// }
 		
 		if err := encoder.Encode(issue); err != nil {
 			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 		
-		// Save content hash after successful export (bd-159)
-		contentHash, err := computeIssueContentHash(issue)
-		if err != nil {
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to compute hash for %s: %v\n", issue.ID, err)
-			}
-		} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-			if os.Getenv("BD_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "Debug: failed to save export hash for %s: %v\n", issue.ID, err)
-			}
-		}
+		// DISABLED: export hash tracking (bd-160)
+		// contentHash, err := computeIssueContentHash(issue)
+		// if err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to compute hash for %s: %v\n", issue.ID, err)
+		// 	}
+		// } else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+		// 	if os.Getenv("BD_DEBUG") != "" {
+		// 		fmt.Fprintf(os.Stderr, "Debug: failed to save export hash for %s: %v\n", issue.ID, err)
+		// 	}
+		// }
 		
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
@@ -513,6 +517,7 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	}
 
 	// Set appropriate file permissions (0644: rw-r--r--)
+	// nolint:gosec // G302: JSONL needs to be readable by other tools
 	if err := os.Chmod(jsonlPath, 0644); err != nil {
 		// Non-fatal - file is already written
 		if os.Getenv("BD_DEBUG") != "" {
@@ -526,12 +531,12 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 // flushToJSONL exports dirty issues to JSONL using incremental updates
 // flushToJSONL exports dirty database changes to the JSONL file. Uses incremental
 // export by default (only exports modified issues), or full export for ID-changing
-// operations (renumber, resolve-collisions). Invoked by the debounce timer or
+// operations (e.g., rename-prefix). Invoked by the debounce timer or
 // immediately on command exit.
 //
 // Export modes:
 //   - Incremental (default): Exports only GetDirtyIssues(), merges with existing JSONL
-//   - Full (after renumber): Exports all issues, rebuilds JSONL from scratch
+//   - Full (after rename-prefix): Exports all issues, rebuilds JSONL from scratch
 //
 // Error handling: Tracks consecutive failures. After 3+ failures, displays prominent
 // warning suggesting manual "bd export" to recover. Failure counter resets on success.
@@ -554,16 +559,6 @@ func flushToJSONL() {
 	}
 	storeMutex.Unlock()
 
-	flushMutex.Lock()
-	if !isDirty {
-		flushMutex.Unlock()
-		return
-	}
-	isDirty = false
-	fullExport := needsFullExport
-	needsFullExport = false // Reset flag
-	flushMutex.Unlock()
-
 	jsonlPath := findJSONLPath()
 
 	// Double-check store is still active before accessing
@@ -573,6 +568,52 @@ func flushToJSONL() {
 		return
 	}
 	storeMutex.Unlock()
+
+	ctx := context.Background()
+	
+	// Validate JSONL integrity BEFORE checking isDirty (bd-c6cf)
+	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)
+	// If export_hashes was cleared, we need to do a full export even if nothing is dirty
+	integrityNeedsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+	if err != nil {
+		// Special case: missing JSONL is not fatal, just forces full export (bd-c6cf)
+		if !os.IsNotExist(err) {
+			// Record failure without clearing isDirty (we didn't do any work yet)
+			flushMutex.Lock()
+			flushFailureCount++
+			lastFlushError = err
+			failCount := flushFailureCount
+			flushMutex.Unlock()
+
+			// Always show the immediate warning
+			fmt.Fprintf(os.Stderr, "Warning: auto-flush failed: %v\n", err)
+
+			// Show prominent warning after 3+ consecutive failures
+			if failCount >= 3 {
+				red := color.New(color.FgRed, color.Bold).SprintFunc()
+				fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+				fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
+				fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+			}
+			return
+		}
+		// Missing JSONL: treat as "force full export" case
+		integrityNeedsFullExport = true
+	}
+
+	// Now check if we should proceed with export
+	flushMutex.Lock()
+	if !isDirty && !integrityNeedsFullExport {
+		// Nothing to do: no dirty issues and no integrity issue
+		flushMutex.Unlock()
+		return
+	}
+	
+	// We're proceeding with export - capture state and clear flags
+	isDirty = false
+	fullExport := needsFullExport || integrityNeedsFullExport
+	needsFullExport = false // Reset flag
+	flushMutex.Unlock()
 
 	// Helper to record failure
 	recordFailure := func(err error) {
@@ -602,17 +643,14 @@ func flushToJSONL() {
 		flushMutex.Unlock()
 	}
 
-	ctx := context.Background()
-
 	// Determine which issues to export
 	var dirtyIDs []string
-	var err error
 
 	if fullExport {
 		// Full export: get ALL issues (needed after ID-changing operations like renumber)
-		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get all issues: %w", err))
+		allIssues, err2 := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err2 != nil {
+			recordFailure(fmt.Errorf("failed to get all issues: %w", err2))
 			return
 		}
 		dirtyIDs = make([]string, len(allIssues))
@@ -621,9 +659,10 @@ func flushToJSONL() {
 		}
 	} else {
 		// Incremental export: get only dirty issue IDs (bd-39 optimization)
-		dirtyIDs, err = store.GetDirtyIssues(ctx)
-		if err != nil {
-			recordFailure(fmt.Errorf("failed to get dirty issues: %w", err))
+		var err2 error
+		dirtyIDs, err2 = store.GetDirtyIssues(ctx)
+		if err2 != nil {
+			recordFailure(fmt.Errorf("failed to get dirty issues: %w", err2))
 			return
 		}
 
@@ -639,6 +678,9 @@ func flushToJSONL() {
 	if !fullExport {
 		if existingFile, err := os.Open(jsonlPath); err == nil {
 			scanner := bufio.NewScanner(existingFile)
+			// Increase buffer to handle large JSON lines (bd-c6cf)
+			// Default scanner limit is 64KB which can cause silent truncation
+			scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB max line size
 			lineNum := 0
 			for scanner.Scan() {
 				lineNum++
@@ -653,6 +695,12 @@ func flushToJSONL() {
 					// Warn about malformed JSONL lines
 					fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
 				}
+			}
+			// Check for scanner errors (bd-c6cf)
+			if err := scanner.Err(); err != nil {
+				_ = existingFile.Close()
+				recordFailure(fmt.Errorf("failed to read existing JSONL: %w", err))
+				return
 			}
 			_ = existingFile.Close()
 		}
@@ -713,6 +761,11 @@ func flushToJSONL() {
 		exportedHash := hex.EncodeToString(hasher.Sum(nil))
 		if err := store.SetMetadata(ctx, "last_import_hash", exportedHash); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash after export: %v\n", err)
+		}
+		
+		// Store JSONL file hash for integrity validation (bd-160)
+		if err := store.SetJSONLFileHash(ctx, exportedHash); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash after export: %v\n", err)
 		}
 	}
 

@@ -9,9 +9,14 @@ This directory contains examples of how to integrate bd with AI agents and workf
 - **[markdown-to-jsonl/](markdown-to-jsonl/)** - Convert markdown planning docs to bd issues
 - **[github-import/](github-import/)** - Import issues from GitHub repositories
 - **[git-hooks/](git-hooks/)** - Pre-configured git hooks for automatic export/import
-- **[branch-merge/](branch-merge/)** - Branch merge workflow with collision resolution
+<!-- REMOVED (bd-4c74): branch-merge example - collision resolution no longer needed with hash IDs -->
 - **[claude-desktop-mcp/](claude-desktop-mcp/)** - MCP server for Claude Desktop integration
 - **[claude-code-skill/](claude-code-skill/)** - Claude Code skill for effective beads usage patterns
+- **[contributor-workflow/](contributor-workflow/)** - OSS contributor setup with separate planning repo
+- **[team-workflow/](team-workflow/)** - Team collaboration with shared repositories
+- **[multi-phase-development/](multi-phase-development/)** - Organize large projects by phases (planning, MVP, iteration, polish)
+- **[multiple-personas/](multiple-personas/)** - Architect/implementer/reviewer role separation
+- **[protected-branch/](protected-branch/)** - Protected branch workflow for team collaboration
 
 ## Quick Start
 
@@ -28,9 +33,7 @@ cd bash-agent
 cd git-hooks
 ./install.sh
 
-# Try branch merge collision resolution
-cd branch-merge
-./demo.sh
+# REMOVED (bd-4c74): branch-merge demo - hash IDs eliminate collision resolution
 ```
 
 ## Creating Your Own Agent

@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package main
 
 import (
@@ -5,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +116,11 @@ func TestBackwardCompatibilityWithOldDaemon(t *testing.T) {
 }
 
 func TestDaemonLockJSONFormat(t *testing.T) {
+	// Skip on Windows - file locking prevents reading lock file while locked
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file locking prevents reading locked files")
+	}
+
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0700); err != nil {
@@ -151,6 +160,11 @@ func TestDaemonLockJSONFormat(t *testing.T) {
 }
 
 func TestValidateDaemonLock(t *testing.T) {
+	// Skip on Windows - file locking prevents reading lock file while locked
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file locking prevents reading locked files")
+	}
+
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0700); err != nil {
@@ -191,9 +205,13 @@ func TestMultipleDaemonProcessesRace(t *testing.T) {
 	// Find the bd binary
 	bdBinary, err := exec.LookPath("bd")
 	if err != nil {
-		// Try local build
-		if _, err := os.Stat("./bd"); err == nil {
-			bdBinary = "./bd"
+		// Try local build (platform-specific)
+		localBinary := "./bd"
+		if runtime.GOOS == "windows" {
+			localBinary = "./bd.exe"
+		}
+		if _, err := os.Stat(localBinary); err == nil {
+			bdBinary = localBinary
 		} else {
 			t.Skip("bd binary not found, skipping race test")
 		}

@@ -151,11 +151,7 @@ func profileImportOperation(t *testing.T, numIssues int) {
 	phases["create_update"] = time.Since(createStart)
 
 	// Phase 4: Sync counters
-	syncStart := time.Now()
-	if err := sqliteStore.SyncAllCounters(ctx); err != nil {
-		t.Fatalf("Failed to sync counters: %v", err)
-	}
-	phases["sync_counters"] = time.Since(syncStart)
+	// REMOVED (bd-c7af): Counter sync - no longer needed with hash IDs
 
 	totalDuration := time.Since(startTime)
 

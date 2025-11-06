@@ -213,9 +213,18 @@ func TestUpdateIssue(t *testing.T) {
 	json.Unmarshal(createResp.Data, &issue)
 
 	newTitle := "Updated Title"
+	notes := "Some important notes"
+	design := "Design details"
+	assignee := "alice"
+	acceptance := "Acceptance criteria"
+
 	updateArgs := &UpdateArgs{
-		ID:    issue.ID,
-		Title: &newTitle,
+		ID:                 issue.ID,
+		Title:              &newTitle,
+		Notes:              &notes,
+		Design:             &design,
+		Assignee:           &assignee,
+		AcceptanceCriteria: &acceptance,
 	}
 
 	updateResp, err := client.Update(updateArgs)
@@ -228,6 +237,18 @@ func TestUpdateIssue(t *testing.T) {
 
 	if updatedIssue.Title != newTitle {
 		t.Errorf("Expected title %s, got %s", newTitle, updatedIssue.Title)
+	}
+	if updatedIssue.Notes != notes {
+		t.Errorf("Expected notes %s, got %s", notes, updatedIssue.Notes)
+	}
+	if updatedIssue.Design != design {
+		t.Errorf("Expected design %s, got %s", design, updatedIssue.Design)
+	}
+	if updatedIssue.Assignee != assignee {
+		t.Errorf("Expected assignee %s, got %s", assignee, updatedIssue.Assignee)
+	}
+	if updatedIssue.AcceptanceCriteria != acceptance {
+		t.Errorf("Expected acceptance criteria %s, got %s", acceptance, updatedIssue.AcceptanceCriteria)
 	}
 }
 
@@ -515,4 +536,167 @@ func TestDatabaseHandshake(t *testing.T) {
 	if err != nil {
 		t.Errorf("Create without ExpectedDB should succeed (backward compat): %v", err)
 	}
+}
+
+func TestCreate_WithParent(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create parent issue
+	parentArgs := &CreateArgs{
+		Title:     "Parent Epic",
+		IssueType: "epic",
+		Priority:  1,
+	}
+
+	parentResp, err := client.Create(parentArgs)
+	if err != nil {
+		t.Fatalf("Create parent failed: %v", err)
+	}
+
+	var parent types.Issue
+	if err := json.Unmarshal(parentResp.Data, &parent); err != nil {
+		t.Fatalf("Failed to unmarshal parent: %v", err)
+	}
+
+	// Create child issue using --parent flag
+	childArgs := &CreateArgs{
+		Parent:    parent.ID,
+		Title:     "Child Task",
+		IssueType: "task",
+		Priority:  1,
+	}
+
+	childResp, err := client.Create(childArgs)
+	if err != nil {
+		t.Fatalf("Create child failed: %v", err)
+	}
+
+	var child types.Issue
+	if err := json.Unmarshal(childResp.Data, &child); err != nil {
+		t.Fatalf("Failed to unmarshal child: %v", err)
+	}
+
+	// Verify hierarchical ID format (should be parent.1)
+	expectedID := parent.ID + ".1"
+	if child.ID != expectedID {
+		t.Errorf("Expected child ID %s, got %s", expectedID, child.ID)
+	}
+
+	// Create second child
+	child2Args := &CreateArgs{
+		Parent:    parent.ID,
+		Title:     "Second Child Task",
+		IssueType: "task",
+		Priority:  1,
+	}
+
+	child2Resp, err := client.Create(child2Args)
+	if err != nil {
+		t.Fatalf("Create second child failed: %v", err)
+	}
+
+	var child2 types.Issue
+	if err := json.Unmarshal(child2Resp.Data, &child2); err != nil {
+		t.Fatalf("Failed to unmarshal second child: %v", err)
+	}
+
+	// Verify second child has incremented ID (parent.2)
+	expectedID2 := parent.ID + ".2"
+	if child2.ID != expectedID2 {
+		t.Errorf("Expected second child ID %s, got %s", expectedID2, child2.ID)
+	}
+}
+
+func TestCreate_WithParentAndIDConflict(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create parent issue
+	parentArgs := &CreateArgs{
+		Title:     "Parent Epic",
+		IssueType: "epic",
+		Priority:  1,
+	}
+
+	parentResp, err := client.Create(parentArgs)
+	if err != nil {
+		t.Fatalf("Create parent failed: %v", err)
+	}
+
+	var parent types.Issue
+	if err := json.Unmarshal(parentResp.Data, &parent); err != nil {
+		t.Fatalf("Failed to unmarshal parent: %v", err)
+	}
+
+	// Try to create with both ID and Parent (should fail)
+	conflictArgs := &CreateArgs{
+		ID:        "bd-custom",
+		Parent:    parent.ID,
+		Title:     "Should Fail",
+		IssueType: "task",
+		Priority:  1,
+	}
+
+	resp, err := client.Create(conflictArgs)
+	if err == nil && resp.Success {
+		t.Fatal("Expected error when both ID and Parent are specified")
+	}
+
+	if !strings.Contains(resp.Error, "cannot specify both ID and Parent") {
+		t.Errorf("Expected conflict error message, got: %s", resp.Error)
+	}
+}
+
+func TestCreate_DiscoveredFromInheritsSourceRepo(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create a parent issue
+	parentArgs := &CreateArgs{
+		Title:     "Parent issue",
+		IssueType: "task",
+		Priority:  1,
+	}
+
+	parentResp, err := client.Create(parentArgs)
+	if err != nil {
+		t.Fatalf("Failed to create parent: %v", err)
+	}
+
+	var parentIssue types.Issue
+	if err := json.Unmarshal(parentResp.Data, &parentIssue); err != nil {
+		t.Fatalf("Failed to unmarshal parent: %v", err)
+	}
+
+	// Create discovered issue with discovered-from dependency
+	// The logic in handleCreate should check for discovered-from dependencies
+	// and inherit the parent's source_repo
+	discoveredArgs := &CreateArgs{
+		Title:        "Discovered bug",
+		IssueType:    "bug",
+		Priority:     1,
+		Dependencies: []string{"discovered-from:" + parentIssue.ID},
+	}
+
+	discoveredResp, err := client.Create(discoveredArgs)
+	if err != nil {
+		t.Fatalf("Failed to create discovered issue: %v", err)
+	}
+
+	var discoveredIssue types.Issue
+	if err := json.Unmarshal(discoveredResp.Data, &discoveredIssue); err != nil {
+		t.Fatalf("Failed to unmarshal discovered issue: %v", err)
+	}
+
+	// Verify the issue was created successfully
+	if discoveredIssue.Title != "Discovered bug" {
+		t.Errorf("Expected title 'Discovered bug', got %s", discoveredIssue.Title)
+	}
+
+	// Note: To fully test source_repo inheritance, we'd need to:
+	// 1. Create a parent with custom source_repo (requires direct storage access)
+	// 2. Verify the discovered issue inherited it
+	// The logic is implemented in server_issues_epics.go handleCreate
+	// and tested via the cmd/bd test which has direct storage access
 }

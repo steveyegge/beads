@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
@@ -24,6 +27,27 @@ func normalizeLabels(ss []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// parseTimeRPC parses time strings in multiple formats (RFC3339, YYYY-MM-DD, etc.)
+// Matches the parseTimeFlag behavior in cmd/bd/list.go for CLI parity
+func parseTimeRPC(s string) (time.Time, error) {
+	// Try RFC3339 first (ISO 8601 with timezone)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	
+	// Try YYYY-MM-DD format (common user input)
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	
+	// Try YYYY-MM-DD HH:MM:SS format
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t, nil
+	}
+	
+	return time.Time{}, fmt.Errorf("unsupported date format: %q (use YYYY-MM-DD or RFC3339)", s)
 }
 
 func strValue(p *string) string {
@@ -48,16 +72,16 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 		u["priority"] = *a.Priority
 	}
 	if a.Design != nil {
-		u["design"] = a.Design
+		u["design"] = *a.Design
 	}
 	if a.AcceptanceCriteria != nil {
-		u["acceptance_criteria"] = a.AcceptanceCriteria
+		u["acceptance_criteria"] = *a.AcceptanceCriteria
 	}
 	if a.Notes != nil {
-		u["notes"] = a.Notes
+		u["notes"] = *a.Notes
 	}
 	if a.Assignee != nil {
-		u["assignee"] = a.Assignee
+		u["assignee"] = *a.Assignee
 	}
 	return u
 }
@@ -71,7 +95,29 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// Check for conflicting flags
+	if createArgs.ID != "" && createArgs.Parent != "" {
+		return Response{
+			Success: false,
+			Error:   "cannot specify both ID and Parent",
+		}
+	}
+
 	store := s.storage
+	ctx := s.reqCtx(req)
+
+	// If parent is specified, generate child ID
+	issueID := createArgs.ID
+	if createArgs.Parent != "" {
+		childID, err := store.GetNextChildID(ctx, createArgs.Parent)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to generate child ID: %v", err),
+			}
+		}
+		issueID = childID
+	}
 
 	var design, acceptance, assignee *string
 	if createArgs.Design != "" {
@@ -85,7 +131,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	issue := &types.Issue{
-		ID:                 createArgs.ID,
+		ID:                 issueID,
 		Title:              createArgs.Title,
 		Description:        createArgs.Description,
 		IssueType:          types.IssueType(createArgs.IssueType),
@@ -95,8 +141,42 @@ func (s *Server) handleCreate(req *Request) Response {
 		Assignee:           strValue(assignee),
 		Status:             types.StatusOpen,
 	}
-
-	ctx := s.reqCtx(req)
+	
+	// Check if any dependencies are discovered-from type
+	// If so, inherit source_repo from the parent issue
+	var discoveredFromParentID string
+	for _, depSpec := range createArgs.Dependencies {
+		depSpec = strings.TrimSpace(depSpec)
+		if depSpec == "" {
+			continue
+		}
+		
+		var depType types.DependencyType
+		var dependsOnID string
+		
+		if strings.Contains(depSpec, ":") {
+			parts := strings.SplitN(depSpec, ":", 2)
+			if len(parts) == 2 {
+				depType = types.DependencyType(strings.TrimSpace(parts[0]))
+				dependsOnID = strings.TrimSpace(parts[1])
+				
+				if depType == types.DepDiscoveredFrom {
+					discoveredFromParentID = dependsOnID
+					break
+				}
+			}
+		}
+	}
+	
+	// If we found a discovered-from dependency, inherit source_repo from parent
+	if discoveredFromParentID != "" {
+		parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
+		if err == nil && parentIssue.SourceRepo != "" {
+			issue.SourceRepo = parentIssue.SourceRepo
+		}
+		// If error getting parent or parent has no source_repo, continue with default
+	}
+	
 	if err := store.CreateIssue(ctx, issue, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -160,7 +240,7 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("create", issue.ID)
+	s.emitMutation(MutationCreate, issue.ID)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -194,7 +274,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", updateArgs.ID)
+	s.emitMutation(MutationUpdate, updateArgs.ID)
 
 	issue, err := store.GetIssue(ctx, updateArgs.ID)
 	if err != nil {
@@ -231,7 +311,7 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	// Emit mutation event for event-driven daemon
-	s.emitMutation("update", closeArgs.ID)
+	s.emitMutation(MutationUpdate, closeArgs.ID)
 
 	issue, _ := store.GetIssue(ctx, closeArgs.ID)
 	data, _ := json.Marshal(issue)
@@ -255,10 +335,13 @@ func (s *Server) handleList(req *Request) Response {
 	filter := types.IssueFilter{
 		Limit: listArgs.Limit,
 	}
-	if listArgs.Status != "" {
+	
+	// Normalize status: treat "" or "all" as unset (no filter)
+	if listArgs.Status != "" && listArgs.Status != "all" {
 		status := types.Status(listArgs.Status)
 		filter.Status = &status
 	}
+	
 	if listArgs.IssueType != "" {
 		issueType := types.IssueType(listArgs.IssueType)
 		filter.IssueType = &issueType
@@ -269,10 +352,11 @@ func (s *Server) handleList(req *Request) Response {
 	if listArgs.Priority != nil {
 		filter.Priority = listArgs.Priority
 	}
+	
 	// Normalize and apply label filters
 	labels := normalizeLabels(listArgs.Labels)
 	labelsAny := normalizeLabels(listArgs.LabelsAny)
-	// Support both old single Label and new Labels array
+	// Support both old single Label and new Labels array (backward compat)
 	if len(labels) > 0 {
 		filter.Labels = labels
 	} else if listArgs.Label != "" {
@@ -287,6 +371,82 @@ func (s *Server) handleList(req *Request) Response {
 			filter.IDs = ids
 		}
 	}
+	
+	// Pattern matching
+	filter.TitleContains = listArgs.TitleContains
+	filter.DescriptionContains = listArgs.DescriptionContains
+	filter.NotesContains = listArgs.NotesContains
+	
+	// Date ranges - use parseTimeRPC helper for flexible formats
+	if listArgs.CreatedAfter != "" {
+		t, err := parseTimeRPC(listArgs.CreatedAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --created-after date: %v", err),
+			}
+		}
+		filter.CreatedAfter = &t
+	}
+	if listArgs.CreatedBefore != "" {
+		t, err := parseTimeRPC(listArgs.CreatedBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --created-before date: %v", err),
+			}
+		}
+		filter.CreatedBefore = &t
+	}
+	if listArgs.UpdatedAfter != "" {
+		t, err := parseTimeRPC(listArgs.UpdatedAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --updated-after date: %v", err),
+			}
+		}
+		filter.UpdatedAfter = &t
+	}
+	if listArgs.UpdatedBefore != "" {
+		t, err := parseTimeRPC(listArgs.UpdatedBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --updated-before date: %v", err),
+			}
+		}
+		filter.UpdatedBefore = &t
+	}
+	if listArgs.ClosedAfter != "" {
+		t, err := parseTimeRPC(listArgs.ClosedAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --closed-after date: %v", err),
+			}
+		}
+		filter.ClosedAfter = &t
+	}
+	if listArgs.ClosedBefore != "" {
+		t, err := parseTimeRPC(listArgs.ClosedBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --closed-before date: %v", err),
+			}
+		}
+		filter.ClosedBefore = &t
+	}
+	
+	// Empty/null checks
+	filter.EmptyDescription = listArgs.EmptyDescription
+	filter.NoAssignee = listArgs.NoAssignee
+	filter.NoLabels = listArgs.NoLabels
+	
+	// Priority range
+	filter.PriorityMin = listArgs.PriorityMin
+	filter.PriorityMax = listArgs.PriorityMax
 
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
@@ -312,7 +472,53 @@ func (s *Server) handleList(req *Request) Response {
 		issue.Labels = labels
 	}
 
-	data, _ := json.Marshal(issues)
+	// Get dependency counts in bulk (single query instead of N queries)
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+
+	// Build response with counts
+	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+	for i, issue := range issues {
+		counts := depCounts[issue.ID]
+		if counts == nil {
+			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
+		}
+		issuesWithCounts[i] = &types.IssueWithCounts{
+			Issue:           issue,
+			DependencyCount: counts.DependencyCount,
+			DependentCount:  counts.DependentCount,
+		}
+	}
+
+	data, _ := json.Marshal(issuesWithCounts)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleResolveID(req *Request) Response {
+	var args ResolveIDArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid resolve_id args: %v", err),
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	resolvedID, err := utils.ResolvePartialID(ctx, s.storage, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve ID: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(resolvedID)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -338,18 +544,46 @@ func (s *Server) handleShow(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get issue: %v", err),
 		}
 	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue not found: %s", showArgs.ID),
+		}
+	}
 
-	// Populate labels, dependencies, and dependents
+	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	deps, _ := store.GetDependencies(ctx, issue.ID)
-	dependents, _ := store.GetDependents(ctx, issue.ID)
+	
+	// Get dependencies and dependents with metadata (including dependency type)
+	var deps []*types.IssueWithDependencyMetadata
+	var dependents []*types.IssueWithDependencyMetadata
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		deps, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+		dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+	} else {
+		// Fallback for non-SQLite storage (won't have dependency type metadata)
+		regularDeps, _ := store.GetDependencies(ctx, issue.ID)
+		for _, d := range regularDeps {
+			deps = append(deps, &types.IssueWithDependencyMetadata{
+				Issue:          *d,
+				DependencyType: types.DepBlocks, // default
+			})
+		}
+		regularDependents, _ := store.GetDependents(ctx, issue.ID)
+		for _, d := range regularDependents {
+			dependents = append(dependents, &types.IssueWithDependencyMetadata{
+				Issue:          *d,
+				DependencyType: types.DepBlocks, // default
+			})
+		}
+	}
 
 	// Create detailed response with related data
 	type IssueDetails struct {
 		*types.Issue
-		Labels       []string       `json:"labels,omitempty"`
-		Dependencies []*types.Issue `json:"dependencies,omitempty"`
-		Dependents   []*types.Issue `json:"dependents,omitempty"`
+		Labels       []string                              `json:"labels,omitempty"`
+		Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+		Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 	}
 
 	details := &IssueDetails{
@@ -382,6 +616,8 @@ func (s *Server) handleReady(req *Request) Response {
 		Priority:   readyArgs.Priority,
 		Limit:      readyArgs.Limit,
 		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
+		Labels:     normalizeLabels(readyArgs.Labels),
+		LabelsAny:  normalizeLabels(readyArgs.LabelsAny),
 	}
 	if readyArgs.Assignee != "" {
 		wf.Assignee = &readyArgs.Assignee
@@ -393,6 +629,39 @@ func (s *Server) handleReady(req *Request) Response {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to get ready work: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(issues)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleStale(req *Request) Response {
+	var staleArgs StaleArgs
+	if err := json.Unmarshal(req.Args, &staleArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid stale args: %v", err),
+		}
+	}
+
+	store := s.storage
+
+	filter := types.StaleFilter{
+		Days:   staleArgs.Days,
+		Status: staleArgs.Status,
+		Limit:  staleArgs.Limit,
+	}
+
+	ctx := s.reqCtx(req)
+	issues, err := store.GetStaleIssues(ctx, filter)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get stale issues: %v", err),
 		}
 	}
 

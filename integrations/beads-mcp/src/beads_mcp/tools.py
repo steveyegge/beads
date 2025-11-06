@@ -453,6 +453,31 @@ async def beads_blocked() -> list[BlockedIssue]:
     return await client.blocked()
 
 
+async def beads_inspect_migration() -> dict:
+    """Get migration plan and database state for agent analysis.
+    
+    AI agents should:
+    1. Review registered_migrations to understand what will run
+    2. Check warnings array for issues (missing config, version mismatch)
+    3. Verify missing_config is empty before migrating
+    4. Check invariants_to_check to understand safety guarantees
+    
+    Returns migration plan, current db state, warnings, and invariants.
+    """
+    client = await _get_client()
+    return await client.inspect_migration()
+
+
+async def beads_get_schema_info() -> dict:
+    """Get current database schema for inspection.
+    
+    Returns tables, schema version, config, sample issue IDs, and detected prefix.
+    Useful for verifying database state before migrations.
+    """
+    client = await _get_client()
+    return await client.get_schema_info()
+
+
 async def beads_init(
     prefix: Annotated[str | None, "Issue prefix (e.g., 'myproject' for myproject-1, myproject-2)"] = None,
 ) -> str:

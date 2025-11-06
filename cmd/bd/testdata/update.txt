@@ -1,8 +1,18 @@
 # Test bd update command
 bd init --prefix test
+
+# Create issue and capture its hash ID
 bd create 'Issue to update'
-bd update test-1 --status in_progress
+cp stdout issue.txt
+grep 'Created issue: test-' issue.txt
+
+# Extract ID using grep
+exec sh -c 'grep -oE "test-[a-z0-9]+" issue.txt > issue_id.txt'
+
+# Update the issue status
+exec sh -c 'bd update $(cat issue_id.txt) --status in_progress'
 stdout 'Updated issue:'
 
-bd show test-1
+# Verify the update
+exec sh -c 'bd show $(cat issue_id.txt)'
 stdout 'in_progress'

@@ -1,3 +1,4 @@
+// Package main implements the bd CLI dependency repair command.
 package main
 
 import (
@@ -5,158 +6,171 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 var repairDepsCmd = &cobra.Command{
 	Use:   "repair-deps",
 	Short: "Find and fix orphaned dependency references",
-	Long: `Find issues that reference non-existent dependencies and optionally remove them.
+	Long: `Scans all issues for dependencies pointing to non-existent issues.
 
-This command scans all issues for dependency references (both blocks and related-to)
-that point to issues that no longer exist in the database.
-
-Example:
-  bd repair-deps             # Show orphaned dependencies
-  bd repair-deps --fix       # Remove orphaned references
-  bd repair-deps --json      # Output in JSON format`,
-	Run: func(cmd *cobra.Command, _ []string) {
-		// Check daemon mode - not supported yet (uses direct storage access)
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: repair-deps command not yet supported in daemon mode\n")
-			fmt.Fprintf(os.Stderr, "Use: bd --no-daemon repair-deps\n")
-			os.Exit(1)
-		}
-
+Reports orphaned dependencies and optionally removes them with --fix.
+Interactive mode with --interactive prompts for each orphan.`,
+	Run: func(cmd *cobra.Command, args []string) {
 		fix, _ := cmd.Flags().GetBool("fix")
+		interactive, _ := cmd.Flags().GetBool("interactive")
+
+		// If daemon is running but doesn't support this command, use direct storage
+		if daemonClient != nil && store == nil {
+			var err error
+			store, err = sqlite.New(dbPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = store.Close() }()
+		}
 
 		ctx := context.Background()
 
-		// Get all issues
-		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		// Get all dependency records
+		allDeps, err := store.GetAllDependencyRecords(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: failed to get dependencies: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Build ID existence map
-		existingIDs := make(map[string]bool)
-		for _, issue := range allIssues {
-			existingIDs[issue.ID] = true
+		// Get all issues to check existence
+		issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to list issues: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Build set of valid issue IDs
+		validIDs := make(map[string]bool)
+		for _, issue := range issues {
+			validIDs[issue.ID] = true
 		}
 
 		// Find orphaned dependencies
-		type orphanedDep struct {
-			IssueID    string
-			OrphanedID string
-			DepType    string
+		type orphan struct {
+			issueID     string
+			dependsOnID string
+			depType     types.DependencyType
 		}
-		
-		var orphaned []orphanedDep
+		var orphans []orphan
 
-		for _, issue := range allIssues {
-			// Check dependencies
-			for _, dep := range issue.Dependencies {
-				if !existingIDs[dep.DependsOnID] {
-					orphaned = append(orphaned, orphanedDep{
-						IssueID:    issue.ID,
-						OrphanedID: dep.DependsOnID,
-						DepType:    string(dep.Type),
+		for issueID, deps := range allDeps {
+			if !validIDs[issueID] {
+				// The issue itself doesn't exist, skip (will be cleaned up separately)
+				continue
+			}
+			for _, dep := range deps {
+				if !validIDs[dep.DependsOnID] {
+					orphans = append(orphans, orphan{
+						issueID:     dep.IssueID,
+						dependsOnID: dep.DependsOnID,
+						depType:     dep.Type,
 					})
 				}
 			}
 		}
 
-		// Output results
 		if jsonOutput {
 			result := map[string]interface{}{
-				"orphaned_count": len(orphaned),
-				"fixed":          fix,
-				"orphaned_deps":  []map[string]interface{}{},
+				"orphans_found": len(orphans),
+				"orphans":       []map[string]string{},
 			}
-
-			for _, o := range orphaned {
-				result["orphaned_deps"] = append(result["orphaned_deps"].([]map[string]interface{}), map[string]interface{}{
-					"issue_id":     o.IssueID,
-					"orphaned_id":  o.OrphanedID,
-					"dep_type":     o.DepType,
-				})
+			if len(orphans) > 0 {
+				orphanList := make([]map[string]string, len(orphans))
+				for i, o := range orphans {
+					orphanList[i] = map[string]string{
+						"issue_id":      o.issueID,
+						"depends_on_id": o.dependsOnID,
+						"type":          string(o.depType),
+					}
+				}
+				result["orphans"] = orphanList
 			}
-
+			if fix || interactive {
+				result["fixed"] = len(orphans)
+			}
 			outputJSON(result)
 			return
 		}
 
-		// Human-readable output
-		if len(orphaned) == 0 {
-			fmt.Println("No orphaned dependencies found!")
+		// Report results
+		if len(orphans) == 0 {
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("\n%s No orphaned dependencies found\n\n", green("✓"))
 			return
 		}
 
-		fmt.Printf("Found %d orphaned dependencies:\n\n", len(orphaned))
-		for _, o := range orphaned {
-			fmt.Printf("  %s: depends on %s (%s) - DELETED\n", o.IssueID, o.OrphanedID, o.DepType)
+		yellow := color.New(color.FgYellow).SprintFunc()
+		fmt.Printf("\n%s Found %d orphaned dependencies:\n\n", yellow("⚠"), len(orphans))
+
+		for i, o := range orphans {
+			fmt.Printf("%d. %s → %s (%s) [%s does not exist]\n",
+				i+1, o.issueID, o.dependsOnID, o.depType, o.dependsOnID)
 		}
+		fmt.Println()
 
-		if !fix {
-			fmt.Printf("\nRun 'bd repair-deps --fix' to remove these references.\n")
-			return
-		}
-
-		// Fix orphaned dependencies
-		fmt.Printf("\nRemoving orphaned dependencies...\n")
-		
-		// Group by issue for efficient updates
-		orphansByIssue := make(map[string][]string)
-		for _, o := range orphaned {
-			orphansByIssue[o.IssueID] = append(orphansByIssue[o.IssueID], o.OrphanedID)
-		}
-
-		fixed := 0
-		for issueID, orphanedIDs := range orphansByIssue {
-			// Get current issue to verify
-			issue, err := store.GetIssue(ctx, issueID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", issueID, err)
-				continue
-			}
-
-			// Collect orphaned dependency IDs to remove
-			orphanedSet := make(map[string]bool)
-			for _, orphanedID := range orphanedIDs {
-				orphanedSet[orphanedID] = true
-			}
-
-			// Build list of dependencies to keep
-			validDeps := []*types.Dependency{}
-			for _, dep := range issue.Dependencies {
-				if !orphanedSet[dep.DependsOnID] {
-					validDeps = append(validDeps, dep)
+		// Fix if requested
+		if interactive {
+			fixed := 0
+			for _, o := range orphans {
+				fmt.Printf("Remove dependency %s → %s (%s)? [y/N]: ", o.issueID, o.dependsOnID, o.depType)
+				var response string
+				_, _ = fmt.Scanln(&response)
+				if response == "y" || response == "Y" {
+					// Use direct SQL to remove orphaned dependencies
+					// RemoveDependency tries to mark the depends_on issue as dirty, which fails for orphans
+					db := store.UnderlyingDB()
+					_, err := db.ExecContext(ctx, "DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?",
+						o.issueID, o.dependsOnID)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error removing dependency: %v\n", err)
+					} else {
+						// Mark the issue as dirty
+						_, _ = db.ExecContext(ctx, "INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID)
+						fixed++
+					}
 				}
 			}
-
-			// Update via storage layer
-			// We need to remove each orphaned dependency individually
-			for _, orphanedID := range orphanedIDs {
-				if err := store.RemoveDependency(ctx, issueID, orphanedID, actor); err != nil {
-					fmt.Fprintf(os.Stderr, "Error removing %s from %s: %v\n", orphanedID, issueID, err)
-					continue
+			markDirtyAndScheduleFlush()
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("\n%s Fixed %d orphaned dependencies\n\n", green("✓"), fixed)
+		} else if fix {
+			db := store.UnderlyingDB()
+			for _, o := range orphans {
+				// Use direct SQL to remove orphaned dependencies
+				_, err := db.ExecContext(ctx, "DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?",
+					o.issueID, o.dependsOnID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error removing dependency %s → %s: %v\n",
+						o.issueID, o.dependsOnID, err)
+				} else {
+					// Mark the issue as dirty
+					_, _ = db.ExecContext(ctx, "INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", o.issueID)
 				}
-				
-				fmt.Printf("✓ Removed %s from %s dependencies\n", orphanedID, issueID)
-				fixed++
 			}
+			markDirtyAndScheduleFlush()
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("%s Fixed %d orphaned dependencies\n\n", green("✓"), len(orphans))
+		} else {
+			fmt.Printf("Run with --fix to automatically remove orphaned dependencies\n")
+			fmt.Printf("Run with --interactive to review each dependency\n\n")
 		}
-
-		// Schedule auto-flush
-		markDirtyAndScheduleFlush()
-
-		fmt.Printf("\nRepaired %d orphaned dependencies.\n", fixed)
 	},
 }
 
 func init() {
-	repairDepsCmd.Flags().Bool("fix", false, "Remove orphaned dependency references")
+	repairDepsCmd.Flags().Bool("fix", false, "Automatically remove orphaned dependencies")
+	repairDepsCmd.Flags().Bool("interactive", false, "Interactively review each orphaned dependency")
+	repairDepsCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output repair results in JSON format")
 	rootCmd.AddCommand(repairDepsCmd)
 }

@@ -1,8 +1,17 @@
 # Test bd stats command
 bd init --prefix test
+
+# Create issues
 bd create 'First issue'
+cp stdout first.txt
+exec sh -c 'grep -oE "test-[a-z0-9]+" first.txt > first_id.txt'
+
 bd create 'Second issue'
-bd close test-1
+
+# Close one issue
+exec sh -c 'bd close $(cat first_id.txt)'
+
+# Check stats
 bd stats
 stdout 'Total Issues:'
 stdout 'Open:'

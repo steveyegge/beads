@@ -76,3 +76,69 @@ func TestVersionCommand(t *testing.T) {
 	// Restore default
 	jsonOutput = false
 }
+
+func TestVersionFlag(t *testing.T) {
+	// Save original stdout
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	t.Run("--version flag", func(t *testing.T) {
+		// Create a pipe to capture output
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("Failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		// Set version flag and run root command
+		rootCmd.SetArgs([]string{"--version"})
+		rootCmd.Execute()
+
+		// Close writer and read output
+		w.Close()
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		output := buf.String()
+
+		// Verify output contains version info
+		if !strings.Contains(output, "bd version") {
+			t.Errorf("Expected output to contain 'bd version', got: %s", output)
+		}
+		if !strings.Contains(output, Version) {
+			t.Errorf("Expected output to contain version %s, got: %s", Version, output)
+		}
+
+		// Reset args
+		rootCmd.SetArgs(nil)
+	})
+
+	t.Run("-v shorthand", func(t *testing.T) {
+		// Create a pipe to capture output
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("Failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		// Set version flag and run root command
+		rootCmd.SetArgs([]string{"-v"})
+		rootCmd.Execute()
+
+		// Close writer and read output
+		w.Close()
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		output := buf.String()
+
+		// Verify output contains version info
+		if !strings.Contains(output, "bd version") {
+			t.Errorf("Expected output to contain 'bd version', got: %s", output)
+		}
+		if !strings.Contains(output, Version) {
+			t.Errorf("Expected output to contain version %s, got: %s", Version, output)
+		}
+
+		// Reset args
+		rootCmd.SetArgs(nil)
+	})
+}

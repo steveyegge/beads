@@ -5,13 +5,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
 var (
 	// Version is the current version of bd (overridden by ldflags at build time)
-	Version = "0.17.7"
+	Version = "0.22.0"
 	// Build can be set via ldflags at compile time
 	Build = "dev"
 )

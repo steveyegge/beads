@@ -9,6 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
+const windowsOS = "windows"
+
 // newTestStore creates a SQLite store with issue_prefix configured (bd-166)
 // This prevents "database not initialized" errors in tests
 func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {

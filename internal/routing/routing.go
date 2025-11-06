@@ -1,0 +1,100 @@
+package routing
+
+import (
+	"os/exec"
+	"strings"
+)
+
+// UserRole represents whether the user is a maintainer or contributor
+type UserRole string
+
+const (
+	Maintainer  UserRole = "maintainer"
+	Contributor UserRole = "contributor"
+)
+
+// DetectUserRole determines if the user is a maintainer or contributor
+// based on git configuration and repository permissions.
+//
+// Detection strategy:
+// 1. Check if user has push access to origin (git remote -v shows write URL)
+// 2. Check git config for beads.role setting (explicit override)
+// 3. Fall back to contributor if uncertain
+func DetectUserRole(repoPath string) (UserRole, error) {
+	// First check for explicit role in git config
+	cmd := exec.Command("git", "config", "--get", "beads.role")
+	if repoPath != "" {
+		cmd.Dir = repoPath
+	}
+	output, err := cmd.Output()
+	if err == nil {
+		role := strings.TrimSpace(string(output))
+		if role == string(Maintainer) {
+			return Maintainer, nil
+		}
+		if role == string(Contributor) {
+			return Contributor, nil
+		}
+	}
+
+	// Check push access by examining remote URL
+	cmd = exec.Command("git", "remote", "get-url", "--push", "origin")
+	if repoPath != "" {
+		cmd.Dir = repoPath
+	}
+	output, err = cmd.Output()
+	if err != nil {
+		// No remote or error - default to contributor
+		return Contributor, nil
+	}
+
+	pushURL := strings.TrimSpace(string(output))
+	
+	// Check if URL indicates write access
+	// SSH URLs (git@github.com:user/repo.git) typically indicate write access
+	// HTTPS with token/password also indicates write access
+	if strings.HasPrefix(pushURL, "git@") || 
+	   strings.HasPrefix(pushURL, "ssh://") ||
+	   strings.Contains(pushURL, "@") {
+		return Maintainer, nil
+	}
+
+	// HTTPS without credentials likely means read-only contributor
+	return Contributor, nil
+}
+
+// RoutingConfig defines routing rules for issues
+type RoutingConfig struct {
+	Mode                string // "auto" or "explicit"
+	DefaultRepo         string // Default repo for new issues
+	MaintainerRepo      string // Repo for maintainers (in auto mode)
+	ContributorRepo     string // Repo for contributors (in auto mode)
+	ExplicitOverride    string // Explicit --repo flag override
+}
+
+// DetermineTargetRepo determines which repo should receive a new issue
+// based on routing configuration and user role
+func DetermineTargetRepo(config *RoutingConfig, userRole UserRole, repoPath string) string {
+	// Explicit override takes precedence
+	if config.ExplicitOverride != "" {
+		return config.ExplicitOverride
+	}
+
+	// Auto mode: route based on user role
+	if config.Mode == "auto" {
+		if userRole == Maintainer && config.MaintainerRepo != "" {
+			return config.MaintainerRepo
+		}
+		if userRole == Contributor && config.ContributorRepo != "" {
+			return config.ContributorRepo
+		}
+	}
+
+	// Fall back to default repo
+	if config.DefaultRepo != "" {
+		return config.DefaultRepo
+	}
+
+	// No routing configured - use current repo
+	return "."
+}

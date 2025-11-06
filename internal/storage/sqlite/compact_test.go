@@ -9,6 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+const testIssueBD1 = "bd-1"
+
 func TestGetTier1Candidates(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()

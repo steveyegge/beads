@@ -176,11 +176,11 @@ bd ready  # See what's ready to work on
 # Import all issues (open and closed)
 python gh2jsonl.py --repo mycompany/myapp > all-issues.jsonl
 
-# Preview import (check for collisions)
+# Preview import (check for new issues and updates)
 bd import -i all-issues.jsonl --dry-run
 
-# Import with collision resolution if needed
-bd import -i all-issues.jsonl --resolve-collisions
+# Import issues
+bd import -i all-issues.jsonl
 
 # View stats
 bd stats

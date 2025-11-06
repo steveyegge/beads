@@ -430,6 +430,28 @@ class BdDaemonClient(BdClientBase):
         # This is a placeholder for when it's added
         raise NotImplementedError("Blocked operation not yet supported via daemon")
 
+    async def inspect_migration(self) -> dict:
+        """Get migration plan and database state for agent analysis.
+
+        Returns:
+            Migration plan dict with registered_migrations, warnings, etc.
+
+        Note:
+            This falls back to CLI since migrations are rare operations
+        """
+        raise NotImplementedError("inspect_migration not supported via daemon - use CLI client")
+
+    async def get_schema_info(self) -> dict:
+        """Get current database schema for inspection.
+
+        Returns:
+            Schema info dict with tables, version, config, sample IDs, etc.
+
+        Note:
+            This falls back to CLI since schema inspection is a rare operation
+        """
+        raise NotImplementedError("get_schema_info not supported via daemon - use CLI client")
+
     async def add_dependency(self, params: AddDependencyParams) -> None:
         """Add a dependency between issues.
 

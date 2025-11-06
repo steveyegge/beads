@@ -10,21 +10,21 @@ Import issues from JSON Lines format (one JSON object per line).
 - **From stdin**: `bd import` (reads from stdin)
 - **From file**: `bd import -i issues.jsonl`
 - **Preview**: `bd import -i issues.jsonl --dry-run`
-- **Resolve collisions**: `bd import -i issues.jsonl --resolve-collisions`
 
 ## Behavior
 
 - **Existing issues** (same ID): Updated with new data
 - **New issues**: Created
-- **Collisions** (same ID, different content): Detected and reported
+- **Same-ID scenarios**: With hash-based IDs (v0.20.1+), same ID = same issue being updated (not a collision)
 
-## Collision Handling
+## Preview Changes
 
-When merging branches or pulling changes, ID collisions can occur:
+Use `--dry-run` to see what will change before importing:
 
-- **--dry-run**: Preview collisions without making changes
-- **--resolve-collisions**: Automatically remap colliding issues to new IDs
-- All text references and dependencies are automatically updated
+```bash
+bd import -i issues.jsonl --dry-run
+# Shows: new issues, updates, exact matches
+```
 
 ## Automatic Import
 

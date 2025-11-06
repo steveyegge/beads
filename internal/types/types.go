@@ -29,6 +29,7 @@ type Issue struct {
 	CompactedAt        *time.Time     `json:"compacted_at,omitempty"`
 	CompactedAtCommit  *string        `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
 	OriginalSize       int            `json:"original_size,omitempty"`
+	SourceRepo         string         `json:"source_repo,omitempty"` // Which repo owns this issue (multi-repo support)
 	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
 	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
@@ -147,6 +148,26 @@ type Dependency struct {
 	CreatedBy   string         `json:"created_by"`
 }
 
+// DependencyCounts holds counts for dependencies and dependents
+type DependencyCounts struct {
+	DependencyCount int `json:"dependency_count"` // Number of issues this issue depends on
+	DependentCount  int `json:"dependent_count"`  // Number of issues that depend on this issue
+}
+
+// IssueWithDependencyMetadata extends Issue with dependency relationship type
+// Note: We explicitly include all Issue fields to ensure proper JSON marshaling
+type IssueWithDependencyMetadata struct {
+	Issue
+	DependencyType DependencyType `json:"dependency_type"`
+}
+
+// IssueWithCounts extends Issue with dependency relationship counts
+type IssueWithCounts struct {
+	*Issue
+	DependencyCount int `json:"dependency_count"`
+	DependentCount  int `json:"dependent_count"`
+}
+
 // DependencyType categorizes the relationship
 type DependencyType string
 
@@ -222,8 +243,9 @@ type BlockedIssue struct {
 // TreeNode represents a node in a dependency tree
 type TreeNode struct {
 	Issue
-	Depth     int  `json:"depth"`
-	Truncated bool `json:"truncated"`
+	Depth     int    `json:"depth"`
+	ParentID  string `json:"parent_id"`
+	Truncated bool   `json:"truncated"`
 }
 
 // Statistics provides aggregate metrics
@@ -249,6 +271,28 @@ type IssueFilter struct {
 	TitleSearch string
 	IDs         []string  // Filter by specific issue IDs
 	Limit       int
+	
+	// Pattern matching
+	TitleContains       string
+	DescriptionContains string
+	NotesContains       string
+	
+	// Date ranges
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	UpdatedAfter  *time.Time
+	UpdatedBefore *time.Time
+	ClosedAfter   *time.Time
+	ClosedBefore  *time.Time
+	
+	// Empty/null checks
+	EmptyDescription bool
+	NoAssignee       bool
+	NoLabels         bool
+	
+	// Numeric ranges
+	PriorityMin *int
+	PriorityMax *int
 }
 
 // SortPolicy determines how ready work is ordered
@@ -284,8 +328,17 @@ type WorkFilter struct {
 	Status     Status
 	Priority   *int
 	Assignee   *string
+	Labels     []string   // AND semantics: issue must have ALL these labels
+	LabelsAny  []string   // OR semantics: issue must have AT LEAST ONE of these labels
 	Limit      int
 	SortPolicy SortPolicy
+}
+
+// StaleFilter is used to filter stale issue queries
+type StaleFilter struct {
+	Days   int    // Issues not updated in this many days
+	Status string // Filter by status (open|in_progress|blocked), empty = all non-closed
+	Limit  int    // Maximum issues to return
 }
 
 // EpicStatus represents an epic with its completion status

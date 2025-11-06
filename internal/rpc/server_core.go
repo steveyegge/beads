@@ -1,7 +1,6 @@
 package rpc
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -48,16 +47,21 @@ type Server struct {
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
 	// Mutation events for event-driven daemon
-	mutationChan chan MutationEvent
-	// Recent mutations buffer for polling (circular buffer, max 100 events)
-	recentMutations   []MutationEvent
-	recentMutationsMu sync.RWMutex
-	maxMutationBuffer int
+	mutationChan    chan MutationEvent
+	droppedEvents   atomic.Int64 // Counter for dropped mutation events
 }
+
+// Mutation event types
+const (
+	MutationCreate  = "create"
+	MutationUpdate  = "update"
+	MutationDelete  = "delete"
+	MutationComment = "comment"
+)
 
 // MutationEvent represents a database mutation for event-driven sync
 type MutationEvent struct {
-	Type      string    // "create", "update", "delete", "comment"
+	Type      string    // One of: MutationCreate, MutationUpdate, MutationDelete, MutationComment
 	IssueID   string    // e.g., "bd-42"
 	Timestamp time.Time
 }
@@ -80,22 +84,28 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		}
 	}
 
+	mutationBufferSize := 512 // default (increased from 100 for better burst handling)
+	if env := os.Getenv("BEADS_MUTATION_BUFFER"); env != "" {
+		var bufSize int
+		if _, err := fmt.Sscanf(env, "%d", &bufSize); err == nil && bufSize > 0 {
+			mutationBufferSize = bufSize
+		}
+	}
+
 	s := &Server{
-		socketPath:        socketPath,
-		workspacePath:     workspacePath,
-		dbPath:            dbPath,
-		storage:           store,
-		shutdownChan:      make(chan struct{}),
-		doneChan:          make(chan struct{}),
-		startTime:         time.Now(),
-		metrics:           NewMetrics(),
-		maxConns:          maxConns,
-		connSemaphore:     make(chan struct{}, maxConns),
-		requestTimeout:    requestTimeout,
-		readyChan:         make(chan struct{}),
-		mutationChan:      make(chan MutationEvent, 100), // Buffered to avoid blocking
-		recentMutations:   make([]MutationEvent, 0, 100),
-		maxMutationBuffer: 100,
+		socketPath:     socketPath,
+		workspacePath:  workspacePath,
+		dbPath:         dbPath,
+		storage:        store,
+		shutdownChan:   make(chan struct{}),
+		doneChan:       make(chan struct{}),
+		startTime:      time.Now(),
+		metrics:        NewMetrics(),
+		maxConns:       maxConns,
+		connSemaphore:  make(chan struct{}, maxConns),
+		requestTimeout: requestTimeout,
+		readyChan:      make(chan struct{}),
+		mutationChan:   make(chan MutationEvent, mutationBufferSize), // Configurable buffer
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s
@@ -116,7 +126,8 @@ func (s *Server) emitMutation(eventType, issueID string) {
 	case s.mutationChan <- event:
 		// Event sent successfully
 	default:
-		// Channel full, event dropped (not critical - sync will happen eventually)
+		// Channel full, increment dropped events counter
+		s.droppedEvents.Add(1)
 	}
 
 	// Store in recent mutations buffer for polling
@@ -134,35 +145,7 @@ func (s *Server) MutationChan() <-chan MutationEvent {
 	return s.mutationChan
 }
 
-// GetRecentMutations returns mutations since the given timestamp
-func (s *Server) GetRecentMutations(sinceMillis int64) []MutationEvent {
-	s.recentMutationsMu.RLock()
-	defer s.recentMutationsMu.RUnlock()
-
-	var result []MutationEvent
-	for _, m := range s.recentMutations {
-		if m.Timestamp.UnixMilli() > sinceMillis {
-			result = append(result, m)
-		}
-	}
-	return result
-}
-
-// handleGetMutations handles the get_mutations RPC operation
-func (s *Server) handleGetMutations(req *Request) Response {
-	var args GetMutationsArgs
-	if err := json.Unmarshal(req.Args, &args); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("invalid arguments: %v", err),
-		}
-	}
-
-	mutations := s.GetRecentMutations(args.Since)
-	data, _ := json.Marshal(mutations)
-
-	return Response{
-		Success: true,
-		Data:    data,
-	}
+// ResetDroppedEventsCount resets the dropped events counter and returns the previous value
+func (s *Server) ResetDroppedEventsCount() int64 {
+	return s.droppedEvents.Swap(0)
 }

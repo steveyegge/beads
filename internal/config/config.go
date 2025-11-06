@@ -17,43 +17,50 @@ var v *viper.Viper
 func Initialize() error {
 	v = viper.New()
 
-	// Set config file name and type
-	v.SetConfigName("config")
+	// Set config type to yaml (we only load config.yaml, not config.json)
 	v.SetConfigType("yaml")
 
-	// Add config search paths (in order of precedence)
-	// 1. Walk up from CWD to find project .beads/ directory
+	// Explicitly locate config.yaml and use SetConfigFile to avoid picking up config.json
+	// Precedence: project .beads/config.yaml > ~/.config/bd/config.yaml > ~/.beads/config.yaml
+	configFileSet := false
+
+	// 1. Walk up from CWD to find project .beads/config.yaml
 	//    This allows commands to work from subdirectories
 	cwd, err := os.Getwd()
-	if err == nil {
+	if err == nil && !configFileSet {
 		// Walk up parent directories to find .beads/config.yaml
 		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			beadsDir := filepath.Join(dir, ".beads")
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			if _, err := os.Stat(configPath); err == nil {
-				// Found .beads/config.yaml - add this path
-				v.AddConfigPath(beadsDir)
-				break
-			}
-			// Also check if .beads directory exists (even without config.yaml)
-			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-				v.AddConfigPath(beadsDir)
+				// Found .beads/config.yaml - set it explicitly
+				v.SetConfigFile(configPath)
+				configFileSet = true
 				break
 			}
 		}
-		
-		// Also add CWD/.beads for backward compatibility
-		v.AddConfigPath(filepath.Join(cwd, ".beads"))
 	}
 
-	// 2. User config directory (~/.config/bd/)
-	if configDir, err := os.UserConfigDir(); err == nil {
-		v.AddConfigPath(filepath.Join(configDir, "bd"))
+	// 2. User config directory (~/.config/bd/config.yaml)
+	if !configFileSet {
+		if configDir, err := os.UserConfigDir(); err == nil {
+			configPath := filepath.Join(configDir, "bd", "config.yaml")
+			if _, err := os.Stat(configPath); err == nil {
+				v.SetConfigFile(configPath)
+				configFileSet = true
+			}
+		}
 	}
 
-	// 3. Home directory (~/.beads/)
-	if homeDir, err := os.UserHomeDir(); err == nil {
-		v.AddConfigPath(filepath.Join(homeDir, ".beads"))
+	// 3. Home directory (~/.beads/config.yaml)
+	if !configFileSet {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			configPath := filepath.Join(homeDir, ".beads", "config.yaml")
+			if _, err := os.Stat(configPath); err == nil {
+				v.SetConfigFile(configPath)
+				configFileSet = true
+			}
+		}
 	}
 
 	// Automatic environment variable binding
@@ -84,14 +91,26 @@ func Initialize() error {
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
+	
+	// Routing configuration defaults
+	v.SetDefault("routing.mode", "auto")
+	v.SetDefault("routing.default", ".")
+	v.SetDefault("routing.maintainer", ".")
+	v.SetDefault("routing.contributor", "~/.beads-planning")
 
-	// Read config file if it exists (don't error if not found)
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			// Config file found but another error occurred
+	// Read config file if it was found
+	if configFileSet {
+		if err := v.ReadInConfig(); err != nil {
 			return fmt.Errorf("error reading config file: %w", err)
 		}
-		// Config file not found - this is ok, we'll use defaults
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: loaded config from %s\n", v.ConfigFileUsed())
+		}
+	} else {
+		// No config.yaml found - use defaults and environment variables
+		if os.Getenv("BD_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "Debug: no config.yaml found; using defaults and environment variables\n")
+		}
 	}
 
 	return nil
@@ -153,4 +172,37 @@ func AllSettings() map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return v.AllSettings()
+}
+
+// GetStringSlice retrieves a string slice configuration value
+func GetStringSlice(key string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v.GetStringSlice(key)
+}
+
+// MultiRepoConfig contains configuration for multi-repo support
+type MultiRepoConfig struct {
+	Primary    string   // Primary repo path (where canonical issues live)
+	Additional []string // Additional repos to hydrate from
+}
+
+// GetMultiRepoConfig retrieves multi-repo configuration
+// Returns nil if multi-repo is not configured (single-repo mode)
+func GetMultiRepoConfig() *MultiRepoConfig {
+	if v == nil {
+		return nil
+	}
+	
+	// Check if repos.primary is set (indicates multi-repo mode)
+	primary := v.GetString("repos.primary")
+	if primary == "" {
+		return nil // Single-repo mode
+	}
+	
+	return &MultiRepoConfig{
+		Primary:    primary,
+		Additional: v.GetStringSlice("repos.additional"),
+	}
 }

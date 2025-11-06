@@ -68,13 +68,8 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		dep.CreatedBy = actor
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Cycle Detection and Prevention
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		// Cycle Detection and Prevention
 	//
 	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
 	// to maintain a directed acyclic graph (DAG). This is critical for:
@@ -149,248 +144,195 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-	// Mark both issues as dirty for incremental export
-	// (dependencies are exported with each issue, so both need updating)
-	if err := markIssuesDirtyTx(ctx, tx, []string{dep.IssueID, dep.DependsOnID}); err != nil {
-		return err
-	}
+		// Mark both issues as dirty for incremental export
+		// (dependencies are exported with each issue, so both need updating)
+		if err := markIssuesDirtyTx(ctx, tx, []string{dep.IssueID, dep.DependsOnID}); err != nil {
+			return err
+		}
 
-	return tx.Commit()
-}
-
-// addDependencyUnchecked adds a dependency with minimal validation, used during
-// import/remap operations where we're preserving existing dependencies with new IDs.
-// Skips semantic validation (parent-child direction) but keeps essential checks:
-// - Issue existence validation
-// - Self-dependency prevention
-// - Cycle detection
-func (s *SQLiteStorage) addDependencyUnchecked(ctx context.Context, dep *types.Dependency, actor string) error {
-	// Validate dependency type
-	if !dep.Type.IsValid() {
-		return fmt.Errorf("invalid dependency type: %s", dep.Type)
-	}
-
-	// Validate that both issues exist
-	issueExists, err := s.GetIssue(ctx, dep.IssueID)
-	if err != nil {
-		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
-	}
-	if issueExists == nil {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
-	}
-
-	dependsOnExists, err := s.GetIssue(ctx, dep.DependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
-	}
-	if dependsOnExists == nil {
-		return fmt.Errorf("dependency target %s not found", dep.DependsOnID)
-	}
-
-	// Prevent self-dependency
-	if dep.IssueID == dep.DependsOnID {
-		return fmt.Errorf("issue cannot depend on itself")
-	}
-
-	// NOTE: We skip parent-child direction validation here because during import/remap,
-	// we're just updating IDs on existing dependencies that were already validated.
-
-	if dep.CreatedAt.IsZero() {
-		dep.CreatedAt = time.Now()
-	}
-	if dep.CreatedBy == "" {
-		dep.CreatedBy = actor
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Cycle detection (same as AddDependency)
-	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
-		WITH RECURSIVE paths AS (
-			SELECT
-				issue_id,
-				depends_on_id,
-				1 as depth
-			FROM dependencies
-			WHERE issue_id = ?
-
-			UNION ALL
-
-			SELECT
-				d.issue_id,
-				d.depends_on_id,
-				p.depth + 1
-			FROM dependencies d
-			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
-		)
-		SELECT EXISTS(
-			SELECT 1 FROM paths
-			WHERE depends_on_id = ?
-		)
-	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
-
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
-	}
-
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
-	}
-
-	// Insert dependency
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
-		VALUES (?, ?, ?, ?, ?)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy)
-	if err != nil {
-		return fmt.Errorf("failed to add dependency: %w", err)
-	}
-
-	// Record event
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, comment)
-		VALUES (?, ?, ?, ?)
-	`, dep.IssueID, types.EventDependencyAdded, actor,
-		fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID))
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
-
-	// Mark both issues as dirty
-	if err := markIssuesDirtyTx(ctx, tx, []string{dep.IssueID, dep.DependsOnID}); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+		return nil
+	})
 }
 
 // RemoveDependency removes a dependency
 func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
+		`, issueID, dependsOnID)
+		if err != nil {
+			return fmt.Errorf("failed to remove dependency: %w", err)
+		}
 
-	result, err := tx.ExecContext(ctx, `
-		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, issueID, dependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to remove dependency: %w", err)
-	}
+		// Check if dependency existed
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to check rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("dependency from %s to %s does not exist", issueID, dependsOnID)
+		}
 
-	// Check if dependency existed
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to check rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("dependency from %s to %s does not exist", issueID, dependsOnID)
-	}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO events (issue_id, event_type, actor, comment)
+			VALUES (?, ?, ?, ?)
+		`, issueID, types.EventDependencyRemoved, actor,
+			fmt.Sprintf("Removed dependency on %s", dependsOnID))
+		if err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, comment)
-		VALUES (?, ?, ?, ?)
-	`, issueID, types.EventDependencyRemoved, actor,
-		fmt.Sprintf("Removed dependency on %s", dependsOnID))
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
+		// Mark both issues as dirty for incremental export
+		if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
+			return err
+		}
 
-	// Mark both issues as dirty for incremental export
-	if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// removeDependencyIfExists removes a dependency, returning nil if it doesn't exist
-// This is useful during remapping where dependencies may have been already removed
-func (s *SQLiteStorage) removeDependencyIfExists(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	result, err := tx.ExecContext(ctx, `
-		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
-	`, issueID, dependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to remove dependency: %w", err)
-	}
-
-	// Check if dependency existed - if not, that's okay, just skip the event
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to check rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		// Dependency didn't exist, nothing to do
 		return nil
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, comment)
-		VALUES (?, ?, ?, ?)
-	`, issueID, types.EventDependencyRemoved, actor,
-		fmt.Sprintf("Removed dependency on %s", dependsOnID))
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
-
-	// Mark both issues as dirty for incremental export
-	if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	})
 }
 
-// GetDependencies returns issues that this issue depends on
-func (s *SQLiteStorage) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
+// GetDependenciesWithMetadata returns issues that this issue depends on, including dependency type
+func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
 		WHERE d.issue_id = ?
 		ORDER BY i.priority ASC
 	`, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies: %w", err)
+		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return s.scanIssues(ctx, rows)
+	return s.scanIssuesWithDependencyType(ctx, rows)
 }
 
-// GetDependents returns issues that depend on this issue
-func (s *SQLiteStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
+// GetDependentsWithMetadata returns issues that depend on this issue, including dependency type
+func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?
 		ORDER BY i.priority ASC
 	`, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependents: %w", err)
+		return nil, fmt.Errorf("failed to get dependents with metadata: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	return s.scanIssues(ctx, rows)
+	return s.scanIssuesWithDependencyType(ctx, rows)
+}
+
+// GetDependencies returns issues that this issue depends on
+func (s *SQLiteStorage) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
+	issuesWithMeta, err := s.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to plain Issue slice for backward compatibility
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issues[i] = &iwm.Issue
+	}
+	return issues, nil
+}
+
+// GetDependents returns issues that depend on this issue
+func (s *SQLiteStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
+	issuesWithMeta, err := s.GetDependentsWithMetadata(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to plain Issue slice for backward compatibility
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issues[i] = &iwm.Issue
+	}
+	return issues, nil
+}
+
+// GetDependencyCounts returns dependency and dependent counts for multiple issues in a single query
+func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]*types.DependencyCounts), nil
+	}
+
+	// Build placeholders for the IN clause
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs)*2)
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+		args[len(issueIDs)+i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Single query that counts both dependencies and dependents
+	// Uses UNION ALL to combine results from both directions
+	query := fmt.Sprintf(`
+		SELECT
+			issue_id,
+			SUM(CASE WHEN type = 'dependency' THEN count ELSE 0 END) as dependency_count,
+			SUM(CASE WHEN type = 'dependent' THEN count ELSE 0 END) as dependent_count
+		FROM (
+			-- Count dependencies (issues this issue depends on)
+			SELECT issue_id, 'dependency' as type, COUNT(*) as count
+			FROM dependencies
+			WHERE issue_id IN (%s)
+			GROUP BY issue_id
+
+			UNION ALL
+
+			-- Count dependents (issues that depend on this issue)
+			SELECT depends_on_id as issue_id, 'dependent' as type, COUNT(*) as count
+			FROM dependencies
+			WHERE depends_on_id IN (%s)
+			GROUP BY depends_on_id
+		)
+		GROUP BY issue_id
+	`, inClause, inClause)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependency counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]*types.DependencyCounts)
+	for rows.Next() {
+		var issueID string
+		var counts types.DependencyCounts
+		if err := rows.Scan(&issueID, &counts.DependencyCount, &counts.DependentCount); err != nil {
+			return nil, fmt.Errorf("failed to scan dependency counts: %w", err)
+		}
+		result[issueID] = &counts
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating dependency counts: %w", err)
+	}
+
+	// Fill in zero counts for issues with no dependencies or dependents
+	for _, id := range issueIDs {
+		if _, exists := result[id]; !exists {
+			result[id] = &types.DependencyCounts{
+				DependencyCount: 0,
+				DependentCount:  0,
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // GetDependencyRecords returns raw dependency records for an issue
@@ -587,7 +529,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan tree node: %w", err)
 		}
-		_ = parentID // Silence unused variable warning
+		node.ParentID = parentID
 
 		if closedAt.Valid {
 			node.ClosedAt = &closedAt.Time
@@ -642,17 +584,17 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 			UNION ALL
 
 			SELECT
-				d.issue_id,
-				d.depends_on_id,
-				p.start_id,
-				p.path || '→' || d.depends_on_id,
-				p.depth + 1
+			d.issue_id,
+			d.depends_on_id,
+			p.start_id,
+			p.path || '→' || d.depends_on_id,
+			p.depth + 1
 			FROM dependencies d
 			JOIN paths p ON d.issue_id = p.depends_on_id
 			WHERE p.depth < ?
-			  AND p.path NOT LIKE '%' || d.depends_on_id || '→%'
+			AND (d.depends_on_id = p.start_id OR p.path NOT LIKE '%' || d.depends_on_id || '→%')
 		)
-		SELECT DISTINCT path || '→' || start_id as cycle_path
+		SELECT DISTINCT path as cycle_path
 		FROM paths
 		WHERE depends_on_id = start_id
 		ORDER BY cycle_path
@@ -708,6 +650,9 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 // Helper function to scan issues from rows
 func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
 	var issues []*types.Issue
+	var issueIDs []string
+	
+	// First pass: scan all issues
 	for rows.Next() {
 		var issue types.Issue
 		var contentHash sql.NullString
@@ -715,12 +660,13 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
 		var externalRef sql.NullString
+		var sourceRepo sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -742,6 +688,73 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
 		}
+		if sourceRepo.Valid {
+			issue.SourceRepo = sourceRepo.String
+		}
+
+		issues = append(issues, &issue)
+		issueIDs = append(issueIDs, issue.ID)
+	}
+
+	// Second pass: batch-load labels for all issues
+	labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get labels: %w", err)
+	}
+
+	// Assign labels to issues
+	for _, issue := range issues {
+		if labels, ok := labelsMap[issue.ID]; ok {
+			issue.Labels = labels
+		}
+	}
+
+	return issues, nil
+}
+
+// Helper function to scan issues with dependency type from rows
+func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *sql.Rows) ([]*types.IssueWithDependencyMetadata, error) {
+	var results []*types.IssueWithDependencyMetadata
+	for rows.Next() {
+		var issue types.Issue
+		var contentHash sql.NullString
+		var closedAt sql.NullTime
+		var estimatedMinutes sql.NullInt64
+		var assignee sql.NullString
+		var externalRef sql.NullString
+		var sourceRepo sql.NullString
+		var depType types.DependencyType
+
+		err := rows.Scan(
+			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&depType,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan issue with dependency type: %w", err)
+		}
+
+		if contentHash.Valid {
+			issue.ContentHash = contentHash.String
+		}
+		if closedAt.Valid {
+			issue.ClosedAt = &closedAt.Time
+		}
+		if estimatedMinutes.Valid {
+			mins := int(estimatedMinutes.Int64)
+			issue.EstimatedMinutes = &mins
+		}
+		if assignee.Valid {
+			issue.Assignee = assignee.String
+		}
+		if externalRef.Valid {
+			issue.ExternalRef = &externalRef.String
+		}
+		if sourceRepo.Valid {
+			issue.SourceRepo = sourceRepo.String
+		}
 
 		// Fetch labels for this issue
 		labels, err := s.GetLabels(ctx, issue.ID)
@@ -750,8 +763,12 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		issue.Labels = labels
 
-		issues = append(issues, &issue)
+		result := &types.IssueWithDependencyMetadata{
+			Issue:          issue,
+			DependencyType: depType,
+		}
+		results = append(results, result)
 	}
 
-	return issues, nil
+	return results, nil
 }

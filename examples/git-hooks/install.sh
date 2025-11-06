@@ -28,7 +28,7 @@ fi
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Hooks to install
-HOOKS="pre-commit post-merge"
+HOOKS="pre-commit post-merge pre-push"
 
 echo "Installing bd git hooks..."
 
@@ -60,5 +60,6 @@ echo ""
 echo "Hooks installed:"
 echo "  pre-commit  - Flushes pending bd changes to JSONL before commit"
 echo "  post-merge  - Imports updated JSONL after git pull/merge"
+echo "  pre-push    - Exports database to JSONL before push (prevents stale JSONL)"
 echo ""
-echo "To uninstall, remove .git/hooks/pre-commit and .git/hooks/post-merge"
+echo "To uninstall, remove the hooks from .git/hooks/"

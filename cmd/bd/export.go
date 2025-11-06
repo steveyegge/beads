@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -104,13 +106,13 @@ Output to stdout by default, or use -o flag for file output.`,
 			}
 			store, err = sqlite.New(dbPath)
 			if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
+				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+				os.Exit(1)
 			}
 			defer func() { _ = store.Close() }()
-			}
+		}
 
-			// Build filter
+		// Build filter
 		filter := types.IssueFilter{}
 		if statusFilter != "" {
 			status := types.Status(statusFilter)
@@ -213,49 +215,50 @@ Output to stdout by default, or use -o flag for file output.`,
 
 			// Ensure cleanup on failure
 			defer func() {
-			if tempFile != nil {
-			_ = tempFile.Close()
-			_ = os.Remove(tempPath) // Clean up temp file if we haven't renamed it
-			}
+				if tempFile != nil {
+					_ = tempFile.Close()
+					_ = os.Remove(tempPath) // Clean up temp file if we haven't renamed it
+				}
 			}()
 
 			out = tempFile
 		}
 
-		// Write JSONL (with timestamp-only deduplication for bd-164)
+		// Write JSONL (timestamp-only deduplication DISABLED due to bd-160)
 		encoder := json.NewEncoder(out)
 		exportedIDs := make([]string, 0, len(issues))
 		skippedCount := 0
 		for _, issue := range issues {
-			// Check if this is only a timestamp change (bd-164)
-			skip, err := shouldSkipExport(ctx, issue)
-			if err != nil {
-				// Log warning but continue - don't fail export on hash check errors
-				fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
-				skip = false
-			}
-			
-			if skip {
-				skippedCount++
-				continue
-			}
-			
+			// DISABLED: timestamp-only deduplication causes data loss (bd-160)
+			// The export_hashes table gets out of sync with JSONL after git operations,
+			// causing exports to skip issues that aren't actually in the file.
+			//
+			// skip, err := shouldSkipExport(ctx, issue)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
+			// 	skip = false
+			// }
+			// if skip {
+			// 	skippedCount++
+			// 	continue
+			// }
+
 			if err := encoder.Encode(issue); err != nil {
 				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
 				os.Exit(1)
 			}
-			
-			// Save content hash after successful export (bd-164)
-			contentHash, err := computeIssueContentHash(issue)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
-			} else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
-			}
-			
+
+			// DISABLED: export hash tracking (bd-160)
+			// contentHash, err := computeIssueContentHash(issue)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
+			// } else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
+			// }
+
 			exportedIDs = append(exportedIDs, issue.ID)
 		}
-		
+
 		// Report skipped issues if any (helps debugging bd-159)
 		if skippedCount > 0 && (output == "" || output == findJSONLPath()) {
 			fmt.Fprintf(os.Stderr, "Skipped %d issue(s) with timestamp-only changes\n", skippedCount)
@@ -272,6 +275,18 @@ Output to stdout by default, or use -o flag for file output.`,
 			// Clear auto-flush state since we just manually exported
 			// This cancels any pending auto-flush timer and marks DB as clean
 			clearAutoFlushState()
+
+			// Store JSONL file hash for integrity validation (bd-160)
+			// nolint:gosec // G304: finalPath is validated JSONL export path
+			jsonlData, err := os.ReadFile(finalPath)
+			if err == nil {
+				hasher := sha256.New()
+				hasher.Write(jsonlData)
+				fileHash := hex.EncodeToString(hasher.Sum(nil))
+				if err := store.SetJSONLFileHash(ctx, fileHash); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash: %v\n", err)
+				}
+			}
 		}
 
 		// If writing to file, atomically replace the target file
@@ -284,15 +299,44 @@ Output to stdout by default, or use -o flag for file output.`,
 
 			// Atomically replace the target file
 			if err := os.Rename(tempPath, finalPath); err != nil {
-			_ = os.Remove(tempPath) // Clean up on failure
-			fmt.Fprintf(os.Stderr, "Error replacing output file: %v\n", err)
-			os.Exit(1)
+				_ = os.Remove(tempPath) // Clean up on failure
+				fmt.Fprintf(os.Stderr, "Error replacing output file: %v\n", err)
+				os.Exit(1)
 			}
 
 			// Set appropriate file permissions (0600: rw-------)
 			if err := os.Chmod(finalPath, 0600); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to set file permissions: %v\n", err)
 			}
+
+		// Verify JSONL file integrity after export
+			 actualCount, err := countIssuesInJSONL(finalPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Export verification failed: %v\n", err)
+			os.Exit(1)
+		}
+		if actualCount != len(exportedIDs) {
+			fmt.Fprintf(os.Stderr, "Error: Export verification failed\n")
+			fmt.Fprintf(os.Stderr, "  Expected: %d issues\n", len(exportedIDs))
+			fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
+			fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
+			os.Exit(1)
+		}
+	}
+
+	// Output statistics if JSON format requested
+		if jsonOutput {
+			stats := map[string]interface{}{
+				"success":      true,
+				"exported":     len(exportedIDs),
+				"skipped":      skippedCount,
+				"total_issues": len(issues),
+			}
+			if output != "" {
+				stats["output_file"] = output
+			}
+			data, _ := json.MarshalIndent(stats, "", "  ")
+			fmt.Fprintln(os.Stderr, string(data))
 		}
 	},
 }
@@ -302,5 +346,6 @@ func init() {
 	exportCmd.Flags().StringP("output", "o", "", "Output file (default: stdout)")
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
 	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
+	exportCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output export statistics in JSON format")
 	rootCmd.AddCommand(exportCmd)
 }

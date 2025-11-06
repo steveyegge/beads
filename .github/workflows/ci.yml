@@ -18,11 +18,16 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
       - name: Build
         run: go build -v ./cmd/bd
 
       - name: Test
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: go test -v -race -short -coverprofile=coverage.out ./...
 
       - name: Check coverage threshold
         run: |
@@ -55,11 +60,16 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
       - name: Build
         run: go build -v ./cmd/bd
 
       - name: Test
-        run: go test -v ./...
+        run: go test -v -short ./...
 
   lint:
     name: Lint

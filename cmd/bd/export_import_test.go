@@ -133,6 +133,7 @@ func (h *exportImportHelper) validateJSONLines(buf *bytes.Buffer, expectedCount 
 }
 
 func TestExportImport(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	store := newTestStoreWithPrefix(t, dbPath, "test")
@@ -199,6 +200,7 @@ func TestExportImport(t *testing.T) {
 }
 
 func TestExportEmpty(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	store := newTestStore(t, dbPath)
@@ -216,6 +218,7 @@ func TestExportEmpty(t *testing.T) {
 }
 
 func TestImportInvalidJSON(t *testing.T) {
+	t.Parallel()
 	invalidJSON := []string{
 		`{"id":"test-1"`,            // Incomplete JSON
 		`{"id":"test-1","title":}`,  // Invalid syntax
@@ -233,6 +236,7 @@ func TestImportInvalidJSON(t *testing.T) {
 }
 
 func TestRoundTrip(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "original.db")
 	store := newTestStoreWithPrefix(t, dbPath, "test")

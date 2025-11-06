@@ -158,12 +158,12 @@ func issueDataChanged(existing *types.Issue, updates map[string]interface{}) boo
 
 // ImportOptions configures how the import behaves
 type ImportOptions struct {
-	ResolveCollisions  bool // Auto-resolve collisions by remapping to new IDs
-	DryRun             bool // Preview changes without applying them
-	SkipUpdate         bool // Skip updating existing issues (create-only mode)
-	Strict             bool // Fail on any error (dependencies, labels, etc.)
-	RenameOnImport     bool // Rename imported issues to match database prefix
+	DryRun             bool   // Preview changes without applying them
+	SkipUpdate         bool   // Skip updating existing issues (create-only mode)
+	Strict             bool   // Fail on any error (dependencies, labels, etc.)
+	RenameOnImport     bool   // Rename imported issues to match database prefix
 	SkipPrefixValidation bool // Skip prefix validation (for auto-import)
+	OrphanHandling     string // Orphan handling mode: strict/resurrect/skip/allow (empty = use config)
 }
 
 // ImportResult contains statistics about the import operation
@@ -192,14 +192,30 @@ type ImportResult struct {
 // - Displaying results to the user
 // - Setting metadata (e.g., last_import_hash)
 func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage, issues []*types.Issue, opts ImportOptions) (*ImportResult, error) {
+	// Determine orphan handling: flag > config > default (allow)
+	orphanHandling := opts.OrphanHandling
+	if orphanHandling == "" && store != nil {
+		// Read from config if flag not specified
+		configValue, err := store.GetConfig(ctx, "import.missing_parents")
+		if err == nil && configValue != "" {
+			orphanHandling = configValue
+		} else {
+			// Default to allow (most permissive)
+			orphanHandling = "allow"
+		}
+	} else if orphanHandling == "" {
+		// No store available, default to allow
+		orphanHandling = "allow"
+	}
+	
 	// Convert ImportOptions to importer.Options
 	importerOpts := importer.Options{
-		ResolveCollisions:    opts.ResolveCollisions,
 		DryRun:               opts.DryRun,
 		SkipUpdate:           opts.SkipUpdate,
 		Strict:               opts.Strict,
 		RenameOnImport:       opts.RenameOnImport,
 		SkipPrefixValidation: opts.SkipPrefixValidation,
+		OrphanHandling:       importer.OrphanHandling(orphanHandling),
 	}
 
 	// Delegate to the importer package

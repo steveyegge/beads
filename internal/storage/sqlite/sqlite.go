@@ -14,7 +14,8 @@ import (
 
 	// Import SQLite driver
 	"github.com/steveyegge/beads/internal/types"
-	_ "modernc.org/sqlite"
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -26,39 +27,40 @@ type SQLiteStorage struct {
 
 // New creates a new SQLite storage backend
 func New(path string) (*SQLiteStorage, error) {
-	// Convert :memory: to shared memory URL for consistent behavior across connections
-	// SQLite creates separate in-memory databases for each connection to ":memory:",
-	// but "file::memory:?cache=shared" creates a shared in-memory database.
-	dbPath := path
+	// Build connection string with proper URI syntax
+	// For :memory: databases, use shared cache so multiple connections see the same data
+	var connStr string
 	if path == ":memory:" {
-		dbPath = "file::memory:?cache=shared"
-	}
-
-	// Ensure directory exists (skip for memory databases)
-	if !strings.Contains(dbPath, ":memory:") {
-		dir := filepath.Dir(dbPath)
+		// Use shared in-memory database with a named identifier
+		// Note: WAL mode doesn't work with shared in-memory databases, so use DELETE mode
+		// The name "memdb" is required for cache=shared to work properly across connections
+		connStr = "file:memdb?mode=memory&cache=shared&_pragma=journal_mode(DELETE)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+	} else if strings.HasPrefix(path, "file:") {
+		// Already a URI - append our pragmas if not present
+		connStr = path
+		if !strings.Contains(path, "_pragma=foreign_keys") {
+			connStr += "&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		}
+	} else {
+		// Ensure directory exists for file-based databases
+		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
+		// Use file URI with pragmas
+		connStr = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
 	}
 
-	// Open database with WAL mode for better concurrency and busy timeout for parallel writes
-	// Use modernc.org/sqlite's _pragma syntax for all options to ensure consistent behavior
-	// _pragma=journal_mode(WAL) enables Write-Ahead Logging for better concurrency
-	// _pragma=foreign_keys(ON) enforces foreign key constraints
-	// _pragma=busy_timeout(30000) means wait up to 30 seconds for locks instead of failing immediately
-	// _time_format=sqlite enables automatic parsing of DATETIME columns to time.Time
-	// Note: For shared memory URLs, additional params need to be added with & not ?
-	connStr := dbPath
-	if strings.Contains(dbPath, "?") {
-		connStr += "&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
-	} else {
-		connStr += "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
-	}
-
-	db, err := sql.Open("sqlite", connStr)
+	db, err := sql.Open("sqlite3", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// For :memory: databases, force single connection to ensure cache sharing works properly.
+	// SQLite's shared cache mode for in-memory databases only works reliably with one connection.
+	// Without this, different connections in the pool can't see each other's writes (bd-b121).
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
 	}
 
 	// Test connection
@@ -71,607 +73,48 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	// Migrate existing databases to add dirty_issues table if missing
-	if err := migrateDirtyIssuesTable(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate dirty_issues table: %w", err)
+	// Run all migrations
+	if err := RunMigrations(db); err != nil {
+		return nil, err
 	}
 
-	// Migrate existing databases to add issue_counters table if missing
-	if err := migrateIssueCountersTable(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate issue_counters table: %w", err)
+	// Convert to absolute path for consistency (but keep :memory: as-is)
+	absPath := path
+	if path != ":memory:" {
+		var err error
+		absPath, err = filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path: %w", err)
+		}
 	}
 
-	// Migrate existing databases to add external_ref column if missing
-	if err := migrateExternalRefColumn(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate external_ref column: %w", err)
-	}
-
-	// Migrate existing databases to add composite index on dependencies
-	if err := migrateCompositeIndexes(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate composite indexes: %w", err)
-	}
-
-	// Migrate existing databases to add status/closed_at CHECK constraint
-	if err := migrateClosedAtConstraint(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate closed_at constraint: %w", err)
-	}
-
-	// Migrate existing databases to add compaction columns
-	if err := migrateCompactionColumns(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate compaction columns: %w", err)
-	}
-
-	// Migrate existing databases to add issue_snapshots table
-	if err := migrateSnapshotsTable(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate snapshots table: %w", err)
-	}
-
-	// Migrate existing databases to add compaction config defaults
-	if err := migrateCompactionConfig(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate compaction config: %w", err)
-	}
-
-	// Migrate existing databases to add compacted_at_commit column
-	if err := migrateCompactedAtCommitColumn(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate compacted_at_commit column: %w", err)
-	}
-
-	// Migrate existing databases to add export_hashes table (bd-164)
-	if err := migrateExportHashesTable(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate export_hashes table: %w", err)
-	}
-
-	// Migrate existing databases to add content_hash column (bd-95)
-	if err := migrateContentHashColumn(db); err != nil {
-		return nil, fmt.Errorf("failed to migrate content_hash column: %w", err)
-	}
-
-	// Convert to absolute path for consistency
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
-	}
-
-	return &SQLiteStorage{
+	storage := &SQLiteStorage{
 		db:     db,
 		dbPath: absPath,
-	}, nil
-}
+	}
 
-// migrateDirtyIssuesTable checks if the dirty_issues table exists and creates it if missing.
-// This ensures existing databases created before the incremental export feature get migrated automatically.
-func migrateDirtyIssuesTable(db *sql.DB) error {
-	// Check if dirty_issues table exists
-	var tableName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='dirty_issues'
-	`).Scan(&tableName)
-
-	if err == sql.ErrNoRows {
-		// Table doesn't exist, create it
-		_, err := db.Exec(`
-			CREATE TABLE dirty_issues (
-				issue_id TEXT PRIMARY KEY,
-				marked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-			);
-			CREATE INDEX idx_dirty_issues_marked_at ON dirty_issues(marked_at);
-		`)
+	// Hydrate from multi-repo config if configured (bd-307)
+	// Skip for in-memory databases (used in tests)
+	if path != ":memory:" {
+		ctx := context.Background()
+		_, err := storage.HydrateFromMultiRepo(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to create dirty_issues table: %w", err)
-		}
-		// Table created successfully - no need to log, happens silently
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to check for dirty_issues table: %w", err)
-	}
-
-	// Table exists, check if content_hash column exists (migration for bd-164)
-	var hasContentHash bool
-	err = db.QueryRow(`
-		SELECT COUNT(*) > 0 FROM pragma_table_info('dirty_issues')
-		WHERE name = 'content_hash'
-	`).Scan(&hasContentHash)
-	
-	if err != nil {
-		return fmt.Errorf("failed to check for content_hash column: %w", err)
-	}
-	
-	if !hasContentHash {
-		// Add content_hash column to existing table
-		_, err = db.Exec(`ALTER TABLE dirty_issues ADD COLUMN content_hash TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add content_hash column: %w", err)
+			return nil, fmt.Errorf("failed to hydrate from multi-repo: %w", err)
 		}
 	}
 
-	return nil
+	return storage, nil
 }
 
-// migrateIssueCountersTable checks if the issue_counters table needs initialization.
-// This ensures existing databases created before the atomic counter feature get migrated automatically.
-// The table may already exist (created by schema), but be empty - in that case we still need to sync.
-func migrateIssueCountersTable(db *sql.DB) error {
-	// Check if the table exists (it should, created by schema)
-	var tableName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='issue_counters'
-	`).Scan(&tableName)
+// REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
+// no longer needed with hash-based IDs
+// Migration functions moved to migrations.go (bd-fc2d, bd-b245)
 
-	tableExists := err == nil
+// getNextChildNumber atomically generates the next child number for a parent ID
+// Uses the child_counters table for atomic, cross-process child ID generation
+// Hash ID generation functions moved to hash_ids.go (bd-90a5)
 
-	if !tableExists {
-		if err != sql.ErrNoRows {
-			return fmt.Errorf("failed to check for issue_counters table: %w", err)
-		}
-		// Table doesn't exist, create it (shouldn't happen with schema, but handle it)
-		_, err := db.Exec(`
-			CREATE TABLE issue_counters (
-				prefix TEXT PRIMARY KEY,
-				last_id INTEGER NOT NULL DEFAULT 0
-			)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to create issue_counters table: %w", err)
-		}
-	}
-
-	// Check if table is empty - if so, we need to sync from existing issues
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM issue_counters`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("failed to count issue_counters: %w", err)
-	}
-
-	if count == 0 {
-		// Table is empty, sync counters from existing issues to prevent ID collisions
-		// This is safe to do during migration since it's a one-time operation
-		_, err = db.Exec(`
-			INSERT INTO issue_counters (prefix, last_id)
-			SELECT
-				substr(id, 1, instr(id, '-') - 1) as prefix,
-				MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
-			FROM issues
-			WHERE instr(id, '-') > 0
-			  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-			GROUP BY prefix
-			ON CONFLICT(prefix) DO UPDATE SET
-				last_id = MAX(last_id, excluded.last_id)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to sync counters during migration: %w", err)
-		}
-	}
-
-	// Table exists and is initialized (either was already populated, or we just synced it)
-	return nil
-}
-
-// migrateExternalRefColumn checks if the external_ref column exists and adds it if missing.
-// This ensures existing databases created before the external reference feature get migrated automatically.
-func migrateExternalRefColumn(db *sql.DB) error {
-	// Check if external_ref column exists
-	var columnExists bool
-	rows, err := db.Query("PRAGMA table_info(issues)")
-	if err != nil {
-		return fmt.Errorf("failed to check schema: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull, pk int
-		var dflt *string
-		err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
-		if err != nil {
-			return fmt.Errorf("failed to scan column info: %w", err)
-		}
-		if name == "external_ref" {
-			columnExists = true
-			break
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error reading column info: %w", err)
-	}
-
-	if !columnExists {
-		// Add external_ref column
-		_, err := db.Exec(`ALTER TABLE issues ADD COLUMN external_ref TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add external_ref column: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// migrateCompositeIndexes checks if composite indexes exist and creates them if missing.
-// This ensures existing databases get performance optimizations from new indexes.
-func migrateCompositeIndexes(db *sql.DB) error {
-	// Check if idx_dependencies_depends_on_type exists
-	var indexName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='index' AND name='idx_dependencies_depends_on_type'
-	`).Scan(&indexName)
-
-	if err == sql.ErrNoRows {
-		// Index doesn't exist, create it
-		_, err := db.Exec(`
-			CREATE INDEX idx_dependencies_depends_on_type ON dependencies(depends_on_id, type)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to create composite index idx_dependencies_depends_on_type: %w", err)
-		}
-		// Index created successfully
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to check for composite index: %w", err)
-	}
-
-	// Index exists, no migration needed
-	return nil
-}
-
-// migrateClosedAtConstraint cleans up inconsistent status/closed_at data.
-// The CHECK constraint is in the schema for new databases, but we can't easily
-// add it to existing tables without recreating them. Instead, we clean the data
-// and rely on application code (UpdateIssue, import.go) to maintain the invariant.
-func migrateClosedAtConstraint(db *sql.DB) error {
-	// Check if there are any inconsistent rows
-	var count int
-	err := db.QueryRow(`
-		SELECT COUNT(*)
-		FROM issues
-		WHERE (CASE WHEN status = 'closed' THEN 1 ELSE 0 END) <>
-		      (CASE WHEN closed_at IS NOT NULL THEN 1 ELSE 0 END)
-	`).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("failed to count inconsistent issues: %w", err)
-	}
-
-	if count == 0 {
-		// No inconsistent data, nothing to do
-		return nil
-	}
-
-	// Clean inconsistent data: trust the status field
-	// Strategy: If status != 'closed' but closed_at is set, clear closed_at
-	//          If status = 'closed' but closed_at is not set, set it to updated_at (best guess)
-	_, err = db.Exec(`
-		UPDATE issues
-		SET closed_at = NULL
-		WHERE status != 'closed' AND closed_at IS NOT NULL
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to clear closed_at for non-closed issues: %w", err)
-	}
-
-	_, err = db.Exec(`
-		UPDATE issues
-		SET closed_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
-		WHERE status = 'closed' AND closed_at IS NULL
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to set closed_at for closed issues: %w", err)
-	}
-
-	// Migration complete - data is now consistent
-	return nil
-}
-
-// migrateCompactionColumns adds compaction_level, compacted_at, and original_size columns to the issues table.
-// This migration is idempotent and safe to run multiple times.
-func migrateCompactionColumns(db *sql.DB) error {
-	// Check if compaction_level column exists
-	var columnExists bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0
-		FROM pragma_table_info('issues')
-		WHERE name = 'compaction_level'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check compaction_level column: %w", err)
-	}
-
-	if columnExists {
-		// Columns already exist, nothing to do
-		return nil
-	}
-
-	// Add the three compaction columns
-	_, err = db.Exec(`
-		ALTER TABLE issues ADD COLUMN compaction_level INTEGER DEFAULT 0;
-		ALTER TABLE issues ADD COLUMN compacted_at DATETIME;
-		ALTER TABLE issues ADD COLUMN original_size INTEGER;
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to add compaction columns: %w", err)
-	}
-
-	return nil
-}
-
-// migrateSnapshotsTable creates the issue_snapshots table if it doesn't exist.
-// This migration is idempotent and safe to run multiple times.
-func migrateSnapshotsTable(db *sql.DB) error {
-	// Check if issue_snapshots table exists
-	var tableExists bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0
-		FROM sqlite_master
-		WHERE type='table' AND name='issue_snapshots'
-	`).Scan(&tableExists)
-	if err != nil {
-		return fmt.Errorf("failed to check issue_snapshots table: %w", err)
-	}
-
-	if tableExists {
-		// Table already exists, nothing to do
-		return nil
-	}
-
-	// Create the table and indexes
-	_, err = db.Exec(`
-		CREATE TABLE issue_snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			issue_id TEXT NOT NULL,
-			snapshot_time DATETIME NOT NULL,
-			compaction_level INTEGER NOT NULL,
-			original_size INTEGER NOT NULL,
-			compressed_size INTEGER NOT NULL,
-			original_content TEXT NOT NULL,
-			archived_events TEXT,
-			FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-		);
-		CREATE INDEX idx_snapshots_issue ON issue_snapshots(issue_id);
-		CREATE INDEX idx_snapshots_level ON issue_snapshots(compaction_level);
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create issue_snapshots table: %w", err)
-	}
-
-	return nil
-}
-
-// migrateCompactionConfig adds default compaction configuration values.
-// This migration is idempotent and safe to run multiple times (INSERT OR IGNORE).
-func migrateCompactionConfig(db *sql.DB) error {
-	_, err := db.Exec(`
-		INSERT OR IGNORE INTO config (key, value) VALUES
-			('compaction_enabled', 'false'),
-			('compact_tier1_days', '30'),
-			('compact_tier1_dep_levels', '2'),
-			('compact_tier2_days', '90'),
-			('compact_tier2_dep_levels', '5'),
-			('compact_tier2_commits', '100'),
-			('compact_model', 'claude-3-5-haiku-20241022'),
-			('compact_batch_size', '50'),
-			('compact_parallel_workers', '5'),
-			('auto_compact_enabled', 'false')
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to add compaction config defaults: %w", err)
-	}
-	return nil
-}
-
-// migrateCompactedAtCommitColumn adds compacted_at_commit column to the issues table.
-// This migration is idempotent and safe to run multiple times.
-func migrateCompactedAtCommitColumn(db *sql.DB) error {
-	var columnExists bool
-	err := db.QueryRow(`
-		SELECT COUNT(*) > 0
-		FROM pragma_table_info('issues')
-		WHERE name = 'compacted_at_commit'
-	`).Scan(&columnExists)
-	if err != nil {
-		return fmt.Errorf("failed to check compacted_at_commit column: %w", err)
-	}
-
-	if columnExists {
-		return nil
-	}
-
-	_, err = db.Exec(`ALTER TABLE issues ADD COLUMN compacted_at_commit TEXT`)
-	if err != nil {
-		return fmt.Errorf("failed to add compacted_at_commit column: %w", err)
-	}
-
-	return nil
-}
-
-// migrateExportHashesTable ensures the export_hashes table exists for timestamp-only dedup (bd-164)
-func migrateExportHashesTable(db *sql.DB) error {
-	// Check if export_hashes table exists
-	var tableName string
-	err := db.QueryRow(`
-		SELECT name FROM sqlite_master
-		WHERE type='table' AND name='export_hashes'
-	`).Scan(&tableName)
-
-	if err == sql.ErrNoRows {
-		// Table doesn't exist, create it
-		_, err := db.Exec(`
-			CREATE TABLE export_hashes (
-				issue_id TEXT PRIMARY KEY,
-				content_hash TEXT NOT NULL,
-				exported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-			)
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to create export_hashes table: %w", err)
-		}
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to check export_hashes table: %w", err)
-	}
-
-	// Table already exists
-	return nil
-}
-
-// migrateContentHashColumn adds the content_hash column to the issues table if missing (bd-95).
-// This enables global N-way collision resolution by providing content-addressable identity.
-func migrateContentHashColumn(db *sql.DB) error {
-	// Check if content_hash column exists
-	var colName string
-	err := db.QueryRow(`
-		SELECT name FROM pragma_table_info('issues')
-		WHERE name = 'content_hash'
-	`).Scan(&colName)
-
-	if err == sql.ErrNoRows {
-		// Column doesn't exist, add it
-		_, err := db.Exec(`ALTER TABLE issues ADD COLUMN content_hash TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add content_hash column: %w", err)
-		}
-
-		// Create index on content_hash for fast lookups
-		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_content_hash ON issues(content_hash)`)
-		if err != nil {
-			return fmt.Errorf("failed to create content_hash index: %w", err)
-		}
-
-		// Populate content_hash for all existing issues
-		rows, err := db.Query(`
-			SELECT id, title, description, design, acceptance_criteria, notes,
-			       status, priority, issue_type, assignee, external_ref
-			FROM issues
-		`)
-		if err != nil {
-			return fmt.Errorf("failed to query existing issues: %w", err)
-		}
-		defer rows.Close()
-
-		// Collect issues and compute hashes
-		updates := make(map[string]string) // id -> content_hash
-		for rows.Next() {
-			var issue types.Issue
-			var assignee sql.NullString
-			var externalRef sql.NullString
-			err := rows.Scan(
-				&issue.ID, &issue.Title, &issue.Description, &issue.Design,
-				&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
-				&issue.Priority, &issue.IssueType, &assignee, &externalRef,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to scan issue: %w", err)
-			}
-			if assignee.Valid {
-				issue.Assignee = assignee.String
-			}
-			if externalRef.Valid {
-				issue.ExternalRef = &externalRef.String
-			}
-
-			// Compute and store hash
-			updates[issue.ID] = issue.ComputeContentHash()
-		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("error iterating issues: %w", err)
-		}
-
-		// Apply hash updates in batch
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("failed to begin transaction: %w", err)
-		}
-		defer tx.Rollback()
-
-		stmt, err := tx.Prepare(`UPDATE issues SET content_hash = ? WHERE id = ?`)
-		if err != nil {
-			return fmt.Errorf("failed to prepare update statement: %w", err)
-		}
-		defer stmt.Close()
-
-		for id, hash := range updates {
-			if _, err := stmt.Exec(hash, id); err != nil {
-				return fmt.Errorf("failed to update content_hash for issue %s: %w", id, err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit transaction: %w", err)
-		}
-
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to check content_hash column: %w", err)
-	}
-
-	// Column already exists
-	return nil
-}
-
-// getNextIDForPrefix atomically generates the next ID for a given prefix
-// Uses the issue_counters table for atomic, cross-process ID generation
-func (s *SQLiteStorage) getNextIDForPrefix(ctx context.Context, prefix string) (int, error) {
-	var nextID int
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		VALUES (?, 1)
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = last_id + 1
-		RETURNING last_id
-	`, prefix).Scan(&nextID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to generate next ID for prefix %s: %w", prefix, err)
-	}
-	return nextID, nil
-}
-
-// SyncAllCounters synchronizes all ID counters based on existing issues in the database
-// This scans all issues and updates counters to prevent ID collisions with auto-generated IDs
-// Note: This unconditionally overwrites counter values, allowing them to decrease after deletions
-func (s *SQLiteStorage) SyncAllCounters(ctx context.Context) error {
-	// First, delete counters for prefixes that have no issues
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM issue_counters
-		WHERE prefix NOT IN (
-			SELECT DISTINCT substr(id, 1, instr(id, '-') - 1)
-			FROM issues
-			WHERE instr(id, '-') > 0
-			  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to delete orphaned counters: %w", err)
-	}
-
-	// Then, upsert counters for prefixes that have issues
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		SELECT
-			substr(id, 1, instr(id, '-') - 1) as prefix,
-			MAX(CAST(substr(id, instr(id, '-') + 1) AS INTEGER)) as max_id
-		FROM issues
-		WHERE instr(id, '-') > 0
-		  AND substr(id, instr(id, '-') + 1) GLOB '[0-9]*'
-		GROUP BY prefix
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = excluded.last_id
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to sync counters: %w", err)
-	}
-	return nil
-}
+// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
 
 // REMOVED (bd-166): derivePrefixFromPath was causing duplicate issues with wrong prefix
 // The database should ALWAYS have issue_prefix config set explicitly (by 'bd init' or auto-import)
@@ -734,93 +177,50 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Generate ID if not set (inside transaction to prevent race conditions)
+	// Generate or validate ID
 	if issue.ID == "" {
-		// Atomically initialize counter (if needed) and get next ID (within transaction)
-		// This ensures the counter starts from the max existing ID, not 1
-		// CRITICAL: We rely on BEGIN IMMEDIATE above to serialize this operation across processes
-		//
-		// The query works as follows:
-		// 1. Try to INSERT with last_id = MAX(existing IDs) or 1 if none exist
-		// 2. ON CONFLICT: update last_id to MAX(existing last_id, new calculated last_id) + 1
-		// 3. RETURNING gives us the final incremented value
-		//
-		// This atomically handles three cases:
-		// - Counter doesn't exist: initialize from existing issues and return next ID
-		// - Counter exists but lower than max ID: update to max and return next ID
-		// - Counter exists and correct: just increment and return next ID
-		var nextID int
-		err = conn.QueryRowContext(ctx, `
-			INSERT INTO issue_counters (prefix, last_id)
-			SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0) + 1
-			FROM issues
-			WHERE id LIKE ? || '-%'
-			  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
-			ON CONFLICT(prefix) DO UPDATE SET
-				last_id = MAX(
-					last_id,
-					(SELECT COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
-					 FROM issues
-					 WHERE id LIKE ? || '-%'
-					   AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*')
-				) + 1
-			RETURNING last_id
-		`, prefix, prefix, prefix, prefix, prefix, prefix, prefix).Scan(&nextID)
+		// Generate hash-based ID with adaptive length based on database size (bd-ea2a13)
+		generatedID, err := GenerateIssueID(ctx, conn, prefix, issue, actor)
 		if err != nil {
-			return fmt.Errorf("failed to generate next ID for prefix %s: %w", prefix, err)
+			return err
 		}
-
-		issue.ID = fmt.Sprintf("%s-%d", prefix, nextID)
+		issue.ID = generatedID
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix (bd-177)
-		// This prevents wrong-prefix bugs when IDs are manually specified
-		expectedPrefix := prefix + "-"
-		if !strings.HasPrefix(issue.ID, expectedPrefix) {
-			return fmt.Errorf("issue ID '%s' does not match configured prefix '%s'", issue.ID, prefix)
+		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+			return err
 		}
+		
+		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
+		if strings.Contains(issue.ID, ".") {
+		// Try to resurrect entire parent chain if any parents are missing
+		// Use the conn-based version to participate in the same transaction
+		resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
+		if err != nil {
+		 return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
+		}
+		if !resurrected {
+		// Parent(s) not found in JSONL history - cannot proceed
+		lastDot := strings.LastIndex(issue.ID, ".")
+		parentID := issue.ID[:lastDot]
+		 return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
+		 }
+	}
 	}
 
 	// Insert issue
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO issues (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, updated_at, closed_at, external_ref
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
-		issue.AcceptanceCriteria, issue.Notes, issue.Status,
-		issue.Priority, issue.IssueType, issue.Assignee,
-		issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
-		issue.ClosedAt, issue.ExternalRef,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert issue: %w", err)
+	if err := insertIssue(ctx, conn, issue); err != nil {
+		return err
 	}
 
 	// Record creation event
-	eventData, err := json.Marshal(issue)
-	if err != nil {
-		// Fall back to minimal description if marshaling fails
-		eventData = []byte(fmt.Sprintf(`{"id":"%s","title":"%s"}`, issue.ID, issue.Title))
-	}
-	eventDataStr := string(eventData)
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, new_value)
-		VALUES (?, ?, ?, ?)
-	`, issue.ID, types.EventCreated, actor, eventDataStr)
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
+	if err := recordCreatedEvent(ctx, conn, issue, actor); err != nil {
+		return err
 	}
 
 	// Mark issue as dirty for incremental export
-	_, err = conn.ExecContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
-	`, issue.ID, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	if err := markDirty(ctx, conn, issue.ID); err != nil {
+		return err
 	}
 
 	// Commit the transaction
@@ -832,277 +232,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 }
 
 // validateBatchIssues validates all issues in a batch and sets timestamps
-func validateBatchIssues(issues []*types.Issue) error {
-	now := time.Now()
-	for i, issue := range issues {
-		if issue == nil {
-			return fmt.Errorf("issue %d is nil", i)
-		}
-
-		// Only set timestamps if not already provided
-		if issue.CreatedAt.IsZero() {
-			issue.CreatedAt = now
-		}
-		if issue.UpdatedAt.IsZero() {
-			issue.UpdatedAt = now
-		}
-
-		if err := issue.Validate(); err != nil {
-			return fmt.Errorf("validation failed for issue %d: %w", i, err)
-		}
-	}
-	return nil
-}
-
-// generateBatchIDs generates IDs for all issues that need them atomically
-func generateBatchIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue, dbPath string) error {
-	// Get prefix from config (needed for both generation and validation)
-	var prefix string
-	err := conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
-	if err == sql.ErrNoRows || prefix == "" {
-		// CRITICAL: Reject operation if issue_prefix config is missing (bd-166)
-		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
-	} else if err != nil {
-		return fmt.Errorf("failed to get config: %w", err)
-	}
-
-	// Count how many issues need IDs and validate explicitly provided IDs
-	needIDCount := 0
-	expectedPrefix := prefix + "-"
-	for _, issue := range issues {
-		if issue.ID == "" {
-			needIDCount++
-		} else {
-			// Validate that explicitly provided ID matches the configured prefix (bd-177)
-			if !strings.HasPrefix(issue.ID, expectedPrefix) {
-				return fmt.Errorf("issue ID '%s' does not match configured prefix '%s'", issue.ID, prefix)
-			}
-		}
-	}
-
-	if needIDCount == 0 {
-		return nil
-	}
-
-	// Atomically reserve ID range
-	var nextID int
-	err = conn.QueryRowContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		SELECT ?, COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0) + ?
-		FROM issues
-		WHERE id LIKE ? || '-%'
-		  AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*'
-		ON CONFLICT(prefix) DO UPDATE SET
-			last_id = MAX(
-				last_id,
-				(SELECT COALESCE(MAX(CAST(substr(id, LENGTH(?) + 2) AS INTEGER)), 0)
-				 FROM issues
-				 WHERE id LIKE ? || '-%'
-				   AND substr(id, LENGTH(?) + 2) GLOB '[0-9]*')
-			) + ?
-		RETURNING last_id
-	`, prefix, prefix, needIDCount, prefix, prefix, prefix, prefix, prefix, needIDCount).Scan(&nextID)
-	if err != nil {
-		return fmt.Errorf("failed to generate ID range: %w", err)
-	}
-
-	// Assign IDs sequentially from the reserved range and compute content hashes
-	currentID := nextID - needIDCount + 1
-	for i := range issues {
-		if issues[i].ID == "" {
-			issues[i].ID = fmt.Sprintf("%s-%d", prefix, currentID)
-			currentID++
-		}
-		// Compute content hash if not already set (bd-95)
-		if issues[i].ContentHash == "" {
-			issues[i].ContentHash = issues[i].ComputeContentHash()
-		}
-	}
-	return nil
-}
-
-// bulkInsertIssues inserts all issues using a prepared statement
-func bulkInsertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
-	stmt, err := conn.PrepareContext(ctx, `
-		INSERT INTO issues (
-			id, content_hash, title, description, design, acceptance_criteria, notes,
-			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, updated_at, closed_at, external_ref
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer func() { _ = stmt.Close() }()
-
-	for _, issue := range issues {
-		_, err = stmt.ExecContext(ctx,
-			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
-			issue.AcceptanceCriteria, issue.Notes, issue.Status,
-			issue.Priority, issue.IssueType, issue.Assignee,
-			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
-			issue.ClosedAt, issue.ExternalRef,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
-		}
-	}
-	return nil
-}
-
-// bulkRecordEvents records creation events for all issues
-func bulkRecordEvents(ctx context.Context, conn *sql.Conn, issues []*types.Issue, actor string) error {
-	stmt, err := conn.PrepareContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, new_value)
-		VALUES (?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare event statement: %w", err)
-	}
-	defer func() { _ = stmt.Close() }()
-
-	for _, issue := range issues {
-		eventData, err := json.Marshal(issue)
-		if err != nil {
-			// Fall back to minimal description if marshaling fails
-			eventData = []byte(fmt.Sprintf(`{"id":"%s","title":"%s"}`, issue.ID, issue.Title))
-		}
-
-		_, err = stmt.ExecContext(ctx, issue.ID, types.EventCreated, actor, string(eventData))
-		if err != nil {
-			return fmt.Errorf("failed to record event for %s: %w", issue.ID, err)
-		}
-	}
-	return nil
-}
-
-// bulkMarkDirty marks all issues as dirty for incremental export
-func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
-	stmt, err := conn.PrepareContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare dirty statement: %w", err)
-	}
-	defer func() { _ = stmt.Close() }()
-
-	dirtyTime := time.Now()
-	for _, issue := range issues {
-		_, err = stmt.ExecContext(ctx, issue.ID, dirtyTime)
-		if err != nil {
-			return fmt.Errorf("failed to mark dirty %s: %w", issue.ID, err)
-		}
-	}
-	return nil
-}
-
-// CreateIssues creates multiple issues atomically in a single transaction.
-// This provides significant performance improvements over calling CreateIssue in a loop:
-// - Single connection acquisition
-// - Single transaction
-// - Atomic ID range reservation (one counter update for N issues)
-// - All-or-nothing atomicity
-//
-// Expected 5-10x speedup for batches of 10+ issues.
-// CreateIssues creates multiple issues atomically in a single transaction.
-//
-// This method is optimized for bulk issue creation and provides significant
-// performance improvements over calling CreateIssue in a loop:
-//   - Single database connection and transaction
-//   - Atomic ID range reservation (one counter update for N IDs)
-//   - All-or-nothing semantics (rolls back on any error)
-//   - 5-15x faster than sequential CreateIssue calls
-//
-// All issues are validated before any database changes occur. If any issue
-// fails validation, the entire batch is rejected.
-//
-// ID Assignment:
-//   - Issues with empty ID get auto-generated IDs from a reserved range
-//   - Issues with explicit IDs use those IDs (caller must ensure uniqueness)
-//   - Mix of explicit and auto-generated IDs is supported
-//
-// Timestamps:
-//   - All issues in the batch receive identical created_at/updated_at timestamps
-//   - This reflects that they were created as a single atomic operation
-//
-// Usage:
-//   // Bulk import from external source
-//   issues := []*types.Issue{...}
-//   if err := store.CreateIssues(ctx, issues, "import"); err != nil {
-//       return err
-//   }
-//
-//   // After importing with explicit IDs, sync counters to prevent collisions
-//   if err := store.SyncAllCounters(ctx); err != nil {
-//       return err
-//   }
-//
-// Performance:
-//   - 100 issues: ~30ms (vs ~900ms with CreateIssue loop)
-//   - 1000 issues: ~950ms (vs estimated 9s with CreateIssue loop)
-//
-// When to use:
-//   - Bulk imports from external systems (use CreateIssues)
-//   - Creating multiple related issues at once (use CreateIssues)
-//   - Single issue creation (use CreateIssue for simplicity)
-//   - Interactive user operations (use CreateIssue)
-func (s *SQLiteStorage) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
-	if len(issues) == 0 {
-		return nil
-	}
-
-	// Phase 1: Validate all issues first (fail-fast)
-	if err := validateBatchIssues(issues); err != nil {
-		return err
-	}
-
-	// Phase 2: Acquire connection and start transaction
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to acquire connection: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("failed to begin immediate transaction: %w", err)
-	}
-
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
-		}
-	}()
-
-	// Phase 3: Generate IDs for issues that need them
-	if err := generateBatchIDs(ctx, conn, issues, s.dbPath); err != nil {
-		return err
-	}
-
-	// Phase 4: Bulk insert issues
-	if err := bulkInsertIssues(ctx, conn, issues); err != nil {
-		return err
-	}
-
-	// Phase 5: Record creation events
-	if err := bulkRecordEvents(ctx, conn, issues, actor); err != nil {
-		return err
-	}
-
-	// Phase 6: Mark issues dirty for incremental export
-	if err := bulkMarkDirty(ctx, conn, issues); err != nil {
-		return err
-	}
-
-	// Phase 7: Commit transaction
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	committed = true
-	return nil
-}
+// Batch operation functions moved to batch_ops.go (bd-c796)
 
 // GetIssue retrieves an issue by ID
 func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
@@ -1113,6 +243,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var externalRef sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
+	var sourceRepo sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -1120,7 +251,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -1128,7 +259,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo,
 	)
 
 	if err == sql.ErrNoRows {
@@ -1163,6 +294,79 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if originalSize.Valid {
 		issue.OriginalSize = int(originalSize.Int64)
 	}
+	if sourceRepo.Valid {
+		issue.SourceRepo = sourceRepo.String
+	}
+
+	// Fetch labels for this issue
+	labels, err := s.GetLabels(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get labels: %w", err)
+	}
+	issue.Labels = labels
+
+	return &issue, nil
+}
+
+// GetIssueByExternalRef retrieves an issue by external reference
+func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
+	var issue types.Issue
+	var closedAt sql.NullTime
+	var estimatedMinutes sql.NullInt64
+	var assignee sql.NullString
+	var externalRefCol sql.NullString
+	var compactedAt sql.NullTime
+	var originalSize sql.NullInt64
+	var contentHash sql.NullString
+	var compactedAtCommit sql.NullString
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
+		       status, priority, issue_type, assignee, estimated_minutes,
+		       created_at, updated_at, closed_at, external_ref,
+		       compaction_level, compacted_at, compacted_at_commit, original_size
+		FROM issues
+		WHERE external_ref = ?
+	`, externalRef).Scan(
+		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue by external_ref: %w", err)
+	}
+
+	if contentHash.Valid {
+		issue.ContentHash = contentHash.String
+	}
+	if closedAt.Valid {
+		issue.ClosedAt = &closedAt.Time
+	}
+	if estimatedMinutes.Valid {
+		mins := int(estimatedMinutes.Int64)
+		issue.EstimatedMinutes = &mins
+	}
+	if assignee.Valid {
+		issue.Assignee = assignee.String
+	}
+	if externalRefCol.Valid {
+		issue.ExternalRef = &externalRefCol.String
+	}
+	if compactedAt.Valid {
+		issue.CompactedAt = &compactedAt.Time
+	}
+	if compactedAtCommit.Valid {
+		issue.CompactedAtCommit = &compactedAtCommit.String
+	}
+	if originalSize.Valid {
+		issue.OriginalSize = int(originalSize.Int64)
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -1187,74 +391,11 @@ var allowedUpdateFields = map[string]bool{
 	"issue_type":          true,
 	"estimated_minutes":   true,
 	"external_ref":        true,
+	"closed_at":           true,
 }
 
 // validatePriority validates a priority value
-func validatePriority(value interface{}) error {
-	if priority, ok := value.(int); ok {
-		if priority < 0 || priority > 4 {
-			return fmt.Errorf("priority must be between 0 and 4 (got %d)", priority)
-		}
-	}
-	return nil
-}
-
-// validateStatus validates a status value
-func validateStatus(value interface{}) error {
-	if status, ok := value.(string); ok {
-		if !types.Status(status).IsValid() {
-			return fmt.Errorf("invalid status: %s", status)
-		}
-	}
-	return nil
-}
-
-// validateIssueType validates an issue type value
-func validateIssueType(value interface{}) error {
-	if issueType, ok := value.(string); ok {
-		if !types.IssueType(issueType).IsValid() {
-			return fmt.Errorf("invalid issue type: %s", issueType)
-		}
-	}
-	return nil
-}
-
-// validateTitle validates a title value
-func validateTitle(value interface{}) error {
-	if title, ok := value.(string); ok {
-		if len(title) == 0 || len(title) > 500 {
-			return fmt.Errorf("title must be 1-500 characters")
-		}
-	}
-	return nil
-}
-
-// validateEstimatedMinutes validates an estimated_minutes value
-func validateEstimatedMinutes(value interface{}) error {
-	if mins, ok := value.(int); ok {
-		if mins < 0 {
-			return fmt.Errorf("estimated_minutes cannot be negative")
-		}
-	}
-	return nil
-}
-
-// fieldValidators maps field names to their validation functions
-var fieldValidators = map[string]func(interface{}) error{
-	"priority":           validatePriority,
-	"status":             validateStatus,
-	"issue_type":         validateIssueType,
-	"title":              validateTitle,
-	"estimated_minutes":  validateEstimatedMinutes,
-}
-
-// validateFieldUpdate validates a field update value
-func validateFieldUpdate(key string, value interface{}) error {
-	if validator, ok := fieldValidators[key]; ok {
-		return validator(value)
-	}
-	return nil
-}
+// Validation functions moved to validators.go (bd-d9e0)
 
 // determineEventType determines the event type for an update based on old and new status
 func determineEventType(oldIssue *types.Issue, updates map[string]interface{}) types.EventType {
@@ -1280,6 +421,14 @@ func determineEventType(oldIssue *types.Issue, updates map[string]interface{}) t
 // manageClosedAt automatically manages the closed_at field based on status changes
 func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setClauses []string, args []interface{}) ([]string, []interface{}) {
 	statusVal, hasStatus := updates["status"]
+	
+	// If closed_at is explicitly provided in updates, it's already in setClauses/args
+	// and we should not override it (important for import operations that preserve timestamps)
+	_, hasExplicitClosedAt := updates["closed_at"]
+	if hasExplicitClosedAt {
+		return setClauses, args
+	}
+	
 	if !hasStatus {
 		return setClauses, args
 	}
@@ -1297,12 +446,10 @@ func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 
 	if newStatus == string(types.StatusClosed) {
 		// Changing to closed: ensure closed_at is set
-		if _, hasClosedAt := updates["closed_at"]; !hasClosedAt {
-			now := time.Now()
-			updates["closed_at"] = now
-			setClauses = append(setClauses, "closed_at = ?")
-			args = append(args, now)
-		}
+		now := time.Now()
+		updates["closed_at"] = now
+		setClauses = append(setClauses, "closed_at = ?")
+		args = append(args, now)
 	} else if oldIssue.Status == types.StatusClosed {
 		// Changing from closed to something else: clear closed_at
 		updates["closed_at"] = nil
@@ -1396,8 +543,15 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 				if value == nil {
 					updatedIssue.ExternalRef = nil
 				} else {
-					str := value.(string)
-					updatedIssue.ExternalRef = &str
+					// Handle both string and *string
+					switch v := value.(type) {
+					case string:
+						updatedIssue.ExternalRef = &v
+					case *string:
+						updatedIssue.ExternalRef = v
+					default:
+						return fmt.Errorf("external_ref must be string or *string, got %T", value)
+					}
 				}
 			}
 		}
@@ -1556,44 +710,17 @@ func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, n
 	return nil
 }
 
-// RenameCounterPrefix updates the prefix in the issue_counters table
+// RenameCounterPrefix is a no-op with hash-based IDs (bd-8e05)
+// Kept for backward compatibility with rename-prefix command
 func (s *SQLiteStorage) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var lastID int
-	err = tx.QueryRowContext(ctx, `SELECT last_id FROM issue_counters WHERE prefix = ?`, oldPrefix).Scan(&lastID)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("failed to get old counter: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `DELETE FROM issue_counters WHERE prefix = ?`, oldPrefix)
-	if err != nil {
-		return fmt.Errorf("failed to delete old counter: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO issue_counters (prefix, last_id)
-		VALUES (?, ?)
-		ON CONFLICT(prefix) DO UPDATE SET last_id = MAX(last_id, excluded.last_id)
-	`, newPrefix, lastID)
-	if err != nil {
-		return fmt.Errorf("failed to create new counter: %w", err)
-	}
-
-	return tx.Commit()
+	// Hash-based IDs don't use counters, so nothing to update
+	return nil
 }
 
-// ResetCounter deletes the counter for a prefix, forcing it to be recalculated from max ID
-// This is used by renumber to ensure the counter matches the actual max ID after renumbering
+// ResetCounter is a no-op with hash-based IDs (bd-8e05)
+// Kept for backward compatibility
 func (s *SQLiteStorage) ResetCounter(ctx context.Context, prefix string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM issue_counters WHERE prefix = ?`, prefix)
-	if err != nil {
-		return fmt.Errorf("failed to delete counter: %w", err)
-	}
+	// Hash-based IDs don't use counters, so nothing to reset
 	return nil
 }
 
@@ -1681,8 +808,8 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 		return err
 	}
 
-	// Sync counters after deletion to keep them accurate
-	return s.SyncAllCounters(ctx)
+	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
+	return nil
 }
 
 // DeleteIssuesResult contains statistics about a batch deletion operation
@@ -1735,9 +862,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	if err := s.SyncAllCounters(ctx); err != nil {
-		return nil, fmt.Errorf("failed to sync counters after deletion: %w", err)
-	}
+	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
 
 	return result, nil
 }
@@ -1974,6 +1099,20 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, pattern)
 	}
 
+	// Pattern matching
+	if filter.TitleContains != "" {
+		whereClauses = append(whereClauses, "title LIKE ?")
+		args = append(args, "%"+filter.TitleContains+"%")
+	}
+	if filter.DescriptionContains != "" {
+		whereClauses = append(whereClauses, "description LIKE ?")
+		args = append(args, "%"+filter.DescriptionContains+"%")
+	}
+	if filter.NotesContains != "" {
+		whereClauses = append(whereClauses, "notes LIKE ?")
+		args = append(args, "%"+filter.NotesContains+"%")
+	}
+
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
@@ -1984,6 +1123,16 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, *filter.Priority)
 	}
 
+	// Priority ranges
+	if filter.PriorityMin != nil {
+		whereClauses = append(whereClauses, "priority >= ?")
+		args = append(args, *filter.PriorityMin)
+	}
+	if filter.PriorityMax != nil {
+		whereClauses = append(whereClauses, "priority <= ?")
+		args = append(args, *filter.PriorityMax)
+	}
+
 	if filter.IssueType != nil {
 		whereClauses = append(whereClauses, "issue_type = ?")
 		args = append(args, *filter.IssueType)
@@ -1992,6 +1141,43 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.Assignee != nil {
 		whereClauses = append(whereClauses, "assignee = ?")
 		args = append(args, *filter.Assignee)
+	}
+
+	// Date ranges
+	if filter.CreatedAfter != nil {
+		whereClauses = append(whereClauses, "created_at > ?")
+		args = append(args, filter.CreatedAfter.Format(time.RFC3339))
+	}
+	if filter.CreatedBefore != nil {
+		whereClauses = append(whereClauses, "created_at < ?")
+		args = append(args, filter.CreatedBefore.Format(time.RFC3339))
+	}
+	if filter.UpdatedAfter != nil {
+		whereClauses = append(whereClauses, "updated_at > ?")
+		args = append(args, filter.UpdatedAfter.Format(time.RFC3339))
+	}
+	if filter.UpdatedBefore != nil {
+		whereClauses = append(whereClauses, "updated_at < ?")
+		args = append(args, filter.UpdatedBefore.Format(time.RFC3339))
+	}
+	if filter.ClosedAfter != nil {
+		whereClauses = append(whereClauses, "closed_at > ?")
+		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
+	}
+	if filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at < ?")
+		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
+	}
+
+	// Empty/null checks
+	if filter.EmptyDescription {
+		whereClauses = append(whereClauses, "(description IS NULL OR description = '')")
+	}
+	if filter.NoAssignee {
+		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
+	}
+	if filter.NoLabels {
+		whereClauses = append(whereClauses, "id NOT IN (SELECT DISTINCT issue_id FROM labels)")
 	}
 
 	// Label filtering: issue must have ALL specified labels
@@ -2037,7 +1223,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref
+		       created_at, updated_at, closed_at, external_ref, source_repo
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -2095,6 +1281,22 @@ func (s *SQLiteStorage) GetAllConfig(ctx context.Context) (map[string]string, er
 func (s *SQLiteStorage) DeleteConfig(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM config WHERE key = ?`, key)
 	return err
+}
+
+// GetOrphanHandling gets the import.orphan_handling config value
+// Returns OrphanAllow (the default) if not set or if value is invalid
+func (s *SQLiteStorage) GetOrphanHandling(ctx context.Context) OrphanHandling {
+	value, err := s.GetConfig(ctx, "import.orphan_handling")
+	if err != nil || value == "" {
+		return OrphanAllow // Default
+	}
+	
+	switch OrphanHandling(value) {
+	case OrphanStrict, OrphanResurrect, OrphanSkip, OrphanAllow:
+		return OrphanHandling(value)
+	default:
+		return OrphanAllow // Invalid value, use default
+	}
 }
 
 // SetMetadata sets a metadata value (for internal state like import hashes)

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 var commentsCmd = &cobra.Command{
@@ -63,6 +64,13 @@ Examples:
 				os.Exit(1)
 			}
 			ctx := context.Background()
+			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", issueID, err)
+				os.Exit(1)
+			}
+			issueID = fullID
+			
 			result, err := store.GetIssueComments(ctx, issueID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
@@ -176,7 +184,14 @@ Examples:
 				os.Exit(1)
 			}
 			ctx := context.Background()
-			var err error
+			
+			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", issueID, err)
+				os.Exit(1)
+			}
+			issueID = fullID
+			
 			comment, err = store.AddIssueComment(ctx, issueID, author, commentText)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
@@ -198,11 +213,33 @@ Examples:
 	},
 }
 
+// commentCmd is a top-level alias for commentsAddCmd
+var commentCmd = &cobra.Command{
+	Use:   "comment [issue-id] [text]",
+	Short: "Add a comment to an issue (alias for 'comments add')",
+	Long: `Add a comment to an issue. This is a convenient alias for 'bd comments add'.
+
+Examples:
+  # Add a comment
+  bd comment bd-123 "Working on this now"
+
+  # Add a comment from a file
+  bd comment bd-123 -f notes.txt`,
+	Args: cobra.MinimumNArgs(1),
+	Run: commentsAddCmd.Run,
+}
+
 func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
+	
+	// Add the same flags to the alias
+	commentCmd.Flags().StringP("file", "f", "", "Read comment text from file")
+	commentCmd.Flags().StringP("author", "a", "", "Add author to comment")
+	
 	rootCmd.AddCommand(commentsCmd)
+	rootCmd.AddCommand(commentCmd)
 }
 
 func isUnknownOperationError(err error) bool {

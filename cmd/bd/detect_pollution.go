@@ -130,9 +130,9 @@ Example:
 		if !yes {
 			fmt.Printf("\nDelete %d test issues? [y/N] ", len(polluted))
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if strings.ToLower(response) != "y" {
-				fmt.Println("Cancelled.")
+				fmt.Println("Canceled.")
 				return
 			}
 		}
@@ -242,6 +242,7 @@ func detectTestPollution(issues []*types.Issue) []pollutionResult {
 
 func backupPollutedIssues(polluted []pollutionResult, path string) error {
 	// Create backup file
+	// nolint:gosec // G304: path is provided by user as explicit backup location
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create backup file: %w", err)

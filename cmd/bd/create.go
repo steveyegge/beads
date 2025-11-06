@@ -9,6 +9,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -19,6 +21,7 @@ var createCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(0), // Changed to allow no args when using -f
 	Run: func(cmd *cobra.Command, args []string) {
 		file, _ := cmd.Flags().GetString("file")
+		fromTemplate, _ := cmd.Flags().GetString("from-template")
 
 		// If file flag is provided, parse markdown and create multiple issues
 		if file != "" {
@@ -52,36 +55,133 @@ var createCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error: title required (or use --file to create from markdown)\n")
 			os.Exit(1)
 		}
+
+		// Load template if specified
+		var tmpl *Template
+		if fromTemplate != "" {
+			var err error
+			tmpl, err = loadTemplate(fromTemplate)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Get field values, preferring explicit flags over template defaults
 		description, _ := cmd.Flags().GetString("description")
+		if description == "" && tmpl != nil {
+			description = tmpl.Description
+		}
+
 		design, _ := cmd.Flags().GetString("design")
+		if design == "" && tmpl != nil {
+			design = tmpl.Design
+		}
+
 		acceptance, _ := cmd.Flags().GetString("acceptance")
-		priority, _ := cmd.Flags().GetInt("priority")
+		if acceptance == "" && tmpl != nil {
+			acceptance = tmpl.AcceptanceCriteria
+		}
+		
+		// Parse priority (supports both "1" and "P1" formats)
+		priorityStr, _ := cmd.Flags().GetString("priority")
+		priority := parsePriority(priorityStr)
+		if priority == -1 {
+			fmt.Fprintf(os.Stderr, "Error: invalid priority %q (expected 0-4 or P0-P4)\n", priorityStr)
+			os.Exit(1)
+		}
+		if cmd.Flags().Changed("priority") == false && tmpl != nil {
+			priority = tmpl.Priority
+		}
+
 		issueType, _ := cmd.Flags().GetString("type")
+		if !cmd.Flags().Changed("type") && tmpl != nil && tmpl.Type != "" {
+			// Flag not explicitly set and template has a type, use template
+			issueType = tmpl.Type
+		}
+
 		assignee, _ := cmd.Flags().GetString("assignee")
+
 		labels, _ := cmd.Flags().GetStringSlice("labels")
+		labelAlias, _ := cmd.Flags().GetStringSlice("label")
+		if len(labelAlias) > 0 {
+			labels = append(labels, labelAlias...)
+		}
+		if len(labels) == 0 && tmpl != nil && len(tmpl.Labels) > 0 {
+			labels = tmpl.Labels
+		}
+
 		explicitID, _ := cmd.Flags().GetString("id")
+		parentID, _ := cmd.Flags().GetString("parent")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
 		forceCreate, _ := cmd.Flags().GetBool("force")
-		jsonOutput, _ := cmd.Flags().GetBool("json")
+		repoOverride, _ := cmd.Flags().GetString("repo")
+		// Use global jsonOutput set by PersistentPreRun
 
-		// Validate explicit ID format if provided (prefix-number)
+		// Determine target repository using routing logic
+		repoPath := "." // default to current directory
+		if cmd.Flags().Changed("repo") {
+			// Explicit --repo flag overrides auto-routing
+			repoPath = repoOverride
+		} else {
+			// Auto-routing based on user role
+			userRole, err := routing.DetectUserRole(".")
+			if err != nil && os.Getenv("BD_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr, "Warning: failed to detect user role: %v\n", err)
+			}
+			
+			routingConfig := &routing.RoutingConfig{
+				Mode:             config.GetString("routing.mode"),
+				DefaultRepo:      config.GetString("routing.default"),
+				MaintainerRepo:   config.GetString("routing.maintainer"),
+				ContributorRepo:  config.GetString("routing.contributor"),
+				ExplicitOverride: repoOverride,
+			}
+			
+			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
+		}
+		
+		// TODO: Switch to target repo for multi-repo support (bd-4ms)
+		// For now, we just log the target repo in debug mode
+		if os.Getenv("BD_DEBUG") != "" && repoPath != "." {
+			fmt.Fprintf(os.Stderr, "DEBUG: Target repo: %s\n", repoPath)
+		}
+
+		// Check for conflicting flags
+		if explicitID != "" && parentID != "" {
+			fmt.Fprintf(os.Stderr, "Error: cannot specify both --id and --parent flags\n")
+			os.Exit(1)
+		}
+
+		// If parent is specified, generate child ID
+		// In daemon mode, the parent will be sent to the RPC handler
+		// In direct mode, we generate the child ID here
+		if parentID != "" && daemonClient == nil {
+			ctx := context.Background()
+			childID, err := store.GetNextChildID(ctx, parentID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			explicitID = childID // Set as explicit ID for the rest of the flow
+		}
+
+		// Validate explicit ID format if provided
+		// Supports: prefix-number (bd-42), prefix-hash (bd-a3f8e9), or hierarchical (bd-a3f8e9.1)
 		if explicitID != "" {
-			// Check format: must contain hyphen and have numeric suffix
-			parts := strings.Split(explicitID, "-")
-			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (expected format: prefix-number, e.g., 'bd-42')\n", explicitID)
+			// Must contain hyphen
+			if !strings.Contains(explicitID, "-") {
+				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (expected format: prefix-hash or prefix-hash.number, e.g., 'bd-a3f8e9' or 'bd-a3f8e9.1')\n", explicitID)
 				os.Exit(1)
 			}
-			// Validate numeric suffix
-			if _, err := fmt.Sscanf(parts[1], "%d", new(int)); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (numeric suffix required, e.g., 'bd-42')\n", explicitID)
-				os.Exit(1)
-			}
+
+			// Extract prefix (before the first hyphen)
+			hyphenIdx := strings.Index(explicitID, "-")
+			requestedPrefix := explicitID[:hyphenIdx]
 
 			// Validate prefix matches database prefix (unless --force is used)
 			if !forceCreate {
-				requestedPrefix := parts[0]
 				ctx := context.Background()
 
 				// Get database prefix from config
@@ -96,8 +196,7 @@ var createCmd = &cobra.Command{
 
 				if dbPrefix != "" && dbPrefix != requestedPrefix {
 					fmt.Fprintf(os.Stderr, "Error: prefix mismatch detected\n")
-					fmt.Fprintf(os.Stderr, "  This database uses prefix '%s-', but you specified '%s-'\n", dbPrefix, requestedPrefix)
-					fmt.Fprintf(os.Stderr, "  Did you mean to create '%s-%s'?\n", dbPrefix, parts[1])
+					fmt.Fprintf(os.Stderr, "  This database uses prefix '%s', but you specified '%s'\n", dbPrefix, requestedPrefix)
 					fmt.Fprintf(os.Stderr, "  Use --force to create with mismatched prefix anyway\n")
 					os.Exit(1)
 				}
@@ -113,6 +212,7 @@ var createCmd = &cobra.Command{
 		if daemonClient != nil {
 			createArgs := &rpc.CreateArgs{
 				ID:                 explicitID,
+				Parent:             parentID,
 				Title:              title,
 				Description:        description,
 				IssueType:          issueType,
@@ -162,6 +262,42 @@ var createCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
+		
+		// Check if any dependencies are discovered-from type
+		// If so, inherit source_repo from the parent issue
+		var discoveredFromParentID string
+		for _, depSpec := range deps {
+			depSpec = strings.TrimSpace(depSpec)
+			if depSpec == "" {
+				continue
+			}
+			
+			var depType types.DependencyType
+			var dependsOnID string
+			
+			if strings.Contains(depSpec, ":") {
+				parts := strings.SplitN(depSpec, ":", 2)
+				if len(parts) == 2 {
+					depType = types.DependencyType(strings.TrimSpace(parts[0]))
+					dependsOnID = strings.TrimSpace(parts[1])
+					
+					if depType == types.DepDiscoveredFrom {
+						discoveredFromParentID = dependsOnID
+						break
+					}
+				}
+			}
+		}
+		
+		// If we found a discovered-from dependency, inherit source_repo from parent
+		if discoveredFromParentID != "" {
+			parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
+			if err == nil && parentIssue.SourceRepo != "" {
+				issue.SourceRepo = parentIssue.SourceRepo
+			}
+			// If error getting parent or parent has no source_repo, continue with default
+		}
+		
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -234,18 +370,23 @@ var createCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
+	createCmd.Flags().String("from-template", "", "Create issue from template (e.g., 'epic', 'bug', 'feature')")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().StringP("description", "d", "", "Issue description")
 	createCmd.Flags().String("design", "", "Design notes")
 	createCmd.Flags().String("acceptance", "", "Acceptance criteria")
-	createCmd.Flags().IntP("priority", "p", 2, "Priority (0-4, 0=highest)")
+	createCmd.Flags().StringP("priority", "p", "2", "Priority (0-4 or P0-P4, 0=highest)")
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
 	createCmd.Flags().StringP("assignee", "a", "", "Assignee")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
+	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
+	_ = createCmd.Flags().MarkHidden("label")
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
+	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
-	createCmd.Flags().Bool("json", false, "Output JSON format")
+	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
+	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

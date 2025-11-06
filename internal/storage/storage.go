@@ -14,6 +14,7 @@ type Storage interface {
 	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
 	CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
+	GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
 	CloseIssue(ctx context.Context, id string, reason string, actor string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
@@ -25,6 +26,7 @@ type Storage interface {
 	GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error)
 	GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error)
 	GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error)
+	GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error)
 	GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error)
 	DetectCycles(ctx context.Context) ([][]*types.Issue, error)
 
@@ -38,6 +40,7 @@ type Storage interface {
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
 	GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error)
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 
 	// Events
 	AddComment(ctx context.Context, issueID, actor, comment string) error
@@ -59,6 +62,14 @@ type Storage interface {
 	// Export hash tracking (for timestamp-only dedup, bd-164)
 	GetExportHash(ctx context.Context, issueID string) (string, error)
 	SetExportHash(ctx context.Context, issueID, contentHash string) error
+	ClearAllExportHashes(ctx context.Context) error
+	
+	// JSONL file integrity (bd-160)
+	GetJSONLFileHash(ctx context.Context) (string, error)
+	SetJSONLFileHash(ctx context.Context, fileHash string) error
+
+	// ID Generation
+	GetNextChildID(ctx context.Context, parentID string) (string, error)
 
 	// Config
 	SetConfig(ctx context.Context, key, value string) error

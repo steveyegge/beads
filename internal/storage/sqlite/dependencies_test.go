@@ -903,3 +903,315 @@ func TestGetDependencyTree_SubstringBug(t *testing.T) {
 		t.Errorf("Expected bd-1 at depth 4, got %d", depthMap[issues[0].ID])
 	}
 }
+
+func TestGetDependencyCounts(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a network of issues with dependencies
+	//   A (depends on B, C)
+	//   B (depends on C)
+	//   C (no dependencies)
+	//   D (depends on A)
+	//   E (no dependencies, no dependents)
+	issueA := &types.Issue{Title: "Task A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueB := &types.Issue{Title: "Task B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueC := &types.Issue{Title: "Task C", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueD := &types.Issue{Title: "Task D", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueE := &types.Issue{Title: "Task E", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issueA, "test-user")
+	store.CreateIssue(ctx, issueB, "test-user")
+	store.CreateIssue(ctx, issueC, "test-user")
+	store.CreateIssue(ctx, issueD, "test-user")
+	store.CreateIssue(ctx, issueE, "test-user")
+
+	// Add dependencies
+	store.AddDependency(ctx, &types.Dependency{IssueID: issueA.ID, DependsOnID: issueB.ID, Type: types.DepBlocks}, "test-user")
+	store.AddDependency(ctx, &types.Dependency{IssueID: issueA.ID, DependsOnID: issueC.ID, Type: types.DepBlocks}, "test-user")
+	store.AddDependency(ctx, &types.Dependency{IssueID: issueB.ID, DependsOnID: issueC.ID, Type: types.DepBlocks}, "test-user")
+	store.AddDependency(ctx, &types.Dependency{IssueID: issueD.ID, DependsOnID: issueA.ID, Type: types.DepBlocks}, "test-user")
+
+	// Get counts for all issues
+	issueIDs := []string{issueA.ID, issueB.ID, issueC.ID, issueD.ID, issueE.ID}
+	counts, err := store.GetDependencyCounts(ctx, issueIDs)
+	if err != nil {
+		t.Fatalf("GetDependencyCounts failed: %v", err)
+	}
+
+	// Verify counts
+	testCases := []struct {
+		issueID         string
+		name            string
+		expectedDeps    int
+		expectedDepents int
+	}{
+		{issueA.ID, "A", 2, 1}, // depends on B and C, D depends on A
+		{issueB.ID, "B", 1, 1}, // depends on C, A depends on B
+		{issueC.ID, "C", 0, 2}, // no dependencies, A and B depend on C
+		{issueD.ID, "D", 1, 0}, // depends on A, nothing depends on D
+		{issueE.ID, "E", 0, 0}, // isolated issue
+	}
+
+	for _, tc := range testCases {
+		count := counts[tc.issueID]
+		if count == nil {
+			t.Errorf("Issue %s (%s): no counts returned", tc.name, tc.issueID)
+			continue
+		}
+		if count.DependencyCount != tc.expectedDeps {
+			t.Errorf("Issue %s (%s): expected %d dependencies, got %d",
+				tc.name, tc.issueID, tc.expectedDeps, count.DependencyCount)
+		}
+		if count.DependentCount != tc.expectedDepents {
+			t.Errorf("Issue %s (%s): expected %d dependents, got %d",
+				tc.name, tc.issueID, tc.expectedDepents, count.DependentCount)
+		}
+	}
+}
+
+func TestGetDependencyCountsEmpty(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Test with empty list
+	counts, err := store.GetDependencyCounts(ctx, []string{})
+	if err != nil {
+		t.Fatalf("GetDependencyCounts failed on empty list: %v", err)
+	}
+	if len(counts) != 0 {
+		t.Errorf("Expected empty map for empty input, got %d entries", len(counts))
+	}
+}
+
+func TestGetDependencyCountsNonexistent(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Test with non-existent issue IDs
+	counts, err := store.GetDependencyCounts(ctx, []string{"fake-1", "fake-2"})
+	if err != nil {
+		t.Fatalf("GetDependencyCounts failed on nonexistent IDs: %v", err)
+	}
+
+	// Should return zero counts for non-existent issues
+	for id, count := range counts {
+		if count.DependencyCount != 0 || count.DependentCount != 0 {
+			t.Errorf("Expected zero counts for nonexistent issue %s, got deps=%d, dependents=%d",
+				id, count.DependencyCount, count.DependentCount)
+		}
+	}
+}
+
+func TestGetDependenciesWithMetadata(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues
+	issue1 := &types.Issue{Title: "Foundation", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Feature A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue3 := &types.Issue{Title: "Feature B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+	store.CreateIssue(ctx, issue3, "test-user")
+
+	// Add dependencies with different types
+	// issue2 depends on issue1 (blocks)
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	// issue3 depends on issue1 (discovered-from)
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue3.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepDiscoveredFrom,
+	}, "test-user")
+
+	// Get dependencies with metadata for issue2
+	deps, err := store.GetDependenciesWithMetadata(ctx, issue2.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+
+	if len(deps) != 1 {
+		t.Fatalf("Expected 1 dependency, got %d", len(deps))
+	}
+
+	// Verify the dependency includes type metadata
+	dep := deps[0]
+	if dep.ID != issue1.ID {
+		t.Errorf("Expected dependency on %s, got %s", issue1.ID, dep.ID)
+	}
+	if dep.DependencyType != types.DepBlocks {
+		t.Errorf("Expected dependency type 'blocks', got %s", dep.DependencyType)
+	}
+	if dep.Title != "Foundation" {
+		t.Errorf("Expected title 'Foundation', got %s", dep.Title)
+	}
+
+	// Get dependencies with metadata for issue3
+	deps3, err := store.GetDependenciesWithMetadata(ctx, issue3.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+
+	if len(deps3) != 1 {
+		t.Fatalf("Expected 1 dependency, got %d", len(deps3))
+	}
+
+	// Verify the dependency type is discovered-from
+	if deps3[0].DependencyType != types.DepDiscoveredFrom {
+		t.Errorf("Expected dependency type 'discovered-from', got %s", deps3[0].DependencyType)
+	}
+}
+
+func TestGetDependentsWithMetadata(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues: issue2 and issue3 both depend on issue1
+	issue1 := &types.Issue{Title: "Foundation", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Feature A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issue3 := &types.Issue{Title: "Feature B", Status: types.StatusOpen, Priority: 3, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issue1, "test-user")
+	store.CreateIssue(ctx, issue2, "test-user")
+	store.CreateIssue(ctx, issue3, "test-user")
+
+	// Add dependencies with different types
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issue3.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepRelated,
+	}, "test-user")
+
+	// Get dependents of issue1 with metadata
+	dependents, err := store.GetDependentsWithMetadata(ctx, issue1.ID)
+	if err != nil {
+		t.Fatalf("GetDependentsWithMetadata failed: %v", err)
+	}
+
+	if len(dependents) != 2 {
+		t.Fatalf("Expected 2 dependents, got %d", len(dependents))
+	}
+
+	// Verify dependents are ordered by priority (issue2=P1 before issue3=P2)
+	if dependents[0].ID != issue2.ID {
+		t.Errorf("Expected first dependent to be %s, got %s", issue2.ID, dependents[0].ID)
+	}
+	if dependents[0].DependencyType != types.DepBlocks {
+		t.Errorf("Expected first dependent type 'blocks', got %s", dependents[0].DependencyType)
+	}
+
+	if dependents[1].ID != issue3.ID {
+		t.Errorf("Expected second dependent to be %s, got %s", issue3.ID, dependents[1].ID)
+	}
+	if dependents[1].DependencyType != types.DepRelated {
+		t.Errorf("Expected second dependent type 'related', got %s", dependents[1].DependencyType)
+	}
+}
+
+func TestGetDependenciesWithMetadataEmpty(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issue with no dependencies
+	issue := &types.Issue{Title: "Standalone", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	store.CreateIssue(ctx, issue, "test-user")
+
+	// Get dependencies with metadata
+	deps, err := store.GetDependenciesWithMetadata(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+
+	if len(deps) != 0 {
+		t.Errorf("Expected 0 dependencies, got %d", len(deps))
+	}
+}
+
+func TestGetDependenciesWithMetadataMultipleTypes(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create issues
+	base := &types.Issue{Title: "Base", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocks := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	related := &types.Issue{Title: "Related", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	discovered := &types.Issue{Title: "Discovered", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, base, "test-user")
+	store.CreateIssue(ctx, blocks, "test-user")
+	store.CreateIssue(ctx, related, "test-user")
+	store.CreateIssue(ctx, discovered, "test-user")
+
+	// Add dependencies of different types
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     base.ID,
+		DependsOnID: blocks.ID,
+		Type:        types.DepBlocks,
+	}, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     base.ID,
+		DependsOnID: related.ID,
+		Type:        types.DepRelated,
+	}, "test-user")
+
+	store.AddDependency(ctx, &types.Dependency{
+		IssueID:     base.ID,
+		DependsOnID: discovered.ID,
+		Type:        types.DepDiscoveredFrom,
+	}, "test-user")
+
+	// Get all dependencies with metadata
+	deps, err := store.GetDependenciesWithMetadata(ctx, base.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+
+	if len(deps) != 3 {
+		t.Fatalf("Expected 3 dependencies, got %d", len(deps))
+	}
+
+	// Create a map of dependency types
+	typeMap := make(map[string]types.DependencyType)
+	for _, dep := range deps {
+		typeMap[dep.ID] = dep.DependencyType
+	}
+
+	// Verify all types are correctly returned
+	if typeMap[blocks.ID] != types.DepBlocks {
+		t.Errorf("Expected blocks dependency type 'blocks', got %s", typeMap[blocks.ID])
+	}
+	if typeMap[related.ID] != types.DepRelated {
+		t.Errorf("Expected related dependency type 'related', got %s", typeMap[related.ID])
+	}
+	if typeMap[discovered.ID] != types.DepDiscoveredFrom {
+		t.Errorf("Expected discovered dependency type 'discovered-from', got %s", typeMap[discovered.ID])
+	}
+}

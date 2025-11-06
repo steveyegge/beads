@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -18,36 +19,32 @@ func (s *SQLiteStorage) executeLabelOperation(
 	eventComment string,
 	operationError string,
 ) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, labelSQL, labelSQLArgs...)
+		if err != nil {
+			return fmt.Errorf("%s: %w", operationError, err)
+		}
 
-	_, err = tx.ExecContext(ctx, labelSQL, labelSQLArgs...)
-	if err != nil {
-		return fmt.Errorf("%s: %w", operationError, err)
-	}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO events (issue_id, event_type, actor, comment)
+			VALUES (?, ?, ?, ?)
+		`, issueID, eventType, actor, eventComment)
+		if err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, comment)
-		VALUES (?, ?, ?, ?)
-	`, issueID, eventType, actor, eventComment)
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
+		// Mark issue as dirty for incremental export
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO dirty_issues (issue_id, marked_at)
+			VALUES (?, ?)
+			ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+		`, issueID, time.Now())
+		if err != nil {
+			return fmt.Errorf("failed to mark issue dirty: %w", err)
+		}
 
-	// Mark issue as dirty for incremental export
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dirty_issues (issue_id, marked_at)
-		VALUES (?, ?)
-		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
-	`, issueID, time.Now())
-	if err != nil {
-		return fmt.Errorf("failed to mark issue dirty: %w", err)
-	}
-
-	return tx.Commit()
+		return nil
+	})
 }
 
 // AddLabel adds a label to an issue
@@ -96,12 +93,62 @@ func (s *SQLiteStorage) GetLabels(ctx context.Context, issueID string) ([]string
 	return labels, nil
 }
 
+// GetLabelsForIssues fetches labels for multiple issues in a single query
+// Returns a map of issue_id -> []labels
+func (s *SQLiteStorage) GetLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string][]string), nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT issue_id, label 
+		FROM labels 
+		WHERE issue_id IN (%s)
+		ORDER BY issue_id, label
+	`, buildPlaceholders(len(issueIDs)))
+
+	rows, err := s.db.QueryContext(ctx, query, placeholders...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get labels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string][]string)
+	for rows.Next() {
+		var issueID, label string
+		if err := rows.Scan(&issueID, &label); err != nil {
+			return nil, err
+		}
+		result[issueID] = append(result[issueID], label)
+	}
+
+	return result, nil
+}
+
+// buildPlaceholders creates a comma-separated list of SQL placeholders
+func buildPlaceholders(count int) string {
+	if count == 0 {
+		return ""
+	}
+	result := "?"
+	for i := 1; i < count; i++ {
+		result += ",?"
+	}
+	return result
+}
+
 // GetIssuesByLabel returns issues with a specific label
 func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo
 		FROM issues i
 		JOIN labels l ON i.id = l.issue_id
 		WHERE l.label = ?

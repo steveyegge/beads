@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# bd (beads) pre-push hook
+#
+# This hook ensures that the database is exported to JSONL before pushing,
+# preventing the problem where database changes are committed without
+# corresponding JSONL updates.
+#
+# Installation:
+#   cp examples/git-hooks/pre-push .git/hooks/pre-push
+#   chmod +x .git/hooks/pre-push
+#
+# Or use the install script:
+#   examples/git-hooks/install.sh
+
+# Check if bd is available
+if ! command -v bd >/dev/null 2>&1; then
+    echo "Warning: bd command not found, skipping pre-push export check" >&2
+    exit 0
+fi
+
+# Check if we're in a bd workspace
+if [ ! -d .beads ]; then
+    # Not a bd workspace, nothing to do
+    exit 0
+fi
+
+# Check if database is newer than JSONL
+DB_FILE=".beads/beads.db"
+JSONL_FILE=".beads/beads.jsonl"
+
+if [ -f "$DB_FILE" ] && [ -f "$JSONL_FILE" ]; then
+    # Get modification times
+    if [ "$DB_FILE" -nt "$JSONL_FILE" ]; then
+        echo "⚠️  Database is newer than JSONL - exporting before push..." >&2
+        
+        # Force export to ensure JSONL is up to date
+        if ! BEADS_NO_DAEMON=1 bd export --output "$JSONL_FILE" >/dev/null 2>&1; then
+            echo "Error: Failed to export database to JSONL" >&2
+            echo "Run 'bd export' manually to diagnose" >&2
+            exit 1
+        fi
+        
+        # Stage the updated JSONL
+        git add "$JSONL_FILE" 2>/dev/null || true
+        
+        echo "✓ Exported database to JSONL" >&2
+    fi
+fi
+
+exit 0

@@ -34,12 +34,15 @@ func (s *Server) handleDepAdd(req *Request) Response {
 		}
 	}
 
+	// Emit mutation event for event-driven daemon
+	s.emitMutation(MutationUpdate, depArgs.FromID)
+
 	return Response{Success: true}
 }
 
 // Generic handler for simple store operations with standard error handling
 func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc string,
-	opFunc func(context.Context, storage.Storage, string) error) Response {
+	opFunc func(context.Context, storage.Storage, string) error, issueID string) Response {
 	if err := json.Unmarshal(req.Args, argsPtr); err != nil {
 		return Response{
 			Success: false,
@@ -57,6 +60,9 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 		}
 	}
 
+	// Emit mutation event for event-driven daemon
+	s.emitMutation(MutationUpdate, issueID)
+
 	return Response{Success: true}
 }
 
@@ -64,21 +70,21 @@ func (s *Server) handleDepRemove(req *Request) Response {
 	var depArgs DepRemoveArgs
 	return s.handleSimpleStoreOp(req, &depArgs, "dep remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveDependency(ctx, depArgs.FromID, depArgs.ToID, actor)
-	})
+	}, depArgs.FromID)
 }
 
 func (s *Server) handleLabelAdd(req *Request) Response {
 	var labelArgs LabelAddArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.AddLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	})
+	}, labelArgs.ID)
 }
 
 func (s *Server) handleLabelRemove(req *Request) Response {
 	var labelArgs LabelRemoveArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	})
+	}, labelArgs.ID)
 }
 
 func (s *Server) handleCommentList(req *Request) Response {
@@ -127,6 +133,9 @@ func (s *Server) handleCommentAdd(req *Request) Response {
 			Error:   fmt.Sprintf("failed to add comment: %v", err),
 		}
 	}
+
+	// Emit mutation event for event-driven daemon
+	s.emitMutation(MutationComment, commentArgs.ID)
 
 	data, _ := json.Marshal(comment)
 	return Response{
