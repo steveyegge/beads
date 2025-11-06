@@ -217,8 +217,37 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
         .close { color: #aaa; float: right; font-size: 2.8rem; font-weight: bold; line-height: 2rem; cursor: pointer; }
         .close:hover, .close:focus { color: #000; }
 
-        .filter-controls { margin-bottom: 2rem; }
-        .filter-controls select { margin-right: 1rem; }
+        .filter-controls {
+            margin-bottom: 2rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: flex-end;
+        }
+        .filter-controls label {
+            flex: 0 0 auto;
+        }
+        .filter-controls select { margin-right: 0; }
+        .filter-controls select[multiple] {
+            height: auto;
+            min-height: 100px;
+        }
+        .reload-button {
+            padding: 0.6rem 1.2rem;
+            background: #9b4dca;
+            color: white;
+            border: none;
+            border-radius: 0.4rem;
+            cursor: pointer;
+            font-size: 1.4rem;
+            transition: background 0.2s;
+        }
+        .reload-button:hover {
+            background: #8b3dba;
+        }
+        .reload-button:active {
+            transform: translateY(1px);
+        }
 
         /* Responsive design for mobile */
         @media screen and (max-width: 768px) {
@@ -234,12 +263,17 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 grid-template-columns: repeat(2, 1fr);
             }
             .filter-controls {
-                display: flex;
                 flex-direction: column;
+                align-items: stretch;
+            }
+            .filter-controls label {
+                width: 100%;
             }
             .filter-controls select {
-                margin-right: 0;
-                margin-bottom: 1rem;
+                width: 100%;
+            }
+            .reload-button {
+                width: 100%;
             }
 
             /* Hide table, show card view on mobile */
@@ -331,10 +365,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
     <div class="filter-controls">
         <label>
-            Status:
-            <select id="filter-status">
-                <option value="">All</option>
-                <option value="open">Open</option>
+            Status (multi-select):
+            <select id="filter-status" multiple>
+                <option value="open" selected>Open</option>
                 <option value="in-progress">In Progress</option>
                 <option value="closed">Closed</option>
             </select>
@@ -348,6 +381,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 <option value="3">P3</option>
             </select>
         </label>
+        <button class="reload-button" id="reload-button" title="Reload all data">
+            🔄 Reload
+        </button>
     </div>
 
     <h2>Issues</h2>
@@ -544,16 +580,32 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
         // Filter issues
         function filterIssues() {
-            const statusFilter = document.getElementById('filter-status').value;
+            const statusSelect = document.getElementById('filter-status');
+            const selectedStatuses = Array.from(statusSelect.selectedOptions).map(opt => opt.value);
             const priorityFilter = document.getElementById('filter-priority').value;
 
             const filtered = allIssues.filter(issue => {
-                if (statusFilter && issue.status !== statusFilter) return false;
+                // If statuses are selected, check if issue status is in the selected list
+                if (selectedStatuses.length > 0 && !selectedStatuses.includes(issue.status)) return false;
                 if (priorityFilter && issue.priority !== parseInt(priorityFilter)) return false;
                 return true;
             });
 
             renderIssues(filtered);
+        }
+
+        // Reload all data
+        function reloadData() {
+            setLoading(true);
+            Promise.all([loadStats(), loadIssues()])
+                .then(() => {
+                    setLoading(false);
+                })
+                .catch(error => {
+                    console.error('Error reloading data:', error);
+                    setLoading(false);
+                    showError('Failed to reload data: ' + error.message);
+                });
         }
 
         // Show issue detail modal
@@ -605,6 +657,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
         // Filter event listeners
         document.getElementById('filter-status').addEventListener('change', filterIssues);
         document.getElementById('filter-priority').addEventListener('change', filterIssues);
+
+        // Reload button listener
+        document.getElementById('reload-button').addEventListener('click', reloadData);
 
         // Initial load
         connectWebSocket();
