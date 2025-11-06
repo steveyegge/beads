@@ -349,12 +349,12 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 <div class="stat-label">Total Issues</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" id="stat-open">-</div>
-                <div class="stat-label">Open</div>
+                <div class="stat-value" id="stat-in-progress">-</div>
+                <div class="stat-label">In Progress</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" id="stat-ready">-</div>
-                <div class="stat-label">Ready to Work</div>
+                <div class="stat-value" id="stat-open">-</div>
+                <div class="stat-label">Open</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="stat-closed">-</div>
@@ -510,14 +510,9 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 if (!response.ok) throw new Error('Failed to load statistics');
                 const stats = await response.json();
                 document.getElementById('stat-total').textContent = stats.total || 0;
+                document.getElementById('stat-in-progress').textContent = stats.by_status?.['in-progress'] || 0;
                 document.getElementById('stat-open').textContent = stats.by_status?.open || 0;
                 document.getElementById('stat-closed').textContent = stats.by_status?.closed || 0;
-
-                // Load ready count separately
-                const readyResponse = await fetch('/api/ready');
-                if (!readyResponse.ok) throw new Error('Failed to load ready count');
-                const readyIssues = await readyResponse.json();
-                document.getElementById('stat-ready').textContent = readyIssues.length;
             } catch (error) {
                 console.error('Error loading statistics:', error);
                 showError('Failed to load statistics: ' + error.message);
