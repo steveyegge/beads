@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -49,6 +50,10 @@ type Server struct {
 	// Mutation events for event-driven daemon
 	mutationChan    chan MutationEvent
 	droppedEvents   atomic.Int64 // Counter for dropped mutation events
+	// Recent mutations buffer for polling (circular buffer, max 100 events)
+	recentMutations   []MutationEvent
+	recentMutationsMu sync.RWMutex
+	maxMutationBuffer int
 }
 
 // Mutation event types
@@ -93,19 +98,21 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 	}
 
 	s := &Server{
-		socketPath:     socketPath,
-		workspacePath:  workspacePath,
-		dbPath:         dbPath,
-		storage:        store,
-		shutdownChan:   make(chan struct{}),
-		doneChan:       make(chan struct{}),
-		startTime:      time.Now(),
-		metrics:        NewMetrics(),
-		maxConns:       maxConns,
-		connSemaphore:  make(chan struct{}, maxConns),
-		requestTimeout: requestTimeout,
-		readyChan:      make(chan struct{}),
-		mutationChan:   make(chan MutationEvent, mutationBufferSize), // Configurable buffer
+		socketPath:        socketPath,
+		workspacePath:     workspacePath,
+		dbPath:            dbPath,
+		storage:           store,
+		shutdownChan:      make(chan struct{}),
+		doneChan:          make(chan struct{}),
+		startTime:         time.Now(),
+		metrics:           NewMetrics(),
+		maxConns:          maxConns,
+		connSemaphore:     make(chan struct{}, maxConns),
+		requestTimeout:    requestTimeout,
+		readyChan:         make(chan struct{}),
+		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
+		recentMutations:   make([]MutationEvent, 0, 100),
+		maxMutationBuffer: 100,
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s
@@ -148,4 +155,37 @@ func (s *Server) MutationChan() <-chan MutationEvent {
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value
 func (s *Server) ResetDroppedEventsCount() int64 {
 	return s.droppedEvents.Swap(0)
+}
+
+// GetRecentMutations returns mutations since the given timestamp
+func (s *Server) GetRecentMutations(sinceMillis int64) []MutationEvent {
+	s.recentMutationsMu.RLock()
+	defer s.recentMutationsMu.RUnlock()
+
+	var result []MutationEvent
+	for _, m := range s.recentMutations {
+		if m.Timestamp.UnixMilli() > sinceMillis {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// handleGetMutations handles the get_mutations RPC operation
+func (s *Server) handleGetMutations(req *Request) Response {
+	var args GetMutationsArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid arguments: %v", err),
+		}
+	}
+
+	mutations := s.GetRecentMutations(args.Since)
+	data, _ := json.Marshal(mutations)
+
+	return Response{
+		Success: true,
+		Data:    data,
+	}
 }
