@@ -509,10 +509,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
                 const response = await fetch('/api/stats');
                 if (!response.ok) throw new Error('Failed to load statistics');
                 const stats = await response.json();
-                document.getElementById('stat-total').textContent = stats.total || 0;
-                document.getElementById('stat-in-progress').textContent = stats.by_status?.['in-progress'] || 0;
-                document.getElementById('stat-open').textContent = stats.by_status?.open || 0;
-                document.getElementById('stat-closed').textContent = stats.by_status?.closed || 0;
+                document.getElementById('stat-total').textContent = stats.total_issues || 0;
+                document.getElementById('stat-in-progress').textContent = stats.in_progress_issues || 0;
+                document.getElementById('stat-open').textContent = stats.open_issues || 0;
+                document.getElementById('stat-closed').textContent = stats.closed_issues || 0;
             } catch (error) {
                 console.error('Error loading statistics:', error);
                 showError('Failed to load statistics: ' + error.message);
