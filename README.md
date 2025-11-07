@@ -179,29 +179,28 @@ bd update <issue-id> --status in_progress --json
 bd close <issue-id> --reason "Implemented" --json
 ```
 
-## UI explorer (`bd ui`)
+## UI (`bd ui`)
 
-The CLI ships with a browser-based queue explorer so humans can peek at what their agents are doing without touching `.beads` directly.
+You can launch a UI that lets you work with the bug database directly.
 
 ![Beads UI screenshot](ui-smoke-home.png)
 
 **Launch locally**
 
-```powershell
+```bash
 # from your repo root
-GOOS=windows GOARCH=amd64 go build -o bd.exe ./cmd/bd   # optional if you rely on repo builds
-./bd ui --no-open --listen 127.0.0.1:60100
+./bd ui
 ```
 
-Open http://127.0.0.1:60100 in your browser. Use `--allow-remote --auth-token <token>` if you need to share the UI off-box; otherwise it only binds to loopback.
+Use `--allow-remote --auth-token <token>` if you need to share the UI off-box; otherwise it only binds to loopback.
 
 **What you get**
 
-- Ready queues, labels, and search filters backed by the same RPC endpoints agents use
-- Click-through detail drawer with status updates, labels, and bulk operations
-- Live SSE updates so the page refreshes as agents change issues
-
-Close the UI with `Ctrl+C` (or the `/__shutdown` endpoint if you scripted a launch). Remember: this interface is read/write, so treat it like the CLI—only use it from trusted machines.
+- Search, sort, & saved queries
+- Bulk close, reprioritize, etc
+- Create, view, and edit
+- '?' for keyboard shortcuts
+- Live updates you see when agents change issues
 
 ## Configuring Your Own AGENTS.md
 
