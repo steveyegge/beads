@@ -66,6 +66,8 @@ See `integrations/beads-mcp/README.md` for complete documentation.
 
 **RECOMMENDED: Use a single MCP server for all beads projects** - it automatically routes to per-project local daemons.
 
+**For AI agent multi-repo patterns**, see [docs/MULTI_REPO_AGENTS.md](docs/MULTI_REPO_AGENTS.md) (config options, routing, troubleshooting, best practices).
+
 **For complete multi-repo workflow guide**, see [docs/MULTI_REPO_MIGRATION.md](docs/MULTI_REPO_MIGRATION.md) (OSS contributors, teams, multi-phase development).
 
 **Setup (one-time):**
@@ -183,6 +185,8 @@ bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
 
 # Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
+# NOTE: This command is intentionally NOT exposed via the MCP server
+# Agents should use 'bd update' with field-specific parameters instead
 bd edit <id>                    # Edit description
 bd edit <id> --title            # Edit title
 bd edit <id> --design           # Edit design notes
@@ -583,7 +587,7 @@ bd show bd-41 --json  # Verify merged content
 
 - **Go version**: 1.21+
 - **Linting**: `golangci-lint run ./...` (baseline warnings documented in [docs/LINTING.md](docs/LINTING.md))
-- **Testing**: All new features need tests (`go test ./...`)
+- **Testing**: All new features need tests (`go test -short ./...` for local, full tests run in CI)
 - **Documentation**: Update relevant .md files
 
 ### File Organization
@@ -601,7 +605,7 @@ beads/
 
 ### Before Committing
 
-1. **Run tests**: `go test ./...`
+1. **Run tests**: `go test -short ./...` (full tests run in CI)
 2. **Run linter**: `golangci-lint run ./...` (ignore baseline warnings)
 3. **Update docs**: If you changed behavior, update README.md or other docs
 4. **Commit**: Issues auto-sync to `.beads/issues.jsonl` and import after pull
@@ -693,8 +697,8 @@ bd sync --merge
 # 1. File remaining work
 bd create "Add integration tests for sync" -t task -p 2 --json
 
-# 2. Run quality gates
-go test ./...
+# 2. Run quality gates (only if code changes were made)
+go test -short ./...
 golangci-lint run ./...
 
 # 3. Close finished issues
@@ -1063,10 +1067,10 @@ gh issue view 201
 # Build
 go build -o bd ./cmd/bd
 
-# Test
-go test ./...
+# Test (short - for local development)
+go test -short ./...
 
-# Test with coverage
+# Test with coverage (full tests - for CI)
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 
@@ -1127,7 +1131,7 @@ See `scripts/README.md` for more details.
 
 1. Bump version with `./scripts/bump-version.sh <version> --commit`
 2. Update CHANGELOG.md with release notes
-3. Run full test suite: `go test ./...`
+3. Run tests locally: `go test -short ./...` (CI will run full suite)
 4. Push version bump: `git push origin main`
 5. Tag release: `git tag v<version>`
 6. Push tag: `git push origin v<version>`

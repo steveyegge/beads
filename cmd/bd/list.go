@@ -14,25 +14,8 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/util"
 )
-
-// normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
-func normalizeLabels(ss []string) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(ss))
-	for _, s := range ss {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
-}
 
 // parseTimeFlag parses time strings in multiple formats
 func parseTimeFlag(s string) (time.Time, error) {
@@ -91,8 +74,8 @@ var listCmd = &cobra.Command{
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Normalize labels: trim, dedupe, remove empty
-		labels = normalizeLabels(labels)
-	labelsAny = normalizeLabels(labelsAny)
+		labels = util.NormalizeLabels(labels)
+	labelsAny = util.NormalizeLabels(labelsAny)
 
 		filter := types.IssueFilter{
 			Limit: limit,
@@ -123,7 +106,7 @@ var listCmd = &cobra.Command{
 			filter.TitleSearch = titleSearch
 		}
 		if idFilter != "" {
-			ids := normalizeLabels(strings.Split(idFilter, ","))
+			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
 			}

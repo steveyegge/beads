@@ -4,13 +4,13 @@ This document explains our approach to `golangci-lint` warnings in this codebase
 
 ## Current Status
 
-Running `golangci-lint run ./...` currently reports **34 issues** as of Oct 27, 2025. These are not actual code quality problems - they are false positives or intentional patterns that reflect idiomatic Go practice.
+Running `golangci-lint run ./...` currently reports **22 issues** as of Nov 6, 2025. These are not actual code quality problems - they are false positives or intentional patterns that reflect idiomatic Go practice.
 
-**Historical note**: The count was ~200 before extensive cleanup in October 2025. The remaining issues represent the acceptable baseline that doesn't warrant fixing.
+**Historical note**: The count was ~200 before extensive cleanup in October 2025, reduced to 34 by Oct 27, and now 22 after internal/daemonrunner removal. The remaining issues represent the acceptable baseline that doesn't warrant fixing.
 
 ## Issue Breakdown
 
-### errcheck (24 issues)
+### errcheck (4 issues)
 
 **Pattern**: Unchecked errors from `defer` cleanup operations
 **Status**: Intentional and idiomatic
@@ -29,7 +29,7 @@ defer os.RemoveAll(tmpDir)  // in tests
 
 Fixing these would add noise without improving code quality. The critical cleanup operations (where errors matter) are already checked explicitly.
 
-### gosec (10 issues)
+### gosec (12 issues)
 
 **Pattern 1**: G204 - Subprocess launched with variable (3 issues)
 **Status**: Intentional - launching editor and git commands with user-specified paths
@@ -54,10 +54,27 @@ All file paths are either:
 - G302: 0644 for JSONL files (version controlled, needs to be readable)
 - G306: 0644 for new JSONL files (consistency with existing files)
 
-**Pattern 4**: G115 - Integer overflow conversion (1 issue)
-**Status**: False positive - bounded by max retry count
+**Pattern 4**: G201/G202 - SQL string formatting/concatenation (3 issues)
+**Status**: Safe - using placeholders and bounded queries
 
-The exponential backoff calculation is bounded by a small retry counter, making overflow impossible in practice.
+All SQL concatenation uses proper placeholders and is bounded by controlled input (issue ID lists).
+
+### misspell (3 issues)
+
+**Pattern**: British vs American spelling - `cancelled` vs `canceled`
+**Status**: Acceptable spelling variation
+
+The codebase uses "cancelled" (British spelling) in user-facing messages. Both spellings are correct.
+
+### unparam (4 issues)
+
+**Pattern**: Function parameters or return values that are always the same
+**Status**: Interface compliance and future-proofing
+
+These functions maintain consistent signatures for:
+- Interface implementations
+- Future extensibility
+- Code clarity and documentation
 
 ## golangci-lint Configuration Challenges
 
@@ -70,10 +87,10 @@ This appears to be a known limitation of golangci-lint's configuration system.
 
 ## Recommendation
 
-**For contributors**: Don't be alarmed by the 34 lint warnings. The code quality is high.
+**For contributors**: Don't be alarmed by the 22 lint warnings. The code quality is high.
 
 **For code review**: Focus on:
-- New issues introduced by changes (not the baseline 34)
+- New issues introduced by changes (not the baseline 22)
 - Actual logic errors
 - Missing error checks on critical operations (file writes, database commits)
 - Security concerns beyond gosec's false positives

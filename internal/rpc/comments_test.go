@@ -8,6 +8,9 @@ import (
 )
 
 func TestCommentOperationsViaRPC(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow RPC test in short mode")
+	}
 	_, client, cleanup := setupTestServer(t)
 	defer cleanup()
 

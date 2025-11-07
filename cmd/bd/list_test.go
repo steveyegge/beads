@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/util"
 )
 
 // listTestHelper provides test setup and assertion methods
@@ -155,7 +156,7 @@ func TestListCommand(t *testing.T) {
 
 	t.Run("normalize labels", func(t *testing.T) {
 		labels := []string{" bug ", "critical", "", "bug", "  feature  "}
-		normalized := normalizeLabels(labels)
+		normalized := util.NormalizeLabels(labels)
 		expected := []string{"bug", "critical", "feature"}
 		h.assertCount(len(normalized), len(expected), "normalized labels")
 

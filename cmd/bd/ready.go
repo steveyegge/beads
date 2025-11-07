@@ -9,6 +9,7 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/util"
 )
 var readyCmd = &cobra.Command{
 	Use:   "ready",
@@ -22,8 +23,8 @@ var readyCmd = &cobra.Command{
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 		
 		// Normalize labels: trim, dedupe, remove empty
-		labels = normalizeLabels(labels)
-		labelsAny = normalizeLabels(labelsAny)
+		labels = util.NormalizeLabels(labels)
+		labelsAny = util.NormalizeLabels(labelsAny)
 		
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)

@@ -13,6 +13,9 @@ import (
 const testVersion100 = "1.0.0"
 
 func TestVersionCompatibility(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow RPC test in short mode")
+	}
 	tests := []struct {
 		name          string
 		serverVersion string

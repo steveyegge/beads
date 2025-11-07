@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -95,10 +96,16 @@ Output to stdout by default, or use -o flag for file output.`,
 			os.Exit(1)
 		}
 
-		// Export command doesn't work with daemon - need direct access
+		// Export command requires direct database access for consistent snapshot
+		// If daemon is connected, close it and open direct connection
+		if daemonClient != nil {
+			debug.Logf("Debug: export command forcing direct mode (closes daemon connection)\n")
+			_ = daemonClient.Close()
+			daemonClient = nil
+		}
+		
 		// Ensure we have a direct store connection
 		if store == nil {
-			// Initialize store directly even if daemon is running
 			var err error
 			if dbPath == "" {
 				fmt.Fprintf(os.Stderr, "Error: no database path found\n")
@@ -229,32 +236,10 @@ Output to stdout by default, or use -o flag for file output.`,
 		exportedIDs := make([]string, 0, len(issues))
 		skippedCount := 0
 		for _, issue := range issues {
-			// DISABLED: timestamp-only deduplication causes data loss (bd-160)
-			// The export_hashes table gets out of sync with JSONL after git operations,
-			// causing exports to skip issues that aren't actually in the file.
-			//
-			// skip, err := shouldSkipExport(ctx, issue)
-			// if err != nil {
-			// 	fmt.Fprintf(os.Stderr, "Warning: failed to check if %s should skip: %v\n", issue.ID, err)
-			// 	skip = false
-			// }
-			// if skip {
-			// 	skippedCount++
-			// 	continue
-			// }
-
 			if err := encoder.Encode(issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
-				os.Exit(1)
+			 fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
+			 os.Exit(1)
 			}
-
-			// DISABLED: export hash tracking (bd-160)
-			// contentHash, err := computeIssueContentHash(issue)
-			// if err != nil {
-			// 	fmt.Fprintf(os.Stderr, "Warning: failed to compute hash for %s: %v\n", issue.ID, err)
-			// } else if err := store.SetExportHash(ctx, issue.ID, contentHash); err != nil {
-			// 	fmt.Fprintf(os.Stderr, "Warning: failed to save export hash for %s: %v\n", issue.ID, err)
-			// }
 
 			exportedIDs = append(exportedIDs, issue.ID)
 		}

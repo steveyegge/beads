@@ -9,6 +9,9 @@ import (
 )
 
 func TestAdaptiveIDLength_E2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow E2E test in short mode")
+	}
 	// Create in-memory database
 	db, err := New(":memory:")
 	if err != nil {

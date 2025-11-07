@@ -8,26 +8,9 @@ import (
 
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/utils"
 )
-
-// normalizeLabels trims whitespace, removes empty strings, and deduplicates labels
-func normalizeLabels(ss []string) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(ss))
-	for _, s := range ss {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
-}
 
 // parseTimeRPC parses time strings in multiple formats (RFC3339, YYYY-MM-DD, etc.)
 // Matches the parseTimeFlag behavior in cmd/bd/list.go for CLI parity
@@ -354,8 +337,8 @@ func (s *Server) handleList(req *Request) Response {
 	}
 	
 	// Normalize and apply label filters
-	labels := normalizeLabels(listArgs.Labels)
-	labelsAny := normalizeLabels(listArgs.LabelsAny)
+	labels := util.NormalizeLabels(listArgs.Labels)
+	labelsAny := util.NormalizeLabels(listArgs.LabelsAny)
 	// Support both old single Label and new Labels array (backward compat)
 	if len(labels) > 0 {
 		filter.Labels = labels
@@ -366,7 +349,7 @@ func (s *Server) handleList(req *Request) Response {
 		filter.LabelsAny = labelsAny
 	}
 	if len(listArgs.IDs) > 0 {
-		ids := normalizeLabels(listArgs.IDs)
+		ids := util.NormalizeLabels(listArgs.IDs)
 		if len(ids) > 0 {
 			filter.IDs = ids
 		}
@@ -616,8 +599,8 @@ func (s *Server) handleReady(req *Request) Response {
 		Priority:   readyArgs.Priority,
 		Limit:      readyArgs.Limit,
 		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
-		Labels:     normalizeLabels(readyArgs.Labels),
-		LabelsAny:  normalizeLabels(readyArgs.LabelsAny),
+		Labels:     util.NormalizeLabels(readyArgs.Labels),
+		LabelsAny:  util.NormalizeLabels(readyArgs.LabelsAny),
 	}
 	if readyArgs.Assignee != "" {
 		wf.Assignee = &readyArgs.Assignee

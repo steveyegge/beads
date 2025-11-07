@@ -148,6 +148,13 @@ Use --merge to merge the sync branch back to main branch.`,
 				fmt.Fprintf(os.Stderr, "Error exporting: %v\n", err)
 				os.Exit(1)
 			}
+
+			// Capture left snapshot (pre-pull state) for 3-way merge
+			// This is mandatory for deletion tracking integrity
+			if err := captureLeftSnapshot(jsonlPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to capture snapshot (required for deletion tracking): %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// Step 2: Check if there are changes to commit
@@ -189,6 +196,14 @@ Use --merge to merge the sync branch back to main branch.`,
 					beforeCount, err = countDBIssues(ctx, store)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to count issues before import: %v\n", err)
+					}
+				}
+
+				// Step 3.5: Perform 3-way merge and prune deletions
+				if err := ensureStoreActive(); err == nil && store != nil {
+					if err := applyDeletionsFromMerge(ctx, store, jsonlPath); err != nil {
+						fmt.Fprintf(os.Stderr, "Error during 3-way merge: %v\n", err)
+						os.Exit(1)
 					}
 				}
 
@@ -248,6 +263,11 @@ Use --merge to merge the sync branch back to main branch.`,
 					} else {
 						fmt.Println("→ DB and JSONL in sync, skipping re-export")
 					}
+				}
+
+				// Update base snapshot after successful import
+				if err := updateBaseSnapshot(jsonlPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to update base snapshot: %v\n", err)
 				}
 			}
 		}

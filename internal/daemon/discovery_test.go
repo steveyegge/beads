@@ -219,6 +219,9 @@ func TestDiscoverDaemons_Registry(t *testing.T) {
 }
 
 func TestDiscoverDaemons_Legacy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow daemon discovery test in short mode")
+	}
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)

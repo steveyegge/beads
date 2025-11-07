@@ -11,6 +11,9 @@ import (
 )
 
 func TestImportWithExternalRef(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow import test in short mode")
+	}
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

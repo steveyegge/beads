@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -25,14 +27,35 @@ Behavior:
   - New issues are created
   - Collisions (same ID, different content) are detected and reported
   - Use --dedupe-after to find and merge content duplicates after import
-  - Use --dry-run to preview changes without applying them`,
+  - Use --dry-run to preview changes without applying them
+
+NOTE: Import requires direct database access and does not work with daemon mode.
+      The command automatically uses --no-daemon when executed.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Import requires direct database access due to complex transaction handling
+		// and collision detection. Force direct mode regardless of daemon state.
+		if daemonClient != nil {
+			debug.Logf("Debug: import command forcing direct mode (closes daemon connection)\n")
+			_ = daemonClient.Close()
+			daemonClient = nil
+			
+			// Now initialize direct store
+			var err error
+			store, err = sqlite.New(dbPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = store.Close() }()
+		}
+
 		input, _ := cmd.Flags().GetString("input")
 		skipUpdate, _ := cmd.Flags().GetBool("skip-existing")
 		strict, _ := cmd.Flags().GetBool("strict")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		renameOnImport, _ := cmd.Flags().GetBool("rename-on-import")
 		dedupeAfter, _ := cmd.Flags().GetBool("dedupe-after")
+		clearDuplicateExternalRefs, _ := cmd.Flags().GetBool("clear-duplicate-external-refs")
 		orphanHandling, _ := cmd.Flags().GetString("orphan-handling")
 
 		// Open input
@@ -95,11 +118,12 @@ Behavior:
 
 		// Phase 2: Use shared import logic
 		opts := ImportOptions{
-			DryRun:         dryRun,
-			SkipUpdate:     skipUpdate,
-			Strict:         strict,
-			RenameOnImport: renameOnImport,
-			OrphanHandling: orphanHandling,
+			DryRun:                     dryRun,
+			SkipUpdate:                 skipUpdate,
+			Strict:                     strict,
+			RenameOnImport:             renameOnImport,
+			ClearDuplicateExternalRefs: clearDuplicateExternalRefs,
+			OrphanHandling:             orphanHandling,
 		}
 
 		result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
@@ -265,6 +289,7 @@ func init() {
 	importCmd.Flags().Bool("dedupe-after", false, "Detect and report content duplicates after import")
 	importCmd.Flags().Bool("dry-run", false, "Preview collision detection without making changes")
 	importCmd.Flags().Bool("rename-on-import", false, "Rename imported issues to match database prefix (updates all references)")
+	importCmd.Flags().Bool("clear-duplicate-external-refs", false, "Clear duplicate external_ref values (keeps first occurrence)")
 	importCmd.Flags().String("orphan-handling", "", "How to handle missing parent issues: strict/resurrect/skip/allow (default: use config or 'allow')")
 	importCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output import statistics in JSON format")
 	rootCmd.AddCommand(importCmd)

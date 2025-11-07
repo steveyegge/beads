@@ -135,15 +135,27 @@ Slow tests use `testing.Short()` to skip when `-short` flag is present.
 ### Running Tests
 
 ```bash
-# Fast tests (recommended for development)
+# Fast tests (recommended for development - skips slow tests)
+# Use this for rapid iteration during development
 go test -short ./...
 
-# Full test suite (before committing)
+# Full test suite (before committing - includes all tests)
+# Run this before pushing to ensure nothing breaks
 go test ./...
 
 # With race detection and coverage
 go test -race -coverprofile=coverage.out ./...
 ```
+
+**When to use `-short`:**
+- During active development for fast feedback loops
+- When making small changes that don't affect integration points
+- When you want to quickly verify unit tests pass
+
+**When to use full test suite:**
+- Before committing and pushing changes
+- After modifying git operations or multi-clone scenarios
+- When preparing a pull request
 
 ### Writing Tests
 
