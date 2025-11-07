@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 120 80">
+  <!-- Generator: Adobe Illustrator 29.8.2, SVG Export Plug-In . SVG Version: 2.1.1 Build 3)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #ee5e23;
+      }
+
+      .st1 {
+        fill: #f16122;
+      }
+
+      .st2 {
+        fill: #f16a21;
+      }
+
+      .st3 {
+        fill: #ef5223;
+      }
+
+      .st4 {
+        fill: #f4843d;
+      }
+
+      .st5 {
+        fill: url(#linear-gradient1);
+      }
+
+      .st6 {
+        fill: #e54625;
+      }
+
+      .st7 {
+        fill: #f9a868;
+      }
+
+      .st8 {
+        fill: #ed5b23;
+      }
+
+      .st9 {
+        fill: #f7d2b5;
+      }
+
+      .st10 {
+        fill: #d42f27;
+      }
+
+      .st11 {
+        fill: #f9b384;
+      }
+
+      .st12 {
+        fill: #f37a26;
+      }
+
+      .st13 {
+        fill: url(#linear-gradient);
+      }
+    </style>
+    <linearGradient id="linear-gradient" x1="59.9" y1="54.3" x2="59.9" y2="61.6" gradientTransform="translate(0 80) scale(1 -1)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f4843d"/>
+      <stop offset=".5" stop-color="#f9a868"/>
+      <stop offset="1" stop-color="#f37a26"/>
+    </linearGradient>
+    <linearGradient id="linear-gradient1" x1="59.9" y1="18.5" x2="59.9" y2="25.9" gradientTransform="translate(0 80) scale(1 -1)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e54625"/>
+      <stop offset=".5" stop-color="#f9a868"/>
+      <stop offset="1" stop-color="#f37a26"/>
+    </linearGradient>
+  </defs>
+  <rect class="st4" x="23.9" y="22.6" width="72" height="34.7"/>
+  <polygon class="st1" points="112.2 47.2 95.9 57.4 95.9 22.6 112.2 32.8 112.2 47.2"/>
+  <polygon class="st8" points="112.2 19.2 95.9 22.6 88.5 0 112.2 19.2"/>
+  <polygon class="st3" points="112.2 19.2 112.2 32.8 95.9 22.6 112.2 19.2"/>
+  <polygon class="st3" points="112.2 47.2 112.2 60.8 95.9 57.4 112.2 47.2"/>
+  <polygon class="st10" points="112.2 60.8 88.5 80 95.9 57.4 112.2 60.8"/>
+  <polygon class="st11" points="7.8 47.2 23.9 57.4 23.9 22.6 7.8 32.8 7.8 47.2"/>
+  <polygon class="st7" points="7.8 19.2 23.9 22.6 31.4 0 7.8 19.2"/>
+  <polygon class="st9" points="7.8 19.2 7.8 32.8 23.9 22.6 7.8 19.2"/>
+  <polygon class="st2" points="7.8 47.2 7.8 60.8 23.9 57.4 7.8 47.2"/>
+  <polygon class="st0" points="7.8 60.8 31.4 80 23.9 57.4 7.8 60.8"/>
+  <polygon class="st12" points="95.9 22.6 23.9 22.6 31.4 0 88.5 0 95.9 22.6"/>
+  <polygon class="st6" points="95.9 57.4 23.9 57.4 31.4 80 88.5 80 95.9 57.4"/>
+  <polygon class="st13" points="25.3 18.4 23.9 22.6 23.9 25.7 95.9 25.7 95.9 22.6 94.6 18.4 25.3 18.4"/>
+  <polygon class="st5" points="95.9 57.4 95.9 54.1 23.9 54.1 23.9 57.4 25.3 61.5 94.6 61.5 95.9 57.4"/>
+</svg>

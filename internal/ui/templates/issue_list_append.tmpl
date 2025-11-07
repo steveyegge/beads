@@ -1,0 +1,62 @@
+{{ range .Issues }}
+<li
+  class="ui-issue-list-item"
+  data-issue-id="{{ .ID }}"
+  data-index="{{ .Index }}"
+  data-selected="false"
+  hx-swap-oob="beforeend:[data-role='issue-list-items']"
+>
+  <label class="ui-issue-select">
+    <input
+      type="checkbox"
+      data-role="issue-select"
+      aria-label="Select {{ .ID }}"
+    />
+    <span aria-hidden="true"></span>
+  </label>
+  <button
+    type="button"
+    class="ui-issue-row{{ if .Active }} is-active{{ end }}"
+    data-role="issue-row"
+    data-issue-id="{{ .ID }}"
+    data-status="{{ .Status }}"
+    data-priority="{{ .Priority }}"
+    data-type="{{ .IssueType }}"
+    aria-selected="{{ if .Active }}true{{ else }}false{{ end }}"
+    tabindex="{{ if .Active }}0{{ else }}-1{{ end }}"
+    aria-label="{{ .ID }} · {{ .Title }}"
+    hx-get="{{ .DetailURL }}"
+    hx-target="[data-role='issue-detail']"
+    hx-push-url="false"
+    hx-swap="innerHTML"
+  >
+    <span class="ui-issue-row-heading">
+      <span class="ui-issue-row-title">{{ .Title }}</span>
+    </span>
+    <span class="ui-issue-row-meta">
+      <span class="ui-badge ui-badge--id" data-testid="issue-id-pill" aria-hidden="true">{{ .ID }}</span>
+      <span class="ui-badge ui-badge--priority ui-badge--priority-{{ .PriorityClass }}">{{ .PriorityLabel }}</span>
+      <span class="ui-badge ui-badge--type ui-badge--type-{{ .IssueTypeClass }}">{{ .IssueTypeLabel }}</span>
+      <time class="ui-issue-row-updated" datetime="{{ .UpdatedISO }}">{{ .UpdatedRelative }}</time>
+    </span>
+  </button>
+</li>
+{{ end }}
+<div
+  class="ui-issue-list-load-more"
+  data-role="issue-load-more"
+  hx-swap-oob="outerHTML:[data-role='issue-load-more']"
+  {{ if not .HasMore }}hidden{{ end }}
+>
+  {{ if .HasMore }}
+  <button
+    type="button"
+    class="ui-load-more-button"
+    hx-get="{{ .LoadMoreURL }}"
+    {{ if .LoadMoreVals }}hx-vals='{{ toJSON .LoadMoreVals }}'{{ end }}
+    hx-swap="none"
+  >
+    Load more closed issues
+  </button>
+  {{ end }}
+</div>

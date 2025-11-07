@@ -1,0 +1,536 @@
+<section
+  class="issue-detail"
+  data-testid="issue-detail"
+  data-role="issue-detail"
+  data-issue-id="{{ .Issue.ID }}"
+  hx-get="/fragments/issue?id={{ urlquery .Issue.ID }}"
+  hx-trigger="events:update[event.detail && ((event.detail.issueId && event.detail.issueId === '{{ .Issue.ID }}') || (Array.isArray(event.detail.issueIds) && event.detail.issueIds.indexOf && event.detail.issueIds.indexOf('{{ .Issue.ID }}') !== -1))] from:body"
+  hx-target="this"
+  hx-swap="outerHTML"
+  x-data="{}"
+  x-init="document.body && document.body.dispatchEvent(new CustomEvent('issue:detail-loaded', { detail: { issueId: '{{ .Issue.ID }}', source: 'detail-fragment' } }))"
+>
+  <header class="issue-detail__header">
+    <div class="issue-detail__title-row">
+      <span class="issue-detail__badge issue-detail__badge--id" data-testid="issue-detail-id" aria-hidden="true">{{ .Issue.ID }}</span>
+      <h1 class="issue-detail__title" aria-label="Issue title" data-linebreak="slash-n">{{ .Issue.Title }}</h1>
+    </div>
+    <div class="issue-detail__meta">
+      <span
+        class="issue-detail__badge issue-detail__badge--status"
+        data-field="status"
+        data-status="{{ .Issue.Status }}"
+      >{{ .Issue.StatusLabel }}</span>
+      <span class="issue-detail__badge issue-detail__badge--priority" data-field="priority">P{{ .Issue.Priority }}</span>
+      <span class="issue-detail__badge issue-detail__badge--type" data-field="type">{{ .Issue.IssueType }}</span>
+      {{- if .Issue.Assignee }}
+      <span class="issue-detail__badge issue-detail__badge--assignee" data-field="assignee">Assigned to {{ .Issue.Assignee }}</span>
+      {{- end }}
+    </div>
+    <section
+      class="issue-detail__labels-editor"
+      data-testid="label-editor"
+      x-data="bdLabelEditor({
+        issueId: {{ printf "%q" .Issue.ID }},
+        initialLabels: {{ toJSON .Issue.Labels }}
+      })"
+    >
+      <h2 class="issue-detail__labels-title">Labels</h2>
+      <p class="issue-detail__labels-empty" x-show="!labels.length" data-testid="label-empty">
+        No labels yet. Add one to categorize the work.
+      </p>
+      <ul
+        class="issue-detail__labels"
+        aria-label="Labels"
+        x-show="labels.length"
+        x-cloak
+      >
+        <template x-for="label in labels" :key="label">
+          <li
+            class="issue-detail__label"
+            data-role="label-chip"
+            x-bind:data-label-value="label"
+          >
+            <span class="issue-detail__label-text" x-text="label"></span>
+            <button
+              type="button"
+              class="issue-detail__label-remove"
+              data-role="remove-label"
+              x-bind:data-label-value="label"
+              x-on:click="removeLabel(label)"
+              aria-label="Remove label"
+            >
+              ×
+            </button>
+          </li>
+        </template>
+      </ul>
+      <form
+        class="issue-detail__label-form"
+        data-testid="label-form"
+        x-on:submit.prevent="submitLabel()"
+      >
+        <label class="issue-detail__label-input-wrapper">
+          <span class="issue-detail__label-input-label">Add label</span>
+          <input
+            type="text"
+            class="issue-detail__label-input"
+            placeholder="e.g. ui, ops"
+            autocomplete="off"
+            spellcheck="false"
+            data-testid="label-input"
+            x-model="inputValue"
+            list="label-suggestions-{{ .Issue.ID }}"
+          />
+        </label>
+        <datalist id="label-suggestions-{{ .Issue.ID }}" data-testid="label-suggestions">
+          <template x-for="label in suggestions" :key="label">
+            <option x-text="label"></option>
+          </template>
+        </datalist>
+        <button
+          type="submit"
+          class="issue-detail__label-submit"
+          data-testid="label-submit"
+          x-bind:disabled="!canSubmit"
+        >
+          Add
+        </button>
+      </form>
+      <p
+        class="issue-detail__label-error"
+        data-testid="label-error"
+        x-show="Boolean(error)"
+        x-text="error"
+        role="alert"
+      ></p>
+    </section>
+  </header>
+
+  <section
+    class="issue-detail__section issue-detail__section--editable"
+    data-section="description"
+    x-data="bdDetailEditor({
+      issueId: {{ printf "%q" .Issue.ID }},
+      field: 'description',
+      label: 'Description',
+      initialValue: {{ toJSON .Issue.Description }}
+    })"
+    x-init="init($refs)"
+  >
+    <header class="issue-detail__section-header">
+      <h2>Description</h2>
+      <button
+        type="button"
+        class="issue-detail__edit"
+        data-testid="description-edit-button"
+        x-on:click="startEdit()"
+        x-show="!isEditing"
+        x-cloak
+        x-ref="trigger"
+        x-text="editLabel"
+      >Edit</button>
+    </header>
+    <div class="issue-detail__viewer" x-show="!isEditing" x-cloak>
+      {{- if .Issue.DescriptionHTML }}
+      <div class="issue-detail__content" data-linebreak="slash-n">{{ safeHTML .Issue.DescriptionHTML }}</div>
+      {{- else }}
+      <p class="issue-detail__placeholder-text">No description provided yet.</p>
+      {{- end }}
+    </div>
+    <form
+      class="issue-detail__editor"
+      data-testid="description-editor"
+      x-show="isEditing"
+      x-cloak
+      x-on:submit.prevent="submit()"
+    >
+      <label class="issue-detail__editor-field">
+        <span class="issue-detail__editor-label">Description</span>
+        <textarea
+          class="issue-detail__editor-textarea"
+          data-testid="description-editor-input"
+          x-model="draft"
+          x-ref="textarea"
+          x-on:input="clearError()"
+          rows="8"
+          spellcheck="true"
+        ></textarea>
+      </label>
+      <p class="issue-detail__editor-hint">Markdown is supported.</p>
+      <p
+        class="issue-detail__editor-error"
+        data-testid="description-editor-error"
+        x-show="error"
+        x-text="error"
+        role="alert"
+        x-cloak
+      ></p>
+      <div class="issue-detail__editor-actions">
+        <button
+          type="button"
+          class="issue-detail__editor-cancel"
+          data-testid="description-editor-cancel"
+          x-on:click="cancel()"
+          x-bind:disabled="isSubmitting"
+          x-ref="cancel"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="issue-detail__editor-save"
+          data-testid="description-editor-save"
+          x-bind:disabled="isSubmitting"
+          x-ref="submit"
+        >
+          <span x-show="!isSubmitting">Save</span>
+          <span x-show="isSubmitting" aria-hidden="true">Saving…</span>
+        </button>
+      </div>
+    </form>
+  </section>
+
+  {{- if .Issue.DesignHTML }}
+  <article class="issue-detail__section" data-section="design">
+    <h2>Design</h2>
+    <div class="issue-detail__content" data-linebreak="slash-n">{{ safeHTML .Issue.DesignHTML }}</div>
+  </article>
+  {{- end }}
+
+  <section
+    class="issue-detail__section issue-detail__section--editable"
+    data-section="notes"
+    x-data="bdDetailEditor({
+      issueId: {{ printf "%q" .Issue.ID }},
+      field: 'notes',
+      label: 'Notes',
+      initialValue: {{ toJSON .Issue.Notes }}
+    })"
+    x-init="init($refs)"
+  >
+    <header class="issue-detail__section-header">
+      <h2>Notes</h2>
+      <button
+        type="button"
+        class="issue-detail__edit"
+        data-testid="notes-edit-button"
+        x-on:click="startEdit()"
+        x-show="!isEditing"
+        x-cloak
+        x-ref="trigger"
+        x-text="editLabel"
+      >Edit</button>
+    </header>
+    <div class="issue-detail__viewer" x-show="!isEditing" x-cloak>
+      {{- if .Issue.NotesHTML }}
+      <div class="issue-detail__content" data-linebreak="slash-n">{{ safeHTML .Issue.NotesHTML }}</div>
+      {{- else }}
+      <p class="issue-detail__placeholder-text">No notes yet. Capture key takeaways or open questions here.</p>
+      {{- end }}
+    </div>
+    <form
+      class="issue-detail__editor"
+      data-testid="notes-editor"
+      x-show="isEditing"
+      x-cloak
+      x-on:submit.prevent="submit()"
+    >
+      <label class="issue-detail__editor-field">
+        <span class="issue-detail__editor-label">Notes</span>
+        <textarea
+          class="issue-detail__editor-textarea"
+          data-testid="notes-editor-input"
+          x-model="draft"
+          x-ref="textarea"
+          x-on:input="clearError()"
+          rows="6"
+          spellcheck="true"
+        ></textarea>
+      </label>
+      <p class="issue-detail__editor-hint">Markdown is supported.</p>
+      <p
+        class="issue-detail__editor-error"
+        data-testid="notes-editor-error"
+        x-show="error"
+        x-text="error"
+        role="alert"
+        x-cloak
+      ></p>
+      <div class="issue-detail__editor-actions">
+        <button
+          type="button"
+          class="issue-detail__editor-cancel"
+          data-testid="notes-editor-cancel"
+          x-on:click="cancel()"
+          x-bind:disabled="isSubmitting"
+          x-ref="cancel"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="issue-detail__editor-save"
+          data-testid="notes-editor-save"
+          x-bind:disabled="isSubmitting"
+          x-ref="submit"
+        >
+          <span x-show="!isSubmitting">Save</span>
+          <span x-show="isSubmitting" aria-hidden="true">Saving…</span>
+        </button>
+      </div>
+    </form>
+  </section>
+
+  {{- if .Issue.AcceptanceHTML }}
+  <article class="issue-detail__section" data-section="acceptance">
+    <h2>Acceptance Criteria</h2>
+    <div class="issue-detail__content" data-linebreak="slash-n">{{ safeHTML .Issue.AcceptanceHTML }}</div>
+  </article>
+  {{- end }}
+
+  {{- if or .Dependencies.blocks .Dependencies.discovered_from }}
+  <section class="issue-detail__dependencies">
+    <h2>Dependencies</h2>
+    {{- if .Dependencies.blocks }}
+    <div class="issue-detail__dependency-group" data-dependency="blocks">
+      <h3>Depends On</h3>
+      <ul>
+        {{- range .Dependencies.blocks }}
+        <li data-issue-id="{{ .ID }}">
+          <span class="issue-detail__dependency-id">{{ .ID }}</span>
+          <span class="issue-detail__dependency-title" data-linebreak="slash-n">{{ .Title }}</span>
+          <span class="issue-detail__dependency-meta">[P{{ .Priority }} · {{ .Status }}]</span>
+        </li>
+        {{- end }}
+      </ul>
+    </div>
+    {{- end }}
+    {{- if .Dependencies.discovered_from }}
+    <div class="issue-detail__dependency-group" data-dependency="discovered-from">
+      <h3>Discovered From</h3>
+      <ul>
+        {{- range .Dependencies.discovered_from }}
+        <li data-issue-id="{{ .ID }}">
+          <span class="issue-detail__dependency-id">{{ .ID }}</span>
+          <span class="issue-detail__dependency-title" data-linebreak="slash-n">{{ .Title }}</span>
+          <span class="issue-detail__dependency-meta">[P{{ .Priority }} · {{ .Status }}]</span>
+        </li>
+        {{- end }}
+      </ul>
+    </div>
+    {{- end }}
+  </section>
+  {{- end }}
+
+  <section
+    class="issue-detail__actions"
+    x-data="bdStatusActions({ issueId: {{ printf "%q" .Issue.ID }}, initialStatus: {{ printf "%q" .Issue.Status }} })"
+    x-init="init($refs)"
+    x-on:keydown.window="handleShortcut($event)"
+    x-bind:data-current-status="status"
+    data-testid="status-actions"
+    data-role="status-actions"
+  >
+    <h2>Actions</h2>
+    <div class="status-actions__buttons" role="group" aria-label="Update status">
+      <button
+        type="button"
+        class="status-actions__button"
+        data-status-target="open"
+        data-testid="status-action-ready"
+        data-shortcut="Shift+R"
+        x-bind:class="{ 'is-active': isActive('open') }"
+        x-bind:disabled="isDisabled('open')"
+        x-bind:aria-pressed="isActive('open')"
+        x-on:click="requestStatusChange('open', $event)"
+      >
+        <span class="status-actions__label" x-text="labelForAction('open')"></span>
+        <span aria-hidden="true" class="status-actions__shortcut">Shift+R</span>
+      </button>
+      <button
+        type="button"
+        class="status-actions__button"
+        data-status-target="in_progress"
+        data-testid="status-action-in-progress"
+        data-shortcut="Shift+I"
+        x-bind:class="{ 'is-active': isActive('in_progress') }"
+        x-bind:disabled="isDisabled('in_progress')"
+        x-bind:aria-pressed="isActive('in_progress')"
+        x-on:click="requestStatusChange('in_progress', $event)"
+      >
+        <span class="status-actions__label" x-text="labelForAction('in_progress')"></span>
+        <span aria-hidden="true" class="status-actions__shortcut">Shift+I</span>
+      </button>
+      <button
+        type="button"
+        class="status-actions__button"
+        data-status-target="closed"
+        data-testid="status-action-done"
+        data-shortcut="Shift+D"
+        x-bind:class="{ 'is-active': isActive('closed') }"
+        x-bind:disabled="isDisabled('closed')"
+        x-bind:aria-pressed="isActive('closed')"
+        x-on:click="requestStatusChange('closed', $event)"
+        x-ref="trigger"
+      >
+        <span class="status-actions__label" x-text="labelForAction('closed')"></span>
+        <span aria-hidden="true" class="status-actions__shortcut">Shift+D</span>
+      </button>
+    </div>
+    <p
+      class="status-actions__message"
+      data-testid="status-action-message"
+      x-show="Boolean(message)"
+      x-text="message"
+      role="status"
+      aria-live="polite"
+    ></p>
+    <p
+      class="status-actions__error"
+      data-testid="status-action-error"
+      x-show="Boolean(error)"
+      x-text="error"
+      role="alert"
+    ></p>
+    <div
+      class="status-confirm"
+      x-show="confirm.isOpen"
+      x-cloak
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="status-confirm-title"
+      x-on:keydown.escape.window="cancelConfirm()"
+    >
+      <div
+        class="status-confirm__overlay"
+        data-testid="status-confirm-overlay"
+        x-ref="overlay"
+        x-on:click="cancelConfirm()"
+      ></div>
+      <div class="status-confirm__dialog">
+        <h3 id="status-confirm-title">Mark as Done?</h3>
+        <p class="status-confirm__body">
+          Mark {{ .Issue.ID }} as Done? This will move the bead to the Done queue.
+        </p>
+        <p
+          class="status-confirm__error"
+          x-show="error"
+          x-text="error"
+          role="alert"
+          x-cloak
+        ></p>
+        <div class="status-confirm__actions">
+          <button
+            type="button"
+            class="status-confirm__cancel"
+            data-testid="status-confirm-cancel"
+            x-ref="confirmCancel"
+            x-on:click="cancelConfirm()"
+            x-bind:disabled="confirm.isSubmitting"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="status-confirm__confirm"
+            data-testid="status-confirm-submit"
+            x-ref="confirm"
+            x-on:click="confirmChange()"
+            x-bind:disabled="confirm.isSubmitting"
+          >
+            <span x-show="!confirm.isSubmitting">Mark Done</span>
+            <span x-show="confirm.isSubmitting" aria-hidden="true">Updating…</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="issue-detail__danger">
+      <div
+        class="issue-delete"
+        data-testid="issue-delete"
+        x-data="bdIssueDelete({ issueId: {{ printf "%q" .Issue.ID }}, issueTitle: {{ printf "%q" .Issue.Title }} })"
+        x-init="init($refs)"
+      >
+        <button
+          type="button"
+          class="issue-delete__trigger"
+          data-testid="issue-delete-trigger"
+          x-on:click="open()"
+        >
+          Delete Issue
+        </button>
+        <div
+          class="issue-delete__overlay"
+          data-testid="issue-delete-overlay"
+          x-show="isOpen"
+          x-transition.opacity
+          x-on:click.self="close()"
+          x-on:keydown.escape.window.prevent.stop="close()"
+          x-cloak
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="issue-delete-title"
+        >
+          <div class="issue-delete__dialog" role="document">
+            <h3 class="issue-delete__title" id="issue-delete-title">
+              Delete {{ .Issue.ID }}
+            </h3>
+            <p class="issue-delete__warning">
+              This action cannot be undone. Type <strong>{{ .Issue.ID }}</strong>
+              to confirm deletion of
+              <span class="issue-delete__highlight">{{ .Issue.Title }}</span>.
+            </p>
+            <label class="issue-delete__label" for="issue-delete-confirm-{{ .Issue.ID }}">
+              Confirmation
+            </label>
+            <input
+              id="issue-delete-confirm-{{ .Issue.ID }}"
+              class="issue-delete__input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              x-ref="confirmation"
+              x-model="confirmation"
+              x-on:input="clearError()"
+              x-on:keydown.enter.prevent="submit()"
+              data-testid="issue-delete-confirmation"
+            />
+            <p
+              class="issue-delete__error"
+              data-testid="issue-delete-error"
+              role="alert"
+              x-show="Boolean(error)"
+              x-text="error"
+            ></p>
+            <div class="issue-delete__actions">
+              <button
+                type="button"
+                class="issue-delete__cancel"
+                x-on:click="close()"
+                x-bind:disabled="isSubmitting"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="issue-delete__confirm"
+                data-testid="issue-delete-submit"
+                x-bind:disabled="isSubmitting || !matches()"
+                x-on:click="submit()"
+              >
+                <span x-show="!isSubmitting">Delete Issue</span>
+                <span x-show="isSubmitting">Deleting&hellip;</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="issue-detail__comments" data-placeholder="comments">
+    <h2>Agent Notes</h2>
+    <p class="issue-detail__placeholder-text">Comments and summaries will surface here in a future update.</p>
+  </section>
+</section>

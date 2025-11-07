@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en" data-theme="{{ .Theme }}" x-data='bdShell({ initialFilters: {{ .InitialFiltersJSON }} })'>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ .AppTitle }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ .StaticPrefix }}/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="{{ .StaticPrefix }}/images/favicon.svg" />
+    <link rel="shortcut icon" href="{{ .StaticPrefix }}/images/favicon.svg" />
+    <script
+      defer
+      src="{{ .StaticPrefix }}/vendor/htmx.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="{{ .StaticPrefix }}/app.js"></script>
+    <script
+      defer
+      src="{{ .StaticPrefix }}/vendor/alpine.min.js"
+      crossorigin="anonymous"
+    ></script>
+  </head>
+  <body class="ui-body{{ if not .LiveUpdatesAvailable }} ui-body--degraded{{ end }}" data-live-updates="{{ if .LiveUpdatesAvailable }}on{{ else }}off{{ end }}" data-live-updates-initial="{{ if .LiveUpdatesAvailable }}on{{ else }}off{{ end }}" data-event-stream="{{ .EventStreamURL }}">
+    <div class="ui-layout">
+      <header class="ui-header" data-testid="ui-header">
+        <h1 class="ui-title" data-testid="ui-title">
+          <a
+            class="ui-title__link"
+            data-testid="ui-title-link"
+            href="https://github.com/steveyegge/beads"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {{ .AppTitle }}
+          </a>
+          <span class="ui-title-beads" role="group" aria-label="Theme selector">
+            <img class="ui-title-beads__string" src="{{ .StaticPrefix }}/images/bead-string.svg" alt="" aria-hidden="true" />
+            <button class="ui-title-beads__button" data-theme-selector="white" aria-label="White theme" title="Switch to white theme">
+              <img class="ui-title-beads__image" src="{{ .StaticPrefix }}/images/bead-1-white.svg" alt="" />
+            </button>
+            <button class="ui-title-beads__button" data-theme-selector="orange" aria-label="Orange theme" title="Switch to orange theme">
+              <img class="ui-title-beads__image" src="{{ .StaticPrefix }}/images/bead-2-orange.svg" alt="" />
+            </button>
+            <button class="ui-title-beads__button" data-theme-selector="green" aria-label="Green theme" title="Switch to green theme (coming soon)">
+              <img class="ui-title-beads__image" src="{{ .StaticPrefix }}/images/bead-3-green.svg" alt="" />
+            </button>
+            <button class="ui-title-beads__button" data-theme-selector="blue" aria-label="Blue theme" title="Switch to blue theme (coming soon)">
+              <img class="ui-title-beads__image" src="{{ .StaticPrefix }}/images/bead-4-blue.svg" alt="" />
+            </button>
+            <button class="ui-title-beads__button" data-theme-selector="black" aria-label="Black theme" title="Switch to black theme (coming soon)">
+              <img class="ui-title-beads__image" src="{{ .StaticPrefix }}/images/bead-5-black.svg" alt="" />
+            </button>
+          </span>
+        </h1>
+      </header>
+    <div
+      class="ui-banner ui-banner--warning"
+      data-role="live-update-warning"
+      role="status"
+      {{ if .LiveUpdatesAvailable }}hidden data-state="hidden"{{ else }}data-state="visible"{{ end }}
+    >
+      <strong class="ui-banner__title">Live updates disabled.</strong>
+      <span data-role="live-update-warning-message">
+        The UI cannot reach the Beads daemon yet. Actions may not refresh automatically.
+      </span>
+    </div>
+    <div
+      class="ui-command-root"
+      x-data="bdPaletteFactory({ limit: 8 })"
+      x-on:keydown.window="handleGlobalShortcut($event)"
+      x-on:command-palette:open.window.prevent="open()"
+      x-on:command-palette:close.window.prevent="close()"
+      data-testid="command-palette"
+    >
+      <button type="button" data-testid="command-palette-trigger" class="ui-command-trigger" x-on:click="open()" aria-hidden="true"></button>
+      <div
+        class="ui-command-overlay"
+        x-show="isOpen"
+        x-cloak
+        x-transition.opacity
+        x-on:click.self="close()"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        data-testid="command-palette-overlay"
+      >
+        <div
+          class="ui-command-panel"
+          x-ref="panel"
+          x-on:keydown.escape.prevent.stop="close()"
+          x-on:keydown.arrow-down.prevent="moveSelection(1)"
+          x-on:keydown.arrow-up.prevent="moveSelection(-1)"
+          x-on:keydown.enter.prevent="activateSelection()"
+          data-testid="command-palette-panel"
+        >
+          <div class="ui-command-search">
+            <div class="ui-command-search-icon" aria-hidden="true">⌘K</div>
+            <input
+              x-ref="query"
+              type="search"
+              class="ui-command-input"
+              placeholder='Search issues, e.g. is:open daemon'
+              autocomplete="off"
+              spellcheck="false"
+              data-shortcut-allow="true"
+              data-testid="command-palette-input"
+              x-model="query"
+              x-on:input="handleInput()"
+            />
+            <button
+              type="button"
+              class="ui-command-close"
+              aria-label="Close command palette"
+              x-on:click="close()"
+            >
+              Esc
+            </button>
+          </div>
+          <div class="ui-command-body">
+            <p
+              class="ui-command-status"
+              data-testid="command-palette-status"
+              x-show="loading"
+            >
+              Searching…
+            </p>
+            <p
+              class="ui-command-error"
+              data-testid="command-palette-error"
+              x-show="!loading && error"
+              x-text="error"
+            ></p>
+            <div
+              class="ui-command-empty"
+              data-testid="command-palette-empty"
+              x-show="!loading && !error && !results.length && query"
+            >
+              No matches found.
+            </div>
+            <div
+              class="ui-command-hint"
+              data-testid="command-palette-hint"
+              x-show="!loading && !error && !query"
+            >
+              Start typing to search. Use ↑ and ↓ to move, Enter to open, Esc to close.
+            </div>
+            <div class="ui-command-sort">
+              <label class="ui-command-sort-label" for="command-palette-sort">Sort</label>
+              <select
+                id="command-palette-sort"
+                class="ui-command-sort-select"
+                data-testid="command-palette-sort"
+                x-model="sortMode"
+                x-on:change="handleSortChange($event.target.value)"
+              >
+                <option value="relevance">Relevance</option>
+                <option value="recent">Recent</option>
+                <option value="priority">Priority</option>
+              </select>
+            </div>
+
+            <ul
+              class="ui-command-results"
+              role="listbox"
+              data-testid="command-palette-results"
+            >
+              <template x-for="(result, index) in results" :key="result.id">
+                <li
+                  class="ui-command-result"
+                  role="option"
+                  :aria-selected="index === activeIndex"
+                  :class="{ 'is-active': index === activeIndex }"
+                  x-on:mouseenter="setActive(index)"
+                  x-on:mousedown.prevent
+                  x-on:click="handleResultClick(index)"
+                >
+                  <span class="ui-command-result-title" x-text="result.title"></span>
+                  <span class="ui-command-result-meta">
+                    <span class="ui-command-result-id" x-text="result.id"></span>
+                    <span
+                      class="ui-command-result-snippet"
+                      x-text="result.snippet"
+                    ></span>
+                  </span>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    <main class="ui-shell">
+      <aside class="ui-search" data-role="search-panel" aria-label="Issue search">
+        <h2 class="ui-section-title">Search</h2>
+        <form
+          class="ui-search-form"
+          data-role="search-form"
+          data-testid="search-form"
+          autocomplete="off"
+          novalidate
+        >
+          <div class="ui-search-field">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Keyword</span>
+              <input
+                type="search"
+                class="ui-search-input"
+                placeholder="Title or description"
+                data-filter-field="query"
+                data-testid="search-query-input"
+              />
+            </label>
+          </div>
+          <div class="ui-search-grid">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Status</span>
+              <select
+                class="ui-search-select"
+                data-filter-field="status"
+                data-testid="search-status-select"
+              >
+                <option value="">Any</option>
+                <option value="open">Ready</option>
+                <option value="in_progress">In Progress</option>
+                <option value="blocked">Blocked</option>
+                <option value="closed">Closed</option>
+              </select>
+            </label>
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Type</span>
+              <select
+                class="ui-search-select"
+                data-filter-field="issueType"
+                data-testid="search-type-select"
+              >
+                <option value="">Any</option>
+                <option value="feature">Feature</option>
+                <option value="bug">Bug</option>
+                <option value="task">Task</option>
+                <option value="chore">Chore</option>
+                <option value="epic">Epic</option>
+              </select>
+            </label>
+          </div>
+          <div class="ui-search-grid">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Priority</span>
+              <select
+                class="ui-search-select"
+                data-filter-field="priority"
+                data-testid="search-priority-select"
+              >
+                <option value="">Any</option>
+                <option value="0">P0 Critical</option>
+                <option value="1">P1 High</option>
+                <option value="2">P2 Medium</option>
+                <option value="3">P3 Low</option>
+                <option value="4">P4 Backlog</option>
+              </select>
+            </label>
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Assignee</span>
+              <input
+                type="text"
+                class="ui-search-input"
+                placeholder="alice"
+                data-filter-field="assignee"
+                data-testid="search-assignee-input"
+              />
+            </label>
+          </div>
+          <div class="ui-search-sort" data-role="search-sort" data-testid="search-sort">
+            <div class="ui-search-sort__control" data-sort-control>
+              <label class="ui-search-label">
+                <span class="ui-search-label-text" data-sort-label>Sort by</span>
+                <select
+                  class="ui-search-select"
+                  data-filter-field="sortOrder"
+                  data-sort-index="0"
+                  data-testid="search-sort-primary"
+                >
+                  <option value="default-primary">Default</option>
+                  <option value="updated-desc">Updated (newest first)</option>
+                  <option value="updated-asc">Updated (oldest first)</option>
+                  <option value="created-desc">Created (newest first)</option>
+                  <option value="created-asc">Created (oldest first)</option>
+                  <option value="priority-asc">Priority (P0 to P4)</option>
+                  <option value="priority-desc">Priority (P4 to P0)</option>
+                  <option value="title-asc">Title (A to Z)</option>
+                  <option value="title-desc">Title (Z to A)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <template id="search-sort-template">
+            <div class="ui-search-sort__control" data-sort-control>
+              <label class="ui-search-label">
+                <span class="ui-search-label-text" data-sort-label>Then sort by</span>
+                <select
+                  class="ui-search-select"
+                  data-filter-field="sortOrder"
+                  data-sort-index=""
+                  data-testid="search-sort-next"
+                >
+                  <option value="default-fallback">Default</option>
+                  <option value="none">None</option>
+                  <option value="updated-desc">Updated (newest first)</option>
+                  <option value="updated-asc">Updated (oldest first)</option>
+                  <option value="created-desc">Created (newest first)</option>
+                  <option value="created-asc">Created (oldest first)</option>
+                  <option value="priority-asc">Priority (P0 to P4)</option>
+                  <option value="priority-desc">Priority (P4 to P0)</option>
+                  <option value="title-asc">Title (A to Z)</option>
+                  <option value="title-desc">Title (Z to A)</option>
+                </select>
+              </label>
+            </div>
+          </template>
+          <div class="ui-search-field">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Labels (match all)</span>
+              <input
+                type="text"
+                class="ui-search-input"
+                placeholder="ops, ui"
+                data-filter-field="labelsAll"
+                data-testid="search-labels-all-input"
+              />
+            </label>
+          </div>
+          <div class="ui-search-field">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">Labels (match any)</span>
+              <input
+                type="text"
+                class="ui-search-input"
+                placeholder="frontend, ux"
+                data-filter-field="labelsAny"
+                data-testid="search-labels-any-input"
+              />
+            </label>
+          </div>
+          <div class="ui-search-field">
+            <label class="ui-search-label">
+              <span class="ui-search-label-text">ID prefix</span>
+              <input
+                type="text"
+                class="ui-search-input"
+                placeholder="ui"
+                data-filter-field="prefix"
+                data-testid="search-prefix-input"
+              />
+            </label>
+          </div>
+          <div class="ui-search-actions">
+            <button
+              type="button"
+              class="ui-search-action"
+              data-action="apply"
+              data-testid="search-apply"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              class="ui-search-action ui-search-action--secondary"
+              data-action="reset"
+              data-testid="search-reset"
+            >
+              Reset
+            </button>
+          </div>
+        </form>
+        <section class="ui-saved-views" data-testid="saved-views">
+          <header class="ui-saved-views__header">
+            <h3 class="ui-saved-views__title">Saved Searches</h3>
+            <button
+              type="button"
+              class="ui-saved-views__refresh"
+              data-testid="saved-views-save"
+            >
+              Save
+            </button>
+          </header>
+          <ul
+            class="ui-saved-views__list"
+            data-testid="saved-views-list"
+            hidden
+          ></ul>
+          <p
+            class="ui-saved-views__empty"
+            data-testid="saved-views-empty"
+          >
+            No saved searches yet. Build a search and save it for quick access.
+          </p>
+        </section>
+      </aside>
+      <section
+        class="ui-issues"
+        data-role="issue-list"
+        tabindex="0"
+        aria-label="Issue list"
+        hx-get="/fragments/issues?status=open"
+        hx-trigger="load"
+        hx-target="this"
+        hx-swap="innerHTML"
+      >
+        <div class="ui-placeholder">
+          <h2>Loading issues…</h2>
+          <p>Fetching matching issues from the daemon.</p>
+        </div>
+      </section>
+      <section
+        class="ui-detail"
+        data-role="issue-detail"
+        aria-live="polite"
+        aria-label="Issue detail"
+      >
+        <div class="ui-placeholder">
+          <h2>Select an issue</h2>
+          <p>Choose an item from the list to inspect details.</p>
+        </div>
+      </section>
+      <template id="issue-detail-placeholder-template">
+        <div class="ui-placeholder">
+          <h2>Select an issue</h2>
+          <p>Choose an item from the list to inspect details.</p>
+        </div>
+      </template>
+      <template id="bulk-editor-template">
+        <article class="ui-detail-bulk" data-role="bulk-panel">
+          <header class="ui-detail-bulk__header">
+            <h2>Adjust multiple issues</h2>
+            <p class="ui-detail-bulk__description">
+              Update status or priority for every selected issue.
+            </p>
+          </header>
+          <form class="ui-bulk-toolbar" data-role="bulk-toolbar" novalidate hidden>
+            <div class="ui-bulk-toolbar__summary">
+              <span data-role="bulk-count">No issues selected</span>
+              <button type="button" class="ui-bulk-toolbar__clear" data-action="bulk-clear">
+                Clear
+              </button>
+            </div>
+            <div class="ui-bulk-toolbar__controls">
+              <label class="ui-bulk-toolbar__field">
+                <span class="ui-bulk-toolbar__label">Status</span>
+                <select data-role="bulk-status">
+                  <option value="">Status…</option>
+                  <option value="open">Ready</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="closed">Done</option>
+                </select>
+              </label>
+              <label class="ui-bulk-toolbar__field">
+                <span class="ui-bulk-toolbar__label">Priority</span>
+                <select data-role="bulk-priority">
+                  <option value="">Priority…</option>
+                  <option value="0">P0 Critical</option>
+                  <option value="1">P1 High</option>
+                  <option value="2">P2 Medium</option>
+                  <option value="3">P3 Low</option>
+                  <option value="4">P4 Backlog</option>
+                </select>
+              </label>
+              <button type="submit" class="ui-bulk-toolbar__apply" data-action="bulk-apply">
+                Apply
+              </button>
+            </div>
+            <p class="ui-bulk-toolbar__message" data-role="bulk-message" hidden></p>
+          </form>
+        </article>
+      </template>
+    </main>
+    <div
+      class="ui-help-overlay"
+      data-role="help-overlay"
+      data-testid="help-overlay"
+      hidden
+    >
+      <div
+        class="ui-help-overlay__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="help-overlay-title"
+      >
+        <header class="ui-help-overlay__header">
+          <h2 id="help-overlay-title">Command Palette Shortcuts</h2>
+          <button
+            type="button"
+            class="ui-help-overlay__close"
+            data-role="help-close"
+            aria-label="Close help"
+          >
+            ×
+          </button>
+        </header>
+        <section class="ui-help-overlay__content">
+          <p>
+            The command palette (`⌘K` / `Ctrl+K`) supports three sort modes while you search.
+            Modes persist between sessions when you explicitly choose one.
+          </p>
+          <h3>Sort Modes</h3>
+          <ul>
+            <li><strong>Relevance</strong> – default whenever a query is present.</li>
+            <li><strong>Recent</strong> – default when the query is empty.</li>
+            <li><strong>Priority</strong> – orders results by priority (P0 → P4) with recent updates breaking ties.</li>
+          </ul>
+          <h3>Keyboard Shortcuts</h3>
+          <ul>
+            <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Alt</kbd> + <kbd>1</kbd> → Relevance</li>
+            <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Alt</kbd> + <kbd>2</kbd> → Recent</li>
+            <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Alt</kbd> + <kbd>3</kbd> → Priority</li>
+          </ul>
+          <p>Press <kbd>?</kbd> again or <kbd>Esc</kbd> to close this help.</p>
+        </section>
+      </div>
+    </div>
+    </div>
+    <div
+      class="ui-quick-create"
+      x-data="bdQuickCreate()"
+      x-init="init({ title: $refs.qcTitle, description: $refs.qcDescription, discovered: $refs.qcDiscovered })"
+      x-on:keydown.window="handleShortcut($event)"
+      x-on:keydown.escape.window.prevent="isOpen && close()"
+      data-testid="quick-create-root"
+    >
+      <button
+        type="button"
+        class="ui-quick-create__fab"
+        data-testid="quick-create-trigger"
+        x-on:click="toggle()"
+        aria-label="Quick create issue"
+      >
+        <span aria-hidden="true">+</span>
+      </button>
+      <div
+        class="ui-quick-create__toast"
+        data-testid="quick-create-toast"
+        x-cloak
+        x-show="message"
+        x-transition
+      >
+        <p x-text="message"></p>
+        <button type="button" x-on:click="clearMessage()">Dismiss</button>
+      </div>
+      <div
+        class="ui-quick-create__overlay"
+        data-testid="quick-create-overlay"
+        x-cloak
+        x-show="isOpen"
+        x-transition.opacity
+        x-on:click.self="close()"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="quick-create-title-heading"
+      >
+        <div class="ui-quick-create__panel">
+          <header class="ui-quick-create__header">
+            <h2 id="quick-create-title-heading">Quick Create Issue</h2>
+            <button
+              type="button"
+              class="ui-quick-create__close"
+              data-testid="quick-create-cancel"
+              x-on:click="close()"
+            >
+              Close
+            </button>
+          </header>
+          <form
+            class="ui-quick-create__form"
+            data-testid="quick-create-form"
+            x-on:submit.prevent="submit()"
+            novalidate
+          >
+            <div class="ui-quick-create__field">
+              <label class="ui-quick-create__label" for="quick-create-title-input">
+                Title
+              </label>
+              <input
+                id="quick-create-title-input"
+                class="ui-quick-create__input"
+                type="text"
+                autocomplete="off"
+                placeholder="Summarize the issue"
+                x-ref="qcTitle"
+                x-model="title"
+                x-on:input="error && clearError()"
+                data-testid="quick-create-title"
+              />
+            </div>
+            <div class="ui-quick-create__field">
+              <label class="ui-quick-create__label" for="quick-create-description-input">
+                Description (optional)
+              </label>
+              <textarea
+                id="quick-create-description-input"
+                class="ui-quick-create__textarea"
+                placeholder="Add more details"
+                x-ref="qcDescription"
+                x-model="description"
+                x-on:input="error && clearError()"
+                data-testid="quick-create-description"
+              ></textarea>
+            </div>
+            <div class="ui-quick-create__field">
+              <label class="ui-quick-create__label" for="quick-create-discovered-input">
+                Discovered From
+              </label>
+              <input
+                id="quick-create-discovered-input"
+                class="ui-quick-create__input"
+                type="text"
+                readonly
+                x-ref="qcDiscovered"
+                x-model="discoveredFrom"
+                data-testid="quick-create-discovered-from"
+              />
+              <p class="ui-quick-create__hint">
+                Auto-populates when an issue detail is open. Editable to attribute follow-up work.
+              </p>
+            </div>
+            <div class="ui-quick-create__field-group">
+              <label class="ui-quick-create__field">
+                <span class="ui-quick-create__label">Type</span>
+                <select
+                  class="ui-quick-create__input"
+                  x-model="issueType"
+                  data-testid="quick-create-type"
+                >
+                  <template x-for="entry in issueTypes" :key="entry.id">
+                    <option :value="entry.id" x-text="entry.label"></option>
+                  </template>
+                </select>
+              </label>
+              <label class="ui-quick-create__field">
+                <span class="ui-quick-create__label">Priority</span>
+                <select
+                  class="ui-quick-create__input"
+                  x-model.number="priority"
+                  x-on:change="setPriority($event.target.value)"
+                  data-testid="quick-create-priority"
+                >
+                  <template x-for="entry in priorityOptions" :key="entry.value">
+                    <option :value="entry.value" x-text="entry.label"></option>
+                  </template>
+                </select>
+              </label>
+            </div>
+            <p
+              class="ui-quick-create__error"
+              x-show="error"
+              x-text="error"
+              data-testid="quick-create-error"
+            ></p>
+            <div class="ui-quick-create__actions">
+              <button
+                type="button"
+                class="ui-quick-create__cancel"
+                x-on:click="close()"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="ui-quick-create__submit"
+                data-testid="quick-create-submit"
+                :disabled="!canSubmit"
+              >
+                <span x-show="!isSubmitting">Create</span>
+                <span x-show="isSubmitting">Creating…</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

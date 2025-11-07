@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Beads UI</title>
+    <link rel="stylesheet" href="/.assets/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="/.assets/images/favicon.svg" />
+    <link rel="shortcut icon" href="/.assets/images/favicon.svg" />
+  </head>
+  <body class="ui-body" data-live-updates="on" data-live-updates-initial="on" data-event-stream="/events">
+    <div class="ui-layout">
+      <header class="ui-header">
+        <h1 class="ui-title" data-testid="ui-title">
+          <a
+            class="ui-title__link"
+            data-testid="ui-title-link"
+            href="https://github.com/steveyegge/beads"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Beads
+          </a>
+        </h1>
+      </header>
+      <main id="app-root">
+        <section class="ui-card" data-testid="ui-placeholder-card">
+          <h2>Coming Soon</h2>
+          <p>
+            This preview focuses on connectivity and basic shell scaffolding.
+            Future milestones will layer on search, filters, and live updates.
+          </p>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/.assets/app.js"></script>
+  </body>
+</html>

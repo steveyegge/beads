@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 120 80">
+  <!-- Generator: Adobe Illustrator 29.8.2, SVG Export Plug-In . SVG Version: 2.1.1 Build 3)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: url(#linear-gradient1);
+      }
+
+      .st1 {
+        fill: #0f7645;
+      }
+
+      .st2 {
+        filter: url(#AI_GaussianBlur_43);
+      }
+
+      .st2, .st3, .st4, .st5 {
+        opacity: .5;
+      }
+
+      .st3 {
+        filter: url(#AI_GaussianBlur_41);
+      }
+
+      .st6 {
+        fill: #94c9b0;
+      }
+
+      .st7 {
+        fill: url(#linear-gradient);
+      }
+
+      .st4 {
+        filter: url(#AI_GaussianBlur_42);
+      }
+
+      .st5 {
+        filter: url(#AI_GaussianBlur_4);
+      }
+    </style>
+    <filter id="AI_GaussianBlur_4">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <linearGradient id="linear-gradient" x1="13.9" y1="17.7" x2="104.1" y2="17.7" gradientTransform="translate(0 80) scale(1 -1)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".2" stop-color="#d8ebe3" stop-opacity=".4"/>
+      <stop offset=".4" stop-color="#93c8b2"/>
+      <stop offset=".5" stop-color="#94c8b0"/>
+      <stop offset=".7" stop-color="#bfded0" stop-opacity=".6"/>
+      <stop offset=".9" stop-color="#edf5f1" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="AI_GaussianBlur_41" data-name="AI_GaussianBlur_4">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <linearGradient id="linear-gradient1" y1="-1140" y2="-1140" gradientTransform="translate(0 1157.9)" xlink:href="#linear-gradient"/>
+    <filter id="AI_GaussianBlur_42" data-name="AI_GaussianBlur_4">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <filter id="AI_GaussianBlur_43" data-name="AI_GaussianBlur_4">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+  <path class="st1" d="M48.7,76.6L10.8,50.8c-7.7-5.3-7.7-16.5,0-21.8L48.7,3.1c6.2-4.2,14.4-4.2,20.6,0l37.9,25.8c7.7,5.3,7.7,16.5,0,21.8l-37.9,25.8c-6.2,4.2-14.4,4.2-20.6,0Z"/>
+  <g class="st5">
+    <path class="st7" d="M16.4,54.8l34.3,22.3c5.1,3.3,11.5,3.3,16.5,0l34.3-22.3c4.6-3,2.4-9.8-3.2-9.8,0,0-29.9,4.1-39.9,4.1s-39-4.1-39-4.1c-5.5,0-7.7,6.8-3.2,9.8h.2Z"/>
+  </g>
+  <g class="st3">
+    <path class="st0" d="M16.4,25.4L50.7,3.1c5.1-3.3,11.5-3.3,16.5,0l34.3,22.3c4.6,3,2.4,9.8-3.2,9.8,0,0-29.9-4.1-39.9-4.1s-39,4.1-39,4.1c-5.5,0-7.7-6.8-3.2-9.8h.2Z"/>
+  </g>
+  <g class="st4">
+    <path class="st6" d="M10.1,32.1l39.4-8.9c5.8-1.3,13.2-1.3,19.1,0l39.4,8.9c5.3,1.2,2.8,4-3.6,4,0,0-34.3-4.7-45.9-4.6s-44.8,4.6-44.8,4.6c-6.4,0-8.9-2.8-3.6-4h.1Z"/>
+  </g>
+  <g class="st2">
+    <path class="st6" d="M10.1,47.6l39.4,8.9c5.8,1.3,13.2,1.3,19.1,0l39.4-8.9c5.3-1.2,2.8-4-3.6-4,0,0-34.3,4.7-45.9,4.6-11.2,0-44.8-4.6-44.8-4.6-6.4,0-8.9,2.8-3.6,4h.1Z"/>
+  </g>
+</svg>
