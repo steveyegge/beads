@@ -185,15 +185,6 @@ You can launch a UI that lets you work with the bug database directly.
 
 ![Beads UI screenshot](ui-smoke-home.png)
 
-**Launch locally**
-
-```bash
-# from your repo root
-./bd ui
-```
-
-Use `--allow-remote --auth-token <token>` if you need to share the UI off-box; otherwise it only binds to loopback.
-
 **What you get**
 
 - Search, sort, & saved queries
@@ -201,6 +192,13 @@ Use `--allow-remote --auth-token <token>` if you need to share the UI off-box; o
 - Create, view, and edit
 - '?' for keyboard shortcuts
 - Live updates you see when agents change issues
+
+### Tips for using `bd ui`
+
+- Run `bd ui` from the repo root
+- Pass `--no-open` if you are tunneling in over SSH and want to skip auto-opening a browser, or set `BD_UI_OPEN_COMMAND` to customize the launcher.
+- When sharing the UI remotely, always combine `--allow-remote` with `--auth-token <token>` (or `--tls-self-signed`) so reviewers have to authenticate over HTTPS.
+- The UI writes `.beads/ui-session.json`; if you need to rotate the token, delete that file and restart with the desired flags.
 
 ## Configuring Your Own AGENTS.md
 

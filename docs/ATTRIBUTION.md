@@ -56,3 +56,39 @@ SOFTWARE.
 ### Thank You
 
 Special thanks to @neongreen for building beads-merge and graciously allowing us to integrate it into bd. This solves critical multi-workspace sync issues and makes beads much more robust for collaborative workflows.
+
+## UI Vendor Assets
+
+### htmx
+
+- **Source**: https://github.com/bigskysoftware/htmx (vendored in `ui/static/vendor/htmx.min.js`)
+- **Author**: Big Sky Software (@bigskysoftware)
+- **License**: MIT License (bundled in upstream repository)
+- **Usage**: Powers incremental fragment updates, command palette reloads, and saved-view refreshes inside the `bd ui` shell.
+
+### Alpine.js
+
+- **Source**: https://github.com/alpinejs/alpine (vendored in `ui/static/vendor/alpine.min.js`)
+- **Author**: Caleb Porzio and contributors (@alpinejs)
+- **License**: MIT License (bundled in upstream repository)
+- **Usage**: Handles lightweight interactivity (palette state, keyboard routing) without requiring a full SPA framework.
+
+## Additional Go Libraries
+
+### github.com/microcosm-cc/bluemonday
+
+- **Purpose**: HTML sanitizer used by the UI detail renderer to safely display Markdown output.
+- **License**: BSD 3-Clause (see upstream LICENSE file).
+- **Location**: Referenced via Go modules (no vendoring).
+
+### github.com/yuin/goldmark
+
+- **Purpose**: CommonMark parser that renders issue descriptions/notes inside the UI.
+- **License**: MIT License (see upstream repository).
+- **Location**: Referenced via Go modules (no vendoring).
+
+### github.com/playwright-community/playwright-go
+
+- **Purpose**: Provides the Playwright bindings that back the `ui/e2e` browser-based tests.
+- **License**: Apache License 2.0.
+- **Location**: Referenced via Go modules for test-only builds (no vendoring).

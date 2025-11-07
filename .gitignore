@@ -40,6 +40,8 @@ Thumbs.db
 .beads/daemon.lock
 .beads/bd.sock
 .beads/.exclusive-lock
+.beads/ui-session.json
+.beads/ui-session.json.tmp
 
 # .beads directory files (keep JSONL only)
 .beads/.gitignore
