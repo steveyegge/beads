@@ -41,9 +41,9 @@ func TestCLI_Create(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	out := runBD(t, tmpDir, "create", "Test issue", "-p", "1", "--json")
-	
+
 	var result map[string]interface{}
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
+	if err := json.Unmarshal(extractJSON(out), &result); err != nil {
 		t.Fatalf("Failed to parse JSON: %v\nOutput: %s", err, out)
 	}
 	if result["title"] != "Test issue" {
@@ -59,10 +59,10 @@ func TestCLI_List(t *testing.T) {
 	tmpDir := setupCLITestDB(t)
 	runBD(t, tmpDir, "create", "First", "-p", "1")
 	runBD(t, tmpDir, "create", "Second", "-p", "2")
-	
+
 	out := runBD(t, tmpDir, "list", "--json")
 	var issues []map[string]interface{}
-	if err := json.Unmarshal([]byte(out), &issues); err != nil {
+	if err := json.Unmarshal(extractJSON(out), &issues); err != nil {
 		t.Fatalf("Failed to parse JSON: %v", err)
 	}
 	if len(issues) != 2 {
@@ -77,16 +77,16 @@ func TestCLI_Update(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	out := runBD(t, tmpDir, "create", "Issue to update", "-p", "1", "--json")
-	
+
 	var issue map[string]interface{}
-	json.Unmarshal([]byte(out), &issue)
+	_ = json.Unmarshal(extractJSON(out), &issue)
 	id := issue["id"].(string)
-	
+
 	runBD(t, tmpDir, "update", id, "--status", "in_progress")
-	
+
 	out = runBD(t, tmpDir, "show", id, "--json")
 	var updated []map[string]interface{}
-	json.Unmarshal([]byte(out), &updated)
+	_ = json.Unmarshal(extractJSON(out), &updated)
 	if updated[0]["status"] != "in_progress" {
 		t.Errorf("Expected status 'in_progress', got: %v", updated[0]["status"])
 	}
@@ -99,16 +99,16 @@ func TestCLI_Close(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	out := runBD(t, tmpDir, "create", "Issue to close", "-p", "1", "--json")
-	
+
 	var issue map[string]interface{}
-	json.Unmarshal([]byte(out), &issue)
+	_ = json.Unmarshal(extractJSON(out), &issue)
 	id := issue["id"].(string)
-	
+
 	runBD(t, tmpDir, "close", id, "--reason", "Done")
-	
+
 	out = runBD(t, tmpDir, "show", id, "--json")
 	var closed []map[string]interface{}
-	json.Unmarshal([]byte(out), &closed)
+	_ = json.Unmarshal(extractJSON(out), &closed)
 	if closed[0]["status"] != "closed" {
 		t.Errorf("Expected status 'closed', got: %v", closed[0]["status"])
 	}
@@ -120,17 +120,17 @@ func TestCLI_DepAdd(t *testing.T) {
 	}
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
-	
+
 	out1 := runBD(t, tmpDir, "create", "First", "-p", "1", "--json")
 	out2 := runBD(t, tmpDir, "create", "Second", "-p", "1", "--json")
-	
+
 	var issue1, issue2 map[string]interface{}
-	json.Unmarshal([]byte(out1), &issue1)
-	json.Unmarshal([]byte(out2), &issue2)
-	
+	_ = json.Unmarshal(extractJSON(out1), &issue1)
+	_ = json.Unmarshal(extractJSON(out2), &issue2)
+
 	id1 := issue1["id"].(string)
 	id2 := issue2["id"].(string)
-	
+
 	out := runBD(t, tmpDir, "dep", "add", id2, id1)
 	if !strings.Contains(out, "Added dependency") {
 		t.Errorf("Expected 'Added dependency', got: %s", out)
@@ -143,17 +143,17 @@ func TestCLI_DepRemove(t *testing.T) {
 	}
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
-	
+
 	out1 := runBD(t, tmpDir, "create", "First", "-p", "1", "--json")
 	out2 := runBD(t, tmpDir, "create", "Second", "-p", "1", "--json")
-	
+
 	var issue1, issue2 map[string]interface{}
-	json.Unmarshal([]byte(out1), &issue1)
-	json.Unmarshal([]byte(out2), &issue2)
-	
+	_ = json.Unmarshal(extractJSON(out1), &issue1)
+	_ = json.Unmarshal(extractJSON(out2), &issue2)
+
 	id1 := issue1["id"].(string)
 	id2 := issue2["id"].(string)
-	
+
 	runBD(t, tmpDir, "dep", "add", id2, id1)
 	out := runBD(t, tmpDir, "dep", "remove", id2, id1)
 	if !strings.Contains(out, "Removed dependency") {
@@ -167,17 +167,17 @@ func TestCLI_DepTree(t *testing.T) {
 	}
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
-	
+
 	out1 := runBD(t, tmpDir, "create", "Parent", "-p", "1", "--json")
 	out2 := runBD(t, tmpDir, "create", "Child", "-p", "1", "--json")
-	
+
 	var issue1, issue2 map[string]interface{}
-	json.Unmarshal([]byte(out1), &issue1)
-	json.Unmarshal([]byte(out2), &issue2)
-	
+	_ = json.Unmarshal(extractJSON(out1), &issue1)
+	_ = json.Unmarshal(extractJSON(out2), &issue2)
+
 	id1 := issue1["id"].(string)
 	id2 := issue2["id"].(string)
-	
+
 	runBD(t, tmpDir, "dep", "add", id2, id1)
 	out := runBD(t, tmpDir, "dep", "tree", id1)
 	if !strings.Contains(out, "Parent") {
@@ -191,17 +191,17 @@ func TestCLI_Blocked(t *testing.T) {
 	}
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
-	
+
 	out1 := runBD(t, tmpDir, "create", "Blocker", "-p", "1", "--json")
 	out2 := runBD(t, tmpDir, "create", "Blocked", "-p", "1", "--json")
-	
+
 	var issue1, issue2 map[string]interface{}
-	json.Unmarshal([]byte(out1), &issue1)
-	json.Unmarshal([]byte(out2), &issue2)
-	
+	_ = json.Unmarshal(extractJSON(out1), &issue1)
+	_ = json.Unmarshal(extractJSON(out2), &issue2)
+
 	id1 := issue1["id"].(string)
 	id2 := issue2["id"].(string)
-	
+
 	runBD(t, tmpDir, "dep", "add", id2, id1)
 	out := runBD(t, tmpDir, "blocked")
 	if !strings.Contains(out, "Blocked") {
@@ -217,7 +217,7 @@ func TestCLI_Stats(t *testing.T) {
 	tmpDir := setupCLITestDB(t)
 	runBD(t, tmpDir, "create", "Issue 1", "-p", "1")
 	runBD(t, tmpDir, "create", "Issue 2", "-p", "1")
-	
+
 	out := runBD(t, tmpDir, "stats")
 	if !strings.Contains(out, "Total") || !strings.Contains(out, "2") {
 		t.Errorf("Expected stats to show 2 issues, got: %s", out)
@@ -231,11 +231,11 @@ func TestCLI_Show(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	out := runBD(t, tmpDir, "create", "Show test", "-p", "1", "--json")
-	
+
 	var issue map[string]interface{}
-	json.Unmarshal([]byte(out), &issue)
+	_ = json.Unmarshal(extractJSON(out), &issue)
 	id := issue["id"].(string)
-	
+
 	out = runBD(t, tmpDir, "show", id)
 	if !strings.Contains(out, "Show test") {
 		t.Errorf("Expected 'Show test' in output, got: %s", out)
@@ -249,10 +249,10 @@ func TestCLI_Export(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	runBD(t, tmpDir, "create", "Export test", "-p", "1")
-	
+
 	exportFile := filepath.Join(tmpDir, "export.jsonl")
 	runBD(t, tmpDir, "export", "-o", exportFile)
-	
+
 	if _, err := os.Stat(exportFile); os.IsNotExist(err) {
 		t.Errorf("Export file not created: %s", exportFile)
 	}
@@ -265,18 +265,18 @@ func TestCLI_Import(t *testing.T) {
 	t.Parallel()
 	tmpDir := setupCLITestDB(t)
 	runBD(t, tmpDir, "create", "Import test", "-p", "1")
-	
+
 	exportFile := filepath.Join(tmpDir, "export.jsonl")
 	runBD(t, tmpDir, "export", "-o", exportFile)
-	
+
 	// Create new db and import
 	tmpDir2 := t.TempDir()
 	runBD(t, tmpDir2, "init", "--prefix", "test", "--quiet")
 	runBD(t, tmpDir2, "import", "-i", exportFile)
-	
+
 	out := runBD(t, tmpDir2, "list", "--json")
 	var issues []map[string]interface{}
-	json.Unmarshal([]byte(out), &issues)
+	_ = json.Unmarshal(extractJSON(out), &issues)
 	if len(issues) != 1 {
 		t.Errorf("Expected 1 imported issue, got %d", len(issues))
 	}
@@ -291,16 +291,6 @@ func init() {
 		bdBinary = "bd.exe"
 	}
 	
-	// Check if bd binary exists in repo root (../../bd from cmd/bd/)
-	repoRoot := filepath.Join("..", "..")
-	existingBD := filepath.Join(repoRoot, bdBinary)
-	if _, err := os.Stat(existingBD); err == nil {
-		// Use existing binary
-		testBD, _ = filepath.Abs(existingBD)
-		return
-	}
-	
-	// Fall back to building once (for CI or fresh checkouts)
 	tmpDir, err := os.MkdirTemp("", "bd-cli-test-*")
 	if err != nil {
 		panic(err)
@@ -315,19 +305,35 @@ func init() {
 // Helper to run bd command in tmpDir with --no-daemon
 func runBD(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	
+
 	// Add --no-daemon to all commands except init
 	if len(args) > 0 && args[0] != "init" {
 		args = append([]string{"--no-daemon"}, args...)
 	}
-	
+
 	cmd := exec.Command(testBD, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
-	
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("bd %v failed: %v\nOutput: %s", args, err, out)
 	}
 	return string(out)
+}
+
+func extractJSON(out string) []byte {
+	start := strings.IndexFunc(out, func(r rune) bool {
+		return r == '{' || r == '['
+	})
+	if start == -1 {
+		return []byte(out)
+	}
+
+	trimmed := out[start:]
+	end := strings.LastIndexAny(trimmed, "}]")
+	if end != -1 {
+		trimmed = trimmed[:end+1]
+	}
+	return []byte(trimmed)
 }
