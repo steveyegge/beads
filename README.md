@@ -85,9 +85,9 @@ brew tap steveyegge/beads
 brew install bd
 ```
 
-**Other platforms and methods:** See [INSTALLING.md](INSTALLING.md) for Windows, Arch Linux, and manual installation.
+**Other platforms and methods:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Windows, Arch Linux, and manual installation.
 
-**IDE Integration:** See [INSTALLING.md](INSTALLING.md) for Claude Code plugin and MCP server setup.
+**IDE Integration:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Claude Code plugin and MCP server setup.
 
 **Claude Code for Web:** See [npm-package/CLAUDE_CODE_WEB.md](npm-package/CLAUDE_CODE_WEB.md) for SessionStart hook setup.
 
@@ -672,18 +672,18 @@ For advanced usage, see:
 ## Documentation
 
 - **[README.md](README.md)** - You are here! Core features and quick start
-- **[INSTALLING.md](INSTALLING.md)** - Complete installation guide for all platforms
-- **[QUICKSTART.md](QUICKSTART.md)** - Interactive tutorial (`bd quickstart`)
+- **[docs/INSTALLING.md](docs/INSTALLING.md)** - Complete installation guide for all platforms
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - Interactive tutorial (`bd quickstart`)
 - **[docs/MULTI_REPO_MIGRATION.md](docs/MULTI_REPO_MIGRATION.md)** - Multi-repo workflow guide (OSS, teams, multi-phase)
 - **[docs/MULTI_REPO_AGENTS.md](docs/MULTI_REPO_AGENTS.md)** - Multi-repo patterns for AI agents
-- **[FAQ.md](FAQ.md)** - Frequently asked questions
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[ADVANCED.md](ADVANCED.md)** - Advanced features and use cases
-- **[LABELS.md](LABELS.md)** - Complete label system guide
-- **[CONFIG.md](CONFIG.md)** - Configuration system
-- **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format analysis
-- **[PLUGIN.md](PLUGIN.md)** - Claude Code plugin documentation
+- **[docs/FAQ.md](docs/FAQ.md)** - Frequently asked questions
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - Advanced features and use cases
+- **[docs/LABELS.md](docs/LABELS.md)** - Complete label system guide
+- **[docs/CONFIG.md](docs/CONFIG.md)** - Configuration system
+- **[docs/EXTENDING.md](docs/EXTENDING.md)** - Database extension patterns
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - JSONL format analysis
+- **[docs/PLUGIN.md](docs/PLUGIN.md)** - Claude Code plugin documentation
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 - **[SECURITY.md](SECURITY.md)** - Security policy
 
