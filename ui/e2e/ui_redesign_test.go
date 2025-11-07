@@ -375,12 +375,10 @@ func TestRedesignedCommandPaletteTrigger(t *testing.T) {
 	}
 
 	// Verify input is focused
-	isFocused, err := input.Evaluate(`el => el === document.activeElement`)
-	if err != nil {
-		t.Fatalf("check if input focused: %v", err)
-	}
-	if focused, ok := isFocused.(bool); !ok || !focused {
-		t.Fatalf("expected command input to be focused")
+	if _, err := page.WaitForFunction(`(el) => el === document.activeElement`, input, playwright.PageWaitForFunctionOptions{
+		Timeout: playwright.Float(2000),
+	}); err != nil {
+		t.Fatalf("expected command input to be focused: %v", err)
 	}
 }
 
