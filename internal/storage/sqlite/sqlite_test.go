@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func setupTestDB(t *testing.T) (*SQLiteStorage, func()) {
@@ -287,7 +288,7 @@ func (h *createIssuesTestHelper) assertNoAutoGenID(issues []*types.Issue, wantEr
 		if issue == nil {
 			continue
 		}
-		hasCustomID := issue.ID != "" && (issue.ID == "bd-100" || issue.ID == "bd-200" || 
+		hasCustomID := issue.ID != "" && (issue.ID == "bd-100" || issue.ID == "bd-200" ||
 			issue.ID == "bd-999" || issue.ID == "bd-existing")
 		if !hasCustomID && issue.ID != "" {
 			h.t.Errorf("issue %d: ID should not be auto-generated on error, got %s", i, issue.ID)
@@ -302,10 +303,10 @@ func TestCreateIssues(t *testing.T) {
 	h := newCreateIssuesHelper(t, store)
 
 	tests := []struct {
-		name       string
-		issues     []*types.Issue
-		wantErr    bool
-		checkFunc  func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue)
+		name      string
+		issues    []*types.Issue
+		wantErr   bool
+		checkFunc func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue)
 	}{
 		{
 			name:    "empty batch",
@@ -347,21 +348,21 @@ func TestCreateIssues(t *testing.T) {
 			},
 		},
 		{
-		name: "mixed ID assignment - explicit and auto-generated",
-		issues: []*types.Issue{
-		h.newIssue("bd-100", "Custom ID 1", types.StatusOpen, 1, types.TypeTask, nil),
-		h.newIssue("", "Auto ID", types.StatusOpen, 1, types.TypeTask, nil),
-		h.newIssue("bd-200", "Custom ID 2", types.StatusOpen, 1, types.TypeTask, nil),
-		},
-		wantErr: false,
-		checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
-		h.assertCount(issues, 3)
-		h.assertEqual("bd-100", issues[0].ID, "ID")
-		if issues[1].ID == "" || issues[1].ID == "bd-100" || issues[1].ID == "bd-200" {
-		t.Errorf("expected auto-generated ID, got %s", issues[1].ID)
-		}
-		h.assertEqual("bd-200", issues[2].ID, "ID")
-		},
+			name: "mixed ID assignment - explicit and auto-generated",
+			issues: []*types.Issue{
+				h.newIssue("bd-100", "Custom ID 1", types.StatusOpen, 1, types.TypeTask, nil),
+				h.newIssue("", "Auto ID", types.StatusOpen, 1, types.TypeTask, nil),
+				h.newIssue("bd-200", "Custom ID 2", types.StatusOpen, 1, types.TypeTask, nil),
+			},
+			wantErr: false,
+			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
+				h.assertCount(issues, 3)
+				h.assertEqual("bd-100", issues[0].ID, "ID")
+				if issues[1].ID == "" || issues[1].ID == "bd-100" || issues[1].ID == "bd-200" {
+					t.Errorf("expected auto-generated ID, got %s", issues[1].ID)
+				}
+				h.assertEqual("bd-200", issues[2].ID, "ID")
+			},
 		},
 		{
 			name: "validation error - missing title",
@@ -369,36 +370,36 @@ func TestCreateIssues(t *testing.T) {
 				h.newIssue("", "Valid issue", types.StatusOpen, 1, types.TypeTask, nil),
 				h.newIssue("", "", types.StatusOpen, 1, types.TypeTask, nil),
 			},
-			wantErr: true,
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-			name:    "validation error - invalid priority",
-			issues:  []*types.Issue{h.newIssue("", "Test", types.StatusOpen, 10, types.TypeTask, nil)},
-			wantErr: true,
+			name:      "validation error - invalid priority",
+			issues:    []*types.Issue{h.newIssue("", "Test", types.StatusOpen, 10, types.TypeTask, nil)},
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-			name:    "validation error - invalid status",
-			issues:  []*types.Issue{h.newIssue("", "Test", "invalid", 1, types.TypeTask, nil)},
-			wantErr: true,
+			name:      "validation error - invalid status",
+			issues:    []*types.Issue{h.newIssue("", "Test", "invalid", 1, types.TypeTask, nil)},
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-		name: "duplicate ID error",
-		issues: []*types.Issue{
-		h.newIssue("bd-999", "First issue", types.StatusOpen, 1, types.TypeTask, nil),
-		h.newIssue("bd-999", "Second issue", types.StatusOpen, 1, types.TypeTask, nil),
-		},
-		wantErr: true,
-		checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
+			name: "duplicate ID error",
+			issues: []*types.Issue{
+				h.newIssue("bd-999", "First issue", types.StatusOpen, 1, types.TypeTask, nil),
+				h.newIssue("bd-999", "Second issue", types.StatusOpen, 1, types.TypeTask, nil),
+			},
+			wantErr:   true,
+			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
 			name: "closed_at invariant - open status with closed_at",
 			issues: []*types.Issue{
 				h.newIssue("", "Invalid closed_at", types.StatusOpen, 1, types.TypeTask, &time.Time{}),
 			},
-			wantErr: true,
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
@@ -406,7 +407,7 @@ func TestCreateIssues(t *testing.T) {
 			issues: []*types.Issue{
 				h.newIssue("", "Missing closed_at", types.StatusClosed, 1, types.TypeTask, nil),
 			},
-			wantErr: true,
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
@@ -415,7 +416,7 @@ func TestCreateIssues(t *testing.T) {
 				h.newIssue("", "Valid issue", types.StatusOpen, 1, types.TypeTask, nil),
 				nil,
 			},
-			wantErr: true,
+			wantErr:   true,
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
@@ -852,6 +853,18 @@ func TestSearchIssues(t *testing.T) {
 		}
 	}
 
+	olderClosedAt := time.Now().Add(-2 * time.Hour)
+	oldClosedIssue := &types.Issue{
+		Title:     "Historical closed",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		ClosedAt:  &olderClosedAt,
+	}
+	if err := store.CreateIssue(ctx, oldClosedIssue, "test-user"); err != nil {
+		t.Fatalf("CreateIssue for historical closed failed: %v", err)
+	}
+
 	// Test query search
 	results, err := store.SearchIssues(ctx, "bug", types.IssueFilter{})
 	if err != nil {
@@ -963,10 +976,94 @@ func TestSearchIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchIssues with whitespace labels failed: %v", err)
 	}
-	// This won't match because storage layer doesn't trim - that's CLI's job
-	// But let's verify the storage layer accepts it without error
-	if len(results) != 0 {
-		t.Logf("Note: Storage layer doesn't auto-trim labels (expected - trimming is CLI responsibility)")
+	if len(results) != 1 || results[0].ID != issues[0].ID {
+		t.Errorf("Expected trimmed label filter to match issue %s, got %+v", issues[0].ID, results)
+	}
+
+	// Test ID prefix filtering
+	prefix := issues[0].ID
+	if len(prefix) > 5 {
+		prefix = prefix[:5]
+	}
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{IDPrefix: prefix})
+	if err != nil {
+		t.Fatalf("SearchIssues with IDPrefix failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("Expected at least one issue with prefix %s", prefix)
+	}
+	for _, res := range results {
+		if !strings.HasPrefix(res.ID, prefix) {
+			t.Fatalf("Result ID %s does not have expected prefix %s", res.ID, prefix)
+		}
+	}
+
+	// Test custom sort ordering
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{
+		Sort: []types.IssueSortOption{
+			{Field: types.SortFieldTitle, Direction: types.SortAsc},
+			{Field: types.SortFieldPriority, Direction: types.SortDesc},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with custom sort failed: %v", err)
+	}
+	for i := 1; i < len(results); i++ {
+		prev := strings.ToLower(results[i-1].Title)
+		curr := strings.ToLower(results[i].Title)
+		if prev > curr {
+			t.Fatalf("Results not sorted by title ascending: %q before %q", results[i-1].Title, results[i].Title)
+		}
+	}
+
+	// Test closed ordering and cursor pagination
+	closedStatus := types.StatusClosed
+	results, err = store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:      &closedStatus,
+		OrderClosed: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with OrderClosed failed: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("Expected at least two closed issues, got %d", len(results))
+	}
+	firstClosed := results[0]
+	secondClosed := results[1]
+	if firstClosed.ClosedAt == nil || secondClosed.ClosedAt == nil {
+		t.Fatalf("Closed issues should have closed_at populated")
+	}
+	if !firstClosed.ClosedAt.After(*secondClosed.ClosedAt) && !firstClosed.ClosedAt.Equal(*secondClosed.ClosedAt) {
+		t.Fatalf("Expected first closed issue to be newer than second")
+	}
+
+	cursorTime := firstClosed.ClosedAt
+	cursorID := firstClosed.ID
+	paginated, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:         &closedStatus,
+		OrderClosed:    true,
+		ClosedBefore:   cursorTime,
+		ClosedBeforeID: cursorID,
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with ClosedBefore cursor failed: %v", err)
+	}
+	if len(paginated) == 0 {
+		t.Fatalf("Expected cursor page to return results")
+	}
+	if paginated[0].ID == firstClosed.ID {
+		t.Fatalf("Cursor results should not include the cursor issue %s", firstClosed.ID)
+	}
+	for _, res := range paginated {
+		if res.ClosedAt == nil {
+			t.Fatalf("Paginated result missing closed_at")
+		}
+		if res.ClosedAt.After(*cursorTime) {
+			t.Fatalf("Paginated result %s closed_at %v should be before cursor %v", res.ID, res.ClosedAt, cursorTime)
+		}
+		if res.ClosedAt.Equal(*cursorTime) && !(res.ID < cursorID) {
+			t.Fatalf("Paginated result %s should have ID less than cursor when timestamps equal", res.ID)
+		}
 	}
 }
 

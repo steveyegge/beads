@@ -9,10 +9,15 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/go-cmp v0.6.0
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/ncruces/go-sqlite3 v0.29.1
+	github.com/playwright-community/playwright-go v0.5200.1
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
+	github.com/yuin/goldmark v1.7.13
 	golang.org/x/mod v0.29.0
+	golang.org/x/net v0.44.0
 	golang.org/x/sys v0.36.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -20,7 +25,12 @@ require (
 )
 
 require (
+	github.com/aymerick/douceur v0.2.0 // indirect
+	github.com/deckarep/golang-set/v2 v2.7.0 // indirect
+	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

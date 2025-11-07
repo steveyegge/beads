@@ -47,8 +47,11 @@ type Server struct {
 	// Auto-import single-flight guard
 	importInProgress atomic.Bool
 	// Mutation events for event-driven daemon
-	mutationChan    chan MutationEvent
-	droppedEvents   atomic.Int64 // Counter for dropped mutation events
+	mutationChan  chan MutationEvent
+	droppedEvents atomic.Int64 // Counter for dropped mutation events
+	watchersMu    sync.RWMutex
+	watchers      map[int64]chan IssueEvent
+	watcherSeq    int64
 }
 
 // Mutation event types
@@ -61,8 +64,8 @@ const (
 
 // MutationEvent represents a database mutation for event-driven sync
 type MutationEvent struct {
-	Type      string    // One of: MutationCreate, MutationUpdate, MutationDelete, MutationComment
-	IssueID   string    // e.g., "bd-42"
+	Type      string // One of: MutationCreate, MutationUpdate, MutationDelete, MutationComment
+	IssueID   string // e.g., "bd-42"
 	Timestamp time.Time
 }
 
@@ -106,6 +109,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		requestTimeout: requestTimeout,
 		readyChan:      make(chan struct{}),
 		mutationChan:   make(chan MutationEvent, mutationBufferSize), // Configurable buffer
+		watchers:       make(map[int64]chan IssueEvent),
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s

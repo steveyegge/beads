@@ -3,6 +3,9 @@ package rpc
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +41,13 @@ func strValue(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+func debugCursorf(format string, args ...interface{}) {
+	if os.Getenv("RPC_DEBUG_CURSOR") == "" {
+		return
+	}
+	log.Printf("rpc cursor: "+format, args...)
 }
 
 func updatesFromArgs(a UpdateArgs) map[string]interface{} {
@@ -122,9 +132,9 @@ func (s *Server) handleCreate(req *Request) Response {
 		Design:             strValue(design),
 		AcceptanceCriteria: strValue(acceptance),
 		Assignee:           strValue(assignee),
-		Status:             types.StatusOpen,
+	Status:             types.StatusOpen,
 	}
-	
+
 	// Check if any dependencies are discovered-from type
 	// If so, inherit source_repo from the parent issue
 	var discoveredFromParentID string
@@ -133,16 +143,16 @@ func (s *Server) handleCreate(req *Request) Response {
 		if depSpec == "" {
 			continue
 		}
-		
+
 		var depType types.DependencyType
 		var dependsOnID string
-		
+
 		if strings.Contains(depSpec, ":") {
 			parts := strings.SplitN(depSpec, ":", 2)
 			if len(parts) == 2 {
 				depType = types.DependencyType(strings.TrimSpace(parts[0]))
 				dependsOnID = strings.TrimSpace(parts[1])
-				
+
 				if depType == types.DepDiscoveredFrom {
 					discoveredFromParentID = dependsOnID
 					break
@@ -150,7 +160,7 @@ func (s *Server) handleCreate(req *Request) Response {
 			}
 		}
 	}
-	
+
 	// If we found a discovered-from dependency, inherit source_repo from parent
 	if discoveredFromParentID != "" {
 		parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
@@ -159,7 +169,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 		// If error getting parent or parent has no source_repo, continue with default
 	}
-	
+
 	if err := store.CreateIssue(ctx, issue, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -224,6 +234,7 @@ func (s *Server) handleCreate(req *Request) Response {
 
 	// Emit mutation event for event-driven daemon
 	s.emitMutation(MutationCreate, issue.ID)
+	s.publishIssueEvent(ctx, IssueEventCreated, issue)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -266,6 +277,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 			Error:   fmt.Sprintf("failed to get updated issue: %v", err),
 		}
 	}
+	s.publishIssueEvent(ctx, IssueEventUpdated, issue)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -297,11 +309,62 @@ func (s *Server) handleClose(req *Request) Response {
 	s.emitMutation(MutationUpdate, closeArgs.ID)
 
 	issue, _ := store.GetIssue(ctx, closeArgs.ID)
+	if issue != nil {
+		s.publishIssueEvent(ctx, IssueEventClosed, issue)
+	}
 	data, _ := json.Marshal(issue)
 	return Response{
 		Success: true,
 		Data:    data,
 	}
+}
+
+func (s *Server) handleDelete(req *Request) Response {
+	var deleteArgs DeleteArgs
+	if err := json.Unmarshal(req.Args, &deleteArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid delete args: %v", err),
+		}
+	}
+
+	issueID := strings.TrimSpace(deleteArgs.ID)
+	if issueID == "" {
+		return Response{
+			Success: false,
+			Error:   "issue id is required",
+		}
+	}
+
+	store := s.storage
+	ctx := s.reqCtx(req)
+
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to load issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success:    false,
+			Error:      fmt.Sprintf("issue %s not found", issueID),
+			StatusCode: http.StatusNotFound,
+		}
+	}
+
+	if err := store.DeleteIssue(ctx, issueID); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to delete issue: %v", err),
+		}
+	}
+
+	s.emitMutation(MutationDelete, issueID)
+	s.publishIssueEvent(ctx, IssueEventDeleted, issue)
+
+	return Response{Success: true}
 }
 
 func (s *Server) handleList(req *Request) Response {
@@ -314,6 +377,7 @@ func (s *Server) handleList(req *Request) Response {
 	}
 
 	store := s.storage
+	ctx := s.reqCtx(req)
 
 	filter := types.IssueFilter{
 		Limit: listArgs.Limit,
@@ -354,7 +418,7 @@ func (s *Server) handleList(req *Request) Response {
 			filter.IDs = ids
 		}
 	}
-	
+
 	// Pattern matching
 	filter.TitleContains = listArgs.TitleContains
 	filter.DescriptionContains = listArgs.DescriptionContains
@@ -411,17 +475,7 @@ func (s *Server) handleList(req *Request) Response {
 		}
 		filter.ClosedAfter = &t
 	}
-	if listArgs.ClosedBefore != "" {
-		t, err := parseTimeRPC(listArgs.ClosedBefore)
-		if err != nil {
-			return Response{
-				Success: false,
-				Error:   fmt.Sprintf("invalid --closed-before date: %v", err),
-			}
-		}
-		filter.ClosedBefore = &t
-	}
-	
+
 	// Empty/null checks
 	filter.EmptyDescription = listArgs.EmptyDescription
 	filter.NoAssignee = listArgs.NoAssignee
@@ -431,6 +485,44 @@ func (s *Server) handleList(req *Request) Response {
 	filter.PriorityMin = listArgs.PriorityMin
 	filter.PriorityMax = listArgs.PriorityMax
 
+	if trimmed := strings.TrimSpace(listArgs.IDPrefix); trimmed != "" {
+		filter.IDPrefix = trimmed
+	}
+
+	if trimmed := strings.TrimSpace(listArgs.Order); trimmed != "" {
+		switch strings.ToLower(trimmed) {
+		case closedQueueOrder, legacyClosedQueueOrder:
+			filter.OrderClosed = true
+		default:
+			if options := types.ParseIssueSortOrder(trimmed); len(options) > 0 {
+				filter.Sort = options
+			}
+		}
+	}
+
+	if trimmed := strings.TrimSpace(listArgs.ClosedBefore); trimmed != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+			filter.ClosedBefore = &ts
+			filter.ClosedBeforeID = strings.TrimSpace(listArgs.ClosedBeforeID)
+			debugCursorf("explicit closed_before=%s id=%s", ts.Format(time.RFC3339Nano), filter.ClosedBeforeID)
+		} else if ts, err := parseTimeRPC(trimmed); err == nil {
+			filter.ClosedBefore = &ts
+			filter.ClosedBeforeID = strings.TrimSpace(listArgs.ClosedBeforeID)
+			debugCursorf("parsed closed_before=%s id=%s via parseTimeRPC", ts.Format(time.RFC3339Nano), filter.ClosedBeforeID)
+		} else {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --closed-before date: %v", err),
+			}
+		}
+	} else if cursor := strings.TrimSpace(listArgs.Cursor); cursor != "" {
+		if ts, id, err := parseClosedCursor(cursor); err == nil {
+			filter.ClosedBefore = &ts
+			filter.ClosedBeforeID = id
+			debugCursorf("cursor=%s => closed_before=%s id=%s", cursor, ts.Format(time.RFC3339Nano), id)
+		}
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {
@@ -439,13 +531,56 @@ func (s *Server) handleList(req *Request) Response {
 			Error:   fmt.Sprintf("--id flag supports at most %d issue IDs, got %d", maxIDs, len(filter.IDs)),
 		}
 	}
-
-	ctx := s.reqCtx(req)
+	if os.Getenv("RPC_DEBUG_CURSOR") != "" && strings.TrimSpace(listArgs.Cursor) != "" {
+		debugCursorf("filters: status=%v orderClosed=%v closedBefore=%v closedBeforeID=%s", filter.Status, filter.OrderClosed, filter.ClosedBefore, filter.ClosedBeforeID)
+	}
+	cursorTime := filter.ClosedBefore
+	cursorID := filter.ClosedBeforeID
 	issues, err := store.SearchIssues(ctx, listArgs.Query, filter)
 	if err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to list issues: %v", err),
+		}
+	}
+	if cursorTime != nil && strings.TrimSpace(listArgs.Cursor) != "" && len(issues) == 0 {
+		fallbackFilter := filter
+		fallbackFilter.ClosedBefore = nil
+		fallbackFilter.ClosedBeforeID = ""
+		originalLimit := fallbackFilter.Limit
+		if originalLimit <= 0 {
+			originalLimit = 50
+		}
+		fallbackFilter.Limit = originalLimit * 2
+		fallbackIssues, err := store.SearchIssues(ctx, listArgs.Query, fallbackFilter)
+		if err == nil {
+			for _, issue := range fallbackIssues {
+				if issue.ClosedAt == nil {
+					continue
+				}
+				if issue.ClosedAt.Before(*cursorTime) || (issue.ClosedAt.Equal(*cursorTime) && issue.ID < cursorID) {
+					issues = append(issues, issue)
+					if filter.Limit > 0 && len(issues) >= filter.Limit {
+						break
+					}
+				}
+			}
+		}
+	}
+	if os.Getenv("RPC_DEBUG_CURSOR") != "" && strings.TrimSpace(listArgs.Cursor) != "" {
+		debugCursorf("storage returned %d issues", len(issues))
+		for _, issue := range issues {
+			debugCursorf("issue %s closed_at=%v", issue.ID, issue.ClosedAt)
+		}
+		altFilter := filter
+		altFilter.ClosedBefore = nil
+		altFilter.ClosedBeforeID = ""
+		altIssues, errAlt := store.SearchIssues(ctx, listArgs.Query, altFilter)
+		if errAlt == nil {
+			debugCursorf("without cursor filter returned %d issues", len(altIssues))
+			for _, issue := range altIssues {
+				debugCursorf("alt issue %s closed_at=%v", issue.ID, issue.ClosedAt)
+			}
 		}
 	}
 
@@ -536,7 +671,7 @@ func (s *Server) handleShow(req *Request) Response {
 
 	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	
+
 	// Get dependencies and dependents with metadata (including dependency type)
 	var deps []*types.IssueWithDependencyMetadata
 	var dependents []*types.IssueWithDependencyMetadata
@@ -564,7 +699,7 @@ func (s *Server) handleShow(req *Request) Response {
 	// Create detailed response with related data
 	type IssueDetails struct {
 		*types.Issue
-		Labels       []string                              `json:"labels,omitempty"`
+		Labels       []string                             `json:"labels,omitempty"`
 		Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 		Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 	}

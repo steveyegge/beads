@@ -88,6 +88,7 @@ func TestValidateBatchIssues(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+
 }
 
 func TestBatchCreateIssues(t *testing.T) {
@@ -248,6 +249,24 @@ func TestBatchCreateIssues(t *testing.T) {
 		}
 		if got.ContentHash == "" {
 			t.Error("content hash should be set")
+		}
+	})
+
+	t.Run("allows orphaned child IDs by default", func(t *testing.T) {
+		child := &types.Issue{
+			ID:        "bd-orphan.1",
+			Title:     "Orphan child",
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Status:    types.StatusOpen,
+		}
+
+		if err := s.CreateIssues(ctx, []*types.Issue{child}, "test-actor"); err != nil {
+			t.Fatalf("expected CreateIssues to allow orphan child IDs by default, got %v", err)
+		}
+
+		if _, err := s.GetIssue(ctx, child.ID); err != nil {
+			t.Fatalf("failed to fetch orphan child after creation: %v", err)
 		}
 	})
 }

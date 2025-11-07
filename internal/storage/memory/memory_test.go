@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,6 +358,19 @@ func TestSearchIssues(t *testing.T) {
 		}
 	}
 
+	if err := store.AddLabel(ctx, issues[0].ID, "backend", "test-user"); err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+	if err := store.AddLabel(ctx, issues[0].ID, "urgent", "test-user"); err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+	if err := store.AddLabel(ctx, issues[1].ID, "backend", "test-user"); err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+	if err := store.AddLabel(ctx, issues[2].ID, "frontend", "test-user"); err != nil {
+		t.Fatalf("AddLabel failed: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		query    string
@@ -393,6 +407,24 @@ func TestSearchIssues(t *testing.T) {
 			filter:   types.IssueFilter{IssueType: func() *types.IssueType { t := types.TypeBug; return &t }()},
 			wantSize: 1,
 		},
+		{
+			name:     "filter by labels AND",
+			query:    "",
+			filter:   types.IssueFilter{Labels: []string{" backend ", "urgent"}},
+			wantSize: 1,
+		},
+		{
+			name:     "filter by labels OR",
+			query:    "",
+			filter:   types.IssueFilter{LabelsAny: []string{"frontend", "urgent"}},
+			wantSize: 2,
+		},
+		{
+			name:     "title search filter",
+			query:    "",
+			filter:   types.IssueFilter{TitleSearch: "bug"},
+			wantSize: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -406,6 +438,96 @@ func TestSearchIssues(t *testing.T) {
 				t.Errorf("Expected %d results, got %d", tt.wantSize, len(results))
 			}
 		})
+	}
+
+	// ID prefix filter
+	prefix := issues[0].ID
+	if len(prefix) > 5 {
+		prefix = prefix[:5]
+	}
+	idResults, err := store.SearchIssues(ctx, "", types.IssueFilter{IDPrefix: prefix})
+	if err != nil {
+		t.Fatalf("SearchIssues with IDPrefix failed: %v", err)
+	}
+	if len(idResults) == 0 {
+		t.Fatalf("Expected at least one issue with prefix %s", prefix)
+	}
+	for _, res := range idResults {
+		if !strings.HasPrefix(res.ID, prefix) {
+			t.Fatalf("Result ID %s missing prefix %s", res.ID, prefix)
+		}
+	}
+
+	// Custom ordering
+	sortedResults, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Sort: []types.IssueSortOption{
+			{Field: types.SortFieldTitle, Direction: types.SortAsc},
+			{Field: types.SortFieldPriority, Direction: types.SortDesc},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with custom sort failed: %v", err)
+	}
+	for i := 1; i < len(sortedResults); i++ {
+		prev := strings.ToLower(sortedResults[i-1].Title)
+		curr := strings.ToLower(sortedResults[i].Title)
+		if prev > curr {
+			t.Fatalf("Results not sorted by title ascending: %q before %q", sortedResults[i-1].Title, sortedResults[i].Title)
+		}
+	}
+
+	// Closed ordering and cursor
+	if err := store.CloseIssue(ctx, issues[0].ID, "done", "test-user"); err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+	olderClosedAt := time.Now().Add(-time.Hour)
+	olderClosed := &types.Issue{
+		Title:     "Older closed",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		ClosedAt:  &olderClosedAt,
+	}
+	if err := store.CreateIssue(ctx, olderClosed, "test-user"); err != nil {
+		t.Fatalf("CreateIssue for older closed failed: %v", err)
+	}
+
+	closedStatus := types.StatusClosed
+	closedResults, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:      &closedStatus,
+		OrderClosed: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with OrderClosed failed: %v", err)
+	}
+	if len(closedResults) < 2 {
+		t.Fatalf("Expected at least two closed issues, got %d", len(closedResults))
+	}
+
+	cursorTime := closedResults[0].ClosedAt
+	cursorID := closedResults[0].ID
+	if cursorTime == nil {
+		t.Fatalf("First closed result missing closed_at")
+	}
+	paginated, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		Status:         &closedStatus,
+		OrderClosed:    true,
+		ClosedBefore:   cursorTime,
+		ClosedBeforeID: cursorID,
+	})
+	if err != nil {
+		t.Fatalf("SearchIssues with ClosedBefore failed: %v", err)
+	}
+	for _, res := range paginated {
+		if res.ClosedAt == nil {
+			t.Fatalf("Paginated result missing closed_at")
+		}
+		if res.ClosedAt.After(*cursorTime) {
+			t.Fatalf("Paginated result %s has closed_at %v after cursor %v", res.ID, res.ClosedAt, cursorTime)
+		}
+		if res.ClosedAt.Equal(*cursorTime) && !(res.ID < cursorID) {
+			t.Fatalf("Paginated result %s should sort before cursor when timestamps equal", res.ID)
+		}
 	}
 }
 
@@ -824,7 +946,6 @@ func TestMetadataOperations(t *testing.T) {
 		t.Errorf("Expected abc123, got %v", value)
 	}
 }
-
 
 func TestThreadSafety(t *testing.T) {
 	store := setupTestMemory(t)

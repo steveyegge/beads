@@ -13,9 +13,9 @@ import (
 	"time"
 
 	// Import SQLite driver
-	"github.com/steveyegge/beads/internal/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -190,22 +190,22 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return err
 		}
-		
+
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
 		if strings.Contains(issue.ID, ".") {
-		// Try to resurrect entire parent chain if any parents are missing
-		// Use the conn-based version to participate in the same transaction
-		resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
-		if err != nil {
-		 return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
+			// Try to resurrect entire parent chain if any parents are missing
+			// Use the conn-based version to participate in the same transaction
+			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
+			if err != nil {
+				return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
+			}
+			if !resurrected {
+				// Parent(s) not found in JSONL history - cannot proceed
+				lastDot := strings.LastIndex(issue.ID, ".")
+				parentID := issue.ID[:lastDot]
+				return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
+			}
 		}
-		if !resurrected {
-		// Parent(s) not found in JSONL history - cannot proceed
-		lastDot := strings.LastIndex(issue.ID, ".")
-		parentID := issue.ID[:lastDot]
-		 return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
-		 }
-	}
 	}
 
 	// Insert issue
@@ -1093,9 +1093,9 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, pattern, pattern, pattern)
 	}
 
-	if filter.TitleSearch != "" {
+	if trimmed := strings.TrimSpace(filter.TitleSearch); trimmed != "" {
 		whereClauses = append(whereClauses, "title LIKE ?")
-		pattern := "%" + filter.TitleSearch + "%"
+		pattern := "%" + trimmed + "%"
 		args = append(args, pattern)
 	}
 
@@ -1180,9 +1180,18 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, "id NOT IN (SELECT DISTINCT issue_id FROM labels)")
 	}
 
+	if trimmed := strings.TrimSpace(filter.IDPrefix); trimmed != "" {
+		whereClauses = append(whereClauses, "id LIKE ?")
+		args = append(args, trimmed+"%")
+	}
+
 	// Label filtering: issue must have ALL specified labels
 	if len(filter.Labels) > 0 {
 		for _, label := range filter.Labels {
+			label = strings.TrimSpace(label)
+			if label == "" {
+				continue
+			}
 			whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label = ?)")
 			args = append(args, label)
 		}
@@ -1190,12 +1199,22 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 
 	// Label filtering (OR): issue must have AT LEAST ONE of these labels
 	if len(filter.LabelsAny) > 0 {
-		placeholders := make([]string, len(filter.LabelsAny))
-		for i, label := range filter.LabelsAny {
-			placeholders[i] = "?"
-			args = append(args, label)
+		labelsAny := make([]string, 0, len(filter.LabelsAny))
+		for _, label := range filter.LabelsAny {
+			label = strings.TrimSpace(label)
+			if label == "" {
+				continue
+			}
+			labelsAny = append(labelsAny, label)
 		}
-		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
+		if len(labelsAny) > 0 {
+			placeholders := make([]string, len(labelsAny))
+			for i, label := range labelsAny {
+				placeholders[i] = "?"
+				args = append(args, label)
+			}
+			whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
+		}
 	}
 
 	// ID filtering: match specific issue IDs
@@ -1206,6 +1225,21 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 			args = append(args, id)
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
+	}
+
+	if filter.OrderClosed || filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at IS NOT NULL")
+	}
+
+	if filter.ClosedBefore != nil {
+		closedBefore := *filter.ClosedBefore
+		if filter.ClosedBeforeID != "" {
+			whereClauses = append(whereClauses, "(closed_at < ? OR (closed_at = ? AND id < ?))")
+			args = append(args, closedBefore, closedBefore, filter.ClosedBeforeID)
+		} else {
+			whereClauses = append(whereClauses, "closed_at < ?")
+			args = append(args, closedBefore)
+		}
 	}
 
 	whereSQL := ""
@@ -1219,6 +1253,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, filter.Limit)
 	}
 
+	orderClauses := buildIssueOrderClauses(filter)
+	orderSQL := ""
+	if len(orderClauses) > 0 {
+		orderSQL = "ORDER BY " + strings.Join(orderClauses, ", ")
+	}
+
 	// #nosec G201 - safe SQL with controlled formatting
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -1226,9 +1266,9 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, updated_at, closed_at, external_ref, source_repo
 		FROM issues
 		%s
-		ORDER BY priority ASC, created_at DESC
 		%s
-	`, whereSQL, limitSQL)
+		%s
+	`, whereSQL, orderSQL, limitSQL)
 
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
@@ -1237,6 +1277,64 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	defer func() { _ = rows.Close() }()
 
 	return s.scanIssues(ctx, rows)
+}
+
+func buildIssueOrderClauses(filter types.IssueFilter) []string {
+	orderClauses := make([]string, 0, 4)
+
+	if filter.OrderClosed {
+		orderClauses = append(orderClauses,
+			"closed_at DESC",
+			"updated_at DESC",
+			"id DESC",
+		)
+		return orderClauses
+	}
+
+	appendClause := func(column string, direction types.SortDirection, collate bool) {
+		dir := "ASC"
+		if direction == types.SortDesc {
+			dir = "DESC"
+		}
+		if collate {
+			orderClauses = append(orderClauses, fmt.Sprintf("%s COLLATE NOCASE %s", column, dir))
+		} else {
+			orderClauses = append(orderClauses, fmt.Sprintf("%s %s", column, dir))
+		}
+	}
+
+	if len(filter.Sort) > 0 {
+		for _, opt := range filter.Sort {
+			switch opt.Field {
+			case types.SortFieldPriority:
+				appendClause("priority", opt.Direction, false)
+			case types.SortFieldUpdated:
+				appendClause("updated_at", opt.Direction, false)
+			case types.SortFieldCreated:
+				appendClause("created_at", opt.Direction, false)
+			case types.SortFieldTitle:
+				appendClause("title", opt.Direction, true)
+			}
+		}
+	} else {
+		for _, opt := range types.DefaultIssueSortOptions() {
+			switch opt.Field {
+			case types.SortFieldPriority:
+				appendClause("priority", opt.Direction, false)
+			case types.SortFieldUpdated:
+				appendClause("updated_at", opt.Direction, false)
+			case types.SortFieldCreated:
+				appendClause("created_at", opt.Direction, false)
+			case types.SortFieldTitle:
+				appendClause("title", opt.Direction, true)
+			}
+		}
+	}
+
+	// Ensure deterministic ordering for identical values
+	orderClauses = append(orderClauses, "id ASC")
+
+	return orderClauses
 }
 
 // SetConfig sets a configuration value
@@ -1419,26 +1517,26 @@ func (s *SQLiteStorage) IsClosed() bool {
 // IMPORTANT SAFETY RULES:
 //
 // 1. DO NOT call Close() on the returned *sql.DB
-//    - The SQLiteStorage owns the connection lifecycle
-//    - Closing it will break all storage operations
-//    - Use storage.Close() to close the database
+//   - The SQLiteStorage owns the connection lifecycle
+//   - Closing it will break all storage operations
+//   - Use storage.Close() to close the database
 //
 // 2. DO NOT modify connection pool settings
-//    - Avoid SetMaxOpenConns, SetMaxIdleConns, SetConnMaxLifetime, etc.
-//    - The storage has already configured these for optimal performance
+//   - Avoid SetMaxOpenConns, SetMaxIdleConns, SetConnMaxLifetime, etc.
+//   - The storage has already configured these for optimal performance
 //
 // 3. DO NOT change SQLite PRAGMAs
-//    - The database is configured with WAL mode, foreign keys, and busy timeout
-//    - Changing these (e.g., journal_mode, synchronous, locking_mode) can cause corruption
+//   - The database is configured with WAL mode, foreign keys, and busy timeout
+//   - Changing these (e.g., journal_mode, synchronous, locking_mode) can cause corruption
 //
 // 4. Expect errors after storage.Close()
-//    - Check storage.IsClosed() before long-running operations if needed
-//    - Pass contexts with timeouts to prevent hanging on closed connections
+//   - Check storage.IsClosed() before long-running operations if needed
+//   - Pass contexts with timeouts to prevent hanging on closed connections
 //
 // 5. Keep write transactions SHORT
-//    - SQLite has a single-writer lock even in WAL mode
-//    - Long-running write transactions will block core storage operations
-//    - Use read transactions (BEGIN DEFERRED) when possible
+//   - SQLite has a single-writer lock even in WAL mode
+//   - Long-running write transactions will block core storage operations
+//   - Use read transactions (BEGIN DEFERRED) when possible
 //
 // GOOD PRACTICES:
 //
@@ -1460,7 +1558,6 @@ func (s *SQLiteStorage) IsClosed() bool {
 //	    );
 //	    CREATE INDEX IF NOT EXISTS idx_vc_executions_issue ON vc_executions(issue_id);
 //	`)
-//
 func (s *SQLiteStorage) UnderlyingDB() *sql.DB {
 	return s.db
 }

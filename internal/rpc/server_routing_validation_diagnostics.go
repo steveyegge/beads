@@ -137,8 +137,8 @@ func (s *Server) handleRequest(req *Request) Response {
 	// Check for stale JSONL and auto-import if needed (bd-160)
 	// Skip for write operations that will trigger export anyway
 	// Skip for import operation itself to avoid recursion
-	if req.Operation != OpPing && req.Operation != OpHealth && req.Operation != OpMetrics && 
-	   req.Operation != OpImport && req.Operation != OpExport {
+	if req.Operation != OpPing && req.Operation != OpHealth && req.Operation != OpMetrics &&
+		req.Operation != OpImport && req.Operation != OpExport {
 		if err := s.checkAndAutoImportIfStale(req); err != nil {
 			// Log warning but continue - don't fail the request
 			fmt.Fprintf(os.Stderr, "Warning: staleness check failed: %v\n", err)
@@ -164,6 +164,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleUpdate(req)
 	case OpClose:
 		resp = s.handleClose(req)
+	case OpDelete:
+		resp = s.handleDelete(req)
 	case OpList:
 		resp = s.handleList(req)
 	case OpShow:
@@ -190,7 +192,7 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleCommentAdd(req)
 	case OpBatch:
 		resp = s.handleBatch(req)
-	
+
 	case OpCompact:
 		resp = s.handleCompact(req)
 	case OpCompactStats:
@@ -247,7 +249,7 @@ func (s *Server) handlePing(_ *Request) Response {
 func (s *Server) handleStatus(_ *Request) Response {
 	// Get last activity timestamp
 	lastActivity := s.lastActivityTime.Load().(time.Time)
-	
+
 	// Check for exclusive lock
 	lockActive := false
 	lockHolder := ""
@@ -257,7 +259,7 @@ func (s *Server) handleStatus(_ *Request) Response {
 			lockHolder = holder
 		}
 	}
-	
+
 	statusResp := StatusResponse{
 		Version:             ServerVersion,
 		WorkspacePath:       s.workspacePath,
@@ -269,7 +271,7 @@ func (s *Server) handleStatus(_ *Request) Response {
 		ExclusiveLockActive: lockActive,
 		ExclusiveLockHolder: lockHolder,
 	}
-	
+
 	data, _ := json.Marshal(statusResp)
 	return Response{
 		Success: true,

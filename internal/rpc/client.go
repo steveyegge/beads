@@ -2,10 +2,14 @@ package rpc
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/debug"
@@ -237,6 +241,11 @@ func (c *Client) CloseIssue(args *CloseArgs) (*Response, error) {
 	return c.Execute(OpClose, args)
 }
 
+// DeleteIssue deletes an issue via the daemon.
+func (c *Client) DeleteIssue(args *DeleteArgs) (*Response, error) {
+	return c.Execute(OpDelete, args)
+}
+
 // List lists issues via the daemon
 func (c *Client) List(args *ListArgs) (*Response, error) {
 	return c.Execute(OpList, args)
@@ -302,8 +311,6 @@ func (c *Client) Batch(args *BatchArgs) (*Response, error) {
 	return c.Execute(OpBatch, args)
 }
 
-
-
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)
@@ -312,4 +319,129 @@ func (c *Client) Export(args *ExportArgs) (*Response, error) {
 // EpicStatus gets epic completion status via the daemon
 func (c *Client) EpicStatus(args *EpicStatusArgs) (*Response, error) {
 	return c.Execute(OpEpicStatus, args)
+}
+
+// WatchEvents subscribes to daemon issue mutation events. The returned cancel function
+// closes the underlying stream and terminates the goroutine delivering events.
+func (c *Client) WatchEvents(ctx context.Context, args *WatchEventsArgs) (<-chan IssueEvent, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if args == nil {
+		args = &WatchEventsArgs{}
+	}
+
+	if !endpointExists(c.socketPath) {
+		return nil, nil, ErrDaemonUnavailable
+	}
+
+	conn, err := dialRPC(c.socketPath, 2*time.Second)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	writer := bufio.NewWriter(conn)
+	reader := bufio.NewReader(conn)
+
+	payload, err := json.Marshal(args)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("marshal watch args: %w", err)
+	}
+
+	req := Request{
+		Operation:     OpWatchEvents,
+		Args:          payload,
+		ClientVersion: ClientVersion,
+		ExpectedDB:    c.dbPath,
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("marshal watch request: %w", err)
+	}
+
+	if _, err := writer.Write(reqJSON); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("send watch request: %w", err)
+	}
+	if err := writer.WriteByte('\n'); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("send watch newline: %w", err)
+	}
+	if err := writer.Flush(); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("flush watch request: %w", err)
+	}
+
+	ackLine, err := reader.ReadBytes('\n')
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("watch ack read: %w", err)
+	}
+
+	var ack Response
+	if err := json.Unmarshal(ackLine, &ack); err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("decode watch ack: %w", err)
+	}
+	if !ack.Success {
+		_ = conn.Close()
+		if ack.Error != "" {
+			return nil, nil, errors.New(ack.Error)
+		}
+		return nil, nil, ErrDaemonUnavailable
+	}
+
+	out := make(chan IssueEvent, 32)
+	done := make(chan struct{})
+	var once sync.Once
+
+	cancel := func() {
+		once.Do(func() {
+			close(done)
+			_ = conn.Close()
+		})
+	}
+
+	go func() {
+		defer close(out)
+		defer cancel()
+
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+
+			var evt IssueEvent
+			if err := json.Unmarshal(line, &evt); err != nil {
+				continue
+			}
+
+			select {
+			case out <- evt:
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			cancel()
+		case <-done:
+		}
+	}()
+
+	return out, cancel, nil
 }

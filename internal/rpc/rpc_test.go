@@ -96,7 +96,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	
+
 	if client == nil {
 		cancel()
 		server.Stop()
@@ -104,7 +104,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Client is nil after connection")
 	}
-	
+
 	// Set the client's dbPath to the test database so it doesn't route to the wrong DB
 	client.dbPath = dbPath
 
@@ -301,36 +301,166 @@ func TestCloseIssue(t *testing.T) {
 }
 
 func TestListIssues(t *testing.T) {
-	_, client, cleanup := setupTestServer(t)
+	server, client, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	for i := 0; i < 3; i++ {
-		args := &CreateArgs{
-			Title:     "Test Issue",
+	create := func(title string, priority int) types.Issue {
+		resp, err := client.Create(&CreateArgs{
+			Title:     title,
 			IssueType: "task",
-			Priority:  2,
-		}
-		if _, err := client.Create(args); err != nil {
+			Priority:  priority,
+		})
+		if err != nil {
 			t.Fatalf("Create failed: %v", err)
 		}
+		if !resp.Success {
+			t.Fatalf("Create returned error: %s", resp.Error)
+		}
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			t.Fatalf("Failed to decode create response: %v", err)
+		}
+		return issue
 	}
 
-	listArgs := &ListArgs{
-		Limit: 10,
+	alpha := create("Alpha task", 2)
+	bravo := create("Bravo bug", 0)
+	charlie := create("Charlie chore", 1)
+
+	if _, err := client.AddLabel(&LabelAddArgs{ID: alpha.ID, Label: "backend"}); err != nil {
+		t.Fatalf("LabelAdd failed: %v", err)
+	}
+	if _, err := client.AddLabel(&LabelAddArgs{ID: charlie.ID, Label: "frontend"}); err != nil {
+		t.Fatalf("LabelAdd failed: %v", err)
 	}
 
-	resp, err := client.List(listArgs)
+	if _, err := client.CloseIssue(&CloseArgs{ID: bravo.ID, Reason: "done"}); err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+	time.Sleep(15 * time.Millisecond)
+	if _, err := client.CloseIssue(&CloseArgs{ID: charlie.ID, Reason: "done"}); err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+
+	decodeIssues := func(resp *Response) []types.IssueWithCounts {
+		if !resp.Success {
+			t.Fatalf("List returned error: %s", resp.Error)
+		}
+		var issues []types.IssueWithCounts
+		if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			t.Fatalf("Failed to unmarshal issues: %v", err)
+		}
+		return issues
+	}
+
+	// Title sorting
+	resp, err := client.List(&ListArgs{Order: "title-asc"})
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
-
-	var issues []types.Issue
-	if err := json.Unmarshal(resp.Data, &issues); err != nil {
-		t.Fatalf("Failed to unmarshal issues: %v", err)
+	issues := decodeIssues(resp)
+	if len(issues) != 3 {
+		t.Fatalf("Expected 3 issues, got %d", len(issues))
+	}
+	titles := []string{
+		issues[0].Issue.Title,
+		issues[1].Issue.Title,
+		issues[2].Issue.Title,
+	}
+	if strings.Join(titles, ",") != "Alpha task,Bravo bug,Charlie chore" {
+		t.Fatalf("Title sort unexpected: %v", titles)
 	}
 
-	if len(issues) != 3 {
-		t.Errorf("Expected 3 issues, got %d", len(issues))
+	// ID prefix filter
+	prefix := alpha.ID
+	if len(prefix) > 5 {
+		prefix = prefix[:5]
+	}
+	resp, err = client.List(&ListArgs{IDPrefix: prefix})
+	if err != nil {
+		t.Fatalf("List with IDPrefix failed: %v", err)
+	}
+	prefixIssues := decodeIssues(resp)
+	if len(prefixIssues) == 0 {
+		t.Fatalf("Expected at least one issue with prefix %s", prefix)
+	}
+	for _, item := range prefixIssues {
+		if !strings.HasPrefix(item.Issue.ID, prefix) {
+			t.Fatalf("Issue %s missing prefix %s", item.Issue.ID, prefix)
+		}
+	}
+
+	// Closed ordering
+	resp, err = client.List(&ListArgs{
+		Status: string(types.StatusClosed),
+		Order:  "closed",
+	})
+	if err != nil {
+		t.Fatalf("List closed failed: %v", err)
+	}
+	closedIssues := decodeIssues(resp)
+	if len(closedIssues) != 2 {
+		t.Fatalf("Expected 2 closed issues, got %d", len(closedIssues))
+	}
+	firstClosed := closedIssues[0].Issue
+	secondClosed := closedIssues[1].Issue
+	if firstClosed.ID != charlie.ID {
+		t.Fatalf("Expected most recent closed issue to be %s, got %s", charlie.ID, firstClosed.ID)
+	}
+	if firstClosed.ClosedAt == nil || secondClosed.ClosedAt == nil {
+		t.Fatalf("Closed issues missing closed timestamps")
+	}
+	t.Logf("closed order: first=%s second=%s diff=%s", firstClosed.ClosedAt.Format(time.RFC3339Nano), secondClosed.ClosedAt.Format(time.RFC3339Nano), firstClosed.ClosedAt.Sub(*secondClosed.ClosedAt))
+	cursor := firstClosed.ClosedAt.Format(time.RFC3339Nano) + "|" + firstClosed.ID
+
+	// Cursor pagination
+	resp, err = client.List(&ListArgs{
+		Status: string(types.StatusClosed),
+		Order:  "closed",
+		Cursor: cursor,
+	})
+	if err != nil {
+		t.Fatalf("List with cursor failed: %v", err)
+	}
+	cursorIssues := decodeIssues(resp)
+	if len(cursorIssues) != 1 {
+		storageCursor, err := server.storage.SearchIssues(context.Background(), "", types.IssueFilter{
+			Status:         func() *types.Status { s := types.StatusClosed; return &s }(),
+			OrderClosed:    true,
+			ClosedBefore:   firstClosed.ClosedAt,
+			ClosedBeforeID: firstClosed.ID,
+		})
+		if err != nil {
+			t.Fatalf("cursor storage lookup failed: %v", err)
+		}
+		t.Fatalf("Expected cursor to return 1 issue, got %d (storage count=%d)", len(cursorIssues), len(storageCursor))
+	}
+	if cursorIssues[0].Issue.ID != bravo.ID {
+		t.Fatalf("Expected cursor issue %s, got %s", bravo.ID, cursorIssues[0].Issue.ID)
+	}
+
+	// Label filters
+	resp, err = client.List(&ListArgs{
+		Labels: []string{" backend "},
+	})
+	if err != nil {
+		t.Fatalf("List with labels failed: %v", err)
+	}
+	labelIssues := decodeIssues(resp)
+	if len(labelIssues) != 1 || labelIssues[0].Issue.ID != alpha.ID {
+		t.Fatalf("Expected label filter to return %s, got %+v", alpha.ID, labelIssues)
+	}
+
+	// Ensure storage closed_at ordering aligns with direct storage view (regression)
+	storedIssues, err := server.storage.SearchIssues(context.Background(), "", types.IssueFilter{
+		Status:      func() *types.Status { s := types.StatusClosed; return &s }(),
+		OrderClosed: true,
+	})
+	if err != nil {
+		t.Fatalf("Direct storage search failed: %v", err)
+	}
+	if len(storedIssues) != 2 || storedIssues[0].ID != charlie.ID {
+		t.Fatalf("Storage OrderClosed mismatch, got %+v", storedIssues)
 	}
 }
 
@@ -437,7 +567,7 @@ func TestConcurrentRequests(t *testing.T) {
 func TestDatabaseHandshake(t *testing.T) {
 	// Save original directory and change to a temp directory for test isolation
 	origDir, _ := os.Getwd()
-	
+
 	// Create two separate databases and daemons
 	tmpDir1, err := os.MkdirTemp("", "bd-test-db1-*")
 	if err != nil {
@@ -485,7 +615,7 @@ func TestDatabaseHandshake(t *testing.T) {
 	// Change to tmpDir1 so cwd resolution doesn't find other databases
 	os.Chdir(tmpDir1)
 	defer os.Chdir(origDir)
-	
+
 	client1, err := TryConnect(socketPath1)
 	if err != nil {
 		t.Fatalf("Failed to connect to server 1: %v", err)

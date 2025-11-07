@@ -64,7 +64,7 @@ type Storage interface {
 	GetExportHash(ctx context.Context, issueID string) (string, error)
 	SetExportHash(ctx context.Context, issueID, contentHash string) error
 	ClearAllExportHashes(ctx context.Context) error
-	
+
 	// JSONL file integrity (bd-160)
 	GetJSONLFileHash(ctx context.Context) (string, error)
 	SetJSONLFileHash(ctx context.Context, fileHash string) error

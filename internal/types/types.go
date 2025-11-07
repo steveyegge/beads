@@ -9,30 +9,30 @@ import (
 
 // Issue represents a trackable work item
 type Issue struct {
-	ID                 string         `json:"id"`
-	ContentHash        string         `json:"content_hash,omitempty"` // SHA256 hash of canonical content (excludes ID, timestamps)
-	Title              string         `json:"title"`
-	Description        string         `json:"description"`
-	Design             string         `json:"design,omitempty"`
-	AcceptanceCriteria string         `json:"acceptance_criteria,omitempty"`
-	Notes              string         `json:"notes,omitempty"`
-	Status             Status         `json:"status"`
-	Priority           int            `json:"priority"`
-	IssueType          IssueType      `json:"issue_type"`
-	Assignee           string         `json:"assignee,omitempty"`
-	EstimatedMinutes   *int           `json:"estimated_minutes,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	ClosedAt           *time.Time     `json:"closed_at,omitempty"`
-	ExternalRef        *string        `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
-	CompactionLevel    int            `json:"compaction_level,omitempty"`
-	CompactedAt        *time.Time     `json:"compacted_at,omitempty"`
-	CompactedAtCommit  *string        `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
-	OriginalSize       int            `json:"original_size,omitempty"`
-	SourceRepo         string         `json:"source_repo,omitempty"` // Which repo owns this issue (multi-repo support)
-	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
-	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
-	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
+	ID                 string        `json:"id"`
+	ContentHash        string        `json:"content_hash,omitempty"` // SHA256 hash of canonical content (excludes ID, timestamps)
+	Title              string        `json:"title"`
+	Description        string        `json:"description"`
+	Design             string        `json:"design,omitempty"`
+	AcceptanceCriteria string        `json:"acceptance_criteria,omitempty"`
+	Notes              string        `json:"notes,omitempty"`
+	Status             Status        `json:"status"`
+	Priority           int           `json:"priority"`
+	IssueType          IssueType     `json:"issue_type"`
+	Assignee           string        `json:"assignee,omitempty"`
+	EstimatedMinutes   *int          `json:"estimated_minutes,omitempty"`
+	CreatedAt          time.Time     `json:"created_at"`
+	UpdatedAt          time.Time     `json:"updated_at"`
+	ClosedAt           *time.Time    `json:"closed_at,omitempty"`
+	ExternalRef        *string       `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
+	CompactionLevel    int           `json:"compaction_level,omitempty"`
+	CompactedAt        *time.Time    `json:"compacted_at,omitempty"`
+	CompactedAtCommit  *string       `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
+	OriginalSize       int           `json:"original_size,omitempty"`
+	SourceRepo         string        `json:"source_repo,omitempty"`  // Which repo owns this issue (multi-repo support)
+	Labels             []string      `json:"labels,omitempty"`       // Populated only for export/import
+	Dependencies       []*Dependency `json:"dependencies,omitempty"` // Populated only for export/import
+	Comments           []*Comment    `json:"comments,omitempty"`     // Populated only for export/import
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -40,7 +40,7 @@ type Issue struct {
 // to ensure that identical content produces identical hashes across all clones.
 func (i *Issue) ComputeContentHash() string {
 	h := sha256.New()
-	
+
 	// Hash all substantive fields in a stable order
 	h.Write([]byte(i.Title))
 	h.Write([]byte{0}) // separator
@@ -60,11 +60,11 @@ func (i *Issue) ComputeContentHash() string {
 	h.Write([]byte{0})
 	h.Write([]byte(i.Assignee))
 	h.Write([]byte{0})
-	
+
 	if i.ExternalRef != nil {
 		h.Write([]byte(*i.ExternalRef))
 	}
-	
+
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
@@ -205,14 +205,14 @@ type Comment struct {
 
 // Event represents an audit trail entry
 type Event struct {
-	ID        int64      `json:"id"`
-	IssueID   string     `json:"issue_id"`
-	EventType EventType  `json:"event_type"`
-	Actor     string     `json:"actor"`
-	OldValue  *string    `json:"old_value,omitempty"`
-	NewValue  *string    `json:"new_value,omitempty"`
-	Comment   *string    `json:"comment,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        int64     `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	EventType EventType `json:"event_type"`
+	Actor     string    `json:"actor"`
+	OldValue  *string   `json:"old_value,omitempty"`
+	NewValue  *string   `json:"new_value,omitempty"`
+	Comment   *string   `json:"comment,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // EventType categorizes audit trail events
@@ -250,14 +250,40 @@ type TreeNode struct {
 
 // Statistics provides aggregate metrics
 type Statistics struct {
-	TotalIssues              int     `json:"total_issues"`
-	OpenIssues               int     `json:"open_issues"`
-	InProgressIssues         int     `json:"in_progress_issues"`
-	ClosedIssues             int     `json:"closed_issues"`
-	BlockedIssues            int     `json:"blocked_issues"`
-	ReadyIssues              int     `json:"ready_issues"`
-	EpicsEligibleForClosure  int     `json:"epics_eligible_for_closure"`
-	AverageLeadTime          float64 `json:"average_lead_time_hours"`
+	TotalIssues             int     `json:"total_issues"`
+	OpenIssues              int     `json:"open_issues"`
+	InProgressIssues        int     `json:"in_progress_issues"`
+	ClosedIssues            int     `json:"closed_issues"`
+	BlockedIssues           int     `json:"blocked_issues"`
+	ReadyIssues             int     `json:"ready_issues"`
+	EpicsEligibleForClosure int     `json:"epics_eligible_for_closure"`
+	AverageLeadTime         float64 `json:"average_lead_time_hours"`
+}
+
+// SortDirection represents ascending or descending ordering.
+type SortDirection string
+
+// Sort direction constants.
+const (
+	SortAsc  SortDirection = "asc"
+	SortDesc SortDirection = "desc"
+)
+
+// IssueSortField identifies sortable attributes for issues.
+type IssueSortField string
+
+// Issue sort field constants.
+const (
+	SortFieldUpdated  IssueSortField = "updated"
+	SortFieldCreated  IssueSortField = "created"
+	SortFieldPriority IssueSortField = "priority"
+	SortFieldTitle    IssueSortField = "title"
+)
+
+// IssueSortOption specifies a single sort clause.
+type IssueSortOption struct {
+	Field     IssueSortField
+	Direction SortDirection
 }
 
 // IssueFilter is used to filter issue queries
@@ -266,17 +292,22 @@ type IssueFilter struct {
 	Priority    *int
 	IssueType   *IssueType
 	Assignee    *string
-	Labels      []string  // AND semantics: issue must have ALL these labels
-	LabelsAny   []string  // OR semantics: issue must have AT LEAST ONE of these labels
+	Labels      []string // AND semantics: issue must have ALL these labels
+	LabelsAny   []string // OR semantics: issue must have AT LEAST ONE of these labels
 	TitleSearch string
-	IDs         []string  // Filter by specific issue IDs
+	IDs         []string // Filter by specific issue IDs
+	IDPrefix    string
 	Limit       int
-	
+
+	Sort           []IssueSortOption
+	OrderClosed    bool
+	ClosedBeforeID string
+
 	// Pattern matching
 	TitleContains       string
 	DescriptionContains string
 	NotesContains       string
-	
+
 	// Date ranges
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
@@ -284,12 +315,12 @@ type IssueFilter struct {
 	UpdatedBefore *time.Time
 	ClosedAfter   *time.Time
 	ClosedBefore  *time.Time
-	
+
 	// Empty/null checks
 	EmptyDescription bool
 	NoAssignee       bool
 	NoLabels         bool
-	
+
 	// Numeric ranges
 	PriorityMin *int
 	PriorityMax *int
@@ -328,8 +359,8 @@ type WorkFilter struct {
 	Status     Status
 	Priority   *int
 	Assignee   *string
-	Labels     []string   // AND semantics: issue must have ALL these labels
-	LabelsAny  []string   // OR semantics: issue must have AT LEAST ONE of these labels
+	Labels     []string // AND semantics: issue must have ALL these labels
+	LabelsAny  []string // OR semantics: issue must have AT LEAST ONE of these labels
 	Limit      int
 	SortPolicy SortPolicy
 }
@@ -343,8 +374,8 @@ type StaleFilter struct {
 
 // EpicStatus represents an epic with its completion status
 type EpicStatus struct {
-	Epic            *Issue `json:"epic"`
-	TotalChildren   int    `json:"total_children"`
-	ClosedChildren  int    `json:"closed_children"`
-	EligibleForClose bool  `json:"eligible_for_close"`
+	Epic             *Issue `json:"epic"`
+	TotalChildren    int    `json:"total_children"`
+	ClosedChildren   int    `json:"closed_children"`
+	EligibleForClose bool   `json:"eligible_for_close"`
 }

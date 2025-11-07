@@ -20,14 +20,14 @@ type MemoryStorage struct {
 	mu sync.RWMutex // Protects all maps
 
 	// Core data
-	issues       map[string]*types.Issue       // ID -> Issue
+	issues       map[string]*types.Issue        // ID -> Issue
 	dependencies map[string][]*types.Dependency // IssueID -> Dependencies
-	labels       map[string][]string           // IssueID -> Labels
-	events       map[string][]*types.Event     // IssueID -> Events
-	comments     map[string][]*types.Comment   // IssueID -> Comments
-	config       map[string]string             // Config key-value pairs
-	metadata     map[string]string             // Metadata key-value pairs
-	counters     map[string]int                // Prefix -> Last ID
+	labels       map[string][]string            // IssueID -> Labels
+	events       map[string][]*types.Event      // IssueID -> Events
+	comments     map[string][]*types.Comment    // IssueID -> Comments
+	config       map[string]string              // Config key-value pairs
+	metadata     map[string]string              // Metadata key-value pairs
+	counters     map[string]int                 // Prefix -> Last ID
 
 	// For tracking
 	dirty map[string]bool // IssueIDs that have been modified
@@ -399,6 +399,49 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	return nil
 }
 
+// DeleteIssue removes an issue and associated references from memory storage.
+func (m *MemoryStorage) DeleteIssue(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	issue, exists := m.issues[id]
+	if !exists {
+		return fmt.Errorf("issue %s not found", id)
+	}
+
+	delete(m.issues, id)
+	delete(m.dependencies, id)
+	delete(m.labels, id)
+	delete(m.events, id)
+	delete(m.comments, id)
+	delete(m.dirty, id)
+
+	// Remove dependency references where other issues depend on this issue.
+	for issueID, deps := range m.dependencies {
+		filtered := deps[:0]
+		changed := false
+		for _, dep := range deps {
+			if dep.DependsOnID == id {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, dep)
+		}
+		if changed {
+			if len(filtered) == 0 {
+				delete(m.dependencies, issueID)
+			} else {
+				m.dependencies[issueID] = filtered
+			}
+			m.dirty[issueID] = true
+		}
+	}
+
+	_ = ctx
+	_ = issue
+	return nil
+}
+
 // CloseIssue closes an issue with a reason
 func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
 	return m.UpdateIssue(ctx, id, map[string]interface{}{
@@ -406,38 +449,45 @@ func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string
 	}, actor)
 }
 
-// DeleteIssue permanently deletes an issue and all associated data
-func (m *MemoryStorage) DeleteIssue(ctx context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check if issue exists
-	if _, ok := m.issues[id]; !ok {
-		return fmt.Errorf("issue not found: %s", id)
-	}
-
-	// Delete the issue
-	delete(m.issues, id)
-
-	// Delete associated data
-	delete(m.dependencies, id)
-	delete(m.labels, id)
-	delete(m.events, id)
-	delete(m.comments, id)
-	delete(m.dirty, id)
-
-	return nil
-}
-
 // SearchIssues finds issues matching query and filters
 func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var results []*types.Issue
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+	titleSearchLower := strings.ToLower(strings.TrimSpace(filter.TitleSearch))
+	idPrefixLower := strings.ToLower(strings.TrimSpace(filter.IDPrefix))
+
+	idsFilter := make(map[string]struct{}, len(filter.IDs))
+	for _, id := range filter.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		idsFilter[id] = struct{}{}
+	}
+
+	labelsAll := make([]string, 0, len(filter.Labels))
+	for _, label := range filter.Labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		labelsAll = append(labelsAll, label)
+	}
+
+	labelsAny := make([]string, 0, len(filter.LabelsAny))
+	for _, label := range filter.LabelsAny {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		labelsAny = append(labelsAny, label)
+	}
+
+	results := make([]*types.Issue, 0, len(m.issues))
 
 	for _, issue := range m.issues {
-		// Apply filters
 		if filter.Status != nil && issue.Status != *filter.Status {
 			continue
 		}
@@ -451,48 +501,92 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			continue
 		}
 
-		// Query search (title, description, or ID)
-		if query != "" {
-			query = strings.ToLower(query)
-			if !strings.Contains(strings.ToLower(issue.Title), query) &&
-				!strings.Contains(strings.ToLower(issue.Description), query) &&
-				!strings.Contains(strings.ToLower(issue.ID), query) {
+		if (filter.OrderClosed || filter.ClosedBefore != nil) && issue.ClosedAt == nil {
+			continue
+		}
+
+		if filter.ClosedBefore != nil {
+			closedAt := issue.ClosedAt
+			if closedAt == nil {
+				continue
+			}
+			if closedAt.Before(*filter.ClosedBefore) {
+				// ok
+			} else if closedAt.Equal(*filter.ClosedBefore) {
+				if filter.ClosedBeforeID != "" && !(issue.ID < filter.ClosedBeforeID) {
+					continue
+				}
+				if filter.ClosedBeforeID == "" {
+					continue
+				}
+			} else {
 				continue
 			}
 		}
 
-		// Label filtering: must have ALL specified labels
-		if len(filter.Labels) > 0 {
+		if idPrefixLower != "" && !strings.HasPrefix(strings.ToLower(issue.ID), idPrefixLower) {
+			continue
+		}
+
+		if len(idsFilter) > 0 {
+			if _, ok := idsFilter[issue.ID]; !ok {
+				continue
+			}
+		}
+
+		if queryLower != "" {
+			titleLower := strings.ToLower(issue.Title)
+			descriptionLower := strings.ToLower(issue.Description)
+			idLower := strings.ToLower(issue.ID)
+			if !strings.Contains(titleLower, queryLower) &&
+				!strings.Contains(descriptionLower, queryLower) &&
+				!strings.Contains(idLower, queryLower) {
+				continue
+			}
+		}
+
+		if titleSearchLower != "" {
+			if !strings.Contains(strings.ToLower(issue.Title), titleSearchLower) {
+				continue
+			}
+		}
+
+		if len(labelsAll) > 0 {
 			issueLabels := m.labels[issue.ID]
-			hasAllLabels := true
-			for _, reqLabel := range filter.Labels {
+			hasAll := true
+			for _, req := range labelsAll {
 				found := false
 				for _, label := range issueLabels {
-					if label == reqLabel {
+					if label == req {
 						found = true
 						break
 					}
 				}
 				if !found {
-					hasAllLabels = false
+					hasAll = false
 					break
 				}
 			}
-			if !hasAllLabels {
+			if !hasAll {
 				continue
 			}
 		}
 
-		// ID filtering
-		if len(filter.IDs) > 0 {
-			found := false
-			for _, filterID := range filter.IDs {
-				if issue.ID == filterID {
-					found = true
+		if len(labelsAny) > 0 {
+			issueLabels := m.labels[issue.ID]
+			var matchAny bool
+			for _, label := range issueLabels {
+				for _, req := range labelsAny {
+					if label == req {
+						matchAny = true
+						break
+					}
+				}
+				if matchAny {
 					break
 				}
 			}
-			if !found {
+			if !matchAny {
 				continue
 			}
 		}
@@ -509,20 +603,87 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 		results = append(results, &issueCopy)
 	}
 
-	// Sort by priority, then by created_at
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Priority != results[j].Priority {
-			return results[i].Priority < results[j].Priority
+	if filter.OrderClosed {
+		sort.SliceStable(results, func(i, j int) bool {
+			var leftClosed, rightClosed time.Time
+			if results[i].ClosedAt != nil {
+				leftClosed = *results[i].ClosedAt
+			}
+			if results[j].ClosedAt != nil {
+				rightClosed = *results[j].ClosedAt
+			}
+			if !leftClosed.Equal(rightClosed) {
+				return leftClosed.After(rightClosed)
+			}
+			if !results[i].UpdatedAt.Equal(results[j].UpdatedAt) {
+				return results[i].UpdatedAt.After(results[j].UpdatedAt)
+			}
+			return results[i].ID > results[j].ID
+		})
+	} else {
+		sortOptions := filter.Sort
+		if len(sortOptions) == 0 {
+			sortOptions = types.DefaultIssueSortOptions()
 		}
-		return results[i].CreatedAt.After(results[j].CreatedAt)
-	})
 
-	// Apply limit
+		sort.SliceStable(results, func(i, j int) bool {
+			for _, opt := range sortOptions {
+				comp := compareIssueField(results[i], results[j], opt.Field)
+				if comp == 0 {
+					continue
+				}
+				if opt.Direction == types.SortDesc {
+					return comp > 0
+				}
+				return comp < 0
+			}
+			return results[i].ID < results[j].ID
+		})
+	}
+
 	if filter.Limit > 0 && len(results) > filter.Limit {
 		results = results[:filter.Limit]
 	}
 
 	return results, nil
+}
+
+func compareIssueField(a, b *types.Issue, field types.IssueSortField) int {
+	switch field {
+	case types.SortFieldPriority:
+		switch {
+		case a.Priority < b.Priority:
+			return -1
+		case a.Priority > b.Priority:
+			return 1
+		default:
+			return 0
+		}
+	case types.SortFieldUpdated:
+		switch {
+		case a.UpdatedAt.Before(b.UpdatedAt):
+			return -1
+		case a.UpdatedAt.After(b.UpdatedAt):
+			return 1
+		default:
+			return 0
+		}
+	case types.SortFieldCreated:
+		switch {
+		case a.CreatedAt.Before(b.CreatedAt):
+			return -1
+		case a.CreatedAt.After(b.CreatedAt):
+			return 1
+		default:
+			return 0
+		}
+	case types.SortFieldTitle:
+		left := strings.ToLower(a.Title)
+		right := strings.ToLower(b.Title)
+		return strings.Compare(left, right)
+	default:
+		return 0
+	}
 }
 
 // AddDependency adds a dependency between issues

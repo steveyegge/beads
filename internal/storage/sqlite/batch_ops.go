@@ -48,7 +48,7 @@ func (s *SQLiteStorage) generateBatchIDs(ctx context.Context, conn *sql.Conn, is
 	if err := EnsureIDs(ctx, conn, prefix, issues, actor, orphanHandling); err != nil {
 		return err
 	}
-	
+
 	// Compute content hashes
 	for i := range issues {
 		if issues[i].ContentHash == "" {
@@ -103,13 +103,15 @@ func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) e
 //   - This reflects that they were created as a single atomic operation
 //
 // Usage:
-//   // Bulk import from external source
-//   issues := []*types.Issue{...}
-//   if err := store.CreateIssues(ctx, issues, "import"); err != nil {
-//       return err
-//   }
 //
-//   // After importing with explicit IDs, sync counters to prevent collisions
+//	// Bulk import from external source
+//	issues := []*types.Issue{...}
+//	if err := store.CreateIssues(ctx, issues, "import"); err != nil {
+//	    return err
+//	}
+//
+//	// After importing with explicit IDs, sync counters to prevent collisions
+//
 // REMOVED (bd-c7af): SyncAllCounters example - no longer needed with hash IDs
 //
 // Performance:
@@ -122,8 +124,8 @@ func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) e
 //   - Single issue creation (use CreateIssue for simplicity)
 //   - Interactive user operations (use CreateIssue)
 func (s *SQLiteStorage) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
-	// Default to OrphanResurrect for backward compatibility
-	return s.CreateIssuesWithOptions(ctx, issues, actor, OrphanResurrect)
+	// Default to OrphanAllow so imports can tolerate missing parents without additional configuration.
+	return s.CreateIssuesWithOptions(ctx, issues, actor, OrphanAllow)
 }
 
 // CreateIssuesWithOptions creates multiple issues with configurable orphan handling

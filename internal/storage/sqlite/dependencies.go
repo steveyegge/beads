@@ -70,28 +70,28 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		// Cycle Detection and Prevention
-	//
-	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
-	// to maintain a directed acyclic graph (DAG). This is critical for:
-	//
-	// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
-	//    appear blocked when they're actually part of a circular dependency.
-	//
-	// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
-	//    DAG structure. Cycles would require special handling and could cause confusion.
-	//
-	// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
-	//    on B and B depends on A (directly or through other issues), which should be done first?
-	//
-	// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
-	// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
-	// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
-	// are just as problematic as single-type cycles.
-	//
-	// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
-	// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
-	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
+		//
+		// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
+		// to maintain a directed acyclic graph (DAG). This is critical for:
+		//
+		// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
+		//    appear blocked when they're actually part of a circular dependency.
+		//
+		// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
+		//    DAG structure. Cycles would require special handling and could cause confusion.
+		//
+		// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
+		//    on B and B depends on A (directly or through other issues), which should be done first?
+		//
+		// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
+		// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
+		// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
+		// are just as problematic as single-type cycles.
+		//
+		// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
+		// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
+		var cycleExists bool
+		err = tx.QueryRowContext(ctx, `
 		WITH RECURSIVE paths AS (
 			SELECT
 				issue_id,
@@ -116,33 +116,33 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		)
 	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
 
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to check for cycles: %w", err)
+		}
 
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
-	}
+		if cycleExists {
+			return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
+				dep.IssueID, dep.DependsOnID, dep.IssueID)
+		}
 
-	// Insert dependency
-	_, err = tx.ExecContext(ctx, `
+		// Insert dependency
+		_, err = tx.ExecContext(ctx, `
 		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
 		VALUES (?, ?, ?, ?, ?)
 	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy)
-	if err != nil {
-		return fmt.Errorf("failed to add dependency: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to add dependency: %w", err)
+		}
 
-	// Record event
-	_, err = tx.ExecContext(ctx, `
+		// Record event
+		_, err = tx.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, comment)
 		VALUES (?, ?, ?, ?)
 	`, dep.IssueID, types.EventDependencyAdded, actor,
-		fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID))
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
+			fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID))
+		if err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
 
 		// Mark both issues as dirty for incremental export
 		// (dependencies are exported with each issue, so both need updating)
@@ -696,13 +696,18 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		issueIDs = append(issueIDs, issue.ID)
 	}
 
-	// Second pass: batch-load labels for all issues
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate issues: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close rows: %w", err)
+	}
+
 	labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to batch get labels: %w", err)
 	}
 
-	// Assign labels to issues
 	for _, issue := range issues {
 		if labels, ok := labelsMap[issue.ID]; ok {
 			issue.Labels = labels
@@ -768,6 +773,21 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			DependencyType: depType,
 		}
 		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate issues with dependency metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close rows: %w", err)
+	}
+
+	for _, result := range results {
+		labels, err := s.GetLabels(ctx, result.Issue.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get labels for issue %s: %w", result.Issue.ID, err)
+		}
+		result.Issue.Labels = labels
 	}
 
 	return results, nil

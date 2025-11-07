@@ -2,38 +2,42 @@ package rpc
 
 import (
 	"encoding/json"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Operation constants for all bd commands
 const (
-	OpPing            = "ping"
-	OpStatus          = "status"
-	OpHealth          = "health"
-	OpMetrics         = "metrics"
-	OpCreate          = "create"
-	OpUpdate          = "update"
-	OpClose           = "close"
-	OpList            = "list"
-	OpShow            = "show"
-	OpReady           = "ready"
-	OpStale           = "stale"
-	OpStats           = "stats"
-	OpDepAdd          = "dep_add"
-	OpDepRemove       = "dep_remove"
-	OpDepTree         = "dep_tree"
-	OpLabelAdd        = "label_add"
-	OpLabelRemove     = "label_remove"
-	OpCommentList     = "comment_list"
-	OpCommentAdd      = "comment_add"
-	OpBatch           = "batch"
-	OpResolveID       = "resolve_id"
+	OpPing        = "ping"
+	OpStatus      = "status"
+	OpHealth      = "health"
+	OpMetrics     = "metrics"
+	OpWatchEvents = "watch_events"
+	OpCreate      = "create"
+	OpUpdate      = "update"
+	OpClose       = "close"
+	OpDelete      = "delete"
+	OpList        = "list"
+	OpShow        = "show"
+	OpReady       = "ready"
+	OpStale       = "stale"
+	OpStats       = "stats"
+	OpDepAdd      = "dep_add"
+	OpDepRemove   = "dep_remove"
+	OpDepTree     = "dep_tree"
+	OpLabelAdd    = "label_add"
+	OpLabelRemove = "label_remove"
+	OpCommentList = "comment_list"
+	OpCommentAdd  = "comment_add"
+	OpBatch       = "batch"
+	OpResolveID   = "resolve_id"
 
-	OpCompact         = "compact"
-	OpCompactStats    = "compact_stats"
-	OpExport          = "export"
-	OpImport          = "import"
-	OpEpicStatus      = "epic_status"
-	OpShutdown        = "shutdown"
+	OpCompact      = "compact"
+	OpCompactStats = "compact_stats"
+	OpExport       = "export"
+	OpImport       = "import"
+	OpEpicStatus   = "epic_status"
+	OpShutdown     = "shutdown"
 )
 
 // Request represents an RPC request from client to daemon
@@ -49,9 +53,10 @@ type Request struct {
 
 // Response represents an RPC response from daemon to client
 type Response struct {
-	Success bool            `json:"success"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	Success    bool            `json:"success"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	StatusCode int             `json:"status_code,omitempty"`
 }
 
 // CreateArgs represents arguments for the create operation
@@ -88,37 +93,46 @@ type CloseArgs struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// DeleteArgs represents arguments for the delete operation
+type DeleteArgs struct {
+	ID string `json:"id"`
+}
+
 // ListArgs represents arguments for the list operation
 type ListArgs struct {
-	Query     string   `json:"query,omitempty"`
-	Status    string   `json:"status,omitempty"`
-	Priority  *int     `json:"priority,omitempty"`
-	IssueType string   `json:"issue_type,omitempty"`
-	Assignee  string   `json:"assignee,omitempty"`
-	Label     string   `json:"label,omitempty"`      // Deprecated: use Labels
-	Labels    []string `json:"labels,omitempty"`     // AND semantics
-	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
-	IDs       []string `json:"ids,omitempty"`        // Filter by specific issue IDs
-	Limit     int      `json:"limit,omitempty"`
-	
+	Query          string   `json:"query,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	Priority       *int     `json:"priority,omitempty"`
+	IssueType      string   `json:"issue_type,omitempty"`
+	Assignee       string   `json:"assignee,omitempty"`
+	Label          string   `json:"label,omitempty"`      // Deprecated: use Labels
+	Labels         []string `json:"labels,omitempty"`     // AND semantics
+	LabelsAny      []string `json:"labels_any,omitempty"` // OR semantics
+	IDs            []string `json:"ids,omitempty"`        // Filter by specific issue IDs
+	IDPrefix       string   `json:"id_prefix,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	Order          string   `json:"order,omitempty"`
+	Cursor         string   `json:"cursor,omitempty"`
+	ClosedBefore   string   `json:"closed_before,omitempty"`
+	ClosedBeforeID string   `json:"closed_before_id,omitempty"`
+
 	// Pattern matching
 	TitleContains       string `json:"title_contains,omitempty"`
 	DescriptionContains string `json:"description_contains,omitempty"`
 	NotesContains       string `json:"notes_contains,omitempty"`
-	
+
 	// Date ranges (ISO 8601 format)
 	CreatedAfter  string `json:"created_after,omitempty"`
 	CreatedBefore string `json:"created_before,omitempty"`
 	UpdatedAfter  string `json:"updated_after,omitempty"`
 	UpdatedBefore string `json:"updated_before,omitempty"`
 	ClosedAfter   string `json:"closed_after,omitempty"`
-	ClosedBefore  string `json:"closed_before,omitempty"`
-	
+
 	// Empty/null checks
 	EmptyDescription bool `json:"empty_description,omitempty"`
 	NoAssignee       bool `json:"no_assignee,omitempty"`
 	NoLabels         bool `json:"no_labels,omitempty"`
-	
+
 	// Priority range
 	PriorityMin *int `json:"priority_min,omitempty"`
 	PriorityMax *int `json:"priority_max,omitempty"`
@@ -200,6 +214,40 @@ type EpicStatusArgs struct {
 	EligibleOnly bool `json:"eligible_only,omitempty"`
 }
 
+// WatchEventsArgs represents arguments for event streaming subscriptions.
+type WatchEventsArgs struct {
+	// Reserved for future filters (labels, prefixes, etc.)
+}
+
+// IssueEventType enumerates daemon mutation events.
+type IssueEventType string
+
+const (
+	IssueEventCreated   IssueEventType = "created"
+	IssueEventUpdated   IssueEventType = "updated"
+	IssueEventClosed    IssueEventType = "closed"
+	IssueEventDeleted   IssueEventType = "deleted"
+	IssueEventCommented IssueEventType = "commented"
+)
+
+// IssueEventRecord captures the minimum fields for UI updates.
+type IssueEventRecord struct {
+	ID        string          `json:"id"`
+	Title     string          `json:"title,omitempty"`
+	Status    types.Status    `json:"status,omitempty"`
+	IssueType types.IssueType `json:"issue_type,omitempty"`
+	Priority  int             `json:"priority,omitempty"`
+	Assignee  string          `json:"assignee,omitempty"`
+	Labels    []string        `json:"labels,omitempty"`
+	UpdatedAt string          `json:"updated_at,omitempty"`
+}
+
+// IssueEvent is emitted by the watch stream.
+type IssueEvent struct {
+	Type  IssueEventType   `json:"type"`
+	Issue IssueEventRecord `json:"issue"`
+}
+
 // PingResponse is the response for a ping operation
 type PingResponse struct {
 	Message string `json:"message"`
@@ -208,15 +256,15 @@ type PingResponse struct {
 
 // StatusResponse represents the daemon status metadata
 type StatusResponse struct {
-	Version              string  `json:"version"`                  // Server/daemon version
-	WorkspacePath        string  `json:"workspace_path"`           // Absolute path to workspace root
-	DatabasePath         string  `json:"database_path"`            // Absolute path to database file
-	SocketPath           string  `json:"socket_path"`              // Path to Unix socket
-	PID                  int     `json:"pid"`                      // Process ID
-	UptimeSeconds        float64 `json:"uptime_seconds"`           // Time since daemon started
-	LastActivityTime     string  `json:"last_activity_time"`       // ISO 8601 timestamp of last request
-	ExclusiveLockActive  bool    `json:"exclusive_lock_active"`    // Whether an exclusive lock is held
-	ExclusiveLockHolder  string  `json:"exclusive_lock_holder,omitempty"` // Lock holder name if active
+	Version             string  `json:"version"`                         // Server/daemon version
+	WorkspacePath       string  `json:"workspace_path"`                  // Absolute path to workspace root
+	DatabasePath        string  `json:"database_path"`                   // Absolute path to database file
+	SocketPath          string  `json:"socket_path"`                     // Path to Unix socket
+	PID                 int     `json:"pid"`                             // Process ID
+	UptimeSeconds       float64 `json:"uptime_seconds"`                  // Time since daemon started
+	LastActivityTime    string  `json:"last_activity_time"`              // ISO 8601 timestamp of last request
+	ExclusiveLockActive bool    `json:"exclusive_lock_active"`           // Whether an exclusive lock is held
+	ExclusiveLockHolder string  `json:"exclusive_lock_holder,omitempty"` // Lock holder name if active
 }
 
 // HealthResponse is the response for a health check operation
@@ -251,15 +299,16 @@ type BatchResponse struct {
 
 // BatchResult represents the result of a single operation in a batch
 type BatchResult struct {
-	Success bool            `json:"success"`
-	Data    json.RawMessage `json:"data,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	Success    bool            `json:"success"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	StatusCode int             `json:"status_code,omitempty"`
 }
 
 // CompactArgs represents arguments for the compact operation
 type CompactArgs struct {
-	IssueID   string `json:"issue_id,omitempty"`   // Empty for --all
-	Tier      int    `json:"tier"`                 // 1 or 2
+	IssueID   string `json:"issue_id,omitempty"` // Empty for --all
+	Tier      int    `json:"tier"`               // 1 or 2
 	DryRun    bool   `json:"dry_run"`
 	Force     bool   `json:"force"`
 	All       bool   `json:"all"`
@@ -275,15 +324,15 @@ type CompactStatsArgs struct {
 
 // CompactResponse represents the response from a compact operation
 type CompactResponse struct {
-	Success      bool              `json:"success"`
-	IssueID      string            `json:"issue_id,omitempty"`
-	Results      []CompactResult   `json:"results,omitempty"`     // For batch operations
-	Stats        *CompactStatsData `json:"stats,omitempty"`       // For stats operation
-	OriginalSize int               `json:"original_size,omitempty"`
-	CompactedSize int              `json:"compacted_size,omitempty"`
-	Reduction    string            `json:"reduction,omitempty"`
-	Duration     string            `json:"duration,omitempty"`
-	DryRun       bool              `json:"dry_run,omitempty"`
+	Success       bool              `json:"success"`
+	IssueID       string            `json:"issue_id,omitempty"`
+	Results       []CompactResult   `json:"results,omitempty"` // For batch operations
+	Stats         *CompactStatsData `json:"stats,omitempty"`   // For stats operation
+	OriginalSize  int               `json:"original_size,omitempty"`
+	CompactedSize int               `json:"compacted_size,omitempty"`
+	Reduction     string            `json:"reduction,omitempty"`
+	Duration      string            `json:"duration,omitempty"`
+	DryRun        bool              `json:"dry_run,omitempty"`
 }
 
 // CompactResult represents the result of compacting a single issue
@@ -298,11 +347,11 @@ type CompactResult struct {
 
 // CompactStatsData represents compaction statistics
 type CompactStatsData struct {
-	Tier1Candidates int     `json:"tier1_candidates"`
-	Tier2Candidates int     `json:"tier2_candidates"`
-	TotalClosed     int     `json:"total_closed"`
-	Tier1MinAge     string  `json:"tier1_min_age"`
-	Tier2MinAge     string  `json:"tier2_min_age"`
+	Tier1Candidates  int    `json:"tier1_candidates"`
+	Tier2Candidates  int    `json:"tier2_candidates"`
+	TotalClosed      int    `json:"total_closed"`
+	Tier1MinAge      string `json:"tier1_min_age"`
+	Tier2MinAge      string `json:"tier2_min_age"`
 	EstimatedSavings string `json:"estimated_savings,omitempty"`
 }
 
