@@ -96,9 +96,10 @@ _Findings:_ Legacy branch introduces an entire `ui/` tree (static assets + Go e2
 - ✅ `go test ./...` (Nov 7, 2025 01:32 PT) — all packages green after commit restructuring.
 - ✅ `go test -tags ui_e2e ./ui/e2e` (Nov 7, 2025 01:55 PT) — switching `TestRedesignedCommandPaletteTrigger` to `page.WaitForFunction` fixed the headless flake; the full suite now passes consistently.
 - ✅ Targeted headed repro (Nov 7, 2025 01:44 PT): `BD_E2E_HEADLESS=false go test -tags ui_e2e ./ui/e2e -run TestRedesignedCommandPaletteTrigger -count=1` confirmed the palette focuses correctly with a visible browser (kept for future debugging reference).
+- ✅ Manual smoke (Nov 7, 2025 13:55 PT): Python harness spawned `bd daemon`/`bd ui --listen 127.0.0.1:60100`, hit `/healthz` (200) and `/api/issues?queue=ready` (200) returning seeded issue payload—no screenshots captured per guidance.
 
 **Outstanding risks / follow-ups**
-- Re-run ui_e2e + manual smoke immediately before filing the PR to capture fresh screenshots if the UI changes again.
+- Re-run ui_e2e + manual smoke immediately before filing the PR if the UI changes again (reuse the Python harness; still no new screenshots requested).
 
 - [ ] **Finalize and Share**
   - [ ] Verify no `.beads` changes staged. 
@@ -118,9 +119,9 @@ _Findings:_ Legacy branch introduces an entire `ui/` tree (static assets + Go e2
 - **Backend done:** RPC delete + watch events, storage filters/pagination, orphan handling, tests passing.
 - **Frontend re-applied:** UI + static assets in tree; CSS adjustments landed.
 - **Next up:**
-  1. Run the manual smoke checklist once more (bd daemon + bd ui + superpowers browser) to capture any additional observations before filing.
-  2. Capture UI walkthrough screenshots, draft PR narrative, and note any doc updates needed.
-  3. Once history is tidy and smoke tests pass, push `ui-tests-refresh` and open the PR.
+  1. Draft the PR summary (bullets + risks) and ensure README remains untouched.
+  2. Decide if the existing screenshot set is sufficient or if legacy captures should be pruned for brevity (no new captures requested).
+  3. Once narrative is ready, push any remaining tweaks and open the PR targeting `upstream/main`.
 
 
 # Manual Smoke Test Setup
