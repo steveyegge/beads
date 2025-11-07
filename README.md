@@ -549,7 +549,7 @@ bd list --label backend,auth     # AND: must have ALL labels
 bd list --label-any frontend,ui  # OR: must have AT LEAST ONE
 ```
 
-**See [LABELS.md](LABELS.md) for complete label documentation and best practices.**
+**See [docs/LABELS.md](docs/LABELS.md) for complete label documentation and best practices.**
 
 ### Deleting Issues
 
@@ -591,7 +591,7 @@ bd config list --json
 bd config unset jira.url
 ```
 
-**See [CONFIG.md](CONFIG.md) for complete configuration documentation.**
+**See [docs/CONFIG.md](docs/CONFIG.md) for complete configuration documentation.**
 
 ### Compaction (Memory Decay)
 
@@ -664,10 +664,10 @@ Check out the **[examples/](examples/)** directory for:
 
 For advanced usage, see:
 
-- **[ADVANCED.md](ADVANCED.md)** - Prefix renaming, merging duplicates, daemon configuration
-- **[CONFIG.md](CONFIG.md)** - Configuration system for integrations
-- **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - Prefix renaming, merging duplicates, daemon configuration
+- **[docs/CONFIG.md](docs/CONFIG.md)** - Configuration system for integrations
+- **[docs/EXTENDING.md](docs/EXTENDING.md)** - Database extension patterns
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - JSONL format and merge strategies
 
 ## Documentation
 
