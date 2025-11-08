@@ -13,6 +13,7 @@ bd init --quiet  # Non-interactive, auto-installs git hooks, no prompts
 ```
 
 **Why `--quiet`?** Regular `bd init` has interactive prompts (git hooks, merge driver) that confuse agents. The `--quiet` flag makes it fully non-interactive:
+
 - Automatically installs git hooks
 - Automatically configures git merge driver for intelligent JSONL merging
 - No prompts for user input
@@ -31,6 +32,7 @@ We use bd (beads) for issue tracking instead of Markdown TODOs or external tools
 **RECOMMENDED**: Use the MCP (Model Context Protocol) server for the best experience! The beads MCP server provides native integration with Claude and other MCP-compatible AI assistants.
 
 **Installation:**
+
 ```bash
 # Install the MCP server
 pip install beads-mcp
@@ -45,6 +47,7 @@ pip install beads-mcp
 ```
 
 **Benefits:**
+
 - Native function calls instead of shell commands
 - Automatic workspace detection
 - Better error handling and validation
@@ -52,6 +55,7 @@ pip install beads-mcp
 - No need for `--json` flags
 
 **All bd commands are available as MCP functions** with the prefix `mcp__beads-*__`. For example:
+
 - `bd ready` → `mcp__beads__ready()`
 - `bd create` → `mcp__beads__create(title="...", priority=1)`
 - `bd update` → `mcp__beads__update(issue_id="bd-42", status="in_progress")`
@@ -67,6 +71,7 @@ See `integrations/beads-mcp/README.md` for complete documentation.
 **For complete multi-repo workflow guide**, see [docs/MULTI_REPO_MIGRATION.md](docs/MULTI_REPO_MIGRATION.md) (OSS contributors, teams, multi-phase development).
 
 **Setup (one-time):**
+
 ```bash
 # MCP config in ~/.config/amp/settings.json or Claude Desktop config:
 {
@@ -79,12 +84,14 @@ See `integrations/beads-mcp/README.md` for complete documentation.
 
 **How it works (LSP model):**
 The single MCP server instance automatically:
+
 1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace
 2. Routes requests to the correct **per-project daemon** based on working directory
 3. Auto-starts the local daemon if not running (with exponential backoff)
 4. **Each project gets its own isolated daemon** serving only its database
 
 **Architecture:**
+
 ```
 MCP Server (one instance)
     ↓
@@ -94,6 +101,7 @@ SQLite Databases (complete isolation)
 ```
 
 **Why per-project daemons?**
+
 - ✅ Complete database isolation between projects
 - ✅ No cross-project pollution or git worktree conflicts
 - ✅ Simpler mental model: one project = one database = one daemon
@@ -102,6 +110,7 @@ SQLite Databases (complete isolation)
 **Note:** The daemon **auto-starts automatically** when you run any `bd` command (v0.9.11+). To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
 
 **Version Management:** bd automatically handles daemon version mismatches (v0.16.0+):
+
 - When you upgrade bd, old daemons are automatically detected and restarted
 - Version compatibility is checked on every connection
 - No manual intervention required after upgrades
@@ -111,6 +120,7 @@ SQLite Databases (complete isolation)
 
 **Alternative (not recommended): Multiple MCP Server Instances**
 If you must use separate MCP servers:
+
 ```json
 {
   "beads-webapp": {
@@ -127,6 +137,7 @@ If you must use separate MCP servers:
   }
 }
 ```
+
 ⚠️ **Problem**: AI may select the wrong MCP server for your workspace, causing commands to operate on the wrong database.
 
 ### CLI Quick Reference
@@ -286,6 +297,7 @@ bd info --schema --json                                # Get schema, tables, con
 ```
 
 **Migration safety:** The system verifies data integrity invariants after migrations:
+
 - **required_config_present**: Ensures issue_prefix and schema_version are set
 - **foreign_keys_valid**: No orphaned dependencies or labels
 - **issue_count_stable**: Issue count doesn't decrease unexpectedly
@@ -307,6 +319,10 @@ bd daemons health --json
 bd daemons stop /path/to/workspace --json
 bd daemons stop 12345 --json  # By PID
 
+# Restart a specific daemon
+bd daemons restart /path/to/workspace --json
+bd daemons restart 12345 --json  # By PID
+
 # View daemon logs
 bd daemons logs /path/to/workspace -n 100
 bd daemons logs 12345 -f  # Follow mode
@@ -317,28 +333,65 @@ bd daemons killall --force --json  # Force kill if graceful fails
 ```
 
 **When to use:**
+
 - **After upgrading bd**: Run `bd daemons health` to check for version mismatches, then `bd daemons killall` to restart all daemons with the new version
 - **Debugging**: Use `bd daemons logs <workspace>` to view daemon logs
 - **Cleanup**: `bd daemons list` auto-removes stale sockets
 
 **Troubleshooting:**
+
 - **Stale sockets**: `bd daemons list` auto-cleans them
 - **Version mismatch**: `bd daemons killall` then let daemons auto-start on next command
 - **Daemon won't stop**: `bd daemons killall --force`
 
 See [commands/daemons.md](commands/daemons.md) for detailed documentation.
 
+### Web Interface (Monitor)
+
+**Note for AI Agents:** The monitor is primarily for human visualization and supervision. Agents should continue using the CLI with `--json` flags.
+
+bd includes a built-in web interface for real-time issue monitoring:
+
+```bash
+bd monitor                           # Start on localhost:8080
+bd monitor --port 3000               # Custom port
+bd monitor --host 0.0.0.0 --port 80  # Public access
+```
+
+**Features:**
+
+- Real-time issue table with filtering (status, priority)
+- Click-through to detailed issue view
+- WebSocket updates (when daemon is running)
+- Responsive mobile design
+- Statistics dashboard
+
+**When humans might use it:**
+
+- Supervising AI agent work in real-time
+- Quick project status overview
+- Mobile access to issue tracking
+- Team dashboard for shared visibility
+
+**AI agents should NOT:**
+
+- Parse HTML from the monitor (use `--json` flags instead)
+- Try to interact with the web UI programmatically
+- Use monitor for data retrieval (use CLI commands)
+
 ### Event-Driven Daemon Mode (Experimental)
 
 **NEW in v0.16+**: The daemon supports an experimental event-driven mode that replaces 5-second polling with instant reactivity.
 
 **Benefits:**
+
 - ⚡ **<500ms latency** (vs ~5000ms with polling)
 - 🔋 **~60% less CPU usage** (no continuous polling)
 - 🎯 **Instant sync** on mutations and file changes
 - 🛡️ **Dropped events safety net** prevents data loss
 
 **How it works:**
+
 - **FileWatcher** monitors `.beads/issues.jsonl` and `.git/refs/heads` using platform-native APIs:
   - Linux: `inotify`
   - macOS: `FSEvents` (via kqueue)
@@ -364,12 +417,14 @@ bd daemons killall
 ```
 
 **Available modes:**
+
 - `poll` (default) - Traditional 5-second polling, stable and battle-tested
 - `events` - New event-driven mode, experimental but thoroughly tested
 
 **Troubleshooting:**
 
 If the watcher fails to start:
+
 - Check daemon logs: `bd daemons logs /path/to/workspace -n 100`
 - Look for "File watcher unavailable" warnings
 - Common causes:
@@ -378,16 +433,19 @@ If the watcher fails to start:
   - Resource limits - check `ulimit -n` (open file descriptors)
 
 **Fallback behavior:**
+
 - If `BEADS_DAEMON_MODE=events` but watcher fails, daemon falls back to polling automatically
 - Set `BEADS_WATCHER_FALLBACK=false` to disable fallback and require fsnotify
 
 **Disable polling fallback:**
+
 ```bash
 # Require fsnotify, fail if unavailable
 BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon start
 ```
 
 **Switch back to polling:**
+
 ```bash
 # Explicitly use polling mode
 BEADS_DAEMON_MODE=poll bd daemon start
@@ -462,12 +520,14 @@ bd import -i issues.jsonl --dedupe-after
 **Detection strategies:**
 
 1. **Before creating new issues**: Search for similar existing issues
+
    ```bash
    bd list --json | grep -i "authentication"
    bd show bd-41 bd-42 --json  # Compare candidates
    ```
 
 2. **Periodic duplicate scans**: Review issues by type or priority
+
    ```bash
    bd list --status open --priority 1 --json  # High-priority issues
    bd list --issue-type bug --json             # All bugs
@@ -498,18 +558,21 @@ bd show bd-41 --json  # Verify merged content
 ```
 
 **What gets merged:**
+
 - ✅ All dependencies from source → target
 - ✅ Text references updated across ALL issues (descriptions, notes, design, acceptance criteria)
 - ✅ Source issues closed with "Merged into bd-X" reason
 - ❌ Source issue content NOT copied (target keeps its original content)
 
 **Important notes:**
+
 - Merge preserves target issue completely; only dependencies/references migrate
 - If source issues have valuable content, manually copy it to target BEFORE merging
 - Cannot merge in daemon mode yet (bd-190); use `--no-daemon` flag
 - Operation cannot be undone (but git history preserves the original)
 
 **Best practices:**
+
 - Merge early to prevent dependency fragmentation
 - Choose the oldest or most complete issue as merge target
 - Add labels like `duplicate` to source issues before merging (for tracking)
@@ -550,6 +613,7 @@ beads/
 ### Git Workflow
 
 **Auto-sync provides batching!** bd automatically:
+
 - **Exports** to JSONL after CRUD operations (30-second debounce for batching)
 - **Imports** from JSONL when it's newer than DB (e.g., after `git pull`)
 - **Daemon commits/pushes** every 5 seconds (if `--auto-commit` / `--auto-push` enabled)
@@ -569,6 +633,7 @@ bd config set sync.branch beads-metadata
 ```
 
 **How it works:**
+
 - Beads commits issue updates to `beads-metadata` instead of `main`
 - Uses git worktrees (lightweight checkouts) in `.git/beads-worktrees/`
 - Your main working directory is never affected
@@ -600,6 +665,7 @@ bd sync --merge
 ```
 
 **Benefits:**
+
 - ✅ Works with protected `main` branches
 - ✅ No disruption to agent workflows
 - ✅ Platform-agnostic (works on any git platform)
@@ -626,6 +692,7 @@ bd sync --merge
    - Format: "Continue work on bd-X: [issue title]. [Brief context about what's been done and what's next]"
 
 **Example "land the plane" session:**
+
 ```bash
 # 1. File remaining work
 bd create "Add integration tests for sync" -t task -p 2 --json
@@ -656,6 +723,7 @@ bd show bd-44 --json
 ```
 
 **Then provide the user with:**
+
 - Summary of what was completed this session
 - What issues were filed for follow-up
 - Status of quality gates (all passing / issues filed)
@@ -670,6 +738,7 @@ bd sync
 ```
 
 This immediately:
+
 1. Exports pending changes to JSONL (no 30s wait)
 2. Commits to git
 3. Pulls from remote
@@ -677,6 +746,7 @@ This immediately:
 5. Pushes to remote
 
 **Example agent session:**
+
 ```bash
 # Make multiple changes (batched in 30-second window)
 bd create "Fix bug" -p 1
@@ -691,6 +761,7 @@ bd sync
 ```
 
 **Why this matters:**
+
 - Without `bd sync`, changes sit in 30-second debounce window
 - User might think you pushed but JSONL is still dirty
 - `bd sync` forces immediate flush/commit/push
@@ -703,6 +774,7 @@ bd sync
 ```
 
 This installs:
+
 - **pre-commit** - Flushes pending changes immediately before commit (bypasses 30s debounce)
 - **post-merge** - Imports updated JSONL after pull/merge (guaranteed sync)
 - **pre-push** - Exports database to JSONL before push (prevents stale JSONL from reaching remote)
@@ -720,6 +792,7 @@ See [examples/git-hooks/README.md](examples/git-hooks/README.md) for details.
 Git worktrees share the same `.git` directory and thus share the same `.beads` database. The daemon doesn't know which branch each worktree has checked out, which can cause it to commit/push to the wrong branch.
 
 **What you lose without daemon mode:**
+
 - **Auto-sync** - No automatic commit/push of changes (use `bd sync` manually)
 - **MCP server** - The beads-mcp server requires daemon mode for multi-repo support
 - **Background watching** - No automatic detection of remote changes
@@ -727,6 +800,7 @@ Git worktrees share the same `.git` directory and thus share the same `.beads` d
 **Solutions for Worktree Users:**
 
 1. **Use `--no-daemon` flag** (recommended):
+
    ```bash
    bd --no-daemon ready
    bd --no-daemon create "Fix bug" -p 1
@@ -734,6 +808,7 @@ Git worktrees share the same `.git` directory and thus share the same `.beads` d
    ```
 
 2. **Disable daemon via environment variable** (for entire worktree session):
+
    ```bash
    export BEADS_NO_DAEMON=1
    bd ready  # All commands use direct mode
@@ -759,10 +834,12 @@ Git conflicts in `.beads/beads.jsonl` happen when the same issue is modified on 
 
 **Automatic detection:**
 bd automatically detects conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and shows clear resolution steps:
+
 - `bd import` rejects files with conflict markers and shows resolution commands
 - `bd validate --checks=conflicts` scans for conflicts in JSONL
 
 **Resolution workflow:**
+
 ```bash
 # After git merge creates conflict in .beads/beads.jsonl
 
@@ -771,7 +848,7 @@ git checkout --theirs .beads/beads.jsonl
 bd import -i .beads/beads.jsonl
 
 # Option 2: Keep our version (local)
-git checkout --ours .beads/beads.jsonl  
+git checkout --ours .beads/beads.jsonl
 bd import -i .beads/beads.jsonl
 
 # Option 3: Manual resolution in editor
@@ -790,6 +867,7 @@ git commit
 **As of v0.21+, bd automatically configures its own merge driver during `bd init`.** This uses the beads-merge algorithm (by @neongreen, vendored into bd) to provide intelligent JSONL merging and prevent conflicts when multiple branches modify issues.
 
 **What it does:**
+
 - Performs field-level 3-way merging (not line-by-line)
 - Matches issues by identity (id + created_at + created_by)
 - Smart field merging: timestamps→max, dependencies→union, status/priority→3-way
@@ -797,6 +875,7 @@ git commit
 - Automatically configured during `bd init` (both interactive and `--quiet` modes)
 
 **Auto-configuration (happens automatically):**
+
 ```bash
 # During bd init, these are configured:
 git config merge.beads.driver "bd merge %A %O %L %R"
@@ -805,6 +884,7 @@ git config merge.beads.name "bd JSONL merge driver"
 ```
 
 **Manual setup (if skipped with `--skip-merge-driver`):**
+
 ```bash
 git config merge.beads.driver "bd merge %A %O %L %R"
 git config merge.beads.name "bd JSONL merge driver"
@@ -854,6 +934,7 @@ Run `bd stats` to see overall progress.
 ### 1.0 Milestone
 
 We're working toward 1.0. Key blockers tracked in bd. Run:
+
 ```bash
 bd dep tree bd-8  # Show 1.0 epic dependencies
 ```
@@ -863,6 +944,7 @@ bd dep tree bd-8  # Show 1.0 epic dependencies
 **For external tools that need full database control** (e.g., CI/CD, deterministic execution systems):
 
 The bd daemon respects exclusive locks via `.beads/.exclusive-lock` file. When this lock exists:
+
 - Daemon skips all operations for the locked database
 - External tool has complete control over git sync and database operations
 - Stale locks (dead process) are automatically cleaned up
@@ -870,12 +952,14 @@ The bd daemon respects exclusive locks via `.beads/.exclusive-lock` file. When t
 **Use case:** Tools like VibeCoder that need deterministic execution without daemon interference.
 
 See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for:
+
 - Lock file format (JSON schema)
 - Creating and releasing locks (Go/shell examples)
 - Stale lock detection behavior
 - Integration testing guidance
 
 **Quick example:**
+
 ```bash
 # Create lock
 echo '{"holder":"my-tool","pid":'$$',"hostname":"'$(hostname)'","started_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","version":"1.0.0"}' > .beads/.exclusive-lock
@@ -949,6 +1033,7 @@ rm .beads/.exclusive-lock
 **IMPORTANT**: When asked to check GitHub issues or PRs, use command-line tools like `gh` instead of browser/playwright tools.
 
 **Preferred approach:**
+
 ```bash
 # List open issues with details
 gh issue list --limit 30
@@ -961,12 +1046,14 @@ gh issue view 201
 ```
 
 **Then provide an in-conversation summary** highlighting:
+
 - Urgent/critical issues (regressions, bugs, broken builds)
 - Common themes or patterns
 - Feature requests with high engagement
 - Items that need immediate attention
 
 **Why this matters:**
+
 - Browser tools consume more tokens and are slower
 - CLI summaries are easier to scan and discuss
 - Keeps the conversation focused and efficient
@@ -1007,6 +1094,7 @@ git push origin main
 ```
 
 **What it does:**
+
 - Updates ALL version files (CLI, plugin, MCP server, docs) in one command
 - Validates semantic versioning format
 - Shows diff preview
@@ -1014,17 +1102,20 @@ git push origin main
 - Creates standardized commit message
 
 **User will typically say:**
+
 - "Bump to 0.9.3"
 - "Update version to 1.0.0"
 - "Rev the project to 0.9.4"
 - "Increment the version"
 
 **You should:**
+
 1. Run `./scripts/bump-version.sh <version> --commit`
 2. Push to GitHub
 3. Confirm all versions updated correctly
 
 **Files updated automatically:**
+
 - `cmd/bd/version.go` - CLI version
 - `.claude-plugin/plugin.json` - Plugin version
 - `.claude-plugin/marketplace.json` - Marketplace version
@@ -1053,6 +1144,7 @@ See `scripts/README.md` for more details.
 Happy coding! 🔗
 
 <!-- bd onboard section -->
+
 ## Issue Tracking with bd (beads)
 
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
@@ -1067,38 +1159,45 @@ Happy coding! 🔗
 ### Quick Start
 
 **FIRST TIME?** Just run `bd init` - it auto-imports issues from git:
+
 ```bash
 bd init --prefix bd
 ```
 
 **OSS Contributor?** Use the contributor wizard for fork workflows:
+
 ```bash
 bd init --contributor  # Interactive setup for separate planning repo
 ```
 
 **Team Member?** Use the team wizard for branch workflows:
+
 ```bash
 bd init --team  # Interactive setup for team collaboration
 ```
 
 **Check for ready work:**
+
 ```bash
 bd ready --json
 ```
 
 **Create new issues:**
+
 ```bash
 bd create "Issue title" -t bug|feature|task -p 0-4 --json
 bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
 ```
 
 **Claim and update:**
+
 ```bash
 bd update bd-42 --status in_progress --json
 bd update bd-42 --priority 1 --json
 ```
 
 **Complete work:**
+
 ```bash
 bd close bd-42 --reason "Completed" --json
 ```
@@ -1131,6 +1230,7 @@ bd close bd-42 --reason "Completed" --json
 ### Auto-Sync
 
 bd automatically syncs with git:
+
 - Exports to `.beads/issues.jsonl` after changes (5s debounce)
 - Imports from JSONL when newer (e.g., after `git pull`)
 - No manual export/import needed!
@@ -1144,6 +1244,7 @@ pip install beads-mcp
 ```
 
 Add to MCP config (e.g., `~/.config/claude/config.json`):
+
 ```json
 {
   "beads": {
@@ -1158,6 +1259,7 @@ Then use `mcp__beads__*` functions instead of CLI commands.
 ### Managing AI-Generated Planning Documents
 
 AI assistants often create planning and design documents during development:
+
 - PLAN.md, IMPLEMENTATION.md, ARCHITECTURE.md
 - DESIGN.md, CODEBASE_SUMMARY.md, INTEGRATION_PLAN.md
 - TESTING_GUIDE.md, TECHNICAL_DESIGN.md, and similar files
@@ -1165,18 +1267,21 @@ AI assistants often create planning and design documents during development:
 **Best Practice: Use a dedicated directory for these ephemeral files**
 
 **Recommended approach:**
+
 - Create a `history/` directory in the project root
 - Store ALL AI-generated planning/design docs in `history/`
 - Keep the repository root clean and focused on permanent project files
 - Only access `history/` when explicitly asked to review past planning
 
 **Example .gitignore entry (optional):**
+
 ```
 # AI planning documents (ephemeral)
 history/
 ```
 
 **Benefits:**
+
 - ✅ Clean repository root
 - ✅ Clear separation between ephemeral and permanent documentation
 - ✅ Easy to exclude from version control if desired
@@ -1196,4 +1301,5 @@ history/
 - ❌ Do NOT clutter repo root with planning documents
 
 For more details, see README.md and QUICKSTART.md.
+
 <!-- /bd onboard section -->

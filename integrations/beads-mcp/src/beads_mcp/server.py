@@ -2,6 +2,7 @@
 
 import asyncio
 import atexit
+import importlib.metadata
 import logging
 import os
 import signal
@@ -97,7 +98,13 @@ atexit.register(cleanup)
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-logger.info("beads-mcp server initialized with lifecycle management")
+# Get version from package metadata
+try:
+    __version__ = importlib.metadata.version("beads-mcp")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "dev"
+
+logger.info(f"beads-mcp v{__version__} initialized with lifecycle management")
 
 
 def with_workspace(func: Callable[..., T]) -> Callable[..., T]:

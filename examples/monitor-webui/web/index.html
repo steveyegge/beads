@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>bd monitor - Issue Tracker</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="header">
+        <div>
+            <h1>bd monitor</h1>
+            <p>Real-time issue tracking dashboard</p>
+        </div>
+        <div class="connection-status disconnected" id="connection-status">
+            <span class="connection-dot disconnected" id="connection-dot"></span>
+            <span id="connection-text">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="error-message" id="error-message"></div>
+
+    <div class="stats">
+        <h2>Statistics</h2>
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-total">-</div>
+                <div class="stat-label">Total Issues</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-in-progress">-</div>
+                <div class="stat-label">In Progress</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-open">-</div>
+                <div class="stat-label">Open</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-closed">-</div>
+                <div class="stat-label">Closed</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="filter-controls">
+        <label>
+            Status (multi-select):
+            <select id="filter-status" multiple>
+                <option value="open" selected>Open</option>
+                <option value="in-progress">In Progress</option>
+                <option value="closed">Closed</option>
+            </select>
+        </label>
+        <label>
+            Priority:
+            <select id="filter-priority">
+                <option value="">All</option>
+                <option value="1">P1</option>
+                <option value="2">P2</option>
+                <option value="3">P3</option>
+            </select>
+        </label>
+        <button class="reload-button" id="reload-button" title="Reload all data">
+            🔄 Reload
+        </button>
+    </div>
+
+    <h2>Issues</h2>
+    <table id="issues-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Type</th>
+                <th>Assignee</th>
+            </tr>
+        </thead>
+        <tbody id="issues-tbody">
+            <tr><td colspan="6"><div class="spinner"></div></td></tr>
+        </tbody>
+    </table>
+
+    <!-- Mobile card view -->
+    <div class="issues-card-view" id="issues-card-view">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Modal for issue details -->
+    <div id="issue-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modal-title">Issue Details</h2>
+            <div id="modal-body">
+                <p>Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

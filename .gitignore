@@ -62,6 +62,7 @@ result
 
 # GoReleaser build artifacts
 dist/
+Formula/bd.rb
 
 # Git worktrees
 .worktrees/

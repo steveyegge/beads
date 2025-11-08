@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -52,6 +53,10 @@ type Server struct {
 	watchersMu    sync.RWMutex
 	watchers      map[int64]chan IssueEvent
 	watcherSeq    int64
+	// Recent mutations buffer for polling (circular buffer, max 100 events)
+	recentMutations   []MutationEvent
+	recentMutationsMu sync.RWMutex
+	maxMutationBuffer int
 }
 
 // Mutation event types
@@ -96,20 +101,22 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 	}
 
 	s := &Server{
-		socketPath:     socketPath,
-		workspacePath:  workspacePath,
-		dbPath:         dbPath,
-		storage:        store,
-		shutdownChan:   make(chan struct{}),
-		doneChan:       make(chan struct{}),
-		startTime:      time.Now(),
-		metrics:        NewMetrics(),
-		maxConns:       maxConns,
-		connSemaphore:  make(chan struct{}, maxConns),
-		requestTimeout: requestTimeout,
-		readyChan:      make(chan struct{}),
-		mutationChan:   make(chan MutationEvent, mutationBufferSize), // Configurable buffer
-		watchers:       make(map[int64]chan IssueEvent),
+		socketPath:        socketPath,
+		workspacePath:     workspacePath,
+		dbPath:            dbPath,
+		storage:           store,
+		shutdownChan:      make(chan struct{}),
+		doneChan:          make(chan struct{}),
+		startTime:         time.Now(),
+		metrics:           NewMetrics(),
+		maxConns:          maxConns,
+		connSemaphore:     make(chan struct{}, maxConns),
+		requestTimeout:    requestTimeout,
+		readyChan:         make(chan struct{}),
+		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
+		watchers:          make(map[int64]chan IssueEvent),
+		recentMutations:   make([]MutationEvent, 0, 100),
+		maxMutationBuffer: 100,
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s
@@ -117,18 +124,31 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 
 // emitMutation sends a mutation event to the daemon's event-driven loop.
 // Non-blocking: drops event if channel is full (sync will happen eventually).
+// Also stores in recent mutations buffer for polling.
 func (s *Server) emitMutation(eventType, issueID string) {
-	select {
-	case s.mutationChan <- MutationEvent{
+	event := MutationEvent{
 		Type:      eventType,
 		IssueID:   issueID,
 		Timestamp: time.Now(),
-	}:
+	}
+
+	// Send to mutation channel for daemon
+	select {
+	case s.mutationChan <- event:
 		// Event sent successfully
 	default:
 		// Channel full, increment dropped events counter
 		s.droppedEvents.Add(1)
 	}
+
+	// Store in recent mutations buffer for polling
+	s.recentMutationsMu.Lock()
+	s.recentMutations = append(s.recentMutations, event)
+	// Keep buffer size limited (circular buffer behavior)
+	if len(s.recentMutations) > s.maxMutationBuffer {
+		s.recentMutations = s.recentMutations[1:]
+	}
+	s.recentMutationsMu.Unlock()
 }
 
 // MutationChan returns the mutation event channel for the daemon to consume
@@ -139,4 +159,37 @@ func (s *Server) MutationChan() <-chan MutationEvent {
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value
 func (s *Server) ResetDroppedEventsCount() int64 {
 	return s.droppedEvents.Swap(0)
+}
+
+// GetRecentMutations returns mutations since the given timestamp
+func (s *Server) GetRecentMutations(sinceMillis int64) []MutationEvent {
+	s.recentMutationsMu.RLock()
+	defer s.recentMutationsMu.RUnlock()
+
+	var result []MutationEvent
+	for _, m := range s.recentMutations {
+		if m.Timestamp.UnixMilli() > sinceMillis {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// handleGetMutations handles the get_mutations RPC operation
+func (s *Server) handleGetMutations(req *Request) Response {
+	var args GetMutationsArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid arguments: %v", err),
+		}
+	}
+
+	mutations := s.GetRecentMutations(args.Since)
+	data, _ := json.Marshal(mutations)
+
+	return Response{
+		Success: true,
+		Data:    data,
+	}
 }

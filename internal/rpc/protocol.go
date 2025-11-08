@@ -37,6 +37,7 @@ const (
 	OpExport       = "export"
 	OpImport       = "import"
 	OpEpicStatus   = "epic_status"
+	OpGetMutations = "get_mutations"
 	OpShutdown     = "shutdown"
 )
 
@@ -363,4 +364,9 @@ type ExportArgs struct {
 // ImportArgs represents arguments for the import operation
 type ImportArgs struct {
 	JSONLPath string `json:"jsonl_path"` // Path to import JSONL file
+}
+
+// GetMutationsArgs represents arguments for retrieving recent mutations
+type GetMutationsArgs struct {
+	Since int64 `json:"since"` // Unix timestamp in milliseconds (0 for all recent)
 }

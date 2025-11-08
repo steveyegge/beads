@@ -67,6 +67,22 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - ⚡ **High performance** - Batch operations for bulk imports (1000 issues in ~950ms)
 - 🗜️ **Memory decay** - Semantic compaction gracefully reduces old closed issues
 
+## Requirements
+
+**Linux users:** Beads requires **glibc 2.32+** (Ubuntu 22.04+, Debian 11+, RHEL 9+, or equivalent).
+
+- ✅ **Supported:** Ubuntu 22.04+ (Jammy), Debian 11+ (Bullseye), Fedora 34+, RHEL 9+
+- ❌ **Not supported:** Ubuntu 20.04 (glibc 2.31), Debian 10 (glibc 2.28), CentOS 7, RHEL 8
+
+**Ubuntu 20.04 users:** Standard support ended April 2025. Please upgrade to Ubuntu 22.04+ or build from source:
+```bash
+git clone https://github.com/steveyegge/beads.git
+cd beads
+go build -o bd ./cmd/bd
+```
+
+**macOS/Windows:** No special requirements.
+
 ## Installation
 
 **npm (Node.js environments, Claude Code for Web):**
@@ -85,9 +101,9 @@ brew tap steveyegge/beads
 brew install bd
 ```
 
-**Other platforms and methods:** See [INSTALLING.md](INSTALLING.md) for Windows, Arch Linux, and manual installation.
+**Other platforms and methods:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Windows, Arch Linux, and manual installation.
 
-**IDE Integration:** See [INSTALLING.md](INSTALLING.md) for Claude Code plugin and MCP server setup.
+**IDE Integration:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Claude Code plugin and MCP server setup.
 
 **Claude Code for Web:** See [npm-package/CLAUDE_CODE_WEB.md](npm-package/CLAUDE_CODE_WEB.md) for SessionStart hook setup.
 
@@ -570,7 +586,7 @@ bd list --label backend,auth     # AND: must have ALL labels
 bd list --label-any frontend,ui  # OR: must have AT LEAST ONE
 ```
 
-**See [LABELS.md](LABELS.md) for complete label documentation and best practices.**
+**See [docs/LABELS.md](docs/LABELS.md) for complete label documentation and best practices.**
 
 ### Deleting Issues
 
@@ -612,7 +628,7 @@ bd config list --json
 bd config unset jira.url
 ```
 
-**See [CONFIG.md](CONFIG.md) for complete configuration documentation.**
+**See [docs/CONFIG.md](docs/CONFIG.md) for complete configuration documentation.**
 
 ### Compaction (Memory Decay)
 
@@ -655,6 +671,10 @@ bd daemons health
 bd daemons stop /path/to/workspace
 bd daemons stop 12345  # By PID
 
+# Restart a specific daemon
+bd daemons restart /path/to/workspace
+bd daemons restart 12345  # By PID
+
 # View daemon logs
 bd daemons logs /path/to/workspace -n 100
 bd daemons logs 12345 -f  # Follow mode
@@ -671,6 +691,39 @@ bd daemons killall --force  # Force kill if graceful fails
 
 See [commands/daemons.md](commands/daemons.md) for complete documentation.
 
+### Web Interface
+
+A standalone web interface for real-time issue monitoring is available as an example:
+
+```bash
+# Build the monitor-webui
+cd examples/monitor-webui
+go build
+
+# Start web UI on localhost:8080
+./monitor-webui
+
+# Custom port and host
+./monitor-webui -port 3000
+./monitor-webui -host 0.0.0.0 -port 8080  # Listen on all interfaces
+```
+
+The monitor provides:
+- **Real-time table view** of all issues with filtering by status and priority
+- **Click-through details** - Click any issue to view full details in a modal
+- **Live updates** - WebSocket connection for real-time changes via daemon RPC
+- **Responsive design** - Mobile-friendly card view on small screens
+- **Statistics dashboard** - Quick overview of issue counts and ready work
+- **Clean UI** - Simple, fast interface styled with milligram.css
+
+The monitor is particularly useful for:
+- **Team visibility** - Share a dashboard view of project status
+- **AI agent supervision** - Watch your coding agent create and update issues in real-time
+- **Quick browsing** - Faster than CLI for exploring issue details
+- **Mobile access** - Check project status from your phone
+
+See [examples/monitor-webui/](examples/monitor-webui/) for complete documentation.
+
 ## Examples
 
 Check out the **[examples/](examples/)** directory for:
@@ -685,26 +738,26 @@ Check out the **[examples/](examples/)** directory for:
 
 For advanced usage, see:
 
-- **[ADVANCED.md](ADVANCED.md)** - Prefix renaming, merging duplicates, daemon configuration
-- **[CONFIG.md](CONFIG.md)** - Configuration system for integrations
-- **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - Prefix renaming, merging duplicates, daemon configuration
+- **[docs/CONFIG.md](docs/CONFIG.md)** - Configuration system for integrations
+- **[docs/EXTENDING.md](docs/EXTENDING.md)** - Database extension patterns
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - JSONL format and merge strategies
 
 ## Documentation
 
 - **[README.md](README.md)** - You are here! Core features and quick start
-- **[INSTALLING.md](INSTALLING.md)** - Complete installation guide for all platforms
-- **[QUICKSTART.md](QUICKSTART.md)** - Interactive tutorial (`bd quickstart`)
+- **[docs/INSTALLING.md](docs/INSTALLING.md)** - Complete installation guide for all platforms
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - Interactive tutorial (`bd quickstart`)
 - **[docs/MULTI_REPO_MIGRATION.md](docs/MULTI_REPO_MIGRATION.md)** - Multi-repo workflow guide (OSS, teams, multi-phase)
 - **[docs/MULTI_REPO_AGENTS.md](docs/MULTI_REPO_AGENTS.md)** - Multi-repo patterns for AI agents
-- **[FAQ.md](FAQ.md)** - Frequently asked questions
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[ADVANCED.md](ADVANCED.md)** - Advanced features and use cases
-- **[LABELS.md](LABELS.md)** - Complete label system guide
-- **[CONFIG.md](CONFIG.md)** - Configuration system
-- **[EXTENDING.md](EXTENDING.md)** - Database extension patterns
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format analysis
-- **[PLUGIN.md](PLUGIN.md)** - Claude Code plugin documentation
+- **[docs/FAQ.md](docs/FAQ.md)** - Frequently asked questions
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - Advanced features and use cases
+- **[docs/LABELS.md](docs/LABELS.md)** - Complete label system guide
+- **[docs/CONFIG.md](docs/CONFIG.md)** - Configuration system
+- **[docs/EXTENDING.md](docs/EXTENDING.md)** - Database extension patterns
+- **[docs/ADVANCED.md](docs/ADVANCED.md)** - JSONL format analysis
+- **[docs/PLUGIN.md](docs/PLUGIN.md)** - Claude Code plugin documentation
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines
 - **[SECURITY.md](SECURITY.md)** - Security policy
 

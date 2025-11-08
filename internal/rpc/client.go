@@ -276,6 +276,11 @@ func (c *Client) Stats() (*Response, error) {
 	return c.Execute(OpStats, nil)
 }
 
+// GetMutations retrieves recent mutations from the daemon
+func (c *Client) GetMutations(args *GetMutationsArgs) (*Response, error) {
+	return c.Execute(OpGetMutations, args)
+}
+
 // AddDependency adds a dependency via the daemon
 func (c *Client) AddDependency(args *DepAddArgs) (*Response, error) {
 	return c.Execute(OpDepAdd, args)

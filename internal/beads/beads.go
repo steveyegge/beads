@@ -147,11 +147,11 @@ func FindDatabasePath() string {
 		// Look for any .db file in the beads directory
 		matches, err := filepath.Glob(filepath.Join(absBeadsDir, "*.db"))
 		if err == nil && len(matches) > 0 {
-			// Filter out backup files and vc.db
+			// Filter out backup files only
 			var validDBs []string
 			for _, match := range matches {
 				baseName := filepath.Base(match)
-				if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+				if !strings.Contains(baseName, ".backup") {
 					validDBs = append(validDBs, match)
 				}
 			}
