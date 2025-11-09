@@ -126,13 +126,17 @@ func TestInitCommand(t *testing.T) {
 				gitignoreStr := string(gitignoreContent)
 				expectedPatterns := []string{
 					"*.db",
+					"*.db?*",
 					"*.db-journal",
 					"*.db-wal",
 					"*.db-shm",
 					"daemon.log",
 					"daemon.pid",
 					"bd.sock",
-					"!*.jsonl",
+					"beads.base.jsonl",
+					"beads.left.jsonl",
+					"beads.right.jsonl",
+					"!issues.jsonl",
 				}
 				for _, pattern := range expectedPatterns {
 					if !strings.Contains(gitignoreStr, pattern) {

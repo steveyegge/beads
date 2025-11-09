@@ -179,6 +179,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 		gitignorePath := filepath.Join(localBeadsDir, ".gitignore")
 		gitignoreContent := `# SQLite databases
 *.db
+*.db?*
 *.db-journal
 *.db-wal
 *.db-shm
@@ -193,8 +194,16 @@ bd.sock
 db.sqlite
 bd.db
 
+# Merge artifacts (temporary files from 3-way merge)
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
+
 # Keep JSONL exports and config (source of truth for git)
-!*.jsonl
+!issues.jsonl
 !metadata.json
 !config.json
 `
