@@ -42,7 +42,7 @@ type HookStatus struct {
 
 // CheckGitHooks checks the status of bd git hooks in .git/hooks/
 func CheckGitHooks() ([]HookStatus, error) {
-	hooks := []string{"pre-commit", "post-merge", "pre-push"}
+	hooks := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
 	statuses := make([]HookStatus, 0, len(hooks))
 
 	for _, hookName := range hooks {
