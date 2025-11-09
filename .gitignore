@@ -62,6 +62,9 @@ Thumbs.db
 # Ignore nix result
 result
 
+# direnv (machine-specific environment)
+.envrc
+
 # GoReleaser build artifacts
 dist/
 Formula/bd.rb
