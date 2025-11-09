@@ -6,8 +6,9 @@ import (
 )
 
 // ExtractIssuePrefix extracts the prefix from an issue ID like "bd-123" -> "bd"
+// Only considers the first hyphen, so "vc-baseline-test" -> "vc"
 func ExtractIssuePrefix(issueID string) string {
-	idx := strings.LastIndex(issueID, "-")
+	idx := strings.Index(issueID, "-")
 	if idx <= 0 {
 		return ""
 	}

@@ -628,6 +628,7 @@ func attemptAutoMerge(conflictedPath string) error {
 }
 
 // detectPrefixFromIssues extracts the common prefix from issue IDs
+// Only considers the first hyphen, so "vc-baseline-test" -> "vc"
 func detectPrefixFromIssues(issues []*types.Issue) string {
 	if len(issues) == 0 {
 		return ""
@@ -636,10 +637,10 @@ func detectPrefixFromIssues(issues []*types.Issue) string {
 	// Count prefix occurrences
 	prefixCounts := make(map[string]int)
 	for _, issue := range issues {
-		// Extract prefix from issue ID (e.g., "bd-123" -> "bd")
-		parts := strings.SplitN(issue.ID, "-", 2)
-		if len(parts) == 2 {
-			prefixCounts[parts[0]]++
+		// Extract prefix from issue ID using first hyphen only
+		idx := strings.Index(issue.ID, "-")
+		if idx > 0 {
+			prefixCounts[issue.ID[:idx]]++
 		}
 	}
 	

@@ -179,7 +179,7 @@ func detectPrefix(_ string, memStore *memory.MemoryStorage) (string, error) {
 
 // extractIssuePrefix extracts the prefix from an issue ID like "bd-123" -> "bd"
 func extractIssuePrefix(issueID string) string {
-	idx := strings.LastIndex(issueID, "-")
+	idx := strings.Index(issueID, "-")
 	if idx <= 0 {
 		return ""
 	}

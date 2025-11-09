@@ -45,6 +45,11 @@ func TestExtractPrefix(t *testing.T) {
 		{"no-number", "no"},     // Has hyphen, so "no" is prefix
 		{"nonumber", ""},        // No hyphen
 		{"", ""},
+		// Multi-part suffixes (bd-fasa regression tests)
+		{"vc-baseline-test", "vc"},
+		{"vc-92cl-gate-test", "vc"},
+		{"bd-multi-part-id", "bd"},
+		{"prefix-a-b-c-d", "prefix"},
 	}
 
 	for _, tt := range tests {

@@ -241,12 +241,13 @@ Examples:
 }
 
 // extractPrefix extracts the prefix from an issue ID (e.g., "bd-123" -> "bd")
+// Only considers the first hyphen, so "vc-baseline-test" -> "vc"
 func extractPrefix(issueID string) string {
-	parts := strings.Split(issueID, "-")
-	if len(parts) > 0 {
-		return parts[0]
+	idx := strings.Index(issueID, "-")
+	if idx <= 0 {
+		return ""
 	}
-	return ""
+	return issueID[:idx]
 }
 
 // VersionChange represents agent-relevant changes for a specific version
