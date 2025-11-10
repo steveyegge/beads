@@ -39,5 +39,11 @@ func MigrateExternalRefColumn(db *sql.DB) error {
 		}
 	}
 
+	// Create index on external_ref (idempotent)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_external_ref ON issues(external_ref)`)
+	if err != nil {
+		return fmt.Errorf("failed to create index on external_ref: %w", err)
+	}
+
 	return nil
 }
