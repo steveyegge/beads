@@ -16,6 +16,11 @@ import (
 // syncBranchCommitAndPush commits JSONL to the sync branch using a worktree
 // Returns true if changes were committed, false if no changes or sync.branch not configured
 func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPush bool, log daemonLogger) (bool, error) {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return true, nil // Skip sync branch commit/push in local-only mode
+	}
+	
 	// Get sync.branch config
 	syncBranch, err := store.GetConfig(ctx, "sync.branch")
 	if err != nil {
@@ -169,6 +174,11 @@ func gitPushFromWorktree(ctx context.Context, worktreePath, branch string) error
 // syncBranchPull pulls changes from the sync branch into the worktree
 // Returns true if pull was performed, false if sync.branch not configured
 func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger) (bool, error) {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return true, nil // Skip sync branch pull in local-only mode
+	}
+	
 	// Get sync.branch config
 	syncBranch, err := store.GetConfig(ctx, "sync.branch")
 	if err != nil {
