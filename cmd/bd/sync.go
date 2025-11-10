@@ -385,8 +385,24 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 	return nil
 }
 
+// hasGitRemote checks if a git remote exists in the repository
+func hasGitRemote(ctx context.Context) bool {
+	cmd := exec.CommandContext(ctx, "git", "remote")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) > 0
+}
+
 // gitPull pulls from the current branch's upstream
+// Returns nil if no remote configured (local-only mode)
 func gitPull(ctx context.Context) error {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return nil // Gracefully skip - local-only mode
+	}
+	
 	// Get current branch name
 	branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	branchOutput, err := branchCmd.Output()
@@ -414,7 +430,13 @@ func gitPull(ctx context.Context) error {
 }
 
 // gitPush pushes to the current branch's upstream
+// Returns nil if no remote configured (local-only mode)
 func gitPush(ctx context.Context) error {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return nil // Gracefully skip - local-only mode
+	}
+	
 	cmd := exec.CommandContext(ctx, "git", "push")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
