@@ -91,9 +91,14 @@ go build -o bd ./cmd/bd
 npm install -g @beads/bd
 ```
 
-**Quick install (all platforms):**
+**Quick install (macOS / Linux):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+**Quick install (Windows - PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 ```
 
 **Homebrew (macOS/Linux):**
@@ -102,9 +107,7 @@ brew tap steveyegge/beads
 brew install bd
 ```
 
-**Other platforms and methods:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Windows, Arch Linux, and manual installation.
-
-**IDE Integration:** See [docs/INSTALLING.md](docs/INSTALLING.md) for Claude Code plugin and MCP server setup.
+For full, platform-specific instructions (Windows, Arch Linux, manual builds, IDE integrations, etc.) see the canonical guide in [docs/INSTALLING.md](docs/INSTALLING.md).
 
 **Claude Code for Web:** See [npm-package/CLAUDE_CODE_WEB.md](npm-package/CLAUDE_CODE_WEB.md) for SessionStart hook setup.
 
