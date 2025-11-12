@@ -101,27 +101,25 @@ Examples:
 			os.Exit(1)
 		}
 
-		// Get SQLite store
-		sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
-			os.Exit(1)
-		}
-
-		// Handle analyze mode
+		// Handle analyze mode (requires direct database access)
 		if compactAnalyze {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: --analyze not yet supported in daemon mode, use --no-daemon\n")
+			if err := ensureDirectMode("compact --analyze requires direct database access"); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
 				os.Exit(1)
 			}
 			runCompactAnalyze(ctx, sqliteStore)
 			return
 		}
 
-		// Handle apply mode
+		// Handle apply mode (requires direct database access)
 		if compactApply {
-			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: --apply not yet supported in daemon mode, use --no-daemon\n")
+			if err := ensureDirectMode("compact --apply requires direct database access"); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			if compactID == "" {
@@ -132,31 +130,47 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error: --apply requires --summary\n")
 				os.Exit(1)
 			}
+			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
+				os.Exit(1)
+			}
 			runCompactApply(ctx, sqliteStore)
 			return
 		}
 
 		// Handle auto mode (legacy)
 		if compactAuto {
-			// API key check only for auto mode
+			// Validation checks
+			if compactID != "" && compactAll {
+				fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
+				os.Exit(1)
+			}
+			if compactForce && compactID == "" {
+				fmt.Fprintf(os.Stderr, "Error: --force requires --id\n")
+				os.Exit(1)
+			}
+			if compactID == "" && !compactAll && !compactDryRun {
+				fmt.Fprintf(os.Stderr, "Error: must specify --all, --id, or --dry-run\n")
+				os.Exit(1)
+			}
+
+			// Use RPC if daemon available, otherwise direct mode
+			if daemonClient != nil {
+				runCompactRPC(ctx)
+				return
+			}
+
+			// Fallback to direct mode
 			apiKey := os.Getenv("ANTHROPIC_API_KEY")
 			if apiKey == "" && !compactDryRun {
 				fmt.Fprintf(os.Stderr, "Error: --auto mode requires ANTHROPIC_API_KEY environment variable\n")
 				os.Exit(1)
 			}
 
-			if compactID != "" && compactAll {
-				fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
-				os.Exit(1)
-			}
-
-			if compactForce && compactID == "" {
-				fmt.Fprintf(os.Stderr, "Error: --force requires --id\n")
-				os.Exit(1)
-			}
-
-			if compactID == "" && !compactAll && !compactDryRun {
-				fmt.Fprintf(os.Stderr, "Error: must specify --all, --id, or --dry-run\n")
+			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Error: compact requires SQLite storage\n")
 				os.Exit(1)
 			}
 
