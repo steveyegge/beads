@@ -20,8 +20,8 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 
 	// Write data
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmpPath) // Best effort cleanup
+		_ = tmpFile.Close()    // best effort cleanup
+		_ = os.Remove(tmpPath) // best effort cleanup
 		return fmt.Errorf("write temp file: %w", err)
 	}
 
