@@ -245,19 +245,53 @@ if ($goSupport.Present) {
     Write-WarningMsg "Go not found on PATH."
 }
 
+function Print-GoInstallInstructions {
+    Write-Host "\nTo install Go (required: 1.24+), run one of the following depending on what you have installed:" -ForegroundColor Cyan
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    $choco = Get-Command choco -ErrorAction SilentlyContinue
+    $scoop = Get-Command scoop -ErrorAction SilentlyContinue
+
+    if ($winget) {
+        Write-Host "  winget install --exact --id GoLang.Go" -ForegroundColor Yellow
+        Write-Host "  (run as an elevated/admin terminal if required)\n" -ForegroundColor Cyan
+        return
+    }
+
+    if ($choco) {
+        Write-Host "  choco install golang -y" -ForegroundColor Yellow
+        Write-Host "  (requires an elevated/admin PowerShell)\n" -ForegroundColor Cyan
+        return
+    }
+
+    if ($scoop) {
+        Write-Host "  scoop install go" -ForegroundColor Yellow
+        Write-Host "  (scoop installs to your user profile; no admin required)\n" -ForegroundColor Cyan
+        return
+    }
+
+    Write-Host "  Download and run the official installer from:" -ForegroundColor Cyan
+    Write-Host "    https://go.dev/dl/" -ForegroundColor Yellow
+    Write-Host "\nAfter installing Go 1.24+, re-run this installer (the exact same command you used to invoke this script)." -ForegroundColor Cyan
+}
+
 $installed = $false
 
 if ($goSupport.Present -and $goSupport.MeetsRequirement) {
     $installed = Install-WithGo
     if (-not $installed) {
-        Write-WarningMsg "Falling back to source build..."
+        Write-WarningMsg "go install failed; attempting to build from source..."
+        $installed = Install-FromSource
     }
 } elseif ($goSupport.Present -and -not $goSupport.MeetsRequirement) {
-    Write-Err "Go 1.24 or newer is required (found: $($goSupport.RawVersion)). Please upgrade Go or use the fallback build."
-}
-
-if (-not $installed) {
-    $installed = Install-FromSource
+    Write-Err "Go 1.24 or newer is required (found: $($goSupport.RawVersion)). Please upgrade Go or use your package manager."
+    Print-GoInstallInstructions
+    exit 1
+} else {
+    # No Go present - do not attempt to auto-download or auto-install Go.
+    Write-Err "Go is not installed. bd requires Go 1.24+ to build from source."
+    Print-GoInstallInstructions
+    exit 1
 }
 
 if ($installed) {
