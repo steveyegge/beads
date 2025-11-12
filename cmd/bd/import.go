@@ -309,12 +309,13 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		}
 
 		// Update database mtime to reflect it's now in sync with JSONL
-		// This prevents bd doctor from incorrectly warning that JSONL is newer
-		// Only touch if actual changes were made (not dry-run, not unchanged-only)
-		if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
-			if err := touchDatabaseFile(dbPath, input); err != nil {
-				debug.Logf("Warning: failed to update database mtime: %v", err)
-			}
+		// This is CRITICAL even when import found 0 changes, because:
+		// 1. Import validates DB and JSONL are in sync (no content divergence)
+		// 2. Without mtime update, bd sync refuses to export (thinks JSONL is newer)
+		// 3. This can happen after git pull updates JSONL mtime but content is identical
+		// Fix for: refusing to export: JSONL is newer than database (import first to avoid data loss)
+		if err := touchDatabaseFile(dbPath, input); err != nil {
+			debug.Logf("Warning: failed to update database mtime: %v", err)
 		}
 
 		// Print summary
