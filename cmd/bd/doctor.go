@@ -14,6 +14,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
@@ -156,10 +157,10 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 6: Multiple JSONL files
-	multiJSONLCheck := checkMultipleJSONLFiles(path)
-	result.Checks = append(result.Checks, multiJSONLCheck)
-	if multiJSONLCheck.Status == statusWarning || multiJSONLCheck.Status == statusError {
+	// Check 6: Legacy JSONL filename (issues.jsonl vs beads.jsonl)
+	jsonlCheck := convertDoctorCheck(doctor.CheckLegacyJSONLFilename(path))
+	result.Checks = append(result.Checks, jsonlCheck)
+	if jsonlCheck.Status == statusWarning || jsonlCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
@@ -191,7 +192,28 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 11: Claude integration
+	claudeCheck := convertDoctorCheck(doctor.CheckClaude())
+	result.Checks = append(result.Checks, claudeCheck)
+	// Don't fail overall check for missing Claude integration, just warn
+
+	// Check 12: Legacy beads slash commands in documentation
+	legacyDocsCheck := convertDoctorCheck(doctor.CheckLegacyBeadsSlashCommands(path))
+	result.Checks = append(result.Checks, legacyDocsCheck)
+	// Don't fail overall check for legacy docs, just warn
+
 	return result
+}
+
+// convertDoctorCheck converts doctor package check to main package check
+func convertDoctorCheck(dc doctor.DoctorCheck) doctorCheck {
+	return doctorCheck{
+		Name:    dc.Name,
+		Status:  dc.Status,
+		Message: dc.Message,
+		Detail:  dc.Detail,
+		Fix:     dc.Fix,
+	}
 }
 
 func checkInstallation(path string) doctorCheck {
@@ -231,8 +253,20 @@ func checkDatabaseVersion(path string) doctorCheck {
 	// Check if database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Check if JSONL exists (--no-db mode)
-		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-		if _, err := os.Stat(jsonlPath); err == nil {
+		// Check both canonical (beads.jsonl) and legacy (issues.jsonl) names
+		beadsJSONL := filepath.Join(beadsDir, "beads.jsonl")
+		issuesJSONL := filepath.Join(beadsDir, "issues.jsonl")
+
+		if _, err := os.Stat(beadsJSONL); err == nil {
+			return doctorCheck{
+				Name:    "Database",
+				Status:  statusOK,
+				Message: "JSONL-only mode",
+				Detail:  "Using beads.jsonl (no SQLite database)",
+			}
+		}
+
+		if _, err := os.Stat(issuesJSONL); err == nil {
 			return doctorCheck{
 				Name:    "Database",
 				Status:  statusOK,
@@ -623,42 +657,6 @@ func checkMultipleDatabases(path string) doctorCheck {
 		Status:  statusWarning,
 		Message: fmt.Sprintf("Multiple database files found: %s", strings.Join(dbFiles, ", ")),
 		Fix:     "Run 'bd migrate' to consolidate databases or manually remove old .db files",
-	}
-}
-
-func checkMultipleJSONLFiles(path string) doctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
-	
-	var jsonlFiles []string
-	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
-		jsonlPath := filepath.Join(beadsDir, name)
-		if _, err := os.Stat(jsonlPath); err == nil {
-			jsonlFiles = append(jsonlFiles, name)
-		}
-	}
-
-	if len(jsonlFiles) == 0 {
-		return doctorCheck{
-			Name:    "JSONL Files",
-			Status:  statusOK,
-			Message: "No JSONL files found (database-only mode)",
-		}
-	}
-
-	if len(jsonlFiles) == 1 {
-		return doctorCheck{
-			Name:    "JSONL Files",
-			Status:  statusOK,
-			Message: fmt.Sprintf("Using %s", jsonlFiles[0]),
-		}
-	}
-
-	// Multiple JSONL files found
-	return doctorCheck{
-		Name:    "JSONL Files",
-		Status:  statusWarning,
-		Message: fmt.Sprintf("Multiple JSONL files found: %s", strings.Join(jsonlFiles, ", ")),
-		Fix:     "Standardize on one JSONL file (issues.jsonl recommended). Delete or rename the other.",
 	}
 }
 
