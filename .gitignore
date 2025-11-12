@@ -14,6 +14,9 @@
 # Go workspace file
 go.work
 
+# Go build cache
+pkg/
+
 # IDE
 .vscode/
 .idea/
@@ -85,4 +88,14 @@ npm-package/package-lock.json
 .beads/beads.db?*
 bd-original
 mcp_agent_mail/
-tests/integration/__pycache__/
+bd-test
+bd-fixed
+.cursor/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.envrc

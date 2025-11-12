@@ -48,7 +48,7 @@ Complete command reference for bd (beads) CLI tool. All commands support `--json
 | `bd stats` | Get project statistics | `--json` |
 | `bd blocked` | Find blocked issues | `--json` |
 | `bd export` | Export issues to JSONL | `--json` |
-| `bd import` | Import issues from JSONL | `--resolve-collisions` |
+| `bd import` | Import issues from JSONL | `--dedupe-after`, `--dry-run` |
 | `bd init` | Initialize bd in directory | `--prefix` |
 | `bd quickstart` | Show quick start guide | (no flags) |
 

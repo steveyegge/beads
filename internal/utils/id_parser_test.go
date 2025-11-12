@@ -322,9 +322,9 @@ func TestExtractIssuePrefix(t *testing.T) {
 			expected: "bd",
 		},
 		{
-			name:     "hyphenated prefix",
+			name:     "multi-part suffix",
 			issueID:  "alpha-beta-1",
-			expected: "alpha-beta",
+			expected: "alpha", // Only first hyphen (bd-fasa)
 		},
 	}
 

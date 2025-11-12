@@ -99,6 +99,7 @@ jobs:
 
       - name: Update Homebrew formula
         run: |
+          mkdir -p Formula
           cat > Formula/bd.rb <<'EOF'
           class Bd < Formula
             desc "AI-supervised issue tracker for coding workflows"

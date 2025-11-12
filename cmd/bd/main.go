@@ -142,7 +142,22 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Skip database initialization for commands that don't need a database
-		noDbCommands := []string{"init", cmdDaemon, "help", "version", "quickstart", "doctor", "merge", "completion", "bash", "zsh", "fish", "powershell"}
+		noDbCommands := []string{
+			cmdDaemon,
+			"bash",
+			"completion",
+			"doctor",
+			"fish",
+			"help",
+			"init",
+			"merge",
+			"powershell",
+			"prime",
+			"quickstart",
+			"setup",
+			"version",
+			"zsh",
+		}
 		if slices.Contains(noDbCommands, cmd.Name()) {
 			return
 		}
@@ -410,13 +425,11 @@ var rootCmd = &cobra.Command{
 		// Warn if multiple databases detected in directory hierarchy
 		warnMultipleDatabases(dbPath)
 
-		// Check for version mismatch (warn if binary is older than DB)
-		checkVersionMismatch()
-
 		// Auto-import if JSONL is newer than DB (e.g., after git pull)
 		// Skip for import command itself to avoid recursion
+		// Skip for delete command to prevent resurrection of deleted issues (bd-8kde)
 		// Skip if sync --dry-run to avoid modifying DB in dry-run mode (bd-191)
-		if cmd.Name() != "import" && autoImportEnabled {
+		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled {
 			// Check if this is sync command with --dry-run flag
 			if cmd.Name() == "sync" {
 				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {

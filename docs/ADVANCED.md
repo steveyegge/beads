@@ -73,7 +73,7 @@ bd duplicates --auto-merge
 bd duplicates --dry-run
 
 # Detect duplicates during import
-bd import -i issues.jsonl --resolve-collisions --dedupe-after
+bd import -i issues.jsonl --dedupe-after
 ```
 
 **How it works:**

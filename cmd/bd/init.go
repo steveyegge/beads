@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +18,8 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
+	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 var initCmd = &cobra.Command{
@@ -47,12 +51,24 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			}
 		}
 
-		// Determine prefix with precedence: flag > config > auto-detect
+		// Determine prefix with precedence: flag > config > auto-detect from git > auto-detect from directory name
 		if prefix == "" {
 			// Try to get from config file
 			prefix = config.GetString("issue-prefix")
 		}
 
+		// auto-detect prefix from first issue in JSONL file
+		if prefix == "" {
+			issueCount, jsonlPath := checkGitForIssues()
+			if issueCount > 0 {
+				firstIssue, err := readFirstIssueFromJSONL(jsonlPath)
+				if firstIssue != nil && err == nil {
+					prefix = utils.ExtractIssuePrefix(firstIssue.ID)
+				}
+			}
+		}
+		
+		// auto-detect prefix from directory name
 		if prefix == "" {
 			// Auto-detect from directory name
 			cwd, err := os.Getwd()
@@ -133,7 +149,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			}
 
 			// Create metadata.json for --no-db mode
-			cfg := configfile.DefaultConfig(Version)
+			cfg := configfile.DefaultConfig()
 			if err := cfg.Save(localBeadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway
@@ -163,6 +179,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 		gitignorePath := filepath.Join(localBeadsDir, ".gitignore")
 		gitignoreContent := `# SQLite databases
 *.db
+*.db?*
 *.db-journal
 *.db-wal
 *.db-shm
@@ -177,8 +194,16 @@ bd.sock
 db.sqlite
 bd.db
 
+# Merge artifacts (temporary files from 3-way merge)
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
+
 # Keep JSONL exports and config (source of truth for git)
-!*.jsonl
+!issues.jsonl
 !metadata.json
 !config.json
 `
@@ -256,7 +281,7 @@ bd.db
 
 	// Create metadata.json for database metadata
 	if useLocalBeads {
-		cfg := configfile.DefaultConfig(Version)
+		cfg := configfile.DefaultConfig()
 		if err := cfg.Save(localBeadsDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 			// Non-fatal - continue anyway
@@ -699,7 +724,7 @@ fi
 # Import the updated JSONL
 if ! bd import -i .beads/issues.jsonl >/dev/null 2>&1; then
     echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i .beads/issues.jsonl' manually" >&2
+    echo "Run 'bd import -i .beads/issues.jsonl' manually to see the error" >&2
 fi
 
 exit 0
@@ -734,7 +759,7 @@ fi
 # to ensure immediate sync after merge
 if ! bd import -i .beads/issues.jsonl >/dev/null 2>&1; then
     echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i .beads/issues.jsonl' manually" >&2
+    echo "Run 'bd import -i .beads/issues.jsonl' manually to see the error" >&2
     # Don't fail the merge, just warn
 fi
 
@@ -968,4 +993,40 @@ func createConfigYaml(beadsDir string, noDbMode bool) error {
 	}
 	
 	return nil
+}
+
+// readFirstIssueFromJSONL reads the first issue from a JSONL file
+func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open JSONL file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		// skip empty lines
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err == nil {
+			return &issue, nil
+		} else {
+			// Skip malformed lines with warning
+			fmt.Fprintf(os.Stderr, "Warning: skipping malformed JSONL line %d: %v\n", lineNum, err)
+			continue
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading JSONL file: %w", err)
+	}
+
+	return nil, nil
 }

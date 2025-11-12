@@ -23,7 +23,7 @@ GitHub Issues + gh CLI can approximate some features, but fundamentally cannot r
    - GH: No built-in "ready" concept; would require custom GraphQL + sync service + ongoing maintenance
 
 3. **Git-First, Offline, Branch-Scoped Task Memory**
-   - bd: Works offline, issues live on branches, mergeable with code via `bd import --resolve-collisions`
+   - bd: Works offline, issues live on branches, hash IDs prevent collisions on merge
    - GH: Cloud-first, requires network/auth, global per-repo, no branch-scoped task state
 
 4. **AI-Resolvable Conflicts & Duplicate Merge**
@@ -439,7 +439,7 @@ The hash/fingerprint/collision architecture prevents:
 - **Wrong prefix bugs**: Issues created with incorrect prefix due to config mismatch
 - **Merge conflicts**: Branch divergence creating conflicting JSONL content
 
-**Solution**: `bd import --resolve-collisions` automatically remaps colliding IDs and updates all references.
+**Solution**: Hash-based IDs (v0.20+) eliminate collisions. Different issues automatically get different IDs.
 
 **2. Physical SQLite Corruption**
 

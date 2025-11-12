@@ -83,8 +83,9 @@ func checkParentProcessAlive(parentPID int) bool {
 	}
 	
 	if parentPID == 1 {
-		// Adopted by init - parent died
-		return false
+		// Adopted by init/launchd - this is normal for detached daemons on macOS/Linux
+		// Don't treat this as parent death
+		return true
 	}
 	
 	// Check if parent process is running

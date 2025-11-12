@@ -30,13 +30,13 @@ These git hooks ensure bd changes are always synchronized with your commits and 
 
 ### Quick Install (Recommended)
 
-From your repository root:
+Use `bd hooks install` to install hooks automatically:
 
 ```bash
-./examples/git-hooks/install.sh
+bd hooks install
 ```
 
-Or use `bd init --quiet` to install hooks automatically.
+Alternatively, use `bd init --quiet` which installs hooks during initialization.
 
 **Hook Chaining (New in v0.23):** If you already have git hooks installed (e.g., pre-commit framework), bd will:
 - Detect existing hooks

@@ -141,7 +141,7 @@ For **logical consistency issues** (ID collisions from branch merges, parallel w
 
 ```bash
 # This is NOT corruption - use collision resolution instead
-bd import -i .beads/issues.jsonl --resolve-collisions
+bd import -i .beads/issues.jsonl
 ```
 
 See [FAQ](FAQ.md#whats-the-difference-between-sqlite-corruption-and-id-collisions) for the distinction.

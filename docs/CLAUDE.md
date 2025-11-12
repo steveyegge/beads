@@ -44,7 +44,7 @@ Remote JSONL (shared across machines)
 
 - **Write path**: CLI → SQLite → JSONL export → git commit
 - **Read path**: git pull → JSONL import → SQLite → CLI
-- **Collision handling**: `bd import --resolve-collisions` (see AGENTS.md)
+- **Hash-based IDs**: Automatic collision prevention (v0.20+)
 
 Core implementation:
 - Export: `cmd/bd/export.go`, `cmd/bd/autoflush.go`

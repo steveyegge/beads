@@ -269,6 +269,12 @@ Use --merge to merge the sync branch back to main branch.`,
 				if err := updateBaseSnapshot(jsonlPath); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to update base snapshot: %v\n", err)
 				}
+
+				// Clean up temporary snapshot files after successful merge
+				sm := NewSnapshotManager(jsonlPath)
+				if err := sm.Cleanup(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clean up snapshots: %v\n", err)
+				}
 			}
 		}
 
@@ -341,9 +347,24 @@ func gitHasUnmergedPaths() (bool, error) {
 }
 
 // gitHasUpstream checks if the current branch has an upstream configured
+// Uses git config directly for compatibility with Git for Windows
 func gitHasUpstream() bool {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	return cmd.Run() == nil
+	// Get current branch name
+	branchCmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	branchOutput, err := branchCmd.Output()
+	if err != nil {
+		return false
+	}
+	branch := strings.TrimSpace(string(branchOutput))
+	
+	// Check if remote and merge refs are configured
+	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))
+	
+	remoteErr := remoteCmd.Run()
+	mergeErr := mergeCmd.Run()
+	
+	return remoteErr == nil && mergeErr == nil
 }
 
 // gitHasChanges checks if the specified file has uncommitted changes
@@ -379,8 +400,24 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 	return nil
 }
 
+// hasGitRemote checks if a git remote exists in the repository
+func hasGitRemote(ctx context.Context) bool {
+	cmd := exec.CommandContext(ctx, "git", "remote")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) > 0
+}
+
 // gitPull pulls from the current branch's upstream
+// Returns nil if no remote configured (local-only mode)
 func gitPull(ctx context.Context) error {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return nil // Gracefully skip - local-only mode
+	}
+	
 	// Get current branch name
 	branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	branchOutput, err := branchCmd.Output()
@@ -408,7 +445,13 @@ func gitPull(ctx context.Context) error {
 }
 
 // gitPush pushes to the current branch's upstream
+// Returns nil if no remote configured (local-only mode)
 func gitPush(ctx context.Context) error {
+	// Check if any remote exists (bd-biwp: support local-only repos)
+	if !hasGitRemote(ctx) {
+		return nil // Gracefully skip - local-only mode
+	}
+	
 	cmd := exec.CommandContext(ctx, "git", "push")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

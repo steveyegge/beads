@@ -40,7 +40,7 @@ func TestVersionCompatibility(t *testing.T) {
 			serverVersion: "1.1.0",
 			clientVersion: "1.2.0",
 			shouldWork:    false,
-			errorContains: "daemon 1.1.0 is older than client 1.2.0",
+			errorContains: "daemon upgrade",
 		},
 		{
 			name:          "Different major versions - client newer",
@@ -323,7 +323,7 @@ func TestVersionCheckMessage(t *testing.T) {
 			serverVersion: testVersion100,
 			clientVersion: "1.1.0",
 			expectError:   true,
-			errorContains: "daemon 1.0.0 is older than client 1.1.0",
+			errorContains: "client v1.1.0 requires daemon upgrade",
 		},
 		{
 			name:          "Compatible versions",

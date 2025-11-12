@@ -1,0 +1,8 @@
+This file has been renamed to prevent confusion.
+The canonical JSONL file is: .beads/beads.jsonl
+
+This file (issues.jsonl) was the original name but kept reappearing
+like a zombie despite multiple attempts to remove it.
+
+DO NOT USE THIS FILE.
+Use .beads/beads.jsonl instead.

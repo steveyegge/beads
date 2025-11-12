@@ -1,5 +1,5 @@
 #!/bin/sh
-# bd-hooks-version: 0.22.1
+# bd-hooks-version: 0.23.1
 #
 # bd (beads) post-merge hook
 #
@@ -33,9 +33,12 @@ fi
 
 # Run bd sync --import-only to import the updated JSONL
 # This is more robust than direct import as it handles all edge cases
-if ! bd sync --import-only >/dev/null 2>&1; then
+# Capture both stdout and stderr to show user what went wrong
+if ! output=$(bd sync --import-only 2>&1); then
     echo "Warning: Failed to sync bd changes after merge" >&2
-    echo "Run 'bd sync --import-only' manually" >&2
+    echo "$output" >&2
+    echo "" >&2
+    echo "Run 'bd sync --import-only' manually to resolve" >&2
     # Don't fail the merge, just warn
 fi
 
