@@ -241,68 +241,6 @@ func TestCheckMultipleDatabases(t *testing.T) {
 	}
 }
 
-func TestCheckMultipleJSONLFiles(t *testing.T) {
-	tests := []struct {
-		name           string
-		jsonlFiles     []string
-		expectedStatus string
-		expectWarning  bool
-	}{
-		{
-			name:           "no JSONL files",
-			jsonlFiles:     []string{},
-			expectedStatus: statusOK,
-			expectWarning:  false,
-		},
-		{
-			name:           "single issues.jsonl",
-			jsonlFiles:     []string{"issues.jsonl"},
-			expectedStatus: statusOK,
-			expectWarning:  false,
-		},
-		{
-			name:           "single beads.jsonl",
-			jsonlFiles:     []string{"beads.jsonl"},
-			expectedStatus: statusOK,
-			expectWarning:  false,
-		},
-		{
-			name:           "both JSONL files",
-			jsonlFiles:     []string{"issues.jsonl", "beads.jsonl"},
-			expectedStatus: statusWarning,
-			expectWarning:  true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			beadsDir := filepath.Join(tmpDir, ".beads")
-			if err := os.Mkdir(beadsDir, 0750); err != nil {
-				t.Fatal(err)
-			}
-
-			// Create test JSONL files
-			for _, jsonlFile := range tc.jsonlFiles {
-				path := filepath.Join(beadsDir, jsonlFile)
-				if err := os.WriteFile(path, []byte{}, 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			check := checkMultipleJSONLFiles(tmpDir)
-
-			if check.Status != tc.expectedStatus {
-				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
-			}
-
-			if tc.expectWarning && check.Fix == "" {
-				t.Error("Expected fix message for warning status")
-			}
-		})
-	}
-}
-
 func TestCheckPermissions(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")

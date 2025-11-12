@@ -192,6 +192,34 @@ func FindDatabasePath() string {
 	return ""
 }
 
+// FindBeadsDir finds the .beads/ directory in the current directory tree
+// Returns empty string if not found. Supports both database and JSONL-only mode.
+// This is useful for commands that need to detect beads projects without requiring a database.
+func FindBeadsDir() string {
+	// 1. Check BEADS_DIR environment variable (preferred)
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		absBeadsDir := utils.CanonicalizePath(beadsDir)
+		if info, err := os.Stat(absBeadsDir); err == nil && info.IsDir() {
+			return absBeadsDir
+		}
+	}
+
+	// 2. Search for .beads/ in current directory and ancestors
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		beadsDir := filepath.Join(dir, ".beads")
+		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			return beadsDir
+		}
+	}
+
+	return ""
+}
+
 // FindJSONLPath returns the expected JSONL file path for the given database path.
 // It searches for existing *.jsonl files in the database directory and returns
 // the first one found, or defaults to "issues.jsonl".
