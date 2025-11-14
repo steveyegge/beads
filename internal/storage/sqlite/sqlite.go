@@ -76,7 +76,8 @@ func New(path string) (*SQLiteStorage, error) {
 	// For :memory: databases, force single connection to ensure cache sharing works properly.
 	// SQLite's shared cache mode for in-memory databases only works reliably with one connection.
 	// Without this, different connections in the pool can't see each other's writes (bd-b121).
-	if path == ":memory:" {
+	isInMemory := path == ":memory:" || strings.Contains(connStr, ":memory:")
+	if isInMemory {
 		db.SetMaxOpenConns(1)
 	}
 
@@ -85,24 +86,15 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Set journal mode and synchronous settings
+	// Set journal mode
 	// Note: foreign_keys and busy_timeout are now set per-connection via DSN
-	if path == ":memory:" {
+	if isInMemory {
 		// DELETE mode for in-memory databases (WAL doesn't work)
 		if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {
 			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
 		}
-	} else if isFreshInit {
-		// Optimized settings for fresh database creation (huge performance win)
-		if _, err := db.Exec("PRAGMA journal_mode=MEMORY"); err != nil {
-			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
-		}
-		// Use NORMAL instead of OFF for basic crash safety while maintaining performance
-		if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
-			return nil, fmt.Errorf("failed to set synchronous: %w", err)
-		}
 	} else {
-		// Normal WAL mode for existing databases
+		// WAL mode for file-based databases (both fresh and existing)
 		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
 		}
@@ -137,21 +129,10 @@ func New(path string) (*SQLiteStorage, error) {
 		}
 	}
 
-	// Restore safe settings after fresh init
-	if isFreshInit {
-		// Switch to WAL mode for normal operations
-		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-		}
-		// Restore synchronous mode
-		if _, err := db.Exec("PRAGMA synchronous=FULL"); err != nil {
-			return nil, fmt.Errorf("failed to restore synchronous mode: %w", err)
-		}
-	}
 
-	// Convert to absolute path for consistency (but keep :memory: as-is)
+	// Convert to absolute path for consistency (but keep in-memory paths as-is)
 	absPath := path
-	if path != ":memory:" {
+	if !isInMemory {
 		var err error
 		absPath, err = filepath.Abs(path)
 		if err != nil {
