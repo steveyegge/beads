@@ -73,11 +73,13 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// For :memory: databases, force single connection to ensure cache sharing works properly.
-	// SQLite's shared cache mode for in-memory databases only works reliably with one connection.
-	// Without this, different connections in the pool can't see each other's writes (bd-b121).
-	isInMemory := path == ":memory:" || strings.Contains(connStr, ":memory:")
-	if isInMemory {
+	// For in-memory databases, force single connection.
+	// - Shared cache (:memory: or cache=shared): needs single connection for sharing
+	// - Private cache (cache=private): needs single connection because each connection
+	//   gets its own isolated database, so schema/data won't be visible across connections
+	// Without this, different connections can't see each other's data (bd-b121).
+	isInMemoryDB := path == ":memory:" || strings.Contains(connStr, ":memory:")
+	if isInMemoryDB {
 		db.SetMaxOpenConns(1)
 	}
 
@@ -88,6 +90,7 @@ func New(path string) (*SQLiteStorage, error) {
 
 	// Set journal mode
 	// Note: foreign_keys and busy_timeout are now set per-connection via DSN
+	isInMemory := path == ":memory:" || strings.Contains(connStr, ":memory:")
 	if isInMemory {
 		// DELETE mode for in-memory databases (WAL doesn't work)
 		if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {

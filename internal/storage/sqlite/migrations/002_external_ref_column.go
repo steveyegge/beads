@@ -32,6 +32,13 @@ func MigrateExternalRefColumn(db *sql.DB) error {
 		return fmt.Errorf("error reading column info: %w", err)
 	}
 
+	// Close rows explicitly before executing more SQL statements.
+	// With single-connection mode (in-memory databases), keeping rows open
+	// would deadlock subsequent db.Exec calls.
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("failed to close rows: %w", err)
+	}
+
 	if !columnExists {
 		_, err := db.Exec(`ALTER TABLE issues ADD COLUMN external_ref TEXT`)
 		if err != nil {
