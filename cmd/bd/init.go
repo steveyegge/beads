@@ -266,7 +266,12 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 	}
 
 	// Check if git has existing issues to import (fresh clone scenario)
-	issueCount, jsonlPath := checkGitForIssues()
+	// Skip this check if .beads/ doesn't exist in git yet (fresh init optimization)
+	var issueCount int
+	var jsonlPath string
+	if isGitRepo() && gitHasBeadsDir() {
+		issueCount, jsonlPath = checkGitForIssues()
+	}
 	if issueCount > 0 {
 		if !quiet {
 			fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
@@ -1000,4 +1005,16 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 	}
 
 	return nil, nil
+}
+
+// gitHasBeadsDir checks if .beads directory exists in git HEAD
+// Returns false on any error (fail-safe optimization)
+func gitHasBeadsDir() bool {
+	// Quick check: try to list .beads directory in git
+	cmd := exec.Command("git", "ls-tree", "-d", "HEAD", ".beads")
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		return false
+	}
+	return true
 }
