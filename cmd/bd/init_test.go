@@ -879,3 +879,50 @@ func TestReadFirstIssueFromJSONL_EmptyFile(t *testing.T) {
 		t.Errorf("Expected nil issue for empty file, got %+v", issue)
 	}
 }
+
+// BenchmarkInit measures the performance of fresh database initialization
+func BenchmarkInit(b *testing.B) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+
+		// Create fresh temp directory for each iteration
+		tmpDir := b.TempDir()
+
+		// Change to temp directory
+		originalWd, err := os.Getwd()
+		if err != nil {
+			b.Fatalf("Failed to get working directory: %v", err)
+		}
+
+		if err := os.Chdir(tmpDir); err != nil {
+			b.Fatalf("Failed to change to temp directory: %v", err)
+		}
+
+		// Initialize git repo (realistic scenario)
+		if err := runCommandInDir(tmpDir, "git", "init", "-q"); err != nil {
+			b.Fatalf("Failed to init git: %v", err)
+		}
+
+		// Reset command state
+		dbPath = ""
+		rootCmd.SetArgs([]string{"init", "--prefix", "bench", "--quiet", "--skip-merge-driver"})
+
+		b.StartTimer()
+
+		// Measure init performance
+		if err := rootCmd.Execute(); err != nil {
+			b.Fatalf("Init failed: %v", err)
+		}
+
+		b.StopTimer()
+
+		// Restore working directory for cleanup
+		if err := os.Chdir(originalWd); err != nil {
+			b.Fatalf("Failed to restore working directory: %v", err)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -222,31 +223,61 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 		// Non-fatal - continue anyway
 		}
 
-	// Compute and store repository fingerprint
-	repoID, err := beads.ComputeRepoID()
-	if err != nil {
+	// Compute repository fingerprints in parallel (git operations are I/O bound)
+	type fingerprintResult struct {
+		repoID   string
+		cloneID  string
+		repoErr  error
+		cloneErr error
+	}
+	resultChan := make(chan fingerprintResult, 1)
+
+	go func() {
+		var result fingerprintResult
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		// Compute repo ID in parallel
+		go func() {
+			defer wg.Done()
+			result.repoID, result.repoErr = beads.ComputeRepoID()
+		}()
+
+		// Compute clone ID in parallel
+		go func() {
+			defer wg.Done()
+			result.cloneID, result.cloneErr = beads.GetCloneID()
+		}()
+
+		wg.Wait()
+		resultChan <- result
+	}()
+
+	result := <-resultChan
+
+	// Store repository fingerprint
+	if result.repoErr != nil {
 		if !quiet {
-			fmt.Fprintf(os.Stderr, "Warning: could not compute repository ID: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: could not compute repository ID: %v\n", result.repoErr)
 		}
 	} else {
-		if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
+		if err := store.SetMetadata(ctx, "repo_id", result.repoID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
 		} else if !quiet {
-			fmt.Printf("  Repository ID: %s\n", repoID[:8])
+			fmt.Printf("  Repository ID: %s\n", result.repoID[:8])
 		}
 	}
 
 	// Store clone-specific ID
-	cloneID, err := beads.GetCloneID()
-	if err != nil {
+	if result.cloneErr != nil {
 		if !quiet {
-			fmt.Fprintf(os.Stderr, "Warning: could not compute clone ID: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: could not compute clone ID: %v\n", result.cloneErr)
 		}
 	} else {
-		if err := store.SetMetadata(ctx, "clone_id", cloneID); err != nil {
+		if err := store.SetMetadata(ctx, "clone_id", result.cloneID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to set clone_id: %v\n", err)
 		} else if !quiet {
-			fmt.Printf("  Clone ID: %s\n", cloneID)
+			fmt.Printf("  Clone ID: %s\n", result.cloneID)
 		}
 	}
 

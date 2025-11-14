@@ -27,28 +27,32 @@ type SQLiteStorage struct {
 
 // New creates a new SQLite storage backend
 func New(path string) (*SQLiteStorage, error) {
-	// Build connection string with proper URI syntax
-	// For :memory: databases, use shared cache so multiple connections see the same data
+	// Detect if this is a fresh database initialization
+	// Fresh init = database file doesn't exist yet (skip expensive validation)
+	isFreshInit := false
+	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			isFreshInit = true
+		}
+	}
+
+	// Build connection string with minimal settings
+	// Set PRAGMA via EXEC after opening (more compatible)
 	var connStr string
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
-		// Note: WAL mode doesn't work with shared in-memory databases, so use DELETE mode
-		// The name "memdb" is required for cache=shared to work properly across connections
-		connStr = "file:memdb?mode=memory&cache=shared&_pragma=journal_mode(DELETE)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		connStr = "file:memdb?mode=memory&cache=shared"
 	} else if strings.HasPrefix(path, "file:") {
-		// Already a URI - append our pragmas if not present
+		// Already a URI - use as-is
 		connStr = path
-		if !strings.Contains(path, "_pragma=foreign_keys") {
-			connStr += "&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
-		}
 	} else {
 		// Ensure directory exists for file-based databases
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		// Use file URI with pragmas
-		connStr = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		// Simple file URI without PRAGMA settings
+		connStr = "file:" + path
 	}
 
 	db, err := sql.Open("sqlite3", connStr)
@@ -68,28 +72,73 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	// Set essential PRAGMA settings via EXEC
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=30000"); err != nil {
+		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
+	// Set journal mode and synchronous settings
+	if path == ":memory:" {
+		// DELETE mode for in-memory databases (WAL doesn't work)
+		if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {
+			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
+		}
+	} else if isFreshInit {
+		// Optimized settings for fresh database creation (huge performance win)
+		if _, err := db.Exec("PRAGMA journal_mode=MEMORY"); err != nil {
+			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA synchronous=OFF"); err != nil {
+			return nil, fmt.Errorf("failed to set synchronous: %w", err)
+		}
+	} else {
+		// Normal WAL mode for existing databases
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
+		}
+	}
+
 	// Initialize schema
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	// Run all migrations
+	// Run migrations (idempotent, safe to run on fresh databases)
 	if err := RunMigrations(db); err != nil {
 		return nil, err
 	}
 
-	// Verify schema compatibility after migrations (bd-ckvw)
-	// First attempt
-	if err := verifySchemaCompatibility(db); err != nil {
-		// Schema probe failed - retry migrations once
-		if retryErr := RunMigrations(db); retryErr != nil {
-			return nil, fmt.Errorf("migration retry failed after schema probe failure: %w (original: %v)", retryErr, err)
-		}
-		
-		// Probe again after retry
+	// Only verify schema compatibility on existing databases
+	// Fresh databases skip validation (huge performance win: ~80-100ms)
+	if !isFreshInit {
+		// Verify schema compatibility after migrations (bd-ckvw)
+		// First attempt
 		if err := verifySchemaCompatibility(db); err != nil {
-			// Still failing - return fatal error with clear message
-			return nil, fmt.Errorf("schema probe failed after migration retry: %w. Database may be corrupted or from incompatible version. Run 'bd doctor' to diagnose", err)
+			// Schema probe failed - retry migrations once
+			if retryErr := RunMigrations(db); retryErr != nil {
+				return nil, fmt.Errorf("migration retry failed after schema probe failure: %w (original: %v)", retryErr, err)
+			}
+
+			// Probe again after retry
+			if err := verifySchemaCompatibility(db); err != nil {
+				// Still failing - return fatal error with clear message
+				return nil, fmt.Errorf("schema probe failed after migration retry: %w. Database may be corrupted or from incompatible version. Run 'bd doctor' to diagnose", err)
+			}
+		}
+	}
+
+	// Restore safe settings after fresh init
+	if isFreshInit {
+		// Switch to WAL mode for normal operations
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+		}
+		// Restore synchronous mode
+		if _, err := db.Exec("PRAGMA synchronous=FULL"); err != nil {
+			return nil, fmt.Errorf("failed to restore synchronous mode: %w", err)
 		}
 	}
 

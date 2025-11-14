@@ -781,6 +781,11 @@ var closeCmd = &cobra.Command{
 	},
 }
 
+// formatDependencyType returns the string representation of a dependency type
+func formatDependencyType(depType types.DependencyType) string {
+	return string(depType)
+}
+
 func init() {
 	showCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(showCmd)
