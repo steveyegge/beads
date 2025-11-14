@@ -30,8 +30,17 @@ func New(path string) (*SQLiteStorage, error) {
 	// Detect if this is a fresh database initialization
 	// Fresh init = database file doesn't exist yet (skip expensive validation)
 	isFreshInit := false
-	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+	if path != ":memory:" {
+		// Extract filesystem path from URI if needed
+		checkPath := path
+		if strings.HasPrefix(path, "file:") {
+			// Remove "file:" prefix and extract path before any query parameters
+			checkPath = strings.TrimPrefix(path, "file:")
+			if idx := strings.IndexByte(checkPath, '?'); idx >= 0 {
+				checkPath = checkPath[:idx]
+			}
+		}
+		if _, err := os.Stat(checkPath); os.IsNotExist(err) {
 			isFreshInit = true
 		}
 	}

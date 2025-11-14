@@ -233,24 +233,34 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 	resultChan := make(chan fingerprintResult, 1)
 
 	go func() {
-		var result fingerprintResult
 		var wg sync.WaitGroup
 		wg.Add(2)
+
+		// Use separate variables to avoid concurrent writes to same struct
+		var repoID, cloneID string
+		var repoErr, cloneErr error
 
 		// Compute repo ID in parallel
 		go func() {
 			defer wg.Done()
-			result.repoID, result.repoErr = beads.ComputeRepoID()
+			repoID, repoErr = beads.ComputeRepoID()
 		}()
 
 		// Compute clone ID in parallel
 		go func() {
 			defer wg.Done()
-			result.cloneID, result.cloneErr = beads.GetCloneID()
+			cloneID, cloneErr = beads.GetCloneID()
 		}()
 
 		wg.Wait()
-		resultChan <- result
+
+		// Assemble result after all goroutines complete
+		resultChan <- fingerprintResult{
+			repoID:   repoID,
+			cloneID:  cloneID,
+			repoErr:  repoErr,
+			cloneErr: cloneErr,
+		}
 	}()
 
 	result := <-resultChan
