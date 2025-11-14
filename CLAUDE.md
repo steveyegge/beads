@@ -177,11 +177,12 @@ func TestMyFeature(t *testing.T) {
 ### Modifying Database Schema
 
 1. Update `internal/storage/sqlite/schema.go`
-2. Add migration in `cmd/bd/migrate.go`
-3. Update `internal/types/types.go` if adding new types
-4. Implement in `internal/storage/sqlite/sqlite.go`
-5. Update export/import in `cmd/bd/export.go` and `cmd/bd/import.go`
-6. Add tests covering migration path
+2. Add migration file in `internal/storage/sqlite/migrations/` (e.g., `015_my_migration.go`)
+3. Register it in `internal/storage/sqlite/migrations.go` in the `migrationsList` array
+4. Update `internal/types/types.go` if adding new types
+5. Implement in `internal/storage/sqlite/sqlite.go`
+6. Update export/import in `cmd/bd/export.go` and `cmd/bd/import.go`
+7. Add tests covering migration path
 
 ### Adding a Daemon RPC Endpoint
 
@@ -195,7 +196,7 @@ func TestMyFeature(t *testing.T) {
 
 ### Database Schema Versioning
 
-Schema version stored in `config` table (`schema_version` key). Current version: 9 (hash IDs). Migrations tracked in `cmd/bd/migrate.go`. Use `bd info --schema --json` to inspect.
+Schema version stored in `metadata` table (`bd_version` key) as a version string (e.g., "0.9.11"). Migrations tracked in `internal/storage/sqlite/migrations/`. Use `bd info --schema --json` to inspect.
 
 ### Auto-Sync Timings
 
@@ -206,7 +207,7 @@ Schema version stored in `config` table (`schema_version` key). Current version:
 
 ### Dependency Graph
 
-Dependencies stored in `issue_dependencies` table with `dep_type`:
+Dependencies stored in `dependencies` table with `type`:
 - `blocks`: Hard blocker (affects `bd ready`)
 - `related`: Soft relationship
 - `parent-child`: Hierarchical (epic → tasks)

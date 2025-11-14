@@ -79,15 +79,11 @@ func getMigrationDescription(name string) string {
 
 // RunMigrations executes all registered migrations in order with invariant checking
 func RunMigrations(db *sql.DB) error {
-	// Quick check: if schema_version is already at target (9), skip all migrations
-	// This optimization avoids snapshot/validation overhead on fresh databases
-	var schemaVersion int
-	err := db.QueryRow("SELECT value FROM config WHERE key = 'schema_version'").Scan(&schemaVersion)
-	if err == nil && schemaVersion >= 9 {
-		// Already at target version, skip migrations
-		return nil
-	}
-
+	// Migrations are idempotent - we must run them every time
+	// The optimization was removed because:
+	// 1. Schema version is not reliably tracked in a single location
+	// 2. Each migration has its own existence checks (idempotent design)
+	// 3. The cost of checking all preconditions > cost of running idempotent migrations
 	snapshot, err := captureSnapshot(db)
 	if err != nil {
 		return fmt.Errorf("failed to capture pre-migration snapshot: %w", err)
