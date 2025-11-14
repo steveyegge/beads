@@ -45,23 +45,27 @@ func New(path string) (*SQLiteStorage, error) {
 		}
 	}
 
-	// Build connection string with minimal settings
-	// Set PRAGMA via EXEC after opening (more compatible)
+	// Build connection string with PRAGMA settings that apply per-connection
+	// Critical: foreign_keys and busy_timeout must be in DSN to apply to ALL connections
 	var connStr string
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
-		connStr = "file:memdb?mode=memory&cache=shared"
+		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
 	} else if strings.HasPrefix(path, "file:") {
-		// Already a URI - use as-is
-		connStr = path
+		// Already a URI - append PRAGMA settings
+		if strings.Contains(path, "?") {
+			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+		} else {
+			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+		}
 	} else {
 		// Ensure directory exists for file-based databases
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		// Simple file URI without PRAGMA settings
-		connStr = "file:" + path
+		// File URI with per-connection PRAGMA settings
+		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
 	}
 
 	db, err := sql.Open("sqlite3", connStr)
@@ -81,15 +85,8 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Set essential PRAGMA settings via EXEC
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=30000"); err != nil {
-		return nil, fmt.Errorf("failed to set busy_timeout: %w", err)
-	}
-
 	// Set journal mode and synchronous settings
+	// Note: foreign_keys and busy_timeout are now set per-connection via DSN
 	if path == ":memory:" {
 		// DELETE mode for in-memory databases (WAL doesn't work)
 		if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {
@@ -100,7 +97,8 @@ func New(path string) (*SQLiteStorage, error) {
 		if _, err := db.Exec("PRAGMA journal_mode=MEMORY"); err != nil {
 			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
 		}
-		if _, err := db.Exec("PRAGMA synchronous=OFF"); err != nil {
+		// Use NORMAL instead of OFF for basic crash safety while maintaining performance
+		if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
 			return nil, fmt.Errorf("failed to set synchronous: %w", err)
 		}
 	} else {

@@ -886,11 +886,21 @@ func BenchmarkInit(b *testing.B) {
 	origDBPath := dbPath
 	defer func() { dbPath = origDBPath }()
 
+	// Create single parent temp directory outside the loop
+	parentTmpDir, err := os.MkdirTemp("", "bench-init-*")
+	if err != nil {
+		b.Fatalf("Failed to create parent temp dir: %v", err)
+	}
+	defer os.RemoveAll(parentTmpDir)
+
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 
-		// Create fresh temp directory for each iteration
-		tmpDir := b.TempDir()
+		// Create fresh temp directory for this iteration with manual cleanup
+		tmpDir, err := os.MkdirTemp(parentTmpDir, "run-*")
+		if err != nil {
+			b.Fatalf("Failed to create temp directory: %v", err)
+		}
 
 		// Change to temp directory
 		originalWd, err := os.Getwd()
@@ -920,9 +930,10 @@ func BenchmarkInit(b *testing.B) {
 
 		b.StopTimer()
 
-		// Restore working directory for cleanup
+		// Restore working directory and clean up immediately
 		if err := os.Chdir(originalWd); err != nil {
 			b.Fatalf("Failed to restore working directory: %v", err)
 		}
+		os.RemoveAll(tmpDir)
 	}
 }
