@@ -8,7 +8,7 @@ import (
 )
 
 func TestDetectCollisions(t *testing.T) {
-	store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+	store := newTestStore(t, "") // Use default temp file
 	ctx := context.Background()
 
 	// Create existing issue

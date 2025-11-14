@@ -11,7 +11,7 @@ func TestDeleteIssues(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("delete non-existent issue", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		result, err := store.DeleteIssues(ctx, []string{"bd-999"}, false, false, false)
 		if err != nil {
 			t.Fatalf("DeleteIssues failed: %v", err)
@@ -22,7 +22,7 @@ func TestDeleteIssues(t *testing.T) {
 	})
 
 	t.Run("delete with dependents - should fail without force or cascade", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		
 		// Create issues with dependency
 		issue1 := &types.Issue{ID: "bd-1", Title: "Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -45,7 +45,7 @@ func TestDeleteIssues(t *testing.T) {
 	})
 
 	t.Run("delete with cascade - should delete all dependents", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		
 		// Create chain: bd-1 -> bd-2 -> bd-3
 		issue1 := &types.Issue{ID: "bd-1", Title: "Cascade Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -92,7 +92,7 @@ func TestDeleteIssues(t *testing.T) {
 	})
 
 	t.Run("delete with force - should orphan dependents", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		
 		// Create chain: bd-1 -> bd-2 -> bd-3
 		issue1 := &types.Issue{ID: "bd-1", Title: "Force Parent", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -142,7 +142,7 @@ func TestDeleteIssues(t *testing.T) {
 	})
 
 	t.Run("dry run - should not delete", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		
 		issue1 := &types.Issue{ID: "bd-1", Title: "DryRun Issue 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
 		issue2 := &types.Issue{ID: "bd-2", Title: "DryRun Issue 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -174,7 +174,7 @@ func TestDeleteIssues(t *testing.T) {
 	})
 
 	t.Run("delete multiple issues at once", func(t *testing.T) {
-		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+		store := newTestStore(t, "")
 		
 		independent1 := &types.Issue{ID: "bd-10", Title: "Independent 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
 		independent2 := &types.Issue{ID: "bd-11", Title: "Independent 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
@@ -205,7 +205,7 @@ func TestDeleteIssues(t *testing.T) {
 }
 
 func TestDeleteIssue(t *testing.T) {
-	store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+	store := newTestStore(t, "")
 	ctx := context.Background()
 
 	issue := &types.Issue{

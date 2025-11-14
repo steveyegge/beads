@@ -50,7 +50,10 @@ func TestValidateBranchName(t *testing.T) {
 
 func newTestStore(t *testing.T) *sqlite.SQLiteStorage {
 	t.Helper()
-	store, err := sqlite.New("file::memory:?mode=memory&cache=private")
+	// Use temp file instead of memory to avoid shared cache issues
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/syncbranch.db"
+	store, err := sqlite.New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}

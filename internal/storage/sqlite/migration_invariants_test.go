@@ -248,11 +248,12 @@ func TestGetInvariantNames(t *testing.T) {
 	}
 }
 
-// setupInvariantTestDB creates an in-memory test database with schema
+// setupInvariantTestDB creates a test database with schema
 func setupInvariantTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	store := newTestStore(t, ":memory:")
+	// Use temp file instead of :memory: to avoid shared cache issues
+	store := newTestStore(t, t.TempDir()+"/invariant.db")
 	t.Cleanup(func() { _ = store.Close() })
 
 	// Return the underlying database connection

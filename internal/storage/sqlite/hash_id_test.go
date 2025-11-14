@@ -9,7 +9,10 @@ import (
 )
 
 func TestHashIDGeneration(t *testing.T) {
-	store, err := New(":memory:")
+	// Use temp file to avoid shared cache issues
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	store, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -73,7 +76,10 @@ func TestHashIDDeterministic(t *testing.T) {
 }
 
 func TestHashIDCollisionHandling(t *testing.T) {
-	store, err := New(":memory:")
+	// Use temp file to avoid shared cache issues
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	store, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -132,7 +138,10 @@ func TestHashIDCollisionHandling(t *testing.T) {
 }
 
 func TestHashIDBatchCreation(t *testing.T) {
-	store, err := New(":memory:")
+	// Use temp file to avoid shared cache issues
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+	store, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}

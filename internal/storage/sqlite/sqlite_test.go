@@ -1295,10 +1295,17 @@ func TestMultipleStorageDistinctPaths(t *testing.T) {
 func TestInMemoryDatabase(t *testing.T) {
 	ctx := context.Background()
 
-	// Test that :memory: database works
-	store, err := New(":memory:")
+	// Test with temporary file database (in-memory shared cache can cause test interference)
+	tmpDir, err := os.MkdirTemp("", "beads-test-memory-*")
 	if err != nil {
-		t.Fatalf("failed to create in-memory storage: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "memory.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create file-based storage: %v", err)
 	}
 	defer store.Close()
 

@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +14,15 @@ func TestAdaptiveIDLength_E2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow E2E test in short mode")
 	}
-	// Create in-memory database
-	db, err := New(":memory:")
+	// Create temporary file database to avoid shared cache issues
+	tmpDir, err := os.MkdirTemp("", "beads-test-e2e-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "e2e.db")
+	db, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -120,8 +129,15 @@ func formatTitle(format string, i int) string {
 }
 
 func TestAdaptiveIDLength_CustomConfig(t *testing.T) {
-	// Create in-memory database
-	db, err := New(":memory:")
+	// Create temporary file database to avoid shared cache issues
+	tmpDir, err := os.MkdirTemp("", "beads-test-adaptive-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := New(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
