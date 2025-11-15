@@ -48,16 +48,24 @@ func New(path string) (*SQLiteStorage, error) {
 	// Build connection string with PRAGMA settings that apply per-connection
 	// Critical: foreign_keys, busy_timeout, and journal_mode must be in DSN to apply to ALL connections
 	var connStr string
+
+	// Detect in-memory databases FIRST before deciding journal mode
+	// In-memory DBs need DELETE journal mode; file-based DBs use WAL
+	isInMemoryPath := path == ":memory:" || strings.Contains(path, ":memory:")
+	journalMode := "WAL"
+	if isInMemoryPath {
+		journalMode = "DELETE"
+	}
+
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
-		// Use DELETE journal mode for in-memory (WAL doesn't work)
 		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(DELETE)"
 	} else if strings.HasPrefix(path, "file:") {
-		// Already a URI - append PRAGMA settings including WAL journal mode
+		// Already a URI - append PRAGMA settings with appropriate journal mode
 		if strings.Contains(path, "?") {
-			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
+			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
 		} else {
-			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
+			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
 		}
 	} else {
 		// Ensure directory exists for file-based databases
@@ -65,8 +73,8 @@ func New(path string) (*SQLiteStorage, error) {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		// File URI with per-connection PRAGMA settings including WAL journal mode
-		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
+		// File URI with per-connection PRAGMA settings
+		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
 	}
 
 	db, err := sql.Open("sqlite3", connStr)
