@@ -8,9 +8,9 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -81,6 +81,13 @@ var taskTitles = []string{
 	"Configure deployment",
 }
 
+// Fixture size rationale:
+// We only provide Large (10K) and XLarge (20K) fixtures because:
+// - Performance characteristics only emerge at scale (10K+ issues)
+// - Smaller fixtures don't provide meaningful optimization insights
+// - Code weight matters; we avoid unused complexity
+// - Target use case: repositories with thousands of issues
+
 // LargeSQLite creates a 10K issue database with realistic patterns
 func LargeSQLite(ctx context.Context, store storage.Storage) error {
 	return generateIssues(ctx, store, 10000, rand.New(rand.NewSource(42)))
@@ -114,6 +121,19 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 	featureIssues := make([]*types.Issue, 0, numFeatures)
 	taskIssues := make([]*types.Issue, 0, numTasks)
 
+	// Progress tracking
+	totalIssues := n
+	createdIssues := 0
+	lastPctLogged := -1
+
+	logProgress := func() {
+		pct := (createdIssues * 100) / totalIssues
+		if pct >= lastPctLogged+10 {
+			fmt.Printf("  Progress: %d%% (%d/%d issues created)\n", pct, createdIssues, totalIssues)
+			lastPctLogged = pct
+		}
+	}
+
 	// Create epics
 	for i := 0; i < numEpics; i++ {
 		issue := &types.Issue{
@@ -144,6 +164,8 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 
 		epicIssues = append(epicIssues, issue)
 		allIssues = append(allIssues, issue)
+		createdIssues++
+		logProgress()
 	}
 
 	// Create features under epics
@@ -190,6 +212,8 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 
 		featureIssues = append(featureIssues, issue)
 		allIssues = append(allIssues, issue)
+		createdIssues++
+		logProgress()
 	}
 
 	// Create tasks under features
@@ -236,7 +260,11 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 
 		taskIssues = append(taskIssues, issue)
 		allIssues = append(allIssues, issue)
+		createdIssues++
+		logProgress()
 	}
+
+	fmt.Printf("  Progress: 100%% (%d/%d issues created) - Complete!\n", totalIssues, totalIssues)
 
 	// Add cross-links: 20% of tasks block other tasks across epics
 	numCrossLinks := numTasks / 5
@@ -362,17 +390,47 @@ func importFromJSONL(ctx context.Context, store storage.Storage, path string) er
 		issues = append(issues, &issue)
 	}
 
-	// Import using the importer
-	opts := importer.Options{
-		OrphanHandling: importer.OrphanAllow,
+	// Import issues directly using storage interface
+	// Step 1: Create all issues first (without dependencies/labels)
+	type savedMetadata struct {
+		deps   []*types.Dependency
+		labels []string
+	}
+	metadata := make(map[string]savedMetadata)
+
+	for _, issue := range issues {
+		// Save dependencies and labels for later
+		metadata[issue.ID] = savedMetadata{
+			deps:   issue.Dependencies,
+			labels: issue.Labels,
+		}
+		issue.Dependencies = nil
+		issue.Labels = nil
+
+		if err := store.CreateIssue(ctx, issue, "fixture"); err != nil {
+			// Ignore duplicate errors
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				return fmt.Errorf("failed to create issue %s: %w", issue.ID, err)
+			}
+		}
 	}
 
-	// Get database path from storage
-	dbPath := store.Path()
+	// Step 2: Add all dependencies (now that all issues exist)
+	for issueID, meta := range metadata {
+		for _, dep := range meta.deps {
+			if err := store.AddDependency(ctx, dep, "fixture"); err != nil {
+				// Ignore duplicate and cycle errors
+				if !strings.Contains(err.Error(), "already exists") &&
+					!strings.Contains(err.Error(), "cycle") {
+					return fmt.Errorf("failed to add dependency for %s: %w", issueID, err)
+				}
+			}
+		}
 
-	_, err = importer.ImportIssues(ctx, dbPath, store, issues, opts)
-	if err != nil {
-		return fmt.Errorf("failed to import issues: %w", err)
+		// Add labels
+		for _, label := range meta.labels {
+			_ = store.AddLabel(ctx, issueID, label, "fixture")
+		}
 	}
 
 	return nil
