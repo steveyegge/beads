@@ -76,10 +76,12 @@ claude mcp list
 
 ```bash
 # Create wrapper script (one-time setup)
+# NOTE: Script uses portable relative path - works for any user/directory
 cat > /Users/jleechan/projects_other/beads/integrations/beads-mcp/run-local-mcp.sh <<'EOF'
 #!/bin/bash
 # Wrapper script to run local beads-mcp for development
-cd /Users/jleechan/projects_other/beads/integrations/beads-mcp
+# Automatically changes to the script's directory (integrations/beads-mcp)
+cd "$(dirname "${BASH_SOURCE[0]}")"
 exec uv run python -m beads_mcp
 EOF
 
