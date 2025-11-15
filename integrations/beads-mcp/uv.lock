@@ -67,7 +67,7 @@ wheels = [
 
 [[package]]
 name = "beads-mcp"
-version = "0.23.1"
+version = "0.23.1+jleechan.fork"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
