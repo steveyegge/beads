@@ -51,7 +51,13 @@ func New(path string) (*SQLiteStorage, error) {
 
 	// Detect in-memory databases FIRST before deciding journal mode
 	// In-memory DBs need DELETE journal mode; file-based DBs use WAL
-	isInMemoryPath := path == ":memory:" || strings.Contains(path, ":memory:")
+	// SQLite in-memory formats (https://sqlite.org/inmemorydb.html):
+	//   1. :memory: (classic)
+	//   2. file::memory:?... (URI with :memory: in path)
+	//   3. file:memdb?mode=memory&... (URI with mode=memory parameter)
+	isInMemoryPath := path == ":memory:" ||
+		strings.Contains(path, ":memory:") ||
+		strings.Contains(path, "mode=memory")
 	journalMode := "WAL"
 	if isInMemoryPath {
 		journalMode = "DELETE"
