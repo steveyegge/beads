@@ -211,73 +211,64 @@ func measureOperation(name string, op func() error) time.Duration {
 	return time.Since(start)
 }
 
-func runReadyWork(dbPath string) error {
-	// This would use the storage interface to get ready work
-	// For now, we'll use a simple SQL query
+// runQuery executes a read-only database query and returns any error
+func runQuery(dbPath string, queryFn func(*sql.DB) error) error {
 	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	return queryFn(db)
+}
 
-	// Simplified ready work query (the real one is more complex)
-	_, err = db.Query(`
-		SELECT id FROM issues
-		WHERE status IN ('open', 'in_progress')
-		AND id NOT IN (
-			SELECT issue_id FROM dependencies WHERE type = 'blocks'
-		)
-		LIMIT 100
-	`)
-	return err
+func runReadyWork(dbPath string) error {
+	return runQuery(dbPath, func(db *sql.DB) error {
+		// simplified ready work query (the real one is more complex)
+		_, err := db.Query(`
+			SELECT id FROM issues
+			WHERE status IN ('open', 'in_progress')
+			AND id NOT IN (
+				SELECT issue_id FROM dependencies WHERE type = 'blocks'
+			)
+			LIMIT 100
+		`)
+		return err
+	})
 }
 
 func runListOpen(dbPath string) error {
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
+	return runQuery(dbPath, func(db *sql.DB) error {
+		_, err := db.Query("SELECT id, title, status FROM issues WHERE status != 'closed' LIMIT 100")
 		return err
-	}
-	defer db.Close()
-
-	_, err = db.Query("SELECT id, title, status FROM issues WHERE status != 'closed' LIMIT 100")
-	return err
+	})
 }
 
 func runShowRandom(dbPath string) error {
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	return runQuery(dbPath, func(db *sql.DB) error {
+		// get a random issue
+		var issueID string
+		if err := db.QueryRow("SELECT id FROM issues ORDER BY RANDOM() LIMIT 1").Scan(&issueID); err != nil {
+			return err
+		}
 
-	// Get a random issue
-	var issueID string
-	err = db.QueryRow("SELECT id FROM issues ORDER BY RANDOM() LIMIT 1").Scan(&issueID)
-	if err != nil {
+		// get issue details
+		_, err := db.Query("SELECT * FROM issues WHERE id = ?", issueID)
 		return err
-	}
-
-	// Get issue details
-	_, err = db.Query("SELECT * FROM issues WHERE id = ?", issueID)
-	return err
+	})
 }
 
 func runComplexSearch(dbPath string) error {
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
+	return runQuery(dbPath, func(db *sql.DB) error {
+		// complex query with filters
+		_, err := db.Query(`
+			SELECT i.id, i.title, i.status, i.priority
+			FROM issues i
+			LEFT JOIN labels l ON i.id = l.issue_id
+			WHERE i.status IN ('open', 'in_progress')
+			AND i.priority <= 2
+			GROUP BY i.id
+			LIMIT 100
+		`)
 		return err
-	}
-	defer db.Close()
-
-	// Complex query with filters
-	_, err = db.Query(`
-		SELECT i.id, i.title, i.status, i.priority
-		FROM issues i
-		LEFT JOIN labels l ON i.id = l.issue_id
-		WHERE i.status IN ('open', 'in_progress')
-		AND i.priority <= 2
-		GROUP BY i.id
-		LIMIT 100
-	`)
-	return err
+	})
 }

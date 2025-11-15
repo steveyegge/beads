@@ -88,32 +88,86 @@ var taskTitles = []string{
 // - Code weight matters; we avoid unused complexity
 // - Target use case: repositories with thousands of issues
 
+// DataConfig controls the distribution and characteristics of generated test data
+type DataConfig struct {
+	TotalIssues      int     // total number of issues to generate
+	EpicRatio        float64 // percentage of issues that are epics (e.g., 0.1 for 10%)
+	FeatureRatio     float64 // percentage of issues that are features (e.g., 0.3 for 30%)
+	OpenRatio        float64 // percentage of issues that are open (e.g., 0.5 for 50%)
+	CrossLinkRatio   float64 // percentage of tasks with cross-epic blocking dependencies (e.g., 0.2 for 20%)
+	MaxEpicAgeDays   int     // maximum age in days for epics (e.g., 180)
+	MaxFeatureAgeDays int    // maximum age in days for features (e.g., 150)
+	MaxTaskAgeDays   int     // maximum age in days for tasks (e.g., 120)
+	MaxClosedAgeDays int     // maximum days since closure (e.g., 30)
+	RandSeed         int64   // random seed for reproducibility
+}
+
+// DefaultLargeConfig returns configuration for 10K issue dataset
+func DefaultLargeConfig() DataConfig {
+	return DataConfig{
+		TotalIssues:      10000,
+		EpicRatio:        0.1,
+		FeatureRatio:     0.3,
+		OpenRatio:        0.5,
+		CrossLinkRatio:   0.2,
+		MaxEpicAgeDays:   180,
+		MaxFeatureAgeDays: 150,
+		MaxTaskAgeDays:   120,
+		MaxClosedAgeDays: 30,
+		RandSeed:         42,
+	}
+}
+
+// DefaultXLargeConfig returns configuration for 20K issue dataset
+func DefaultXLargeConfig() DataConfig {
+	return DataConfig{
+		TotalIssues:      20000,
+		EpicRatio:        0.1,
+		FeatureRatio:     0.3,
+		OpenRatio:        0.5,
+		CrossLinkRatio:   0.2,
+		MaxEpicAgeDays:   180,
+		MaxFeatureAgeDays: 150,
+		MaxTaskAgeDays:   120,
+		MaxClosedAgeDays: 30,
+		RandSeed:         43,
+	}
+}
+
 // LargeSQLite creates a 10K issue database with realistic patterns
 func LargeSQLite(ctx context.Context, store storage.Storage) error {
-	return generateIssues(ctx, store, 10000, rand.New(rand.NewSource(42)))
+	cfg := DefaultLargeConfig()
+	return generateIssuesWithConfig(ctx, store, cfg)
 }
 
 // XLargeSQLite creates a 20K issue database with realistic patterns
 func XLargeSQLite(ctx context.Context, store storage.Storage) error {
-	return generateIssues(ctx, store, 20000, rand.New(rand.NewSource(43)))
+	cfg := DefaultXLargeConfig()
+	return generateIssuesWithConfig(ctx, store, cfg)
 }
 
 // LargeFromJSONL creates a 10K issue database by exporting to JSONL and reimporting
 func LargeFromJSONL(ctx context.Context, store storage.Storage, tempDir string) error {
-	return generateFromJSONL(ctx, store, tempDir, 10000, rand.New(rand.NewSource(44)))
+	cfg := DefaultLargeConfig()
+	cfg.RandSeed = 44 // different seed for JSONL path
+	return generateFromJSONL(ctx, store, tempDir, cfg)
 }
 
 // XLargeFromJSONL creates a 20K issue database by exporting to JSONL and reimporting
 func XLargeFromJSONL(ctx context.Context, store storage.Storage, tempDir string) error {
-	return generateFromJSONL(ctx, store, tempDir, 20000, rand.New(rand.NewSource(45)))
+	cfg := DefaultXLargeConfig()
+	cfg.RandSeed = 45 // different seed for JSONL path
+	return generateFromJSONL(ctx, store, tempDir, cfg)
 }
 
-// generateIssues creates n issues with realistic epic hierarchies and cross-links
-func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand.Rand) error {
-	// Calculate breakdown: 10% epics, 30% features, 60% tasks
-	numEpics := n / 10
-	numFeatures := (n * 3) / 10
-	numTasks := n - numEpics - numFeatures
+// generateIssuesWithConfig creates issues with realistic epic hierarchies and cross-links using provided configuration
+func generateIssuesWithConfig(ctx context.Context, store storage.Storage, cfg DataConfig) error {
+	rng := rand.New(rand.NewSource(cfg.RandSeed))
+
+	// Calculate breakdown using configuration ratios
+	numEpics := int(float64(cfg.TotalIssues) * cfg.EpicRatio)
+	numFeatures := int(float64(cfg.TotalIssues) * cfg.FeatureRatio)
+	numTasks := cfg.TotalIssues - numEpics - numFeatures
 
 	// Track created issues for cross-linking
 	var allIssues []*types.Issue
@@ -122,14 +176,13 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 	taskIssues := make([]*types.Issue, 0, numTasks)
 
 	// Progress tracking
-	totalIssues := n
 	createdIssues := 0
 	lastPctLogged := -1
 
 	logProgress := func() {
-		pct := (createdIssues * 100) / totalIssues
+		pct := (createdIssues * 100) / cfg.TotalIssues
 		if pct >= lastPctLogged+10 {
-			fmt.Printf("  Progress: %d%% (%d/%d issues created)\n", pct, createdIssues, totalIssues)
+			fmt.Printf("  Progress: %d%% (%d/%d issues created)\n", pct, createdIssues, cfg.TotalIssues)
 			lastPctLogged = pct
 		}
 	}
@@ -139,16 +192,16 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 		issue := &types.Issue{
 			Title:       fmt.Sprintf("%s (Epic %d)", epicTitles[i%len(epicTitles)], i),
 			Description: fmt.Sprintf("Epic for %s", epicTitles[i%len(epicTitles)]),
-			Status:      randomStatus(rng, 0.5), // 50% open, 50% closed
+			Status:      randomStatus(rng, cfg.OpenRatio),
 			Priority:    randomPriority(rng),
 			IssueType:   types.TypeEpic,
 			Assignee:    commonAssignees[rng.Intn(len(commonAssignees))],
-			CreatedAt:   randomTime(rng, 180), // Created up to 180 days ago
+			CreatedAt:   randomTime(rng, cfg.MaxEpicAgeDays),
 			UpdatedAt:   time.Now(),
 		}
 
 		if issue.Status == types.StatusClosed {
-			closedAt := randomTime(rng, 30)
+			closedAt := randomTime(rng, cfg.MaxClosedAgeDays)
 			issue.ClosedAt = &closedAt
 		}
 
@@ -175,16 +228,16 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 		issue := &types.Issue{
 			Title:       fmt.Sprintf("%s (Feature %d)", featureTitles[i%len(featureTitles)], i),
 			Description: fmt.Sprintf("Feature under %s", parentEpic.Title),
-			Status:      randomStatus(rng, 0.5),
+			Status:      randomStatus(rng, cfg.OpenRatio),
 			Priority:    randomPriority(rng),
 			IssueType:   types.TypeFeature,
 			Assignee:    commonAssignees[rng.Intn(len(commonAssignees))],
-			CreatedAt:   randomTime(rng, 150),
+			CreatedAt:   randomTime(rng, cfg.MaxFeatureAgeDays),
 			UpdatedAt:   time.Now(),
 		}
 
 		if issue.Status == types.StatusClosed {
-			closedAt := randomTime(rng, 30)
+			closedAt := randomTime(rng, cfg.MaxClosedAgeDays)
 			issue.ClosedAt = &closedAt
 		}
 
@@ -223,16 +276,16 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 		issue := &types.Issue{
 			Title:       fmt.Sprintf("%s (Task %d)", taskTitles[i%len(taskTitles)], i),
 			Description: fmt.Sprintf("Task under %s", parentFeature.Title),
-			Status:      randomStatus(rng, 0.5),
+			Status:      randomStatus(rng, cfg.OpenRatio),
 			Priority:    randomPriority(rng),
 			IssueType:   types.TypeTask,
 			Assignee:    commonAssignees[rng.Intn(len(commonAssignees))],
-			CreatedAt:   randomTime(rng, 120),
+			CreatedAt:   randomTime(rng, cfg.MaxTaskAgeDays),
 			UpdatedAt:   time.Now(),
 		}
 
 		if issue.Status == types.StatusClosed {
-			closedAt := randomTime(rng, 30)
+			closedAt := randomTime(rng, cfg.MaxClosedAgeDays)
 			issue.ClosedAt = &closedAt
 		}
 
@@ -264,10 +317,10 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 		logProgress()
 	}
 
-	fmt.Printf("  Progress: 100%% (%d/%d issues created) - Complete!\n", totalIssues, totalIssues)
+	fmt.Printf("  Progress: 100%% (%d/%d issues created) - Complete!\n", cfg.TotalIssues, cfg.TotalIssues)
 
-	// Add cross-links: 20% of tasks block other tasks across epics
-	numCrossLinks := numTasks / 5
+	// Add cross-links between tasks across epics using configured ratio
+	numCrossLinks := int(float64(numTasks) * cfg.CrossLinkRatio)
 	for i := 0; i < numCrossLinks; i++ {
 		fromTask := taskIssues[rng.Intn(len(taskIssues))]
 		toTask := taskIssues[rng.Intn(len(taskIssues))]
@@ -293,9 +346,9 @@ func generateIssues(ctx context.Context, store storage.Storage, n int, rng *rand
 }
 
 // generateFromJSONL creates issues, exports to JSONL, clears DB, and reimports
-func generateFromJSONL(ctx context.Context, store storage.Storage, tempDir string, n int, rng *rand.Rand) error {
+func generateFromJSONL(ctx context.Context, store storage.Storage, tempDir string, cfg DataConfig) error {
 	// First generate issues normally
-	if err := generateIssues(ctx, store, n, rng); err != nil {
+	if err := generateIssuesWithConfig(ctx, store, cfg); err != nil {
 		return fmt.Errorf("failed to generate issues: %w", err)
 	}
 
