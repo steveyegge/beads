@@ -196,10 +196,12 @@ func startCPUProfile(path string) error {
 	return pprof.StartCPUProfile(f)
 }
 
+// stopCPUProfile stops CPU profiling and closes the profile file.
+// Must be called after pprof.StartCPUProfile() to flush profile data to disk.
 func stopCPUProfile() {
 	pprof.StopCPUProfile()
 	if cpuProfileFile != nil {
-		cpuProfileFile.Close()
+		_ = cpuProfileFile.Close() // best effort cleanup
 	}
 }
 

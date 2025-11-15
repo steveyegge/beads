@@ -147,14 +147,20 @@ var rootCmd = &cobra.Command{
 			actor = config.GetString("actor")
 		}
 
+		// Performance profiling setup
+		// When --profile is enabled, force direct mode to capture actual database operations
+		// rather than just RPC serialization/network overhead. This gives accurate profiles
+		// of the storage layer, query performance, and business logic.
 		if profileEnabled {
-			noDaemon = true // Force direct mode to profile actual work, not just RPC calls
+			noDaemon = true
 			timestamp := time.Now().Format("20060102-150405")
 			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
-				profileFile = f; _ = pprof.StartCPUProfile(f)
+				profileFile = f
+				_ = pprof.StartCPUProfile(f)
 			}
 			if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
-				traceFile = f; _ = trace.Start(f)
+				traceFile = f
+				_ = trace.Start(f)
 			}
 		}
 
