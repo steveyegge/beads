@@ -69,6 +69,18 @@ func New(path string) (*SQLiteStorage, error) {
 		journalMode = "DELETE"
 	}
 
+	if strings.HasPrefix(path, "file:") && !isInMemory {
+		// Ensure directory exists for file-based URIs by extracting filesystem path
+		fsPath := strings.TrimPrefix(path, "file:")
+		if idx := strings.IndexByte(fsPath, '?'); idx >= 0 {
+			fsPath = fsPath[:idx]
+		}
+		dir := filepath.Dir(fsPath)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
 		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(DELETE)"
