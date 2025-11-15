@@ -879,3 +879,61 @@ func TestReadFirstIssueFromJSONL_EmptyFile(t *testing.T) {
 		t.Errorf("Expected nil issue for empty file, got %+v", issue)
 	}
 }
+
+// BenchmarkInit measures the performance of fresh database initialization
+func BenchmarkInit(b *testing.B) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+
+	// Create single parent temp directory outside the loop
+	parentTmpDir, err := os.MkdirTemp("", "bench-init-*")
+	if err != nil {
+		b.Fatalf("Failed to create parent temp dir: %v", err)
+	}
+	defer os.RemoveAll(parentTmpDir)
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+
+		// Create fresh temp directory for this iteration with manual cleanup
+		tmpDir, err := os.MkdirTemp(parentTmpDir, "run-*")
+		if err != nil {
+			b.Fatalf("Failed to create temp directory: %v", err)
+		}
+
+		// Change to temp directory
+		originalWd, err := os.Getwd()
+		if err != nil {
+			b.Fatalf("Failed to get working directory: %v", err)
+		}
+
+		if err := os.Chdir(tmpDir); err != nil {
+			b.Fatalf("Failed to change to temp directory: %v", err)
+		}
+
+		// Initialize git repo (realistic scenario)
+		if err := runCommandInDir(tmpDir, "git", "init", "-q"); err != nil {
+			b.Fatalf("Failed to init git: %v", err)
+		}
+
+		// Reset command state
+		dbPath = ""
+		rootCmd.SetArgs([]string{"init", "--prefix", "bench", "--quiet", "--skip-merge-driver"})
+
+		b.StartTimer()
+
+		// Measure init performance
+		if err := rootCmd.Execute(); err != nil {
+			b.Fatalf("Init failed: %v", err)
+		}
+
+		b.StopTimer()
+
+		// Restore working directory and clean up immediately
+		if err := os.Chdir(originalWd); err != nil {
+			b.Fatalf("Failed to restore working directory: %v", err)
+		}
+		os.RemoveAll(tmpDir)
+	}
+}

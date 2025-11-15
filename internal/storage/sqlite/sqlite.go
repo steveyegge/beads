@@ -13,9 +13,9 @@ import (
 	"time"
 
 	// Import SQLite driver
-	"github.com/steveyegge/beads/internal/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -25,21 +25,71 @@ type SQLiteStorage struct {
 	closed atomic.Bool // Tracks whether Close() has been called
 }
 
+// isInMemorySQLitePath detects whether a SQLite path/DSN refers to an in-memory database.
+// SQLite supports multiple URI formats for in-memory databases (https://sqlite.org/inmemorydb.html),
+// so we need to handle both :memory: and mode=memory variants consistently.
+func isInMemorySQLitePath(value string) bool {
+	if value == "" {
+		return false
+	}
+	return value == ":memory:" ||
+		strings.Contains(value, ":memory:") ||
+		strings.Contains(value, "mode=memory")
+}
+
 // New creates a new SQLite storage backend
 func New(path string) (*SQLiteStorage, error) {
-	// Build connection string with proper URI syntax
-	// For :memory: databases, use shared cache so multiple connections see the same data
+	// Detect if this is a fresh database initialization
+	// Fresh init = database file doesn't exist yet (skip expensive validation)
+	isFreshInit := false
+	if path != ":memory:" {
+		// Extract filesystem path from URI if needed
+		checkPath := path
+		if strings.HasPrefix(path, "file:") {
+			// Remove "file:" prefix and extract path before any query parameters
+			checkPath = strings.TrimPrefix(path, "file:")
+			if idx := strings.IndexByte(checkPath, '?'); idx >= 0 {
+				checkPath = checkPath[:idx]
+			}
+		}
+		if _, err := os.Stat(checkPath); os.IsNotExist(err) {
+			isFreshInit = true
+		}
+	}
+
+	// Build connection string with PRAGMA settings that apply per-connection
+	// Critical: foreign_keys, busy_timeout, and journal_mode must be in DSN to apply to ALL connections
 	var connStr string
+
+	// Detect in-memory databases FIRST before deciding journal mode
+	// In-memory DBs need DELETE journal mode; file-based DBs use WAL
+	isInMemory := isInMemorySQLitePath(path)
+	journalMode := "WAL"
+	if isInMemory {
+		journalMode = "DELETE"
+	}
+
+	if strings.HasPrefix(path, "file:") && !isInMemory {
+		// Ensure directory exists for file-based URIs by extracting filesystem path
+		fsPath := strings.TrimPrefix(path, "file:")
+		if idx := strings.IndexByte(fsPath, '?'); idx >= 0 {
+			fsPath = fsPath[:idx]
+		}
+		dir := filepath.Dir(fsPath)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
-		// Note: WAL mode doesn't work with shared in-memory databases, so use DELETE mode
-		// The name "memdb" is required for cache=shared to work properly across connections
-		connStr = "file:memdb?mode=memory&cache=shared&_pragma=journal_mode(DELETE)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(DELETE)"
 	} else if strings.HasPrefix(path, "file:") {
-		// Already a URI - append our pragmas if not present
-		connStr = path
-		if !strings.Contains(path, "_pragma=foreign_keys") {
-			connStr += "&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		// Already a URI - append PRAGMA settings with appropriate journal mode
+		if strings.Contains(path, "?") {
+			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
+		} else {
+			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
 		}
 	} else {
 		// Ensure directory exists for file-based databases
@@ -47,8 +97,8 @@ func New(path string) (*SQLiteStorage, error) {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		// Use file URI with pragmas
-		connStr = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)&_time_format=sqlite"
+		// File URI with per-connection PRAGMA settings
+		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(" + journalMode + ")"
 	}
 
 	db, err := sql.Open("sqlite3", connStr)
@@ -56,10 +106,13 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// For :memory: databases, force single connection to ensure cache sharing works properly.
-	// SQLite's shared cache mode for in-memory databases only works reliably with one connection.
-	// Without this, different connections in the pool can't see each other's writes (bd-b121).
-	if path == ":memory:" {
+	// For in-memory databases, force single connection.
+	// - Shared cache (:memory: or cache=shared): needs single connection for sharing
+	// - Private cache (cache=private): needs single connection because each connection
+	//   gets its own isolated database, so schema/data won't be visible across connections
+	// Without this, different connections can't see each other's data (bd-b121).
+	// Reuse isInMemory from above to keep journal_mode and connection pooling aligned
+	if isInMemory {
 		db.SetMaxOpenConns(1)
 	}
 
@@ -68,36 +121,52 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	// Note: All PRAGMA settings (foreign_keys, busy_timeout, journal_mode) are now
+	// set per-connection via DSN to ensure they apply to ALL pooled connections
+
 	// Initialize schema
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	// Run all migrations
+	// Run migrations (idempotent, safe to run on fresh databases)
 	if err := RunMigrations(db); err != nil {
 		return nil, err
 	}
 
-	// Verify schema compatibility after migrations (bd-ckvw)
-	// First attempt
-	if err := verifySchemaCompatibility(db); err != nil {
-		// Schema probe failed - retry migrations once
-		if retryErr := RunMigrations(db); retryErr != nil {
-			return nil, fmt.Errorf("migration retry failed after schema probe failure: %w (original: %v)", retryErr, err)
-		}
-		
-		// Probe again after retry
+	// Only verify schema compatibility on existing databases
+	// Fresh databases skip validation (huge performance win: ~80-100ms)
+	if !isFreshInit {
+		// Verify schema compatibility after migrations (bd-ckvw)
+		// First attempt
 		if err := verifySchemaCompatibility(db); err != nil {
-			// Still failing - return fatal error with clear message
-			return nil, fmt.Errorf("schema probe failed after migration retry: %w. Database may be corrupted or from incompatible version. Run 'bd doctor' to diagnose", err)
+			// Schema probe failed - retry migrations once
+			if retryErr := RunMigrations(db); retryErr != nil {
+				return nil, fmt.Errorf("migration retry failed after schema probe failure: %w (original: %v)", retryErr, err)
+			}
+
+			// Probe again after retry
+			if err := verifySchemaCompatibility(db); err != nil {
+				// Still failing - return fatal error with clear message
+				return nil, fmt.Errorf("schema probe failed after migration retry: %w. Database may be corrupted or from incompatible version. Run 'bd doctor' to diagnose", err)
+			}
 		}
 	}
 
-	// Convert to absolute path for consistency (but keep :memory: as-is)
+	// Convert to absolute path for consistency (but keep in-memory paths as-is)
+	// For file: URIs, extract the filesystem path before calling filepath.Abs (bd-review-fix)
 	absPath := path
-	if path != ":memory:" {
+	if !isInMemory {
+		pathForAbs := path
+		if strings.HasPrefix(path, "file:") {
+			// Extract filesystem path from URI before calling filepath.Abs
+			pathForAbs = strings.TrimPrefix(path, "file:")
+			if idx := strings.IndexByte(pathForAbs, '?'); idx >= 0 {
+				pathForAbs = pathForAbs[:idx]
+			}
+		}
 		var err error
-		absPath, err = filepath.Abs(path)
+		absPath, err = filepath.Abs(pathForAbs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get absolute path: %w", err)
 		}
@@ -109,8 +178,8 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Hydrate from multi-repo config if configured (bd-307)
-	// Skip for in-memory databases (used in tests)
-	if path != ":memory:" {
+	// Skip for in-memory databases (used in tests) - use consistent detection (bd-review-fix)
+	if !isInMemory {
 		ctx := context.Background()
 		_, err := storage.HydrateFromMultiRepo(ctx)
 		if err != nil {
@@ -205,22 +274,22 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return err
 		}
-		
+
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
 		if strings.Contains(issue.ID, ".") {
-		// Try to resurrect entire parent chain if any parents are missing
-		// Use the conn-based version to participate in the same transaction
-		resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
-		if err != nil {
-		 return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
+			// Try to resurrect entire parent chain if any parents are missing
+			// Use the conn-based version to participate in the same transaction
+			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
+			if err != nil {
+				return fmt.Errorf("failed to resurrect parent chain for %s: %w", issue.ID, err)
+			}
+			if !resurrected {
+				// Parent(s) not found in JSONL history - cannot proceed
+				lastDot := strings.LastIndex(issue.ID, ".")
+				parentID := issue.ID[:lastDot]
+				return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
+			}
 		}
-		if !resurrected {
-		// Parent(s) not found in JSONL history - cannot proceed
-		lastDot := strings.LastIndex(issue.ID, ".")
-		parentID := issue.ID[:lastDot]
-		 return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
-		 }
-	}
 	}
 
 	// Insert issue
@@ -436,14 +505,14 @@ func determineEventType(oldIssue *types.Issue, updates map[string]interface{}) t
 // manageClosedAt automatically manages the closed_at field based on status changes
 func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setClauses []string, args []interface{}) ([]string, []interface{}) {
 	statusVal, hasStatus := updates["status"]
-	
+
 	// If closed_at is explicitly provided in updates, it's already in setClauses/args
 	// and we should not override it (important for import operations that preserve timestamps)
 	_, hasExplicitClosedAt := updates["closed_at"]
 	if hasExplicitClosedAt {
 		return setClauses, args
 	}
-	
+
 	if !hasStatus {
 		return setClauses, args
 	}
@@ -1305,7 +1374,7 @@ func (s *SQLiteStorage) GetOrphanHandling(ctx context.Context) OrphanHandling {
 	if err != nil || value == "" {
 		return OrphanAllow // Default
 	}
-	
+
 	switch OrphanHandling(value) {
 	case OrphanStrict, OrphanResurrect, OrphanSkip, OrphanAllow:
 		return OrphanHandling(value)
@@ -1434,26 +1503,26 @@ func (s *SQLiteStorage) IsClosed() bool {
 // IMPORTANT SAFETY RULES:
 //
 // 1. DO NOT call Close() on the returned *sql.DB
-//    - The SQLiteStorage owns the connection lifecycle
-//    - Closing it will break all storage operations
-//    - Use storage.Close() to close the database
+//   - The SQLiteStorage owns the connection lifecycle
+//   - Closing it will break all storage operations
+//   - Use storage.Close() to close the database
 //
 // 2. DO NOT modify connection pool settings
-//    - Avoid SetMaxOpenConns, SetMaxIdleConns, SetConnMaxLifetime, etc.
-//    - The storage has already configured these for optimal performance
+//   - Avoid SetMaxOpenConns, SetMaxIdleConns, SetConnMaxLifetime, etc.
+//   - The storage has already configured these for optimal performance
 //
 // 3. DO NOT change SQLite PRAGMAs
-//    - The database is configured with WAL mode, foreign keys, and busy timeout
-//    - Changing these (e.g., journal_mode, synchronous, locking_mode) can cause corruption
+//   - The database is configured with WAL mode, foreign keys, and busy timeout
+//   - Changing these (e.g., journal_mode, synchronous, locking_mode) can cause corruption
 //
 // 4. Expect errors after storage.Close()
-//    - Check storage.IsClosed() before long-running operations if needed
-//    - Pass contexts with timeouts to prevent hanging on closed connections
+//   - Check storage.IsClosed() before long-running operations if needed
+//   - Pass contexts with timeouts to prevent hanging on closed connections
 //
 // 5. Keep write transactions SHORT
-//    - SQLite has a single-writer lock even in WAL mode
-//    - Long-running write transactions will block core storage operations
-//    - Use read transactions (BEGIN DEFERRED) when possible
+//   - SQLite has a single-writer lock even in WAL mode
+//   - Long-running write transactions will block core storage operations
+//   - Use read transactions (BEGIN DEFERRED) when possible
 //
 // GOOD PRACTICES:
 //
@@ -1475,7 +1544,6 @@ func (s *SQLiteStorage) IsClosed() bool {
 //	    );
 //	    CREATE INDEX IF NOT EXISTS idx_vc_executions_issue ON vc_executions(issue_id);
 //	`)
-//
 func (s *SQLiteStorage) UnderlyingDB() *sql.DB {
 	return s.db
 }

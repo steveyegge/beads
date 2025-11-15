@@ -1513,3 +1513,42 @@ func TestIsClosed(t *testing.T) {
 		t.Error("Store should be closed after calling Close()")
 	}
 }
+
+// TestPragmaSettingsPerConnection verifies that PRAGMA settings apply to all connections
+func TestPragmaSettingsPerConnection(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "beads-pragma-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	// Verify foreign keys are enabled on multiple connections
+	// This test will fail if PRAGMA is only set on one connection
+	for i := 0; i < 3; i++ {
+		var fkEnabled int
+		err := store.db.QueryRow("PRAGMA foreign_keys").Scan(&fkEnabled)
+		if err != nil {
+			t.Fatalf("iteration %d: failed to query foreign_keys: %v", i, err)
+		}
+		if fkEnabled != 1 {
+			t.Errorf("iteration %d: foreign_keys not enabled (got %d, want 1)", i, fkEnabled)
+		}
+
+		// Verify busy_timeout is set
+		var timeout int
+		err = store.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout)
+		if err != nil {
+			t.Fatalf("iteration %d: failed to query busy_timeout: %v", i, err)
+		}
+		if timeout != 30000 {
+			t.Errorf("iteration %d: busy_timeout not set correctly (got %d, want 30000)", i, timeout)
+		}
+	}
+}
