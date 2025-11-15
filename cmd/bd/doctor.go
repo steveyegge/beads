@@ -1202,7 +1202,7 @@ func checkGitHooks(path string) doctorCheck {
 		}
 	}
 
-	hookInstallMsg := "See https://github.com/steveyegge/beads/tree/main/examples/git-hooks for installation instructions"
+	hookInstallMsg := "Install hooks with 'bd hooks install'. See https://github.com/steveyegge/beads/tree/main/examples/git-hooks for installation instructions"
 
 	if len(installedHooks) > 0 {
 		return doctorCheck{
