@@ -46,17 +46,18 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Build connection string with PRAGMA settings that apply per-connection
-	// Critical: foreign_keys and busy_timeout must be in DSN to apply to ALL connections
+	// Critical: foreign_keys, busy_timeout, and journal_mode must be in DSN to apply to ALL connections
 	var connStr string
 	if path == ":memory:" {
 		// Use shared in-memory database with a named identifier
-		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+		// Use DELETE journal mode for in-memory (WAL doesn't work)
+		connStr = "file:memdb?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(DELETE)"
 	} else if strings.HasPrefix(path, "file:") {
-		// Already a URI - append PRAGMA settings
+		// Already a URI - append PRAGMA settings including WAL journal mode
 		if strings.Contains(path, "?") {
-			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+			connStr = path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
 		} else {
-			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+			connStr = path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
 		}
 	} else {
 		// Ensure directory exists for file-based databases
@@ -64,8 +65,8 @@ func New(path string) (*SQLiteStorage, error) {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		// File URI with per-connection PRAGMA settings
-		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)"
+		// File URI with per-connection PRAGMA settings including WAL journal mode
+		connStr = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)"
 	}
 
 	db, err := sql.Open("sqlite3", connStr)
@@ -78,8 +79,9 @@ func New(path string) (*SQLiteStorage, error) {
 	// - Private cache (cache=private): needs single connection because each connection
 	//   gets its own isolated database, so schema/data won't be visible across connections
 	// Without this, different connections can't see each other's data (bd-b121).
-	isInMemoryDB := path == ":memory:" || strings.Contains(connStr, ":memory:")
-	if isInMemoryDB {
+	// Use consistent in-memory detection throughout (bd-review-fix)
+	isInMemory := path == ":memory:" || strings.Contains(connStr, ":memory:")
+	if isInMemory {
 		db.SetMaxOpenConns(1)
 	}
 
@@ -88,20 +90,8 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Set journal mode
-	// Note: foreign_keys and busy_timeout are now set per-connection via DSN
-	isInMemory := path == ":memory:" || strings.Contains(connStr, ":memory:")
-	if isInMemory {
-		// DELETE mode for in-memory databases (WAL doesn't work)
-		if _, err := db.Exec("PRAGMA journal_mode=DELETE"); err != nil {
-			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
-		}
-	} else {
-		// WAL mode for file-based databases (both fresh and existing)
-		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			return nil, fmt.Errorf("failed to set journal_mode: %w", err)
-		}
-	}
+	// Note: All PRAGMA settings (foreign_keys, busy_timeout, journal_mode) are now
+	// set per-connection via DSN to ensure they apply to ALL pooled connections
 
 	// Initialize schema
 	if _, err := db.Exec(schema); err != nil {
@@ -134,10 +124,19 @@ func New(path string) (*SQLiteStorage, error) {
 
 
 	// Convert to absolute path for consistency (but keep in-memory paths as-is)
+	// For file: URIs, extract the filesystem path before calling filepath.Abs (bd-review-fix)
 	absPath := path
 	if !isInMemory {
+		pathForAbs := path
+		if strings.HasPrefix(path, "file:") {
+			// Extract filesystem path from URI before calling filepath.Abs
+			pathForAbs = strings.TrimPrefix(path, "file:")
+			if idx := strings.IndexByte(pathForAbs, '?'); idx >= 0 {
+				pathForAbs = pathForAbs[:idx]
+			}
+		}
 		var err error
-		absPath, err = filepath.Abs(path)
+		absPath, err = filepath.Abs(pathForAbs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get absolute path: %w", err)
 		}
@@ -149,8 +148,8 @@ func New(path string) (*SQLiteStorage, error) {
 	}
 
 	// Hydrate from multi-repo config if configured (bd-307)
-	// Skip for in-memory databases (used in tests)
-	if path != ":memory:" {
+	// Skip for in-memory databases (used in tests) - use consistent detection (bd-review-fix)
+	if !isInMemory {
 		ctx := context.Background()
 		_, err := storage.HydrateFromMultiRepo(ctx)
 		if err != nil {
