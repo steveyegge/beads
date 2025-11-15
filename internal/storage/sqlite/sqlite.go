@@ -14,8 +14,10 @@ import (
 
 	// Import SQLite driver
 	"github.com/steveyegge/beads/internal/types"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/tetratelabs/wazero"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -23,6 +25,36 @@ type SQLiteStorage struct {
 	db     *sql.DB
 	dbPath string
 	closed atomic.Bool // Tracks whether Close() has been called
+}
+
+func init() {
+	// Setup WASM compilation cache to avoid 220ms JIT compilation overhead on every process start
+	// Cache directory: ~/.cache/beads/wasm/ (platform-specific via os.UserCacheDir)
+	// Automatic version management: wazero keys cache entries by its own version
+	cacheDir := ""
+	if userCache, err := os.UserCacheDir(); err == nil {
+		cacheDir = filepath.Join(userCache, "beads", "wasm")
+	}
+
+	var cache wazero.CompilationCache
+	if cacheDir != "" {
+		// Try file-system cache first (persistent across runs)
+		if c, err := wazero.NewCompilationCacheWithDir(cacheDir); err == nil {
+			cache = c
+			// Optional: log cache location for debugging
+			// fmt.Fprintf(os.Stderr, "WASM cache: %s\n", cacheDir)
+		}
+	}
+
+	// Fallback to in-memory cache if dir creation failed
+	if cache == nil {
+		cache = wazero.NewCompilationCache()
+		// Optional: log fallback for debugging
+		// fmt.Fprintln(os.Stderr, "WASM cache: in-memory only")
+	}
+
+	// Configure go-sqlite3's wazero runtime to use the cache
+	sqlite3.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
 }
 
 // New creates a new SQLite storage backend
