@@ -56,11 +56,14 @@ func New(path string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// For :memory: databases, force single connection to ensure cache sharing works properly.
-	// SQLite's shared cache mode for in-memory databases only works reliably with one connection.
-	// Without this, different connections in the pool can't see each other's writes (bd-b121).
-	if path == ":memory:" {
+	// For all in-memory databases (including file::memory:), force single connection.
+	// SQLite's in-memory databases are isolated per connection by default.
+	// Without this, different connections in the pool can't see each other's writes (bd-b121, bd-yvlc).
+	isInMemory := path == ":memory:" ||
+		(strings.HasPrefix(path, "file:") && strings.Contains(path, "mode=memory"))
+	if isInMemory {
 		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 
 	// Test connection
