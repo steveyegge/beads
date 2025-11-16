@@ -258,6 +258,13 @@ func TestIsHashID(t *testing.T) {
 		{"bd-123abc", true},
 		{"bd-a3f8e9a2.1", true},
 		{"bd-a3f8e9a2.1.2", true},
+		{"bd-beads-1", false},
+		{"bd-beads-123", false},
+		{"bd-beads-a3f8e9a2", true},
+		{"bd-beads-abc123", true},
+		{"bd-beads-123abc", true},
+		{"bd-beads-a3f8e9a2.1", true},
+		{"bd-beads-a3f8e9a2.1.2", true},
 	}
 
 	for _, tt := range tests {
