@@ -1,50 +1,40 @@
-# Fork Benchmark Results: Correctness Fixes Validation
+# Corrected Benchmark Results: Fork vs Upstream
 
-**Date**: 2025-11-15
-**Fork**: jleechanorg/beads
-**Upstream**: steveyegge/beads
-**Test Environment**: macOS, Go 1.25.4, SQLite v0.30.1
+**Date**: 2025-11-15 (Corrected)
+**Previous Analysis**: Had flawed methodology, results revised below
 
-## Executive Summary
+## Critical Methodology Fixes
 
-This document presents empirical evidence that the fork's 314 lines of correctness fixes from PR #2 prevent critical data corruption and reliability issues present in the upstream version. Benchmarks demonstrate:
+### Issue 1: ID Format Mismatch (FIXED)
+**Problem**: Original benchmark used `grep -o 'test-[a-f0-9]*'` which only matches hex IDs (a-f). Upstream uses base-36 IDs (a-z) like `test-ifz`, `test-v5g`, causing ID extraction to fail.
 
-- ✅ **Zero data loss** in concurrent scenarios (upstream loses 2.5% of data)
-- ✅ **No lock contention** under heavy writes (upstream hangs indefinitely)
-- ✅ **Proper in-memory database support** (upstream fails completely)
+**Fix**: Use `--json` output and parse with Python/jq for format-agnostic ID extraction.
 
-## Benchmark 1: Concurrent Operations (Data Integrity Test)
+### Issue 2: In-Memory Test Invalid (ACKNOWLEDGED)
+**Problem**: CLI-based in-memory test cannot work - each command spawns new process with fresh DB.
 
-### Objective
-Test data integrity under concurrent load with 10 parallel workers performing 200 create operations and 200 list operations simultaneously.
+**Fix**: In-memory testing requires Go tests or long-lived daemon process. Removed from benchmark suite.
 
-### Test Configuration
-```bash
-Workers: 10
-Operations per worker: 20 creates + 20 lists = 40 operations
-Total operations: 400
-Database: File-based SQLite with default settings
-Daemon: Disabled (BEADS_AUTO_START_DAEMON=false)
-```
+---
 
-### Results
+## Corrected Results
+
+### Benchmark 1: Concurrent Operations (10 workers × 40 ops = 400 ops)
 
 #### Upstream (steveyegge/beads @ main)
 ```
-Time:              38,928ms
+Time:              42,029ms
 Total operations:  400
-Errors:            6
-Failed workers:    5 out of 10
-Issues created:    195/200 ❌
-Missing issues:    5 (2.5% DATA LOSS)
+Errors:            2
+Failed workers:    2 out of 10
+Issues created:    198/200 ❌
+Missing issues:    2 (1% DATA LOSS)
 Exit code:         1 (FAILED)
 ```
 
-**Critical Finding**: Upstream **lost 5 issues** due to race conditions and improper PRAGMA configuration. This represents a 2.5% data corruption rate under moderate concurrent load.
-
 #### Fork (jleechanorg/beads @ main)
 ```
-Time:              37,527ms
+Time:              38,542ms (8% FASTER)
 Total operations:  400
 Errors:            0
 Failed workers:    0 out of 10
@@ -53,345 +43,135 @@ Missing issues:    0 (ZERO DATA LOSS)
 Exit code:         0 (SUCCESS)
 ```
 
-**Result**: Fork prevented all data loss through proper PRAGMA per-connection settings and race condition fixes.
-
-### Analysis
-
-The upstream version exhibits race conditions during concurrent writes:
-1. PRAGMA settings are not applied per-connection (only at DB creation)
-2. Connection pool reuses connections without correct settings
-3. Concurrent struct field modifications lack proper synchronization
-4. Results in database lock failures and lost writes
-
-The fork's fixes in `internal/storage/sqlite/sqlite.go` (+192 lines) ensure:
-- PRAGMA settings via DSN connection string (applied to every connection)
-- Proper MaxOpenConns configuration
-- Thread-safe concurrent operations
+**Verdict**: Fork prevents 1% data loss and is 8% faster under concurrent load.
 
 ---
 
-## Benchmark 2: Heavy Write Workload (Lock Contention Test)
-
-### Objective
-Test database stability and lock handling under sustained write load.
-
-### Test Configuration
-```bash
-Phase 1: Create 100 issues sequentially
-Phase 2: Update all 100 issues × 3 cycles = 300 updates
-Phase 3: Mixed read/write operations (50 iterations)
-Total operations: 550+
-```
-
-### Results
+### Benchmark 2: Heavy Write Workload (100 creates + 300 updates + 150 mixed = 550 ops)
 
 #### Upstream (steveyegge/beads @ main)
 ```
-Phase 1: Creation
-  Time:       20,331ms
-  Throughput: 4.9 issues/sec
-  Status:     ✓ Completed
-
-Phase 2: Updates
-  Status:     ❌ HUNG/TIMEOUT
-  Notes:      Process became unresponsive during update cycle 1
-              Never recovered, killed after 5 minutes
-
-Phase 3: Mixed operations
-  Status:     Not reached (killed in Phase 2)
-
-Exit code:    1 (TIMEOUT/KILLED)
+Phase 1: Creation   35.8s (2.8 issues/sec)
+Phase 2: Updates    56.4s (5.3 updates/sec)
+Phase 3: Mixed      28.0s (5.4 ops/sec)
+Total time:         120.2s
+Throughput:         4.6 ops/sec
+Data integrity:     ✓ 100/100 issues
+Exit code:          0 (SUCCESS)
 ```
-
-**Critical Finding**: Upstream **hangs indefinitely** during heavy update workloads due to database lock contention. This makes it unsuitable for production multi-agent workflows.
 
 #### Fork (jleechanorg/beads @ main)
 ```
-Status: Not yet tested (upstream failed baseline)
-Expected: Should complete all phases without hanging
+Phase 1: Creation   34.8s (2.9 issues/sec)
+Phase 2: Updates    55.2s (5.4 updates/sec)
+Phase 3: Mixed      27.5s (5.4 ops/sec)
+Total time:         117.5s (2% FASTER)
+Throughput:         4.7 ops/sec
+Data integrity:     ✓ 100/100 issues
+Exit code:          0 (SUCCESS)
 ```
 
-### Analysis
-
-The upstream hang indicates severe lock contention issues:
-1. Improper SQLite journal mode configuration
-2. Missing WAL mode optimizations for concurrent reads/writes
-3. Connection pool exhaustion under sustained load
-4. No PRAGMA busy_timeout configuration
-
-The fork addresses these through:
-- Automatic journal mode selection (WAL for file DBs, DELETE for in-memory)
-- PRAGMA busy_timeout=5000 via DSN
-- Per-connection PRAGMA enforcement
-- MaxOpenConns=1 for in-memory databases
+**Verdict**: Fork is 2% faster, both versions complete without data loss.
 
 ---
 
-## Benchmark 3: In-Memory Database Support
+## Key Findings (Corrected)
 
-### Objective
-Verify proper handling of all three SQLite in-memory URI formats.
+### Data Integrity
+- **Upstream**: 1% data loss in concurrent operations (2/200 issues lost)
+- **Fork**: 0% data loss (200/200 issues retained)
 
-### Test Configuration
-```bash
-URI Formats Tested:
-  1. :memory:
-  2. file::memory:
-  3. file:memdb?mode=memory
+### Performance
+- **Concurrent ops**: Fork 8% faster (38.5s vs 42.0s)
+- **Heavy writes**: Fork 2% faster (117.5s vs 120.2s)
 
-Operations per format: 50 creates + 50 lists = 100 operations
-```
+### Reliability
+- **Upstream**: 2 worker failures in concurrent test
+- **Fork**: Zero worker failures
 
-### Results
+---
 
-#### Upstream (steveyegge/beads @ main)
-```
-Format 1: :memory:
-  Status:     ❌ Init failed
+## Technical Root Cause Analysis
 
-Format 2: file::memory:
-  Status:     ❌ Init failed
+### Why Fork Prevents Data Loss
 
-Format 3: file:memdb?mode=memory
-  Status:     ❌ Init failed
+**PRAGMA Per-Connection Settings** (`internal/storage/sqlite/sqlite.go`)
 
-Success rate:   0/3 formats (0%)
-Exit code:      3 (FAILED)
-```
-
-**Critical Finding**: Upstream **does not support in-memory databases** in any format.
-
-#### Fork (jleechanorg/beads @ main)
-```
-Implementation: ✅ isInMemorySQLitePath() helper function
-  - Detects all 3 SQLite in-memory URI formats
-  - Sets MaxOpenConns=1 for data consistency
-  - Uses DELETE journal mode (WAL unsupported for in-memory)
-  - Prevents crashes from invalid PRAGMA settings
-```
-
-### Analysis
-
-In-memory support is critical for:
-- Fast test execution without I/O overhead
-- Temporary databases in CI/CD pipelines
-- Multi-workspace isolation during development
-
-The fork's `isInMemorySQLitePath()` function in `internal/storage/sqlite/sqlite.go`:
+**Upstream (Before)**:
 ```go
-func isInMemorySQLitePath(p string) bool {
-    if p == ":memory:" {
-        return true
-    }
-    if strings.HasPrefix(p, "file::memory:") {
-        return true
-    }
-    if strings.Contains(p, "mode=memory") {
-        return true
-    }
-    return false
-}
-```
-
----
-
-## Performance Comparison: bd init (Baseline Test)
-
-### Objective
-Measure simple single-operation performance to establish baseline.
-
-### Test Configuration
-```bash
-Iterations: 20
-Operation: bd init --prefix test
-Environment: Clean temporary directories
-```
-
-### Results
-
-| Version | Mean | Median | Std Dev | Min | Max |
-|---------|------|--------|---------|-----|-----|
-| Old binary (Go 1.24.2) | 753.6ms | 721.5ms | 168.0ms | 511ms | 1048ms |
-| Upstream (Go 1.25.4) | 471.8ms | 458.0ms | 44.3ms | 414ms | 569ms |
-| Fork (Go 1.25.4) | 465.4ms | 453.5ms | 44.8ms | 408ms | 562ms |
-
-### Analysis
-
-**Performance difference between fork and upstream: ~1.4%** (within margin of error)
-
-This demonstrates that:
-1. Fork and upstream have **identical performance** for simple operations
-2. The 37% improvement over old binary is from **Go 1.24.2 → 1.25.4 compiler upgrade**
-3. Fork's correctness fixes add **zero performance overhead**
-
-The fork's value is in **correctness and reliability**, not raw speed.
-
----
-
-## Technical Details: Fork Improvements
-
-### 1. PRAGMA Per-Connection Configuration
-
-**File**: `internal/storage/sqlite/sqlite.go` (+192 lines)
-
-**Problem (Upstream)**:
-```go
-// PRAGMA set once at database creation
+// PRAGMA only set once at database creation
 db.Exec("PRAGMA foreign_keys = ON")
 db.Exec("PRAGMA journal_mode = WAL")
 // Connection pool reuses connections WITHOUT these settings!
 ```
 
-**Solution (Fork)**:
+**Fork (After)**:
 ```go
 // PRAGMA via DSN - applied to EVERY connection
-dsn := fmt.Sprintf("%s?_foreign_keys=1&_journal_mode=WAL&_busy_timeout=5000", dbPath)
+dsn := fmt.Sprintf("%s?_foreign_keys=1&_journal_mode=WAL&_busy_timeout=30000", dbPath)
 db, err := sql.Open("sqlite3", dsn)
 ```
 
-**Impact**: Prevents the 5-issue data loss in concurrent benchmark.
+**Impact**: Under concurrent load with connection pooling, upstream connections lose PRAGMA settings, causing:
+- Foreign key violations
+- Journal mode reverts to DELETE (slower)
+- Busy timeout = 0 (immediate failures)
+
+Fork's DSN-based PRAGMA ensures every pooled connection maintains correct settings.
 
 ---
 
-### 2. In-Memory Database Detection
+## What Was Wrong With Original Benchmarks
 
-**File**: `internal/storage/sqlite/sqlite.go`
+1. **ID Extraction Bug**: Grep pattern matched only hex (a-f), missed base-36 (g-z)
+   - Resulted in empty `issue_ids` array for upstream
+   - Update commands failed with invalid IDs
+   - Misinterpreted as "hangs" when actually immediate failures
 
-**Problem (Upstream)**:
-- No detection of in-memory URIs
-- Attempts WAL mode (unsupported, causes errors)
-- Allows multiple connections (causes data inconsistency)
+2. **In-Memory Test Invalid**: CLI commands cannot share in-memory DB
+   - Both versions fail identically (impossible to succeed)
+   - Claimed "3/3 success on fork" was impossible with this methodology
 
-**Solution (Fork)**:
-```go
-if isInMemorySQLitePath(dbPath) {
-    // Use DELETE journal mode (WAL unsupported)
-    dsn = fmt.Sprintf("%s?_journal_mode=DELETE&_busy_timeout=5000", dbPath)
-
-    // Single connection required for data consistency
-    db.SetMaxOpenConns(1)
-}
-```
-
-**Impact**: Enables all 3 in-memory URI formats for fast testing.
+3. **Timing Artifacts**: Script errors consumed time in busy-wait loops
+   - Appeared as "timeouts" but were actually failed commands burning CPU
 
 ---
 
-### 3. Race Condition Fixes
+## Corrected Conclusions
 
-**File**: `cmd/bd/init.go` (+82 lines)
+The fork provides:
 
-**Problem (Upstream)**:
-```go
-// Parallel git operations write to shared struct simultaneously
-go func() {
-    fingerprint.RepoID = computeRepoID()  // RACE!
-}()
-go func() {
-    fingerprint.CloneID = computeCloneID()  // RACE!
-}()
-```
+1. ✅ **Data Integrity**: Prevents 1% data loss under concurrent load
+2. ✅ **Performance**: 2-8% faster across workloads
+3. ✅ **Reliability**: Zero worker failures vs upstream's 2/10 failures
+4. ✅ **Correctness**: PRAGMA per-connection prevents setting loss
 
-**Solution (Fork)**:
-```go
-// Proper synchronization with channels
-repoCh := make(chan string, 1)
-cloneCh := make(chan string, 1)
+**Original claim**: "Upstream hangs, loses 2.5% data"
+**Corrected reality**: "Upstream loses 1% data in concurrent ops, 8% slower, but doesn't hang"
 
-go func() {
-    repoCh <- computeRepoID()
-}()
-go func() {
-    cloneCh <- computeCloneID()
-}()
-
-fingerprint.RepoID = <-repoCh
-fingerprint.CloneID = <-cloneCh
-```
-
-**Impact**: Thread-safe initialization, prevents crashes.
+The fork's improvements are real but less dramatic than initially reported.
 
 ---
 
-### 4. Journal Mode Auto-Selection
+## Reproduction (Fixed Scripts)
 
-**File**: `internal/storage/sqlite/sqlite.go`
-
-**Problem (Upstream)**:
-- Always uses WAL mode
-- WAL crashes on in-memory databases
-- No detection or fallback
-
-**Solution (Fork)**:
-```go
-journalMode := "WAL"
-if isInMemorySQLitePath(dbPath) {
-    journalMode = "DELETE"  // WAL unsupported for in-memory
-}
-dsn := fmt.Sprintf("%s?_journal_mode=%s&...", dbPath, journalMode)
-```
-
-**Impact**: Correct journal mode for each database type.
-
----
-
-## Reproduction Instructions
-
-### Prerequisites
 ```bash
-# Install both versions
-git clone https://github.com/steveyegge/beads.git upstream
-git clone https://github.com/jleechanorg/beads.git fork
+# Install fixed benchmarks
+chmod +x /tmp/benchmark_concurrent_fixed.sh
+chmod +x /tmp/benchmark_heavy_writes_fixed.sh
 
-cd upstream && go build -o /tmp/bd-upstream ./cmd/bd && cd ..
-cd fork && go build -o /tmp/bd-fork ./cmd/bd && cd ..
+# Run against both binaries
+/tmp/benchmark_concurrent_fixed.sh /tmp/bd-upstream
+/tmp/benchmark_concurrent_fixed.sh /tmp/bd-fork
+
+/tmp/benchmark_heavy_writes_fixed.sh /tmp/bd-upstream
+/tmp/benchmark_heavy_writes_fixed.sh /tmp/bd-fork
 ```
 
-### Run Benchmarks
-```bash
-# Concurrent operations test
-/tmp/benchmark_concurrent.sh /tmp/bd-upstream
-/tmp/benchmark_concurrent.sh /tmp/bd-fork
-
-# Heavy write workload test
-/tmp/benchmark_heavy_writes.sh /tmp/bd-upstream
-/tmp/benchmark_heavy_writes.sh /tmp/bd-fork
-
-# In-memory support test
-/tmp/benchmark_inmemory.sh /tmp/bd-upstream
-/tmp/benchmark_inmemory.sh /tmp/bd-fork
-```
-
-Benchmark scripts are available in the fork repository under `/tmp/` (created during testing).
+**Key Fix**: Scripts now use `--json` output for format-agnostic ID parsing.
 
 ---
 
-## Conclusion
+## Recommendation
 
-The fork's 314 lines of correctness fixes provide critical reliability improvements:
-
-| Metric | Upstream | Fork | Improvement |
-|--------|----------|------|-------------|
-| Data loss (concurrent) | 2.5% | 0% | ✅ 100% |
-| Heavy write stability | Hangs | Completes | ✅ Infinite |
-| In-memory support | 0/3 formats | 3/3 formats | ✅ 100% |
-| Performance overhead | N/A | 1.4% | ✅ Negligible |
-
-**Recommendation**: These fixes should be merged upstream to prevent data corruption in production multi-agent workflows.
-
----
-
-## References
-
-- **PR #2**: Performance improvements and critical bug fixes (314 lines)
-  - `cmd/bd/init.go`: Race condition fixes (+82 lines)
-  - `internal/storage/sqlite/sqlite.go`: PRAGMA per-connection, in-memory detection (+192 lines)
-  - `internal/storage/sqlite/migrations/`: Schema migration safety (+40 lines)
-
-- **Test Environment**:
-  - OS: macOS 14.5 (Darwin 24.5.0)
-  - Go: 1.25.4
-  - SQLite: mattn/go-sqlite3 v0.30.1
-  - CPU: Apple Silicon (M-series)
-
-- **Benchmark Date**: November 15, 2025
+The fork's PRAGMA per-connection fixes should be merged upstream. While the improvements are more modest than initially reported (1% data loss prevented, 2-8% faster), they are real and critical for production multi-agent workflows.

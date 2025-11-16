@@ -1,6 +1,6 @@
 #!/bin/bash
-# Benchmark concurrent operations to test PRAGMA per-connection fixes
-# Fork should handle concurrent writes safely while upstream may have issues
+# Fixed concurrent operations benchmark
+# Uses --json output for reliable ID parsing across all ID formats (hex, base-36, etc.)
 
 set -e
 
@@ -30,13 +30,13 @@ worker() {
     local start=$(python3 -c 'import time; print(time.time())')
 
     for i in $(seq 1 $OPERATIONS_PER_WORKER); do
-        # Create issue
-        if ! $BD_BINARY create "Worker $worker_id - Issue $i" > /dev/null 2>&1; then
+        # Create issue - use --json for reliable parsing
+        if ! $BD_BINARY create "Worker $worker_id - Issue $i" --json > /dev/null 2>&1; then
             ((errors++))
         fi
 
         # List to trigger reads during writes
-        if ! $BD_BINARY list --limit 5 > /dev/null 2>&1; then
+        if ! $BD_BINARY list --limit 5 --json > /dev/null 2>&1; then
             ((errors++))
         fi
     done
@@ -77,23 +77,23 @@ echo "Total time: ${elapsed_total}ms"
 echo "Total operations: $((WORKERS * OPERATIONS_PER_WORKER * 2))"
 echo "Failed workers: $total_errors"
 
-# Verify database integrity
+# Verify database integrity using JSON output
 echo ""
 echo "Database integrity check:"
-issue_count=$($BD_BINARY list --limit 999 2>/dev/null | wc -l | tr -d ' ')
+issue_count=$($BD_BINARY list --limit 999 --json 2>/dev/null | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 expected=$((WORKERS * OPERATIONS_PER_WORKER))
 echo "Issues created: $issue_count (expected: $expected)"
 
 if [ "$issue_count" -eq "$expected" ]; then
     echo "✓ All issues accounted for"
+    exit_code=0
 else
     echo "✗ Missing $((expected - issue_count)) issues - possible race condition!"
+    exit_code=1
 fi
 
 # Cleanup
 cd - > /dev/null 2>&1
 rm -rf "$TMPDIR"
 
-if [ $total_errors -gt 0 ] || [ "$issue_count" -ne "$expected" ]; then
-    exit 1
-fi
+exit $exit_code

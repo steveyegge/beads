@@ -1,6 +1,6 @@
 #!/bin/bash
-# Benchmark heavy write workload to test journal mode improvements
-# Tests rapid creation/update cycles with write throughput measurement
+# Fixed heavy write workload benchmark
+# Uses --json output for reliable ID parsing across all ID formats
 
 set -e
 
@@ -29,7 +29,10 @@ start_create=$(python3 -c 'import time; print(time.time())')
 
 issue_ids=()
 for i in $(seq 1 $ISSUES_TO_CREATE); do
-    id=$($BD_BINARY create "Issue $i" --priority $((i % 4 + 1)) 2>&1 | grep -o 'test-[a-f0-9]*' || echo "")
+    # Use --json to reliably extract ID regardless of format (hex, base-36, etc.)
+    output=$($BD_BINARY create "Issue $i" --priority $((i % 4 + 1)) --json 2>&1)
+    id=$(echo "$output" | python3 -c "import sys, json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
+
     if [ -n "$id" ]; then
         issue_ids+=("$id")
     fi
@@ -112,22 +115,22 @@ echo "Total operations: $total_ops"
 throughput_overall=$(python3 -c "print(f'{$total_ops / ($total_elapsed / 1000):.1f}')")
 echo "Overall throughput: ${throughput_overall} ops/sec"
 
-# Verify integrity
+# Verify integrity using JSON
 echo ""
 echo "Database integrity check:"
-issue_count=$($BD_BINARY list --limit 999 | wc -l | tr -d ' ')
+issue_count=$($BD_BINARY list --limit 999 --json 2>/dev/null | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 echo "Issues in database: $issue_count (expected: $ISSUES_TO_CREATE)"
 
 if [ "$issue_count" -eq "$ISSUES_TO_CREATE" ]; then
     echo "✓ Database integrity verified"
+    exit_code=0
 else
     echo "✗ Database corruption detected!"
+    exit_code=1
 fi
 
 # Cleanup
 cd - > /dev/null 2>&1
 rm -rf "$TMPDIR"
 
-if [ "$issue_count" -ne "$ISSUES_TO_CREATE" ]; then
-    exit 1
-fi
+exit $exit_code
