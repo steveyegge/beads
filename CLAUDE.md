@@ -263,6 +263,55 @@ Common helpers in `cmd/bd/test_helpers_test.go`:
   - `MULTI_REPO_AGENTS.md`: Multi-repo patterns
 - **examples/**: Working code examples (Python agent, Bash agent, etc.)
 
+## Performance Benchmarking
+
+**CRITICAL**: Before running ANY performance benchmarks, you MUST follow the validation protocol in `.claude/skills/benchmark-validation-protocol.md`.
+
+### Benchmark Validation Requirements (MANDATORY)
+
+**DO NOT skip these steps** - failure to follow this protocol has resulted in catastrophic benchmark failures (see `~/Downloads/benchmark-postmortem.md` for incident details).
+
+1. **Fresh Build Verification**:
+   ```bash
+   # Clean everything
+   git clean -fdx
+   go clean -cache
+
+   # Fresh build
+   go build -o /tmp/bd-test ./cmd/bd
+
+   # VERIFY version matches git HEAD
+   /tmp/bd-test --version
+   git rev-parse HEAD
+   # These MUST match!
+   ```
+
+2. **Baseline Sanity Checks**:
+   ```bash
+   # Test basic operations
+   tmpdir=$(mktemp -d) && cd $tmpdir
+   time /tmp/bd-test init --prefix test  # Should be ~200-500ms
+   time /tmp/bd-test create "Test"       # Should be ~50-200ms
+   time /tmp/bd-test list                # Should be <100ms
+   cd - && rm -rf $tmpdir
+   ```
+
+   **RED FLAGS (STOP IMMEDIATELY)**:
+   - Init takes >1 second
+   - Create takes >500ms
+   - Any operation 10x slower than expected
+   - **If ANY red flag: Binary corrupted - REBUILD**
+
+3. **Run Multiple Times**: Minimum 3 runs with <10% variance
+
+4. **Independent Verification**: Have another agent review raw results before publishing
+
+5. **Claim Validation**: Can you explain WHY the difference exists? Would you bet money on it?
+
+**If you see suspicious results, STOP. Do NOT publish. Rebuild binaries fresh and re-run.**
+
+See `.claude/skills/benchmark-validation-protocol.md` for complete checklist and incident history.
+
 ## Before Committing
 
 1. Run `go test -short ./...` (CI runs full suite)
