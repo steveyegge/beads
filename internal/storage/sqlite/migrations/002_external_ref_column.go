@@ -11,7 +11,6 @@ func MigrateExternalRefColumn(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to check schema: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var cid int
@@ -20,6 +19,7 @@ func MigrateExternalRefColumn(db *sql.DB) error {
 		var dflt *string
 		err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
 		if err != nil {
+			rows.Close()
 			return fmt.Errorf("failed to scan column info: %w", err)
 		}
 		if name == "external_ref" {
@@ -29,6 +29,7 @@ func MigrateExternalRefColumn(db *sql.DB) error {
 	}
 
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return fmt.Errorf("error reading column info: %w", err)
 	}
 

@@ -13,9 +13,11 @@ import (
 	"time"
 
 	// Import SQLite driver
+	"github.com/steveyegge/beads/internal/types"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/steveyegge/beads/internal/types"
+	"github.com/tetratelabs/wazero"
 )
 
 // SQLiteStorage implements the Storage interface using SQLite
@@ -35,6 +37,53 @@ func isInMemorySQLitePath(value string) bool {
 	return value == ":memory:" ||
 		strings.Contains(value, ":memory:") ||
 		strings.Contains(value, "mode=memory")
+}
+
+// setupWASMCache configures WASM compilation caching to reduce SQLite startup time.
+// Returns the cache directory path (empty string if using in-memory cache).
+//
+// Cache behavior:
+//   - Location: ~/.cache/beads/wasm/ (platform-specific via os.UserCacheDir)
+//   - Version management: wazero automatically keys cache by its version
+//   - Cleanup: Old versions remain harmless (~5-10MB each); manual cleanup if needed
+//   - Fallback: Uses in-memory cache if filesystem cache creation fails
+//
+// Performance impact:
+//   - First run: ~220ms (compile + cache)
+//   - Subsequent runs: ~20ms (load from cache)
+func setupWASMCache() string {
+	cacheDir := ""
+	if userCache, err := os.UserCacheDir(); err == nil {
+		cacheDir = filepath.Join(userCache, "beads", "wasm")
+	}
+
+	var cache wazero.CompilationCache
+	if cacheDir != "" {
+		// Try file-system cache first (persistent across runs)
+		if c, err := wazero.NewCompilationCacheWithDir(cacheDir); err == nil {
+			cache = c
+			// Optional: log cache location for debugging
+			// fmt.Fprintf(os.Stderr, "WASM cache: %s\n", cacheDir)
+		}
+	}
+
+	// Fallback to in-memory cache if dir creation failed
+	if cache == nil {
+		cache = wazero.NewCompilationCache()
+		cacheDir = "" // Indicate in-memory fallback
+		// Optional: log fallback for debugging
+		// fmt.Fprintln(os.Stderr, "WASM cache: in-memory only")
+	}
+
+	// Configure go-sqlite3's wazero runtime to use the cache
+	sqlite3.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
+
+	return cacheDir
+}
+
+func init() {
+	// Setup WASM compilation cache to avoid 220ms JIT compilation overhead on every process start
+	_ = setupWASMCache()
 }
 
 // New creates a new SQLite storage backend
@@ -110,10 +159,11 @@ func New(path string) (*SQLiteStorage, error) {
 	// - Shared cache (:memory: or cache=shared): needs single connection for sharing
 	// - Private cache (cache=private): needs single connection because each connection
 	//   gets its own isolated database, so schema/data won't be visible across connections
-	// Without this, different connections can't see each other's data (bd-b121).
+	// Without this, different connections can't see each other's data (bd-b121, bd-yvlc).
 	// Reuse isInMemory from above to keep journal_mode and connection pooling aligned
 	if isInMemory {
 		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 
 	// Test connection
