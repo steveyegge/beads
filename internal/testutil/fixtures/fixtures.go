@@ -403,6 +403,7 @@ func exportToJSONL(ctx context.Context, store storage.Storage, path string) erro
 	}
 
 	// Write to JSONL file
+	// #nosec G304 -- fixture exports to deterministic file controlled by tests
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create JSONL file: %w", err)
@@ -422,6 +423,7 @@ func exportToJSONL(ctx context.Context, store storage.Storage, path string) erro
 // importFromJSONL imports issues from a JSONL file
 func importFromJSONL(ctx context.Context, store storage.Storage, path string) error {
 	// Read JSONL file
+	// #nosec G304 -- fixture imports from deterministic file created earlier in test
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read JSONL file: %w", err)

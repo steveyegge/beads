@@ -299,7 +299,7 @@ func findCandidateIssues(ctx context.Context, db *sql.DB, p migrateIssuesParams)
 	}
 
 	// Build query
-	query := "SELECT id FROM issues WHERE " + strings.Join(conditions, " AND ")
+	query := "SELECT id FROM issues WHERE " + strings.Join(conditions, " AND ") // #nosec G202 -- query fragments are constant strings with parameter placeholders
 
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -499,7 +499,7 @@ func countCrossRepoEdges(ctx context.Context, db *sql.DB, migrationSet []string)
 	incomingQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM dependencies 
 		WHERE depends_on_id IN (%s) 
-		AND issue_id NOT IN (%s)`, inClause, inClause)
+		AND issue_id NOT IN (%s)`, inClause, inClause) // #nosec G201 -- inClause generated from sanitized placeholders
 
 	var incoming int
 	if err := db.QueryRowContext(ctx, incomingQuery, append(args, args...)...).Scan(&incoming); err != nil {
@@ -510,7 +510,7 @@ func countCrossRepoEdges(ctx context.Context, db *sql.DB, migrationSet []string)
 	outgoingQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM dependencies 
 		WHERE issue_id IN (%s) 
-		AND depends_on_id NOT IN (%s)`, inClause, inClause)
+		AND depends_on_id NOT IN (%s)`, inClause, inClause) // #nosec G201 -- inClause generated from sanitized placeholders
 
 	var outgoing int
 	if err := db.QueryRowContext(ctx, outgoingQuery, append(args, args...)...).Scan(&outgoing); err != nil {
@@ -665,6 +665,7 @@ func executeMigration(ctx context.Context, db *sql.DB, migrationSet []string, to
 }
 
 func loadIDsFromFile(path string) ([]string, error) {
+	// #nosec G304 -- file path supplied explicitly via CLI flag
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

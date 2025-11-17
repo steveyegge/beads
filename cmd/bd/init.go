@@ -965,6 +965,7 @@ func createConfigYaml(beadsDir string, noDbMode bool) error {
 
 // readFirstIssueFromJSONL reads the first issue from a JSONL file
 func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
+	// #nosec G304 -- helper reads JSONL file chosen by current bd command
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSONL file: %w", err)

@@ -74,6 +74,7 @@ func CheckGitHooks() []HookStatus {
 
 // getHookVersion extracts the version from a hook file
 func getHookVersion(path string) (string, error) {
+	// #nosec G304 -- hook path constrained to .git/hooks directory
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -293,6 +294,7 @@ func installHooks(embeddedHooks map[string]string, force bool) error {
 		}
 
 		// Write hook file
+		// #nosec G306 -- git hooks must be executable for Git to run them
 		if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
 			return fmt.Errorf("failed to write %s: %w", hookName, err)
 		}

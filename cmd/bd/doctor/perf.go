@@ -188,6 +188,7 @@ func collectDatabaseStats(dbPath string) map[string]string {
 }
 
 func startCPUProfile(path string) error {
+	// #nosec G304 -- profile path supplied by CLI flag in trusted environment
 	f, err := os.Create(path)
 	if err != nil {
 		return err

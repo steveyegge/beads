@@ -122,6 +122,7 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 
 		// Create issues.jsonl
 		jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+		// #nosec G306 -- planning repo JSONL must be shareable across collaborators
 		if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
 			return fmt.Errorf("failed to create issues.jsonl: %w", err)
 		}
@@ -144,6 +145,7 @@ Issues here are automatically created when working on forked repositories.
 
 Created by: bd init --contributor
 `)
+		// #nosec G306 -- README should be world-readable
 		if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create README: %v\n", err)
 		}
