@@ -138,15 +138,15 @@ type migrateIssuesParams struct {
 }
 
 type migrationPlan struct {
-	TotalSelected      int                `json:"total_selected"`
-	AddedByDependency  int                `json:"added_by_dependency"`
-	IncomingEdges      int                `json:"incoming_edges"`
-	OutgoingEdges      int                `json:"outgoing_edges"`
-	Orphans            int                `json:"orphans"`
-	OrphanSamples      []string           `json:"orphan_samples,omitempty"`
-	IssueIDs           []string           `json:"issue_ids"`
-	From               string             `json:"from"`
-	To                 string             `json:"to"`
+	TotalSelected     int      `json:"total_selected"`
+	AddedByDependency int      `json:"added_by_dependency"`
+	IncomingEdges     int      `json:"incoming_edges"`
+	OutgoingEdges     int      `json:"outgoing_edges"`
+	Orphans           int      `json:"orphans"`
+	OrphanSamples     []string `json:"orphan_samples,omitempty"`
+	IssueIDs          []string `json:"issue_ids"`
+	From              string   `json:"from"`
+	To                string   `json:"to"`
 }
 
 func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
@@ -186,7 +186,7 @@ func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
 	}
 
 	// Step 4: Check for orphaned dependencies
-	orphans, err := checkOrphanedDependencies(ctx, db, migrationSet)
+	orphans, err := checkOrphanedDependencies(ctx, db)
 	if err != nil {
 		return fmt.Errorf("failed to check dependencies: %w", err)
 	}
@@ -207,7 +207,7 @@ func executeMigrateIssues(ctx context.Context, p migrateIssuesParams) error {
 	if !p.dryRun {
 		if !p.yes && !jsonOutput {
 			if !confirmMigration(plan) {
-				fmt.Println("Migration cancelled")
+				fmt.Println("Migration canceled")
 				return nil
 			}
 		}
@@ -523,7 +523,7 @@ func countCrossRepoEdges(ctx context.Context, db *sql.DB, migrationSet []string)
 	}, nil
 }
 
-func checkOrphanedDependencies(ctx context.Context, db *sql.DB, migrationSet []string) ([]string, error) {
+func checkOrphanedDependencies(ctx context.Context, db *sql.DB) ([]string, error) {
 	// Check for dependencies referencing non-existent issues
 	query := `
 		SELECT DISTINCT d.depends_on_id 
@@ -580,7 +580,8 @@ func displayMigrationPlan(plan migrationPlan, dryRun bool) error {
 			"plan":    plan,
 			"dry_run": dryRun,
 		}
-		outputJSON(output); return nil
+		outputJSON(output)
+		return nil
 	}
 
 	// Human-readable output

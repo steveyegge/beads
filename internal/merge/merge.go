@@ -150,7 +150,7 @@ func Merge3Way(outputPath, basePath, leftPath, rightPath string, debug bool) err
 		if err := outFile.Sync(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to sync output file: %v\n", err)
 		}
-		if content, err := os.ReadFile(outputPath); err == nil {
+		if content, err := os.ReadFile(outputPath); err == nil { // #nosec G304 -- debug output reads file created earlier in same function
 			lines := 0
 			fmt.Fprintf(os.Stderr, "Output file preview (first 10 lines):\n")
 			for _, line := range splitLines(string(content)) {
@@ -195,7 +195,7 @@ func splitLines(s string) []string {
 }
 
 func readIssues(path string) ([]Issue, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path supplied by CLI flag and validated upstream
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
