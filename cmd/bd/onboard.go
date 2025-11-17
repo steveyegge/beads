@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -137,6 +138,50 @@ history/
 
 For more details, see README.md and QUICKSTART.md.`
 
+func renderOnboardInstructions(w io.Writer) {
+	bold := color.New(color.Bold).SprintFunc()
+	cyan := color.New(color.FgCyan).SprintFunc()
+	yellow := color.New(color.FgYellow).SprintFunc()
+	green := color.New(color.FgGreen).SprintFunc()
+
+	fmt.Fprintf(w, "\n%s\n\n", bold("bd Onboarding Instructions for AI Agent"))
+
+	fmt.Fprintf(w, "%s\n\n", yellow("Please complete the following tasks:"))
+
+	fmt.Fprintf(w, "%s\n", bold("1. Update AGENTS.md"))
+	fmt.Fprintln(w, "   Add the following content to AGENTS.md in an appropriate location.")
+	fmt.Fprintln(w, "   If AGENTS.md doesn't exist, create it with this content.")
+	fmt.Fprintln(w, "   Integrate it naturally into any existing structure.")
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "%s\n", cyan("--- BEGIN AGENTS.MD CONTENT ---"))
+	fmt.Fprintln(w, agentsContent)
+	fmt.Fprintf(w, "%s\n\n", cyan("--- END AGENTS.MD CONTENT ---"))
+
+	fmt.Fprintf(w, "%s\n", bold("2. Update CLAUDE.md (if present)"))
+	fmt.Fprintln(w, "   If CLAUDE.md exists in this directory, add this note at the top:")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "%s\n", cyan("   **Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)"))
+	fmt.Fprintf(w, "%s\n", cyan("   for issue tracking. Use `bd` commands instead of markdown TODOs."))
+	fmt.Fprintf(w, "%s\n", cyan("   See AGENTS.md for workflow details."))
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "%s\n", bold("3. Remove bootstrap instruction"))
+	fmt.Fprintln(w, "   If AGENTS.md or CLAUDE.md contains a line like:")
+	fmt.Fprintf(w, "%s\n", cyan("   \"BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions\""))
+	fmt.Fprintln(w, "   Delete that line after completing steps 1 and 2.")
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "%s\n", bold("Important reminders:"))
+	fmt.Fprintln(w, "   • Use bd for ALL task tracking - NO markdown TODO lists")
+	fmt.Fprintln(w, "   • Always use --json flag for programmatic bd commands")
+	fmt.Fprintln(w, "   • Link discovered work with discovered-from dependencies")
+	fmt.Fprintf(w, "   • Check %s before asking \"what should I work on?\"\n", cyan("bd ready"))
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "%s\n\n", green("When done, tell your AI assistant: \"bd onboarding complete\""))
+}
+
 var onboardCmd = &cobra.Command{
 	Use:   "onboard",
 	Short: "Display instructions for configuring AGENTS.md",
@@ -146,47 +191,7 @@ This command outputs instructions that AI agents should follow to integrate bd
 into the project's agent documentation. The agent will intelligently merge the
 content into AGENTS.md and update CLAUDE.md if present.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		bold := color.New(color.Bold).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
-		yellow := color.New(color.FgYellow).SprintFunc()
-		green := color.New(color.FgGreen).SprintFunc()
-
-		fmt.Printf("\n%s\n\n", bold("bd Onboarding Instructions for AI Agent"))
-
-		fmt.Printf("%s\n\n", yellow("Please complete the following tasks:"))
-
-		fmt.Printf("%s\n", bold("1. Update AGENTS.md"))
-		fmt.Println("   Add the following content to AGENTS.md in an appropriate location.")
-		fmt.Println("   If AGENTS.md doesn't exist, create it with this content.")
-		fmt.Println("   Integrate it naturally into any existing structure.")
-		fmt.Println()
-
-		fmt.Printf("%s\n", cyan("--- BEGIN AGENTS.MD CONTENT ---"))
-		fmt.Println(agentsContent)
-		fmt.Printf("%s\n\n", cyan("--- END AGENTS.MD CONTENT ---"))
-
-		fmt.Printf("%s\n", bold("2. Update CLAUDE.md (if present)"))
-		fmt.Println("   If CLAUDE.md exists in this directory, add this note at the top:")
-		fmt.Println()
-		fmt.Printf("%s\n", cyan("   **Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)"))
-		fmt.Printf("%s\n", cyan("   for issue tracking. Use `bd` commands instead of markdown TODOs."))
-		fmt.Printf("%s\n", cyan("   See AGENTS.md for workflow details."))
-		fmt.Println()
-
-		fmt.Printf("%s\n", bold("3. Remove bootstrap instruction"))
-		fmt.Println("   If AGENTS.md or CLAUDE.md contains a line like:")
-		fmt.Printf("%s\n", cyan("   \"BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions\""))
-		fmt.Println("   Delete that line after completing steps 1 and 2.")
-		fmt.Println()
-
-		fmt.Printf("%s\n", bold("Important reminders:"))
-		fmt.Println("   • Use bd for ALL task tracking - NO markdown TODO lists")
-		fmt.Println("   • Always use --json flag for programmatic bd commands")
-		fmt.Println("   • Link discovered work with discovered-from dependencies")
-		fmt.Printf("   • Check %s before asking \"what should I work on?\"\n", cyan("bd ready"))
-		fmt.Println()
-
-		fmt.Printf("%s\n\n", green("When done, tell your AI assistant: \"bd onboarding complete\""))
+		renderOnboardInstructions(cmd.OutOrStdout())
 	},
 }
 
