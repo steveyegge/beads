@@ -1,0 +1,35 @@
+[package]
+name = "bd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "bd"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+notify.workspace = true
+config.workspace = true
+env_logger.workspace = true
+log.workspace = true
+colored.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+fs2.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3.8"

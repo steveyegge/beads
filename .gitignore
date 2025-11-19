@@ -1,10 +1,17 @@
 # Binaries
 /beads
-/bd
+# Note: /bd would ignore the directory, but we want to keep bd/ source code
+# Instead we'll ignore bd binary in target/
 *.exe
 *.dll
 *.so
 *.dylib
+
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+/bd-binary
 
 # Test binaries
 *.test
