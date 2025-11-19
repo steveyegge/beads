@@ -48,6 +48,13 @@ var (
 )
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "PANIC in main: %v\n", r)
+		}
+		fmt.Println("Main function exiting")
+	}()
+
 	flag.Parse()
 
 	// Find database path if not specified
@@ -319,6 +326,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // handleWebSocketBroadcast sends messages to all connected WebSocket clients
 func handleWebSocketBroadcast() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "PANIC in handleWebSocketBroadcast: %v\n", r)
+		}
+	}()
 	for {
 		// Wait for message to broadcast
 		message := <-wsBroadcast
@@ -340,6 +352,11 @@ func handleWebSocketBroadcast() {
 
 // pollMutations polls the daemon for mutations and broadcasts them to WebSocket clients
 func pollMutations() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "PANIC in pollMutations: %v\n", r)
+		}
+	}()
 	lastPollTime := int64(0) // Start from beginning
 
 	ticker := time.NewTicker(2 * time.Second) // Poll every 2 seconds
