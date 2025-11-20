@@ -711,13 +711,21 @@ func (s *SQLiteStorage) UpdateIssueID(ctx context.Context, oldID, newID string, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE issues
 		SET id = ?, title = ?, description = ?, design = ?, acceptance_criteria = ?, notes = ?, updated_at = ?
 		WHERE id = ?
 	`, newID, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes, time.Now(), oldID)
 	if err != nil {
 		return fmt.Errorf("failed to update issue ID: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("issue not found: %s", oldID)
 	}
 
 	_, err = tx.ExecContext(ctx, `UPDATE dependencies SET issue_id = ? WHERE issue_id = ?`, newID, oldID)
@@ -812,12 +820,20 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?
 		WHERE id = ?
 	`, types.StatusClosed, now, now, id)
 	if err != nil {
 		return fmt.Errorf("failed to close issue: %w", err)
+	}
+	
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("issue not found: %s", id)
 	}
 
 	_, err = tx.ExecContext(ctx, `
