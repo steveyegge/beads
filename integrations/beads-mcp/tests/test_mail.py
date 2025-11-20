@@ -113,8 +113,8 @@ class TestMailSend:
         
         # Verify HTTP request
         mock_requests.assert_called_once()
-        call_kwargs = mock_requests.call_args.kwargs
-        assert call_kwargs["method"] == "POST"
+        args, call_kwargs = mock_requests.call_args
+        assert args[0] == "POST"
         assert call_kwargs["json"]["params"]["name"] == "send_message"
         assert call_kwargs["json"]["params"]["arguments"]["to"] == ["alice", "bob"]
         assert call_kwargs["json"]["params"]["arguments"]["subject"] == "Test Message"
