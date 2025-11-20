@@ -20,9 +20,18 @@ func (s *SQLiteStorage) executeLabelOperation(
 	operationError string,
 ) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, labelSQL, labelSQLArgs...)
+		result, err := tx.ExecContext(ctx, labelSQL, labelSQLArgs...)
 		if err != nil {
 			return fmt.Errorf("%s: %w", operationError, err)
+		}
+
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to check rows affected: %w", err)
+		}
+		if rows == 0 {
+			// No change made (label already existed or didn't exist), so don't record event
+			return nil
 		}
 
 		_, err = tx.ExecContext(ctx, `
