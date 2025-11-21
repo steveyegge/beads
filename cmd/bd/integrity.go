@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -96,7 +97,14 @@ func computeJSONLHash(jsonlPath string) (string, error) {
 // unchanged) while still catching git operations that restore old content with new mtimes.
 //
 // In multi-repo mode, keySuffix should be the stable repo identifier (e.g., ".", "../frontend").
+// The keySuffix must not contain the ':' separator character (bd-ar2.12).
 func hasJSONLChanged(ctx context.Context, store storage.Storage, jsonlPath string, keySuffix string) bool {
+	// Validate keySuffix doesn't contain the separator character (bd-ar2.12)
+	if keySuffix != "" && strings.Contains(keySuffix, ":") {
+		// Invalid keySuffix - treat as changed to trigger proper error handling
+		return true
+	}
+
 	// Build metadata keys with optional suffix for per-repo tracking (bd-ar2.10, bd-ar2.11)
 	hashKey := "last_import_hash"
 	mtimeKey := "last_import_mtime"

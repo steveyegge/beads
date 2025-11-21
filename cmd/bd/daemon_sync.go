@@ -241,7 +241,27 @@ func getRepoKeyForPath(jsonlPath string) string {
 // updateExportMetadata updates last_import_hash and related metadata after a successful export.
 // This prevents "JSONL content has changed since last import" errors on subsequent exports (bd-ymj fix).
 // In multi-repo mode, keySuffix should be the stable repo identifier (e.g., ".", "../frontend").
+//
+// Metadata key format (bd-ar2.12):
+//   - Single-repo mode: "last_import_hash", "last_import_time", "last_import_mtime"
+//   - Multi-repo mode: "last_import_hash:<repo_key>", "last_import_time:<repo_key>", etc.
+//     where <repo_key> is a stable repo identifier like "." or "../frontend"
+//
+// Transaction boundaries (bd-ar2.6):
+// This function does NOT provide atomicity between JSONL write, metadata updates, and DB mtime.
+// If a crash occurs between these operations, metadata may be inconsistent. However, this is
+// acceptable because:
+//   1. The worst case is "JSONL content has changed" error on next export
+//   2. User can fix by running 'bd import' (safe, no data loss)
+//   3. Current approach is simple and doesn't require complex WAL or format changes
+// Future: Consider Option 4 (defensive checks on startup) if this becomes a common issue.
 func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath string, log daemonLogger, keySuffix string) {
+	// Validate keySuffix doesn't contain the separator character (bd-ar2.12)
+	if keySuffix != "" && strings.Contains(keySuffix, ":") {
+		log.log("Error: invalid keySuffix contains ':' separator: %s", keySuffix)
+		return
+	}
+
 	currentHash, err := computeJSONLHash(jsonlPath)
 	if err != nil {
 		log.log("Warning: failed to compute JSONL hash for metadata update: %v", err)
@@ -258,8 +278,14 @@ func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath 
 		mtimeKey += ":" + keySuffix
 	}
 
+	// Note: Metadata update failures are treated as warnings, not errors (bd-ar2.5).
+	// This is acceptable because the worst case is the next export will require
+	// an import first, which is safe and prevents data loss.
+	// Alternative: Make this critical and fail the export if metadata updates fail,
+	// but this makes exports more fragile and doesn't prevent data corruption.
 	if err := store.SetMetadata(ctx, hashKey, currentHash); err != nil {
 		log.log("Warning: failed to update %s: %v", hashKey, err)
+		log.log("Next export may require running 'bd import' first")
 	}
 
 	exportTime := time.Now().Format(time.RFC3339)
