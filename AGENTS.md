@@ -461,13 +461,32 @@ The 30-second debounce provides a **transaction window** for batch operations - 
 1. **File beads issues for any remaining work** that needs follow-up
 2. **Ensure all quality gates pass** (only if code changes were made) - run tests, linters, builds (file P0 issues if broken)
 3. **Update beads issues** - close finished work, update status
-4. **Sync the issue tracker carefully** - Work methodically to ensure both local and remote issues merge safely. This may require pulling, handling conflicts (sometimes accepting remote changes and re-importing), syncing the database, and verifying consistency. Be creative and patient - the goal is clean reconciliation where no issues are lost.
+4. **Sync and PUSH everything to remote** - Work methodically to ensure both local and remote are synchronized:
+   ```bash
+   # Pull first to catch any remote changes
+   git pull --rebase
+
+   # If conflicts in .beads/beads.jsonl, resolve thoughtfully:
+   #   - git checkout --theirs .beads/beads.jsonl (accept remote)
+   #   - bd import -i .beads/beads.jsonl (re-import)
+   #   - Or manual merge, then import
+
+   # Sync the database (exports to JSONL, commits)
+   bd sync
+
+   # CRITICAL: Push everything to remote
+   git push
+
+   # Verify push succeeded
+   git status  # Should show "up to date with origin/main"
+   ```
+   **CRITICAL**: The plane has NOT landed until `git push` completes successfully. If you don't push, the work is still on the runway!
 5. **Clean up git state** - Clear old stashes and prune dead remote branches:
    ```bash
    git stash clear                    # Remove old stashes
    git remote prune origin            # Clean up deleted remote branches
    ```
-6. **Verify clean state** - Ensure all changes are committed and pushed, no untracked files remain
+6. **Verify clean state** - Ensure all changes are committed AND PUSHED, no untracked files remain
 7. **Choose a follow-up issue for next session**
    - Provide a prompt for the user to give to you in the next session
    - Format: "Continue work on bd-X: [issue title]. [Brief context about what's been done and what's next]"
@@ -485,20 +504,24 @@ golangci-lint run ./...
 # 3. Close finished issues
 bd close bd-42 bd-43 --reason "Completed" --json
 
-# 4. Sync carefully - example workflow (adapt as needed):
+# 4. Sync and PUSH everything
 git pull --rebase
-# If conflicts in .beads/issues.jsonl, resolve thoughtfully:
-#   - git checkout --theirs .beads/issues.jsonl (accept remote)
-#   - bd import -i .beads/issues.jsonl (re-import)
+# If conflicts in .beads/beads.jsonl, resolve thoughtfully:
+#   - git checkout --theirs .beads/beads.jsonl (accept remote)
+#   - bd import -i .beads/beads.jsonl (re-import)
 #   - Or manual merge, then import
-bd sync  # Export/import/verify
-git push
-# Repeat pull/push if needed until clean
+bd sync        # Export/import/commit
+git push       # CRITICAL - Must push!
+git status     # Verify "up to date with origin/main"
 
-# 5. Verify clean state
+# 5. Clean up git state
+git stash clear
+git remote prune origin
+
+# 6. Verify everything is clean and pushed
 git status
 
-# 6. Choose next work
+# 7. Choose next work
 bd ready --json
 bd show bd-44 --json
 ```
