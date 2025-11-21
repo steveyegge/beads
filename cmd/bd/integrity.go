@@ -1,20 +1,32 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // isJSONLNewer checks if JSONL file is newer than database file.
-// Returns true if JSONL is newer, false otherwise.
+// Returns true if JSONL is newer AND has different content, false otherwise.
+// This prevents false positives from daemon auto-export timestamp skew (bd-lm2q).
 func isJSONLNewer(jsonlPath string) bool {
+	return isJSONLNewerWithStore(jsonlPath, nil)
+}
+
+// isJSONLNewerWithStore is like isJSONLNewer but accepts an optional store parameter.
+// If st is nil, it will try to use the global store.
+func isJSONLNewerWithStore(jsonlPath string, st storage.Storage) bool {
 	jsonlInfo, jsonlStatErr := os.Stat(jsonlPath)
 	if jsonlStatErr != nil {
 		return false
@@ -27,7 +39,36 @@ func isJSONLNewer(jsonlPath string) bool {
 		return false
 	}
 
-	return jsonlInfo.ModTime().After(dbInfo.ModTime())
+	// Quick path: if DB is newer, JSONL is definitely not newer
+	if !jsonlInfo.ModTime().After(dbInfo.ModTime()) {
+		return false
+	}
+
+	// JSONL is newer by timestamp - but this could be due to daemon auto-export
+	// or clock skew. Use content-based comparison to determine if import is needed.
+	// If we can't determine content hash (e.g., store not available), conservatively
+	// assume JSONL is newer to trigger auto-import.
+	if st == nil {
+		if ensureStoreActive() != nil || store == nil {
+			return true // Conservative: can't check content, assume different
+		}
+		st = store
+	}
+
+	ctx := context.Background()
+	jsonlHash, err := computeJSONLHash(jsonlPath)
+	if err != nil {
+		return true // Conservative: can't read JSONL, assume different
+	}
+
+	dbHash, err := computeDBHash(ctx, st)
+	if err != nil {
+		return true // Conservative: can't read DB, assume different
+	}
+
+	// Compare hashes: if they match, JSONL and DB have same content
+	// despite timestamp difference (daemon auto-export case)
+	return jsonlHash != dbHash
 }
 
 // validatePreExport performs integrity checks before exporting database to JSONL.
@@ -279,4 +320,73 @@ func dbNeedsExport(ctx context.Context, store storage.Storage, jsonlPath string)
 
 	// DB and JSONL appear to be in sync
 	return false, nil
+}
+
+// computeJSONLHash computes a content hash of the JSONL file.
+// Returns the SHA256 hash of the file contents.
+func computeJSONLHash(jsonlPath string) (string, error) {
+	data, err := os.ReadFile(jsonlPath) // #nosec G304 - controlled path from config
+	if err != nil {
+		return "", fmt.Errorf("failed to read JSONL: %w", err)
+	}
+
+	// Use sha256 for consistency with autoimport package
+	hasher := sha256.New()
+	hasher.Write(data)
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// computeDBHash computes a content hash of the database by exporting to memory.
+// This is used to compare DB content with JSONL content without relying on timestamps.
+func computeDBHash(ctx context.Context, store storage.Storage) (string, error) {
+	// Get all issues from DB
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get issues: %w", err)
+	}
+
+	// Sort by ID for consistent hash
+	sort.Slice(issues, func(i, j int) bool {
+		return issues[i].ID < issues[j].ID
+	})
+
+	// Populate dependencies
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get dependencies: %w", err)
+	}
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
+	// Populate labels
+	for _, issue := range issues {
+		labels, err := store.GetLabels(ctx, issue.ID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get labels for %s: %w", issue.ID, err)
+		}
+		issue.Labels = labels
+	}
+
+	// Populate comments
+	for _, issue := range issues {
+		comments, err := store.GetIssueComments(ctx, issue.ID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get comments for %s: %w", issue.ID, err)
+		}
+		issue.Comments = comments
+	}
+
+	// Serialize to JSON and hash
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			return "", fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+	}
+
+	hasher := sha256.New()
+	hasher.Write(buf.Bytes())
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
