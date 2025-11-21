@@ -27,14 +27,14 @@ func TestContentBasedComparison(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
+	ctx := context.Background()
+
 	// Create and populate database
 	localStore, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 	defer localStore.Close()
-
-	ctx := context.Background()
 
 	// Initialize database with issue_prefix
 	if err := localStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
@@ -179,14 +179,14 @@ func TestContentHashComputation(t *testing.T) {
 	dbPath := filepath.Join(beadsDir, "beads.db")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
+	ctx := context.Background()
+
 	// Create and populate database
 	localStore, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 	defer localStore.Close()
-
-	ctx := context.Background()
 
 	if err := localStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set issue_prefix: %v", err)

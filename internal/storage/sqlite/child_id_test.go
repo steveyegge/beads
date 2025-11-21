@@ -129,8 +129,10 @@ func TestGetNextChildID_ParentNotExists(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for non-existent parent, got nil")
 	}
-	if err != nil && err.Error() != "parent issue bd-nonexistent does not exist" {
-		t.Errorf("unexpected error message: %v", err)
+	// With resurrection feature (bd-dvd fix), error message includes JSONL history check
+	expectedErr := "parent issue bd-nonexistent does not exist and could not be resurrected from JSONL history"
+	if err != nil && err.Error() != expectedErr {
+		t.Errorf("unexpected error message: got %q, want %q", err.Error(), expectedErr)
 	}
 }
 
@@ -201,5 +203,74 @@ func TestCreateIssue_HierarchicalID_ParentNotExists(t *testing.T) {
 	expectedErr := "parent issue bd-nonexistent does not exist and could not be resurrected from JSONL history"
 	if err != nil && err.Error() != expectedErr {
 		t.Errorf("unexpected error message: got %q, want %q", err.Error(), expectedErr)
+	}
+}
+
+func TestGetNextChildID_ResurrectParent(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := tmpDir + "/test.db"
+	defer os.Remove(tmpFile)
+	store := newTestStore(t, tmpFile)
+	defer store.Close()
+	ctx := context.Background()
+
+	// Create parent issue
+	parent := &types.Issue{
+		ID:          "bd-test123",
+		ContentHash: "abc123",
+		Title:       "Parent Issue",
+		Description: "Parent to be resurrected",
+		Status:      types.StatusOpen,
+		Priority:    1,
+		IssueType:   types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, parent, "test"); err != nil {
+		t.Fatalf("failed to create parent: %v", err)
+	}
+
+	// Delete the parent from database (simulating deletion)
+	if err := store.DeleteIssue(ctx, parent.ID); err != nil {
+		t.Fatalf("failed to delete parent: %v", err)
+	}
+
+	// Create JSONL file with the deleted parent (simulating JSONL history)
+	// Note: This requires the JSONL to be in .beads/issues.jsonl relative to dbPath
+	// The resurrection logic looks for issues.jsonl in the same directory as the database
+	beadsDir := tmpDir
+	jsonlPath := beadsDir + "/issues.jsonl"
+
+	// Write parent to JSONL
+	jsonlFile, err := os.Create(jsonlPath)
+	if err != nil {
+		t.Fatalf("failed to create JSONL file: %v", err)
+	}
+	parentJSON := `{"id":"bd-test123","content_hash":"abc123","title":"Parent Issue","description":"Parent to be resurrected","status":"open","priority":1,"type":"epic","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
+	if _, err := jsonlFile.WriteString(parentJSON + "\n"); err != nil {
+		jsonlFile.Close()
+		t.Fatalf("failed to write to JSONL: %v", err)
+	}
+	jsonlFile.Close()
+
+	// Now attempt to get next child ID - should resurrect parent
+	childID, err := store.GetNextChildID(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("GetNextChildID should have resurrected parent, but got error: %v", err)
+	}
+
+	expectedID := "bd-test123.1"
+	if childID != expectedID {
+		t.Errorf("expected child ID %s, got %s", expectedID, childID)
+	}
+
+	// Verify parent was resurrected as tombstone
+	resurrectedParent, err := store.GetIssue(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("failed to get resurrected parent: %v", err)
+	}
+	if resurrectedParent.Status != types.StatusClosed {
+		t.Errorf("expected resurrected parent to be closed, got %s", resurrectedParent.Status)
+	}
+	if resurrectedParent.Title != "Parent Issue" {
+		t.Errorf("expected resurrected parent title to be preserved, got %s", resurrectedParent.Title)
 	}
 }

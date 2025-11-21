@@ -34,7 +34,14 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 		return "", fmt.Errorf("failed to check parent existence: %w", err)
 	}
 	if count == 0 {
-		return "", fmt.Errorf("parent issue %s does not exist", parentID)
+		// Try to resurrect parent from JSONL history before failing (bd-dvd fix)
+		resurrected, err := s.TryResurrectParent(ctx, parentID)
+		if err != nil {
+			return "", fmt.Errorf("failed to resurrect parent %s: %w", parentID, err)
+		}
+		if !resurrected {
+			return "", fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
+		}
 	}
 	
 	// Calculate current depth by counting dots

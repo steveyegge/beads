@@ -306,6 +306,27 @@ func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, au
 		}
 		log.log("Exported to JSONL")
 
+		// Update last_import_hash metadata to prevent "content has changed" errors (bd-ymj fix)
+		// This keeps metadata in sync after export so next export doesn't fail
+		if currentHash, err := computeJSONLHash(jsonlPath); err == nil {
+			if err := store.SetMetadata(exportCtx, "last_import_hash", currentHash); err != nil {
+				log.log("Warning: failed to update last_import_hash: %v", err)
+			}
+			exportTime := time.Now().Format(time.RFC3339)
+			if err := store.SetMetadata(exportCtx, "last_import_time", exportTime); err != nil {
+				log.log("Warning: failed to update last_import_time: %v", err)
+			}
+			// Store mtime for fast-path optimization
+			if jsonlInfo, statErr := os.Stat(jsonlPath); statErr == nil {
+				mtimeStr := fmt.Sprintf("%d", jsonlInfo.ModTime().Unix())
+				if err := store.SetMetadata(exportCtx, "last_import_mtime", mtimeStr); err != nil {
+					log.log("Warning: failed to update last_import_mtime: %v", err)
+				}
+			}
+		} else {
+			log.log("Warning: failed to compute JSONL hash for metadata update: %v", err)
+		}
+
 		// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 		// This prevents validatePreExport from incorrectly blocking on next export
 		// with "JSONL is newer than database" after daemon auto-export
@@ -495,6 +516,27 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 		log.log("Exported to JSONL")
+
+		// Update last_import_hash metadata to prevent "content has changed" errors (bd-ymj fix)
+		// This keeps metadata in sync after export so next export doesn't fail
+		if currentHash, err := computeJSONLHash(jsonlPath); err == nil {
+			if err := store.SetMetadata(syncCtx, "last_import_hash", currentHash); err != nil {
+				log.log("Warning: failed to update last_import_hash: %v", err)
+			}
+			exportTime := time.Now().Format(time.RFC3339)
+			if err := store.SetMetadata(syncCtx, "last_import_time", exportTime); err != nil {
+				log.log("Warning: failed to update last_import_time: %v", err)
+			}
+			// Store mtime for fast-path optimization
+			if jsonlInfo, statErr := os.Stat(jsonlPath); statErr == nil {
+				mtimeStr := fmt.Sprintf("%d", jsonlInfo.ModTime().Unix())
+				if err := store.SetMetadata(syncCtx, "last_import_mtime", mtimeStr); err != nil {
+					log.log("Warning: failed to update last_import_mtime: %v", err)
+				}
+			}
+		} else {
+			log.log("Warning: failed to compute JSONL hash for metadata update: %v", err)
+		}
 
 		// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 		// This prevents validatePreExport from incorrectly blocking on next export
