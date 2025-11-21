@@ -299,6 +299,32 @@ document.getElementById('clear-text').addEventListener('click', function() {
     filterIssues();
 });
 
+// Stat click listeners
+function setStatusFilter(statuses) {
+    const statusSelect = document.getElementById('filter-status');
+    const options = Array.from(statusSelect.options);
+    
+    options.forEach(opt => {
+        if (statuses === 'all') {
+            opt.selected = true;
+        } else {
+            opt.selected = statuses.includes(opt.value);
+        }
+    });
+    
+    // Update toggle button text
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-status');
+    btn.textContent = allSelected ? 'Select None' : 'Select All';
+    
+    filterIssues();
+}
+
+document.getElementById('stat-item-total').addEventListener('click', () => setStatusFilter('all'));
+document.getElementById('stat-item-open').addEventListener('click', () => setStatusFilter(['open']));
+document.getElementById('stat-item-in-progress').addEventListener('click', () => setStatusFilter(['in_progress']));
+document.getElementById('stat-item-closed').addEventListener('click', () => setStatusFilter(['closed']));
+
 // Reload button listener
 document.getElementById('reload-button').addEventListener('click', reloadData);
 

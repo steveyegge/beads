@@ -107,6 +107,13 @@ h1, h2, h3, h4, h5, h6 {
     padding: 1rem;
     background: #f9f9fa;
     border-radius: 6px;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
 .stat-value {
