@@ -1124,10 +1124,12 @@ func countJSONLIssues(jsonlPath string) (int, map[string]int, error) {
 
 		if id, ok := issue["id"].(string); ok {
 			count++
-			// Extract prefix (everything before the first dash)
-			parts := strings.SplitN(id, "-", 2)
-			if len(parts) > 0 {
-				prefixes[parts[0]]++
+			// Extract prefix (everything before the last dash)
+			lastDash := strings.LastIndex(id, "-")
+			if lastDash != -1 {
+				prefixes[id[:lastDash]]++
+			} else {
+				prefixes[id]++
 			}
 		}
 	}
