@@ -131,16 +131,20 @@ func (m *MemoryStorage) GetAllIssues() []*types.Issue {
 
 // extractPrefixAndNumber extracts prefix and number from issue ID like "bd-123" -> ("bd", 123)
 func extractPrefixAndNumber(id string) (string, int) {
-	parts := strings.SplitN(id, "-", 2)
-	if len(parts) != 2 {
+	lastDash := strings.LastIndex(id, "-")
+	if lastDash == -1 {
 		return "", 0
 	}
+
+	prefix := id[:lastDash]
+	suffix := id[lastDash+1:]
+
 	var num int
-	_, err := fmt.Sscanf(parts[1], "%d", &num)
+	_, err := fmt.Sscanf(suffix, "%d", &num)
 	if err != nil {
 		return "", 0
 	}
-	return parts[0], num
+	return prefix, num
 }
 
 // CreateIssue creates a new issue

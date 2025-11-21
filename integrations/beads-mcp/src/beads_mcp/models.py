@@ -11,8 +11,8 @@ IssueType = Literal["bug", "feature", "task", "epic", "chore"]
 DependencyType = Literal["blocks", "related", "parent-child", "discovered-from"]
 
 
-class Issue(BaseModel):
-    """Issue model matching bd JSON output."""
+class IssueBase(BaseModel):
+    """Base issue model with shared fields."""
 
     id: str
     title: str
@@ -29,8 +29,6 @@ class Issue(BaseModel):
     closed_at: datetime | None = None
     assignee: str | None = None
     labels: list[str] = Field(default_factory=list)
-    dependencies: list["Issue"] = Field(default_factory=list)
-    dependents: list["Issue"] = Field(default_factory=list)
     dependency_count: int = 0
     dependent_count: int = 0
 
@@ -41,6 +39,19 @@ class Issue(BaseModel):
         if not 0 <= v <= 4:
             raise ValueError("Priority must be between 0 and 4")
         return v
+
+
+class LinkedIssue(IssueBase):
+    """Issue reference in dependencies/dependents (avoids recursion)."""
+
+    dependency_type: DependencyType | None = None
+
+
+class Issue(IssueBase):
+    """Issue model matching bd JSON output."""
+
+    dependencies: list[LinkedIssue] = Field(default_factory=list)
+    dependents: list[LinkedIssue] = Field(default_factory=list)
 
 
 class Dependency(BaseModel):
@@ -159,3 +170,63 @@ class InitResult(BaseModel):
     database: str
     prefix: str
     message: str
+
+
+# Agent Mail Models
+
+class MailSendParams(BaseModel):
+    """Parameters for sending mail."""
+    
+    to: list[str]
+    subject: str
+    body: str
+    urgent: bool = False
+    cc: list[str] | None = None
+    project_key: str | None = None
+    sender_name: str | None = None
+
+
+class MailInboxParams(BaseModel):
+    """Parameters for checking inbox."""
+    
+    limit: int = 20
+    urgent_only: bool = False
+    unread_only: bool = False
+    cursor: str | None = None
+    agent_name: str | None = None
+    project_key: str | None = None
+
+
+class MailReadParams(BaseModel):
+    """Parameters for reading mail."""
+    
+    message_id: int
+    mark_read: bool = True
+    agent_name: str | None = None
+    project_key: str | None = None
+
+
+class MailReplyParams(BaseModel):
+    """Parameters for replying to mail."""
+    
+    message_id: int
+    body: str
+    subject: str | None = None
+    agent_name: str | None = None
+    project_key: str | None = None
+
+
+class MailAckParams(BaseModel):
+    """Parameters for acknowledging mail."""
+    
+    message_id: int
+    agent_name: str | None = None
+    project_key: str | None = None
+
+
+class MailDeleteParams(BaseModel):
+    """Parameters for deleting mail."""
+    
+    message_id: int
+    agent_name: str | None = None
+    project_key: str | None = None

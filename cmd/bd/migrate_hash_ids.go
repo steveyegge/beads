@@ -328,12 +328,12 @@ func replaceIDReferences(text string, mapping map[string]string) string {
 func isHashID(id string) bool {
 	// Hash IDs contain hex letters (a-f), sequential IDs are only digits
 	// May have hierarchical suffix like .1 or .1.2
-	parts := strings.SplitN(id, "-", 2)
-	if len(parts) != 2 {
+	lastSeperatorIndex := strings.LastIndex(id, "-")
+	if lastSeperatorIndex == -1 {
 		return false
 	}
 	
-	suffix := parts[1]
+	suffix := id[lastSeperatorIndex+1:]
 	// Strip hierarchical suffix like .1 or .1.2
 	baseSuffix := strings.Split(suffix, ".")[0]
 	

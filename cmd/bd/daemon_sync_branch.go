@@ -64,14 +64,14 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 	}
 	
 	// Sync JSONL file to worktree
-	// Use hardcoded relative path since JSONL is always at .beads/issues.jsonl
-	jsonlRelPath := filepath.Join(".beads", "issues.jsonl")
+	// Use hardcoded relative path since JSONL is always at .beads/beads.jsonl
+	jsonlRelPath := filepath.Join(".beads", "beads.jsonl")
 	if err := wtMgr.SyncJSONLToWorktree(worktreePath, jsonlRelPath); err != nil {
 		return false, fmt.Errorf("failed to sync JSONL to worktree: %w", err)
 	}
 	
 	// Check for changes in worktree
-	worktreeJSONLPath := filepath.Join(worktreePath, ".beads", "issues.jsonl")
+	worktreeJSONLPath := filepath.Join(worktreePath, ".beads", "beads.jsonl")
 	hasChanges, err := gitHasChangesInWorktree(ctx, worktreePath, worktreeJSONLPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to check for changes in worktree: %w", err)
@@ -226,8 +226,8 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	log.log("Pulled sync branch %s", syncBranch)
 	
 	// Copy JSONL back to main repo
-	worktreeJSONLPath := filepath.Join(worktreePath, ".beads", "issues.jsonl")
-	mainJSONLPath := filepath.Join(repoRoot, ".beads", "issues.jsonl")
+	worktreeJSONLPath := filepath.Join(worktreePath, ".beads", "beads.jsonl")
+	mainJSONLPath := filepath.Join(repoRoot, ".beads", "beads.jsonl")
 	
 	// Check if worktree JSONL exists
 	if _, err := os.Stat(worktreeJSONLPath); os.IsNotExist(err) {

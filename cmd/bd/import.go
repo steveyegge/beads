@@ -118,8 +118,8 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 				if err := attemptAutoMerge(input); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: Automatic merge failed: %v\n\n", err)
 					fmt.Fprintf(os.Stderr, "To resolve manually:\n")
-					fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n")
-					fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/issues.jsonl && bd import -i .beads/issues.jsonl\n\n")
+					fmt.Fprintf(os.Stderr, "  git checkout --ours .beads/beads.jsonl && bd import -i .beads/beads.jsonl\n")
+					fmt.Fprintf(os.Stderr, "  git checkout --theirs .beads/beads.jsonl && bd import -i .beads/beads.jsonl\n\n")
 					fmt.Fprintf(os.Stderr, "For advanced field-level merging, see: https://github.com/neongreen/mono/tree/main/beads-merge\n")
 					os.Exit(1)
 				}
@@ -430,8 +430,8 @@ func checkUncommittedChanges(filePath string, result *ImportResult) {
 		// Get line counts for context
 		workingTreeLines := countLines(filePath)
 		headLines := countLinesInGitHEAD(filePath, workDir)
-
-		fmt.Fprintf(os.Stderr, "\n⚠️  Warning: .beads/issues.jsonl has uncommitted changes\n")
+		
+		fmt.Fprintf(os.Stderr, "\n⚠️  Warning: %s has uncommitted changes\n", filePath)
 		fmt.Fprintf(os.Stderr, "   Working tree: %d lines\n", workingTreeLines)
 		if headLines > 0 {
 			fmt.Fprintf(os.Stderr, "   Git HEAD: %d lines\n", headLines)
