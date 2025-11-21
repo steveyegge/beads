@@ -255,7 +255,7 @@ git checkout --ours .beads/beads.jsonl
 bd import -i .beads/beads.jsonl
 
 # Option 3: Use beads-merge tool (recommended)
-# See AGENTS.md for beads-merge integration
+# See docs/GIT_INTEGRATION.md for merge conflict resolution
 
 git add .beads/beads.jsonl
 git commit
@@ -369,7 +369,7 @@ bd daemon start --auto-commit --auto-push
 
 ### Issue: Merge conflicts in JSONL
 
-Use beads-merge (see [AGENTS.md](../../AGENTS.md#advanced-intelligent-merge-tools)) or resolve manually:
+Use beads-merge or resolve manually (see [GIT_INTEGRATION.md](../../docs/GIT_INTEGRATION.md)):
 
 ```bash
 git checkout --theirs .beads/beads.jsonl
@@ -399,4 +399,4 @@ bd validate --checks=conflicts
 - [Protected Branch Setup](../protected-branch/)
 - [Contributor Workflow](../contributor-workflow/)
 - [Multi-Repo Migration Guide](../../docs/MULTI_REPO_MIGRATION.md)
-- [Advanced Merge Tools](../../AGENTS.md#advanced-intelligent-merge-tools)
+- [Git Integration Guide](../../docs/GIT_INTEGRATION.md)

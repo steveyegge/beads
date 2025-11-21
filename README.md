@@ -245,7 +245,7 @@ This pattern has proven invaluable for maintaining database hygiene and preventi
 **5. Choose next work**
 - Provide a formatted prompt for the next session with context
 
-See the ["Landing the Plane"](AGENTS.md#landing-the-plane) section in this project's `AGENTS.md` for a complete example you can adapt. The key insight: explicitly reminding agents to maintain issue tracker hygiene prevents the common problem of agents creating issues during work but forgetting to sync them at session end.
+See the ["Landing the Plane"](AGENT_INSTRUCTIONS.md#landing-the-plane) section in this project's documentation for a complete example you can adapt. The key insight: explicitly reminding agents to maintain issue tracker hygiene prevents the common problem of agents creating issues during work but forgetting to sync them at session end.
 
 ## The Magic: Distributed Database via Git
 
