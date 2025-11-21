@@ -44,8 +44,16 @@ func DetectUserRole(repoPath string) (UserRole, error) {
 	}
 	output, err = cmd.Output()
 	if err != nil {
-		// No remote or error - default to contributor
-		return Contributor, nil
+		// Fallback to standard fetch URL if push URL fails (some git versions/configs)
+		cmd = exec.Command("git", "remote", "get-url", "origin")
+		if repoPath != "" {
+			cmd.Dir = repoPath
+		}
+		output, err = cmd.Output()
+		if err != nil {
+			// No remote or error - default to contributor
+			return Contributor, nil
+		}
 	}
 
 	pushURL := strings.TrimSpace(string(output))

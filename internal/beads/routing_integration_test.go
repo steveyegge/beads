@@ -14,6 +14,10 @@ import (
 )
 
 func TestRoutingIntegration(t *testing.T) {
+	// Isolate from user's git config (e.g. url.insteadOf) to ensure deterministic URLs
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+
 	tests := []struct {
 		name               string
 		setupGit           func(t *testing.T, dir string)
