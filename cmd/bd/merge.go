@@ -48,6 +48,26 @@ Vendored into bd with permission.`,
 		leftPath := args[2]
 		rightPath := args[3]
 
+		// Log arguments for debugging
+		if debugMerge {
+			fmt.Fprintf(os.Stderr, "=== MERGE DRIVER INVOKED ===\n")
+			fmt.Fprintf(os.Stderr, "Arguments received:\n")
+			fmt.Fprintf(os.Stderr, "  %%A (output): %q\n", outputPath)
+			fmt.Fprintf(os.Stderr, "  %%O (base):   %q\n", basePath)
+			fmt.Fprintf(os.Stderr, "  %%L (left):   %q\n", leftPath)
+			fmt.Fprintf(os.Stderr, "  %%R (right):  %q\n", rightPath)
+			fmt.Fprintf(os.Stderr, "\nFile existence check:\n")
+			for i, path := range []string{outputPath, basePath, leftPath, rightPath} {
+				label := []string{"%%A (output)", "%%O (base)", "%%L (left)", "%%R (right)"}[i]
+				if _, err := os.Stat(path); err == nil {
+					fmt.Fprintf(os.Stderr, "  %s: EXISTS\n", label)
+				} else {
+					fmt.Fprintf(os.Stderr, "  %s: NOT FOUND - %v\n", label, err)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "\n")
+		}
+
 		// Ensure cleanup runs after merge completes
 		defer func() {
 			cleanupMergeArtifacts(outputPath, debugMerge)
