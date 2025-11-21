@@ -198,14 +198,13 @@ func TestDuplicateGroupsWithDifferentStatuses(t *testing.T) {
 }
 
 func TestDuplicatesIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+	testStore := newTestStore(t, tmpDir+"/.beads/beads.db")
 	ctx := context.Background()
-	testStore, cleanup := setupTestDB(t)
-	defer cleanup()
 
-	// Create duplicate issues
+	// Create duplicate issues (let DB assign IDs)
 	issues := []*types.Issue{
 		{
-			ID:          "bd-1",
 			Title:       "Fix authentication bug",
 			Description: "Users can't login",
 			Status:      types.StatusOpen,
@@ -213,7 +212,6 @@ func TestDuplicatesIntegration(t *testing.T) {
 			IssueType:   types.TypeBug,
 		},
 		{
-			ID:          "bd-2",
 			Title:       "Fix authentication bug",
 			Description: "Users can't login",
 			Status:      types.StatusOpen,
@@ -221,7 +219,6 @@ func TestDuplicatesIntegration(t *testing.T) {
 			IssueType:   types.TypeBug,
 		},
 		{
-			ID:          "bd-3",
 			Title:       "Different task",
 			Description: "Different description",
 			Status:      types.StatusOpen,
@@ -253,13 +250,15 @@ func TestDuplicatesIntegration(t *testing.T) {
 		t.Fatalf("Expected 2 issues in group, got %d", len(groups[0]))
 	}
 
-	// Verify the duplicate group contains bd-1 and bd-2
-	ids := make(map[string]bool)
+	// Verify the duplicate group contains the two issues with "Fix authentication bug"
+	dupCount := 0
 	for _, issue := range groups[0] {
-		ids[issue.ID] = true
+		if issue.Title == "Fix authentication bug" {
+			dupCount++
+		}
 	}
 
-	if !ids["bd-1"] || !ids["bd-2"] {
-		t.Errorf("Expected duplicate group to contain bd-1 and bd-2")
+	if dupCount != 2 {
+		t.Errorf("Expected duplicate group to contain 2 'Fix authentication bug' issues, got %d", dupCount)
 	}
 }
