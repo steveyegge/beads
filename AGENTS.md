@@ -222,6 +222,8 @@ bd monitor --port 3000      # Custom port
 
 ### Optional: Agent Mail for Multi-Agent Coordination
 
+**⚠️ NOT CURRENTLY CONFIGURED** - The mcp-agent-mail server is not set up for this project. Do not attempt to use mcp-agent-mail tools.
+
 **For multi-agent workflows only** - if multiple AI agents work on the same repository simultaneously, consider using Agent Mail for real-time coordination:
 
 **With Agent Mail enabled:**
