@@ -345,9 +345,9 @@ var updateCmd = &cobra.Command{
 		}
 		if cmd.Flags().Changed("priority") {
 			priorityStr, _ := cmd.Flags().GetString("priority")
-			priority := validation.ParsePriority(priorityStr)
-			if priority == -1 {
-				fmt.Fprintf(os.Stderr, "Error: invalid priority %q (expected 0-4 or P0-P4)\n", priorityStr)
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			updates["priority"] = priority

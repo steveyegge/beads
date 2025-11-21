@@ -45,3 +45,44 @@ func ParseIssueType(content string) (types.IssueType, error) {
 
 	return issueType, nil
 }
+
+// ValidatePriority parses and validates a priority string.
+// Returns the parsed priority (0-4) or an error if invalid.
+// Supports both numeric (0-4) and P-prefix format (P0-P4).
+func ValidatePriority(priorityStr string) (int, error) {
+	priority := ParsePriority(priorityStr)
+	if priority == -1 {
+		return -1, fmt.Errorf("invalid priority %q (expected 0-4 or P0-P4)", priorityStr)
+	}
+	return priority, nil
+}
+
+// ValidateIDFormat validates that an ID has the correct format.
+// Supports: prefix-number (bd-42), prefix-hash (bd-a3f8e9), or hierarchical (bd-a3f8e9.1)
+// Returns the prefix part or an error if invalid.
+func ValidateIDFormat(id string) (string, error) {
+	if id == "" {
+		return "", nil
+	}
+
+	// Must contain hyphen
+	if !strings.Contains(id, "-") {
+		return "", fmt.Errorf("invalid ID format '%s' (expected format: prefix-hash or prefix-hash.number, e.g., 'bd-a3f8e9' or 'bd-a3f8e9.1')", id)
+	}
+
+	// Extract prefix (before the first hyphen)
+	hyphenIdx := strings.Index(id, "-")
+	prefix := id[:hyphenIdx]
+
+	return prefix, nil
+}
+
+// ValidatePrefix checks that the requested prefix matches the database prefix.
+// Returns an error if they don't match (unless force is true).
+func ValidatePrefix(requestedPrefix, dbPrefix string, force bool) error {
+	if force || dbPrefix == "" || dbPrefix == requestedPrefix {
+		return nil
+	}
+
+	return fmt.Errorf("prefix mismatch: database uses '%s' but you specified '%s' (use --force to override)", dbPrefix, requestedPrefix)
+}

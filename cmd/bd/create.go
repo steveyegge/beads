@@ -95,9 +95,9 @@ var createCmd = &cobra.Command{
 		
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
-		priority := validation.ParsePriority(priorityStr)
-		if priority == -1 {
-			fmt.Fprintf(os.Stderr, "Error: invalid priority %q (expected 0-4 or P0-P4)\n", priorityStr)
+		priority, err := validation.ValidatePriority(priorityStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		if cmd.Flags().Changed("priority") == false && tmpl != nil {
@@ -178,38 +178,29 @@ var createCmd = &cobra.Command{
 		}
 
 		// Validate explicit ID format if provided
-		// Supports: prefix-number (bd-42), prefix-hash (bd-a3f8e9), or hierarchical (bd-a3f8e9.1)
 		if explicitID != "" {
-			// Must contain hyphen
-			if !strings.Contains(explicitID, "-") {
-				fmt.Fprintf(os.Stderr, "Error: invalid ID format '%s' (expected format: prefix-hash or prefix-hash.number, e.g., 'bd-a3f8e9' or 'bd-a3f8e9.1')\n", explicitID)
+			requestedPrefix, err := validation.ValidateIDFormat(explicitID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 
-			// Extract prefix (before the first hyphen)
-			hyphenIdx := strings.Index(explicitID, "-")
-			requestedPrefix := explicitID[:hyphenIdx]
+			// Validate prefix matches database prefix
+			ctx := context.Background()
 
-			// Validate prefix matches database prefix (unless --force is used)
-			if !forceCreate {
-				ctx := context.Background()
+			// Get database prefix from config
+			var dbPrefix string
+			if daemonClient != nil {
+				// TODO(bd-g5p7): Add RPC method to get config in daemon mode
+				// For now, skip validation in daemon mode (needs RPC enhancement)
+			} else {
+				// Direct mode - check config
+				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
+			}
 
-				// Get database prefix from config
-				var dbPrefix string
-				if daemonClient != nil {
-					// Using daemon - need to get config via RPC
-					// For now, skip validation in daemon mode (needs RPC enhancement)
-				} else {
-					// Direct mode - check config
-					dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
-				}
-
-				if dbPrefix != "" && dbPrefix != requestedPrefix {
-					fmt.Fprintf(os.Stderr, "Error: prefix mismatch detected\n")
-					fmt.Fprintf(os.Stderr, "  This database uses prefix '%s', but you specified '%s'\n", dbPrefix, requestedPrefix)
-					fmt.Fprintf(os.Stderr, "  Use --force to create with mismatched prefix anyway\n")
-					os.Exit(1)
-				}
+			if err := validation.ValidatePrefix(requestedPrefix, dbPrefix, forceCreate); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
 			}
 		}
 
