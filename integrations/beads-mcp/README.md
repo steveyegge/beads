@@ -222,6 +222,24 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 - `reopen` - Reopen a closed issue with optional reason
 - `set_context` - Set default workspace for subsequent calls (backward compatibility)
 
+## Known Issues
+
+### MCP Tools Not Loading in Claude Code (Issue [#346](https://github.com/steveyegge/beads/issues/346))
+
+**Status:** Blocked by upstream FastMCP bug ([#2455](https://github.com/jlowin/fastmcp/issues/2455))
+
+MCP tools currently fail to load in Claude Code due to a schema generation bug in FastMCP 2.13.1. The issue affects self-referential Pydantic models and causes Claude Code to reject all beads MCP tools.
+
+**Workaround:** Use slash commands instead of MCP tools in Claude Code:
+- `/beads:ready` instead of the `ready` MCP tool
+- `/beads:show bd-123` instead of the `show` MCP tool
+- `/beads:list` instead of the `list` MCP tool
+- etc.
+
+Slash commands work because they call the `bd` CLI directly rather than going through the MCP tool interface.
+
+**Resolution:** This will be fixed automatically once FastMCP releases a fix for their schema generation bug. The beads-mcp dependency will then be updated to use the fixed version.
+
 
 ## Development
 
