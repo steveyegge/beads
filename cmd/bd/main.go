@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,6 +62,10 @@ var (
 	// Daemon mode
 	daemonClient *rpc.Client // RPC client when daemon is running
 	noDaemon     bool        // Force direct mode (no daemon)
+
+	// Signal-aware context for graceful cancellation
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 
 	// Auto-flush state
 	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
@@ -123,6 +130,9 @@ var rootCmd = &cobra.Command{
 		_ = cmd.Help()
 	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Set up signal-aware context for graceful cancellation
+		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
 		// Apply viper configuration if flags weren't explicitly set
 		// Priority: flags > viper (config file + env vars) > defaults
 		// Do this BEFORE early-return so init/version/help respect config
@@ -437,7 +447,7 @@ var rootCmd = &cobra.Command{
 
 		// Fall back to direct storage access
 		var err error
-		store, err = sqlite.New(dbPath)
+		store, err = sqlite.New(rootCtx, dbPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 			os.Exit(1)
@@ -528,6 +538,11 @@ var rootCmd = &cobra.Command{
 		}
 		if profileFile != nil { pprof.StopCPUProfile(); _ = profileFile.Close() }
 		if traceFile != nil { trace.Stop(); _ = traceFile.Close() }
+
+		// Cancel the signal context to clean up resources
+		if rootCancel != nil {
+			rootCancel()
+		}
 	},
 }
 

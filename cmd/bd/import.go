@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,7 +50,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			daemonClient = nil
 
 			var err error
-			store, err = sqlite.New(dbPath)
+			store, err = sqlite.New(rootCtx, dbPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)
@@ -89,7 +88,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		}
 
 		// Phase 1: Read and parse all JSONL
-		ctx := context.Background()
+		ctx := rootCtx
 		scanner := bufio.NewScanner(in)
 
 		var allIssues []*types.Issue
@@ -175,7 +174,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 
 		// Check if database needs initialization (prefix not set)
 		// Detect prefix from the imported issues
-		initCtx := context.Background()
+		initCtx := rootCtx
 		configuredPrefix, err2 := store.GetConfig(initCtx, "issue_prefix")
 		if err2 != nil || strings.TrimSpace(configuredPrefix) == "" {
 			// Database exists but not initialized - detect prefix from issues
@@ -306,6 +305,34 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		// Only flush if there were actual changes to avoid unnecessary I/O
 		if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
 			flushToJSONL()
+		}
+
+		// Update last_import_hash metadata to enable content-based staleness detection (bd-khnb fix)
+		// This prevents git operations from resurrecting deleted issues by comparing content instead of mtime
+		if input != "" {
+			if currentHash, err := computeJSONLHash(input); err == nil {
+				if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
+					// Non-fatal warning: Metadata update failures are intentionally non-fatal to prevent blocking
+					// successful imports. System degrades gracefully to mtime-based staleness detection if metadata
+					// is unavailable. This ensures import operations always succeed even if metadata storage fails.
+					debug.Logf("Warning: failed to update last_import_hash: %v", err)
+				}
+				importTime := time.Now().Format(time.RFC3339)
+				if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
+					// Non-fatal warning (see above comment about graceful degradation)
+					debug.Logf("Warning: failed to update last_import_time: %v", err)
+				}
+				// Store mtime for fast-path optimization in hasJSONLChanged (bd-3bg)
+				if jsonlInfo, statErr := os.Stat(input); statErr == nil {
+					mtimeStr := fmt.Sprintf("%d", jsonlInfo.ModTime().Unix())
+					if err := store.SetMetadata(ctx, "last_import_mtime", mtimeStr); err != nil {
+						// Non-fatal warning (see above comment about graceful degradation)
+						debug.Logf("Warning: failed to update last_import_mtime: %v", err)
+					}
+				}
+			} else {
+				debug.Logf("Warning: failed to read JSONL for hash update: %v", err)
+			}
 		}
 
 		// Update database mtime to reflect it's now in sync with JSONL

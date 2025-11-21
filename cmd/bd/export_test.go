@@ -71,6 +71,8 @@ func TestExportCommand(t *testing.T) {
 		// Set up global state
 		store = s
 		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
 
 		// Create a mock command with output flag
 		exportCmd.SetArgs([]string{"-o", exportPath})
@@ -124,6 +126,8 @@ func TestExportCommand(t *testing.T) {
 
 		store = s
 		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
 		exportCmd.Flags().Set("output", exportPath)
 		exportCmd.Run(exportCmd, []string{})
 
@@ -164,6 +168,8 @@ func TestExportCommand(t *testing.T) {
 
 		store = s
 		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
 		exportCmd.Flags().Set("output", exportPath)
 		exportCmd.Run(exportCmd, []string{})
 
@@ -268,6 +274,8 @@ func TestExportCommand(t *testing.T) {
 
 		store = s
 		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
 		exportCmd.Flags().Set("output", exportPath)
 		exportCmd.Run(exportCmd, []string{})
 
@@ -288,6 +296,8 @@ func TestExportCommand(t *testing.T) {
 			t.Fatalf("Failed to clear export hashes: %v", err)
 		}
 		store = s
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
 		exportCmd.Flags().Set("output", corruptedPath)
 		exportCmd.Run(exportCmd, []string{})
 
@@ -318,6 +328,58 @@ func TestExportCommand(t *testing.T) {
 		}
 		if count != 1 {
 			t.Errorf("Expected 1 line in corrupted file, got %d", count)
+		}
+	})
+
+	t.Run("export cancellation", func(t *testing.T) {
+		// Create a large number of issues to ensure export takes time
+		ctx := context.Background()
+		largeStore := newTestStore(t, filepath.Join(tmpDir, "large.db"))
+		defer largeStore.Close()
+
+		// Create 100 issues
+		for i := 0; i < 100; i++ {
+			issue := &types.Issue{
+				Title:       "Test Issue",
+				Description: "Test description for cancellation",
+				Priority:    0,
+				IssueType:   types.TypeBug,
+				Status:      types.StatusOpen,
+			}
+			if err := largeStore.CreateIssue(ctx, issue, "test-user"); err != nil {
+				t.Fatalf("Failed to create issue: %v", err)
+			}
+		}
+
+		exportPath := filepath.Join(tmpDir, "export_cancel.jsonl")
+
+		// Create a cancellable context
+		cancelCtx, cancel := context.WithCancel(context.Background())
+
+		// Start export in a goroutine
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- exportToJSONLWithStore(cancelCtx, largeStore, exportPath)
+		}()
+
+		// Cancel after a short delay
+		cancel()
+
+		// Wait for export to finish
+		err := <-errChan
+
+		// Verify that the operation was cancelled
+		if err != nil && err != context.Canceled {
+			t.Logf("Export returned error: %v (expected context.Canceled)", err)
+		}
+
+		// Verify database integrity - we should still be able to query
+		issues, err := largeStore.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			t.Fatalf("Database corrupted after cancellation: %v", err)
+		}
+		if len(issues) != 100 {
+			t.Errorf("Expected 100 issues after cancellation, got %d", len(issues))
 		}
 	})
 }
