@@ -50,7 +50,7 @@ func TestValidateBranchName(t *testing.T) {
 
 func newTestStore(t *testing.T) *sqlite.SQLiteStorage {
 	t.Helper()
-	store, err := sqlite.New("file::memory:?mode=memory&cache=private")
+	store, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}

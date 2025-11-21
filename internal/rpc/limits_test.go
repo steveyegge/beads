@@ -30,7 +30,7 @@ func TestConnectionLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestRequestTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestHealthResponseIncludesLimits(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

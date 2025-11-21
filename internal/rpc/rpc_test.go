@@ -37,7 +37,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 	// Ensure socket doesn't exist from previous failed test
 	os.Remove(socketPath)
 
-	store, err := sqlitestorage.New(dbPath)
+	store, err := sqlitestorage.New(context.Background(), dbPath)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create store: %v", err)
@@ -354,7 +354,7 @@ func TestSocketCleanup(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := filepath.Join(tmpDir, "bd.sock")
 
-	store, err := sqlitestorage.New(dbPath)
+	store, err := sqlitestorage.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

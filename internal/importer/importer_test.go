@@ -563,7 +563,7 @@ func TestImportIssues_Basic(t *testing.T) {
 	
 	// Create temp database
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestImportIssues_Update(t *testing.T) {
 	ctx := context.Background()
 	
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestImportIssues_DryRun(t *testing.T) {
 	ctx := context.Background()
 	
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -709,7 +709,7 @@ func TestImportIssues_Dependencies(t *testing.T) {
 	ctx := context.Background()
 	
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -762,7 +762,7 @@ func TestImportIssues_Labels(t *testing.T) {
 	ctx := context.Background()
 	
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -806,7 +806,7 @@ func TestGetOrCreateStore_ExistingStore(t *testing.T) {
 	ctx := context.Background()
 	
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -830,7 +830,7 @@ func TestGetOrCreateStore_NewStore(t *testing.T) {
 	tmpDB := t.TempDir() + "/test.db"
 	
 	// Create initial database
-	initStore, err := sqlite.New(tmpDB)
+	initStore, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -1003,7 +1003,7 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 	t.Skip("TODO(bd-gpe7): Test hangs due to database deadlock - needs investigation")
 	
 	t.Run("sequential imports with same external_ref are detected as updates", func(t *testing.T) {
-		store, err := sqlite.New(":memory:")
+		store, err := sqlite.New(context.Background(), ":memory:")
 		if err != nil {
 			t.Fatalf("Failed to create store: %v", err)
 		}

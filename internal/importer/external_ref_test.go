@@ -22,7 +22,7 @@ func TestImportWithExternalRef(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create database
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestImportWithExternalRefDifferentID(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create database
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestImportLocalIssueNotOverwrittenByExternalRef(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create database
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestImportExternalRefTimestampCheck(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create database
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
