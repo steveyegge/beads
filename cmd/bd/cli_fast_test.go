@@ -135,6 +135,9 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 		flushTimer.Stop()
 		flushTimer = nil
 	}
+	// Reset context state
+	rootCtx = nil
+	rootCancel = nil
 	
 	// Give SQLite time to release file locks before cleanup
 	time.Sleep(10 * time.Millisecond)
