@@ -401,7 +401,7 @@ func TestGetSyncBranch_EnvOverridesDB(t *testing.T) {
 	oldDBPath := dbPath
 
 	// Use an in-memory SQLite store for testing
-	testStore, err := sqlite.New("file::memory:?mode=memory&cache=private")
+	testStore, err := sqlite.New(context.Background(), "file::memory:?mode=memory&cache=private")
 	if err != nil {
 		t.Fatalf("failed to create test store: %v", err)
 	}

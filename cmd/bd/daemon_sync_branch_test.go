@@ -218,7 +218,7 @@ func TestSyncBranchCommitAndPush_EnvOverridesDB(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(beadsDir, "test.db")
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
