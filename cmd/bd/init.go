@@ -790,7 +790,7 @@ func mergeDriverInstalled() bool {
 // installMergeDriver configures git to use bd merge for JSONL files
 func installMergeDriver() error {
 	// Configure git merge driver
-	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %L %R")
+	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %A %B")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure git merge driver: %w\n%s", err, output)
 	}

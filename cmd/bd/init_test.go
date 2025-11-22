@@ -627,7 +627,7 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 		}
 
 		// Pre-configure merge driver manually
-		if err := runCommandInDir(tmpDir, "git", "config", "merge.beads.driver", "bd merge %A %O %L %R"); err != nil {
+		if err := runCommandInDir(tmpDir, "git", "config", "merge.beads.driver", "bd merge %A %O %A %B"); err != nil {
 			t.Fatalf("Failed to set git config: %v", err)
 		}
 
@@ -776,7 +776,7 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 			t.Fatalf("Failed to get merge.beads.driver: %v", err)
 		}
 		driver = strings.TrimSpace(driver)
-		expected := "bd merge %A %O %L %R"
+		expected := "bd merge %A %O %A %B"
 		if driver != expected {
 			t.Errorf("Expected merge.beads.driver to be %q, got %q", expected, driver)
 		}

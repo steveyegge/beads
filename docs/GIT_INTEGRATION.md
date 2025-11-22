@@ -128,7 +128,7 @@ git commit
 
 ```bash
 # These are configured automatically:
-git config merge.beads.driver "bd merge %A %O %L %R"
+git config merge.beads.driver "bd merge %A %O %A %B"
 git config merge.beads.name "bd JSONL merge driver"
 
 # .gitattributes entry added:
@@ -140,7 +140,7 @@ git config merge.beads.name "bd JSONL merge driver"
 **If you skipped merge driver with `--skip-merge-driver`:**
 
 ```bash
-git config merge.beads.driver "bd merge %A %O %L %R"
+git config merge.beads.driver "bd merge %A %O %A %B"
 git config merge.beads.name "bd JSONL merge driver"
 echo ".beads/beads.jsonl merge=beads" >> .gitattributes
 ```

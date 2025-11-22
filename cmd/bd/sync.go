@@ -198,9 +198,22 @@ Use --merge to merge the sync branch back to main branch.`,
 			if dryRun {
 				fmt.Println("→ [DRY RUN] Would pull from remote")
 			} else {
+				// Check merge driver configuration before pulling
+				checkMergeDriverConfig()
+
 				fmt.Println("→ Pulling from remote...")
 				if err := gitPull(ctx); err != nil {
 					fmt.Fprintf(os.Stderr, "Error pulling: %v\n", err)
+
+					// Check if this looks like a merge driver failure
+					errStr := err.Error()
+					if strings.Contains(errStr, "merge driver") ||
+					   strings.Contains(errStr, "no such file or directory") ||
+					   strings.Contains(errStr, "MERGE DRIVER INVOKED") {
+						fmt.Fprintf(os.Stderr, "\nThis may be caused by an incorrect merge driver configuration.\n")
+						fmt.Fprintf(os.Stderr, "Fix: bd doctor --fix\n\n")
+					}
+
 					fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
 					os.Exit(1)
 				}
@@ -427,6 +440,28 @@ func hasGitRemote(ctx context.Context) bool {
 
 // gitPull pulls from the current branch's upstream
 // Returns nil if no remote configured (local-only mode)
+func checkMergeDriverConfig() {
+	// Get current merge driver configuration
+	cmd := exec.Command("git", "config", "merge.beads.driver")
+	output, err := cmd.Output()
+	if err != nil {
+		// No merge driver configured - this is OK, user may not need it
+		return
+	}
+
+	currentConfig := strings.TrimSpace(string(output))
+
+	// Check if using old incorrect placeholders
+	if strings.Contains(currentConfig, "%L") || strings.Contains(currentConfig, "%R") {
+		fmt.Fprintf(os.Stderr, "\n⚠️  WARNING: Git merge driver is misconfigured!\n")
+		fmt.Fprintf(os.Stderr, "   Current: %s\n", currentConfig)
+		fmt.Fprintf(os.Stderr, "   Problem: Git only supports %%O (base), %%A (current), %%B (other)\n")
+		fmt.Fprintf(os.Stderr, "            Using %%L/%%R will cause merge failures!\n")
+		fmt.Fprintf(os.Stderr, "\n   Fix now: bd doctor --fix\n")
+		fmt.Fprintf(os.Stderr, "   Or manually: git config merge.beads.driver \"bd merge %%A %%O %%A %%B\"\n\n")
+	}
+}
+
 func gitPull(ctx context.Context) error {
 	// Check if any remote exists (bd-biwp: support local-only repos)
 	if !hasGitRemote(ctx) {
