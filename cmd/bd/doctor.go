@@ -275,21 +275,28 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 6: Legacy JSONL filename (issues.jsonl vs beads.jsonl)
+	// Check 6: Multiple JSONL files (excluding merge artifacts)
 	jsonlCheck := convertDoctorCheck(doctor.CheckLegacyJSONLFilename(path))
 	result.Checks = append(result.Checks, jsonlCheck)
 	if jsonlCheck.Status == statusWarning || jsonlCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
-	// Check 7: Daemon health
+	// Check 7: Database/JSONL configuration mismatch
+	configCheck := convertDoctorCheck(doctor.CheckDatabaseConfig(path))
+	result.Checks = append(result.Checks, configCheck)
+	if configCheck.Status == statusWarning || configCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 8: Daemon health
 	daemonCheck := checkDaemonStatus(path)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
-	// Check 8: Database-JSONL sync
+	// Check 9: Database-JSONL sync
 	syncCheck := checkDatabaseJSONLSync(path)
 	result.Checks = append(result.Checks, syncCheck)
 	if syncCheck.Status == statusWarning || syncCheck.Status == statusError {
