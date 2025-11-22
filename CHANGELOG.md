@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.2] - 2025-11-22
+
+### Fixed
+
+- **Test Stability**: Complete rootCtx initialization fix for all hanging tests (issue #355, b8db5ab)
+  - Fixed TestGetAssignedStatus missing rootCtx initialization (a517ec9)
+  - Prevents test hangs from uninitialized context
+  - Improved test reliability and isolation
+
+- **JSONL Configuration**: Improved bd doctor JSONL checks to focus on real problems (87ee3a6)
+  - Reduces false positives in JSONL validation
+  - Better detection of actual configuration issues
+
+### Changed
+
+- **JSONL Filename Default**: Changed default JSONL filename from `beads.jsonl` to `issues.jsonl` (c4c5c80)
+  - Updated TestFindJSONLPathDefault to match new default (5eefec7)
+  - Removed stale `issues.jsonl` in favor of configured `beads.jsonl` (d918e47)
+  - More intuitive default filename for new users
+
 ## [0.24.1] - 2025-11-22
 
 ### Added
