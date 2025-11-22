@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -89,9 +88,10 @@ func TestAutoFlushDisabled(t *testing.T) {
 
 // TestAutoFlushDebounce tests that rapid operations result in a single flush
 func TestAutoFlushDebounce(t *testing.T) {
-	// FIXME(bd-159): Test needs fixing - config.Set doesn't override flush-debounce properly
-	t.Skip("Test needs fixing - config setup issue with flush-debounce")
-	
+	// NOTE(bd-159): This test is obsolete - debouncing is now tested in flush_manager_test.go
+	// The codebase moved from module-level autoFlushEnabled/flushTimer to FlushManager
+	t.Skip("Test obsolete - debouncing tested in flush_manager_test.go (see bd-159)")
+
 	// Create temp directory for test database
 	tmpDir, err := os.MkdirTemp("", "bd-test-autoflush-*")
 	if err != nil {
@@ -113,13 +113,6 @@ func TestAutoFlushDebounce(t *testing.T) {
 	storeMutex.Lock()
 	storeActive = true
 	storeMutex.Unlock()
-
-	// Set short debounce for testing (100ms) via config
-	// Note: env vars don't work in tests because config is already initialized
-	// So we'll just wait for the default 5s debounce
-	origDebounce := config.GetDuration("flush-debounce")
-	config.Set("flush-debounce", 100*time.Millisecond)
-	defer config.Set("flush-debounce", origDebounce)
 
 	// Reset auto-flush state
 	autoFlushEnabled = true
