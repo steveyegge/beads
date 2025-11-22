@@ -14,6 +14,7 @@ const (
 	OpUpdate          = "update"
 	OpClose           = "close"
 	OpList            = "list"
+	OpCount           = "count"
 	OpShow            = "show"
 	OpReady           = "ready"
 	OpStale           = "stale"
@@ -73,16 +74,19 @@ type CreateArgs struct {
 
 // UpdateArgs represents arguments for the update operation
 type UpdateArgs struct {
-	ID                 string  `json:"id"`
-	Title              *string `json:"title,omitempty"`
-	Description        *string `json:"description,omitempty"`
-	Status             *string `json:"status,omitempty"`
-	Priority           *int    `json:"priority,omitempty"`
-	Design             *string `json:"design,omitempty"`
-	AcceptanceCriteria *string `json:"acceptance_criteria,omitempty"`
-	Notes              *string `json:"notes,omitempty"`
-	Assignee           *string `json:"assignee,omitempty"`
-	ExternalRef        *string `json:"external_ref,omitempty"` // Link to external issue trackers
+	ID                 string   `json:"id"`
+	Title              *string  `json:"title,omitempty"`
+	Description        *string  `json:"description,omitempty"`
+	Status             *string  `json:"status,omitempty"`
+	Priority           *int     `json:"priority,omitempty"`
+	Design             *string  `json:"design,omitempty"`
+	AcceptanceCriteria *string  `json:"acceptance_criteria,omitempty"`
+	Notes              *string  `json:"notes,omitempty"`
+	Assignee           *string  `json:"assignee,omitempty"`
+	ExternalRef        *string  `json:"external_ref,omitempty"` // Link to external issue trackers
+	AddLabels          []string `json:"add_labels,omitempty"`
+	RemoveLabels       []string `json:"remove_labels,omitempty"`
+	SetLabels          []string `json:"set_labels,omitempty"`
 }
 
 // CloseArgs represents arguments for the close operation
@@ -125,6 +129,44 @@ type ListArgs struct {
 	// Priority range
 	PriorityMin *int `json:"priority_min,omitempty"`
 	PriorityMax *int `json:"priority_max,omitempty"`
+}
+
+// CountArgs represents arguments for the count operation
+type CountArgs struct {
+	// Supports all the same filters as ListArgs
+	Query     string   `json:"query,omitempty"`
+	Status    string   `json:"status,omitempty"`
+	Priority  *int     `json:"priority,omitempty"`
+	IssueType string   `json:"issue_type,omitempty"`
+	Assignee  string   `json:"assignee,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+	LabelsAny []string `json:"labels_any,omitempty"`
+	IDs       []string `json:"ids,omitempty"`
+
+	// Pattern matching
+	TitleContains       string `json:"title_contains,omitempty"`
+	DescriptionContains string `json:"description_contains,omitempty"`
+	NotesContains       string `json:"notes_contains,omitempty"`
+
+	// Date ranges
+	CreatedAfter  string `json:"created_after,omitempty"`
+	CreatedBefore string `json:"created_before,omitempty"`
+	UpdatedAfter  string `json:"updated_after,omitempty"`
+	UpdatedBefore string `json:"updated_before,omitempty"`
+	ClosedAfter   string `json:"closed_after,omitempty"`
+	ClosedBefore  string `json:"closed_before,omitempty"`
+
+	// Empty/null checks
+	EmptyDescription bool `json:"empty_description,omitempty"`
+	NoAssignee       bool `json:"no_assignee,omitempty"`
+	NoLabels         bool `json:"no_labels,omitempty"`
+
+	// Priority range
+	PriorityMin *int `json:"priority_min,omitempty"`
+	PriorityMax *int `json:"priority_max,omitempty"`
+
+	// Grouping option (only one can be specified)
+	GroupBy string `json:"group_by,omitempty"` // "status", "priority", "type", "assignee", "label"
 }
 
 // ShowArgs represents arguments for the show operation

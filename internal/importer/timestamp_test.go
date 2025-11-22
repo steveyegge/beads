@@ -18,7 +18,7 @@ func TestImportTimestampPrecedence(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	
 	// Initialize storage
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestImportSameTimestamp(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}

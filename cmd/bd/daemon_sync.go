@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -199,6 +201,115 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	return err
 }
 
+// getRepoKeyForPath extracts the stable repo identifier from a JSONL path.
+// For single-repo mode, returns empty string (no suffix needed).
+// For multi-repo mode, extracts the repo path (e.g., ".", "../frontend").
+// This creates portable metadata keys that work across different machine paths.
+func getRepoKeyForPath(jsonlPath string) string {
+	multiRepo := config.GetMultiRepoConfig()
+	if multiRepo == nil {
+		return "" // Single-repo mode
+	}
+
+	// Normalize the jsonlPath for comparison
+	// Remove trailing "/.beads/issues.jsonl" to get repo path
+	const suffix = "/.beads/issues.jsonl"
+	if strings.HasSuffix(jsonlPath, suffix) {
+		repoPath := strings.TrimSuffix(jsonlPath, suffix)
+
+		// Try to match against primary repo
+		primaryPath := multiRepo.Primary
+		if primaryPath == "" {
+			primaryPath = "."
+		}
+		if repoPath == primaryPath {
+			return primaryPath
+		}
+
+		// Try to match against additional repos
+		for _, additional := range multiRepo.Additional {
+			if repoPath == additional {
+				return additional
+			}
+		}
+	}
+
+	// Fallback: return empty string for single-repo mode behavior
+	return ""
+}
+
+// sanitizeMetadataKey removes or replaces characters that conflict with metadata key format.
+// On Windows, absolute paths contain colons (e.g., C:\...) which conflict with the ':' separator
+// used in multi-repo metadata keys. This function replaces colons with underscores to make
+// paths safe for use as metadata key suffixes (bd-web8).
+func sanitizeMetadataKey(key string) string {
+	return strings.ReplaceAll(key, ":", "_")
+}
+
+// updateExportMetadata updates last_import_hash and related metadata after a successful export.
+// This prevents "JSONL content has changed since last import" errors on subsequent exports (bd-ymj fix).
+// In multi-repo mode, keySuffix should be the stable repo identifier (e.g., ".", "../frontend").
+//
+// Metadata key format (bd-ar2.12):
+//   - Single-repo mode: "last_import_hash", "last_import_time", "last_import_mtime"
+//   - Multi-repo mode: "last_import_hash:<repo_key>", "last_import_time:<repo_key>", etc.
+//     where <repo_key> is a stable repo identifier like "." or "../frontend"
+//   - Windows paths: Colons in absolute paths (e.g., C:\...) are replaced with underscores (bd-web8)
+//
+// Transaction boundaries (bd-ar2.6):
+// This function does NOT provide atomicity between JSONL write, metadata updates, and DB mtime.
+// If a crash occurs between these operations, metadata may be inconsistent. However, this is
+// acceptable because:
+//   1. The worst case is "JSONL content has changed" error on next export
+//   2. User can fix by running 'bd import' (safe, no data loss)
+//   3. Current approach is simple and doesn't require complex WAL or format changes
+// Future: Consider Option 4 (defensive checks on startup) if this becomes a common issue.
+func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath string, log daemonLogger, keySuffix string) {
+	// Sanitize keySuffix to handle Windows paths with colons (bd-web8)
+	if keySuffix != "" {
+		keySuffix = sanitizeMetadataKey(keySuffix)
+	}
+
+	currentHash, err := computeJSONLHash(jsonlPath)
+	if err != nil {
+		log.log("Warning: failed to compute JSONL hash for metadata update: %v", err)
+		return
+	}
+
+	// Build metadata keys with optional suffix for per-repo tracking
+	hashKey := "last_import_hash"
+	timeKey := "last_import_time"
+	mtimeKey := "last_import_mtime"
+	if keySuffix != "" {
+		hashKey += ":" + keySuffix
+		timeKey += ":" + keySuffix
+		mtimeKey += ":" + keySuffix
+	}
+
+	// Note: Metadata update failures are treated as warnings, not errors (bd-ar2.5).
+	// This is acceptable because the worst case is the next export will require
+	// an import first, which is safe and prevents data loss.
+	// Alternative: Make this critical and fail the export if metadata updates fail,
+	// but this makes exports more fragile and doesn't prevent data corruption.
+	if err := store.SetMetadata(ctx, hashKey, currentHash); err != nil {
+		log.log("Warning: failed to update %s: %v", hashKey, err)
+		log.log("Next export may require running 'bd import' first")
+	}
+
+	exportTime := time.Now().Format(time.RFC3339)
+	if err := store.SetMetadata(ctx, timeKey, exportTime); err != nil {
+		log.log("Warning: failed to update %s: %v", timeKey, err)
+	}
+
+	// Store mtime for fast-path optimization
+	if jsonlInfo, statErr := os.Stat(jsonlPath); statErr == nil {
+		mtimeStr := fmt.Sprintf("%d", jsonlInfo.ModTime().Unix())
+		if err := store.SetMetadata(ctx, mtimeKey, mtimeStr); err != nil {
+			log.log("Warning: failed to update %s: %v", mtimeKey, err)
+		}
+	}
+}
+
 // validateDatabaseFingerprint checks that the database belongs to this repository
 func validateDatabaseFingerprint(ctx context.Context, store storage.Storage, log *daemonLogger) error {
 
@@ -306,6 +417,19 @@ func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, au
 		}
 		log.log("Exported to JSONL")
 
+		// Update export metadata (bd-ymj fix, bd-ar2.2 multi-repo support, bd-ar2.11 stable keys)
+		multiRepoPaths := getMultiRepoJSONLPaths()
+		if multiRepoPaths != nil {
+			// Multi-repo mode: update metadata for each JSONL with stable repo key
+			for _, path := range multiRepoPaths {
+				repoKey := getRepoKeyForPath(path)
+				updateExportMetadata(exportCtx, store, path, log, repoKey)
+			}
+		} else {
+			// Single-repo mode: update metadata for main JSONL
+			updateExportMetadata(exportCtx, store, jsonlPath, log, "")
+		}
+
 		// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 		// This prevents validatePreExport from incorrectly blocking on next export
 		// with "JSONL is newer than database" after daemon auto-export
@@ -387,7 +511,9 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 
 		// Check JSONL content hash to avoid redundant imports
 		// Use content-based check (not mtime) to avoid git resurrection bug (bd-khnb)
-		if !hasJSONLChanged(importCtx, store, jsonlPath) {
+		// Use getRepoKeyForPath for multi-repo support (bd-ar2.10, bd-ar2.11)
+		repoKey := getRepoKeyForPath(jsonlPath)
+		if !hasJSONLChanged(importCtx, store, jsonlPath, repoKey) {
 			log.log("Skipping import: JSONL content unchanged")
 			return
 		}
@@ -495,6 +621,18 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 		log.log("Exported to JSONL")
+
+		// Update export metadata (bd-ymj fix, bd-ar2.2 multi-repo support, bd-ar2.11 stable keys)
+		if multiRepoPaths != nil {
+			// Multi-repo mode: update metadata for each JSONL with stable repo key
+			for _, path := range multiRepoPaths {
+				repoKey := getRepoKeyForPath(path)
+				updateExportMetadata(syncCtx, store, path, log, repoKey)
+			}
+		} else {
+			// Single-repo mode: update metadata for main JSONL
+			updateExportMetadata(syncCtx, store, jsonlPath, log, "")
+		}
 
 		// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 		// This prevents validatePreExport from incorrectly blocking on next export

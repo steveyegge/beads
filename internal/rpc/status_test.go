@@ -15,7 +15,7 @@ func TestStatusEndpoint(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	store, err := sqlite.New(dbPath)
+	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}

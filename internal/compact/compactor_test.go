@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package compact
 
 import (
@@ -14,7 +17,7 @@ func setupTestStorage(t *testing.T) *sqlite.SQLiteStorage {
 	t.Helper()
 
 	tmpDB := t.TempDir() + "/test.db"
-	store, err := sqlite.New(tmpDB)
+	store, err := sqlite.New(context.Background(), tmpDB)
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}

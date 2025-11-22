@@ -156,7 +156,7 @@ echo "BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGE
 
 **Git merge driver:** During `bd init`, beads configures git to use `bd merge` for intelligent JSONL merging. This prevents conflicts when multiple branches modify issues. Skip with `--skip-merge-driver` if needed. To configure manually later:
 ```bash
-git config merge.beads.driver "bd merge %A %O %L %R"
+git config merge.beads.driver "bd merge %A %O %A %B"
 git config merge.beads.name "bd JSONL merge driver"
 echo ".beads/beads.jsonl merge=beads" >> .gitattributes
 ```

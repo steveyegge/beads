@@ -790,7 +790,7 @@ func mergeDriverInstalled() bool {
 // installMergeDriver configures git to use bd merge for JSONL files
 func installMergeDriver() error {
 	// Configure git merge driver
-	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %L %R")
+	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %A %B")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure git merge driver: %w\n%s", err, output)
 	}
@@ -812,12 +812,14 @@ func installMergeDriver() error {
 	}
 
 	// Check if beads merge driver is already configured
-	hasBeadsMerge := strings.Contains(existingContent, ".beads/beads.jsonl") &&
+	// Check for either pattern (issues.jsonl is canonical, beads.jsonl is legacy)
+	hasBeadsMerge := (strings.Contains(existingContent, ".beads/issues.jsonl") ||
+		strings.Contains(existingContent, ".beads/beads.jsonl")) &&
 		strings.Contains(existingContent, "merge=beads")
 
 	if !hasBeadsMerge {
-		// Append beads merge driver configuration
-		beadsMergeAttr := "\n# Use bd merge for beads JSONL files\n.beads/beads.jsonl merge=beads\n"
+		// Append beads merge driver configuration (issues.jsonl is canonical)
+		beadsMergeAttr := "\n# Use bd merge for beads JSONL files\n.beads/issues.jsonl merge=beads\n"
 
 		newContent := existingContent
 		if !strings.HasSuffix(newContent, "\n") && len(newContent) > 0 {

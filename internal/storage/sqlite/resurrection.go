@@ -47,7 +47,21 @@ func (s *SQLiteStorage) tryResurrectParentWithConn(ctx context.Context, conn *sq
 	if count > 0 {
 		return true, nil // Parent already exists, nothing to do
 	}
-	
+
+	// Before resurrecting this parent, ensure its entire ancestor chain exists (bd-ar2.4)
+	// This handles deeply nested cases where we're resurrecting bd-root.1.2 and bd-root.1 is also missing
+	ancestors := extractParentChain(parentID)
+	for _, ancestor := range ancestors {
+		// Recursively resurrect each ancestor in the chain
+		resurrected, err := s.tryResurrectParentWithConn(ctx, conn, ancestor)
+		if err != nil {
+			return false, fmt.Errorf("failed to resurrect ancestor %s: %w", ancestor, err)
+		}
+		if !resurrected {
+			return false, nil // Ancestor not found in history, can't continue
+		}
+	}
+
 	// Parent doesn't exist - try to find it in JSONL history
 	parentIssue, err := s.findIssueInJSONL(parentID)
 	if err != nil {

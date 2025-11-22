@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -164,7 +165,7 @@ func applyFixes(result doctorResult) {
 
 	response = strings.TrimSpace(strings.ToLower(response))
 	if response != "" && response != "y" && response != "yes" {
-		fmt.Println("Fix cancelled.")
+		fmt.Println("Fix canceled.")
 		return
 	}
 
@@ -192,6 +193,8 @@ func applyFixes(result doctorResult) {
 			err = fix.DatabaseVersion(result.Path)
 		case "Schema Compatibility":
 			err = fix.SchemaCompatibility(result.Path)
+		case "Git Merge Driver":
+			err = fix.MergeDriver(result.Path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -272,21 +275,28 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 6: Legacy JSONL filename (issues.jsonl vs beads.jsonl)
+	// Check 6: Multiple JSONL files (excluding merge artifacts)
 	jsonlCheck := convertDoctorCheck(doctor.CheckLegacyJSONLFilename(path))
 	result.Checks = append(result.Checks, jsonlCheck)
 	if jsonlCheck.Status == statusWarning || jsonlCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
-	// Check 7: Daemon health
+	// Check 7: Database/JSONL configuration mismatch
+	configCheck := convertDoctorCheck(doctor.CheckDatabaseConfig(path))
+	result.Checks = append(result.Checks, configCheck)
+	if configCheck.Status == statusWarning || configCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 8: Daemon health
 	daemonCheck := checkDaemonStatus(path)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
-	// Check 8: Database-JSONL sync
+	// Check 9: Database-JSONL sync
 	syncCheck := checkDatabaseJSONLSync(path)
 	result.Checks = append(result.Checks, syncCheck)
 	if syncCheck.Status == statusWarning || syncCheck.Status == statusError {
@@ -326,6 +336,11 @@ func runDiagnostics(path string) doctorResult {
 	gitignoreCheck := convertDoctorCheck(doctor.CheckGitignore())
 	result.Checks = append(result.Checks, gitignoreCheck)
 	// Don't fail overall check for gitignore, just warn
+
+	// Check 15: Git merge driver configuration
+	mergeDriverCheck := checkMergeDriver(path)
+	result.Checks = append(result.Checks, mergeDriverCheck)
+	// Don't fail overall check for merge driver, just warn
 
 	return result
 }
@@ -1510,6 +1525,64 @@ func checkSchemaCompatibility(path string) doctorCheck {
 		Name:    "Schema Compatibility",
 		Status:  statusOK,
 		Message: "All required tables and columns present",
+	}
+}
+
+func checkMergeDriver(path string) doctorCheck {
+	// Check if we're in a git repository
+	gitDir := filepath.Join(path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Git Merge Driver",
+			Status:  statusOK,
+			Message: "N/A (not a git repository)",
+		}
+	}
+
+	// Get current merge driver configuration
+	cmd := exec.Command("git", "config", "merge.beads.driver")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		// Merge driver not configured
+		return doctorCheck{
+			Name:    "Git Merge Driver",
+			Status:  statusWarning,
+			Message: "Git merge driver not configured",
+			Fix:     "Run 'bd init' to configure the merge driver, or manually: git config merge.beads.driver \"bd merge %A %O %A %B\"",
+		}
+	}
+
+	currentConfig := strings.TrimSpace(string(output))
+	correctConfig := "bd merge %A %O %A %B"
+
+	// Check if using old incorrect placeholders
+	if strings.Contains(currentConfig, "%L") || strings.Contains(currentConfig, "%R") {
+		return doctorCheck{
+			Name:    "Git Merge Driver",
+			Status:  statusError,
+			Message: fmt.Sprintf("Incorrect merge driver config: %q (uses invalid %%L/%%R placeholders)", currentConfig),
+			Detail:  "Git only supports %O (base), %A (current), %B (other). Using %L/%R causes merge failures.",
+			Fix:     "Run 'bd doctor --fix' to update to correct config, or manually: git config merge.beads.driver \"bd merge %A %O %A %B\"",
+		}
+	}
+
+	// Check if config is correct
+	if currentConfig != correctConfig {
+		return doctorCheck{
+			Name:    "Git Merge Driver",
+			Status:  statusWarning,
+			Message: fmt.Sprintf("Non-standard merge driver config: %q", currentConfig),
+			Detail:  fmt.Sprintf("Expected: %q", correctConfig),
+			Fix:     fmt.Sprintf("Run 'bd doctor --fix' to update config, or manually: git config merge.beads.driver \"%s\"", correctConfig),
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Git Merge Driver",
+		Status:  statusOK,
+		Message: "Correctly configured",
+		Detail:  currentConfig,
 	}
 }
 

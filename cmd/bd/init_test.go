@@ -526,7 +526,7 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read .gitattributes: %v", err)
 		}
-		if !strings.Contains(string(content), ".beads/beads.jsonl merge=beads") {
+		if !strings.Contains(string(content), ".beads/issues.jsonl merge=beads") {
 			t.Error(".gitattributes should contain merge driver configuration")
 		}
 	})
@@ -627,13 +627,13 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 		}
 
 		// Pre-configure merge driver manually
-		if err := runCommandInDir(tmpDir, "git", "config", "merge.beads.driver", "bd merge %A %O %L %R"); err != nil {
+		if err := runCommandInDir(tmpDir, "git", "config", "merge.beads.driver", "bd merge %A %O %A %B"); err != nil {
 			t.Fatalf("Failed to set git config: %v", err)
 		}
 
 		// Create .gitattributes with merge driver
 		gitattrsPath := filepath.Join(tmpDir, ".gitattributes")
-		initialContent := "# Existing config\n.beads/beads.jsonl merge=beads\n"
+		initialContent := "# Existing config\n.beads/issues.jsonl merge=beads\n"
 		if err := os.WriteFile(gitattrsPath, []byte(initialContent), 0644); err != nil {
 			t.Fatalf("Failed to create .gitattributes: %v", err)
 		}
@@ -661,7 +661,7 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 
 		contentStr := string(content)
 		// Count occurrences - should only appear once
-		count := strings.Count(contentStr, ".beads/beads.jsonl merge=beads")
+		count := strings.Count(contentStr, ".beads/issues.jsonl merge=beads")
 		if count != 1 {
 			t.Errorf("Expected .gitattributes to contain merge config exactly once, found %d times", count)
 		}
@@ -727,13 +727,13 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 		}
 
 		// Should contain beads config
-		if !strings.Contains(contentStr, ".beads/beads.jsonl merge=beads") {
+		if !strings.Contains(contentStr, ".beads/issues.jsonl merge=beads") {
 			t.Error(".gitattributes should contain beads merge config")
 		}
 
 		// Beads config should come after existing content
 		txtIdx := strings.Index(contentStr, "*.txt")
-		beadsIdx := strings.Index(contentStr, ".beads/beads.jsonl")
+		beadsIdx := strings.Index(contentStr, ".beads/issues.jsonl")
 		if txtIdx >= beadsIdx {
 			t.Error("Beads config should be appended after existing content")
 		}
@@ -776,7 +776,7 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 			t.Fatalf("Failed to get merge.beads.driver: %v", err)
 		}
 		driver = strings.TrimSpace(driver)
-		expected := "bd merge %A %O %L %R"
+		expected := "bd merge %A %O %A %B"
 		if driver != expected {
 			t.Errorf("Expected merge.beads.driver to be %q, got %q", expected, driver)
 		}

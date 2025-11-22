@@ -31,7 +31,7 @@ func setupTestServerWithStore(t *testing.T) (*Server, *Client, *sqlitestorage.SQ
 
 	os.Remove(socketPath)
 
-	store, err := sqlitestorage.New(dbPath)
+	store, err := sqlitestorage.New(context.Background(), dbPath)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create store: %v", err)

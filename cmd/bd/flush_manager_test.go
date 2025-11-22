@@ -414,3 +414,66 @@ func teardownTestEnvironment(t *testing.T) {
 		flushManager = nil
 	}
 }
+
+// TestPerformFlushErrorHandling verifies that performFlush handles errors correctly.
+// This test addresses bd-lln: unparam flagged performFlush as always returning nil.
+//
+// The design is that performFlush calls flushToJSONLWithState, which handles all
+// errors internally by:
+// - Setting lastFlushError and flushFailureCount
+// - Printing warnings to stderr
+// - Not propagating errors back to the caller
+//
+// Therefore, performFlush doesn't return errors - it's a fire-and-forget operation.
+// Any error handling is done internally by the flush system.
+func TestPerformFlushErrorHandling(t *testing.T) {
+	setupTestEnvironment(t)
+	defer teardownTestEnvironment(t)
+
+	fm := NewFlushManager(true, 50*time.Millisecond)
+	defer func() {
+		if err := fm.Shutdown(); err != nil {
+			t.Errorf("Shutdown failed: %v", err)
+		}
+	}()
+
+	// performFlush with inactive store should handle gracefully (no return value)
+	storeMutex.Lock()
+	storeActive = false
+	storeMutex.Unlock()
+
+	fm.performFlush(false) // Should not panic
+
+	// Restore store for cleanup
+	storeMutex.Lock()
+	storeActive = true
+	storeMutex.Unlock()
+}
+
+// TestPerformFlushStoreInactive verifies performFlush handles inactive store gracefully
+func TestPerformFlushStoreInactive(t *testing.T) {
+	setupTestEnvironment(t)
+	defer teardownTestEnvironment(t)
+
+	fm := NewFlushManager(true, 50*time.Millisecond)
+	defer func() {
+		if err := fm.Shutdown(); err != nil {
+			t.Errorf("Shutdown failed: %v", err)
+		}
+	}()
+
+	// Deactivate store
+	storeMutex.Lock()
+	storeActive = false
+	storeMutex.Unlock()
+
+	// performFlush should handle this gracefully (no return value)
+	fm.performFlush(false) // Should not panic
+
+	fm.performFlush(true) // Try full export too - should not panic
+
+	// Restore store for cleanup
+	storeMutex.Lock()
+	storeActive = true
+	storeMutex.Unlock()
+}

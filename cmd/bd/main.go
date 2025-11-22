@@ -89,6 +89,7 @@ var (
 	noAutoFlush  bool
 	noAutoImport bool
 	sandboxMode  bool
+	allowStale   bool // Use --allow-stale: skip staleness check (emergency escape hatch)
 	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
 	profileEnabled bool
 	profileFile    *os.File
@@ -109,6 +110,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
 	rootCmd.PersistentFlags().BoolVar(&noAutoImport, "no-auto-import", false, "Disable automatic JSONL import when newer than DB")
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
+	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 
@@ -196,6 +198,15 @@ var rootCmd = &cobra.Command{
 		}
 		if slices.Contains(noDbCommands, cmd.Name()) {
 			return
+		}
+
+		// Auto-detect sandboxed environment (bd-u3t: Phase 2 for GH #353)
+		// Only auto-enable if user hasn't explicitly set --sandbox or --no-daemon
+		if !cmd.Flags().Changed("sandbox") && !cmd.Flags().Changed("no-daemon") {
+			if isSandboxed() {
+				sandboxMode = true
+				fmt.Fprintf(os.Stderr, "ℹ️  Sandbox detected, using direct mode\n")
+			}
 		}
 
 		// If sandbox mode is set, enable all sandbox flags
