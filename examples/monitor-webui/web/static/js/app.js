@@ -127,18 +127,18 @@ function renderIssues(issues) {
     // Render table view
     tbody.innerHTML = issues.map(issue => {
         const statusClass = 'status-' + (issue.status || 'open').toLowerCase().replace('_', '-');
-        const priorityClass = 'priority-' + (issue.priority || 2);
-        return '<tr onclick="showIssueDetail(\'' + issue.id + '\')"><td>' + issue.id + '</td><td>' + issue.title + '</td><td class="' + statusClass + '">' + (issue.status || 'open') + '</td><td class="' + priorityClass + '">P' + (issue.priority || 2) + '</td><td>' + (issue.issue_type || 'task') + '</td><td>' + (issue.assignee || '-') + '</td></tr>';
+        const priorityClass = 'priority-' + (issue.priority ?? 2);
+        return '<tr onclick="showIssueDetail(\'' + issue.id + '\')"><td>' + issue.id + '</td><td>' + issue.title + '</td><td class="' + statusClass + '">' + (issue.status || 'open') + '</td><td class="' + priorityClass + '">P' + (issue.priority ?? 2) + '</td><td>' + (issue.issue_type || 'task') + '</td><td>' + (issue.assignee || '-') + '</td></tr>';
     }).join('');
 
     // Render card view for mobile
     cardView.innerHTML = issues.map(issue => {
         const statusClass = 'status-' + (issue.status || 'open').toLowerCase().replace('_', '-');
-        const priorityClass = 'priority-' + (issue.priority || 2);
+        const priorityClass = 'priority-' + (issue.priority ?? 2);
         let html = '<div class="issue-card" onclick="showIssueDetail(\'' + issue.id + '\')">';
         html += '<div class="issue-card-header">';
         html += '<span class="issue-card-id">' + issue.id + '</span>';
-        html += '<span class="' + priorityClass + '">P' + (issue.priority || 2) + '</span>';
+        html += '<span class="' + priorityClass + '">P' + (issue.priority ?? 2) + '</span>';
         html += '</div>';
         html += '<h3 class="issue-card-title">' + issue.title + '</h3>';
         html += '<div class="issue-card-meta">';
