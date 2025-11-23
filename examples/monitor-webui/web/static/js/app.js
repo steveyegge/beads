@@ -103,7 +103,7 @@ async function loadIssues() {
         const response = await fetch('/api/issues');
         if (!response.ok) throw new Error('Failed to load issues');
         allIssues = await response.json();
-        renderIssues(allIssues);
+        filterIssues();
     } catch (error) {
         console.error('Error loading issues:', error);
         showError('Failed to load issues: ' + error.message);
@@ -155,12 +155,24 @@ function renderIssues(issues) {
 function filterIssues() {
     const statusSelect = document.getElementById('filter-status');
     const selectedStatuses = Array.from(statusSelect.selectedOptions).map(opt => opt.value);
-    const priorityFilter = document.getElementById('filter-priority').value;
+    
+    const prioritySelect = document.getElementById('filter-priority');
+    const selectedPriorities = Array.from(prioritySelect.selectedOptions).map(opt => parseInt(opt.value));
+    
+    const searchText = document.getElementById('filter-text').value.toLowerCase();
 
     const filtered = allIssues.filter(issue => {
         // If statuses are selected, check if issue status is in the selected list
         if (selectedStatuses.length > 0 && !selectedStatuses.includes(issue.status)) return false;
-        if (priorityFilter && issue.priority !== parseInt(priorityFilter)) return false;
+        
+        // If priorities are selected, check if issue priority is in the selected list
+        if (selectedPriorities.length > 0 && !selectedPriorities.includes(issue.priority)) return false;
+        
+        if (searchText) {
+            const title = (issue.title || '').toLowerCase();
+            const description = (issue.description || '').toLowerCase();
+            if (!title.includes(searchText) && !description.includes(searchText)) return false;
+        }
         return true;
     });
 
@@ -228,8 +240,90 @@ window.onclick = function(event) {
 };
 
 // Filter event listeners
-document.getElementById('filter-status').addEventListener('change', filterIssues);
-document.getElementById('filter-priority').addEventListener('change', filterIssues);
+document.getElementById('filter-status').addEventListener('change', function() {
+    const statusSelect = document.getElementById('filter-status');
+    const options = Array.from(statusSelect.options);
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-status');
+    btn.textContent = allSelected ? 'Select None' : 'Select All';
+    filterIssues();
+});
+document.getElementById('toggle-status').addEventListener('click', function() {
+    const statusSelect = document.getElementById('filter-status');
+    const options = Array.from(statusSelect.options);
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-status');
+
+    if (allSelected) {
+        // Select None
+        options.forEach(opt => opt.selected = false);
+        btn.textContent = 'Select All';
+    } else {
+        // Select All
+        options.forEach(opt => opt.selected = true);
+        btn.textContent = 'Select None';
+    }
+    filterIssues();
+});
+
+document.getElementById('filter-priority').addEventListener('change', function() {
+    const prioritySelect = document.getElementById('filter-priority');
+    const options = Array.from(prioritySelect.options);
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-priority');
+    btn.textContent = allSelected ? 'Select None' : 'Select All';
+    filterIssues();
+});
+
+document.getElementById('toggle-priority').addEventListener('click', function() {
+    const prioritySelect = document.getElementById('filter-priority');
+    const options = Array.from(prioritySelect.options);
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-priority');
+
+    if (allSelected) {
+        // Select None
+        options.forEach(opt => opt.selected = false);
+        btn.textContent = 'Select All';
+    } else {
+        // Select All
+        options.forEach(opt => opt.selected = true);
+        btn.textContent = 'Select None';
+    }
+    filterIssues();
+});
+
+document.getElementById('filter-text').addEventListener('input', filterIssues);
+document.getElementById('clear-text').addEventListener('click', function() {
+    document.getElementById('filter-text').value = '';
+    filterIssues();
+});
+
+// Stat click listeners
+function setStatusFilter(statuses) {
+    const statusSelect = document.getElementById('filter-status');
+    const options = Array.from(statusSelect.options);
+    
+    options.forEach(opt => {
+        if (statuses === 'all') {
+            opt.selected = true;
+        } else {
+            opt.selected = statuses.includes(opt.value);
+        }
+    });
+    
+    // Update toggle button text
+    const allSelected = options.every(opt => opt.selected);
+    const btn = document.getElementById('toggle-status');
+    btn.textContent = allSelected ? 'Select None' : 'Select All';
+    
+    filterIssues();
+}
+
+document.getElementById('stat-item-total').addEventListener('click', () => setStatusFilter('all'));
+document.getElementById('stat-item-open').addEventListener('click', () => setStatusFilter(['open']));
+document.getElementById('stat-item-in-progress').addEventListener('click', () => setStatusFilter(['in_progress']));
+document.getElementById('stat-item-closed').addEventListener('click', () => setStatusFilter(['closed']));
 
 // Reload button listener
 document.getElementById('reload-button').addEventListener('click', reloadData);
