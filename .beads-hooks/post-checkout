@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# bd-hooks-version: 0.24.2
+#
+# Beads post-checkout hook
+# Automatically imports JSONL to SQLite database after checking out branches
+#
+# Install: cp examples/git-hooks/post-checkout .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout
+
+# Arguments provided by git:
+# $1 = ref of previous HEAD
+# $2 = ref of new HEAD
+# $3 = flag (1 if branch checkout, 0 if file checkout)
+
+# Only run on branch checkouts
+if [[ "$3" != "1" ]]; then
+    exit 0
+fi
+
+set -e
+
+# Check if bd is installed
+if ! command -v bd &> /dev/null; then
+    exit 0
+fi
+
+# Check if issues.jsonl exists
+if [[ ! -f .beads/issues.jsonl ]]; then
+    exit 0
+fi
+
+# Import issues from JSONL
+echo "🔗 Importing beads issues from JSONL..."
+
+if bd import -i .beads/issues.jsonl 2>/dev/null; then
+    echo "✓ Beads issues imported successfully"
+else
+    echo "Warning: bd import failed"
+fi
+
+exit 0
