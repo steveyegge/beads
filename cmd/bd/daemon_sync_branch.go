@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // syncBranchCommitAndPush commits JSONL to the sync branch using a worktree
@@ -21,13 +22,13 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 		return true, nil // Skip sync branch commit/push in local-only mode
 	}
 	
-	// Get sync.branch config
-	syncBranch, err := store.GetConfig(ctx, "sync.branch")
+	// Get sync branch configuration (supports BEADS_SYNC_BRANCH override)
+	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil {
-		return false, fmt.Errorf("failed to get sync.branch config: %w", err)
+		return false, fmt.Errorf("failed to get sync branch: %w", err)
 	}
-	
-	// If no sync.branch configured, caller should use regular commit logic
+
+	// If no sync branch configured, caller should use regular commit logic
 	if syncBranch == "" {
 		return false, nil
 	}
@@ -189,13 +190,13 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return true, nil // Skip sync branch pull in local-only mode
 	}
 	
-	// Get sync.branch config
-	syncBranch, err := store.GetConfig(ctx, "sync.branch")
+	// Get sync branch configuration (supports BEADS_SYNC_BRANCH override)
+	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil {
-		return false, fmt.Errorf("failed to get sync.branch config: %w", err)
+		return false, fmt.Errorf("failed to get sync branch: %w", err)
 	}
-	
-	// If no sync.branch configured, caller should use regular pull logic
+
+	// If no sync branch configured, caller should use regular pull logic
 	if syncBranch == "" {
 		return false, nil
 	}
