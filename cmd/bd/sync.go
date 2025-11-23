@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -693,9 +694,9 @@ func getSyncBranch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	syncBranch, err := store.GetConfig(ctx, "sync.branch")
+	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil {
-		return "", fmt.Errorf("failed to get sync.branch config: %w", err)
+		return "", fmt.Errorf("failed to get sync branch config: %w", err)
 	}
 
 	if syncBranch == "" {
