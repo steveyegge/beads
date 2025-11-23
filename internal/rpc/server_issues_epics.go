@@ -3,6 +3,7 @@ package rpc
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -87,6 +88,12 @@ func (s *Server) handleCreate(req *Request) Response {
 			Success: false,
 			Error:   "cannot specify both ID and Parent",
 		}
+	}
+
+	// Warn if creating an issue without a description (unless it's a test issue)
+	if createArgs.Description == "" && !strings.Contains(strings.ToLower(createArgs.Title), "test") {
+		// Log warning to daemon logs (stderr goes to daemon logs)
+		fmt.Fprintf(os.Stderr, "[WARNING] Creating issue '%s' without description. Issues without descriptions lack context for future work.\n", createArgs.Title)
 	}
 
 	store := s.storage
