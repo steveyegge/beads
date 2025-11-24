@@ -222,7 +222,7 @@ func FindBeadsDir() string {
 
 // FindJSONLPath returns the expected JSONL file path for the given database path.
 // It searches for existing *.jsonl files in the database directory and returns
-// the first one found, or defaults to "beads.jsonl".
+// the first one found, preferring beads.jsonl over issues.jsonl (bd-afd).
 //
 // This function does not create directories or files - it only discovers paths.
 // Use this when you need to know where bd stores its JSONL export.
@@ -238,12 +238,18 @@ func FindJSONLPath(dbPath string) string {
 	pattern := filepath.Join(dbDir, "*.jsonl")
 	matches, err := filepath.Glob(pattern)
 	if err == nil && len(matches) > 0 {
-		// Return the first .jsonl file found
+		// bd-afd: Prefer beads.jsonl over issues.jsonl (canonical name)
+		for _, match := range matches {
+			if filepath.Base(match) == "beads.jsonl" {
+				return match
+			}
+		}
+		// Return the first .jsonl file found if beads.jsonl not present
 		return matches[0]
 	}
 
-	// Default to issues.jsonl
-	return filepath.Join(dbDir, "issues.jsonl")
+	// bd-afd: Default to beads.jsonl (was issues.jsonl)
+	return filepath.Join(dbDir, "beads.jsonl")
 }
 
 // DatabaseInfo contains information about a discovered beads database

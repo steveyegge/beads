@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
@@ -34,6 +35,13 @@ func trackBdVersion() {
 		// No config file yet - create one with current version
 		cfg = configfile.DefaultConfig()
 		cfg.LastBdVersion = Version
+
+		// bd-afd: Auto-detect actual JSONL file instead of using hardcoded default
+		// This prevents mismatches when metadata.json gets deleted (git clean, merge conflict, etc.)
+		if actualJSONL := findActualJSONLFile(beadsDir); actualJSONL != "" {
+			cfg.JSONLExport = actualJSONL
+		}
+
 		_ = cfg.Save(beadsDir) // Best effort
 		return
 	}
@@ -173,6 +181,57 @@ func findSubstring(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// findActualJSONLFile scans .beads/ for the actual JSONL file in use.
+// Prefers beads.jsonl over issues.jsonl, skips backups and merge artifacts.
+// Returns empty string if no JSONL file is found.
+//
+// bd-afd: Auto-detect JSONL file to prevent metadata.json mismatches
+func findActualJSONLFile(beadsDir string) string {
+	entries, err := os.ReadDir(beadsDir)
+	if err != nil {
+		return ""
+	}
+
+	var candidates []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+
+		// Must end with .jsonl
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+
+		// Skip merge artifacts and backups
+		lowerName := strings.ToLower(name)
+		if strings.Contains(lowerName, "backup") ||
+			strings.Contains(lowerName, ".orig") ||
+			strings.Contains(lowerName, ".bak") ||
+			strings.Contains(lowerName, "~") ||
+			strings.HasPrefix(lowerName, "backup_") {
+			continue
+		}
+
+		candidates = append(candidates, name)
+	}
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	// Prefer beads.jsonl over issues.jsonl (canonical name)
+	for _, name := range candidates {
+		if name == "beads.jsonl" {
+			return name
+		}
+	}
+
+	// Fall back to first candidate (including issues.jsonl if present)
+	return candidates[0]
 }
 
 // autoMigrateOnVersionBump automatically migrates the database when CLI version changes.

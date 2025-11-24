@@ -198,6 +198,8 @@ func applyFixes(result doctorResult) {
 			err = fix.MergeDriver(result.Path)
 		case "Sync Branch Config":
 			err = fix.SyncBranchConfig(result.Path)
+		case "Database Config":
+			err = fix.DatabaseConfig(result.Path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)

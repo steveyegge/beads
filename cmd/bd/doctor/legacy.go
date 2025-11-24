@@ -252,7 +252,7 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 		Status:  "warning",
 		Message: "Configuration mismatch detected",
 		Detail:  strings.Join(issues, "\n  "),
-		Fix: "Update configuration in .beads/metadata.json:\n" +
+		Fix: "Run 'bd doctor --fix' to auto-detect and fix mismatches, or manually:\n" +
 			"  1. Check which files are actually being used\n" +
 			"  2. Update metadata.json to match the actual filenames\n" +
 			"  3. Or rename the files to match the configuration",
