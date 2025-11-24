@@ -345,7 +345,7 @@ func findDatabaseInTree() string {
 // Returns a slice of DatabaseInfo for each database found, starting from the
 // closest to CWD (most relevant) to the furthest (least relevant).
 func FindAllDatabases() []DatabaseInfo {
-	var databases []DatabaseInfo
+	databases := []DatabaseInfo{} // Initialize to empty slice, never return nil
 	seen := make(map[string]bool) // Track canonical paths to avoid duplicates
 
 	dir, err := os.Getwd()

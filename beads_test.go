@@ -18,6 +18,7 @@ func TestNewSQLiteStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
+	defer store.Close()
 
 	if store == nil {
 		t.Error("expected non-nil storage")
