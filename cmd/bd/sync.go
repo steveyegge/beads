@@ -123,16 +123,28 @@ Use --merge to merge the sync branch back to main branch.`,
 			os.Exit(1)
 		}
 
-		// Step 1: Import JSONL first (ZFC: JSONL First Consistency - bd-l0r)
-		// JSONL is always the source of truth. Import before export to ensure DB is synced.
+		// Step 1: Export pending changes (but check for stale DB first)
 		if dryRun {
-			fmt.Println("→ [DRY RUN] Would import from JSONL (ZFC)")
 			fmt.Println("→ [DRY RUN] Would export pending changes to JSONL")
 		} else {
-			fmt.Println("→ Importing from JSONL (ZFC)...")
-			if err := importFromJSONL(ctx, jsonlPath, renameOnImport); err != nil {
-				fmt.Fprintf(os.Stderr, "Error importing (ZFC): %v\n", err)
-				os.Exit(1)
+			// ZFC safety check (bd-l0r): if DB significantly diverges from JSONL,
+			// force import first to sync with JSONL source of truth
+			if err := ensureStoreActive(); err == nil && store != nil {
+				dbCount, err := countDBIssuesFast(ctx, store)
+				if err == nil {
+					jsonlCount, err := countIssuesInJSONL(jsonlPath)
+					if err == nil && jsonlCount > 0 && dbCount > jsonlCount {
+						divergence := float64(dbCount-jsonlCount) / float64(jsonlCount)
+						if divergence > 0.5 { // >50% more issues in DB than JSONL
+							fmt.Printf("→ DB has %d issues but JSONL has %d (stale DB detected)\n", dbCount, jsonlCount)
+							fmt.Println("→ Importing JSONL first (ZFC)...")
+							if err := importFromJSONL(ctx, jsonlPath, renameOnImport); err != nil {
+								fmt.Fprintf(os.Stderr, "Error importing (ZFC): %v\n", err)
+								os.Exit(1)
+							}
+						}
+					}
+				}
 			}
 
 			// Pre-export integrity checks
