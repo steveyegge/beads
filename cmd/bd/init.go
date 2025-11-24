@@ -752,12 +752,20 @@ exit 0
 	return nil
 }
 
-// mergeDriverInstalled checks if bd merge driver is configured
+// mergeDriverInstalled checks if bd merge driver is configured correctly
 func mergeDriverInstalled() bool {
 	// Check git config for merge driver
 	cmd := exec.Command("git", "config", "merge.beads.driver")
 	output, err := cmd.Output()
 	if err != nil || len(output) == 0 {
+		return false
+	}
+
+	// Check if using old invalid placeholders (%L/%R from versions <0.24.0)
+	// Git only supports %O (base), %A (current), %B (other)
+	driverConfig := strings.TrimSpace(string(output))
+	if strings.Contains(driverConfig, "%L") || strings.Contains(driverConfig, "%R") {
+		// Stale config with invalid placeholders - needs repair
 		return false
 	}
 
