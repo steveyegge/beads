@@ -371,6 +371,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			}
 		}
 		if hasIssues {
+			yellow := color.New(color.FgYellow).SprintFunc()
 			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", yellow("⚠"))
 			// Show just the warnings/errors, not all checks
 			for _, check := range doctorResult.Checks {
