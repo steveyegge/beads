@@ -414,6 +414,14 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
+	// Invalidate blocked issues cache if status changed (bd-1c4h)
+	// Status changes affect which issues are blocked (blockers must be open/in_progress/blocked)
+	if _, statusChanged := updates["status"]; statusChanged {
+		if err := t.parent.invalidateBlockedCache(ctx, t.conn); err != nil {
+			return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -497,6 +505,12 @@ func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason stri
 	// Mark issue as dirty
 	if err := markDirty(ctx, t.conn, id); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	// Invalidate blocked issues cache since status changed to closed (bd-1c4h)
+	// Closed issues don't block others, so this affects blocking calculations
+	if err := t.parent.invalidateBlockedCache(ctx, t.conn); err != nil {
+		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 	}
 
 	return nil
@@ -646,11 +660,30 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 		return fmt.Errorf("failed to mark depends-on issue dirty: %w", err)
 	}
 
+	// Invalidate blocked cache for blocking dependencies (bd-1c4h)
+	if dep.Type == types.DepBlocks || dep.Type == types.DepParentChild {
+		if err := t.parent.invalidateBlockedCache(ctx, t.conn); err != nil {
+			return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // RemoveDependency removes a dependency within the transaction.
 func (t *sqliteTxStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+	// First, check what type of dependency is being removed (bd-1c4h)
+	var depType types.DependencyType
+	err := t.conn.QueryRowContext(ctx, `
+		SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
+	`, issueID, dependsOnID).Scan(&depType)
+
+	// Store whether cache needs invalidation before deletion
+	needsCacheInvalidation := false
+	if err == nil {
+		needsCacheInvalidation = (depType == types.DepBlocks || depType == types.DepParentChild)
+	}
+
 	result, err := t.conn.ExecContext(ctx, `
 		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 	`, issueID, dependsOnID)
@@ -682,6 +715,13 @@ func (t *sqliteTxStorage) RemoveDependency(ctx context.Context, issueID, depends
 	}
 	if err := markDirty(ctx, t.conn, dependsOnID); err != nil {
 		return fmt.Errorf("failed to mark depends-on issue dirty: %w", err)
+	}
+
+	// Invalidate blocked cache if this was a blocking dependency (bd-1c4h)
+	if needsCacheInvalidation {
+		if err := t.parent.invalidateBlockedCache(ctx, t.conn); err != nil {
+			return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+		}
 	}
 
 	return nil

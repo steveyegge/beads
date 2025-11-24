@@ -100,11 +100,10 @@ type execer interface {
 
 // rebuildBlockedCache completely rebuilds the blocked_issues_cache table
 // This is used during cache invalidation when dependencies change
-func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, tx *sql.Tx) error {
-	// Use the transaction if provided, otherwise use direct db connection
-	var exec execer = s.db
-	if tx != nil {
-		exec = tx
+func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) error {
+	// Use direct db connection if no execer provided
+	if exec == nil {
+		exec = s.db
 	}
 
 	// Clear the cache
@@ -152,6 +151,6 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, tx *sql.Tx) err
 
 // invalidateBlockedCache rebuilds the blocked issues cache
 // Called when dependencies change or issue status changes
-func (s *SQLiteStorage) invalidateBlockedCache(ctx context.Context, tx *sql.Tx) error {
-	return s.rebuildBlockedCache(ctx, tx)
+func (s *SQLiteStorage) invalidateBlockedCache(ctx context.Context, exec execer) error {
+	return s.rebuildBlockedCache(ctx, exec)
 }
