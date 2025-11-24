@@ -272,3 +272,390 @@ func TestTipFrequency(t *testing.T) {
 		t.Error("Expected tip to be selected after frequency window passed")
 	}
 }
+
+func TestInjectTip(t *testing.T) {
+	// Reset tip registry for testing
+	tipsMutex.Lock()
+	tips = []Tip{}
+	tipsMutex.Unlock()
+
+	store := memory.New("")
+
+	// Set deterministic seed for testing
+	os.Setenv("BEADS_TIP_SEED", "11111")
+	defer os.Unsetenv("BEADS_TIP_SEED")
+	tipRandOnce = sync.Once{}
+	initTipRand()
+
+	// Test 1: Inject a new tip
+	InjectTip(
+		"injected_tip_1",
+		"This is an injected tip",
+		80,
+		1*time.Hour,
+		1.0, // Always show when eligible
+		func() bool { return true },
+	)
+
+	tipsMutex.RLock()
+	tipCount := len(tips)
+	tipsMutex.RUnlock()
+
+	if tipCount != 1 {
+		t.Errorf("Expected 1 tip, got %d", tipCount)
+	}
+
+	// Verify tip can be selected
+	tip := selectNextTip(store)
+	if tip == nil {
+		t.Fatal("Expected injected tip to be selected")
+	}
+	if tip.ID != "injected_tip_1" {
+		t.Errorf("Expected tip ID 'injected_tip_1', got %q", tip.ID)
+	}
+	if tip.Message != "This is an injected tip" {
+		t.Errorf("Expected message 'This is an injected tip', got %q", tip.Message)
+	}
+	if tip.Priority != 80 {
+		t.Errorf("Expected priority 80, got %d", tip.Priority)
+	}
+
+	// Test 2: Inject another tip and verify priority ordering
+	InjectTip(
+		"injected_tip_2",
+		"Higher priority tip",
+		100,
+		1*time.Hour,
+		1.0,
+		func() bool { return true },
+	)
+
+	tipsMutex.RLock()
+	tipCount = len(tips)
+	tipsMutex.RUnlock()
+
+	if tipCount != 2 {
+		t.Errorf("Expected 2 tips, got %d", tipCount)
+	}
+
+	// Higher priority tip should be selected first
+	tip = selectNextTip(store)
+	if tip == nil {
+		t.Fatal("Expected tip to be selected")
+	}
+	if tip.ID != "injected_tip_2" {
+		t.Errorf("Expected higher priority tip 'injected_tip_2' to be selected first, got %q", tip.ID)
+	}
+
+	// Test 3: Update existing tip (same ID)
+	InjectTip(
+		"injected_tip_1",
+		"Updated message",
+		50, // Lower priority now
+		2*time.Hour,
+		0.5,
+		func() bool { return true },
+	)
+
+	tipsMutex.RLock()
+	tipCount = len(tips)
+	var updatedTip *Tip
+	for i := range tips {
+		if tips[i].ID == "injected_tip_1" {
+			updatedTip = &tips[i]
+			break
+		}
+	}
+	tipsMutex.RUnlock()
+
+	if tipCount != 2 {
+		t.Errorf("Expected 2 tips after update (no duplicate), got %d", tipCount)
+	}
+	if updatedTip == nil {
+		t.Fatal("Expected to find updated tip")
+	}
+	if updatedTip.Message != "Updated message" {
+		t.Errorf("Expected updated message, got %q", updatedTip.Message)
+	}
+	if updatedTip.Priority != 50 {
+		t.Errorf("Expected updated priority 50, got %d", updatedTip.Priority)
+	}
+	if updatedTip.Frequency != 2*time.Hour {
+		t.Errorf("Expected updated frequency 2h, got %v", updatedTip.Frequency)
+	}
+	if updatedTip.Probability != 0.5 {
+		t.Errorf("Expected updated probability 0.5, got %v", updatedTip.Probability)
+	}
+}
+
+func TestRemoveTip(t *testing.T) {
+	// Reset tip registry for testing
+	tipsMutex.Lock()
+	tips = []Tip{}
+	tipsMutex.Unlock()
+
+	// Add some tips
+	InjectTip("tip_a", "Tip A", 100, time.Hour, 1.0, func() bool { return true })
+	InjectTip("tip_b", "Tip B", 90, time.Hour, 1.0, func() bool { return true })
+	InjectTip("tip_c", "Tip C", 80, time.Hour, 1.0, func() bool { return true })
+
+	tipsMutex.RLock()
+	tipCount := len(tips)
+	tipsMutex.RUnlock()
+
+	if tipCount != 3 {
+		t.Fatalf("Expected 3 tips, got %d", tipCount)
+	}
+
+	// Test 1: Remove middle tip
+	RemoveTip("tip_b")
+
+	tipsMutex.RLock()
+	tipCount = len(tips)
+	var foundB bool
+	for _, tip := range tips {
+		if tip.ID == "tip_b" {
+			foundB = true
+			break
+		}
+	}
+	tipsMutex.RUnlock()
+
+	if tipCount != 2 {
+		t.Errorf("Expected 2 tips after removal, got %d", tipCount)
+	}
+	if foundB {
+		t.Error("Expected tip_b to be removed")
+	}
+
+	// Test 2: Remove non-existent tip (should be no-op)
+	RemoveTip("tip_nonexistent")
+
+	tipsMutex.RLock()
+	tipCount = len(tips)
+	tipsMutex.RUnlock()
+
+	if tipCount != 2 {
+		t.Errorf("Expected 2 tips after no-op removal, got %d", tipCount)
+	}
+
+	// Test 3: Remove remaining tips
+	RemoveTip("tip_a")
+	RemoveTip("tip_c")
+
+	tipsMutex.RLock()
+	tipCount = len(tips)
+	tipsMutex.RUnlock()
+
+	if tipCount != 0 {
+		t.Errorf("Expected 0 tips after removing all, got %d", tipCount)
+	}
+}
+
+func TestInjectTipConcurrency(t *testing.T) {
+	// Reset tip registry for testing
+	tipsMutex.Lock()
+	tips = []Tip{}
+	tipsMutex.Unlock()
+
+	// Test thread safety by injecting and removing tips concurrently
+	var wg sync.WaitGroup
+	const numGoroutines = 50
+
+	// Inject tips concurrently
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tipID := "concurrent_tip_" + string(rune('a'+id%26))
+			InjectTip(tipID, "Message", 50, time.Hour, 0.5, func() bool { return true })
+		}(i)
+	}
+	wg.Wait()
+
+	// Remove some tips concurrently
+	for i := 0; i < numGoroutines/2; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tipID := "concurrent_tip_" + string(rune('a'+id%26))
+			RemoveTip(tipID)
+		}(i)
+	}
+	wg.Wait()
+
+	// If we got here without panics or deadlocks, the test passes
+	// Just verify we can still access the tips
+	tipsMutex.RLock()
+	_ = len(tips)
+	tipsMutex.RUnlock()
+}
+
+func TestIsClaudeDetected(t *testing.T) {
+	// Save original env vars
+	origClaudeCode := os.Getenv("CLAUDE_CODE")
+	origAnthropicCli := os.Getenv("ANTHROPIC_CLI")
+	defer func() {
+		os.Setenv("CLAUDE_CODE", origClaudeCode)
+		os.Setenv("ANTHROPIC_CLI", origAnthropicCli)
+	}()
+
+	// Clear env vars for clean testing
+	os.Unsetenv("CLAUDE_CODE")
+	os.Unsetenv("ANTHROPIC_CLI")
+
+	// Test 1: Detection via CLAUDE_CODE env var
+	os.Setenv("CLAUDE_CODE", "1")
+	if !isClaudeDetected() {
+		t.Error("Expected Claude detected with CLAUDE_CODE env var")
+	}
+	os.Unsetenv("CLAUDE_CODE")
+
+	// Test 2: Detection via ANTHROPIC_CLI env var
+	os.Setenv("ANTHROPIC_CLI", "1")
+	if !isClaudeDetected() {
+		t.Error("Expected Claude detected with ANTHROPIC_CLI env var")
+	}
+	os.Unsetenv("ANTHROPIC_CLI")
+
+	// Test 3: Detection via ~/.claude directory
+	// This depends on the test environment - if ~/.claude exists, it should detect
+	// We can't easily control this without modifying the filesystem
+	home, err := os.UserHomeDir()
+	if err == nil {
+		claudeDir := home + "/.claude"
+		if _, err := os.Stat(claudeDir); err == nil {
+			// ~/.claude exists, should detect
+			if !isClaudeDetected() {
+				t.Error("Expected Claude detected with ~/.claude directory present")
+			}
+		}
+	}
+}
+
+func TestIsClaudeSetupComplete(t *testing.T) {
+	// This test checks the logic without modifying the filesystem
+	// The actual detection depends on the presence of files
+
+	// Test that the function returns a boolean and doesn't panic
+	result := isClaudeSetupComplete()
+	// Just verify it returns without error
+	_ = result
+
+	// If running in an environment with Claude setup, verify detection
+	// We'll check both global and project paths exist
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return // Skip if we can't get home dir
+	}
+
+	globalCommand := home + "/.claude/commands/prime_beads.md"
+	globalHooksSession := home + "/.claude/hooks/sessionstart"
+	globalHooksPreTool := home + "/.claude/hooks/PreToolUse"
+
+	// Check if global setup exists
+	if _, err := os.Stat(globalCommand); err == nil {
+		if _, err := os.Stat(globalHooksSession); err == nil {
+			if !isClaudeSetupComplete() {
+				t.Error("Expected Claude setup complete with global hooks (sessionstart)")
+			}
+		} else if _, err := os.Stat(globalHooksPreTool); err == nil {
+			if !isClaudeSetupComplete() {
+				t.Error("Expected Claude setup complete with global hooks (PreToolUse)")
+			}
+		}
+	}
+
+	// Check project-level setup
+	projectCommand := ".claude/commands/prime_beads.md"
+	projectHooksSession := ".claude/hooks/sessionstart"
+	projectHooksPreTool := ".claude/hooks/PreToolUse"
+
+	if _, err := os.Stat(projectCommand); err == nil {
+		if _, err := os.Stat(projectHooksSession); err == nil {
+			if !isClaudeSetupComplete() {
+				t.Error("Expected Claude setup complete with project hooks (sessionstart)")
+			}
+		} else if _, err := os.Stat(projectHooksPreTool); err == nil {
+			if !isClaudeSetupComplete() {
+				t.Error("Expected Claude setup complete with project hooks (PreToolUse)")
+			}
+		}
+	}
+}
+
+func TestClaudeSetupTipRegistered(t *testing.T) {
+	// Reset tip registry with fresh default tips
+	tipsMutex.Lock()
+	tips = []Tip{}
+	tipsMutex.Unlock()
+	initDefaultTips()
+
+	// Verify that the claude_setup tip is registered
+	tipsMutex.RLock()
+	defer tipsMutex.RUnlock()
+
+	var found bool
+	for _, tip := range tips {
+		if tip.ID == "claude_setup" {
+			found = true
+			// Verify tip properties
+			if tip.Priority != 100 {
+				t.Errorf("Expected claude_setup priority 100, got %d", tip.Priority)
+			}
+			if tip.Frequency != 24*time.Hour {
+				t.Errorf("Expected claude_setup frequency 24h, got %v", tip.Frequency)
+			}
+			if tip.Probability != 0.6 {
+				t.Errorf("Expected claude_setup probability 0.6, got %v", tip.Probability)
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Expected claude_setup tip to be registered")
+	}
+}
+
+func TestClaudeSetupTipCondition(t *testing.T) {
+	// Save original env vars
+	origClaudeCode := os.Getenv("CLAUDE_CODE")
+	defer os.Setenv("CLAUDE_CODE", origClaudeCode)
+
+	// Reset tip registry with fresh default tips
+	tipsMutex.Lock()
+	tips = []Tip{}
+	tipsMutex.Unlock()
+	initDefaultTips()
+
+	// Find the claude_setup tip
+	tipsMutex.RLock()
+	var claudeTip *Tip
+	for i := range tips {
+		if tips[i].ID == "claude_setup" {
+			claudeTip = &tips[i]
+			break
+		}
+	}
+	tipsMutex.RUnlock()
+
+	if claudeTip == nil {
+		t.Fatal("claude_setup tip not found")
+	}
+
+	// Test: When Claude is not detected, condition should be false
+	os.Unsetenv("CLAUDE_CODE")
+	os.Unsetenv("ANTHROPIC_CLI")
+	// Note: This test may pass or fail depending on ~/.claude existence
+	// The important thing is that the condition function executes without error
+	_ = claudeTip.Condition()
+
+	// Test: When Claude is detected but setup might be complete
+	// Set env var to simulate Claude environment
+	os.Setenv("CLAUDE_CODE", "1")
+	conditionResult := claudeTip.Condition()
+	// If setup is complete, should be false; if not complete, should be true
+	// Just verify it returns a valid boolean
+	_ = conditionResult
+}
