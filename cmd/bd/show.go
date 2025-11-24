@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
@@ -75,8 +76,8 @@ var showCmd = &cobra.Command{
 					type IssueDetails struct {
 						types.Issue
 						Labels       []string       `json:"labels,omitempty"`
-						Dependencies []*types.Issue `json:"dependencies,omitempty"`
-						Dependents   []*types.Issue `json:"dependents,omitempty"`
+						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err == nil {
@@ -96,8 +97,8 @@ var showCmd = &cobra.Command{
 					type IssueDetails struct {
 						types.Issue
 						Labels       []string       `json:"labels,omitempty"`
-						Dependencies []*types.Issue `json:"dependencies,omitempty"`
-						Dependents   []*types.Issue `json:"dependents,omitempty"`
+						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err != nil {
@@ -211,18 +212,33 @@ var showCmd = &cobra.Command{
 			}
 
 			if jsonOutput {
-				// Include labels, dependencies, and comments in JSON output
+				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
 				type IssueDetails struct {
 					*types.Issue
-					Labels       []string         `json:"labels,omitempty"`
-					Dependencies []*types.Issue   `json:"dependencies,omitempty"`
-					Dependents   []*types.Issue   `json:"dependents,omitempty"`
-					Comments     []*types.Comment `json:"comments,omitempty"`
+					Labels       []string                             `json:"labels,omitempty"`
+					Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+					Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+					Comments     []*types.Comment                     `json:"comments,omitempty"`
 				}
 				details := &IssueDetails{Issue: issue}
 				details.Labels, _ = store.GetLabels(ctx, issue.ID)
-				details.Dependencies, _ = store.GetDependencies(ctx, issue.ID)
-				details.Dependents, _ = store.GetDependents(ctx, issue.ID)
+
+				// Get dependencies with metadata (dependency_type field)
+				if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+					details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+					details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+				} else {
+					// Fallback to regular methods without metadata for other storage backends
+					deps, _ := store.GetDependencies(ctx, issue.ID)
+					for _, dep := range deps {
+						details.Dependencies = append(details.Dependencies, &types.IssueWithDependencyMetadata{Issue: *dep})
+					}
+					dependents, _ := store.GetDependents(ctx, issue.ID)
+					for _, dependent := range dependents {
+						details.Dependents = append(details.Dependents, &types.IssueWithDependencyMetadata{Issue: *dependent})
+					}
+				}
+
 				details.Comments, _ = store.GetIssueComments(ctx, issue.ID)
 				allDetails = append(allDetails, details)
 				continue
