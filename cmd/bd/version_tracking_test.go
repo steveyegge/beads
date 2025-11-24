@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
@@ -323,32 +322,15 @@ func TestAutoMigrateOnVersionBump_NoUpgrade(t *testing.T) {
 	versionUpgradeDetected = false
 
 	// Should return early without doing anything
-	autoMigrateOnVersionBump()
+	autoMigrateOnVersionBump("/tmp/test.db")
 
 	// Test passes if no panic occurs
 }
 
 func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
-	// Create temp .beads directory without a database
+	// Create temp directory
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create .beads: %v", err)
-	}
-
-	// Change to temp directory
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change to temp dir: %v", err)
-	}
-
-	// Create metadata.json
-	cfg := configfile.DefaultConfig()
-	cfg.LastBdVersion = "0.22.0"
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
-	}
+	nonExistentDB := filepath.Join(tmpDir, "nonexistent.db")
 
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
@@ -360,35 +342,29 @@ func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
 	versionUpgradeDetected = true
 
 	// Should handle gracefully when database doesn't exist
-	autoMigrateOnVersionBump()
+	autoMigrateOnVersionBump(nonExistentDB)
 
 	// Test passes if no panic occurs
 }
 
 func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
-	// Create temp .beads directory
+	// NOTE: Cannot use t.Parallel() because we modify global variables
+
+	// Save original state FIRST - critical to avoid test pollution from previous tests
+	origUpgradeDetected := versionUpgradeDetected
+	origUpgradeAcknowledged := upgradeAcknowledged
+	origPreviousVersion := previousVersion
+	defer func() {
+		versionUpgradeDetected = origUpgradeDetected
+		upgradeAcknowledged = origUpgradeAcknowledged
+		previousVersion = origPreviousVersion
+	}()
+
+	// Create temp directory with unique name to avoid any possible interference
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create .beads: %v", err)
-	}
-
-	// Change to temp directory
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change to temp dir: %v", err)
-	}
-
-	// Create metadata.json
-	cfg := configfile.DefaultConfig()
-	cfg.LastBdVersion = "0.22.0"
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
-	}
+	dbPath := filepath.Join(tmpDir, "test-migrate-version-unique.db")
 
 	// Create database with old version
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
@@ -400,19 +376,33 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	if err := store.SetMetadata(ctx, "bd_version", oldVersion); err != nil {
 		t.Fatalf("Failed to set old version: %v", err)
 	}
-	_ = store.Close()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
 
-	// Save original state
-	origUpgradeDetected := versionUpgradeDetected
-	defer func() {
-		versionUpgradeDetected = origUpgradeDetected
-	}()
+	// Simulate version upgrade (must be set to true for migration to run)
+	// Set this AFTER closing the database to ensure clean state
+	upgradeAcknowledged = false
+	previousVersion = oldVersion
 
-	// Simulate version upgrade
+	// Verify dbPath before migration
+	if dbPath == "" {
+		t.Fatalf("dbPath is empty!")
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatalf("database doesn't exist before migration: %s", dbPath)
+	}
+
+	// Set versionUpgradeDetected immediately before calling to avoid races
 	versionUpgradeDetected = true
+	t.Logf("Calling autoMigrateOnVersionBump with dbPath=%s, versionUpgradeDetected=%v", dbPath, versionUpgradeDetected)
+	// Immediately call migration while flag is still true
+	autoMigrateOnVersionBump(dbPath)
 
-	// Call auto-migration
-	autoMigrateOnVersionBump()
+	// Verify the flag is still true after migration
+	if !versionUpgradeDetected {
+		t.Fatalf("version Upgrade detected flag was cleared during migration")
+	}
 
 	// Verify database version was updated
 	store, err = sqlite.New(ctx, dbPath)
@@ -427,34 +417,17 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 	}
 
 	if newVersion != Version {
-		t.Errorf("Database version not updated: got %q, want %q", newVersion, Version)
+		t.Errorf("Database version not updated: got %q, want %q (versionUpgradeDetected=%v)",
+			newVersion, Version, versionUpgradeDetected)
 	}
 }
 
 func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
-	// Create temp .beads directory
+	// Create temp directory
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create .beads: %v", err)
-	}
-
-	// Change to temp directory
-	origWd, _ := os.Getwd()
-	defer os.Chdir(origWd)
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change to temp dir: %v", err)
-	}
-
-	// Create metadata.json
-	cfg := configfile.DefaultConfig()
-	cfg.LastBdVersion = Version
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
-	}
+	dbPath := filepath.Join(tmpDir, "test.db")
 
 	// Create database with current version
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
@@ -477,7 +450,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	versionUpgradeDetected = true
 
 	// Call auto-migration - should be a no-op
-	autoMigrateOnVersionBump()
+	autoMigrateOnVersionBump(dbPath)
 
 	// Verify database version is still current
 	store, err = sqlite.New(ctx, dbPath)

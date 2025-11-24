@@ -302,10 +302,6 @@ var rootCmd = &cobra.Command{
 		// Best-effort tracking - failures are silent
 		trackBdVersion()
 
-		// Auto-migrate database on version bump (bd-jgxi)
-		// Best-effort migration - failures are silent to avoid disrupting commands
-		autoMigrateOnVersionBump()
-
 		// Initialize daemon status
 		socketPath := getSocketPath()
 		daemonStatus = DaemonStatus{
@@ -478,6 +474,11 @@ var rootCmd = &cobra.Command{
 
 			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
 		}
+
+		// Auto-migrate database on version bump (bd-jgxi)
+		// Do this AFTER daemon check but BEFORE opening database for main operation
+		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
+		autoMigrateOnVersionBump(dbPath)
 
 		// Fall back to direct storage access
 		var err error

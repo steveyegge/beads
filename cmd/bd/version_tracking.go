@@ -119,32 +119,23 @@ func maybeShowUpgradeNotification() {
 
 // autoMigrateOnVersionBump automatically migrates the database when CLI version changes.
 // This function is best-effort - failures are silent to avoid disrupting commands.
-// Called from PersistentPreRun after trackBdVersion().
+// Called from PersistentPreRun after daemon check but before opening DB for main operation.
+//
+// IMPORTANT: This must be called AFTER determining we're in direct mode (no daemon)
+// and BEFORE opening the database, to avoid: 1) conflicts with daemon, 2) opening DB twice.
 //
 // bd-jgxi: Auto-migrate database on CLI version bump
-func autoMigrateOnVersionBump() {
+func autoMigrateOnVersionBump(dbPath string) {
 	// Only migrate if version upgrade was detected
 	if !versionUpgradeDetected {
 		return
 	}
 
-	// Find the beads directory
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		// No .beads directory - nothing to migrate
+	// Validate dbPath
+	if dbPath == "" {
+		debug.Logf("auto-migrate: skipping migration, no database path")
 		return
 	}
-
-	// Load config to get database path
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		// Config load failed or doesn't exist - skip migration
-		debug.Logf("auto-migrate: skipping migration, config load failed: %v", err)
-		return
-	}
-
-	// Get database path
-	dbPath := cfg.DatabasePath(beadsDir)
 
 	// Check if database exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -154,7 +145,13 @@ func autoMigrateOnVersionBump() {
 	}
 
 	// Open database to check current version
-	ctx := context.Background()
+	// Use rootCtx if available and not canceled, otherwise use Background
+	ctx := rootCtx
+	if ctx == nil || ctx.Err() != nil {
+		// rootCtx is nil or canceled - use fresh background context
+		ctx = context.Background()
+	}
+
 	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		// Failed to open database - skip migration
