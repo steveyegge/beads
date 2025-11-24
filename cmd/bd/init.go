@@ -203,6 +203,11 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 			os.Exit(1)
 		}
 
+		// === CONFIGURATION METADATA (Pattern A: Fatal) ===
+		// Configuration metadata is essential for core functionality and must succeed.
+		// These settings define fundamental behavior (issue IDs, sync workflow).
+		// Failure here indicates a serious problem that prevents normal operation.
+
 		// Set the issue prefix in config
 		if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
@@ -230,6 +235,11 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 				fmt.Printf("  Sync branch: %s\n", branch)
 			}
 		}
+
+		// === TRACKING METADATA (Pattern B: Warn and Continue) ===
+		// Tracking metadata enhances functionality (diagnostics, version checks, collision detection)
+		// but the system works without it. Failures here degrade gracefully - we warn but continue.
+		// Examples: bd_version enables upgrade warnings, repo_id/clone_id help with collision detection.
 
 		// Store the bd version in metadata (for version mismatch detection)
 		if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {

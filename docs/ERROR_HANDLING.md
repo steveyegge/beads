@@ -252,19 +252,61 @@ When writing tests for error handling:
 
 ### Metadata Operations
 
-Many metadata operations use **Pattern B** because they enhance functionality but aren't critical:
+**IMPORTANT:** Not all metadata is created equal. There are two distinct categories with different error handling requirements:
+
+#### Configuration Metadata (Pattern A: Fatal)
+
+Configuration metadata defines **fundamental system behavior** and must succeed:
 
 ```go
-// These are all Pattern B (warn and continue)
+// Pattern A: Exit on failure
+if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+    fmt.Fprintf(os.Stderr, "Error: failed to set issue prefix: %v\n", err)
+    _ = store.Close()
+    os.Exit(1)
+}
+
+if err := syncbranch.Set(ctx, store, branch); err != nil {
+    fmt.Fprintf(os.Stderr, "Error: failed to set sync branch: %v\n", err)
+    _ = store.Close()
+    os.Exit(1)
+}
+```
+
+**Examples:**
+- `issue_prefix` - Defines how all issue IDs are generated
+- `sync.branch` - Critical for git synchronization workflow
+
+**Rationale:** These settings are prerequisites for basic operation. Without them, the system cannot function correctly. A failure here indicates a serious problem (e.g., filesystem issues, database corruption).
+
+#### Tracking Metadata (Pattern B: Warn and Continue)
+
+Tracking metadata **enhances functionality** but the system works without it:
+
+```go
+// Pattern B: Warn and continue
+if err := store.SetMetadata(ctx, "bd_version", Version); err != nil {
+    fmt.Fprintf(os.Stderr, "Warning: failed to store version metadata: %v\n", err)
+    // Non-fatal - continue anyway
+}
+
 if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
     fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
 }
+
 if err := store.SetMetadata(ctx, "last_import_hash", hash); err != nil {
     fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash: %v\n", err)
 }
 ```
 
-**Rationale:** System degrades gracefully if metadata is unavailable. The core functionality (creating issues, importing data) still works.
+**Examples:**
+- `bd_version` - Enables version mismatch warnings on upgrades
+- `repo_id` / `clone_id` - Helps with collision detection across clones
+- `last_import_hash` - Optimizes staleness detection (falls back to mtime if unavailable)
+
+**Rationale:** System degrades gracefully if tracking metadata is unavailable. Core functionality (creating issues, importing data) still works. Failures here might indicate temporary issues (e.g., read-only filesystem) that shouldn't block the entire operation.
+
+**See also:** `cmd/bd/init.go` lines 206-272 for detailed inline documentation of this distinction.
 
 ### File Permission Errors
 
