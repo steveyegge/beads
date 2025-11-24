@@ -62,6 +62,33 @@ update_file() {
     fi
 }
 
+# Update CHANGELOG.md: move [Unreleased] to [version] and create new [Unreleased]
+update_changelog() {
+    local version=$1
+    local date=$(date +%Y-%m-%d)
+
+    if [ ! -f "CHANGELOG.md" ]; then
+        echo -e "${YELLOW}Warning: CHANGELOG.md not found, skipping${NC}"
+        return
+    fi
+
+    # Check if there's an [Unreleased] section
+    if ! grep -q "## \[Unreleased\]" CHANGELOG.md; then
+        echo -e "${YELLOW}Warning: No [Unreleased] section in CHANGELOG.md${NC}"
+        echo -e "${YELLOW}You may need to manually update CHANGELOG.md${NC}"
+        return
+    fi
+
+    # Create a temporary file with the updated changelog
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' "s/## \[Unreleased\]/## [Unreleased]\n\n## [$version] - $date/" CHANGELOG.md
+    else
+        # Linux
+        sed -i "s/## \[Unreleased\]/## [Unreleased]\n\n## [$version] - $date/" CHANGELOG.md
+    fi
+}
+
 # Main script
 main() {
     # Check arguments
@@ -203,6 +230,10 @@ main() {
             "# bd-hooks-version: $NEW_VERSION"
     done
 
+    # 10. Update CHANGELOG.md
+    echo "  • CHANGELOG.md"
+    update_changelog "$NEW_VERSION"
+
     echo ""
     echo -e "${GREEN}✓ Version updated to $NEW_VERSION${NC}"
     echo ""
@@ -332,10 +363,15 @@ main() {
                 npm-package/package.json \
                 README.md \
                 cmd/bd/templates/hooks/*
-        
+
         # Add PLUGIN.md if it exists
         if [ -f "PLUGIN.md" ]; then
             git add PLUGIN.md
+        fi
+
+        # Add CHANGELOG.md if it exists
+        if [ -f "CHANGELOG.md" ]; then
+            git add CHANGELOG.md
         fi
 
         git commit -m "chore: Bump version to $NEW_VERSION
