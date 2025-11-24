@@ -123,23 +123,16 @@ Use --merge to merge the sync branch back to main branch.`,
 			os.Exit(1)
 		}
 
-		// Step 1: Export pending changes
+		// Step 1: Import JSONL first (ZFC: JSONL First Consistency - bd-l0r)
+		// JSONL is always the source of truth. Import before export to ensure DB is synced.
 		if dryRun {
+			fmt.Println("→ [DRY RUN] Would import from JSONL (ZFC)")
 			fmt.Println("→ [DRY RUN] Would export pending changes to JSONL")
 		} else {
-			// Smart conflict resolution: if JSONL content changed, auto-import first
-			// Use content-based check (not mtime) to avoid git resurrection bug (bd-khnb)
-			if err := ensureStoreActive(); err == nil && store != nil {
-				// Use getRepoKeyForPath for multi-repo support (bd-ar2.10, bd-ar2.11)
-			repoKey := getRepoKeyForPath(jsonlPath)
-			if hasJSONLChanged(ctx, store, jsonlPath, repoKey) {
-					fmt.Println("→ JSONL content changed, importing first...")
-					if err := importFromJSONL(ctx, jsonlPath, renameOnImport); err != nil {
-						fmt.Fprintf(os.Stderr, "Error auto-importing: %v\n", err)
-						os.Exit(1)
-					}
-					fmt.Println("✓ Auto-import complete")
-				}
+			fmt.Println("→ Importing from JSONL (ZFC)...")
+			if err := importFromJSONL(ctx, jsonlPath, renameOnImport); err != nil {
+				fmt.Fprintf(os.Stderr, "Error importing (ZFC): %v\n", err)
+				os.Exit(1)
 			}
 
 			// Pre-export integrity checks

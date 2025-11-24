@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -190,27 +189,8 @@ func validatePreExport(ctx context.Context, store storage.Storage, jsonlPath str
 		return fmt.Errorf("refusing to export empty DB over %d issues in JSONL (would cause data loss)", jsonlCount)
 	}
 
-	// Critical: refuse to export stale DB over fresh JSONL (bd-l0r)
-	// When DB has significantly more issues than JSONL, JSONL is the source of truth.
-	// Force import before allowing export to prevent stale DB from contaminating JSONL.
-	if jsonlCount > 0 {
-		divergencePercent := math.Abs(float64(dbCount-jsonlCount)) / float64(jsonlCount) * 100
-		if divergencePercent > 50 {
-			fmt.Fprintf(os.Stderr, "WARNING: DB has %d issues, JSONL has %d (%.1f%% divergence)\n",
-				dbCount, jsonlCount, divergencePercent)
-
-			// If DB is much larger than JSONL, refuse export - force import first
-			// JSONL is always the source of truth (ZFC: JSONL First Consistency)
-			if dbCount > jsonlCount {
-				return fmt.Errorf("refusing to export: DB has %d more issues than JSONL (%.1f%% divergence). "+
-					"JSONL is the source of truth - import it first with 'bd import' or 'bd sync --import-only'",
-					dbCount-jsonlCount, divergencePercent)
-			}
-
-			// If JSONL is much larger than DB, just warn (could be legitimate new issues)
-			fmt.Fprintf(os.Stderr, "This suggests sync failure - investigate before proceeding\n")
-		}
-	}
+	// Note: ZFC (JSONL First Consistency - bd-l0r) is now enforced in sync.go
+	// by always importing before export. This validation is kept for direct bd export calls.
 
 	return nil
 }
