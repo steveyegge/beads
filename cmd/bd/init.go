@@ -36,6 +36,7 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 		contributor, _ := cmd.Flags().GetBool("contributor")
 		team, _ := cmd.Flags().GetBool("team")
 		skipMergeDriver, _ := cmd.Flags().GetBool("skip-merge-driver")
+		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -317,24 +318,22 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 		}
 
 		// Check if we're in a git repo and hooks aren't installed
-		// Do this BEFORE quiet mode return so hooks get installed for agents
-		if isGitRepo() && !hooksInstalled() {
-			if quiet {
-				// Auto-install hooks silently in quiet mode (best default for agents)
-				_ = installGitHooks() // Ignore errors in quiet mode
-			} else {
-				// Defer to interactive prompt below
+		// Install by default unless --skip-hooks is passed
+		if !skipHooks && isGitRepo() && !hooksInstalled() {
+			if err := installGitHooks(); err != nil && !quiet {
+				yellow := color.New(color.FgYellow).SprintFunc()
+				fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", yellow("⚠"), err)
+				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", color.New(color.FgCyan).Sprint("bd doctor --fix"))
 			}
 		}
 
 		// Check if we're in a git repo and merge driver isn't configured
-		// Do this BEFORE quiet mode return so merge driver gets configured for agents
+		// Install by default unless --skip-merge-driver is passed
 		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
-			if quiet {
-				// Auto-install merge driver silently in quiet mode (best default for agents)
-				_ = installMergeDriver() // Ignore errors in quiet mode
-			} else {
-				// Defer to interactive prompt below
+			if err := installMergeDriver(); err != nil && !quiet {
+				yellow := color.New(color.FgYellow).SprintFunc()
+				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", yellow("⚠"), err)
+				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", color.New(color.FgCyan).Sprint("bd doctor --fix"))
 			}
 		}
 
@@ -345,56 +344,11 @@ With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite 
 
 		green := color.New(color.FgGreen).SprintFunc()
 		cyan := color.New(color.FgCyan).SprintFunc()
-		yellow := color.New(color.FgYellow).SprintFunc()
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", green("✓"))
 		fmt.Printf("  Database: %s\n", cyan(initDBPath))
 		fmt.Printf("  Issue prefix: %s\n", cyan(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", cyan(prefix+"-1, "+prefix+"-2, ..."))
-
-		// Interactive git hooks prompt for humans
-		if isGitRepo() && !hooksInstalled() {
-			fmt.Printf("%s Git hooks not installed\n", yellow("⚠"))
-			fmt.Printf("  Install git hooks to prevent race conditions between commits and auto-flush.\n")
-			fmt.Printf("  Run: %s\n\n", cyan("./examples/git-hooks/install.sh"))
-
-			// Prompt to install
-			fmt.Printf("Install git hooks now? [Y/n] ")
-			var response string
-			_, _ = fmt.Scanln(&response) // ignore EOF on empty input
-			response = strings.ToLower(strings.TrimSpace(response))
-
-			if response == "" || response == "y" || response == "yes" {
-				if err := installGitHooks(); err != nil {
-					fmt.Fprintf(os.Stderr, "Error installing hooks: %v\n", err)
-					fmt.Printf("You can install manually with: %s\n\n", cyan("./examples/git-hooks/install.sh"))
-				} else {
-					fmt.Printf("%s Git hooks installed successfully!\n\n", green("✓"))
-				}
-			}
-		}
-
-		// Interactive git merge driver prompt for humans
-		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
-			fmt.Printf("%s Git merge driver not configured\n", yellow("⚠"))
-			fmt.Printf("  bd merge provides intelligent JSONL merging to prevent conflicts.\n")
-			fmt.Printf("  This will configure git to use 'bd merge' for .beads/beads.jsonl\n\n")
-
-			// Prompt to install
-			fmt.Printf("Configure git merge driver now? [Y/n] ")
-			var response string
-			_, _ = fmt.Scanln(&response) // ignore EOF on empty input
-			response = strings.ToLower(strings.TrimSpace(response))
-
-			if response == "" || response == "y" || response == "yes" {
-				if err := installMergeDriver(); err != nil {
-					fmt.Fprintf(os.Stderr, "Error configuring merge driver: %v\n", err)
-				} else {
-					fmt.Printf("%s Git merge driver configured successfully!\n\n", green("✓"))
-				}
-			}
-		}
-
 		fmt.Printf("Run %s to get started.\n\n", cyan("bd quickstart"))
 	},
 }
@@ -405,7 +359,8 @@ func init() {
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
-	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup (non-interactive)")
+	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
+	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	rootCmd.AddCommand(initCmd)
 }
 
