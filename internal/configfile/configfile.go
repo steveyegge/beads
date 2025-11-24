@@ -10,8 +10,9 @@ import (
 const ConfigFileName = "metadata.json"
 
 type Config struct {
-	Database     string `json:"database"`
-	JSONLExport  string `json:"jsonl_export,omitempty"`
+	Database      string `json:"database"`
+	JSONLExport   string `json:"jsonl_export,omitempty"`
+	LastBdVersion string `json:"last_bd_version,omitempty"`
 }
 
 func DefaultConfig() *Config {

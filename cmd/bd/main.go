@@ -83,6 +83,11 @@ var (
 
 	// Auto-import state
 	autoImportEnabled = true // Can be disabled with --no-auto-import
+
+	// Version upgrade tracking (bd-loka)
+	versionUpgradeDetected = false // Set to true if bd version changed since last run
+	previousVersion        = ""    // The last bd version user had (empty = first run or unknown)
+	upgradeAcknowledged    = false // Set to true after showing upgrade notification once per session
 )
 
 var (
@@ -292,6 +297,10 @@ var rootCmd = &cobra.Command{
 				actor = "unknown"
 			}
 		}
+
+		// Track bd version changes (bd-loka)
+		// Best-effort tracking - failures are silent
+		trackBdVersion()
 
 		// Initialize daemon status
 		socketPath := getSocketPath()
