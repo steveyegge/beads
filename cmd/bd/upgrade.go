@@ -169,7 +169,7 @@ Examples:
 			cfg = configfile.DefaultConfig()
 		}
 
-		previousVersion := cfg.LastBdVersion
+		lastSeenVersion := cfg.LastBdVersion
 		cfg.LastBdVersion = Version
 
 		if err := cfg.Save(beadsDir); err != nil {
@@ -185,17 +185,17 @@ Examples:
 			outputJSON(map[string]interface{}{
 				"acknowledged":     true,
 				"current_version":  Version,
-				"previous_version": previousVersion,
+				"previous_version": lastSeenVersion,
 			})
 			return
 		}
 
-		if previousVersion == Version {
+		if lastSeenVersion == Version {
 			fmt.Printf("✓ Already on v%s\n", Version)
-		} else if previousVersion == "" {
+		} else if lastSeenVersion == "" {
 			fmt.Printf("✓ Acknowledged bd v%s\n", Version)
 		} else {
-			fmt.Printf("✓ Acknowledged upgrade from v%s to v%s\n", previousVersion, Version)
+			fmt.Printf("✓ Acknowledged upgrade from v%s to v%s\n", lastSeenVersion, Version)
 		}
 	},
 }
