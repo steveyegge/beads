@@ -163,19 +163,19 @@ func InstallAider() {
 	}
 
 	// Write config file
-	if err := atomicWriteFile(configPath, []byte(aiderConfigTemplate), 0644); err != nil {
+	if err := atomicWriteFile(configPath, []byte(aiderConfigTemplate)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: write config: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Write instructions file (loaded by AI)
-	if err := atomicWriteFile(instructionsPath, []byte(aiderBeadsInstructions), 0644); err != nil {
+	if err := atomicWriteFile(instructionsPath, []byte(aiderBeadsInstructions)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: write instructions: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Write README (for humans)
-	if err := atomicWriteFile(readmePath, []byte(aiderReadmeTemplate), 0644); err != nil {
+	if err := atomicWriteFile(readmePath, []byte(aiderReadmeTemplate)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: write README: %v\n", err)
 		os.Exit(1)
 	}

@@ -98,11 +98,10 @@ func getVersionsSince(sinceVersion string) []VersionChange {
 
 // maybeShowUpgradeNotification displays a one-time upgrade notification if version changed.
 // This is called by commands like 'bd ready' and 'bd list' to inform users of upgrades.
-// Returns true if notification was shown.
-func maybeShowUpgradeNotification() bool {
+func maybeShowUpgradeNotification() {
 	// Only show if upgrade detected and not yet acknowledged
 	if !versionUpgradeDetected || upgradeAcknowledged {
-		return false
+		return
 	}
 
 	// Mark as acknowledged so we only show once per session
@@ -112,6 +111,4 @@ func maybeShowUpgradeNotification() bool {
 	fmt.Printf("🔄 bd upgraded from v%s to v%s since last use\n", previousVersion, Version)
 	fmt.Println("💡 Run 'bd upgrade review' to see what changed")
 	fmt.Println()
-
-	return true
 }

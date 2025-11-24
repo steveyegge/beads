@@ -271,40 +271,40 @@ func TestMaybeShowUpgradeNotification(t *testing.T) {
 		upgradeAcknowledged = origUpgradeAcknowledged
 	}()
 
-	// Test: No upgrade detected
+	// Test: No upgrade detected - should not modify acknowledged flag
 	versionUpgradeDetected = false
 	upgradeAcknowledged = false
 	previousVersion = ""
 
-	if maybeShowUpgradeNotification() {
-		t.Error("Should not show notification when no upgrade detected")
+	maybeShowUpgradeNotification()
+	if upgradeAcknowledged {
+		t.Error("Should not set acknowledged flag when no upgrade detected")
 	}
 
-	// Test: Upgrade detected but already acknowledged
+	// Test: Upgrade detected but already acknowledged - should not change state
 	versionUpgradeDetected = true
 	upgradeAcknowledged = true
 	previousVersion = "0.22.0"
 
-	if maybeShowUpgradeNotification() {
-		t.Error("Should not show notification when already acknowledged")
+	maybeShowUpgradeNotification()
+	if !upgradeAcknowledged {
+		t.Error("Should keep acknowledged flag when already acknowledged")
 	}
 
-	// Test: Upgrade detected and not acknowledged
+	// Test: Upgrade detected and not acknowledged - should set acknowledged flag
 	versionUpgradeDetected = true
 	upgradeAcknowledged = false
 	previousVersion = "0.22.0"
 
-	if !maybeShowUpgradeNotification() {
-		t.Error("Should show notification when upgrade detected and not acknowledged")
-	}
-
-	// Should be marked as acknowledged after showing
+	maybeShowUpgradeNotification()
 	if !upgradeAcknowledged {
 		t.Error("Should mark as acknowledged after showing notification")
 	}
 
-	// Calling again should not show (already acknowledged)
-	if maybeShowUpgradeNotification() {
-		t.Error("Should not show notification twice")
+	// Calling again should keep acknowledged flag set
+	prevAck := upgradeAcknowledged
+	maybeShowUpgradeNotification()
+	if upgradeAcknowledged != prevAck {
+		t.Error("Should not change acknowledged state on subsequent calls")
 	}
 }
