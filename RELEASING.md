@@ -568,17 +568,41 @@ jobs:
 
 After a successful release:
 
-1. **Restart local daemons** to pick up the new version:
+1. **Upgrade local beads-mcp installation** to the new version:
+   ```bash
+   # Option 1: Use the bump-version.sh script (recommended during version bump)
+   ./scripts/bump-version.sh <version> --upgrade-mcp
+
+   # Option 2: Manual upgrade via pip (if installed globally)
+   pip install --upgrade beads-mcp
+
+   # Option 3: Manual upgrade via uv tool (if installed as a tool)
+   uv tool upgrade beads-mcp
+
+   # Verify the new version
+   pip show beads-mcp | grep Version
+
+   # Restart Claude Code or MCP session to pick up the new version
+   # The MCP server will load the newly installed version
+   ```
+
+   **Note:** The `--upgrade-mcp` flag can be combined with other flags:
+   ```bash
+   # Update versions, commit, install bd binary, and upgrade beads-mcp all at once
+   ./scripts/bump-version.sh 0.24.3 --commit --install --upgrade-mcp
+   ```
+
+2. **Restart local daemons** to pick up the new version:
    ```bash
    bd daemons killall --json
    # Daemons will auto-restart with new version on next bd command
    ```
 
-2. **Announce** on relevant channels (Twitter, blog, etc.)
-3. **Update documentation** if needed
-4. **Close milestone** on GitHub if using milestones
-5. **Update project board** if using project management
-6. **Monitor** for issues in the first 24-48 hours
+3. **Announce** on relevant channels (Twitter, blog, etc.)
+4. **Update documentation** if needed
+5. **Close milestone** on GitHub if using milestones
+6. **Update project board** if using project management
+7. **Monitor** for issues in the first 24-48 hours
 
 ## Troubleshooting
 
