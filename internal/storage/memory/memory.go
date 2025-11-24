@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -1094,6 +1095,16 @@ func (m *MemoryStorage) UnderlyingDB() *sql.DB {
 // UnderlyingConn returns error for memory storage (no SQL database)
 func (m *MemoryStorage) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 	return nil, fmt.Errorf("UnderlyingConn not available in memory storage")
+}
+
+// RunInTransaction executes a function within a transaction context.
+// For MemoryStorage, this provides basic atomicity via mutex locking.
+// If the function returns an error, changes are NOT automatically rolled back
+// since MemoryStorage doesn't support true transaction rollback.
+//
+// Note: For full rollback support, callers should use SQLite storage.
+func (m *MemoryStorage) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	return fmt.Errorf("RunInTransaction not supported in --no-db mode: use SQLite storage for transaction support")
 }
 
 // REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
