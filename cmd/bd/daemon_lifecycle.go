@@ -387,7 +387,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 		os.Exit(1)
 	}
 
-	args := []string{"daemon",
+	args := []string{"daemon", "--start",
 		"--interval", interval.String(),
 	}
 	if autoCommit {

@@ -103,7 +103,7 @@ func restartDaemonForVersionMismatch() bool {
 		return false
 	}
 
-	args := []string{"daemon"}
+	args := []string{"daemon", "--start"}
 	cmd := exec.Command(exe, args...)
 	cmd.Env = append(os.Environ(), "BD_DAEMON_FOREGROUND=1")
 
@@ -267,7 +267,7 @@ func startDaemonProcess(socketPath string, isGlobal bool) bool {
 		binPath = os.Args[0]
 	}
 
-	args := []string{"daemon"}
+	args := []string{"daemon", "--start"}
 	if isGlobal {
 		args = append(args, "--global")
 	}

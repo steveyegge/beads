@@ -28,7 +28,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 In your beads project directory:
 
 ```bash
-bd daemon start
+bd daemon --start
 ```
 
 The daemon will:
@@ -108,19 +108,19 @@ If you want to temporarily use CLI mode:
 
 ```bash
 # Start daemon
-bd daemon start
+bd daemon --start
 
 # Check status
-bd daemon status
+bd daemon --status
 
 # View logs
-bd daemon logs
+bd daemons logs .
 
 # Stop daemon
-bd daemon stop
+bd daemon --stop
 
 # Restart daemon
-bd daemon stop && bd daemon start
+bd daemon --stop && bd daemon --start
 ```
 
 ## Troubleshooting
@@ -130,7 +130,7 @@ bd daemon stop && bd daemon start
 Start the daemon in your beads project:
 ```bash
 cd ~/src/vc/adar/beads
-bd daemon start
+bd daemon --start
 ```
 
 ### Wrong database being used

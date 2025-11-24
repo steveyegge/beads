@@ -1,9 +1,9 @@
 ---
-description: Run background sync daemon
-argument-hint: [--stop] [--status] [--health]
+description: Manage background sync daemon
+argument-hint: [--start] [--stop] [--status] [--health]
 ---
 
-Run a per-project background daemon that manages database connections and syncs with git.
+Manage the per-project background daemon that handles database connections and syncs with git.
 
 ## Per-Project Daemon (LSP Model)
 
@@ -39,7 +39,7 @@ Each project runs its own daemon at `.beads/bd.sock` for complete database isola
 
 ## Common Operations
 
-- **Start**: `bd daemon` (auto-starts on first `bd` command)
+- **Start**: `bd daemon --start` (or auto-starts on first `bd` command)
 - **Stop**: `bd daemon --stop`
 - **Status**: `bd daemon --status`
 - **Health**: `bd daemon --health` - shows uptime, cache stats, performance metrics

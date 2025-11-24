@@ -110,7 +110,7 @@ class BdDaemonClient(BdClientBase):
         
         # No socket found anywhere
         raise DaemonNotRunningError(
-            "Daemon socket not found. Is the daemon running? Try: bd daemon (local) or bd daemon --global"
+            "Daemon socket not found. Is the daemon running? Try: bd daemon --start"
         )
 
     async def _send_request(self, operation: str, args: Dict[str, Any]) -> Any:

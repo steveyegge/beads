@@ -173,7 +173,7 @@ FileWatcher (platform-native)
 
 ```bash
 # Enable for single daemon
-BEADS_DAEMON_MODE=events bd daemon start
+BEADS_DAEMON_MODE=events bd daemon --start
 
 # Set globally in shell profile
 export BEADS_DAEMON_MODE=events
@@ -200,14 +200,14 @@ bd daemons killall
 
 ```bash
 # Fail if watcher unavailable (e.g., testing)
-BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon start
+BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon --start
 ```
 
 **Switch back to polling:**
 
 ```bash
 # Explicitly use polling mode
-BEADS_DAEMON_MODE=poll bd daemon start
+BEADS_DAEMON_MODE=poll bd daemon --start
 
 # Or unset to use default
 unset BEADS_DAEMON_MODE
@@ -280,7 +280,7 @@ bd info --json | grep daemon_running
 export BEADS_AUTO_START_DAEMON=false
 
 # Start manually
-bd daemon start
+bd daemon --start
 ```
 
 **Auto-start with exponential backoff:**

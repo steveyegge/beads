@@ -21,8 +21,8 @@ import (
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Run background sync daemon",
-	Long: `Run a background daemon that automatically syncs issues with git remote.
+	Short: "Manage background sync daemon",
+	Long: `Manage the background daemon that automatically syncs issues with git remote.
 
 The daemon will:
 - Poll for changes at configurable intervals (default: 5 seconds)
@@ -32,10 +32,15 @@ The daemon will:
 - Pull remote changes periodically
 - Auto-import when remote changes detected
 
-Use --stop to stop a running daemon.
-Use --status to check if daemon is running.
-Use --health to check daemon health and metrics.`,
+Common operations:
+  bd daemon --start          Start the daemon
+  bd daemon --stop           Stop a running daemon
+  bd daemon --status         Check if daemon is running
+  bd daemon --health         Check daemon health and metrics
+
+Run 'bd daemon' with no flags to see available options.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		start, _ := cmd.Flags().GetBool("start")
 		stop, _ := cmd.Flags().GetBool("stop")
 		status, _ := cmd.Flags().GetBool("status")
 		health, _ := cmd.Flags().GetBool("health")
@@ -47,9 +52,15 @@ Use --health to check daemon health and metrics.`,
 		logFile, _ := cmd.Flags().GetString("log")
 		global, _ := cmd.Flags().GetBool("global")
 
+		// If no operation flags provided, show help
+		if !start && !stop && !status && !health && !metrics && !migrateToGlobal {
+			_ = cmd.Help()
+			return
+		}
+
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
 		// (skip if --stop, --status, --health, --metrics, or --migrate-to-global)
-		if !stop && !status && !health && !metrics && !migrateToGlobal && !global {
+		if start && !stop && !status && !health && !metrics && !migrateToGlobal && !global {
 			if !cmd.Flags().Changed("auto-commit") {
 				if dbPath := beads.FindDatabasePath(); dbPath != "" {
 					ctx := context.Background()
@@ -110,6 +121,14 @@ Use --health to check daemon health and metrics.`,
 		if stop {
 			stopDaemon(pidFile)
 			return
+		}
+
+		// If we get here and --start wasn't provided, something is wrong
+		// (should have been caught by help check above)
+		if !start {
+			fmt.Fprintf(os.Stderr, "Error: --start flag is required to start the daemon\n")
+			fmt.Fprintf(os.Stderr, "Run 'bd daemon --help' to see available options\n")
+			os.Exit(1)
 		}
 
 		// Skip daemon-running check if we're the forked child (BD_DAEMON_FOREGROUND=1)
@@ -197,6 +216,7 @@ Use --health to check daemon health and metrics.`,
 }
 
 func init() {
+	daemonCmd.Flags().Bool("start", false, "Start the daemon")
 	daemonCmd.Flags().Duration("interval", 5*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
