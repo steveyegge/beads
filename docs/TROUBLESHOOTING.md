@@ -5,6 +5,7 @@ Common issues and solutions for bd users.
 ## Table of Contents
 
 - [Installation Issues](#installation-issues)
+- [Antivirus False Positives](#antivirus-false-positives)
 - [Database Issues](#database-issues)
 - [Git and Sync Issues](#git-and-sync-issues)
 - [Ready Work and Dependencies](#ready-work-and-dependencies)
@@ -77,6 +78,44 @@ sudo mv bd /usr/local/bin/
 ```
 
 If you installed via Homebrew, this shouldn't be necessary as the formula already enables CGO. If you're still seeing crashes with the Homebrew version, please [file an issue](https://github.com/steveyegge/beads/issues).
+
+## Antivirus False Positives
+
+### Antivirus software flags bd as malware
+
+**Symptom**: Kaspersky, Windows Defender, or other antivirus software detects `bd` or `bd.exe` as a trojan or malicious software and removes it.
+
+**Common detections**:
+- Kaspersky: `PDM:Trojan.Win32.Generic`
+- Windows Defender: Various generic trojan detections
+
+**Cause**: This is a **false positive**. Go binaries are commonly flagged by antivirus heuristics because some malware is written in Go. This is a known industry-wide issue affecting many legitimate Go projects.
+
+**Solutions**:
+
+1. **Add bd to antivirus exclusions** (recommended):
+   - Add the bd installation directory to your antivirus exclusion list
+   - This is safe - beads is open source and checksums are provided
+
+2. **Verify file integrity before excluding**:
+   ```bash
+   # Windows PowerShell
+   Get-FileHash bd.exe -Algorithm SHA256
+
+   # macOS/Linux
+   shasum -a 256 bd
+   ```
+   Compare with checksums from the [GitHub release page](https://github.com/steveyegge/beads/releases)
+
+3. **Report the false positive**:
+   - Help improve detection by reporting to your antivirus vendor
+   - Most vendors have false positive submission forms
+
+**Detailed guide**: See [docs/ANTIVIRUS.md](ANTIVIRUS.md) for complete instructions including:
+- How to add exclusions for specific antivirus software
+- How to report false positives to vendors
+- Why Go binaries trigger these detections
+- Future plans for code signing
 
 ## Database Issues
 
