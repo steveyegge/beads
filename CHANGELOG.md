@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.3] - 2025-11-24
+
+### Added
+
+- **Built-in version tracking** (bd-loka): bd now tracks its own version in metadata.json
+- **Auto-migrate database on CLI version bump** (bd-jgxi): Database schema migrations happen automatically when upgrading
+- **metadata.json version tracking validation** in `bd doctor` (bd-u4sb)
+- **Agent upgrade awareness documentation and tooling**
+- **Complete command set standardization** (bd-au0)
+- **--shared flag for bd hooks install**: Install versioned hooks that can be committed to git
+- **Aider integration**: Proper YAML config format for beads issue tracking
+- **BEADS_SYNC_BRANCH environment variable**: Override sync branch configuration
+- **--upgrade-mcp flag** for bump-version.sh script
+- **Monitor Web UI enhancements**: Interactive filters, find-as-you-type, improved UX/UI
+
+### Fixed
+
+- **Handle FOREIGN KEY constraint violations gracefully during import** (bd-koab)
+- **Auto-fix metadata.json jsonl_export mismatch** (bd-afd)
+- **Enforce ZFC (JSONL First Consistency)**: Refuse export when DB >> JSONL (bd-l0r)
+- **Remove mtime fast-path in hasJSONLChanged** (bd-v0y): More reliable change detection
+- **Fix N+1 query pattern in export operations** (bd-rcmg): Performance improvement
+- **Merge conflicts now prefer closed>open and deletion>modification** (bd-pq5k)
+- **Support both canonical and legacy JSONL filenames** in merge driver check
+- **Auto-repair stale merge driver configs** with invalid placeholders
+- **Add executable bit validation for git hooks** (bd-fwul)
+- **Auto-configure sync.branch during bd init** (bd-flil)
+- **bd doctor check and fix for missing sync.branch config** (bd-rsua)
+- **Improve pre-push hook**: Suggest bd sync with auto-sync option
+- **Fix race condition in client socket cleanup** (bd-4owj)
+- **Daemon respects auto-commit/auto-push DB config** (#360)
+- **Use dynamic JSONL path in daemon sync branch operations** (#361)
+- **Improve staleness check error handling** (bd-2q6d, bd-o4qy, bd-n4td)
+- **Change file permissions from 0644 to 0600** for better security
+- **Fix Windows CI test failures** and various cross-platform issues
+- **Fix GH#366**: Encourage descriptions when creating issues
+- **Fix GH#367**: bd import defaulting to stdin is confusing
+- **Fix priority 0 bug display** using nullish coalescing
+
 ### Improved
 
 - **Daemon Log Rotation**: Increased default rotation limits for better production use (bd-t7ds)
