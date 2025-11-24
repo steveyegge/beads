@@ -235,16 +235,17 @@ func TestDeletionWithLocalModification(t *testing.T) {
 		t.Fatalf("Failed to simulate remote deletion: %v", err)
 	}
 
-	// Try to merge - this should detect a conflict (modified locally, deleted remotely)
+	// Try to merge - deletion now wins over modification (bd-pq5k)
+	// This should succeed and delete the issue
 	_, err = merge3WayAndPruneDeletions(ctx, store, jsonlPath)
-	if err == nil {
-		t.Error("Expected merge conflict error, but got nil")
+	if err != nil {
+		t.Errorf("Expected merge to succeed (deletion wins), but got error: %v", err)
 	}
 
-	// The issue should still exist in the database (conflict not auto-resolved)
+	// The issue should be deleted (deletion wins over modification)
 	conflictIssue, err := store.GetIssue(ctx, "bd-conflict")
-	if err != nil || conflictIssue == nil {
-		t.Error("Issue should still exist after conflict")
+	if err == nil && conflictIssue != nil {
+		t.Error("Issue should be deleted after merge (deletion wins)")
 	}
 }
 
@@ -295,12 +296,13 @@ func TestComputeAcceptedDeletions(t *testing.T) {
 	}
 }
 
-// TestComputeAcceptedDeletions_LocallyModified tests that locally modified issues are not deleted
+// TestComputeAcceptedDeletions_LocallyModified tests that deletion wins even for locally modified issues (bd-pq5k)
 func TestComputeAcceptedDeletions_LocallyModified(t *testing.T) {
 	dir := t.TempDir()
 
-	basePath := filepath.Join(dir, "base.jsonl")
-	leftPath := filepath.Join(dir, "left.jsonl")
+	jsonlPath := filepath.Join(dir, "issues.jsonl")
+	sm := NewSnapshotManager(jsonlPath)
+	basePath, leftPath := sm.GetSnapshotPaths()
 	mergedPath := filepath.Join(dir, "merged.jsonl")
 
 	// Base has 2 issues
@@ -313,7 +315,7 @@ func TestComputeAcceptedDeletions_LocallyModified(t *testing.T) {
 {"id":"bd-2","title":"Modified locally"}
 `
 
-	// Merged has only bd-1 (bd-2 deleted remotely, but we modified it locally)
+	// Merged has only bd-1 (bd-2 deleted remotely, we modified it locally, but deletion wins per bd-pq5k)
 	mergedContent := `{"id":"bd-1","title":"Original 1"}
 `
 
@@ -327,16 +329,17 @@ func TestComputeAcceptedDeletions_LocallyModified(t *testing.T) {
 		t.Fatalf("Failed to write merged: %v", err)
 	}
 
-	jsonlPath := filepath.Join(dir, "issues.jsonl")
-	sm := NewSnapshotManager(jsonlPath)
 	deletions, err := sm.ComputeAcceptedDeletions(mergedPath)
 	if err != nil {
 		t.Fatalf("Failed to compute deletions: %v", err)
 	}
 
-	// bd-2 should NOT be in accepted deletions because it was modified locally
-	if len(deletions) != 0 {
-		t.Errorf("Expected 0 deletions (locally modified), got %d: %v", len(deletions), deletions)
+	// bd-pq5k: bd-2 SHOULD be in accepted deletions even though modified locally (deletion wins)
+	if len(deletions) != 1 {
+		t.Errorf("Expected 1 deletion (deletion wins over local modification), got %d: %v", len(deletions), deletions)
+	}
+	if len(deletions) == 1 && deletions[0] != "bd-2" {
+		t.Errorf("Expected deletion of bd-2, got %v", deletions)
 	}
 }
 
