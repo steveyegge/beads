@@ -224,21 +224,25 @@ await beads_ready_work(workspace_root="/Users/you/project-a")
 
 ## Known Issues
 
-### MCP Tools Not Loading in Claude Code (Issue [#346](https://github.com/steveyegge/beads/issues/346))
+### ~~MCP Tools Not Loading in Claude Code~~ (Issue [#346](https://github.com/steveyegge/beads/issues/346)) - RESOLVED
 
-**Status:** Blocked by upstream FastMCP bug ([#2455](https://github.com/jlowin/fastmcp/issues/2455))
+**Status:** ✅ Fixed in v0.24.0+
 
-MCP tools currently fail to load in Claude Code due to a schema generation bug in FastMCP 2.13.1. The issue affects self-referential Pydantic models and causes Claude Code to reject all beads MCP tools.
+This issue affected versions prior to v0.24.0. The problem was caused by self-referential Pydantic models (`Issue` with `dependencies: list["Issue"]`) generating invalid MCP schemas with `$ref` at root level.
 
-**Workaround:** Use slash commands instead of MCP tools in Claude Code:
-- `/beads:ready` instead of the `ready` MCP tool
-- `/beads:show bd-123` instead of the `show` MCP tool
-- `/beads:list` instead of the `list` MCP tool
-- etc.
+**Solution:** The issue was fixed in commit f3a678f by refactoring the data models:
+- Created `IssueBase` with common fields
+- Created `LinkedIssue(IssueBase)` for dependency references
+- Changed `Issue` to use `list[LinkedIssue]` instead of `list["Issue"]`
 
-Slash commands work because they call the `bd` CLI directly rather than going through the MCP tool interface.
+This breaks the circular reference and ensures all tool outputSchemas have `type: object` at root level.
 
-**Resolution:** This will be fixed automatically once FastMCP releases a fix for their schema generation bug. The beads-mcp dependency will then be updated to use the fixed version.
+**Upgrade:** If you're running beads-mcp < 0.24.0:
+```bash
+pip install --upgrade beads-mcp
+```
+
+All MCP tools now load correctly in Claude Code with v0.24.0+.
 
 
 ## Development
