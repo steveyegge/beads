@@ -27,6 +27,25 @@ This shows the last 3 versions with workflow-impacting changes, avoiding the nee
 
 **Why this matters:** bd releases weekly with major versions. This command helps you quickly understand what changed without parsing the full CHANGELOG.
 
+### 🔄 After Upgrading bd
+
+When bd is upgraded to a new version, follow this workflow:
+
+```bash
+# 1. Check what changed
+bd info --whats-new
+
+# 2. Update git hooks to match new bd version
+bd hooks install
+
+# 3. Check for any outdated hooks (optional)
+bd info  # Shows warnings if hooks are outdated
+```
+
+**Why update hooks?** Git hooks (pre-commit, post-merge, pre-push) are versioned with bd. Outdated hooks may miss new auto-sync features or bug fixes. Running `bd hooks install` ensures hooks match your bd version.
+
+**Related:** See GitHub Discussion #239 for background on agent upgrade workflows.
+
 ## Human Setup vs Agent Usage
 
 **IMPORTANT:** If you need to initialize bd, use the `--quiet` flag:
@@ -475,6 +494,8 @@ See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for detailed instructions on:
 
 - Always use `--json` flags for programmatic use
 - **Always run `bd sync` at end of session** to flush/commit/push immediately
+- **Check `bd info --whats-new` at session start** if bd was recently upgraded
+- **Run `bd hooks install`** if `bd info` warns about outdated git hooks
 - Link discoveries with `discovered-from` to maintain context
 - Check `bd ready` before asking "what next?"
 - Auto-sync batches changes in 30-second window - use `bd sync` to force immediate flush
