@@ -232,19 +232,17 @@ func (sm *SnapshotManager) Initialize() error {
 // An issue is an "accepted deletion" if:
 // - It exists in base (last import)
 // - It does NOT exist in merged (after 3-way merge)
-// - It is unchanged in left (pre-pull export) compared to base
+//
+// Note (bd-pq5k): Deletion always wins over modification in the merge,
+// so if an issue is deleted in the merged result, we accept it regardless
+// of local changes.
 func (sm *SnapshotManager) ComputeAcceptedDeletions(mergedPath string) ([]string, error) {
-	basePath, leftPath := sm.getSnapshotPaths()
+	basePath, _ := sm.getSnapshotPaths()
 
-	// Build map of ID -> raw line for base and left
+	// Build map of ID -> raw line for base
 	baseIndex, err := sm.buildIDToLineMap(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read base snapshot: %w", err)
-	}
-
-	leftIndex, err := sm.buildIDToLineMap(leftPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read left snapshot: %w", err)
 	}
 
 	// Build set of IDs in merged result
@@ -257,13 +255,13 @@ func (sm *SnapshotManager) ComputeAcceptedDeletions(mergedPath string) ([]string
 
 	// Find accepted deletions
 	var deletions []string
-	for id, baseLine := range baseIndex {
+	for id := range baseIndex {
 		// Issue in base but not in merged
 		if !mergedIDs[id] {
-			// Check if unchanged locally - try raw equality first, then semantic JSON comparison
-			if leftLine, existsInLeft := leftIndex[id]; existsInLeft && (leftLine == baseLine || sm.jsonEquals(leftLine, baseLine)) {
-				deletions = append(deletions, id)
-			}
+			// bd-pq5k: Deletion always wins over modification in 3-way merge
+			// If the merge resulted in deletion, accept it regardless of local changes
+			// The 3-way merge already determined that deletion should win
+			deletions = append(deletions, id)
 		}
 	}
 

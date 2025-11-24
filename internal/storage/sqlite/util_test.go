@@ -50,6 +50,54 @@ func TestIsUniqueConstraintError(t *testing.T) {
 	}
 }
 
+func TestIsForeignKeyConstraintError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "FOREIGN KEY constraint error (uppercase)",
+			err:      errors.New("FOREIGN KEY constraint failed"),
+			expected: true,
+		},
+		{
+			name:     "foreign key constraint error (lowercase)",
+			err:      errors.New("foreign key constraint failed"),
+			expected: true,
+		},
+		{
+			name:     "FOREIGN KEY with details",
+			err:      errors.New("FOREIGN KEY constraint failed: dependencies.depends_on_id"),
+			expected: true,
+		},
+		{
+			name:     "UNIQUE constraint error",
+			err:      errors.New("UNIQUE constraint failed: issues.id"),
+			expected: false,
+		},
+		{
+			name:     "other error",
+			err:      errors.New("some other database error"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsForeignKeyConstraintError(tt.err)
+			if result != tt.expected {
+				t.Errorf("IsForeignKeyConstraintError(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestExecInTransaction(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t, t.TempDir()+"/test.db")

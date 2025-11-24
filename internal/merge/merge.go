@@ -297,22 +297,14 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 			}
 		} else if inBase && inLeft && !inRight {
 			// Deleted in right, maybe modified in left
-			if issuesEqual(baseIssue, leftIssue) {
-				// Deleted in right, unchanged in left - accept deletion
-				continue
-			} else {
-				// Modified in left, deleted in right - conflict
-				conflicts = append(conflicts, makeConflictWithBase(baseIssue.RawLine, leftIssue.RawLine, ""))
-			}
+			// RULE 2: deletion always wins over modification
+			// This is because deletion is an explicit action that should be preserved
+			continue
 		} else if inBase && !inLeft && inRight {
 			// Deleted in left, maybe modified in right
-			if issuesEqual(baseIssue, rightIssue) {
-				// Deleted in left, unchanged in right - accept deletion
-				continue
-			} else {
-				// Modified in right, deleted in left - conflict
-				conflicts = append(conflicts, makeConflictWithBase(baseIssue.RawLine, "", rightIssue.RawLine))
-			}
+			// RULE 2: deletion always wins over modification
+			// This is because deletion is an explicit action that should be preserved
+			continue
 		} else if !inBase && inLeft && !inRight {
 			// Added only in left
 			result = append(result, leftIssue)
@@ -341,8 +333,8 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	// Merge notes
 	result.Notes = mergeField(base.Notes, left.Notes, right.Notes)
 
-	// Merge status
-	result.Status = mergeField(base.Status, left.Status, right.Status)
+	// Merge status - SPECIAL RULE: closed always wins over open
+	result.Status = mergeStatus(base.Status, left.Status, right.Status)
 
 	// Merge priority (as int)
 	if base.Priority == left.Priority && base.Priority != right.Priority {
@@ -362,8 +354,13 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	// Merge updated_at - take the max
 	result.UpdatedAt = maxTime(left.UpdatedAt, right.UpdatedAt)
 
-	// Merge closed_at - take the max
-	result.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
+	// Merge closed_at - only if status is closed
+	// This prevents invalid state (status=open with closed_at set)
+	if result.Status == "closed" {
+		result.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
+	} else {
+		result.ClosedAt = ""
+	}
 
 	// Merge dependencies - combine and deduplicate
 	result.Dependencies = mergeDependencies(left.Dependencies, right.Dependencies)
@@ -374,6 +371,17 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	}
 
 	return result, ""
+}
+
+func mergeStatus(base, left, right string) string {
+	// RULE 1: closed always wins over open
+	// This prevents the insane situation where issues never die
+	if left == "closed" || right == "closed" {
+		return "closed"
+	}
+
+	// Otherwise use standard 3-way merge
+	return mergeField(base, left, right)
 }
 
 func mergeField(base, left, right string) string {

@@ -51,4 +51,15 @@ func IsUniqueConstraintError(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
+// IsForeignKeyConstraintError checks if an error is a FOREIGN KEY constraint violation
+// This can occur when importing issues that reference deleted issues (e.g., after merge)
+func IsForeignKeyConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "FOREIGN KEY constraint failed") ||
+		strings.Contains(errStr, "foreign key constraint failed")
+}
+
 

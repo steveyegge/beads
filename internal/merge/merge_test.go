@@ -7,6 +7,70 @@ import (
 	"testing"
 )
 
+// TestMergeStatus tests the status merging logic with special rules
+func TestMergeStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     string
+		left     string
+		right    string
+		expected string
+	}{
+		{
+			name:     "no changes",
+			base:     "open",
+			left:     "open",
+			right:    "open",
+			expected: "open",
+		},
+		{
+			name:     "left closed, right open - closed wins",
+			base:     "open",
+			left:     "closed",
+			right:    "open",
+			expected: "closed",
+		},
+		{
+			name:     "left open, right closed - closed wins",
+			base:     "open",
+			left:     "open",
+			right:    "closed",
+			expected: "closed",
+		},
+		{
+			name:     "both closed",
+			base:     "open",
+			left:     "closed",
+			right:    "closed",
+			expected: "closed",
+		},
+		{
+			name:     "base closed, left open, right open - open (standard merge)",
+			base:     "closed",
+			left:     "open",
+			right:    "open",
+			expected: "open",
+		},
+		{
+			name:     "base closed, left open, right closed - closed wins",
+			base:     "closed",
+			left:     "open",
+			right:    "closed",
+			expected: "closed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mergeStatus(tt.base, tt.left, tt.right)
+			if result != tt.expected {
+				t.Errorf("mergeStatus(%q, %q, %q) = %q, want %q",
+					tt.base, tt.left, tt.right, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestMergeField tests the basic field merging logic
 func TestMergeField(t *testing.T) {
 	tests := []struct {
@@ -475,7 +539,7 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		}
 	})
 
-	t.Run("deleted in left, modified in right - conflict", func(t *testing.T) {
+	t.Run("deleted in left, modified in right - deletion wins", func(t *testing.T) {
 		base := []Issue{
 			{
 				ID:        "bd-abc123",
@@ -499,15 +563,15 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		}
 
 		result, conflicts := merge3Way(base, left, right)
-		if len(conflicts) == 0 {
-			t.Error("expected conflict for delete vs modify")
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
 		}
 		if len(result) != 0 {
-			t.Errorf("expected no merged issues with conflict, got %d", len(result))
+			t.Errorf("expected deletion to win (0 results), got %d", len(result))
 		}
 	})
 
-	t.Run("deleted in right, modified in left - conflict", func(t *testing.T) {
+	t.Run("deleted in right, modified in left - deletion wins", func(t *testing.T) {
 		base := []Issue{
 			{
 				ID:        "bd-abc123",
@@ -531,11 +595,11 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		right := []Issue{} // Deleted in right
 
 		result, conflicts := merge3Way(base, left, right)
-		if len(conflicts) == 0 {
-			t.Error("expected conflict for modify vs delete")
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
 		}
 		if len(result) != 0 {
-			t.Errorf("expected no merged issues with conflict, got %d", len(result))
+			t.Errorf("expected deletion to win (0 results), got %d", len(result))
 		}
 	})
 }
@@ -648,6 +712,61 @@ func TestMerge3Way_Additions(t *testing.T) {
 
 // TestMerge3Way_ResurrectionPrevention tests bd-hv01 regression
 func TestMerge3Way_ResurrectionPrevention(t *testing.T) {
+	t.Run("bd-pq5k: no invalid state (status=open with closed_at)", func(t *testing.T) {
+		// Simulate the broken merge case that was creating invalid data
+		// Base: issue is closed
+		base := []Issue{
+			{
+				ID:        "bd-test",
+				Title:     "Test issue",
+				Status:    "closed",
+				ClosedAt:  "2024-01-02T00:00:00Z",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				UpdatedAt: "2024-01-02T00:00:00Z",
+				CreatedBy: "user1",
+				RawLine:   `{"id":"bd-test","title":"Test issue","status":"closed","closed_at":"2024-01-02T00:00:00Z","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-02T00:00:00Z","created_by":"user1"}`,
+			},
+		}
+		// Left: still closed with closed_at
+		left := base
+		// Right: somehow got reopened but WITHOUT removing closed_at (the bug scenario)
+		right := []Issue{
+			{
+				ID:        "bd-test",
+				Title:     "Test issue",
+				Status:    "open", // reopened
+				ClosedAt:  "",     // correctly removed
+				CreatedAt: "2024-01-01T00:00:00Z",
+				UpdatedAt: "2024-01-03T00:00:00Z",
+				CreatedBy: "user1",
+				RawLine:   `{"id":"bd-test","title":"Test issue","status":"open","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-03T00:00:00Z","created_by":"user1"}`,
+			},
+		}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+
+		// CRITICAL: Status should be closed (closed wins over open)
+		if result[0].Status != "closed" {
+			t.Errorf("expected status 'closed', got %q", result[0].Status)
+		}
+
+		// CRITICAL: If status is closed, closed_at MUST be set
+		if result[0].Status == "closed" && result[0].ClosedAt == "" {
+			t.Error("INVALID STATE: status='closed' but closed_at is empty")
+		}
+
+		// CRITICAL: If status is open, closed_at MUST be empty
+		if result[0].Status == "open" && result[0].ClosedAt != "" {
+			t.Errorf("INVALID STATE: status='open' but closed_at='%s'", result[0].ClosedAt)
+		}
+	})
+
 	t.Run("bd-hv01 regression: closed issue not resurrected", func(t *testing.T) {
 		// Base: issue is open
 		base := []Issue{
