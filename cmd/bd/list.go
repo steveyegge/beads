@@ -447,6 +447,9 @@ var listCmd = &cobra.Command{
 					assigneeStr, labelsStr, issue.Title)
 			}
 		}
+
+		// Show tip after successful list (direct mode only)
+		maybeShowTip(store)
 	},
 }
 

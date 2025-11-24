@@ -142,6 +142,8 @@ var readyCmd = &cobra.Command{
 			yellow := color.New(color.FgYellow).SprintFunc()
 			fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
 				yellow("✨"))
+			// Show tip even when no ready work found
+			maybeShowTip(store)
 			return
 		}
 		cyan := color.New(color.FgCyan).SprintFunc()
@@ -156,6 +158,9 @@ var readyCmd = &cobra.Command{
 			}
 		}
 		fmt.Println()
+
+		// Show tip after successful ready (direct mode only)
+		maybeShowTip(store)
 	},
 }
 var blockedCmd = &cobra.Command{

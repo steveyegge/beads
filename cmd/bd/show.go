@@ -335,6 +335,9 @@ var showCmd = &cobra.Command{
 
 		if jsonOutput && len(allDetails) > 0 {
 			outputJSON(allDetails)
+		} else if len(allDetails) > 0 {
+			// Show tip after successful show (non-JSON mode)
+			maybeShowTip(store)
 		}
 	},
 }
