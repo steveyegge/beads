@@ -327,6 +327,16 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, claudeCheck)
 	// Don't fail overall check for missing Claude integration, just warn
 
+	// Check 11a: bd in PATH (needed for Claude hooks to work)
+	bdPathCheck := convertDoctorCheck(doctor.CheckBdInPath())
+	result.Checks = append(result.Checks, bdPathCheck)
+	// Don't fail overall check for missing bd in PATH, just warn
+
+	// Check 11b: Documentation bd prime references match installed version
+	bdPrimeDocsCheck := convertDoctorCheck(doctor.CheckDocumentationBdPrimeReference(path))
+	result.Checks = append(result.Checks, bdPrimeDocsCheck)
+	// Don't fail overall check for doc mismatch, just warn
+
 	// Check 12: Agent documentation presence
 	agentDocsCheck := convertDoctorCheck(doctor.CheckAgentDocumentation(path))
 	result.Checks = append(result.Checks, agentDocsCheck)

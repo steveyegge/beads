@@ -272,3 +272,81 @@ func VerifyPrimeOutput() DoctorCheck {
 		}
 	}
 }
+
+// CheckBdInPath verifies that 'bd' command is available in PATH.
+// This is important because Claude hooks rely on executing 'bd prime'.
+func CheckBdInPath() DoctorCheck {
+	_, err := exec.LookPath("bd")
+	if err != nil {
+		return DoctorCheck{
+			Name:    "bd in PATH",
+			Status:  "warning",
+			Message: "'bd' command not found in PATH",
+			Detail:  "Claude hooks execute 'bd prime' and won't work without bd in PATH",
+			Fix: "Install bd globally:\n" +
+				"  • Homebrew: brew install steveyegge/tap/bd\n" +
+				"  • Script: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash\n" +
+				"  • Or add bd to your PATH",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "bd in PATH",
+		Status:  "ok",
+		Message: "'bd' command available",
+	}
+}
+
+// CheckDocumentationBdPrimeReference checks if AGENTS.md or CLAUDE.md reference 'bd prime'
+// and verifies the command exists. This helps catch version mismatches where docs
+// reference features not available in the installed version.
+func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
+	docFiles := []string{
+		filepath.Join(repoPath, "AGENTS.md"),
+		filepath.Join(repoPath, "CLAUDE.md"),
+		filepath.Join(repoPath, ".claude", "CLAUDE.md"),
+	}
+
+	var filesWithBdPrime []string
+	for _, docFile := range docFiles {
+		content, err := os.ReadFile(docFile) // #nosec G304 - controlled paths from repoPath
+		if err != nil {
+			continue
+		}
+
+		if strings.Contains(string(content), "bd prime") {
+			filesWithBdPrime = append(filesWithBdPrime, filepath.Base(docFile))
+		}
+	}
+
+	// If no docs reference bd prime, that's fine - not everyone uses it
+	if len(filesWithBdPrime) == 0 {
+		return DoctorCheck{
+			Name:    "Documentation bd prime",
+			Status:  "ok",
+			Message: "No bd prime references in documentation",
+		}
+	}
+
+	// Docs reference bd prime - verify the command works
+	cmd := exec.Command("bd", "prime", "--help")
+	if err := cmd.Run(); err != nil {
+		return DoctorCheck{
+			Name:    "Documentation bd prime",
+			Status:  "warning",
+			Message: "Documentation references 'bd prime' but command not found",
+			Detail:  "Files: " + strings.Join(filesWithBdPrime, ", "),
+			Fix: "Upgrade bd to get the 'bd prime' command:\n" +
+				"  • Homebrew: brew upgrade bd\n" +
+				"  • Script: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash\n" +
+				"  Or remove 'bd prime' references from documentation if using older version",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Documentation bd prime",
+		Status:  "ok",
+		Message: "Documentation references match installed features",
+		Detail:  "Files: " + strings.Join(filesWithBdPrime, ", "),
+	}
+}
