@@ -13,29 +13,40 @@ import (
 )
 
 // DeletionRecord represents a single deletion entry in the manifest.
+// Timestamps are serialized as RFC3339 and may lose sub-second precision.
 type DeletionRecord struct {
-	ID        string    `json:"id"`              // Issue ID that was deleted
-	Timestamp time.Time `json:"ts"`              // When the deletion occurred
-	Actor     string    `json:"by"`              // Who performed the deletion
+	ID        string    `json:"id"`               // Issue ID that was deleted
+	Timestamp time.Time `json:"ts"`               // When the deletion occurred
+	Actor     string    `json:"by"`               // Who performed the deletion
 	Reason    string    `json:"reason,omitempty"` // Optional reason for deletion
 }
 
-// LoadDeletions reads the deletions manifest and returns a map for O(1) lookup.
-// It returns the records, the count of skipped (corrupt) lines, and any error.
-// Corrupt JSON lines are skipped with a warning rather than failing the load.
-func LoadDeletions(path string) (map[string]DeletionRecord, int, error) {
+// LoadResult contains the result of loading deletions, including any warnings.
+type LoadResult struct {
+	Records  map[string]DeletionRecord
+	Skipped  int
+	Warnings []string
+}
+
+// LoadDeletions reads the deletions manifest and returns a LoadResult.
+// Corrupt JSON lines are skipped rather than failing the load.
+// Warnings about skipped lines are collected in LoadResult.Warnings.
+func LoadDeletions(path string) (*LoadResult, error) {
+	result := &LoadResult{
+		Records:  make(map[string]DeletionRecord),
+		Warnings: []string{},
+	}
+
 	f, err := os.Open(path) // #nosec G304 - controlled path from caller
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No deletions file yet - return empty map
-			return make(map[string]DeletionRecord), 0, nil
+			// No deletions file yet - return empty result
+			return result, nil
 		}
-		return nil, 0, fmt.Errorf("failed to open deletions file: %w", err)
+		return nil, fmt.Errorf("failed to open deletions file: %w", err)
 	}
 	defer f.Close()
 
-	records := make(map[string]DeletionRecord)
-	skipped := 0
 	lineNo := 0
 
 	scanner := bufio.NewScanner(f)
@@ -51,33 +62,40 @@ func LoadDeletions(path string) (map[string]DeletionRecord, int, error) {
 
 		var record DeletionRecord
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			// Skip corrupt line with warning to stderr
-			fmt.Fprintf(os.Stderr, "Warning: skipping corrupt line %d in deletions manifest: %v\n", lineNo, err)
-			skipped++
+			warning := fmt.Sprintf("skipping corrupt line %d in deletions manifest: %v", lineNo, err)
+			result.Warnings = append(result.Warnings, warning)
+			result.Skipped++
 			continue
 		}
 
 		// Validate required fields
 		if record.ID == "" {
-			fmt.Fprintf(os.Stderr, "Warning: skipping line %d in deletions manifest: missing ID\n", lineNo)
-			skipped++
+			warning := fmt.Sprintf("skipping line %d in deletions manifest: missing ID", lineNo)
+			result.Warnings = append(result.Warnings, warning)
+			result.Skipped++
 			continue
 		}
 
 		// Use the most recent record for each ID (last write wins)
-		records[record.ID] = record
+		result.Records[record.ID] = record
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, skipped, fmt.Errorf("error reading deletions file: %w", err)
+		return nil, fmt.Errorf("error reading deletions file: %w", err)
 	}
 
-	return records, skipped, nil
+	return result, nil
 }
 
 // AppendDeletion appends a single deletion record to the manifest.
 // Creates the file if it doesn't exist.
+// Returns an error if the record has an empty ID.
 func AppendDeletion(path string, record DeletionRecord) error {
+	// Validate required fields
+	if record.ID == "" {
+		return fmt.Errorf("cannot append deletion record: ID is required")
+	}
+
 	// Ensure directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -102,11 +120,17 @@ func AppendDeletion(path string, record DeletionRecord) error {
 		return fmt.Errorf("failed to write deletion record: %w", err)
 	}
 
+	// Sync to ensure durability for append-only log
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync deletions file: %w", err)
+	}
+
 	return nil
 }
 
 // WriteDeletions atomically writes the entire deletions manifest.
 // Used for compaction to deduplicate and prune old entries.
+// An empty slice will create an empty file (clearing all deletions).
 func WriteDeletions(path string, records []DeletionRecord) error {
 	// Ensure directory exists
 	dir := filepath.Dir(path)

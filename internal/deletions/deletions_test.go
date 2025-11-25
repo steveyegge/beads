@@ -8,16 +8,19 @@ import (
 )
 
 func TestLoadDeletions_Empty(t *testing.T) {
-	// Non-existent file should return empty map
-	records, skipped, err := LoadDeletions("/nonexistent/path/deletions.jsonl")
+	// Non-existent file should return empty result
+	result, err := LoadDeletions("/nonexistent/path/deletions.jsonl")
 	if err != nil {
 		t.Fatalf("expected no error for non-existent file, got: %v", err)
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped, got %d", skipped)
+	if result.Skipped != 0 {
+		t.Errorf("expected 0 skipped, got %d", result.Skipped)
 	}
-	if len(records) != 0 {
-		t.Errorf("expected empty map, got %d records", len(records))
+	if len(result.Records) != 0 {
+		t.Errorf("expected empty map, got %d records", len(result.Records))
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no warnings, got %d", len(result.Warnings))
 	}
 }
 
@@ -48,19 +51,19 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// Load and verify
-	records, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped, got %d", skipped)
+	if result.Skipped != 0 {
+		t.Errorf("expected 0 skipped, got %d", result.Skipped)
 	}
-	if len(records) != 2 {
-		t.Fatalf("expected 2 records, got %d", len(records))
+	if len(result.Records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(result.Records))
 	}
 
 	// Verify record1
-	r1, ok := records["bd-123"]
+	r1, ok := result.Records["bd-123"]
 	if !ok {
 		t.Fatal("record bd-123 not found")
 	}
@@ -72,7 +75,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// Verify record2
-	r2, ok := records["bd-456"]
+	r2, ok := result.Records["bd-456"]
 	if !ok {
 		t.Fatal("record bd-456 not found")
 	}
@@ -96,20 +99,23 @@ this is not valid json
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	records, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions should not fail on corrupt lines: %v", err)
 	}
-	if skipped != 2 {
-		t.Errorf("expected 2 skipped lines, got %d", skipped)
+	if result.Skipped != 2 {
+		t.Errorf("expected 2 skipped lines, got %d", result.Skipped)
 	}
-	if len(records) != 3 {
-		t.Errorf("expected 3 valid records, got %d", len(records))
+	if len(result.Records) != 3 {
+		t.Errorf("expected 3 valid records, got %d", len(result.Records))
+	}
+	if len(result.Warnings) != 2 {
+		t.Errorf("expected 2 warnings, got %d", len(result.Warnings))
 	}
 
 	// Verify valid records were loaded
 	for _, id := range []string{"bd-001", "bd-002", "bd-003"} {
-		if _, ok := records[id]; !ok {
+		if _, ok := result.Records[id]; !ok {
 			t.Errorf("expected record %s to be loaded", id)
 		}
 	}
@@ -128,16 +134,16 @@ func TestLoadDeletions_MissingID(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	records, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
 	// Two lines should be skipped: one missing "id" field, one with empty "id"
-	if skipped != 2 {
-		t.Errorf("expected 2 skipped lines (missing/empty ID), got %d", skipped)
+	if result.Skipped != 2 {
+		t.Errorf("expected 2 skipped lines (missing/empty ID), got %d", result.Skipped)
 	}
-	if len(records) != 1 {
-		t.Errorf("expected 1 valid record, got %d", len(records))
+	if len(result.Records) != 1 {
+		t.Errorf("expected 1 valid record, got %d", len(result.Records))
 	}
 }
 
@@ -153,18 +159,18 @@ func TestLoadDeletions_LastWriteWins(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	records, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped, got %d", skipped)
+	if result.Skipped != 0 {
+		t.Errorf("expected 0 skipped, got %d", result.Skipped)
 	}
-	if len(records) != 1 {
-		t.Errorf("expected 1 record (deduplicated), got %d", len(records))
+	if len(result.Records) != 1 {
+		t.Errorf("expected 1 record (deduplicated), got %d", len(result.Records))
 	}
 
-	r := records["bd-001"]
+	r := result.Records["bd-001"]
 	if r.Actor != "user2" {
 		t.Errorf("expected last write to win (user2), got '%s'", r.Actor)
 	}
@@ -188,15 +194,15 @@ func TestWriteDeletions_Atomic(t *testing.T) {
 	}
 
 	// Verify by loading
-	loaded, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
-	if skipped != 0 {
-		t.Errorf("expected 0 skipped, got %d", skipped)
+	if result.Skipped != 0 {
+		t.Errorf("expected 0 skipped, got %d", result.Skipped)
 	}
-	if len(loaded) != 2 {
-		t.Errorf("expected 2 records, got %d", len(loaded))
+	if len(result.Records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(result.Records))
 	}
 }
 
@@ -225,14 +231,14 @@ func TestWriteDeletions_Overwrite(t *testing.T) {
 	}
 
 	// Verify only compacted records remain
-	loaded, _, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
-	if len(loaded) != 1 {
-		t.Errorf("expected 1 record after compaction, got %d", len(loaded))
+	if len(result.Records) != 1 {
+		t.Errorf("expected 1 record after compaction, got %d", len(result.Records))
 	}
-	if _, ok := loaded["bd-002"]; !ok {
+	if _, ok := result.Records["bd-002"]; !ok {
 		t.Error("expected bd-002 to remain after compaction")
 	}
 }
@@ -297,14 +303,33 @@ func TestLoadDeletions_EmptyLines(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	records, skipped, err := LoadDeletions(path)
+	result, err := LoadDeletions(path)
 	if err != nil {
 		t.Fatalf("LoadDeletions failed: %v", err)
 	}
-	if skipped != 0 {
-		t.Errorf("empty lines should not count as skipped, got %d", skipped)
+	if result.Skipped != 0 {
+		t.Errorf("empty lines should not count as skipped, got %d", result.Skipped)
 	}
-	if len(records) != 2 {
-		t.Errorf("expected 2 records, got %d", len(records))
+	if len(result.Records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(result.Records))
+	}
+}
+
+func TestAppendDeletion_EmptyID(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	record := DeletionRecord{
+		ID:        "",
+		Timestamp: time.Now(),
+		Actor:     "testuser",
+	}
+
+	err := AppendDeletion(path, record)
+	if err == nil {
+		t.Fatal("AppendDeletion should fail with empty ID")
+	}
+	if err.Error() != "cannot append deletion record: ID is required" {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
