@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -1297,4 +1298,368 @@ type testError struct {
 
 func (e *testError) Error() string {
 	return e.msg
+}
+
+// TestTransactionSearchIssuesBasic tests basic search within a transaction.
+func TestTransactionSearchIssuesBasic(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create some issues first
+	closedAt := time.Now()
+	issues := []*types.Issue{
+		{Title: "Alpha task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask},
+		{Title: "Beta task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{Title: "Gamma feature", Status: types.StatusClosed, Priority: 3, IssueType: types.TypeFeature, ClosedAt: &closedAt},
+	}
+	for _, issue := range issues {
+		if err := store.CreateIssue(ctx, issue, "test-actor"); err != nil {
+			t.Fatalf("CreateIssue failed: %v", err)
+		}
+	}
+
+	// Search within transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Search by query
+		results, err := tx.SearchIssues(ctx, "task", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 issues matching 'task', got %d", len(results))
+		}
+
+		// Search by status
+		closedStatus := types.StatusClosed
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{Status: &closedStatus})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 closed issue, got %d", len(results))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionSearchIssuesReadYourWrites is the KEY test: create an issue and search
+// for it within the same transaction (read-your-writes consistency).
+func TestTransactionSearchIssuesReadYourWrites(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create an existing issue outside the transaction
+	existingIssue := &types.Issue{
+		Title:     "Existing Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, existingIssue, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	var newIssueID string
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create a new issue within the transaction
+		newIssue := &types.Issue{
+			Title:       "Unique Searchable Title XYZ123",
+			Description: "This has special content ABC789",
+			Status:      types.StatusOpen,
+			Priority:    1,
+			IssueType:   types.TypeFeature,
+		}
+		if err := tx.CreateIssue(ctx, newIssue, "test-actor"); err != nil {
+			return err
+		}
+		newIssueID = newIssue.ID
+
+		// CRITICAL: Search for the just-created issue by title
+		results, err := tx.SearchIssues(ctx, "XYZ123", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("read-your-writes FAILED: expected 1 issue with title 'XYZ123', got %d", len(results))
+			return nil
+		}
+		if results[0].ID != newIssueID {
+			t.Errorf("read-your-writes FAILED: found wrong issue, expected %s, got %s", newIssueID, results[0].ID)
+		}
+
+		// Search for it by description
+		results, err = tx.SearchIssues(ctx, "ABC789", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("read-your-writes FAILED: expected 1 issue with description 'ABC789', got %d", len(results))
+		}
+
+		// Search by type filter
+		featureType := types.TypeFeature
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{IssueType: &featureType})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("read-your-writes FAILED: expected 1 feature type issue, got %d", len(results))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify the issue was committed
+	issue, err := store.GetIssue(ctx, newIssueID)
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if issue == nil {
+		t.Error("expected issue to be committed, but it wasn't found")
+	}
+}
+
+// TestTransactionSearchIssuesWithFilters tests various filter options within transaction.
+func TestTransactionSearchIssuesWithFilters(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	closedAt := time.Now()
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create issues with different attributes
+		issues := []*types.Issue{
+			{Title: "P1 Bug", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeBug, Assignee: "alice"},
+			{Title: "P2 Task", Status: types.StatusInProgress, Priority: 2, IssueType: types.TypeTask, Assignee: "bob"},
+			{Title: "P3 Feature", Status: types.StatusClosed, Priority: 3, IssueType: types.TypeFeature, Assignee: "alice", ClosedAt: &closedAt},
+		}
+		for _, issue := range issues {
+			if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+				return err
+			}
+		}
+
+		// Filter by assignee
+		assignee := "alice"
+		results, err := tx.SearchIssues(ctx, "", types.IssueFilter{Assignee: &assignee})
+		if err != nil {
+			return err
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 issues assigned to alice, got %d", len(results))
+		}
+
+		// Filter by priority
+		priority := 1
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{Priority: &priority})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 P1 issue, got %d", len(results))
+		}
+
+		// Filter by type
+		bugType := types.TypeBug
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{IssueType: &bugType})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 bug, got %d", len(results))
+		}
+
+		// Combined filter: status + assignee
+		inProgressStatus := types.StatusInProgress
+		bobAssignee := "bob"
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{
+			Status:   &inProgressStatus,
+			Assignee: &bobAssignee,
+		})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 in_progress issue assigned to bob, got %d", len(results))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionSearchIssuesWithLabels tests label filtering within transaction.
+func TestTransactionSearchIssuesWithLabels(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create issues
+		issue1 := &types.Issue{Title: "Issue 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+		issue2 := &types.Issue{Title: "Issue 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+		if err := tx.CreateIssue(ctx, issue1, "test-actor"); err != nil {
+			return err
+		}
+		if err := tx.CreateIssue(ctx, issue2, "test-actor"); err != nil {
+			return err
+		}
+
+		// Add labels
+		if err := tx.AddLabel(ctx, issue1.ID, "frontend", "test-actor"); err != nil {
+			return err
+		}
+		if err := tx.AddLabel(ctx, issue1.ID, "urgent", "test-actor"); err != nil {
+			return err
+		}
+		if err := tx.AddLabel(ctx, issue2.ID, "backend", "test-actor"); err != nil {
+			return err
+		}
+
+		// Search by label (must have ALL labels)
+		results, err := tx.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{"frontend"}})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 issue with 'frontend' label, got %d", len(results))
+		}
+		if len(results) > 0 && results[0].ID != issue1.ID {
+			t.Errorf("expected issue1, got %s", results[0].ID)
+		}
+
+		// Verify labels are attached to the issue
+		if len(results) > 0 && len(results[0].Labels) != 2 {
+			t.Errorf("expected 2 labels on issue, got %d", len(results[0].Labels))
+		}
+
+		// Search by multiple labels (AND)
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{Labels: []string{"frontend", "urgent"}})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 issue with both 'frontend' and 'urgent' labels, got %d", len(results))
+		}
+
+		// Search by any label (OR)
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{LabelsAny: []string{"frontend", "backend"}})
+		if err != nil {
+			return err
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 issues with either 'frontend' or 'backend' label, got %d", len(results))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionSearchIssuesRollback verifies uncommitted issues aren't visible outside transaction.
+func TestTransactionSearchIssuesRollback(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Try to create an issue but rollback (by returning an error)
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		issue := &types.Issue{
+			Title:     "RollbackTestIssue999",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+			return err
+		}
+
+		// Verify it's visible within the transaction
+		results, err := tx.SearchIssues(ctx, "RollbackTestIssue999", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected issue to be visible within transaction, got %d results", len(results))
+		}
+
+		// Return error to trigger rollback
+		return &testError{msg: "intentional rollback"}
+	})
+
+	if err == nil {
+		t.Fatal("expected error from rollback, got nil")
+	}
+
+	// Verify the issue is NOT visible outside the transaction (it was rolled back)
+	results, err := store.SearchIssues(ctx, "RollbackTestIssue999", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("SearchIssues failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 issues after rollback, got %d - rollback didn't work!", len(results))
+	}
+}
+
+// TestTransactionSearchIssuesLimit tests the limit filter within transaction.
+func TestTransactionSearchIssuesLimit(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create several issues
+		for i := 0; i < 10; i++ {
+			issue := &types.Issue{
+				Title:     "Limit Test Issue",
+				Status:    types.StatusOpen,
+				Priority:  i % 5,
+				IssueType: types.TypeTask,
+			}
+			if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+				return err
+			}
+		}
+
+		// Search with limit
+		results, err := tx.SearchIssues(ctx, "", types.IssueFilter{Limit: 3})
+		if err != nil {
+			return err
+		}
+		if len(results) != 3 {
+			t.Errorf("expected 3 issues with limit, got %d", len(results))
+		}
+
+		// Search without limit should return all
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 10 {
+			t.Errorf("expected 10 issues without limit, got %d", len(results))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
 }

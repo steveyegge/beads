@@ -884,3 +884,266 @@ func (t *sqliteTxStorage) AddComment(ctx context.Context, issueID, actor, commen
 
 	return nil
 }
+
+// SearchIssues finds issues matching query and filters within the transaction.
+// This enables read-your-writes semantics for searching within a transaction.
+func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	whereClauses := []string{}
+	args := []interface{}{}
+
+	if query != "" {
+		whereClauses = append(whereClauses, "(title LIKE ? OR description LIKE ? OR id LIKE ?)")
+		pattern := "%" + query + "%"
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	if filter.TitleSearch != "" {
+		whereClauses = append(whereClauses, "title LIKE ?")
+		pattern := "%" + filter.TitleSearch + "%"
+		args = append(args, pattern)
+	}
+
+	// Pattern matching
+	if filter.TitleContains != "" {
+		whereClauses = append(whereClauses, "title LIKE ?")
+		args = append(args, "%"+filter.TitleContains+"%")
+	}
+	if filter.DescriptionContains != "" {
+		whereClauses = append(whereClauses, "description LIKE ?")
+		args = append(args, "%"+filter.DescriptionContains+"%")
+	}
+	if filter.NotesContains != "" {
+		whereClauses = append(whereClauses, "notes LIKE ?")
+		args = append(args, "%"+filter.NotesContains+"%")
+	}
+
+	if filter.Status != nil {
+		whereClauses = append(whereClauses, "status = ?")
+		args = append(args, *filter.Status)
+	}
+
+	if filter.Priority != nil {
+		whereClauses = append(whereClauses, "priority = ?")
+		args = append(args, *filter.Priority)
+	}
+
+	// Priority ranges
+	if filter.PriorityMin != nil {
+		whereClauses = append(whereClauses, "priority >= ?")
+		args = append(args, *filter.PriorityMin)
+	}
+	if filter.PriorityMax != nil {
+		whereClauses = append(whereClauses, "priority <= ?")
+		args = append(args, *filter.PriorityMax)
+	}
+
+	if filter.IssueType != nil {
+		whereClauses = append(whereClauses, "issue_type = ?")
+		args = append(args, *filter.IssueType)
+	}
+
+	if filter.Assignee != nil {
+		whereClauses = append(whereClauses, "assignee = ?")
+		args = append(args, *filter.Assignee)
+	}
+
+	// Date ranges
+	if filter.CreatedAfter != nil {
+		whereClauses = append(whereClauses, "created_at > ?")
+		args = append(args, filter.CreatedAfter.Format(time.RFC3339))
+	}
+	if filter.CreatedBefore != nil {
+		whereClauses = append(whereClauses, "created_at < ?")
+		args = append(args, filter.CreatedBefore.Format(time.RFC3339))
+	}
+	if filter.UpdatedAfter != nil {
+		whereClauses = append(whereClauses, "updated_at > ?")
+		args = append(args, filter.UpdatedAfter.Format(time.RFC3339))
+	}
+	if filter.UpdatedBefore != nil {
+		whereClauses = append(whereClauses, "updated_at < ?")
+		args = append(args, filter.UpdatedBefore.Format(time.RFC3339))
+	}
+	if filter.ClosedAfter != nil {
+		whereClauses = append(whereClauses, "closed_at > ?")
+		args = append(args, filter.ClosedAfter.Format(time.RFC3339))
+	}
+	if filter.ClosedBefore != nil {
+		whereClauses = append(whereClauses, "closed_at < ?")
+		args = append(args, filter.ClosedBefore.Format(time.RFC3339))
+	}
+
+	// Empty/null checks
+	if filter.EmptyDescription {
+		whereClauses = append(whereClauses, "(description IS NULL OR description = '')")
+	}
+	if filter.NoAssignee {
+		whereClauses = append(whereClauses, "(assignee IS NULL OR assignee = '')")
+	}
+	if filter.NoLabels {
+		whereClauses = append(whereClauses, "id NOT IN (SELECT DISTINCT issue_id FROM labels)")
+	}
+
+	// Label filtering: issue must have ALL specified labels
+	if len(filter.Labels) > 0 {
+		for _, label := range filter.Labels {
+			whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM labels WHERE label = ?)")
+			args = append(args, label)
+		}
+	}
+
+	// Label filtering (OR): issue must have AT LEAST ONE of these labels
+	if len(filter.LabelsAny) > 0 {
+		placeholders := make([]string, len(filter.LabelsAny))
+		for i, label := range filter.LabelsAny {
+			placeholders[i] = "?"
+			args = append(args, label)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (SELECT issue_id FROM labels WHERE label IN (%s))", strings.Join(placeholders, ", ")))
+	}
+
+	// ID filtering: match specific issue IDs
+	if len(filter.IDs) > 0 {
+		placeholders := make([]string, len(filter.IDs))
+		for i, id := range filter.IDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	limitSQL := ""
+	if filter.Limit > 0 {
+		limitSQL = " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+
+	// #nosec G201 - safe SQL with controlled formatting
+	querySQL := fmt.Sprintf(`
+		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
+		       status, priority, issue_type, assignee, estimated_minutes,
+		       created_at, updated_at, closed_at, external_ref, source_repo
+		FROM issues
+		%s
+		ORDER BY priority ASC, created_at DESC
+		%s
+	`, whereSQL, limitSQL)
+
+	rows, err := t.conn.QueryContext(ctx, querySQL, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search issues: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return t.scanIssues(ctx, rows)
+}
+
+// scanIssues scans issue rows and fetches labels using the transaction connection.
+func (t *sqliteTxStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
+	var issues []*types.Issue
+	var issueIDs []string
+
+	// First pass: scan all issues
+	for rows.Next() {
+		var issue types.Issue
+		var contentHash sql.NullString
+		var closedAt sql.NullTime
+		var estimatedMinutes sql.NullInt64
+		var assignee sql.NullString
+		var externalRef sql.NullString
+		var sourceRepo sql.NullString
+
+		err := rows.Scan(
+			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan issue: %w", err)
+		}
+
+		if contentHash.Valid {
+			issue.ContentHash = contentHash.String
+		}
+		if closedAt.Valid {
+			issue.ClosedAt = &closedAt.Time
+		}
+		if estimatedMinutes.Valid {
+			mins := int(estimatedMinutes.Int64)
+			issue.EstimatedMinutes = &mins
+		}
+		if assignee.Valid {
+			issue.Assignee = assignee.String
+		}
+		if externalRef.Valid {
+			issue.ExternalRef = &externalRef.String
+		}
+		if sourceRepo.Valid {
+			issue.SourceRepo = sourceRepo.String
+		}
+
+		issues = append(issues, &issue)
+		issueIDs = append(issueIDs, issue.ID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// Second pass: batch-load labels for all issues using transaction connection
+	labelsMap, err := t.getLabelsForIssues(ctx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get labels: %w", err)
+	}
+
+	// Attach labels to issues
+	for _, issue := range issues {
+		issue.Labels = labelsMap[issue.ID]
+	}
+
+	return issues, nil
+}
+
+// getLabelsForIssues retrieves labels for multiple issues using the transaction connection.
+func (t *sqliteTxStorage) getLabelsForIssues(ctx context.Context, issueIDs []string) (map[string][]string, error) {
+	result := make(map[string][]string)
+	if len(issueIDs) == 0 {
+		return result, nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT issue_id, label FROM labels
+		WHERE issue_id IN (%s)
+		ORDER BY issue_id, label
+	`, strings.Join(placeholders, ", "))
+
+	rows, err := t.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get labels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var issueID, label string
+		if err := rows.Scan(&issueID, &label); err != nil {
+			return nil, err
+		}
+		result[issueID] = append(result[issueID], label)
+	}
+
+	return result, rows.Err()
+}

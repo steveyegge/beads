@@ -52,7 +52,8 @@ type Transaction interface {
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error
 	CloseIssue(ctx context.Context, id string, reason string, actor string) error
 	DeleteIssue(ctx context.Context, id string) error
-	GetIssue(ctx context.Context, id string) (*types.Issue, error) // For read-your-writes within transaction
+	GetIssue(ctx context.Context, id string) (*types.Issue, error)                                  // For read-your-writes within transaction
+	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) // For read-your-writes within transaction
 
 	// Dependency operations
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
