@@ -1,14 +1,20 @@
 package main
+
 import (
 	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -62,7 +68,7 @@ Force: Delete and orphan dependents
 		issueIDs = uniqueStrings(issueIDs)
 		// Handle batch deletion
 		if len(issueIDs) > 1 {
-			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput)
+			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, "batch delete")
 			return
 		}
 		// Single issue deletion (legacy behavior)
@@ -161,6 +167,13 @@ Force: Delete and orphan dependents
 			return
 		}
 		// Actually delete
+		// 0. Record deletion in manifest FIRST (before any DB changes)
+		// This ensures deletion propagates via git sync even if DB operations fail
+		deleteActor := getActorWithGit()
+		if err := recordDeletion(issueID, deleteActor, "manual delete"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to record deletion: %v\n", err)
+			os.Exit(1)
+		}
 		// 1. Update text references in connected issues (all text fields)
 		updatedIssueCount := 0
 		for id, connIssue := range connectedIssues {
@@ -319,7 +332,7 @@ func removeIssueFromJSONL(issueID string) error {
 }
 // deleteBatch handles deletion of multiple issues
 //nolint:unparam // cmd parameter required for potential future use
-func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, cascade bool, jsonOutput bool) {
+func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, cascade bool, jsonOutput bool, reason string) {
 	// Ensure we have a direct store when daemon lacks delete support
 	if daemonClient != nil {
 		if err := ensureDirectMode("daemon does not support delete command"); err != nil {
@@ -413,6 +426,13 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 				}
 			}
 		}
+	}
+	// Record deletions in manifest FIRST (before any DB changes)
+	// This ensures deletion propagates via git sync even if DB operations fail
+	deleteActor := getActorWithGit()
+	if err := recordDeletions(issueIDs, deleteActor, reason); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to record deletions: %v\n", err)
+		os.Exit(1)
 	}
 	// Actually delete
 	result, err := d.DeleteIssues(ctx, issueIDs, cascade, force, false)
@@ -553,6 +573,71 @@ func uniqueStrings(slice []string) []string {
 	}
 	return result
 }
+
+// getActorWithGit returns the actor for audit trail with git config fallback.
+// Priority: global actor var (from --actor flag or BD_ACTOR env) > git config user.name > $USER > "unknown"
+func getActorWithGit() string {
+	// If actor is already set (from flag or env), use it
+	if actor != "" && actor != "unknown" {
+		return actor
+	}
+
+	// Try git config user.name
+	cmd := exec.Command("git", "config", "user.name")
+	if output, err := cmd.Output(); err == nil {
+		if gitUser := strings.TrimSpace(string(output)); gitUser != "" {
+			return gitUser
+		}
+	}
+
+	// Fall back to USER env
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+
+	return "unknown"
+}
+
+// getDeletionsPath returns the path to the deletions manifest file.
+// Uses the same directory as the database.
+func getDeletionsPath() string {
+	// Get the .beads directory from dbPath
+	beadsDir := filepath.Dir(dbPath)
+	return deletions.DefaultPath(beadsDir)
+}
+
+// recordDeletion appends a deletion record to the deletions manifest.
+// This MUST be called BEFORE deleting from the database to ensure
+// deletion records are never lost.
+func recordDeletion(id, deleteActor, reason string) error {
+	record := deletions.DeletionRecord{
+		ID:        id,
+		Timestamp: time.Now().UTC(),
+		Actor:     deleteActor,
+		Reason:    reason,
+	}
+	return deletions.AppendDeletion(getDeletionsPath(), record)
+}
+
+// recordDeletions appends multiple deletion records to the deletions manifest.
+// This MUST be called BEFORE deleting from the database to ensure
+// deletion records are never lost.
+func recordDeletions(ids []string, deleteActor, reason string) error {
+	path := getDeletionsPath()
+	for _, id := range ids {
+		record := deletions.DeletionRecord{
+			ID:        id,
+			Timestamp: time.Now().UTC(),
+			Actor:     deleteActor,
+			Reason:    reason,
+		}
+		if err := deletions.AppendDeletion(path, record); err != nil {
+			return fmt.Errorf("failed to record deletion for %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
 func init() {
 	deleteCmd.Flags().BoolP("force", "f", false, "Actually delete (without this flag, shows preview)")
 	deleteCmd.Flags().String("from-file", "", "Read issue IDs from file (one per line)")

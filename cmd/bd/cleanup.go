@@ -127,7 +127,7 @@ SEE ALSO:
 		}
 
 		// Use the existing batch deletion logic
-		deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput)
+		deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, "cleanup")
 	},
 }
 

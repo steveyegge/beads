@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -51,6 +53,8 @@ type Result struct {
 	ExpectedPrefix      string            // Database configured prefix
 	MismatchPrefixes    map[string]int    // Map of mismatched prefixes to count
 	SkippedDependencies []string          // Dependencies skipped due to FK constraint violations
+	Purged              int               // Issues purged from DB (found in deletions manifest)
+	PurgedIDs           []string          // IDs that were purged
 }
 
 // ImportIssues handles the core import logic used by both manual and auto-import.
@@ -142,6 +146,15 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	// Import comments
 	if err := importComments(ctx, sqliteStore, issues, opts); err != nil {
 		return nil, err
+	}
+
+	// Purge deleted issues from DB based on deletions manifest
+	// Issues that are in the manifest but not in JSONL should be deleted from DB
+	if !opts.DryRun {
+		if err := purgeDeletedIssues(ctx, sqliteStore, dbPath, issues, result); err != nil {
+			// Non-fatal - just log warning
+			fmt.Fprintf(os.Stderr, "Warning: failed to purge deleted issues: %v\n", err)
+		}
 	}
 
 	// Checkpoint WAL to ensure data persistence and reduce WAL file size
@@ -733,6 +746,73 @@ func importComments(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issu
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+// purgeDeletedIssues removes issues from the DB that are in the deletions manifest
+// but not in the incoming JSONL. This enables deletion propagation across clones.
+func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, dbPath string, jsonlIssues []*types.Issue, result *Result) error {
+	// Get deletions manifest path (same directory as database)
+	beadsDir := filepath.Dir(dbPath)
+	deletionsPath := deletions.DefaultPath(beadsDir)
+
+	// Load deletions manifest (gracefully handles missing/empty file)
+	loadResult, err := deletions.LoadDeletions(deletionsPath)
+	if err != nil {
+		return fmt.Errorf("failed to load deletions manifest: %w", err)
+	}
+
+	// Log any warnings from loading
+	for _, warning := range loadResult.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+	}
+
+	// If no deletions, nothing to do
+	if len(loadResult.Records) == 0 {
+		return nil
+	}
+
+	// Build set of IDs in the incoming JSONL for O(1) lookup
+	jsonlIDs := make(map[string]bool, len(jsonlIssues))
+	for _, issue := range jsonlIssues {
+		jsonlIDs[issue.ID] = true
+	}
+
+	// Get all DB issues
+	dbIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return fmt.Errorf("failed to get DB issues: %w", err)
+	}
+
+	// Find DB issues that:
+	// 1. Are NOT in the JSONL (not synced from remote)
+	// 2. ARE in the deletions manifest (were deleted elsewhere)
+	for _, dbIssue := range dbIssues {
+		if jsonlIDs[dbIssue.ID] {
+			// Issue is in JSONL, keep it
+			continue
+		}
+
+		if del, found := loadResult.Records[dbIssue.ID]; found {
+			// Issue is in deletions manifest - purge it from DB
+			if err := sqliteStore.DeleteIssue(ctx, dbIssue.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to purge %s: %v\n", dbIssue.ID, err)
+				continue
+			}
+
+			// Log the purge with metadata
+			fmt.Fprintf(os.Stderr, "Purged %s (deleted %s by %s", dbIssue.ID, del.Timestamp.Format("2006-01-02 15:04:05"), del.Actor)
+			if del.Reason != "" {
+				fmt.Fprintf(os.Stderr, ", reason: %s", del.Reason)
+			}
+			fmt.Fprintf(os.Stderr, ")\n")
+
+			result.Purged++
+			result.PurgedIDs = append(result.PurgedIDs, dbIssue.ID)
+		}
+		// If not in JSONL and not in deletions manifest, keep it (local work)
 	}
 
 	return nil

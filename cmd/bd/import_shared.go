@@ -180,6 +180,8 @@ type ImportResult struct {
 	ExpectedPrefix      string            // Database configured prefix
 	MismatchPrefixes    map[string]int    // Map of mismatched prefixes to count
 	SkippedDependencies []string          // Dependencies skipped due to FK constraint violations
+	Purged              int               // Issues purged from DB (found in deletions manifest)
+	PurgedIDs           []string          // IDs that were purged
 }
 
 // importIssuesCore handles the core import logic used by both manual and auto-import.
@@ -240,6 +242,8 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 		ExpectedPrefix:      result.ExpectedPrefix,
 		MismatchPrefixes:    result.MismatchPrefixes,
 		SkippedDependencies: result.SkippedDependencies,
+		Purged:              result.Purged,
+		PurgedIDs:           result.PurgedIDs,
 	}, nil
 }
 
