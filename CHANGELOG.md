@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.4] - 2025-11-25
+
+### Added
+
+- **Transaction API**: Full transactional support for atomic multi-operation workflows (bd-8bq)
+  - New `storage.Transaction` interface with CreateIssue, UpdateIssue, CloseIssue, DeleteIssue
+  - Dependency operations: AddDependency, RemoveDependency within transactions
+  - Label operations: AddLabel, RemoveLabel with transactional semantics
+  - Config/Metadata operations for atomic config+issue workflows
+  - Uses `BEGIN IMMEDIATE` mode to prevent deadlocks
+  - Automatic rollback on error or panic, commit on success
+  - 1,147 lines of new implementation with comprehensive tests
+
+- **Tip System Infrastructure**: Smart contextual hints for users (bd-d4i)
+  - Tips shown after successful commands (list, ready, create, show)
+  - Condition-based filtering, priority ordering, probability rolls
+  - Frequency limits prevent tip spam
+  - Respects `--json` and `--quiet` flags
+  - Deterministic testing via `BEADS_TIP_SEED` env var
+
+- **Sorting for bd list and bd search**: New `--sort` and `--reverse` flags (bd-22g)
+  - Sort by: priority, created, updated, closed, status, id, title, type, assignee
+  - Smart defaults: priority ascending (P0 first), dates descending (newest first)
+  - Works with all existing filters
+
+- **Claude Integration Verification**: New bd doctor checks (bd-o78)
+  - `CheckBdInPath`: verifies 'bd' is in PATH (needed for hooks)
+  - `CheckDocumentationBdPrimeReference`: detects version mismatches in docs
+
+- **ARM Linux Support**: GoReleaser now builds for linux/arm64 (PR #371 by @tjg184)
+  - Enables bd on ARM-based Linux systems like Raspberry Pi, AWS Graviton
+
+- **Orphan Detection Migration**: Identifies orphaned child issues (bd-3852)
+  - Detects issues with hierarchical IDs where parent no longer exists
+  - Logs suggestions: delete, convert to standalone, or restore parent
+  - Idempotent and safe to run multiple times
+
+### Fixed
+
+- **Transaction Cache Invalidation**: blocked_issues_cache now invalidates correctly (bd-1c4h)
+  - UpdateIssue status changes trigger cache invalidation
+  - CloseIssue always invalidates (closed issues don't block)
+  - AddDependency/RemoveDependency invalidate for blocking types
+
+- **SQLITE_BUSY Retry Logic**: Exponential backoff for concurrent writes (bd-ola6)
+  - `beginImmediateWithRetry()` with 5 retries (10ms, 20ms, 40ms, 80ms, 160ms)
+  - Eliminates spurious failures under normal concurrent usage
+  - Context cancellation respected between retry attempts
+
+- **bd import Argument Validation**: Helpful error for common mistake (bd-77gm)
+  - Running `bd import file.jsonl` (without `-i`) now shows clear error
+  - Previously silently read from stdin, confusing users with "0 created"
+
+- **ZFC Import Export Skip**: Preserve JSONL source of truth (bd-l0r)
+  - After stale DB import from JSONL, skip export to avoid overwriting
+  - Fixes scenario where DB with fewer issues would overwrite JSONL
+
+- **Daemon Reopen with Reason**: `--reason` flag now works in daemon mode (bd-r46)
+  - Previously ignored in daemon RPC calls
+
+- **Windows Test Failures**: Skip file permission tests on Windows
+  - Windows doesn't support Unix-style permissions (0600, 0755)
+  - Core functionality still tested, only permission checks skipped
+
+### Changed
+
+- **bd daemon UX**: New `--start` flag, help text when no args (bd-gfu)
+  - `bd daemon` now shows help instead of immediately starting
+  - Use `bd daemon --start` to explicitly start
+  - Auto-start still works (uses `--start` internally)
+  - More discoverable for new users
+
+### Documentation
+
+- **blocked_issues_cache Architecture**: Document cache behavior and invalidation
+- **Antivirus False Positives**: Guide for handling security software alerts (bd-t4u1)
+- **import.orphan_handling**: Complete documentation (bd-9cdc)
+- **Error Handling Patterns**: Comprehensive audit and guidelines
+
+### Dependencies
+
+- Bump github.com/tetratelabs/wazero from 1.10.0 to 1.10.1 (#374)
+- Bump github.com/anthropics/anthropic-sdk-go from 1.18.0 to 1.18.1 (#373)
+- Bump actions/checkout from 4 to 6 (#372)
+
+### Community
+
+- PR #371: ARM Linux support (@tjg184)
+
 ## [0.24.3] - 2025-11-24
 
 ### Added
