@@ -333,3 +333,216 @@ func TestAppendDeletion_EmptyID(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
+
+func TestPruneDeletions_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	// Prune non-existent file should succeed
+	result, err := PruneDeletions(path, 7)
+	if err != nil {
+		t.Fatalf("PruneDeletions should not fail on non-existent file: %v", err)
+	}
+	if result.KeptCount != 0 {
+		t.Errorf("expected 0 kept, got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 0 {
+		t.Errorf("expected 0 pruned, got %d", result.PrunedCount)
+	}
+}
+
+func TestPruneDeletions_AllRecent(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now.Add(-1 * time.Hour), Actor: "user1"},
+		{ID: "bd-002", Timestamp: now.Add(-2 * time.Hour), Actor: "user2"},
+		{ID: "bd-003", Timestamp: now.Add(-3 * time.Hour), Actor: "user3"},
+	}
+
+	// Write records
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Prune with 7 day retention - nothing should be pruned
+	result, err := PruneDeletions(path, 7)
+	if err != nil {
+		t.Fatalf("PruneDeletions failed: %v", err)
+	}
+	if result.KeptCount != 3 {
+		t.Errorf("expected 3 kept, got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 0 {
+		t.Errorf("expected 0 pruned, got %d", result.PrunedCount)
+	}
+
+	// Verify file unchanged
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 3 {
+		t.Errorf("expected 3 records after prune, got %d", len(loaded.Records))
+	}
+}
+
+func TestPruneDeletions_SomeOld(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	// Two recent, two old
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now.Add(-1 * time.Hour), Actor: "user1"},        // Recent
+		{ID: "bd-002", Timestamp: now.AddDate(0, 0, -10), Actor: "user2"},          // 10 days old
+		{ID: "bd-003", Timestamp: now.Add(-2 * time.Hour), Actor: "user3"},         // Recent
+		{ID: "bd-004", Timestamp: now.AddDate(0, 0, -15), Actor: "user4"},          // 15 days old
+	}
+
+	// Write records
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Prune with 7 day retention
+	result, err := PruneDeletions(path, 7)
+	if err != nil {
+		t.Fatalf("PruneDeletions failed: %v", err)
+	}
+	if result.KeptCount != 2 {
+		t.Errorf("expected 2 kept, got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 2 {
+		t.Errorf("expected 2 pruned, got %d", result.PrunedCount)
+	}
+
+	// Verify pruned IDs
+	prunedMap := make(map[string]bool)
+	for _, id := range result.PrunedIDs {
+		prunedMap[id] = true
+	}
+	if !prunedMap["bd-002"] || !prunedMap["bd-004"] {
+		t.Errorf("expected bd-002 and bd-004 to be pruned, got %v", result.PrunedIDs)
+	}
+
+	// Verify file was updated
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 2 {
+		t.Errorf("expected 2 records after prune, got %d", len(loaded.Records))
+	}
+	if _, ok := loaded.Records["bd-001"]; !ok {
+		t.Error("expected bd-001 to remain")
+	}
+	if _, ok := loaded.Records["bd-003"]; !ok {
+		t.Error("expected bd-003 to remain")
+	}
+}
+
+func TestPruneDeletions_AllOld(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now.AddDate(0, 0, -30), Actor: "user1"},
+		{ID: "bd-002", Timestamp: now.AddDate(0, 0, -60), Actor: "user2"},
+	}
+
+	// Write records
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Prune with 7 day retention - all should be pruned
+	result, err := PruneDeletions(path, 7)
+	if err != nil {
+		t.Fatalf("PruneDeletions failed: %v", err)
+	}
+	if result.KeptCount != 0 {
+		t.Errorf("expected 0 kept, got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 2 {
+		t.Errorf("expected 2 pruned, got %d", result.PrunedCount)
+	}
+
+	// Verify file is empty
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 0 {
+		t.Errorf("expected 0 records after prune, got %d", len(loaded.Records))
+	}
+}
+
+func TestPruneDeletions_NearBoundary(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	// Record just inside retention should be kept (6 days 23 hours)
+	// Record just outside retention should be pruned (7 days 1 hour)
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now.AddDate(0, 0, -6).Add(-23 * time.Hour), Actor: "user1"},  // ~6.96 days (kept)
+		{ID: "bd-002", Timestamp: now.AddDate(0, 0, -7).Add(-1 * time.Hour), Actor: "user2"},   // ~7.04 days (pruned)
+	}
+
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	result, err := PruneDeletions(path, 7)
+	if err != nil {
+		t.Fatalf("PruneDeletions failed: %v", err)
+	}
+	if result.KeptCount != 1 {
+		t.Errorf("expected 1 kept (inside boundary), got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 1 {
+		t.Errorf("expected 1 pruned (outside boundary), got %d", result.PrunedCount)
+	}
+}
+
+func TestPruneDeletions_ZeroRetention(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now.Add(1 * time.Hour), Actor: "user1"},   // 1 hour in future (kept)
+		{ID: "bd-002", Timestamp: now.Add(-1 * time.Hour), Actor: "user2"},  // 1 hour ago (pruned with 0 retention)
+	}
+
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// With 0 retention, cutoff is now - past records should be pruned
+	result, err := PruneDeletions(path, 0)
+	if err != nil {
+		t.Fatalf("PruneDeletions failed: %v", err)
+	}
+	// Future record should be kept, past record should be pruned
+	if result.KeptCount != 1 {
+		t.Errorf("expected 1 kept with 0 retention, got %d", result.KeptCount)
+	}
+	if result.PrunedCount != 1 {
+		t.Errorf("expected 1 pruned with 0 retention, got %d", result.PrunedCount)
+	}
+}

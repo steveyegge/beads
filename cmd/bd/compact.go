@@ -6,28 +6,32 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/compact"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 var (
-	compactDryRun  bool
-	compactTier    int
-	compactAll     bool
-	compactID      string
-	compactForce   bool
-	compactBatch   int
-	compactWorkers int
-	compactStats   bool
-	compactAnalyze bool
-	compactApply   bool
-	compactAuto    bool
-	compactSummary string
-	compactActor   string
-	compactLimit   int
+	compactDryRun   bool
+	compactTier     int
+	compactAll      bool
+	compactID       string
+	compactForce    bool
+	compactBatch    int
+	compactWorkers  int
+	compactStats    bool
+	compactAnalyze  bool
+	compactApply    bool
+	compactAuto     bool
+	compactSummary  string
+	compactActor    string
+	compactLimit    int
+	compactRetention int
 )
 
 var compactCmd = &cobra.Command{
@@ -47,6 +51,11 @@ Tiers:
   - Tier 1: Semantic compression (30 days closed, 70% reduction)
   - Tier 2: Ultra compression (90 days closed, 95% reduction)
 
+Deletions Pruning:
+  All modes also prune old deletion records from deletions.jsonl to prevent
+  unbounded growth. Default retention is 7 days (configurable via --retention
+  or deletions_retention_days in metadata.json).
+
 Examples:
   # Agent-driven workflow (recommended)
   bd compact --analyze --json              # Get candidates with full content
@@ -57,9 +66,12 @@ Examples:
   bd compact --auto --dry-run              # Preview candidates
   bd compact --auto --all                  # Compact all eligible issues
   bd compact --auto --id bd-42             # Compact specific issue
-  
+
   # Statistics
   bd compact --stats                       # Show statistics
+
+  # Override retention period
+  bd compact --auto --all --retention=14   # Keep 14 days of deletions
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		ctx := rootCtx
@@ -287,6 +299,9 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 		float64(savingBytes)/float64(originalSize)*100)
 	fmt.Printf("  Time: %v\n", elapsed)
 
+	// Prune old deletion records
+	pruneDeletionsManifest()
+
 	// Schedule auto-flush to export changes
 	markDirtyAndScheduleFlush()
 }
@@ -410,6 +425,9 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	if totalOriginal > 0 {
 		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", totalSaved, float64(totalSaved)/float64(totalOriginal)*100)
 	}
+
+	// Prune old deletion records
+	pruneDeletionsManifest()
 
 	// Schedule auto-flush to export changes
 	if successCount > 0 {
@@ -865,8 +883,52 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	fmt.Printf("  %d → %d bytes (saved %d, %.1f%%)\n", originalSize, compactedSize, savingBytes, reductionPct)
 	fmt.Printf("  Time: %v\n", elapsed)
 
+	// Prune old deletion records
+	pruneDeletionsManifest()
+
 	// Schedule auto-flush to export changes
 	markDirtyAndScheduleFlush()
+}
+
+// pruneDeletionsManifest prunes old deletion records based on retention settings.
+// It outputs results to stdout (or JSON) and returns any error.
+// Uses the global dbPath to determine the .beads directory.
+func pruneDeletionsManifest() {
+	beadsDir := filepath.Dir(dbPath)
+	// Determine retention days
+	retentionDays := compactRetention
+	if retentionDays <= 0 {
+		// Load config for default
+		cfg, err := configfile.Load(beadsDir)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: could not load config for retention settings: %v\n", err)
+			}
+			retentionDays = configfile.DefaultDeletionsRetentionDays
+		} else if cfg != nil {
+			retentionDays = cfg.GetDeletionsRetentionDays()
+		} else {
+			retentionDays = configfile.DefaultDeletionsRetentionDays
+		}
+	}
+
+	deletionsPath := deletions.DefaultPath(beadsDir)
+	result, err := deletions.PruneDeletions(deletionsPath, retentionDays)
+	if err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: failed to prune deletions: %v\n", err)
+		}
+		return
+	}
+
+	// Only report if there were deletions to prune
+	if result.PrunedCount > 0 {
+		if jsonOutput {
+			// JSON output will be included in the main response
+			return
+		}
+		fmt.Printf("\nDeletions pruned: %d records older than %d days removed\n", result.PrunedCount, retentionDays)
+	}
 }
 
 func init() {
@@ -887,6 +949,9 @@ func init() {
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
+
+	// Deletions pruning flag
+	compactCmd.Flags().IntVar(&compactRetention, "retention", 0, "Deletion retention days (0 = use config default)")
 
 	rootCmd.AddCommand(compactCmd)
 }

@@ -1067,3 +1067,43 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckGitHistoryForDeletions_EmptyList(t *testing.T) {
+	// Empty list should return nil
+	result := checkGitHistoryForDeletions("/tmp/test", nil)
+	if result != nil {
+		t.Errorf("Expected nil for empty list, got %v", result)
+	}
+
+	result = checkGitHistoryForDeletions("/tmp/test", []string{})
+	if result != nil {
+		t.Errorf("Expected nil for empty slice, got %v", result)
+	}
+}
+
+func TestCheckGitHistoryForDeletions_NonGitDir(t *testing.T) {
+	// Non-git directory should return empty (conservative behavior)
+	tmpDir := t.TempDir()
+	result := checkGitHistoryForDeletions(tmpDir, []string{"bd-test"})
+	if len(result) != 0 {
+		t.Errorf("Expected empty result for non-git dir, got %v", result)
+	}
+}
+
+func TestWasInGitHistory_NonGitDir(t *testing.T) {
+	// Non-git directory should return false (conservative behavior)
+	tmpDir := t.TempDir()
+	result := wasInGitHistory(tmpDir, ".beads/beads.jsonl", "bd-test")
+	if result {
+		t.Error("Expected false for non-git dir")
+	}
+}
+
+func TestBatchCheckGitHistory_NonGitDir(t *testing.T) {
+	// Non-git directory should return empty (falls back to individual checks)
+	tmpDir := t.TempDir()
+	result := batchCheckGitHistory(tmpDir, ".beads/beads.jsonl", []string{"bd-test1", "bd-test2"})
+	if len(result) != 0 {
+		t.Errorf("Expected empty result for non-git dir, got %v", result)
+	}
+}

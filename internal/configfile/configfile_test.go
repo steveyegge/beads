@@ -114,8 +114,46 @@ func TestConfigPath(t *testing.T) {
 	beadsDir := "/home/user/project/.beads"
 	got := ConfigPath(beadsDir)
 	want := filepath.Join(beadsDir, "metadata.json")
-	
+
 	if got != want {
 		t.Errorf("ConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestGetDeletionsRetentionDays(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    *Config
+		want   int
+	}{
+		{
+			name: "zero uses default",
+			cfg:  &Config{DeletionsRetentionDays: 0},
+			want: DefaultDeletionsRetentionDays,
+		},
+		{
+			name: "negative uses default",
+			cfg:  &Config{DeletionsRetentionDays: -5},
+			want: DefaultDeletionsRetentionDays,
+		},
+		{
+			name: "custom value",
+			cfg:  &Config{DeletionsRetentionDays: 14},
+			want: 14,
+		},
+		{
+			name: "minimum value 1",
+			cfg:  &Config{DeletionsRetentionDays: 1},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetDeletionsRetentionDays()
+			if got != tt.want {
+				t.Errorf("GetDeletionsRetentionDays() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }

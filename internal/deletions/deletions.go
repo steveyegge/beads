@@ -179,3 +179,54 @@ func WriteDeletions(path string, records []DeletionRecord) error {
 func DefaultPath(beadsDir string) string {
 	return filepath.Join(beadsDir, "deletions.jsonl")
 }
+
+// DefaultRetentionDays is the default number of days to retain deletion records.
+const DefaultRetentionDays = 7
+
+// PruneResult contains the result of a prune operation.
+type PruneResult struct {
+	KeptCount   int
+	PrunedCount int
+	PrunedIDs   []string
+}
+
+// PruneDeletions removes deletion records older than the specified retention period.
+// Returns PruneResult with counts and IDs of pruned records.
+// If the file doesn't exist or is empty, returns zero counts with no error.
+func PruneDeletions(path string, retentionDays int) (*PruneResult, error) {
+	result := &PruneResult{
+		PrunedIDs: []string{},
+	}
+
+	loadResult, err := LoadDeletions(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load deletions: %w", err)
+	}
+
+	if len(loadResult.Records) == 0 {
+		return result, nil
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	var kept []DeletionRecord
+
+	for _, record := range loadResult.Records {
+		if record.Timestamp.After(cutoff) || record.Timestamp.Equal(cutoff) {
+			kept = append(kept, record)
+		} else {
+			result.PrunedCount++
+			result.PrunedIDs = append(result.PrunedIDs, record.ID)
+		}
+	}
+
+	result.KeptCount = len(kept)
+
+	// Only rewrite if we actually pruned something
+	if result.PrunedCount > 0 {
+		if err := WriteDeletions(path, kept); err != nil {
+			return nil, fmt.Errorf("failed to write pruned deletions: %w", err)
+		}
+	}
+
+	return result, nil
+}

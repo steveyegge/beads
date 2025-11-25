@@ -1,12 +1,15 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage"
@@ -753,6 +756,7 @@ func importComments(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issu
 
 // purgeDeletedIssues removes issues from the DB that are in the deletions manifest
 // but not in the incoming JSONL. This enables deletion propagation across clones.
+// Also uses git history fallback for deletions that were pruned from the manifest.
 func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, dbPath string, jsonlIssues []*types.Issue, result *Result) error {
 	// Get deletions manifest path (same directory as database)
 	beadsDir := filepath.Dir(dbPath)
@@ -769,11 +773,6 @@ func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, 
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
 	}
 
-	// If no deletions, nothing to do
-	if len(loadResult.Records) == 0 {
-		return nil
-	}
-
 	// Build set of IDs in the incoming JSONL for O(1) lookup
 	jsonlIDs := make(map[string]bool, len(jsonlIssues))
 	for _, issue := range jsonlIssues {
@@ -785,6 +784,9 @@ func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, 
 	if err != nil {
 		return fmt.Errorf("failed to get DB issues: %w", err)
 	}
+
+	// Collect IDs that need git history check (not in JSONL, not in manifest)
+	var needGitCheck []string
 
 	// Find DB issues that:
 	// 1. Are NOT in the JSONL (not synced from remote)
@@ -811,11 +813,153 @@ func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, 
 
 			result.Purged++
 			result.PurgedIDs = append(result.PurgedIDs, dbIssue.ID)
+		} else {
+			// Not in JSONL and not in deletions manifest
+			// This could be:
+			// 1. Local work (new issue not yet exported)
+			// 2. Deletion was pruned from manifest (check git history)
+			needGitCheck = append(needGitCheck, dbIssue.ID)
 		}
-		// If not in JSONL and not in deletions manifest, keep it (local work)
+	}
+
+	// Git history fallback for potential pruned deletions
+	if len(needGitCheck) > 0 {
+		deletedViaGit := checkGitHistoryForDeletions(beadsDir, needGitCheck)
+		for _, id := range deletedViaGit {
+			// Backfill the deletions manifest (self-healing)
+			backfillRecord := deletions.DeletionRecord{
+				ID:        id,
+				Timestamp: time.Now().UTC(),
+				Actor:     "git-history-backfill",
+				Reason:    "recovered from git history (pruned from manifest)",
+			}
+			if err := deletions.AppendDeletion(deletionsPath, backfillRecord); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to backfill deletion record for %s: %v\n", id, err)
+			}
+
+			// Delete from DB
+			if err := sqliteStore.DeleteIssue(ctx, id); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to purge %s (git-recovered): %v\n", id, err)
+				continue
+			}
+
+			fmt.Fprintf(os.Stderr, "Purged %s (recovered from git history, pruned from manifest)\n", id)
+			result.Purged++
+			result.PurgedIDs = append(result.PurgedIDs, id)
+		}
 	}
 
 	return nil
+}
+
+// checkGitHistoryForDeletions checks if IDs were ever in the JSONL history.
+// Returns the IDs that were found in git history (meaning they were deleted,
+// and the deletion record was pruned from the manifest).
+//
+// Uses batched git log search for efficiency when checking multiple IDs.
+func checkGitHistoryForDeletions(beadsDir string, ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// Get the repo root directory (parent of .beads)
+	repoRoot := filepath.Dir(beadsDir)
+
+	// Build JSONL path relative to repo root
+	jsonlPath := filepath.Join(".beads", "beads.jsonl")
+
+	var deleted []string
+
+	// For efficiency, batch IDs into a single git command when possible
+	// We use git log with -S to search for string additions/removals
+	if len(ids) <= 10 {
+		// Small batch: check each ID individually for accuracy
+		for _, id := range ids {
+			if wasInGitHistory(repoRoot, jsonlPath, id) {
+				deleted = append(deleted, id)
+			}
+		}
+	} else {
+		// Large batch: use grep pattern for efficiency
+		// This may have some false positives, but is much faster
+		deleted = batchCheckGitHistory(repoRoot, jsonlPath, ids)
+	}
+
+	return deleted
+}
+
+// wasInGitHistory checks if a single ID was ever in the JSONL via git history.
+// Returns true if the ID was found in history (meaning it was deleted).
+func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
+	// git log --all -S "\"id\":\"bd-xxx\"" --oneline -- .beads/beads.jsonl
+	// This searches for commits that added or removed the ID string
+	searchPattern := fmt.Sprintf(`"id":"%s"`, id)
+
+	// #nosec G204 - searchPattern is constructed from validated issue IDs
+	cmd := exec.Command("git", "log", "--all", "-S", searchPattern, "--oneline", "--", jsonlPath)
+	cmd.Dir = repoRoot
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = nil // Ignore stderr
+
+	if err := cmd.Run(); err != nil {
+		// Git command failed - could be shallow clone, not a git repo, etc.
+		// Conservative: assume issue is local work, don't delete
+		return false
+	}
+
+	// If output is non-empty, the ID was in git history
+	// This means it was added and then removed (deleted)
+	return len(bytes.TrimSpace(stdout.Bytes())) > 0
+}
+
+// batchCheckGitHistory checks multiple IDs at once using git log with pattern matching.
+// Returns the IDs that were found in git history.
+func batchCheckGitHistory(repoRoot, jsonlPath string, ids []string) []string {
+	// Build a regex pattern to match any of the IDs
+	// Pattern: "id":"bd-xxx"|"id":"bd-yyy"|...
+	patterns := make([]string, 0, len(ids))
+	for _, id := range ids {
+		patterns = append(patterns, fmt.Sprintf(`"id":"%s"`, id))
+	}
+	searchPattern := strings.Join(patterns, "|")
+
+	// Use git log -G (regex) for batch search
+	// #nosec G204 - searchPattern is constructed from validated issue IDs
+	cmd := exec.Command("git", "log", "--all", "-G", searchPattern, "-p", "--", jsonlPath)
+	cmd.Dir = repoRoot
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = nil // Ignore stderr
+
+	if err := cmd.Run(); err != nil {
+		// Git command failed - fall back to individual checks
+		var deleted []string
+		for _, id := range ids {
+			if wasInGitHistory(repoRoot, jsonlPath, id) {
+				deleted = append(deleted, id)
+			}
+		}
+		return deleted
+	}
+
+	output := stdout.String()
+	if output == "" {
+		return nil
+	}
+
+	// Parse output to find which IDs were actually in history
+	var deleted []string
+	for _, id := range ids {
+		searchStr := fmt.Sprintf(`"id":"%s"`, id)
+		if strings.Contains(output, searchStr) {
+			deleted = append(deleted, id)
+		}
+	}
+
+	return deleted
 }
 
 // Helper functions
