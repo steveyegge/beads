@@ -61,6 +61,17 @@ type Transaction interface {
 	// Label operations
 	AddLabel(ctx context.Context, issueID, label, actor string) error
 	RemoveLabel(ctx context.Context, issueID, label, actor string) error
+
+	// Config operations (for atomic config + issue workflows)
+	SetConfig(ctx context.Context, key, value string) error
+	GetConfig(ctx context.Context, key string) (string, error)
+
+	// Metadata operations (for internal state like import hashes)
+	SetMetadata(ctx context.Context, key, value string) error
+	GetMetadata(ctx context.Context, key string) (string, error)
+
+	// Comment operations
+	AddComment(ctx context.Context, issueID, actor, comment string) error
 }
 
 // Storage defines the interface for issue storage backends

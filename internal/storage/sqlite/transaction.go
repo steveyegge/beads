@@ -796,3 +796,91 @@ func (t *sqliteTxStorage) RemoveLabel(ctx context.Context, issueID, label, actor
 
 	return nil
 }
+
+// SetConfig sets a configuration value within the transaction.
+func (t *sqliteTxStorage) SetConfig(ctx context.Context, key, value string) error {
+	_, err := t.conn.ExecContext(ctx, `
+		INSERT INTO config (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	if err != nil {
+		return fmt.Errorf("failed to set config: %w", err)
+	}
+	return nil
+}
+
+// GetConfig gets a configuration value within the transaction.
+// This enables read-your-writes semantics for config values.
+func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, error) {
+	var value string
+	err := t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get config: %w", err)
+	}
+	return value, nil
+}
+
+// SetMetadata sets a metadata value within the transaction.
+func (t *sqliteTxStorage) SetMetadata(ctx context.Context, key, value string) error {
+	_, err := t.conn.ExecContext(ctx, `
+		INSERT INTO metadata (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	if err != nil {
+		return fmt.Errorf("failed to set metadata: %w", err)
+	}
+	return nil
+}
+
+// GetMetadata gets a metadata value within the transaction.
+// This enables read-your-writes semantics for metadata values.
+func (t *sqliteTxStorage) GetMetadata(ctx context.Context, key string) (string, error) {
+	var value string
+	err := t.conn.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get metadata: %w", err)
+	}
+	return value, nil
+}
+
+// AddComment adds a comment to an issue within the transaction.
+func (t *sqliteTxStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
+	// Update issue updated_at timestamp first to verify issue exists
+	now := time.Now()
+	res, err := t.conn.ExecContext(ctx, `
+		UPDATE issues SET updated_at = ? WHERE id = ?
+	`, now, issueID)
+	if err != nil {
+		return fmt.Errorf("failed to update timestamp: %w", err)
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("issue %s not found", issueID)
+	}
+
+	// Insert comment event
+	_, err = t.conn.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, issueID, types.EventCommented, actor, comment)
+	if err != nil {
+		return fmt.Errorf("failed to add comment: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	if err := markDirty(ctx, t.conn, issueID); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	return nil
+}

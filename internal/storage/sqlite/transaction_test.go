@@ -847,6 +847,449 @@ func TestTransactionAtomicPlanApproval(t *testing.T) {
 	}
 }
 
+// TestTransactionSetConfig tests setting a config value within a transaction.
+func TestTransactionSetConfig(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.SetConfig(ctx, "test.key", "test-value")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify config was set
+	value, err := store.GetConfig(ctx, "test.key")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "test-value" {
+		t.Errorf("expected 'test-value', got %q", value)
+	}
+}
+
+// TestTransactionGetConfig tests reading config within a transaction (read-your-writes).
+func TestTransactionGetConfig(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Set config
+		if err := tx.SetConfig(ctx, "test.key", "test-value"); err != nil {
+			return err
+		}
+
+		// Read it back within same transaction
+		value, err := tx.GetConfig(ctx, "test.key")
+		if err != nil {
+			return err
+		}
+		if value != "test-value" {
+			t.Errorf("expected 'test-value' within transaction, got %q", value)
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionConfigRollback tests that config changes are rolled back on error.
+func TestTransactionConfigRollback(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		if err := tx.SetConfig(ctx, "test.key", "test-value"); err != nil {
+			return err
+		}
+		return &testError{msg: "intentional rollback"}
+	})
+
+	if err == nil {
+		t.Error("expected error from transaction")
+	}
+
+	// Verify config was NOT set (rolled back)
+	value, err := store.GetConfig(ctx, "test.key")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "" {
+		t.Errorf("expected empty value after rollback, got %q", value)
+	}
+}
+
+// TestTransactionSetMetadata tests setting a metadata value within a transaction.
+func TestTransactionSetMetadata(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.SetMetadata(ctx, "test.metadata", "metadata-value")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify metadata was set
+	value, err := store.GetMetadata(ctx, "test.metadata")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+	if value != "metadata-value" {
+		t.Errorf("expected 'metadata-value', got %q", value)
+	}
+}
+
+// TestTransactionGetMetadata tests reading metadata within a transaction (read-your-writes).
+func TestTransactionGetMetadata(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Set metadata
+		if err := tx.SetMetadata(ctx, "test.metadata", "metadata-value"); err != nil {
+			return err
+		}
+
+		// Read it back within same transaction
+		value, err := tx.GetMetadata(ctx, "test.metadata")
+		if err != nil {
+			return err
+		}
+		if value != "metadata-value" {
+			t.Errorf("expected 'metadata-value' within transaction, got %q", value)
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionMetadataRollback tests that metadata changes are rolled back on error.
+func TestTransactionMetadataRollback(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		if err := tx.SetMetadata(ctx, "test.metadata", "metadata-value"); err != nil {
+			return err
+		}
+		return &testError{msg: "intentional rollback"}
+	})
+
+	if err == nil {
+		t.Error("expected error from transaction")
+	}
+
+	// Verify metadata was NOT set (rolled back)
+	value, err := store.GetMetadata(ctx, "test.metadata")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+	if value != "" {
+		t.Errorf("expected empty value after rollback, got %q", value)
+	}
+}
+
+// TestTransactionAddComment tests adding a comment within a transaction.
+func TestTransactionAddComment(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create issue first
+	issue := &types.Issue{
+		Title:     "Test Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Add comment in transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.AddComment(ctx, issue.ID, "commenter", "This is a test comment")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify comment exists via events
+	events, err := store.GetEvents(ctx, issue.ID, 10)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+
+	found := false
+	for _, e := range events {
+		if e.EventType == types.EventCommented && e.Comment != nil && *e.Comment == "This is a test comment" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected comment event to exist")
+	}
+}
+
+// TestTransactionAddCommentToCreatedIssue tests adding a comment to an issue created in the same transaction.
+func TestTransactionAddCommentToCreatedIssue(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	var issueID string
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create issue
+		issue := &types.Issue{
+			Title:     "Test Issue",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+			return err
+		}
+		issueID = issue.ID
+
+		// Add comment to the issue we just created
+		return tx.AddComment(ctx, issue.ID, "commenter", "Comment on new issue")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify both issue and comment exist
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil || issue == nil {
+		t.Error("expected issue to exist")
+	}
+
+	events, err := store.GetEvents(ctx, issueID, 10)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+
+	found := false
+	for _, e := range events {
+		if e.EventType == types.EventCommented && e.Comment != nil && *e.Comment == "Comment on new issue" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected comment event to exist")
+	}
+}
+
+// TestTransactionAddCommentNonexistentIssue tests that adding a comment to a nonexistent issue fails.
+func TestTransactionAddCommentNonexistentIssue(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.AddComment(ctx, "nonexistent-id", "commenter", "This should fail")
+	})
+
+	if err == nil {
+		t.Error("expected error when commenting on nonexistent issue")
+	}
+}
+
+// TestTransactionCommentRollback tests that comments are rolled back on error.
+func TestTransactionCommentRollback(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create issue first
+	issue := &types.Issue{
+		Title:     "Test Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		if err := tx.AddComment(ctx, issue.ID, "commenter", "This comment should be rolled back"); err != nil {
+			return err
+		}
+		return &testError{msg: "intentional rollback"}
+	})
+
+	if err == nil {
+		t.Error("expected error from transaction")
+	}
+
+	// Verify comment was NOT added (rolled back)
+	events, err := store.GetEvents(ctx, issue.ID, 10)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+
+	for _, e := range events {
+		if e.EventType == types.EventCommented {
+			t.Error("expected no comment events after rollback")
+		}
+	}
+}
+
+// TestTransactionAtomicConfigWithIssue tests atomically creating an issue and setting config.
+func TestTransactionAtomicConfigWithIssue(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	var issueID string
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// Create issue
+		issue := &types.Issue{
+			Title:     "Test Issue",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+		}
+		if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+			return err
+		}
+		issueID = issue.ID
+
+		// Set config referencing the issue
+		if err := tx.SetConfig(ctx, "last_created_issue", issue.ID); err != nil {
+			return err
+		}
+
+		// Set metadata
+		if err := tx.SetMetadata(ctx, "import_marker", "test-import-123"); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify all three operations succeeded
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil || issue == nil {
+		t.Error("expected issue to exist")
+	}
+
+	configValue, err := store.GetConfig(ctx, "last_created_issue")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if configValue != issueID {
+		t.Errorf("expected config value %q, got %q", issueID, configValue)
+	}
+
+	metadataValue, err := store.GetMetadata(ctx, "import_marker")
+	if err != nil {
+		t.Fatalf("GetMetadata failed: %v", err)
+	}
+	if metadataValue != "test-import-123" {
+		t.Errorf("expected metadata value 'test-import-123', got %q", metadataValue)
+	}
+}
+
+// TestTransactionConfigOverwrite tests that SetConfig overwrites existing values.
+func TestTransactionConfigOverwrite(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Set initial value
+	if err := store.SetConfig(ctx, "test.key", "initial"); err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+
+	// Overwrite in transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.SetConfig(ctx, "test.key", "updated")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify overwrite
+	value, err := store.GetConfig(ctx, "test.key")
+	if err != nil {
+		t.Fatalf("GetConfig failed: %v", err)
+	}
+	if value != "updated" {
+		t.Errorf("expected 'updated', got %q", value)
+	}
+}
+
+// TestTransactionGetConfigNonexistent tests getting a nonexistent config key returns empty string.
+func TestTransactionGetConfigNonexistent(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		value, err := tx.GetConfig(ctx, "nonexistent.key")
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			t.Errorf("expected empty string for nonexistent key, got %q", value)
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
+// TestTransactionGetMetadataNonexistent tests getting a nonexistent metadata key returns empty string.
+func TestTransactionGetMetadataNonexistent(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		value, err := tx.GetMetadata(ctx, "nonexistent.metadata")
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			t.Errorf("expected empty string for nonexistent metadata, got %q", value)
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
 // testError is a simple error type for testing
 type testError struct {
 	msg string
