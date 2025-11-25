@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -862,11 +863,34 @@ func checkGitHistoryForDeletions(beadsDir string, ids []string) []string {
 		return nil
 	}
 
-	// Get the repo root directory (parent of .beads)
-	repoRoot := filepath.Dir(beadsDir)
+	// Find the actual git repo root using git rev-parse (bd-bhd)
+	// This handles monorepos and nested projects where .beads isn't at repo root
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	cmd.Dir = beadsDir
+	output, err := cmd.Output()
+	if err != nil {
+		// Not in a git repo or git not available - can't do history check
+		return nil
+	}
+	repoRoot := strings.TrimSpace(string(output))
+
+	// Compute relative path from repo root to beads.jsonl
+	// beadsDir is absolute, compute its path relative to repoRoot
+	absBeadsDir, err := filepath.Abs(beadsDir)
+	if err != nil {
+		return nil
+	}
+
+	relBeadsDir, err := filepath.Rel(repoRoot, absBeadsDir)
+	if err != nil {
+		return nil
+	}
 
 	// Build JSONL path relative to repo root
-	jsonlPath := filepath.Join(".beads", "beads.jsonl")
+	jsonlPath := filepath.Join(relBeadsDir, "beads.jsonl")
 
 	var deleted []string
 
@@ -888,15 +912,24 @@ func checkGitHistoryForDeletions(beadsDir string, ids []string) []string {
 	return deleted
 }
 
+// gitHistoryTimeout is the maximum time to wait for git history searches.
+// Prevents hangs on large repositories (bd-f0n).
+const gitHistoryTimeout = 30 * time.Second
+
 // wasInGitHistory checks if a single ID was ever in the JSONL via git history.
 // Returns true if the ID was found in history (meaning it was deleted).
 func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
 	// git log --all -S "\"id\":\"bd-xxx\"" --oneline -- .beads/beads.jsonl
 	// This searches for commits that added or removed the ID string
+	// Note: -S uses literal string matching, not regex, so no escaping needed
 	searchPattern := fmt.Sprintf(`"id":"%s"`, id)
 
+	// Use context with timeout to prevent hangs on large repos (bd-f0n)
+	ctx, cancel := context.WithTimeout(context.Background(), gitHistoryTimeout)
+	defer cancel()
+
 	// #nosec G204 - searchPattern is constructed from validated issue IDs
-	cmd := exec.Command("git", "log", "--all", "-S", searchPattern, "--oneline", "--", jsonlPath)
+	cmd := exec.CommandContext(ctx, "git", "log", "--all", "-S", searchPattern, "--oneline", "--", jsonlPath)
 	cmd.Dir = repoRoot
 
 	var stdout bytes.Buffer
@@ -904,7 +937,7 @@ func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
 	cmd.Stderr = nil // Ignore stderr
 
 	if err := cmd.Run(); err != nil {
-		// Git command failed - could be shallow clone, not a git repo, etc.
+		// Git command failed - could be shallow clone, not a git repo, timeout, etc.
 		// Conservative: assume issue is local work, don't delete
 		return false
 	}
@@ -919,15 +952,21 @@ func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
 func batchCheckGitHistory(repoRoot, jsonlPath string, ids []string) []string {
 	// Build a regex pattern to match any of the IDs
 	// Pattern: "id":"bd-xxx"|"id":"bd-yyy"|...
+	// Escape regex special characters in IDs to avoid malformed patterns (bd-bgs)
 	patterns := make([]string, 0, len(ids))
 	for _, id := range ids {
-		patterns = append(patterns, fmt.Sprintf(`"id":"%s"`, id))
+		escapedID := regexp.QuoteMeta(id)
+		patterns = append(patterns, fmt.Sprintf(`"id":"%s"`, escapedID))
 	}
 	searchPattern := strings.Join(patterns, "|")
 
+	// Use context with timeout to prevent hangs on large repos (bd-f0n)
+	ctx, cancel := context.WithTimeout(context.Background(), gitHistoryTimeout)
+	defer cancel()
+
 	// Use git log -G (regex) for batch search
 	// #nosec G204 - searchPattern is constructed from validated issue IDs
-	cmd := exec.Command("git", "log", "--all", "-G", searchPattern, "-p", "--", jsonlPath)
+	cmd := exec.CommandContext(ctx, "git", "log", "--all", "-G", searchPattern, "-p", "--", jsonlPath)
 	cmd.Dir = repoRoot
 
 	var stdout bytes.Buffer
@@ -935,7 +974,8 @@ func batchCheckGitHistory(repoRoot, jsonlPath string, ids []string) []string {
 	cmd.Stderr = nil // Ignore stderr
 
 	if err := cmd.Run(); err != nil {
-		// Git command failed - fall back to individual checks
+		// Git command failed (timeout, shallow clone, etc.) - fall back to individual checks
+		// Individual checks also have timeout protection
 		var deleted []string
 		for _, id := range ids {
 			if wasInGitHistory(repoRoot, jsonlPath, id) {

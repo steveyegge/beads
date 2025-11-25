@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -409,6 +411,12 @@ Use --merge to merge the sync branch back to main branch.`,
 		if dryRun {
 			fmt.Println("\n✓ Dry run complete (no changes made)")
 		} else {
+			// Auto-compact deletions manifest if enabled and threshold exceeded
+			if err := maybeAutoCompactDeletions(ctx, jsonlPath); err != nil {
+				// Non-fatal - just log warning
+				fmt.Fprintf(os.Stderr, "Warning: auto-compact deletions failed: %v\n", err)
+			}
+
 			fmt.Println("\n✓ Sync complete")
 		}
 	},
@@ -1105,11 +1113,84 @@ func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool)
 	if err != nil {
 		return fmt.Errorf("import failed: %w\n%s", err, output)
 	}
-	
+
 	// Show output (import command provides the summary)
 	if len(output) > 0 {
 		fmt.Print(string(output))
 	}
-	
+
+	return nil
+}
+
+// Default configuration values for auto-compact
+const (
+	defaultAutoCompact          = false
+	defaultAutoCompactThreshold = 1000
+)
+
+// maybeAutoCompactDeletions checks if auto-compact is enabled and threshold exceeded,
+// and if so, prunes the deletions manifest.
+func maybeAutoCompactDeletions(ctx context.Context, jsonlPath string) error {
+	// Ensure store is initialized for config access
+	if err := ensureStoreActive(); err != nil {
+		return nil // Can't access config, skip silently
+	}
+
+	// Check if auto-compact is enabled (disabled by default)
+	autoCompactStr, err := store.GetConfig(ctx, "deletions.auto_compact")
+	if err != nil || autoCompactStr == "" {
+		return nil // Not configured, skip
+	}
+
+	autoCompact := autoCompactStr == "true" || autoCompactStr == "1" || autoCompactStr == "yes"
+	if !autoCompact {
+		return nil // Disabled, skip
+	}
+
+	// Get threshold (default 1000)
+	threshold := defaultAutoCompactThreshold
+	if thresholdStr, err := store.GetConfig(ctx, "deletions.auto_compact_threshold"); err == nil && thresholdStr != "" {
+		if parsed, err := strconv.Atoi(thresholdStr); err == nil && parsed > 0 {
+			threshold = parsed
+		}
+	}
+
+	// Get deletions path
+	beadsDir := filepath.Dir(jsonlPath)
+	deletionsPath := deletions.DefaultPath(beadsDir)
+
+	// Count current deletions
+	count, err := deletions.Count(deletionsPath)
+	if err != nil {
+		return fmt.Errorf("failed to count deletions: %w", err)
+	}
+
+	// Check if threshold exceeded
+	if count <= threshold {
+		return nil // Below threshold, skip
+	}
+
+	// Get retention days (default 7)
+	retentionDays := deletions.DefaultRetentionDays
+	if retentionStr, err := store.GetConfig(ctx, "deletions.retention_days"); err == nil && retentionStr != "" {
+		if parsed, err := strconv.Atoi(retentionStr); err == nil && parsed > 0 {
+			retentionDays = parsed
+		}
+	}
+
+	// Prune deletions
+	fmt.Printf("→ Auto-compacting deletions manifest (%d entries > %d threshold)...\n", count, threshold)
+	result, err := deletions.PruneDeletions(deletionsPath, retentionDays)
+	if err != nil {
+		return fmt.Errorf("failed to prune deletions: %w", err)
+	}
+
+	if result.PrunedCount > 0 {
+		fmt.Printf("  Pruned %d entries older than %d days, kept %d entries\n",
+			result.PrunedCount, retentionDays, result.KeptCount)
+	} else {
+		fmt.Printf("  No entries older than %d days to prune\n", retentionDays)
+	}
+
 	return nil
 }

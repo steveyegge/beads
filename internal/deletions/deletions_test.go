@@ -546,3 +546,64 @@ func TestPruneDeletions_ZeroRetention(t *testing.T) {
 		t.Errorf("expected 1 pruned with 0 retention, got %d", result.PrunedCount)
 	}
 }
+
+func TestCount_Empty(t *testing.T) {
+	// Non-existent file should return 0
+	count, err := Count("/nonexistent/path/deletions.jsonl")
+	if err != nil {
+		t.Fatalf("expected no error for non-existent file, got: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 count for non-existent file, got %d", count)
+	}
+}
+
+func TestCount_WithRecords(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+		{ID: "bd-003", Timestamp: now, Actor: "user3"},
+	}
+
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	count, err := Count(path)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3, got %d", count)
+	}
+}
+
+func TestCount_WithEmptyLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	// Write content with empty lines
+	content := `{"id":"bd-001","ts":"2024-01-01T00:00:00Z","by":"user1"}
+
+{"id":"bd-002","ts":"2024-01-02T00:00:00Z","by":"user2"}
+
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	count, err := Count(path)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	// Should count only non-empty lines
+	if count != 2 {
+		t.Errorf("expected 2 (excluding empty lines), got %d", count)
+	}
+}

@@ -570,3 +570,221 @@ func TestZFCSkipsExportAfterImport(t *testing.T) {
 
 	t.Logf("✓ ZFC fix verified: DB synced from 100 to 10 issues, JSONL unchanged")
 }
+
+func TestMaybeAutoCompactDeletions_Disabled(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create test database
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "beads.db")
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+
+	// Create store
+	testStore, err := sqlite.New(ctx, testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Set global store for maybeAutoCompactDeletions
+	// Save and restore original values
+	originalStore := store
+	originalStoreActive := storeActive
+	defer func() {
+		store = originalStore
+		storeActive = originalStoreActive
+	}()
+
+	store = testStore
+	storeActive = true
+
+	// Create empty JSONL file
+	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+		t.Fatalf("failed to create JSONL: %v", err)
+	}
+
+	// Auto-compact is disabled by default, so should return nil
+	err = maybeAutoCompactDeletions(ctx, jsonlPath)
+	if err != nil {
+		t.Errorf("expected no error when auto-compact disabled, got: %v", err)
+	}
+}
+
+func TestMaybeAutoCompactDeletions_Enabled(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create test database
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "beads.db")
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// Create store
+	testStore, err := sqlite.New(ctx, testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Enable auto-compact with low threshold
+	if err := testStore.SetConfig(ctx, "deletions.auto_compact", "true"); err != nil {
+		t.Fatalf("failed to set auto_compact config: %v", err)
+	}
+	if err := testStore.SetConfig(ctx, "deletions.auto_compact_threshold", "5"); err != nil {
+		t.Fatalf("failed to set threshold config: %v", err)
+	}
+	if err := testStore.SetConfig(ctx, "deletions.retention_days", "1"); err != nil {
+		t.Fatalf("failed to set retention config: %v", err)
+	}
+
+	// Set global store for maybeAutoCompactDeletions
+	// Save and restore original values
+	originalStore := store
+	originalStoreActive := storeActive
+	defer func() {
+		store = originalStore
+		storeActive = originalStoreActive
+	}()
+
+	store = testStore
+	storeActive = true
+
+	// Create empty JSONL file
+	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+		t.Fatalf("failed to create JSONL: %v", err)
+	}
+
+	// Create deletions file with entries (some old, some recent)
+	now := time.Now()
+	deletionsContent := ""
+	// Add 10 old entries (will be pruned)
+	for i := 0; i < 10; i++ {
+		oldTime := now.AddDate(0, 0, -10).Format(time.RFC3339)
+		deletionsContent += fmt.Sprintf(`{"id":"bd-old-%d","ts":"%s","by":"user"}`, i, oldTime) + "\n"
+	}
+	// Add 3 recent entries (will be kept)
+	for i := 0; i < 3; i++ {
+		recentTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		deletionsContent += fmt.Sprintf(`{"id":"bd-recent-%d","ts":"%s","by":"user"}`, i, recentTime) + "\n"
+	}
+
+	if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0644); err != nil {
+		t.Fatalf("failed to create deletions file: %v", err)
+	}
+
+	// Verify initial count
+	initialCount := strings.Count(deletionsContent, "\n")
+	if initialCount != 13 {
+		t.Fatalf("expected 13 initial entries, got %d", initialCount)
+	}
+
+	// Run auto-compact
+	err = maybeAutoCompactDeletions(ctx, jsonlPath)
+	if err != nil {
+		t.Errorf("auto-compact failed: %v", err)
+	}
+
+	// Read deletions file and count remaining entries
+	afterContent, err := os.ReadFile(deletionsPath)
+	if err != nil {
+		t.Fatalf("failed to read deletions file: %v", err)
+	}
+
+	afterLines := strings.Split(strings.TrimSpace(string(afterContent)), "\n")
+	afterCount := 0
+	for _, line := range afterLines {
+		if line != "" {
+			afterCount++
+		}
+	}
+
+	// Should have pruned old entries, kept recent ones
+	if afterCount != 3 {
+		t.Errorf("expected 3 entries after prune (recent ones), got %d", afterCount)
+	}
+}
+
+func TestMaybeAutoCompactDeletions_BelowThreshold(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create test database
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "beads.db")
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// Create store
+	testStore, err := sqlite.New(ctx, testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Enable auto-compact with high threshold
+	if err := testStore.SetConfig(ctx, "deletions.auto_compact", "true"); err != nil {
+		t.Fatalf("failed to set auto_compact config: %v", err)
+	}
+	if err := testStore.SetConfig(ctx, "deletions.auto_compact_threshold", "100"); err != nil {
+		t.Fatalf("failed to set threshold config: %v", err)
+	}
+
+	// Set global store for maybeAutoCompactDeletions
+	// Save and restore original values
+	originalStore := store
+	originalStoreActive := storeActive
+	defer func() {
+		store = originalStore
+		storeActive = originalStoreActive
+	}()
+
+	store = testStore
+	storeActive = true
+
+	// Create empty JSONL file
+	if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
+		t.Fatalf("failed to create JSONL: %v", err)
+	}
+
+	// Create deletions file with only 5 entries (below threshold of 100)
+	now := time.Now()
+	deletionsContent := ""
+	for i := 0; i < 5; i++ {
+		ts := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		deletionsContent += fmt.Sprintf(`{"id":"bd-%d","ts":"%s","by":"user"}`, i, ts) + "\n"
+	}
+
+	if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0644); err != nil {
+		t.Fatalf("failed to create deletions file: %v", err)
+	}
+
+	// Run auto-compact - should skip because below threshold
+	err = maybeAutoCompactDeletions(ctx, jsonlPath)
+	if err != nil {
+		t.Errorf("auto-compact failed: %v", err)
+	}
+
+	// Read deletions file - should be unchanged
+	afterContent, err := os.ReadFile(deletionsPath)
+	if err != nil {
+		t.Fatalf("failed to read deletions file: %v", err)
+	}
+
+	if string(afterContent) != deletionsContent {
+		t.Error("deletions file should not be modified when below threshold")
+	}
+}

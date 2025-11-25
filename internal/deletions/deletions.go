@@ -180,6 +180,35 @@ func DefaultPath(beadsDir string) string {
 	return filepath.Join(beadsDir, "deletions.jsonl")
 }
 
+// Count returns the number of lines in the deletions manifest.
+// This is a fast operation that doesn't parse JSON, just counts lines.
+// Returns 0 if the file doesn't exist or is empty.
+func Count(path string) (int, error) {
+	f, err := os.Open(path) // #nosec G304 - controlled path from caller
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to open deletions file: %w", err)
+	}
+	defer f.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			count++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("error reading deletions file: %w", err)
+	}
+
+	return count, nil
+}
+
 // DefaultRetentionDays is the default number of days to retain deletion records.
 const DefaultRetentionDays = 7
 
