@@ -72,10 +72,6 @@ Examples:
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
 		priorityMaxStr, _ := cmd.Flags().GetString("priority-max")
 
-		// Sort flags
-		sortBy, _ := cmd.Flags().GetString("sort")
-		reverse, _ := cmd.Flags().GetBool("reverse")
-
 		// Normalize labels
 		labels = util.NormalizeLabels(labels)
 		labelsAny = util.NormalizeLabels(labelsAny)
@@ -395,10 +391,6 @@ func init() {
 	// Priority range flags
 	searchCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	searchCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
-
-	// Sort flags
-	searchCmd.Flags().String("sort", "", "Sort by field: priority, created, updated, closed, status, id, title, type, assignee")
-	searchCmd.Flags().BoolP("reverse", "r", false, "Reverse sort order")
 
 	rootCmd.AddCommand(searchCmd)
 }
