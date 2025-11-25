@@ -304,7 +304,6 @@ Use --merge to merge the sync branch back to main branch.`,
 				// or if DB has more issues than JSONL, skip re-export.
 				// This prevents resurrection of deleted issues when syncing stale clones.
 				skipReexport := skipExport // Carry forward initial ZFC detection
-				fmt.Printf("DEBUG: skipExport=%v, skipReexport=%v\n", skipExport, skipReexport)
 				if !skipReexport {
 					if err := ensureStoreActive(); err == nil && store != nil {
 						dbCountPostImport, dbErr := countDBIssuesFast(ctx, store)
