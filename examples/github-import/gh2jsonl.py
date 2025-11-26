@@ -140,6 +140,7 @@ class GitHubToBeads:
         self.hash_length = hash_length  # 3-8 chars for hash mode
         self.issues: List[Dict[str, Any]] = []
         self.gh_id_to_bd_id: Dict[int, str] = {}
+        self.used_ids: set = set()  # Track generated IDs for collision detection
 
     def fetch_from_api(self, repo: str, token: Optional[str] = None, state: str = "all"):
         """Fetch issues from GitHub API."""
@@ -321,20 +322,39 @@ class GitHubToBeads:
                 created_at_str = created_at_str[:-1] + '+00:00'
             created_at = datetime.fromisoformat(created_at_str)
 
-            # Generate hash ID
-            bd_id = generate_hash_id(
-                prefix=self.prefix,
-                title=gh_issue["title"],
-                description=gh_issue.get("body") or "",
-                creator=creator,
-                timestamp=created_at,
-                length=self.hash_length,
-                nonce=0
-            )
+            # Generate hash ID with collision detection
+            # Try increasing nonce, then increasing length (matching Go implementation)
+            bd_id = None
+            max_length = 8
+            for length in range(self.hash_length, max_length + 1):
+                for nonce in range(10):
+                    candidate = generate_hash_id(
+                        prefix=self.prefix,
+                        title=gh_issue["title"],
+                        description=gh_issue.get("body") or "",
+                        creator=creator,
+                        timestamp=created_at,
+                        length=length,
+                        nonce=nonce
+                    )
+                    if candidate not in self.used_ids:
+                        bd_id = candidate
+                        break
+                if bd_id:
+                    break
+
+            if not bd_id:
+                raise RuntimeError(
+                    f"Failed to generate unique ID for issue #{gh_id} after trying "
+                    f"lengths {self.hash_length}-{max_length} with 10 nonces each"
+                )
         else:
             # Sequential mode (existing behavior)
             bd_id = f"{self.prefix}-{self.issue_counter}"
             self.issue_counter += 1
+
+        # Track used ID
+        self.used_ids.add(bd_id)
 
         # Store mapping
         self.gh_id_to_bd_id[gh_id] = bd_id
