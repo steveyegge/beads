@@ -104,7 +104,7 @@ func AppendDeletion(path string, record DeletionRecord) error {
 	}
 
 	// Open file for appending (create if not exists)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G304 - controlled path
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302,G304 - controlled path, 0644 needed for git
 	if err != nil {
 		return fmt.Errorf("failed to open deletions file for append: %w", err)
 	}

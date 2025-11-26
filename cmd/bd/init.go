@@ -1238,6 +1238,7 @@ func setupGlobalGitAttributes(homeDir string, verbose bool) error {
 
 	// Read existing attributes file if it exists
 	var existingContent string
+	// #nosec G304 - user config path
 	if content, err := os.ReadFile(attributesPath); err == nil {
 		existingContent = string(content)
 	}
@@ -1260,6 +1261,7 @@ func setupGlobalGitAttributes(homeDir string, verbose bool) error {
 	newContent += beadsPattern + "\n"
 
 	// Write the updated attributes file
+	// #nosec G306 - config file needs 0644
 	if err := os.WriteFile(attributesPath, []byte(newContent), 0644); err != nil {
 		return fmt.Errorf("failed to write global gitattributes: %w", err)
 	}
@@ -1329,6 +1331,7 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 
 	// Read existing ignore file if it exists
 	var existingContent string
+	// #nosec G304 - user config path
 	if content, err := os.ReadFile(ignorePath); err == nil {
 		existingContent = string(content)
 	}
@@ -1365,6 +1368,7 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 	}
 
 	// Write the updated ignore file
+	// #nosec G306 - config file needs 0644
 	if err := os.WriteFile(ignorePath, []byte(newContent), 0644); err != nil {
 		return fmt.Errorf("failed to write global gitignore: %w", err)
 	}
@@ -1388,6 +1392,7 @@ func setupClaudeSettings(verbose bool) error {
 
 	// Check if settings.local.json already exists
 	var existingSettings map[string]interface{}
+	// #nosec G304 - user config path
 	if content, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(content, &existingSettings); err != nil {
 			existingSettings = make(map[string]interface{})
@@ -1425,6 +1430,7 @@ func setupClaudeSettings(verbose bool) error {
 		return fmt.Errorf("failed to marshal settings JSON: %w", err)
 	}
 
+	// #nosec G306 - config file needs 0644
 	if err := os.WriteFile(settingsPath, updatedContent, 0644); err != nil {
 		return fmt.Errorf("failed to write claude settings: %w", err)
 	}

@@ -192,7 +192,7 @@ func getHistoricalIDsViaDiff(repoPath, relPath string) (map[string]bool, error) 
 		}
 
 		// Get file content at this commit
-		showCmd := exec.Command("git", "show", commit+":"+relPath)
+		showCmd := exec.Command("git", "show", commit+":"+relPath) // #nosec G204 - args are from git log output
 		showCmd.Dir = repoPath
 
 		content, err := showCmd.Output()

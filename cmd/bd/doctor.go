@@ -1909,7 +1909,7 @@ func checkDeletionsManifest(path string) doctorCheck {
 
 	// Check if JSONL has any git history
 	relPath, _ := filepath.Rel(path, jsonlPath)
-	cmd := exec.Command("git", "log", "--oneline", "-1", "--", relPath)
+	cmd := exec.Command("git", "log", "--oneline", "-1", "--", relPath) // #nosec G204 - args are controlled
 	cmd.Dir = path
 	if output, err := cmd.Output(); err != nil || len(output) == 0 {
 		// No git history for JSONL
