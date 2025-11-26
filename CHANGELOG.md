@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Deletion Propagation**: Deletions now sync across clones via deletions manifest (bd-imj)
+  - New `.beads/deletions.jsonl` tracks deleted issues with timestamp, actor, reason
+  - Import automatically purges issues that were deleted in other clones
+  - Git history fallback for pruned deletion records (self-healing)
+  - New `bd deleted` command to view deletion audit trail
+  - Auto-compact during sync (opt-in via `deletions.auto_compact: true`)
+  - Configurable retention period (`deletions.retention_days`, default 7)
+  - Local unpushed work protected from accidental deletion
+  - Full documentation in docs/DELETIONS.md
+
 ## [0.24.4] - 2025-11-25
 
 ### Added
