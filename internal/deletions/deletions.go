@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -209,9 +210,6 @@ func Count(path string) (int, error) {
 	return count, nil
 }
 
-// DefaultRetentionDays is the default number of days to retain deletion records.
-const DefaultRetentionDays = 7
-
 // PruneResult contains the result of a prune operation.
 type PruneResult struct {
 	KeptCount   int
@@ -239,7 +237,16 @@ func PruneDeletions(path string, retentionDays int) (*PruneResult, error) {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	var kept []DeletionRecord
 
+	// Convert map to sorted slice for deterministic iteration (bd-wmo)
+	var allRecords []DeletionRecord
 	for _, record := range loadResult.Records {
+		allRecords = append(allRecords, record)
+	}
+	sort.Slice(allRecords, func(i, j int) bool {
+		return allRecords[i].ID < allRecords[j].ID
+	})
+
+	for _, record := range allRecords {
 		if record.Timestamp.After(cutoff) || record.Timestamp.Equal(cutoff) {
 			kept = append(kept, record)
 		} else {

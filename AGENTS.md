@@ -375,6 +375,32 @@ bd close bd-42 "Done"                       # Updates via git sync
 
 See [docs/AGENT_MAIL_QUICKSTART.md](docs/AGENT_MAIL_QUICKSTART.md) for 5-minute setup, or [docs/AGENT_MAIL.md](docs/AGENT_MAIL.md) for complete documentation. Example code in [examples/python-agent/AGENT_MAIL_EXAMPLE.md](examples/python-agent/AGENT_MAIL_EXAMPLE.md).
 
+### Deletion Tracking
+
+When issues are deleted (via `bd delete` or `bd cleanup`), they are recorded in `.beads/deletions.jsonl`. This manifest:
+
+- **Propagates deletions across clones**: When you pull, deleted issues from other clones are removed from your local database
+- **Provides audit trail**: See what was deleted, when, and by whom with `bd deleted`
+- **Auto-prunes**: Old records are automatically cleaned up during `bd sync` (configurable retention)
+
+**Commands:**
+
+```bash
+bd delete bd-42                # Delete issue (records to manifest)
+bd cleanup -f                  # Delete closed issues (records all to manifest)
+bd deleted                     # Show recent deletions (last 7 days)
+bd deleted --since=30d         # Show deletions in last 30 days
+bd deleted bd-xxx              # Show deletion details for specific issue
+bd deleted --json              # Machine-readable output
+```
+
+**How it works:**
+
+1. `bd delete` or `bd cleanup` appends deletion records to `deletions.jsonl`
+2. The file is committed and pushed via `bd sync`
+3. On other clones, `bd sync` imports the deletions and removes those issues from local DB
+4. Git history fallback handles edge cases (pruned records, shallow clones)
+
 ### Issue Types
 
 - `bug` - Something broken that needs fixing

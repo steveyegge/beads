@@ -168,6 +168,7 @@ echo ".beads/beads.jsonl merge=beads" >> .gitattributes
 **Should be committed to git:**
 - `.gitattributes` - Configures git merge driver for intelligent JSONL merging (critical for team collaboration)
 - `.beads/beads.jsonl` - Issue data in JSONL format (source of truth, synced via git)
+- `.beads/deletions.jsonl` - Deletion manifest for cross-clone propagation (tracks deleted issues)
 - `.beads/config.yaml` - Repository configuration template
 - `.beads/README.md` - Documentation about beads for repository visitors
 - `.beads/metadata.json` - Database metadata

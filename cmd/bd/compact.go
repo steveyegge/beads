@@ -864,6 +864,9 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 
 	elapsed := time.Since(start)
 
+	// Prune old deletion records (do this before JSON output so we can include results)
+	pruneResult, retentionDays := pruneDeletionsManifest()
+
 	if jsonOutput {
 		output := map[string]interface{}{
 			"success":        true,
@@ -875,6 +878,13 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 			"reduction_pct":  reductionPct,
 			"elapsed_ms":     elapsed.Milliseconds(),
 		}
+		// Include pruning results if any deletions were pruned (bd-v29)
+		if pruneResult != nil && pruneResult.PrunedCount > 0 {
+			output["deletions_pruned"] = map[string]interface{}{
+				"count":          pruneResult.PrunedCount,
+				"retention_days": retentionDays,
+			}
+		}
 		outputJSON(output)
 		return
 	}
@@ -883,17 +893,19 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	fmt.Printf("  %d → %d bytes (saved %d, %.1f%%)\n", originalSize, compactedSize, savingBytes, reductionPct)
 	fmt.Printf("  Time: %v\n", elapsed)
 
-	// Prune old deletion records
-	pruneDeletionsManifest()
+	// Report pruning results for human-readable output
+	if pruneResult != nil && pruneResult.PrunedCount > 0 {
+		fmt.Printf("\nDeletions pruned: %d records older than %d days removed\n", pruneResult.PrunedCount, retentionDays)
+	}
 
 	// Schedule auto-flush to export changes
 	markDirtyAndScheduleFlush()
 }
 
 // pruneDeletionsManifest prunes old deletion records based on retention settings.
-// It outputs results to stdout (or JSON) and returns any error.
+// Returns the prune result and retention days used, so callers can include in output.
 // Uses the global dbPath to determine the .beads directory.
-func pruneDeletionsManifest() {
+func pruneDeletionsManifest() (*deletions.PruneResult, int) {
 	beadsDir := filepath.Dir(dbPath)
 	// Determine retention days
 	retentionDays := compactRetention
@@ -918,17 +930,10 @@ func pruneDeletionsManifest() {
 		if !jsonOutput {
 			fmt.Fprintf(os.Stderr, "Warning: failed to prune deletions: %v\n", err)
 		}
-		return
+		return nil, retentionDays
 	}
 
-	// Only report if there were deletions to prune
-	if result.PrunedCount > 0 {
-		if jsonOutput {
-			// JSON output will be included in the main response
-			return
-		}
-		fmt.Printf("\nDeletions pruned: %d records older than %d days removed\n", result.PrunedCount, retentionDays)
-	}
+	return result, retentionDays
 }
 
 func init() {

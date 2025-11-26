@@ -1090,10 +1090,10 @@ func TestCheckGitHistoryForDeletions_NonGitDir(t *testing.T) {
 	}
 }
 
-func TestWasInGitHistory_NonGitDir(t *testing.T) {
+func TestWasEverInJSONL_NonGitDir(t *testing.T) {
 	// Non-git directory should return false (conservative behavior)
 	tmpDir := t.TempDir()
-	result := wasInGitHistory(tmpDir, ".beads/beads.jsonl", "bd-test")
+	result := wasEverInJSONL(tmpDir, ".beads/beads.jsonl", "bd-test")
 	if result {
 		t.Error("Expected false for non-git dir")
 	}

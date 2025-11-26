@@ -899,7 +899,7 @@ func checkGitHistoryForDeletions(beadsDir string, ids []string) []string {
 	if len(ids) <= 10 {
 		// Small batch: check each ID individually for accuracy
 		for _, id := range ids {
-			if wasInGitHistory(repoRoot, jsonlPath, id) {
+			if wasEverInJSONL(repoRoot, jsonlPath, id) {
 				deleted = append(deleted, id)
 			}
 		}
@@ -916,9 +916,11 @@ func checkGitHistoryForDeletions(beadsDir string, ids []string) []string {
 // Prevents hangs on large repositories (bd-f0n).
 const gitHistoryTimeout = 30 * time.Second
 
-// wasInGitHistory checks if a single ID was ever in the JSONL via git history.
-// Returns true if the ID was found in history (meaning it was deleted).
-func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
+// wasEverInJSONL checks if a single ID was ever present in the JSONL via git history.
+// Returns true if the ID was found in any commit (added or removed).
+// The caller is responsible for confirming the ID is NOT currently in JSONL
+// to determine that it was deleted (vs still present).
+func wasEverInJSONL(repoRoot, jsonlPath, id string) bool {
 	// git log --all -S "\"id\":\"bd-xxx\"" --oneline -- .beads/beads.jsonl
 	// This searches for commits that added or removed the ID string
 	// Note: -S uses literal string matching, not regex, so no escaping needed
@@ -942,8 +944,8 @@ func wasInGitHistory(repoRoot, jsonlPath, id string) bool {
 		return false
 	}
 
-	// If output is non-empty, the ID was in git history
-	// This means it was added and then removed (deleted)
+	// If output is non-empty, the ID was found in git history (was once in JSONL).
+	// Since caller already verified ID is NOT currently in JSONL, this means deleted.
 	return len(bytes.TrimSpace(stdout.Bytes())) > 0
 }
 
@@ -978,7 +980,7 @@ func batchCheckGitHistory(repoRoot, jsonlPath string, ids []string) []string {
 		// Individual checks also have timeout protection
 		var deleted []string
 		for _, id := range ids {
-			if wasInGitHistory(repoRoot, jsonlPath, id) {
+			if wasEverInJSONL(repoRoot, jsonlPath, id) {
 				deleted = append(deleted, id)
 			}
 		}

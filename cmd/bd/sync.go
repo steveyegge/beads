@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -1171,7 +1172,7 @@ func maybeAutoCompactDeletions(ctx context.Context, jsonlPath string) error {
 	}
 
 	// Get retention days (default 7)
-	retentionDays := deletions.DefaultRetentionDays
+	retentionDays := configfile.DefaultDeletionsRetentionDays
 	if retentionStr, err := store.GetConfig(ctx, "deletions.retention_days"); err == nil && retentionStr != "" {
 		if parsed, err := strconv.Atoi(retentionStr); err == nil && parsed > 0 {
 			retentionDays = parsed
