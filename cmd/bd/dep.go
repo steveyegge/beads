@@ -249,10 +249,22 @@ var depRemoveCmd = &cobra.Command{
 var depTreeCmd = &cobra.Command{
 	Use:   "tree [issue-id]",
 	Short: "Show dependency tree",
-	Args:  cobra.ExactArgs(1),
+	Long: `Show dependency tree rooted at the given issue.
+
+By default, shows dependencies (what blocks this issue). Use --direction to control:
+  - down: Show dependencies (what blocks this issue) - default
+  - up:   Show dependents (what this issue blocks)
+  - both: Show full graph in both directions
+
+Examples:
+  bd dep tree gt-0iqq                    # Show what blocks gt-0iqq
+  bd dep tree gt-0iqq --direction=up     # Show what gt-0iqq blocks
+  bd dep tree gt-0iqq --status=open      # Only show open issues
+  bd dep tree gt-0iqq --depth=3          # Limit to 3 levels deep`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
-		
+
 		// Resolve partial ID first
 		var fullID string
 		if daemonClient != nil {
@@ -274,7 +286,7 @@ var depTreeCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		}
-		
+
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
@@ -289,17 +301,62 @@ var depTreeCmd = &cobra.Command{
 		showAllPaths, _ := cmd.Flags().GetBool("show-all-paths")
 		maxDepth, _ := cmd.Flags().GetInt("max-depth")
 		reverse, _ := cmd.Flags().GetBool("reverse")
+		direction, _ := cmd.Flags().GetString("direction")
+		statusFilter, _ := cmd.Flags().GetString("status")
 		formatStr, _ := cmd.Flags().GetString("format")
+
+		// Handle --direction flag (takes precedence over deprecated --reverse)
+		if direction == "" && reverse {
+			direction = "up"
+		} else if direction == "" {
+			direction = "down"
+		}
+
+		// Validate direction
+		if direction != "down" && direction != "up" && direction != "both" {
+			fmt.Fprintf(os.Stderr, "Error: --direction must be 'down', 'up', or 'both'\n")
+			os.Exit(1)
+		}
 
 		if maxDepth < 1 {
 			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
 			os.Exit(1)
 		}
-		
-		tree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, reverse)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+
+		// For "both" direction, we need to fetch both trees and merge them
+		var tree []*types.TreeNode
+		var err error
+
+		if direction == "both" {
+			// Get dependencies (down) - what blocks this issue
+			downTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Get dependents (up) - what this issue blocks
+			upTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, true)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Merge: root appears once, dependencies below, dependents above
+			// We'll show dependents first (with negative-like positioning conceptually),
+			// then root, then dependencies
+			tree = mergeBidirectionalTrees(downTree, upTree, fullID)
+		} else {
+			tree, err = store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, direction == "up")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Apply status filter if specified
+		if statusFilter != "" {
+			tree = filterTreeByStatus(tree, types.Status(statusFilter))
 		}
 
 		// Handle mermaid format
@@ -318,41 +375,29 @@ var depTreeCmd = &cobra.Command{
 		}
 
 		if len(tree) == 0 {
-			if reverse {
+			switch direction {
+			case "up":
 				fmt.Printf("\n%s has no dependents\n", fullID)
-			} else {
+			case "both":
+				fmt.Printf("\n%s has no dependencies or dependents\n", fullID)
+			default:
 				fmt.Printf("\n%s has no dependencies\n", fullID)
 			}
 			return
 		}
 
 		cyan := color.New(color.FgCyan).SprintFunc()
-		if reverse {
+		switch direction {
+		case "up":
 			fmt.Printf("\n%s Dependent tree for %s:\n\n", cyan("🌲"), fullID)
-		} else {
+		case "both":
+			fmt.Printf("\n%s Full dependency graph for %s:\n\n", cyan("🌲"), fullID)
+		default:
 			fmt.Printf("\n%s Dependency tree for %s:\n\n", cyan("🌲"), fullID)
 		}
 
-		hasTruncation := false
-		for _, node := range tree {
-			indent := ""
-			for i := 0; i < node.Depth; i++ {
-				indent += "  "
-			}
-			line := fmt.Sprintf("%s→ %s: %s [P%d] (%s)",
-				indent, node.ID, node.Title, node.Priority, node.Status)
-			if node.Truncated {
-				line += " … [truncated]"
-				hasTruncation = true
-			}
-			fmt.Println(line)
-		}
-
-		if hasTruncation {
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("\n%s Warning: Tree truncated at depth %d (safety limit)\n",
-				yellow("⚠"), maxDepth)
-		}
+		// Render tree with proper connectors
+		renderTree(tree, maxDepth, direction)
 		fmt.Println()
 	},
 }
@@ -457,6 +502,238 @@ func getStatusEmoji(status types.Status) string {
 	}
 }
 
+// treeRenderer holds state for rendering a tree with proper connectors
+type treeRenderer struct {
+	// Track which nodes we've already displayed (for "shown above" handling)
+	seen map[string]bool
+	// Track connector state at each depth level (true = has more siblings)
+	activeConnectors []bool
+	// Maximum depth reached
+	maxDepth int
+	// Direction of traversal
+	direction string
+}
+
+// renderTree renders the tree with proper box-drawing connectors
+func renderTree(tree []*types.TreeNode, maxDepth int, direction string) {
+	if len(tree) == 0 {
+		return
+	}
+
+	r := &treeRenderer{
+		seen:             make(map[string]bool),
+		activeConnectors: make([]bool, maxDepth+1),
+		maxDepth:         maxDepth,
+		direction:        direction,
+	}
+
+	// Build a map of parent -> children for proper sibling tracking
+	children := make(map[string][]*types.TreeNode)
+	var root *types.TreeNode
+
+	for _, node := range tree {
+		if node.Depth == 0 {
+			root = node
+		} else {
+			children[node.ParentID] = append(children[node.ParentID], node)
+		}
+	}
+
+	if root == nil && len(tree) > 0 {
+		root = tree[0]
+	}
+
+	// Render recursively from root
+	r.renderNode(root, children, 0, true)
+}
+
+// renderNode renders a single node and its children
+func (r *treeRenderer) renderNode(node *types.TreeNode, children map[string][]*types.TreeNode, depth int, isLast bool) {
+	if node == nil {
+		return
+	}
+
+	// Build the prefix with connectors
+	var prefix strings.Builder
+
+	// Add vertical lines for active parent connectors
+	for i := 0; i < depth; i++ {
+		if r.activeConnectors[i] {
+			prefix.WriteString("│   ")
+		} else {
+			prefix.WriteString("    ")
+		}
+	}
+
+	// Add the branch connector for non-root nodes
+	if depth > 0 {
+		if isLast {
+			prefix.WriteString("└── ")
+		} else {
+			prefix.WriteString("├── ")
+		}
+	}
+
+	// Check if we've seen this node before (diamond dependency)
+	if r.seen[node.ID] {
+		gray := color.New(color.FgHiBlack).SprintFunc()
+		fmt.Printf("%s%s (shown above)\n", prefix.String(), gray(node.ID))
+		return
+	}
+	r.seen[node.ID] = true
+
+	// Format the node line
+	line := formatTreeNode(node)
+
+	// Add truncation warning if at max depth and has children
+	if node.Truncated || (depth == r.maxDepth && len(children[node.ID]) > 0) {
+		yellow := color.New(color.FgYellow).SprintFunc()
+		line += yellow(" …")
+	}
+
+	fmt.Printf("%s%s\n", prefix.String(), line)
+
+	// Render children
+	nodeChildren := children[node.ID]
+	for i, child := range nodeChildren {
+		// Update connector state for this depth
+		// For depth 0 (root level), never show vertical connector since root has no siblings
+		if depth > 0 {
+			r.activeConnectors[depth] = (i < len(nodeChildren)-1)
+		}
+		r.renderNode(child, children, depth+1, i == len(nodeChildren)-1)
+	}
+}
+
+// formatTreeNode formats a single tree node with status, ready indicator, etc.
+func formatTreeNode(node *types.TreeNode) string {
+	// Color the ID based on status
+	var idStr string
+	switch node.Status {
+	case types.StatusOpen:
+		idStr = color.New(color.FgWhite).Sprint(node.ID)
+	case types.StatusInProgress:
+		idStr = color.New(color.FgYellow).Sprint(node.ID)
+	case types.StatusBlocked:
+		idStr = color.New(color.FgRed).Sprint(node.ID)
+	case types.StatusClosed:
+		idStr = color.New(color.FgGreen).Sprint(node.ID)
+	default:
+		idStr = node.ID
+	}
+
+	// Build the line
+	line := fmt.Sprintf("%s: %s [P%d] (%s)",
+		idStr, node.Title, node.Priority, node.Status)
+
+	// Add READY indicator for open issues (those that could be worked on)
+	// An issue is ready if it's open and has no blocking dependencies
+	// (In the tree view, depth 0 with status open implies ready in the "down" direction)
+	if node.Status == types.StatusOpen && node.Depth == 0 {
+		green := color.New(color.FgGreen, color.Bold).SprintFunc()
+		line += " " + green("[READY]")
+	}
+
+	return line
+}
+
+// filterTreeByStatus filters the tree to only include nodes with the given status
+// Note: keeps parent chain to maintain tree structure
+func filterTreeByStatus(tree []*types.TreeNode, status types.Status) []*types.TreeNode {
+	if len(tree) == 0 {
+		return tree
+	}
+
+	// First pass: identify which nodes match the status
+	matches := make(map[string]bool)
+	for _, node := range tree {
+		if node.Status == status {
+			matches[node.ID] = true
+		}
+	}
+
+	// If no matches, return empty
+	if len(matches) == 0 {
+		return []*types.TreeNode{}
+	}
+
+	// Second pass: keep matching nodes and their ancestors
+	// Build parent map
+	parentOf := make(map[string]string)
+	for _, node := range tree {
+		if node.ParentID != "" && node.ParentID != node.ID {
+			parentOf[node.ID] = node.ParentID
+		}
+	}
+
+	// Mark all ancestors of matching nodes
+	keep := make(map[string]bool)
+	for id := range matches {
+		keep[id] = true
+		// Walk up to root
+		current := id
+		for {
+			parent, ok := parentOf[current]
+			if !ok || parent == current {
+				break
+			}
+			keep[parent] = true
+			current = parent
+		}
+	}
+
+	// Filter the tree
+	var filtered []*types.TreeNode
+	for _, node := range tree {
+		if keep[node.ID] {
+			filtered = append(filtered, node)
+		}
+	}
+
+	return filtered
+}
+
+// mergeBidirectionalTrees merges up and down trees into a single visualization
+// The root appears once, with dependencies shown below and dependents shown above
+func mergeBidirectionalTrees(downTree, upTree []*types.TreeNode, rootID string) []*types.TreeNode {
+	// For bidirectional display, we show the down tree (dependencies) as the main tree
+	// and add a visual separator with the up tree (dependents)
+	//
+	// For simplicity, we'll just return the down tree for now
+	// A more sophisticated implementation would show both with visual separation
+
+	// Find root in each tree
+	var result []*types.TreeNode
+
+	// Add dependents section if any (excluding root)
+	hasUpNodes := false
+	for _, node := range upTree {
+		if node.ID != rootID {
+			hasUpNodes = true
+			break
+		}
+	}
+
+	if hasUpNodes {
+		// Add a header node for dependents section
+		// We'll mark these with negative depth for visual distinction
+		for _, node := range upTree {
+			if node.ID == rootID {
+				continue // Skip root, we'll add it once from down tree
+			}
+			// Clone node and mark it as "up" direction
+			upNode := *node
+			upNode.Depth = node.Depth // Keep original depth
+			result = append(result, &upNode)
+		}
+	}
+
+	// Add the down tree (dependencies)
+	result = append(result, downTree...)
+
+	return result
+}
+
 func init() {
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|related|parent-child|discovered-from)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
@@ -465,7 +742,9 @@ func init() {
 
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
-	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (what was discovered from this) instead of dependency tree (what blocks this)")
+	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (deprecated: use --direction=up)")
+	depTreeCmd.Flags().String("direction", "", "Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'")
+	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, closed)")
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 

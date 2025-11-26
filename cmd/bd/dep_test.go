@@ -463,3 +463,239 @@ func TestOutputMermaidTree_Siblings(t *testing.T) {
 		}
 	}
 }
+
+func TestDepTreeDirectionFlag(t *testing.T) {
+	// Test that the --direction flag exists on depTreeCmd
+	flag := depTreeCmd.Flags().Lookup("direction")
+	if flag == nil {
+		t.Fatal("depTreeCmd should have --direction flag")
+	}
+
+	// Test default value is empty string (will default to "down")
+	if flag.DefValue != "" {
+		t.Errorf("Expected default direction='', got %q", flag.DefValue)
+	}
+
+	// Test usage text mentions valid options
+	usage := flag.Usage
+	if !strings.Contains(usage, "down") || !strings.Contains(usage, "up") || !strings.Contains(usage, "both") {
+		t.Errorf("Expected flag usage to mention 'down', 'up', 'both', got %q", usage)
+	}
+}
+
+func TestDepTreeStatusFlag(t *testing.T) {
+	// Test that the --status flag exists on depTreeCmd
+	flag := depTreeCmd.Flags().Lookup("status")
+	if flag == nil {
+		t.Fatal("depTreeCmd should have --status flag")
+	}
+
+	// Test default value is empty string
+	if flag.DefValue != "" {
+		t.Errorf("Expected default status='', got %q", flag.DefValue)
+	}
+}
+
+func TestFilterTreeByStatus(t *testing.T) {
+	tree := []*types.TreeNode{
+		{
+			Issue:    types.Issue{ID: "BD-1", Title: "Parent", Status: types.StatusOpen},
+			Depth:    0,
+			ParentID: "",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-2", Title: "Open Child", Status: types.StatusOpen},
+			Depth:    1,
+			ParentID: "BD-1",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-3", Title: "Closed Child", Status: types.StatusClosed},
+			Depth:    1,
+			ParentID: "BD-1",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-4", Title: "Open Grandchild", Status: types.StatusOpen},
+			Depth:    2,
+			ParentID: "BD-3",
+		},
+	}
+
+	t.Run("filter to open only", func(t *testing.T) {
+		filtered := filterTreeByStatus(tree, types.StatusOpen)
+
+		// Should include BD-1, BD-2, and BD-4 (matching)
+		// Plus BD-3 as ancestor of BD-4
+		ids := make(map[string]bool)
+		for _, node := range filtered {
+			ids[node.ID] = true
+		}
+
+		if !ids["BD-1"] {
+			t.Error("Expected BD-1 (root open) in filtered tree")
+		}
+		if !ids["BD-2"] {
+			t.Error("Expected BD-2 (open child) in filtered tree")
+		}
+		if !ids["BD-3"] {
+			t.Error("Expected BD-3 (ancestor of open node) in filtered tree")
+		}
+		if !ids["BD-4"] {
+			t.Error("Expected BD-4 (open grandchild) in filtered tree")
+		}
+	})
+
+	t.Run("filter to closed only", func(t *testing.T) {
+		filtered := filterTreeByStatus(tree, types.StatusClosed)
+
+		ids := make(map[string]bool)
+		for _, node := range filtered {
+			ids[node.ID] = true
+		}
+
+		// Should include BD-3 (matching) and BD-1 (ancestor)
+		if !ids["BD-1"] {
+			t.Error("Expected BD-1 (ancestor) in filtered tree")
+		}
+		if !ids["BD-3"] {
+			t.Error("Expected BD-3 (closed) in filtered tree")
+		}
+		if ids["BD-2"] {
+			t.Error("BD-2 should not be in closed-filtered tree")
+		}
+		if ids["BD-4"] {
+			t.Error("BD-4 should not be in closed-filtered tree")
+		}
+	})
+
+	t.Run("filter to non-existent status", func(t *testing.T) {
+		filtered := filterTreeByStatus(tree, types.StatusBlocked)
+		if len(filtered) != 0 {
+			t.Errorf("Expected empty tree when filtering to non-matching status, got %d nodes", len(filtered))
+		}
+	})
+
+	t.Run("filter empty tree", func(t *testing.T) {
+		filtered := filterTreeByStatus([]*types.TreeNode{}, types.StatusOpen)
+		if len(filtered) != 0 {
+			t.Errorf("Expected empty tree, got %d nodes", len(filtered))
+		}
+	})
+}
+
+func TestFormatTreeNode(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     *types.TreeNode
+		contains []string
+	}{
+		{
+			name: "open issue at depth 0 shows READY",
+			node: &types.TreeNode{
+				Issue: types.Issue{
+					ID:       "BD-1",
+					Title:    "Test Issue",
+					Status:   types.StatusOpen,
+					Priority: 2,
+				},
+				Depth: 0,
+			},
+			contains: []string{"BD-1", "Test Issue", "P2", "open", "[READY]"},
+		},
+		{
+			name: "open issue at depth 1 does not show READY",
+			node: &types.TreeNode{
+				Issue: types.Issue{
+					ID:       "BD-2",
+					Title:    "Child Issue",
+					Status:   types.StatusOpen,
+					Priority: 1,
+				},
+				Depth: 1,
+			},
+			contains: []string{"BD-2", "Child Issue", "P1", "open"},
+		},
+		{
+			name: "closed issue",
+			node: &types.TreeNode{
+				Issue: types.Issue{
+					ID:       "BD-3",
+					Title:    "Done Issue",
+					Status:   types.StatusClosed,
+					Priority: 3,
+				},
+				Depth: 0,
+			},
+			contains: []string{"BD-3", "Done Issue", "P3", "closed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatTreeNode(tt.node)
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("formatTreeNode() = %q, want to contain %q", result, want)
+				}
+			}
+
+			// For non-root open issues, verify READY is NOT shown
+			if tt.node.Status == types.StatusOpen && tt.node.Depth > 0 {
+				if strings.Contains(result, "[READY]") {
+					t.Errorf("formatTreeNode() = %q, should NOT contain [READY] for depth > 0", result)
+				}
+			}
+		})
+	}
+}
+
+func TestRenderTreeOutput(t *testing.T) {
+	// Test tree with proper connectors
+	tree := []*types.TreeNode{
+		{
+			Issue:    types.Issue{ID: "BD-1", Title: "Root", Status: types.StatusOpen, Priority: 1},
+			Depth:    0,
+			ParentID: "",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-2", Title: "Child 1", Status: types.StatusOpen, Priority: 2},
+			Depth:    1,
+			ParentID: "BD-1",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-3", Title: "Child 2", Status: types.StatusClosed, Priority: 2},
+			Depth:    1,
+			ParentID: "BD-1",
+		},
+		{
+			Issue:    types.Issue{ID: "BD-4", Title: "Grandchild", Status: types.StatusOpen, Priority: 3},
+			Depth:    2,
+			ParentID: "BD-2",
+		},
+	}
+
+	// Capture stdout
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	renderTree(tree, 50, "down")
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Check for tree connectors
+	if !strings.Contains(output, "├──") && !strings.Contains(output, "└──") {
+		t.Errorf("Expected tree connectors (├── or └──) in output, got:\n%s", output)
+	}
+
+	// Check that all nodes are present
+	for _, node := range tree {
+		if !strings.Contains(output, node.ID) {
+			t.Errorf("Expected node %s in output, got:\n%s", node.ID, output)
+		}
+	}
+}
