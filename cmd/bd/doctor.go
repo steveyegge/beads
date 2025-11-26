@@ -247,8 +247,31 @@ func runCheckHealth(path string) {
 		return
 	}
 
+	// Get database path once (bd-b8h: centralized path resolution)
+	dbPath := getCheckHealthDBPath(beadsDir)
+
+	// Check if database exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		// No database - only check hooks
+		if issue := checkHooksQuick(path); issue != "" {
+			printCheckHealthHint([]string{issue})
+		}
+		return
+	}
+
+	// Open database once for all checks (bd-xyc: single DB connection)
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		// Can't open DB - only check hooks
+		if issue := checkHooksQuick(path); issue != "" {
+			printCheckHealthHint([]string{issue})
+		}
+		return
+	}
+	defer db.Close()
+
 	// Check if hints.doctor is disabled in config
-	if hintsDisabled(beadsDir) {
+	if hintsDisabledDB(db) {
 		return
 	}
 
@@ -256,12 +279,12 @@ func runCheckHealth(path string) {
 	var issues []string
 
 	// Check 1: Database version mismatch (CLI vs database bd_version)
-	if issue := checkVersionMismatch(beadsDir); issue != "" {
+	if issue := checkVersionMismatchDB(db); issue != "" {
 		issues = append(issues, issue)
 	}
 
 	// Check 2: Sync branch not configured
-	if issue := checkSyncBranchQuick(beadsDir); issue != "" {
+	if issue := checkSyncBranchQuickDB(db); issue != "" {
 		issues = append(issues, issue)
 	}
 
@@ -272,72 +295,47 @@ func runCheckHealth(path string) {
 
 	// If any issues found, print hint
 	if len(issues) > 0 {
-		fmt.Fprintf(os.Stderr, "💡 bd doctor recommends a health check:\n")
-		for _, issue := range issues {
-			fmt.Fprintf(os.Stderr, "   • %s\n", issue)
-		}
-		fmt.Fprintf(os.Stderr, "   Run 'bd doctor' for details, or 'bd doctor --fix' to auto-repair\n")
-		fmt.Fprintf(os.Stderr, "   (Suppress with: bd config set %s false)\n", ConfigKeyHintsDoctor)
-		os.Exit(1)
+		printCheckHealthHint(issues)
 	}
 	// Silent exit on success
 }
 
-// hintsDisabled checks if hints.doctor is set to "false" in the database config.
-func hintsDisabled(beadsDir string) bool {
-	// Get database path
-	var dbPath string
+// printCheckHealthHint prints the health check hint and exits with error.
+func printCheckHealthHint(issues []string) {
+	fmt.Fprintf(os.Stderr, "💡 bd doctor recommends a health check:\n")
+	for _, issue := range issues {
+		fmt.Fprintf(os.Stderr, "   • %s\n", issue)
+	}
+	fmt.Fprintf(os.Stderr, "   Run 'bd doctor' for details, or 'bd doctor --fix' to auto-repair\n")
+	fmt.Fprintf(os.Stderr, "   (Suppress with: bd config set %s false)\n", ConfigKeyHintsDoctor)
+	os.Exit(1)
+}
+
+// getCheckHealthDBPath returns the database path for check-health operations.
+// This centralizes the path resolution logic (bd-b8h).
+func getCheckHealthDBPath(beadsDir string) string {
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+		return cfg.DatabasePath(beadsDir)
 	}
+	return filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+}
 
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return false // Can't check config, assume hints enabled
-	}
-
-	// Open database read-only to check config
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return false
-	}
-	defer db.Close()
-
+// hintsDisabledDB checks if hints.doctor is set to "false" using an existing DB connection.
+// Used by runCheckHealth to avoid multiple DB opens (bd-xyc).
+func hintsDisabledDB(db *sql.DB) bool {
 	var value string
-	err = db.QueryRow("SELECT value FROM config WHERE key = ?", ConfigKeyHintsDoctor).Scan(&value)
+	err := db.QueryRow("SELECT value FROM config WHERE key = ?", ConfigKeyHintsDoctor).Scan(&value)
 	if err != nil {
 		return false // Key not set, assume hints enabled
 	}
-
 	return strings.ToLower(value) == "false"
 }
 
-// checkVersionMismatch checks if CLI version differs from database bd_version.
-func checkVersionMismatch(beadsDir string) string {
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return "" // No database, skip check
-	}
-
-	// Open database read-only
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return ""
-	}
-	defer db.Close()
-
+// checkVersionMismatchDB checks if CLI version differs from database bd_version.
+// Uses an existing DB connection (bd-xyc).
+func checkVersionMismatchDB(db *sql.DB) string {
 	var dbVersion string
-	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'bd_version'").Scan(&dbVersion)
+	err := db.QueryRow("SELECT value FROM metadata WHERE key = 'bd_version'").Scan(&dbVersion)
 	if err != nil {
 		return "" // Can't read version, skip
 	}
@@ -349,30 +347,11 @@ func checkVersionMismatch(beadsDir string) string {
 	return ""
 }
 
-// checkSyncBranchQuick checks if sync.branch is configured.
-func checkSyncBranchQuick(beadsDir string) string {
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return "" // No database, skip check
-	}
-
-	// Open database read-only
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return ""
-	}
-	defer db.Close()
-
+// checkSyncBranchQuickDB checks if sync.branch is configured.
+// Uses an existing DB connection (bd-xyc).
+func checkSyncBranchQuickDB(db *sql.DB) string {
 	var value string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'sync.branch'").Scan(&value)
+	err := db.QueryRow("SELECT value FROM config WHERE key = 'sync.branch'").Scan(&value)
 	if err != nil || value == "" {
 		return "sync.branch not configured"
 	}
@@ -381,6 +360,7 @@ func checkSyncBranchQuick(beadsDir string) string {
 }
 
 // checkHooksQuick does a fast check for outdated git hooks.
+// Checks all beads hooks: pre-commit, post-merge, pre-push, post-checkout (bd-2em).
 func checkHooksQuick(path string) string {
 	hooksDir := filepath.Join(path, ".git", "hooks")
 
@@ -389,34 +369,53 @@ func checkHooksQuick(path string) string {
 		return "" // No git hooks directory, skip
 	}
 
-	// Check post-merge hook version (most likely to be outdated after merge)
-	hookPath := filepath.Join(hooksDir, "post-merge")
-	content, err := os.ReadFile(hookPath) // #nosec G304 - path is controlled
-	if err != nil {
-		return "" // Hook doesn't exist, skip (will be caught by full doctor)
-	}
+	// Check all beads-managed hooks (bd-2em: expanded from just post-merge)
+	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
 
-	// Look for version marker
-	hookContent := string(content)
-	if !strings.Contains(hookContent, "bd-hooks-version:") {
-		return "" // Not a bd hook or old format, skip
-	}
+	var outdatedHooks []string
+	var oldestVersion string
 
-	// Extract version
-	for _, line := range strings.Split(hookContent, "\n") {
-		if strings.Contains(line, "bd-hooks-version:") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				hookVersion := strings.TrimSpace(parts[1])
-				if hookVersion != Version {
-					return fmt.Sprintf("Git hooks outdated (%s → %s)", hookVersion, Version)
+	for _, hookName := range hookNames {
+		hookPath := filepath.Join(hooksDir, hookName)
+		content, err := os.ReadFile(hookPath) // #nosec G304 - path is controlled
+		if err != nil {
+			continue // Hook doesn't exist, skip (will be caught by full doctor)
+		}
+
+		// Look for version marker
+		hookContent := string(content)
+		if !strings.Contains(hookContent, "bd-hooks-version:") {
+			continue // Not a bd hook or old format, skip
+		}
+
+		// Extract version
+		for _, line := range strings.Split(hookContent, "\n") {
+			if strings.Contains(line, "bd-hooks-version:") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					hookVersion := strings.TrimSpace(parts[1])
+					if hookVersion != Version {
+						outdatedHooks = append(outdatedHooks, hookName)
+						// Track the oldest version for display
+						if oldestVersion == "" || compareVersions(hookVersion, oldestVersion) < 0 {
+							oldestVersion = hookVersion
+						}
+					}
 				}
+				break
 			}
-			break
 		}
 	}
 
-	return ""
+	if len(outdatedHooks) == 0 {
+		return ""
+	}
+
+	// Return summary of outdated hooks
+	if len(outdatedHooks) == 1 {
+		return fmt.Sprintf("Git hook %s outdated (%s → %s)", outdatedHooks[0], oldestVersion, Version)
+	}
+	return fmt.Sprintf("Git hooks outdated: %s (%s → %s)", strings.Join(outdatedHooks, ", "), oldestVersion, Version)
 }
 
 func runDiagnostics(path string) doctorResult {
