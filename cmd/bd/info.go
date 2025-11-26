@@ -268,6 +268,66 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.25.1",
+		Date:    "2025-11-25",
+		Changes: []string{
+			"Zombie Resurrection Prevention - Stale clones can no longer resurrect deleted issues",
+			"bd sync commit scope fixed - Now commits entire .beads/ directory before pull",
+		},
+	},
+	{
+		Version: "0.25.0",
+		Date:    "2025-11-25",
+		Changes: []string{
+			"Deletion Propagation - Deletions now sync across clones via deletions manifest",
+			"Stealth Mode - `bd init --stealth` for invisible beads usage",
+			"Ephemeral Branch Sync - `bd sync --from-main` to sync from main without pushing",
+		},
+	},
+	{
+		Version: "0.24.4",
+		Date:    "2025-11-25",
+		Changes: []string{
+			"Transaction API - Full transactional support for atomic multi-operation workflows",
+			"Tip System Infrastructure - Smart contextual hints for users",
+			"Sorting for bd list/search - New `--sort` and `--reverse` flags",
+			"Claude Integration Verification - New bd doctor checks",
+			"ARM Linux Support - GoReleaser now builds for linux/arm64",
+			"Orphan Detection Migration - Identifies orphaned child issues",
+		},
+	},
+	{
+		Version: "0.24.3",
+		Date:    "2025-11-24",
+		Changes: []string{
+			"BD_GUIDE.md Generation - Version-stamped documentation for AI agents",
+			"Configurable Export Error Policies - Flexible error handling for export operations",
+			"Command Set Standardization - Global verbosity, dry-run, and label flags",
+			"Auto-Migration on Version Bump - Automatic database schema updates",
+			"Monitor Web UI Enhancements - Interactive stats cards, multi-select priority",
+		},
+	},
+	{
+		Version: "0.24.1",
+		Date:    "2025-11-22",
+		Changes: []string{
+			"bd search filters - Date and priority filters added",
+			"bd count - New command for counting and grouping issues",
+			"Test Infrastructure - Automatic skip list for tests",
+		},
+	},
+	{
+		Version: "0.24.0",
+		Date:    "2025-11-20",
+		Changes: []string{
+			"bd doctor --fix - Automatic repair functionality",
+			"bd clean - Remove temporary merge artifacts",
+			".beads/README.md Generation - Auto-generated during bd init",
+			"blocked_issues_cache Table - Performance optimization for GetReadyWork",
+			"Commit Hash in Version Output - Enhanced version reporting",
+		},
+	},
+	{
 		Version: "0.23.0",
 		Date:    "2025-11-08",
 		Changes: []string{

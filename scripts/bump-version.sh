@@ -351,6 +351,16 @@ main() {
         echo ""
     fi
 
+    # Check if cmd/bd/info.go has been updated with the new version
+    if ! grep -q "\"$NEW_VERSION\"" cmd/bd/info.go; then
+        echo -e "${YELLOW}Warning: cmd/bd/info.go does not contain an entry for $NEW_VERSION${NC}"
+        echo -e "${YELLOW}  Please update versionChanges in cmd/bd/info.go with release notes${NC}"
+        if [ "$AUTO_COMMIT" = true ]; then
+             echo -e "${RED}Error: Cannot auto-commit without updating cmd/bd/info.go${NC}"
+             exit 1
+        fi
+    fi
+
     # Auto-commit if requested
     if [ "$AUTO_COMMIT" = true ]; then
         echo "Creating git commit..."
