@@ -200,6 +200,8 @@ func applyFixes(result doctorResult) {
 			err = fix.SyncBranchConfig(result.Path)
 		case "Database Config":
 			err = fix.DatabaseConfig(result.Path)
+		case "Deletions Manifest":
+			err = fix.HydrateDeletionsManifest(result.Path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -366,6 +368,11 @@ func runDiagnostics(path string) doctorResult {
 	syncBranchCheck := checkSyncBranchConfig(path)
 	result.Checks = append(result.Checks, syncBranchCheck)
 	// Don't fail overall check for missing sync.branch, just warn
+
+	// Check 18: Deletions manifest (prevents zombie resurrection)
+	deletionsCheck := checkDeletionsManifest(path)
+	result.Checks = append(result.Checks, deletionsCheck)
+	// Don't fail overall check for missing deletions manifest, just warn
 
 	return result
 }
@@ -1837,6 +1844,89 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		Message: "sync.branch not configured",
 		Detail:  fmt.Sprintf("Current branch: %s", currentBranch),
 		Fix:     fmt.Sprintf("Run 'bd doctor --fix' to auto-configure to '%s', or manually: bd config set sync.branch <branch-name>", currentBranch),
+	}
+}
+
+func checkDeletionsManifest(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Skip if .beads doesn't exist
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Deletions Manifest",
+			Status:  statusOK,
+			Message: "N/A (no .beads directory)",
+		}
+	}
+
+	// Check if we're in a git repository
+	gitDir := filepath.Join(path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Deletions Manifest",
+			Status:  statusOK,
+			Message: "N/A (not a git repository)",
+		}
+	}
+
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// Check if deletions.jsonl exists and has content
+	info, err := os.Stat(deletionsPath)
+	if err == nil && info.Size() > 0 {
+		// Count entries
+		file, err := os.Open(deletionsPath) // #nosec G304 - controlled path
+		if err == nil {
+			defer file.Close()
+			count := 0
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				if len(scanner.Bytes()) > 0 {
+					count++
+				}
+			}
+			return doctorCheck{
+				Name:    "Deletions Manifest",
+				Status:  statusOK,
+				Message: fmt.Sprintf("Present (%d entries)", count),
+			}
+		}
+	}
+
+	// deletions.jsonl doesn't exist or is empty
+	// Check if there's git history that might have deletions
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		jsonlPath = filepath.Join(beadsDir, "issues.jsonl")
+		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+			return doctorCheck{
+				Name:    "Deletions Manifest",
+				Status:  statusOK,
+				Message: "N/A (no JSONL file)",
+			}
+		}
+	}
+
+	// Check if JSONL has any git history
+	relPath, _ := filepath.Rel(path, jsonlPath)
+	cmd := exec.Command("git", "log", "--oneline", "-1", "--", relPath)
+	cmd.Dir = path
+	if output, err := cmd.Output(); err != nil || len(output) == 0 {
+		// No git history for JSONL
+		return doctorCheck{
+			Name:    "Deletions Manifest",
+			Status:  statusOK,
+			Message: "Not yet created (no deletions recorded)",
+		}
+	}
+
+	// There's git history but no deletions manifest - recommend hydration
+	return doctorCheck{
+		Name:    "Deletions Manifest",
+		Status:  statusWarning,
+		Message: "Missing or empty (may have pre-v0.25.0 deletions)",
+		Detail:  "Deleted issues from before v0.25.0 are not tracked and may resurrect on sync",
+		Fix:     "Run 'bd doctor --fix' to hydrate deletions manifest from git history",
 	}
 }
 

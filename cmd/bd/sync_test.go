@@ -788,3 +788,215 @@ func TestMaybeAutoCompactDeletions_BelowThreshold(t *testing.T) {
 		t.Error("deletions file should not be modified when below threshold")
 	}
 }
+
+func TestSanitizeJSONLWithDeletions_NoDeletions(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	jsonlContent := `{"id":"bd-1","title":"Issue 1"}
+{"id":"bd-2","title":"Issue 2"}
+{"id":"bd-3","title":"Issue 3"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// No deletions.jsonl file - should return without changes
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed, got %d", result.RemovedCount)
+	}
+
+	// Verify JSONL unchanged
+	afterContent, _ := os.ReadFile(jsonlPath)
+	if string(afterContent) != jsonlContent {
+		t.Error("JSONL should not be modified when no deletions")
+	}
+}
+
+func TestSanitizeJSONLWithDeletions_EmptyDeletions(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	jsonlContent := `{"id":"bd-1","title":"Issue 1"}
+{"id":"bd-2","title":"Issue 2"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+	os.WriteFile(deletionsPath, []byte(""), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed, got %d", result.RemovedCount)
+	}
+}
+
+func TestSanitizeJSONLWithDeletions_RemovesDeletedIssues(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// JSONL with 4 issues
+	jsonlContent := `{"id":"bd-1","title":"Issue 1"}
+{"id":"bd-2","title":"Issue 2"}
+{"id":"bd-3","title":"Issue 3"}
+{"id":"bd-4","title":"Issue 4"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// Deletions manifest marks bd-2 and bd-4 as deleted
+	now := time.Now().Format(time.RFC3339)
+	deletionsContent := fmt.Sprintf(`{"id":"bd-2","ts":"%s","by":"user","reason":"cleanup"}
+{"id":"bd-4","ts":"%s","by":"user","reason":"duplicate"}
+`, now, now)
+	os.WriteFile(deletionsPath, []byte(deletionsContent), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RemovedCount != 2 {
+		t.Errorf("expected 2 removed, got %d", result.RemovedCount)
+	}
+	if len(result.RemovedIDs) != 2 {
+		t.Errorf("expected 2 RemovedIDs, got %d", len(result.RemovedIDs))
+	}
+
+	// Verify correct IDs were removed
+	removedMap := make(map[string]bool)
+	for _, id := range result.RemovedIDs {
+		removedMap[id] = true
+	}
+	if !removedMap["bd-2"] || !removedMap["bd-4"] {
+		t.Errorf("expected bd-2 and bd-4 to be removed, got %v", result.RemovedIDs)
+	}
+
+	// Verify JSONL now only has bd-1 and bd-3
+	afterContent, _ := os.ReadFile(jsonlPath)
+	afterCount, _ := countIssuesInJSONL(jsonlPath)
+	if afterCount != 2 {
+		t.Errorf("expected 2 issues in JSONL after sanitize, got %d", afterCount)
+	}
+	if !strings.Contains(string(afterContent), `"id":"bd-1"`) {
+		t.Error("JSONL should still contain bd-1")
+	}
+	if !strings.Contains(string(afterContent), `"id":"bd-3"`) {
+		t.Error("JSONL should still contain bd-3")
+	}
+	if strings.Contains(string(afterContent), `"id":"bd-2"`) {
+		t.Error("JSONL should NOT contain deleted bd-2")
+	}
+	if strings.Contains(string(afterContent), `"id":"bd-4"`) {
+		t.Error("JSONL should NOT contain deleted bd-4")
+	}
+}
+
+func TestSanitizeJSONLWithDeletions_NoMatchingDeletions(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// JSONL with issues
+	jsonlContent := `{"id":"bd-1","title":"Issue 1"}
+{"id":"bd-2","title":"Issue 2"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// Deletions for different IDs
+	now := time.Now().Format(time.RFC3339)
+	deletionsContent := fmt.Sprintf(`{"id":"bd-99","ts":"%s","by":"user"}
+{"id":"bd-100","ts":"%s","by":"user"}
+`, now, now)
+	os.WriteFile(deletionsPath, []byte(deletionsContent), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed (no matching IDs), got %d", result.RemovedCount)
+	}
+
+	// Verify JSONL unchanged
+	afterContent, _ := os.ReadFile(jsonlPath)
+	if string(afterContent) != jsonlContent {
+		t.Error("JSONL should not be modified when no matching deletions")
+	}
+}
+
+func TestSanitizeJSONLWithDeletions_PreservesMalformedLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// JSONL with a malformed line
+	jsonlContent := `{"id":"bd-1","title":"Issue 1"}
+this is not valid json
+{"id":"bd-2","title":"Issue 2"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// Delete bd-2
+	now := time.Now().Format(time.RFC3339)
+	os.WriteFile(deletionsPath, []byte(fmt.Sprintf(`{"id":"bd-2","ts":"%s","by":"user"}`, now)+"\n"), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RemovedCount != 1 {
+		t.Errorf("expected 1 removed, got %d", result.RemovedCount)
+	}
+
+	// Verify malformed line is preserved (let import handle it)
+	afterContent, _ := os.ReadFile(jsonlPath)
+	if !strings.Contains(string(afterContent), "this is not valid json") {
+		t.Error("malformed line should be preserved")
+	}
+	if !strings.Contains(string(afterContent), `"id":"bd-1"`) {
+		t.Error("bd-1 should be preserved")
+	}
+	if strings.Contains(string(afterContent), `"id":"bd-2"`) {
+		t.Error("bd-2 should be removed")
+	}
+}
+
+func TestSanitizeJSONLWithDeletions_NonexistentJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "nonexistent.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+
+	// Create deletions file
+	now := time.Now().Format(time.RFC3339)
+	os.WriteFile(deletionsPath, []byte(fmt.Sprintf(`{"id":"bd-1","ts":"%s","by":"user"}`, now)+"\n"), 0644)
+
+	// Should handle missing JSONL gracefully
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error for missing JSONL: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed for missing file, got %d", result.RemovedCount)
+	}
+}

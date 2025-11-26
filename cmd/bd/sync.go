@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -298,6 +300,20 @@ Use --merge to merge the sync branch back to main branch.`,
 					if err := applyDeletionsFromMerge(ctx, store, jsonlPath); err != nil {
 						fmt.Fprintf(os.Stderr, "Error during 3-way merge: %v\n", err)
 						os.Exit(1)
+					}
+				}
+
+				// Step 3.6: Sanitize JSONL - remove any resurrected zombies
+				// Git's 3-way merge may re-add deleted issues to JSONL.
+				// We must remove them before import to prevent resurrection.
+				sanitizeResult, err := sanitizeJSONLWithDeletions(jsonlPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to sanitize JSONL: %v\n", err)
+					// Non-fatal - continue with import
+				} else if sanitizeResult.RemovedCount > 0 {
+					fmt.Printf("→ Sanitized JSONL: removed %d deleted issue(s) that were resurrected by git merge\n", sanitizeResult.RemovedCount)
+					for _, id := range sanitizeResult.RemovedIDs {
+						fmt.Printf("  - %s\n", id)
 					}
 				}
 
@@ -1236,4 +1252,121 @@ func maybeAutoCompactDeletions(ctx context.Context, jsonlPath string) error {
 	}
 
 	return nil
+}
+
+// SanitizeResult contains statistics about the JSONL sanitization operation.
+type SanitizeResult struct {
+	RemovedCount int      // Number of issues removed from JSONL
+	RemovedIDs   []string // IDs that were removed
+}
+
+// sanitizeJSONLWithDeletions removes any issues from the JSONL file that are
+// in the deletions manifest. This prevents zombie resurrection when git's
+// 3-way merge re-adds deleted issues to the JSONL during pull.
+//
+// This should be called after git pull but before import.
+func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
+	result := &SanitizeResult{
+		RemovedIDs: []string{},
+	}
+
+	// Get deletions manifest path
+	beadsDir := filepath.Dir(jsonlPath)
+	deletionsPath := deletions.DefaultPath(beadsDir)
+
+	// Load deletions manifest
+	loadResult, err := deletions.LoadDeletions(deletionsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load deletions manifest: %w", err)
+	}
+
+	// If no deletions, nothing to sanitize
+	if len(loadResult.Records) == 0 {
+		return result, nil
+	}
+
+	// Read current JSONL
+	f, err := os.Open(jsonlPath) // #nosec G304 - controlled path
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil // No JSONL file yet
+		}
+		return nil, fmt.Errorf("failed to open JSONL: %w", err)
+	}
+
+	var keptLines [][]byte
+
+	scanner := bufio.NewScanner(f)
+	// Allow large lines (up to 10MB for issues with large descriptions)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+
+		// Quick extraction of ID without full unmarshal
+		// Look for "id":"..." pattern
+		var issue struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(line, &issue); err != nil {
+			// Keep malformed lines (let import handle them)
+			keptLines = append(keptLines, append([]byte{}, line...))
+			continue
+		}
+
+		// Check if this ID is in deletions manifest
+		if _, deleted := loadResult.Records[issue.ID]; deleted {
+			result.RemovedCount++
+			result.RemovedIDs = append(result.RemovedIDs, issue.ID)
+		} else {
+			keptLines = append(keptLines, append([]byte{}, line...))
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("failed to read JSONL: %w", err)
+	}
+	_ = f.Close()
+
+	// If nothing was removed, we're done
+	if result.RemovedCount == 0 {
+		return result, nil
+	}
+
+	// Write sanitized JSONL atomically
+	dir := filepath.Dir(jsonlPath)
+	base := filepath.Base(jsonlPath)
+	tempFile, err := os.CreateTemp(dir, base+".sanitize.*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath) // Clean up on error
+	}()
+
+	for _, line := range keptLines {
+		if _, err := tempFile.Write(line); err != nil {
+			return nil, fmt.Errorf("failed to write line: %w", err)
+		}
+		if _, err := tempFile.Write([]byte("\n")); err != nil {
+			return nil, fmt.Errorf("failed to write newline: %w", err)
+		}
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic replace
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		return nil, fmt.Errorf("failed to replace JSONL: %w", err)
+	}
+
+	return result, nil
 }
