@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -102,6 +103,15 @@ func isMCPActive() bool {
 	return false
 }
 
+// isEphemeralBranch detects if current branch has no upstream (ephemeral/local-only)
+func isEphemeralBranch() bool {
+	// git rev-parse --abbrev-ref --symbolic-full-name @{u}
+	// Returns error code 128 if no upstream configured
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	err := cmd.Run()
+	return err != nil
+}
+
 // outputPrimeContext outputs workflow context in markdown format
 func outputPrimeContext(mcpMode bool) error {
 	if mcpMode {
@@ -112,11 +122,20 @@ func outputPrimeContext(mcpMode bool) error {
 
 // outputMCPContext outputs minimal context for MCP users
 func outputMCPContext() error {
+	ephemeral := isEphemeralBranch()
+
+	var closeProtocol string
+	if ephemeral {
+		closeProtocol = "Before saying \"done\": git status → git add → bd sync --from-main → git commit (no push - ephemeral branch)"
+	} else {
+		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit → bd sync → git push"
+	}
+
 	context := `# Beads Issue Tracker Active
 
 # 🚨 SESSION CLOSE PROTOCOL 🚨
 
-Before saying "done": git status → git add → bd sync → git commit → bd sync → git push
+` + closeProtocol + `
 
 ## Core Rules
 - Track ALL work in beads (no TodoWrite tool, no markdown TODOs)
@@ -130,6 +149,47 @@ Start: Check ` + "`ready`" + ` tool for available work.
 
 // outputCLIContext outputs full CLI reference for non-MCP users
 func outputCLIContext() error {
+	ephemeral := isEphemeralBranch()
+
+	var closeProtocol string
+	var closeNote string
+	var syncSection string
+	var completingWorkflow string
+
+	if ephemeral {
+		closeProtocol = `[ ] 1. git status              (check what changed)
+[ ] 2. git add <files>         (stage code changes)
+[ ] 3. bd sync --from-main     (pull beads updates from main)
+[ ] 4. git commit -m "..."     (commit code changes)`
+		closeNote = "**Note:** This is an ephemeral branch (no upstream). Code is merged to main locally, not pushed."
+		syncSection = `### Sync & Collaboration
+- ` + "`bd sync --from-main`" + ` - Pull beads updates from main (for ephemeral branches)
+- ` + "`bd sync --status`" + ` - Check sync status without syncing`
+		completingWorkflow = `**Completing work:**
+` + "```bash" + `
+bd close <id>           # Mark done
+bd sync --from-main     # Pull latest beads from main
+git add . && git commit -m "..."  # Commit your changes
+# Merge to main when ready (local merge, not push)
+` + "```"
+	} else {
+		closeProtocol = `[ ] 1. git status              (check what changed)
+[ ] 2. git add <files>         (stage code changes)
+[ ] 3. bd sync                 (commit beads changes)
+[ ] 4. git commit -m "..."     (commit code)
+[ ] 5. bd sync                 (commit any new beads changes)
+[ ] 6. git push                (push to remote)`
+		closeNote = "**NEVER skip this.** Work is not done until pushed."
+		syncSection = `### Sync & Collaboration
+- ` + "`bd sync`" + ` - Sync with git remote (run at session end)
+- ` + "`bd sync --status`" + ` - Check sync status without syncing`
+		completingWorkflow = `**Completing work:**
+` + "```bash" + `
+bd close <id>      # Mark done
+bd sync            # Push to remote
+` + "```"
+	}
+
 	context := `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
@@ -140,15 +200,10 @@ func outputCLIContext() error {
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
 ` + "```" + `
-[ ] 1. git status              (check what changed)
-[ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync                 (commit beads changes)
-[ ] 4. git commit -m "..."     (commit code)
-[ ] 5. bd sync                 (commit any new beads changes)
-[ ] 6. git push                (push to remote)
+` + closeProtocol + `
 ` + "```" + `
 
-**NEVER skip this.** Work is not done until pushed.
+` + closeNote + `
 
 ## Core Rules
 - Track ALL work in beads (no TodoWrite tool, no markdown TODOs)
@@ -176,9 +231,7 @@ func outputCLIContext() error {
 - ` + "`bd blocked`" + ` - Show all blocked issues
 - ` + "`bd show <id>`" + ` - See what's blocking/blocked by this issue
 
-### Sync & Collaboration
-- ` + "`bd sync`" + ` - Sync with git remote (run at session end)
-- ` + "`bd sync --status`" + ` - Check sync status without syncing
+` + syncSection + `
 
 ### Project Health
 - ` + "`bd stats`" + ` - Project statistics (open/closed/blocked counts)
@@ -193,11 +246,7 @@ bd show <id>       # Review issue details
 bd update <id> --status=in_progress  # Claim it
 ` + "```" + `
 
-**Completing work:**
-` + "```bash" + `
-bd close <id>      # Mark done
-bd sync            # Push to remote
-` + "```" + `
+` + completingWorkflow + `
 
 **Creating dependent work:**
 ` + "```bash" + `
