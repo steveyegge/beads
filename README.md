@@ -139,7 +139,7 @@ bd init --branch beads-metadata
 # - Auto-start daemon for sync
 
 # Then tell your agent about bd:
-echo "BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
+echo "\nBEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
 ```
 
 **Protected branches?** If your `main` branch is protected, use `bd init --branch beads-metadata` to commit issue updates to a separate branch. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for details.
@@ -193,7 +193,6 @@ bd init --stealth
 ```
 
 **Stealth mode configures:**
-- **Global gitattributes** (`~/.config/git/attributes`) - Enables beads merge for `**/.beads/issues.jsonl` files across all repos
 - **Global gitignore** (`~/.config/git/ignore`) - Ignores `**/.beads/` and `**/.claude/settings.local.json` globally
 - **Claude Code settings** (`.claude/settings.local.json`) - Adds `bd onboard` instruction for AI agents
 
@@ -827,6 +826,7 @@ For advanced usage, see:
 ### Third-Party Tools
 
 - **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates, kanban board, and keyboard navigation. Zero-setup launch with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni).
+- **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with kanban board, tree view, dependency graph, and statistics dashboard. Vim-style navigation, search/filter, themes, and native notifications. Built by [@assimelha](https://github.com/assimelha).
 
 Have you built something cool with bd? [Open an issue](https://github.com/steveyegge/beads/issues) to get it featured here!
 
