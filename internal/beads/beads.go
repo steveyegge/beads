@@ -27,6 +27,78 @@ const CanonicalDatabaseName = "beads.db"
 // LegacyDatabaseNames are old names that should be migrated
 var LegacyDatabaseNames = []string{"bd.db", "issues.db", "bugs.db"}
 
+// findDatabaseInBeadsDir searches for a database file within a .beads directory.
+// It implements the standard search order:
+// 1. Check config.json first (single source of truth)
+// 2. Fall back to canonical beads.db
+// 3. Search for *.db files, filtering out backups and vc.db
+//
+// If warnOnIssues is true, warnings are printed to stderr for:
+// - Multiple databases found (ambiguous state)
+// - Legacy database names that should be migrated
+//
+// Returns empty string if no database is found.
+func findDatabaseInBeadsDir(beadsDir string, warnOnIssues bool) string {
+	// Check for config.json first (single source of truth)
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		dbPath := cfg.DatabasePath(beadsDir)
+		if _, err := os.Stat(dbPath); err == nil {
+			return dbPath
+		}
+	}
+
+	// Fall back to canonical beads.db for backward compatibility
+	canonicalDB := filepath.Join(beadsDir, CanonicalDatabaseName)
+	if _, err := os.Stat(canonicalDB); err == nil {
+		return canonicalDB
+	}
+
+	// Look for any .db file in the beads directory
+	matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+
+	// Filter out backup files and vc.db
+	var validDBs []string
+	for _, match := range matches {
+		baseName := filepath.Base(match)
+		// Skip backup files (contains ".backup" in name) and vc.db
+		if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+			validDBs = append(validDBs, match)
+		}
+	}
+
+	if len(validDBs) == 0 {
+		return ""
+	}
+
+	if warnOnIssues {
+		// Warn about multiple databases found
+		if len(validDBs) > 1 {
+			fmt.Fprintf(os.Stderr, "Warning: Multiple database files found in %s:\n", beadsDir)
+			for _, db := range validDBs {
+				fmt.Fprintf(os.Stderr, "  - %s\n", filepath.Base(db))
+			}
+			fmt.Fprintf(os.Stderr, "Run 'bd init' to migrate to %s or manually remove old databases.\n\n", CanonicalDatabaseName)
+		}
+
+		// Warn about legacy database names
+		dbName := filepath.Base(validDBs[0])
+		if dbName != CanonicalDatabaseName {
+			for _, legacy := range LegacyDatabaseNames {
+				if dbName == legacy {
+					fmt.Fprintf(os.Stderr, "WARNING: Using legacy database name: %s\n", dbName)
+					fmt.Fprintf(os.Stderr, "Run 'bd migrate' to upgrade to canonical name: %s\n\n", CanonicalDatabaseName)
+					break
+				}
+			}
+		}
+	}
+
+	return validDBs[0]
+}
+
 // Issue represents a tracked work item with metadata, dependencies, and status.
 type (
 	Issue = types.Issue
@@ -134,34 +206,9 @@ func FindDatabasePath() string {
 		// Canonicalize the path to prevent nested .beads directories
 		absBeadsDir := utils.CanonicalizePath(beadsDir)
 
-		// Check for config.json first (single source of truth)
-		if cfg, err := configfile.Load(absBeadsDir); err == nil && cfg != nil {
-			dbPath := cfg.DatabasePath(absBeadsDir)
-			if _, err := os.Stat(dbPath); err == nil {
-				return dbPath
-			}
-		}
-
-		// Fall back to canonical beads.db for backward compatibility
-		canonicalDB := filepath.Join(absBeadsDir, CanonicalDatabaseName)
-		if _, err := os.Stat(canonicalDB); err == nil {
-			return canonicalDB
-		}
-
-		// Look for any .db file in the beads directory
-		matches, err := filepath.Glob(filepath.Join(absBeadsDir, "*.db"))
-		if err == nil && len(matches) > 0 {
-			// Filter out backup files only
-			var validDBs []string
-			for _, match := range matches {
-				baseName := filepath.Base(match)
-				if !strings.Contains(baseName, ".backup") {
-					validDBs = append(validDBs, match)
-				}
-			}
-			if len(validDBs) > 0 {
-				return validDBs[0]
-			}
+		// Use helper to find database (no warnings for BEADS_DIR - user explicitly set it)
+		if dbPath := findDatabaseInBeadsDir(absBeadsDir, false); dbPath != "" {
+			return dbPath
 		}
 
 		// BEADS_DIR is set but no database found - this is OK for --no-db mode
@@ -170,26 +217,12 @@ func FindDatabasePath() string {
 
 	// 2. Check BEADS_DB environment variable (deprecated but still supported)
 	if envDB := os.Getenv("BEADS_DB"); envDB != "" {
-		// Canonicalize the path to prevent nested .beads directories
-		if absDB, err := filepath.Abs(envDB); err == nil {
-			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
-				return canonical
-			}
-			return absDB // Return absolute path even if symlink resolution fails
-		}
-		return envDB // Fallback to original if Abs fails
+		return utils.CanonicalizePath(envDB)
 	}
 
 	// 3. Search for .beads/*.db in current directory and ancestors
 	if foundDB := findDatabaseInTree(); foundDB != "" {
-		// Canonicalize found path
-		if absDB, err := filepath.Abs(foundDB); err == nil {
-			if canonical, err := filepath.EvalSymlinks(absDB); err == nil {
-				return canonical
-			}
-			return absDB
-		}
-		return foundDB
+		return utils.CanonicalizePath(foundDB)
 	}
 
 	// No fallback to ~/.beads - return empty string
@@ -264,7 +297,7 @@ type DatabaseInfo struct {
 }
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
-// Prefers config.json, falls back to beads.db, and returns an error if multiple .db files exist
+// Prefers config.json, falls back to beads.db, and warns if multiple .db files exist
 func findDatabaseInTree() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -281,62 +314,10 @@ func findDatabaseInTree() string {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Check for config.json first (single source of truth)
-			if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-				dbPath := cfg.DatabasePath(beadsDir)
-				if _, err := os.Stat(dbPath); err == nil {
-					return dbPath
-				}
+			// Use helper to find database (with warnings for auto-discovery)
+			if dbPath := findDatabaseInBeadsDir(beadsDir, true); dbPath != "" {
+				return dbPath
 			}
-
-			// Fall back to canonical beads.db for backward compatibility
-			canonicalDB := filepath.Join(beadsDir, CanonicalDatabaseName)
-			if _, err := os.Stat(canonicalDB); err == nil {
-			return canonicalDB
-			}
-
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-			// Filter out backup files and vc.db
-			var validDBs []string
-			for _, match := range matches {
-			baseName := filepath.Base(match)
-			// Skip backup files (contains ".backup" in name) and vc.db
-			if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
-			validDBs = append(validDBs, match)
-			}
-			}
-
-			if len(validDBs) > 1 {
-			// Multiple databases found - this is ambiguous
-			// Print error to stderr but return the first one for backward compatibility
-			fmt.Fprintf(os.Stderr, "Warning: Multiple database files found in %s:\n", beadsDir)
-			for _, db := range validDBs {
-			fmt.Fprintf(os.Stderr, "  - %s\n", filepath.Base(db))
-			}
-			fmt.Fprintf(os.Stderr, "Run 'bd init' to migrate to %s or manually remove old databases.\n\n", CanonicalDatabaseName)
-			}
-
-			if len(validDBs) > 0 {
-			// Check if using legacy name and warn
-			 dbName := filepath.Base(validDBs[0])
-			  if dbName != CanonicalDatabaseName {
-					isLegacy := false
-					for _, legacy := range LegacyDatabaseNames {
-						if dbName == legacy {
-							isLegacy = true
-							break
-						}
-					}
-					if isLegacy {
-						fmt.Fprintf(os.Stderr, "WARNING: Using legacy database name: %s\n", dbName)
-						fmt.Fprintf(os.Stderr, "Run 'bd migrate' to upgrade to canonical name: %s\n\n", CanonicalDatabaseName)
-					}
-				}
-				return validDBs[0]
-			}
-		}
 		}
 
 		// Move up one directory
