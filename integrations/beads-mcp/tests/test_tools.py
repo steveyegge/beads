@@ -1,5 +1,6 @@
 """Integration tests for MCP tools."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,20 +23,21 @@ from beads_mcp.tools import (
 
 
 @pytest.fixture(autouse=True)
-def mock_client():
-    """Mock the BdClient for all tests."""
+def reset_connection_pool():
+    """Reset connection pool before and after each test."""
     from beads_mcp import tools
 
-    # Reset client before each test
-    tools._client = None
+    # Reset connection pool before each test
+    tools._connection_pool.clear()
     yield
-    # Reset client after each test
-    tools._client = None
+    # Reset connection pool after each test
+    tools._connection_pool.clear()
 
 
 @pytest.fixture
 def sample_issue():
     """Create a sample issue for testing."""
+    now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     return Issue(
         id="bd-1",
         title="Test issue",
@@ -43,8 +45,8 @@ def sample_issue():
         status="open",
         priority=1,
         issue_type="bug",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -146,9 +148,11 @@ async def test_beads_update_issue(sample_issue):
     mock_client.update = AsyncMock(return_value=updated_issue)
 
     with patch("beads_mcp.tools._get_client", return_value=mock_client):
-        issue = await beads_update_issue(issue_id="bd-1", status="in_progress")
+        result = await beads_update_issue(issue_id="bd-1", status="in_progress")
 
-    assert issue.status == "in_progress"
+    # Result can be Issue or list[Issue] depending on routing
+    assert isinstance(result, Issue)
+    assert result.status == "in_progress"
     mock_client.update.assert_called_once()
 
 
@@ -355,16 +359,18 @@ async def test_update_issue_multiple_fields(sample_issue):
     mock_client.update = AsyncMock(return_value=updated_issue)
 
     with patch("beads_mcp.tools._get_client", return_value=mock_client):
-        issue = await beads_update_issue(
+        result = await beads_update_issue(
             issue_id="bd-1",
             status="in_progress",
             priority=0,
             title="Updated title",
         )
 
-    assert issue.status == "in_progress"
-    assert issue.priority == 0
-    assert issue.title == "Updated title"
+    # Result can be Issue or list[Issue] depending on routing
+    assert isinstance(result, Issue)
+    assert result.status == "in_progress"
+    assert result.priority == 0
+    assert result.title == "Updated title"
     mock_client.update.assert_called_once()
 
 
@@ -442,6 +448,7 @@ async def test_beads_stats():
 @pytest.mark.asyncio
 async def test_beads_blocked():
     """Test beads_blocked tool."""
+    now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     blocked_issue = BlockedIssue(
         id="bd-1",
         title="Blocked issue",
@@ -449,8 +456,8 @@ async def test_beads_blocked():
         status="blocked",
         priority=1,
         issue_type="bug",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=now,
+        updated_at=now,
         blocked_by_count=2,
         blocked_by=["bd-2", "bd-3"],
     )

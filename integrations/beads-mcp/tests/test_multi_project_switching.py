@@ -7,10 +7,13 @@ Tests verify:
 - Connection pool prevents race conditions
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -62,9 +65,9 @@ def temp_projects():
 @pytest.fixture
 def mock_client_factory():
     """Factory for creating mock clients per project."""
-    clients = {}
-    
-    def get_mock_client(workspace_root: str):
+    clients: dict[str, AsyncMock] = {}
+
+    def get_mock_client(workspace_root: str) -> AsyncMock:
         if workspace_root not in clients:
             client = AsyncMock()
             client.ready = AsyncMock(return_value=[])
@@ -88,7 +91,7 @@ class TestConcurrentMultiProject:
         """Test concurrent calls to different projects use different clients."""
         get_mock, clients = mock_client_factory
         
-        async def call_ready(workspace: str):
+        async def call_ready(workspace: str) -> list[Any]:
             """Call ready with workspace context set."""
             token = current_workspace.set(workspace)
             try:
@@ -96,7 +99,7 @@ class TestConcurrentMultiProject:
                     return await beads_ready_work()
             finally:
                 current_workspace.reset(token)
-        
+
         # Call all three projects concurrently
         results = await asyncio.gather(
             call_ready(temp_projects["a"]),
@@ -122,8 +125,8 @@ class TestConcurrentMultiProject:
     async def test_concurrent_calls_same_project_reuse_client(self, temp_projects, mock_client_factory):
         """Test concurrent calls to same project reuse the same client."""
         get_mock, clients = mock_client_factory
-        
-        async def call_ready(workspace: str):
+
+        async def call_ready(workspace: str) -> list[Any]:
             """Call ready with workspace context set."""
             token = current_workspace.set(workspace)
             try:
@@ -131,7 +134,7 @@ class TestConcurrentMultiProject:
                     return await beads_ready_work()
             finally:
                 current_workspace.reset(token)
-        
+
         # Call same project multiple times concurrently
         results = await asyncio.gather(
             call_ready(temp_projects["a"]),
@@ -156,17 +159,17 @@ class TestConcurrentMultiProject:
         # Track creation count (the lock should ensure only 1)
         creation_count = []
         
-        async def call_with_delay(workspace: str):
+        async def call_with_delay(workspace: str) -> list[Any]:
             """Call ready and track concurrent creation attempts."""
             token = current_workspace.set(workspace)
             try:
-                def slow_create(**kwargs):
+                def slow_create(**kwargs: Any) -> AsyncMock:
                     """Slow client creation to expose race conditions."""
                     creation_count.append(1)
                     import time
                     time.sleep(0.01)  # Simulate slow creation
                     return get_mock(kwargs["working_dir"])
-                
+
                 with patch("beads_mcp.tools.create_bd_client", side_effect=slow_create):
                     return await beads_ready_work()
             finally:
@@ -289,10 +292,10 @@ class TestCrossProjectIsolation:
         canonical_a = os.path.realpath(temp_projects["a"])
         canonical_b = os.path.realpath(temp_projects["b"])
         
-        def create_client_with_data(**kwargs):
+        def create_client_with_data(**kwargs: Any) -> AsyncMock:
             client = get_mock(kwargs["working_dir"])
             workspace = os.path.realpath(kwargs["working_dir"])
-            
+
             # Project A returns issues, B returns empty
             if workspace == canonical_a:
                 client.list_issues = AsyncMock(return_value=[
@@ -300,10 +303,10 @@ class TestCrossProjectIsolation:
                 ])
             else:
                 client.list_issues = AsyncMock(return_value=[])
-            
+
             return client
-        
-        async def list_from_project(workspace: str):
+
+        async def list_from_project(workspace: str) -> list[Any]:
             token = current_workspace.set(workspace)
             try:
                 with patch("beads_mcp.tools.create_bd_client", side_effect=create_client_with_data):
@@ -325,7 +328,7 @@ class TestCrossProjectIsolation:
         """Stress test: many parallel calls across multiple repos."""
         get_mock, clients = mock_client_factory
         
-        async def random_call(workspace: str, call_id: int):
+        async def random_call(workspace: str, call_id: int) -> list[Any]:
             """Random call to project."""
             token = current_workspace.set(workspace)
             try:
@@ -361,17 +364,17 @@ class TestContextVarBehavior:
     async def test_contextvar_isolated_per_request(self, temp_projects):
         """Test ContextVar is isolated per async call."""
         
-        async def get_current_workspace():
+        async def get_current_workspace_val() -> str | None:
             """Get current workspace from ContextVar."""
             return current_workspace.get()
-        
+
         # Set different contexts in parallel
-        async def call_with_context(workspace: str):
+        async def call_with_context(workspace: str) -> str | None:
             token = current_workspace.set(workspace)
             try:
                 # Simulate some async work
                 await asyncio.sleep(0.01)
-                return await get_current_workspace()
+                return await get_current_workspace_val()
             finally:
                 current_workspace.reset(token)
         

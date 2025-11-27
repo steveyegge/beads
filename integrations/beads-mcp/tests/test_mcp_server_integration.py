@@ -65,11 +65,10 @@ async def temp_db(bd_executable):
 async def mcp_client(bd_executable, temp_db, monkeypatch):
     """Create MCP client with temporary database."""
     from beads_mcp import tools
-    from beads_mcp.bd_client import BdClient
 
-    # Reset client before test
-    tools._client = None
-    
+    # Reset connection pool before test
+    tools._connection_pool.clear()
+
     # Reset context environment variables
     os.environ.pop("BEADS_CONTEXT_SET", None)
     os.environ.pop("BEADS_WORKING_DIR", None)
@@ -79,12 +78,9 @@ async def mcp_client(bd_executable, temp_db, monkeypatch):
     # temp_db is now the .beads directory path
     # The workspace root is the parent directory
     workspace_root = os.path.dirname(temp_db)
-    
+
     # Disable daemon mode for tests (prevents daemon accumulation and timeouts)
     os.environ["BEADS_NO_DAEMON"] = "1"
-    
-    # Create a pre-configured client with explicit paths (bypasses config loading)
-    tools._client = BdClient(bd_path=bd_executable, beads_dir=temp_db, working_dir=workspace_root)
 
     # Create test client
     async with Client(mcp) as client:
@@ -92,8 +88,8 @@ async def mcp_client(bd_executable, temp_db, monkeypatch):
         await client.call_tool("set_context", {"workspace_root": workspace_root})
         yield client
 
-    # Reset client and context after test
-    tools._client = None
+    # Reset connection pool and context after test
+    tools._connection_pool.clear()
     os.environ.pop("BEADS_CONTEXT_SET", None)
     os.environ.pop("BEADS_WORKING_DIR", None)
     os.environ.pop("BEADS_DB", None)

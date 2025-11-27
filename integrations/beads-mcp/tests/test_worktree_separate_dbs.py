@@ -284,7 +284,7 @@ async def test_mcp_works_with_separate_databases(git_worktree_with_separate_dbs,
     main_repo, worktree, temp_dir = git_worktree_with_separate_dbs
     
     # Configure MCP for daemon-less mode in worktree
-    tools._client = None
+    tools._connection_pool.clear()
     monkeypatch.setenv("BEADS_USE_DAEMON", "0")
     monkeypatch.setenv("BEADS_WORKING_DIR", str(worktree))
     
@@ -324,7 +324,7 @@ async def test_mcp_works_with_separate_databases(git_worktree_with_separate_dbs,
         assert "main-" not in list_content, "Should NOT see main repo issues"
     
     # Cleanup
-    tools._client = None
+    tools._connection_pool.clear()
 
 
 @pytest.mark.skip(reason="Flaky due to daemon interference - requires daemon to be stopped")

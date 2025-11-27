@@ -119,14 +119,14 @@ async def test_list_issues(bd_client):
         await bd_client.create(params)
 
     # List all issues
-    params = ListIssuesParams()
-    issues = await bd_client.list_issues(params)
+    list_params = ListIssuesParams()
+    issues = await bd_client.list_issues(list_params)
 
     assert len(issues) >= 3
 
     # List with status filter
-    params = ListIssuesParams(status="open")
-    issues = await bd_client.list_issues(params)
+    list_params_filtered = ListIssuesParams(status="open")
+    issues = await bd_client.list_issues(list_params_filtered)
 
     assert all(issue.status == "open" for issue in issues)
 
