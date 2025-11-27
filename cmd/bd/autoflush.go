@@ -698,10 +698,23 @@ func flushToJSONLWithState(state flushState) {
 		if err := store.SetMetadata(ctx, "last_import_hash", exportedHash); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash after export: %v\n", err)
 		}
-		
+
 		// Store JSONL file hash for integrity validation (bd-160)
 		if err := store.SetJSONLFileHash(ctx, exportedHash); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash after export: %v\n", err)
+		}
+
+		// Update last_import_time so staleness check doesn't see JSONL as "newer" (fixes #399)
+		// CheckStaleness() compares last_import_time against JSONL mtime. After export,
+		// the JSONL mtime is updated, so we must also update last_import_time to prevent
+		// false "stale" detection on subsequent reads.
+		//
+		// Use RFC3339Nano to preserve nanosecond precision. The file mtime has nanosecond
+		// precision, so using RFC3339 (second precision) would cause the stored time to be
+		// slightly earlier than the file mtime, triggering false staleness.
+		exportTime := time.Now().Format(time.RFC3339Nano)
+		if err := store.SetMetadata(ctx, "last_import_time", exportTime); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_time after export: %v\n", err)
 		}
 	}
 

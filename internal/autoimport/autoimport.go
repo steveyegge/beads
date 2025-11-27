@@ -274,10 +274,15 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 		return false, nil
 	}
 
-	lastImportTime, err := time.Parse(time.RFC3339, lastImportStr)
+	// Try RFC3339Nano first (has nanosecond precision), fall back to RFC3339
+	// This supports both old timestamps (RFC3339) and new ones with nanoseconds (fixes #399)
+	lastImportTime, err := time.Parse(time.RFC3339Nano, lastImportStr)
 	if err != nil {
-		// Corrupted metadata - this is abnormal and should be reported
-		return false, fmt.Errorf("corrupted last_import_time in metadata (cannot parse as RFC3339): %w", err)
+		lastImportTime, err = time.Parse(time.RFC3339, lastImportStr)
+		if err != nil {
+			// Corrupted metadata - this is abnormal and should be reported
+			return false, fmt.Errorf("corrupted last_import_time in metadata (cannot parse as RFC3339): %w", err)
+		}
 	}
 
 	// Find JSONL using database directory
