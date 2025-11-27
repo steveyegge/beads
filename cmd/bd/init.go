@@ -294,9 +294,30 @@ With --stealth: configures global git settings for invisible beads usage:
 			}
 		}
 
-		// Create metadata.json for database metadata
+		// Create or preserve metadata.json for database metadata (bd-zai fix)
 		if useLocalBeads {
-			cfg := configfile.DefaultConfig()
+			// First, check if metadata.json already exists
+			existingCfg, err := configfile.Load(localBeadsDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to load existing metadata.json: %v\n", err)
+			}
+
+			var cfg *configfile.Config
+			if existingCfg != nil {
+				// Preserve existing config
+				cfg = existingCfg
+			} else {
+				// Create new config, detecting JSONL filename from existing files
+				cfg = configfile.DefaultConfig()
+				// Check if beads.jsonl exists but issues.jsonl doesn't (legacy)
+				issuesPath := filepath.Join(localBeadsDir, "issues.jsonl")
+				beadsPath := filepath.Join(localBeadsDir, "beads.jsonl")
+				if _, err := os.Stat(beadsPath); err == nil {
+					if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
+						cfg.JSONLExport = "beads.jsonl" // Legacy filename
+					}
+				}
+			}
 			if err := cfg.Save(localBeadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway

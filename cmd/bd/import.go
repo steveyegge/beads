@@ -200,20 +200,29 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		}
 
 		// Check if database needs initialization (prefix not set)
-		// Detect prefix from the imported issues
+		// Detect prefix from the imported issues (bd-8an fix)
 		initCtx := rootCtx
 		configuredPrefix, err2 := store.GetConfig(initCtx, "issue_prefix")
 		if err2 != nil || strings.TrimSpace(configuredPrefix) == "" {
 			// Database exists but not initialized - detect prefix from issues
 			detectedPrefix := detectPrefixFromIssues(allIssues)
+			prefixSource := "issues"
 			if detectedPrefix == "" {
 				// No issues to import or couldn't detect prefix, use directory name
+				// But avoid using ".beads" as prefix - go up one level
 				cwd, err := os.Getwd()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
 					os.Exit(1)
 				}
-				detectedPrefix = filepath.Base(cwd)
+				dirName := filepath.Base(cwd)
+				if dirName == ".beads" || dirName == "beads" {
+					// Running from inside .beads/ - use parent directory
+					detectedPrefix = filepath.Base(filepath.Dir(cwd))
+				} else {
+					detectedPrefix = dirName
+				}
+				prefixSource = "directory"
 			}
 			detectedPrefix = strings.TrimRight(detectedPrefix, "-")
 
@@ -222,7 +231,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 				os.Exit(1)
 			}
 
-			fmt.Fprintf(os.Stderr, "✓ Initialized database with prefix '%s' (detected from issues)\n", detectedPrefix)
+			fmt.Fprintf(os.Stderr, "✓ Initialized database with prefix '%s' (detected from %s)\n", detectedPrefix, prefixSource)
 		}
 
 		// Phase 2: Use shared import logic
