@@ -1,56 +1,55 @@
-
-{"id":"bd-imj","ts":"2025-11-27T06:23:08.321573Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-4l5","ts":"2025-11-27T06:23:08.330659Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-qsm","ts":"2025-11-27T06:23:08.336349Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-ge7","ts":"2025-11-27T06:23:08.344432Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-red","ts":"2025-11-27T06:23:08.34986Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-pbj","ts":"2025-11-27T06:23:08.355253Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-6xd","ts":"2025-11-27T06:23:08.36024Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-055","ts":"2025-11-27T06:23:08.3653Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-2em","ts":"2025-11-27T06:23:08.36978Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-xyc","ts":"2025-11-27T06:23:08.375234Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-b8h","ts":"2025-11-27T06:23:08.380161Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-k4b","ts":"2025-11-27T06:23:08.385283Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-03r","ts":"2025-11-27T06:23:08.389859Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-mdw","ts":"2025-11-27T06:23:08.395305Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-bhd","ts":"2025-11-27T06:23:08.400258Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-bgs","ts":"2025-11-27T06:23:08.405361Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-v29","ts":"2025-11-27T06:23:08.409975Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-f0n","ts":"2025-11-27T06:23:08.415048Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-44e","ts":"2025-11-27T06:23:08.420137Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-x2i","ts":"2025-11-27T06:23:08.425177Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-hdt","ts":"2025-11-27T06:23:08.429738Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-39o","ts":"2025-11-27T06:23:08.435336Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-m0w","ts":"2025-11-27T06:23:08.441282Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-4h3","ts":"2025-11-27T06:23:08.447282Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-t3b","ts":"2025-11-27T06:23:08.451739Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-e92","ts":"2025-11-27T06:23:08.457205Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-mnap","ts":"2025-11-27T06:23:08.462119Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-p6vp","ts":"2025-11-27T06:23:08.46719Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-nq41","ts":"2025-11-27T06:23:08.471644Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-bt6y","ts":"2025-11-27T06:23:08.477122Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-4aao","ts":"2025-11-27T06:23:08.482352Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-m7ge","ts":"2025-11-27T06:23:08.487218Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-zj8e","ts":"2025-11-27T06:23:08.491807Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-l954","ts":"2025-11-27T06:23:08.496219Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-ye0d","ts":"2025-11-27T06:23:08.501131Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-wcl","ts":"2025-11-27T06:23:08.506265Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-tru","ts":"2025-11-27T06:23:08.510781Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-81a","ts":"2025-11-27T06:23:08.516103Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-tne","ts":"2025-11-27T06:23:08.521229Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-d4i","ts":"2025-11-27T06:23:08.526303Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-l7u","ts":"2025-11-27T06:23:08.530702Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-wmo","ts":"2025-11-27T06:23:08.536162Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-tys","ts":"2025-11-27T06:23:08.541216Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-3gc","ts":"2025-11-27T06:23:08.546278Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-gqo","ts":"2025-11-27T06:23:08.550666Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-c4rq","ts":"2025-11-27T06:23:08.556111Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-ybv5","ts":"2025-11-27T06:23:08.561101Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-1pj6","ts":"2025-11-27T06:23:08.566204Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-j3zt","ts":"2025-11-27T06:23:08.570789Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-9li4","ts":"2025-11-27T06:23:08.576102Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-c362","ts":"2025-11-27T06:23:08.581105Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-736d","ts":"2025-11-27T06:23:08.58714Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-s0z","ts":"2025-11-27T06:23:08.594103Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-9e23","ts":"2025-11-27T06:23:08.599142Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
-{"id":"bd-e166","ts":"2025-11-27T06:23:08.604209Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
+{"id":"bd-03r","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-055","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-1pj6","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-2em","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-39o","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-3gc","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-44e","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-4aao","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-4h3","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-4l5","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-6xd","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-736d","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-81a","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-9e23","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-9li4","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-b8h","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-bgs","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-bhd","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-bt6y","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-c362","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-c4rq","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-d4i","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-e166","title":"Improve timestamp comparison readability in import","description":"The timestamp comparison logic uses double-negative which can be confusing:\n\nCurrent code:\nif !incoming.UpdatedAt.After(existing.UpdatedAt) {\n    // skip update\n}\n\nMore readable:\nif incoming.UpdatedAt.After(existing.UpdatedAt) {\n    // perform update\n} else {\n    // skip (local is newer)\n}\n\nThis is a minor refactor for code clarity.\n\nRelated: bd-1022\nFiles: internal/importer/importer.go:411, 488","status":"closed","priority":4,"issue_type":"chore","created_at":"2025-11-02T15:32:12.27108-08:00","updated_at":"2025-11-26T22:25:27.124071-08:00","closed_at":"2025-11-26T22:25:27.124071-08:00"}
+{"id":"bd-e92","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-f0n","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-ge7","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-gqo","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-hdt","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-imj","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-j3zt","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-k4b","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-l7u","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-l954","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-m0w","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-m7ge","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-mdw","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-mnap","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-nq41","title":"Fix Homebrew warning about Ruby file location","description":"Homebrew warning: Found Ruby file outside steveyegge/beads tap formula directory.\nWarning points to: /opt/homebrew/Library/Taps/steveyegge/homebrew-beads/bd.rb\nIt should likely be inside a Formula/ directory or similar structure expected by Homebrew taps.\n","status":"closed","priority":2,"issue_type":"chore","created_at":"2025-11-20T18:56:21.226579-05:00","updated_at":"2025-11-26T22:25:37.362928-08:00","closed_at":"2025-11-26T22:25:37.362928-08:00"}
+{"id":"bd-p6vp","title":"Clarify .beads/.gitattributes handling in Protected Branches docs","description":"Protected Branches docs quick start leaves untracked `.beads` directory and `.gitattributes`.\nQuestion: Are these changes meant to be checked into the protected branch?\nNeed to clarify if these should be ignored or committed, or if the instructions are missing a step.\n","status":"closed","priority":2,"issue_type":"task","created_at":"2025-11-20T18:56:25.79407-05:00","updated_at":"2025-11-26T22:25:47.574326-08:00","closed_at":"2025-11-26T22:25:47.574326-08:00"}
+{"id":"bd-pbj","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-qsm","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-red","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-s0z","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-t3b","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-tne","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-tru","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-tys","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-v29","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-wcl","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-wmo","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-x2i","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-xyc","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-ybv5","title":"Refactor AGENTS.md to use external references","description":"Suggestion to use external references (e.g., \"ALWAYS REFER TO ./beads/prompt.md\") instead of including all instructions directly within AGENTS.md.\nReasons:\n1. Agents can follow external references.\n2. Prevents context pollution/stuffing in AGENTS.md as more tools append instructions.\n","status":"closed","priority":3,"issue_type":"task","created_at":"2025-11-20T18:55:53.259144-05:00","updated_at":"2025-11-26T22:25:57.772875-08:00","closed_at":"2025-11-26T22:25:57.772875-08:00"}
+{"id":"bd-ye0d","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
+{"id":"bd-zj8e","title":"","description":"","status":"","priority":0,"issue_type":"","created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}
