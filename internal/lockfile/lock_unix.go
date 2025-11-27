@@ -19,3 +19,14 @@ func flockExclusive(f *os.File) error {
 	}
 	return err
 }
+
+// FlockExclusiveBlocking acquires an exclusive blocking lock on the file.
+// This will wait until the lock is available.
+func FlockExclusiveBlocking(f *os.File) error {
+	return unix.Flock(int(f.Fd()), unix.LOCK_EX)
+}
+
+// FlockUnlock releases a lock on the file.
+func FlockUnlock(f *os.File) error {
+	return unix.Flock(int(f.Fd()), unix.LOCK_UN)
+}
