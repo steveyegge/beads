@@ -58,7 +58,15 @@ func findJSONLPath() string {
 // autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
 // Fixes bd-84: Hash-based comparison is git-proof (mtime comparison fails after git pull)
 // Fixes bd-228: Now uses collision detection to prevent silently overwriting local changes
+// Fixes bd-4t7: Defense-in-depth check to respect --no-auto-import flag
 func autoImportIfNewer() {
+	// Defense-in-depth: always check noAutoImport flag directly
+	// This ensures auto-import is disabled even if caller forgot to check autoImportEnabled
+	if noAutoImport {
+		debug.Logf("auto-import skipped (--no-auto-import flag)")
+		return
+	}
+
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
 
