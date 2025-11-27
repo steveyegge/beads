@@ -212,6 +212,8 @@ func applyFixes(result doctorResult) {
 			err = fix.DatabaseConfig(result.Path)
 		case "Deletions Manifest":
 			err = fix.HydrateDeletionsManifest(result.Path)
+		case "Untracked Files":
+			err = fix.UntrackedJSONL(result.Path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -566,6 +568,11 @@ func runDiagnostics(path string) doctorResult {
 	deletionsCheck := checkDeletionsManifest(path)
 	result.Checks = append(result.Checks, deletionsCheck)
 	// Don't fail overall check for missing deletions manifest, just warn
+
+	// Check 19: Untracked .beads/*.jsonl files (bd-pbj)
+	untrackedCheck := checkUntrackedBeadsFiles(path)
+	result.Checks = append(result.Checks, untrackedCheck)
+	// Don't fail overall check for untracked files, just warn
 
 	return result
 }
@@ -2120,6 +2127,77 @@ func checkDeletionsManifest(path string) doctorCheck {
 		Message: "Missing or empty (may have pre-v0.25.0 deletions)",
 		Detail:  "Deleted issues from before v0.25.0 are not tracked and may resurrect on sync",
 		Fix:     "Run 'bd doctor --fix' to hydrate deletions manifest from git history",
+	}
+}
+
+// checkUntrackedBeadsFiles checks for untracked .beads/*.jsonl files that should be committed.
+// This catches deletions.jsonl created by bd cleanup -f that hasn't been committed yet. (bd-pbj)
+func checkUntrackedBeadsFiles(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Skip if .beads doesn't exist
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Untracked Files",
+			Status:  statusOK,
+			Message: "N/A (no .beads directory)",
+		}
+	}
+
+	// Check if we're in a git repository
+	gitDir := filepath.Join(path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Untracked Files",
+			Status:  statusOK,
+			Message: "N/A (not a git repository)",
+		}
+	}
+
+	// Run git status --porcelain to find untracked files in .beads/
+	cmd := exec.Command("git", "status", "--porcelain", ".beads/")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return doctorCheck{
+			Name:    "Untracked Files",
+			Status:  statusWarning,
+			Message: "Unable to check git status",
+			Detail:  err.Error(),
+		}
+	}
+
+	// Parse output for untracked JSONL files (lines starting with "??")
+	var untrackedJSONL []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Untracked files start with "?? "
+		if strings.HasPrefix(line, "?? ") {
+			file := strings.TrimPrefix(line, "?? ")
+			// Only care about .jsonl files
+			if strings.HasSuffix(file, ".jsonl") {
+				untrackedJSONL = append(untrackedJSONL, filepath.Base(file))
+			}
+		}
+	}
+
+	if len(untrackedJSONL) == 0 {
+		return doctorCheck{
+			Name:    "Untracked Files",
+			Status:  statusOK,
+			Message: "All .beads/*.jsonl files are tracked",
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Untracked Files",
+		Status:  statusWarning,
+		Message: fmt.Sprintf("Untracked JSONL files: %s", strings.Join(untrackedJSONL, ", ")),
+		Detail:  "These files should be committed to propagate changes to other clones",
+		Fix:     "Run 'bd doctor --fix' to stage and commit untracked files, or manually: git add .beads/*.jsonl && git commit",
 	}
 }
 
