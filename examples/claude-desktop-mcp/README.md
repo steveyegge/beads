@@ -2,6 +2,8 @@
 
 > **Note**: The beads MCP server is now fully implemented! See [integrations/beads-mcp](../../integrations/beads-mcp/) for the production implementation.
 
+> **Recommendation**: For environments with shell access (Claude Code, Cursor, Windsurf), use **CLI + hooks** instead of MCP. It uses ~1-2k tokens vs 10-50k for MCP schemas, resulting in lower compute cost and latency. **Use MCP only for MCP-only environments** like Claude Desktop where CLI is unavailable.
+
 ## What This Provides
 
 An MCP server that exposes bd functionality to Claude Desktop and other MCP clients, allowing Claude to:

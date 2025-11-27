@@ -121,26 +121,37 @@ bd version
 
 ## IDE and Editor Integrations
 
-### Claude Code Plugin
+### CLI + Hooks (Recommended for Claude Code)
 
-For Claude Code users, the beads plugin provides slash commands and MCP tools.
+**The recommended approach** for Claude Code, Cursor, Windsurf, and other editors with shell access:
 
-**Prerequisites:**
-1. First, install the bd CLI (see above)
-2. Install `uv` (Python package manager) - required for the MCP server:
-   ```bash
-   # macOS/Linux
-   curl -LsSf https://astral.sh/uv/install.sh | sh
+```bash
+# 1. Install bd CLI (see Quick Install above)
+brew install bd
 
-   # Or via Homebrew
-   brew install uv
+# 2. Initialize in your project
+cd your-project
+bd init --quiet
 
-   # Or via pip
-   pip install uv
-   ```
-   After installation, restart your shell or run `source ~/.local/bin/env` to update PATH.
+# 3. Install hooks for automatic context injection
+bd hooks install
+```
 
-3. Then install the plugin:
+**How it works:**
+- SessionStart hook runs `bd prime` automatically
+- `bd prime` injects ~1-2k tokens of workflow context
+- You use `bd` CLI commands directly
+- Git hooks auto-sync the database
+
+**Why this is recommended:**
+- **Context efficient** - ~1-2k tokens vs 10-50k for MCP tool schemas
+- **Lower latency** - Direct CLI calls, no MCP protocol overhead
+- **Universal** - Works with any editor that has shell access
+- **More sustainable** - Less compute per request
+
+### Claude Code Plugin (Optional)
+
+For enhanced UX with slash commands:
 
 ```bash
 # In Claude Code
@@ -149,16 +160,15 @@ For Claude Code users, the beads plugin provides slash commands and MCP tools.
 # Restart Claude Code
 ```
 
-The plugin includes:
+The plugin adds:
 - Slash commands: `/bd-ready`, `/bd-create`, `/bd-show`, `/bd-update`, `/bd-close`, etc.
-- Full MCP server with all bd tools
 - Task agent for autonomous execution
 
 See [PLUGIN.md](PLUGIN.md) for complete plugin documentation.
 
-### MCP Server (For Sourcegraph Amp, Claude Desktop, and other MCP clients)
+### MCP Server (Alternative - for MCP-only environments)
 
-If you're using an MCP-compatible tool other than Claude Code:
+**Use MCP only when CLI is unavailable** (Claude Desktop, Sourcegraph Amp without shell):
 
 ```bash
 # Using uv (recommended)
@@ -195,11 +205,10 @@ Add to your MCP settings:
 }
 ```
 
-**What you get:**
-- Full bd functionality exposed via MCP protocol
-- Tools for creating, updating, listing, and closing issues
-- Ready work detection and dependency management
-- All without requiring Bash commands
+**Trade-offs:**
+- ✅ Works in MCP-only environments
+- ❌ Higher context overhead (MCP schemas add 10-50k tokens)
+- ❌ Additional latency from MCP protocol
 
 See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for detailed MCP server documentation.
 

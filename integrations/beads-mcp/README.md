@@ -3,6 +3,10 @@
 MCP server for [beads](https://github.com/steveyegge/beads) issue tracker and agentic memory system.
 Enables AI agents to manage tasks using bd CLI through Model Context Protocol.
 
+> **Note:** For environments with shell access (Claude Code, Cursor, Windsurf), the **CLI + hooks approach is recommended** over MCP. It uses ~1-2k tokens vs 10-50k for MCP schemas, resulting in lower compute cost and latency. See the [main README](../../README.md) for CLI setup.
+>
+> **Use this MCP server** for MCP-only environments like Claude Desktop where CLI access is unavailable.
+
 ## Installing
 
 Install from PyPI:

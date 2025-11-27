@@ -4,11 +4,38 @@ This document explains design decisions for Claude Code integration in beads.
 
 ## Integration Approach
 
-Beads uses a simple, universal approach to Claude Code integration:
-- `bd prime` command for context injection
+**Recommended: CLI + Hooks** - Beads uses a simple, universal approach to Claude Code integration:
+- `bd prime` command for context injection (~1-2k tokens)
 - Hooks (SessionStart/PreCompact) for automatic context refresh
+- Direct CLI commands with `--json` flags
 - Optional: Plugin for slash commands and enhanced UX
-- Optional: MCP server for native tool access (legacy)
+
+**Alternative: MCP Server** - For MCP-only environments (Claude Desktop, no shell):
+- Higher context overhead (MCP tool schemas)
+- Use only when CLI is unavailable
+
+## Why CLI + Hooks Over MCP?
+
+**Context efficiency matters**, even with large context windows:
+
+1. **Compute cost scales with tokens** - Every token in your context consumes compute on every inference, regardless of whether it's used
+2. **Latency increases with context** - Larger prompts take longer to process
+3. **Energy consumption** - Each token has environmental impact; lean prompts are more sustainable
+4. **Attention quality** - Models attend better to smaller, focused contexts
+
+**The math:**
+- MCP tool schemas can add 10-50k tokens to context (depending on number of tools)
+- `bd prime` adds ~1-2k tokens of workflow context
+- That's 10-50x less context overhead
+
+**When context size doesn't matter:**
+- MCP-only environments where CLI isn't available (Claude Desktop)
+- Very short conversations where context overhead is negligible
+
+**When to prefer CLI + hooks:**
+- Any environment with shell access (Claude Code, Cursor, Windsurf, etc.)
+- Long conversations or coding sessions
+- Multi-editor workflows (CLI is universal)
 
 ## Why Not Claude Skills?
 

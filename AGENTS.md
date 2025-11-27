@@ -74,118 +74,45 @@ bd init --quiet  # Non-interactive, auto-installs git hooks, no prompts
 
 We use bd (beads) for issue tracking instead of Markdown TODOs or external tools.
 
-### MCP Server (Recommended)
+### CLI + Hooks (Recommended)
 
-**RECOMMENDED**: Use the MCP (Model Context Protocol) server for the best experience! The beads MCP server provides native integration with Claude and other MCP-compatible AI assistants.
+**RECOMMENDED**: Use the `bd` CLI with hooks for the best experience. This approach:
 
-**Installation:**
-
-```bash
-# Install the MCP server
-pip install beads-mcp
-
-# Add to your MCP settings (e.g., Claude Desktop config)
-{
-  "beads": {
-    "command": "beads-mcp",
-    "args": []
-  }
-}
-```
-
-**Benefits:**
-
-- Native function calls instead of shell commands
-- Automatic workspace detection
-- Better error handling and validation
-- Structured JSON responses
-- No need for `--json` flags
-
-**All bd commands are available as MCP functions** with the prefix `mcp__beads-*__`. For example:
-
-- `bd ready` → `mcp__beads__ready()`
-- `bd create` → `mcp__beads__create(title="...", priority=1)`
-- `bd update` → `mcp__beads__update(issue_id="bd-42", status="in_progress")`
-
-See `integrations/beads-mcp/README.md` for complete documentation.
-
-### Multi-Repo Configuration (MCP Server)
-
-**RECOMMENDED: Use a single MCP server for all beads projects** - it automatically routes to per-project local daemons.
-
-**For AI agent multi-repo patterns**, see [docs/MULTI_REPO_AGENTS.md](docs/MULTI_REPO_AGENTS.md) (config options, routing, troubleshooting, best practices).
-
-**For complete multi-repo workflow guide**, see [docs/MULTI_REPO_MIGRATION.md](docs/MULTI_REPO_MIGRATION.md) (OSS contributors, teams, multi-phase development).
+- **Minimizes context usage** - Only injects ~1-2k tokens via `bd prime` vs MCP tool schemas
+- **Reduces compute cost** - Less tokens = less processing per request
+- **Lower latency** - Direct CLI calls are faster than MCP protocol overhead
+- **More sustainable** - Every token has compute/energy cost; lean prompts are greener
+- **Universal** - Works with any AI assistant, not just MCP-compatible ones
 
 **Setup (one-time):**
 
 ```bash
-# MCP config in ~/.config/amp/settings.json or Claude Desktop config:
-{
-  "beads": {
-    "command": "beads-mcp",
-    "args": []
-  }
-}
+# Install bd CLI (see docs/INSTALLING.md)
+brew install bd  # or other methods
+
+# Initialize in your project
+bd init --quiet
+
+# Install hooks for automatic context injection
+bd hooks install
 ```
 
-**How it works (LSP model):**
-The single MCP server instance automatically:
+**How it works:**
 
-1. Checks for local daemon socket (`.beads/bd.sock`) in your current workspace
-2. Routes requests to the correct **per-project daemon** based on working directory
-3. Auto-starts the local daemon if not running (with exponential backoff)
-4. **Each project gets its own isolated daemon** serving only its database
+1. **SessionStart hook** runs `bd prime` automatically when Claude Code starts
+2. `bd prime` injects a compact workflow reference (~1-2k tokens)
+3. You use `bd` CLI commands directly (no MCP layer needed)
+4. Git hooks auto-sync the database with JSONL
 
-**Architecture:**
+**Why context minimization matters:**
 
-```
-MCP Server (one instance)
-    ↓
-Per-Project Daemons (one per workspace)
-    ↓
-SQLite Databases (complete isolation)
-```
+Even with 200k+ context windows, minimizing context is important:
+- **Compute cost scales with tokens** - More context = more expensive inference
+- **Latency increases with context** - Larger prompts take longer to process
+- **Energy consumption** - Every token has environmental impact
+- **Attention quality** - Models attend better to smaller, focused contexts
 
-**Why per-project daemons?**
-
-- ✅ Complete database isolation between projects
-- ✅ No cross-project pollution or git worktree conflicts
-- ✅ Simpler mental model: one project = one database = one daemon
-- ✅ Follows LSP (Language Server Protocol) architecture
-
-**Note:** The daemon **auto-starts automatically** when you run any `bd` command (v0.9.11+). To disable auto-start, set `BEADS_AUTO_START_DAEMON=false`.
-
-**Version Management:** bd automatically handles daemon version mismatches (v0.16.0+):
-
-- When you upgrade bd, old daemons are automatically detected and restarted
-- Version compatibility is checked on every connection
-- No manual intervention required after upgrades
-- Works transparently with MCP server and CLI
-- Use `bd daemons health` to check for version mismatches
-- Use `bd daemons killall` to force-restart all daemons if needed
-
-**Alternative (not recommended): Multiple MCP Server Instances**
-If you must use separate MCP servers:
-
-```json
-{
-  "beads-webapp": {
-    "command": "beads-mcp",
-    "env": {
-      "BEADS_WORKING_DIR": "/Users/you/projects/webapp"
-    }
-  },
-  "beads-api": {
-    "command": "beads-mcp",
-    "env": {
-      "BEADS_WORKING_DIR": "/Users/you/projects/api"
-    }
-  }
-}
-```
-
-⚠️ **Problem**: AI may select the wrong MCP server for your workspace, causing commands to operate on the wrong database.
+A 50k token MCP schema consumes the same compute whether you use those tools or not. The CLI approach keeps your context lean and focused.
 
 ### CLI Quick Reference
 
@@ -212,6 +139,36 @@ bd sync  # Force immediate export/commit/push
 ```
 
 **For comprehensive CLI documentation**, see [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
+
+### MCP Server (Alternative)
+
+For Claude Desktop, Sourcegraph Amp, or other MCP-only environments where CLI access is limited, use the MCP server:
+
+```bash
+pip install beads-mcp
+```
+
+Add to MCP config:
+```json
+{
+  "beads": {
+    "command": "beads-mcp",
+    "args": []
+  }
+}
+```
+
+**When to use MCP:**
+- ✅ Claude Desktop (no shell access)
+- ✅ MCP-only environments
+- ✅ Environments where CLI is unavailable
+
+**When to prefer CLI + hooks:**
+- ✅ Claude Code, Cursor, Windsurf, or any environment with shell access
+- ✅ When context efficiency matters (most cases)
+- ✅ Multi-editor workflows (CLI is universal)
+
+See `integrations/beads-mcp/README.md` for MCP documentation. For multi-repo MCP patterns, see [docs/MULTI_REPO_AGENTS.md](docs/MULTI_REPO_AGENTS.md).
 
 ### Import Configuration
 
@@ -691,26 +648,15 @@ bd automatically syncs with git:
 - Imports from JSONL when newer (e.g., after `git pull`)
 - No manual export/import needed!
 
-### MCP Server (Recommended)
+### MCP Server (Alternative)
 
-If using Claude or MCP-compatible clients, install the beads MCP server:
+For MCP-only environments (Claude Desktop, no shell access), install the MCP server:
 
 ```bash
 pip install beads-mcp
 ```
 
-Add to MCP config (e.g., `~/.config/claude/config.json`):
-
-```json
-{
-  "beads": {
-    "command": "beads-mcp",
-    "args": []
-  }
-}
-```
-
-Then use `mcp__beads__*` functions instead of CLI commands.
+**Prefer CLI + hooks** when shell access is available - it uses less context and is more efficient.
 
 ### Managing AI-Generated Planning Documents
 
