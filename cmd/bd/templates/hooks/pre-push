@@ -31,9 +31,9 @@ if command -v bd >/dev/null 2>&1; then
     bd sync --flush-only >/dev/null 2>&1 || true
 fi
 
-# Collect all tracked or existing JSONL files (supports both old and new names)
+# Collect all tracked or existing JSONL files (beads.jsonl, issues.jsonl for backward compat, deletions.jsonl for deletion propagation)
 FILES=""
-for f in .beads/beads.jsonl .beads/issues.jsonl; do
+for f in .beads/beads.jsonl .beads/issues.jsonl .beads/deletions.jsonl; do
     # Include file if it exists in working tree OR is tracked by git (even if deleted)
     if git ls-files --error-unmatch "$f" >/dev/null 2>&1 || [ -f "$f" ]; then
         FILES="$FILES $f"
