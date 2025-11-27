@@ -231,7 +231,8 @@ func autoImportIfNewer() {
 	}
 
 	// Store import timestamp (bd-159: for staleness detection)
-	importTime := time.Now().Format(time.RFC3339)
+	// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+	importTime := time.Now().Format(time.RFC3339Nano)
 	if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_time after import: %v\n", err)
 	}

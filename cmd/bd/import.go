@@ -357,7 +357,8 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 					// is unavailable. This ensures import operations always succeed even if metadata storage fails.
 					debug.Logf("Warning: failed to update last_import_hash: %v", err)
 				}
-				importTime := time.Now().Format(time.RFC3339)
+				// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+				importTime := time.Now().Format(time.RFC3339Nano)
 				if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
 					// Non-fatal warning (see above comment about graceful degradation)
 					debug.Logf("Warning: failed to update last_import_time: %v", err)

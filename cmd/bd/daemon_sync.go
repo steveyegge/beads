@@ -295,7 +295,8 @@ func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath 
 		log.log("Next export may require running 'bd import' first")
 	}
 
-	exportTime := time.Now().Format(time.RFC3339)
+	// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+	exportTime := time.Now().Format(time.RFC3339Nano)
 	if err := store.SetMetadata(ctx, timeKey, exportTime); err != nil {
 		log.log("Warning: failed to update %s: %v", timeKey, err)
 	}

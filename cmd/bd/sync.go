@@ -945,7 +945,8 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 			// is unavailable. This ensures export operations always succeed even if metadata storage fails.
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_hash: %v\n", err)
 		}
-		exportTime := time.Now().Format(time.RFC3339)
+		// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+		exportTime := time.Now().Format(time.RFC3339Nano)
 		if err := store.SetMetadata(ctx, "last_import_time", exportTime); err != nil {
 			// Non-fatal warning (see above comment about graceful degradation)
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_time: %v\n", err)

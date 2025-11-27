@@ -93,7 +93,8 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 		notify.Debugf("auto-import skipped, JSONL unchanged (hash match)")
 		// Update last_import_time to prevent repeated staleness warnings
 		// This handles the case where mtime changed but content didn't (e.g., git pull, touch)
-		importTime := time.Now().Format(time.RFC3339)
+		// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+		importTime := time.Now().Format(time.RFC3339Nano)
 		if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
 			notify.Warnf("failed to update last_import_time: %v", err)
 		}
@@ -133,7 +134,8 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 		notify.Warnf("This may cause auto-import to retry the same import on next operation.")
 	}
 
-	importTime := time.Now().Format(time.RFC3339)
+	// Use RFC3339Nano for nanosecond precision to avoid race with file mtime (fixes #399)
+	importTime := time.Now().Format(time.RFC3339Nano)
 	if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
 		notify.Warnf("failed to update last_import_time after import: %v", err)
 	}
