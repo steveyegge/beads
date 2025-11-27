@@ -225,6 +225,12 @@ func TestCheckLegacyJSONLFilename(t *testing.T) {
 			expectedStatus: "warning",
 			expectWarning:  true,
 		},
+		{
+			name:           "deletions.jsonl ignored as system file",
+			files:          []string{"beads.jsonl", "deletions.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
 	}
 
 	for _, tt := range tests {

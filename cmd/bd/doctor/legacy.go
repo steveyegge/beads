@@ -132,13 +132,14 @@ func CheckLegacyJSONLFilename(repoPath string) DoctorCheck {
 			continue
 		}
 
-		// Skip merge artifacts and backups
+		// Skip merge artifacts, backups, and system files
 		lowerName := strings.ToLower(name)
 		if strings.Contains(lowerName, "backup") ||
 			strings.Contains(lowerName, ".orig") ||
 			strings.Contains(lowerName, ".bak") ||
 			strings.Contains(lowerName, "~") ||
-			strings.HasPrefix(lowerName, "backup_") {
+			strings.HasPrefix(lowerName, "backup_") ||
+			name == "deletions.jsonl" {
 			continue
 		}
 
