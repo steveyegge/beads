@@ -281,8 +281,24 @@ func FindJSONLPath(dbPath string) string {
 				return match
 			}
 		}
-		// Return the first .jsonl file found if issues.jsonl not present
-		return matches[0]
+		// bd-tqo: Fall back to beads.jsonl for legacy support
+		for _, match := range matches {
+			if filepath.Base(match) == "beads.jsonl" {
+				return match
+			}
+		}
+		// bd-tqo: Skip deletions.jsonl and merge artifacts to prevent corruption
+		for _, match := range matches {
+			base := filepath.Base(match)
+			if base == "deletions.jsonl" ||
+				base == "beads.base.jsonl" ||
+				base == "beads.left.jsonl" ||
+				base == "beads.right.jsonl" {
+				continue
+			}
+			return match
+		}
+		// If only deletions/merge files exist, fall through to default
 	}
 
 	// bd-6xd: Default to issues.jsonl (canonical name)

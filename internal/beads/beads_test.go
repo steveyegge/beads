@@ -220,6 +220,68 @@ func TestFindJSONLPathMultipleFiles(t *testing.T) {
 	}
 }
 
+// TestFindJSONLPathSkipsDeletions verifies that FindJSONLPath skips deletions.jsonl
+// and merge artifacts to prevent corruption (bd-tqo fix)
+func TestFindJSONLPathSkipsDeletions(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    []string
+		expected string
+	}{
+		{
+			name:     "prefers issues.jsonl over deletions.jsonl",
+			files:    []string{"deletions.jsonl", "issues.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "skips deletions.jsonl when only option",
+			files:    []string{"deletions.jsonl"},
+			expected: "issues.jsonl", // Falls back to default
+		},
+		{
+			name:     "skips merge artifacts",
+			files:    []string{"beads.base.jsonl", "beads.left.jsonl", "issues.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "prefers issues over beads",
+			files:    []string{"beads.jsonl", "issues.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "uses beads.jsonl as legacy fallback",
+			files:    []string{"beads.jsonl", "deletions.jsonl"},
+			expected: "beads.jsonl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "beads-jsonl-test-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			// Create test files
+			for _, file := range tt.files {
+				path := filepath.Join(tmpDir, file)
+				if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			dbPath := filepath.Join(tmpDir, "test.db")
+			result := FindJSONLPath(dbPath)
+			expected := filepath.Join(tmpDir, tt.expected)
+
+			if result != expected {
+				t.Errorf("FindJSONLPath() = %q, want %q", result, expected)
+			}
+		})
+	}
+}
+
 func TestFindDatabasePathHomeDefault(t *testing.T) {
 	// This test verifies that if no database is found, it falls back to home directory
 	// We can't reliably test this without modifying the home directory, so we'll skip

@@ -298,7 +298,7 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 // FindJSONLInDir finds the JSONL file in the given directory.
 // It prefers issues.jsonl over other .jsonl files to prevent accidentally
 // reading/writing to deletions.jsonl or merge artifacts (bd-tqo fix).
-// Returns empty string if no suitable JSONL file is found.
+// Always returns a path (defaults to issues.jsonl if nothing suitable found).
 func FindJSONLInDir(dbDir string) string {
 	pattern := filepath.Join(dbDir, "*.jsonl")
 	matches, err := filepath.Glob(pattern)
