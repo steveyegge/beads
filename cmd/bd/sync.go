@@ -556,16 +556,40 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 	return nil
 }
 
-// gitCommitBeadsDir stages and commits only files in .beads/ (bd-red fix)
+// gitCommitBeadsDir stages and commits only sync-related files in .beads/ (bd-red fix)
 // This ensures bd sync doesn't accidentally commit other staged files.
+// Only stages specific sync files (issues.jsonl, deletions.jsonl, metadata.json)
+// to avoid staging gitignored snapshot files that may be tracked. (bd-guc fix)
 func gitCommitBeadsDir(ctx context.Context, message string) error {
 	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return fmt.Errorf("no .beads directory found")
 	}
 
-	// Stage all tracked changes in .beads/
-	addCmd := exec.CommandContext(ctx, "git", "add", beadsDir)
+	// Stage only the specific sync-related files (bd-guc)
+	// This avoids staging gitignored snapshot files (beads.*.jsonl, *.meta.json)
+	// that may still be tracked from before they were added to .gitignore
+	syncFiles := []string{
+		filepath.Join(beadsDir, "issues.jsonl"),
+		filepath.Join(beadsDir, "deletions.jsonl"),
+		filepath.Join(beadsDir, "metadata.json"),
+	}
+
+	// Only add files that exist
+	var filesToAdd []string
+	for _, f := range syncFiles {
+		if _, err := os.Stat(f); err == nil {
+			filesToAdd = append(filesToAdd, f)
+		}
+	}
+
+	if len(filesToAdd) == 0 {
+		return fmt.Errorf("no sync files found to commit")
+	}
+
+	// Stage only the sync files
+	args := append([]string{"add"}, filesToAdd...)
+	addCmd := exec.CommandContext(ctx, "git", args...)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
 	}
