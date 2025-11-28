@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
@@ -67,6 +68,12 @@ func ensureStoreActive() error {
 
 	sqlStore, err := sqlite.New(rootCtx, dbPath)
 	if err != nil {
+		// Check for fresh clone scenario (bd-dmb)
+		if isFreshCloneError(err) {
+			beadsDir := filepath.Dir(dbPath)
+			handleFreshCloneError(err, beadsDir)
+			return fmt.Errorf("database not initialized")
+		}
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 

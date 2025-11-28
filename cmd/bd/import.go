@@ -66,6 +66,11 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			var err error
 			store, err = sqlite.New(rootCtx, dbPath)
 			if err != nil {
+				// Check for fresh clone scenario (bd-dmb)
+				beadsDir := filepath.Dir(dbPath)
+				if handleFreshCloneError(err, beadsDir) {
+					os.Exit(1)
+				}
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)
 			}
