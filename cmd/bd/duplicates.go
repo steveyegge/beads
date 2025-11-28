@@ -92,8 +92,8 @@ Example:
 			
 			if autoMerge || dryRun {
 				if !dryRun {
-					// TODO(bd-hdt): Call performMerge when implemented
-					fmt.Fprintf(os.Stderr, "Auto-merge not yet fully implemented. Use suggested commands instead.\n")
+					result := performMerge(target.ID, sources)
+					mergeResults = append(mergeResults, result)
 				}
 			}
 		}
@@ -257,5 +257,52 @@ func formatDuplicateGroupsJSON(groups [][]*types.Issue, refCounts map[string]int
 			"note":              fmt.Sprintf("Duplicate: %s (same content as %s)", strings.Join(sources, " "), target.ID),
 		})
 	}
+	return result
+}
+
+// performMerge executes the merge operation:
+// 1. Closes all source issues with a reason indicating they are duplicates
+// 2. Links each source to the target with a "related" dependency
+// Returns a map with the merge result for JSON output
+func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
+	ctx := rootCtx
+	result := map[string]interface{}{
+		"target":  targetID,
+		"sources": sourceIDs,
+		"closed":  []string{},
+		"linked":  []string{},
+		"errors":  []string{},
+	}
+
+	closedIDs := []string{}
+	linkedIDs := []string{}
+	errors := []string{}
+
+	for _, sourceID := range sourceIDs {
+		// Close the duplicate issue
+		reason := fmt.Sprintf("Duplicate of %s", targetID)
+		if err := store.CloseIssue(ctx, sourceID, reason, actor); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to close %s: %v", sourceID, err))
+			continue
+		}
+		closedIDs = append(closedIDs, sourceID)
+
+		// Add dependency linking source to target
+		dep := &types.Dependency{
+			IssueID:     sourceID,
+			DependsOnID: targetID,
+			Type:        types.DependencyType("related"),
+		}
+		if err := store.AddDependency(ctx, dep, actor); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to link %s to %s: %v", sourceID, targetID, err))
+			continue
+		}
+		linkedIDs = append(linkedIDs, sourceID)
+	}
+
+	result["closed"] = closedIDs
+	result["linked"] = linkedIDs
+	result["errors"] = errors
+
 	return result
 }
