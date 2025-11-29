@@ -231,6 +231,18 @@ func TestCheckLegacyJSONLFilename(t *testing.T) {
 			expectedStatus: "ok",
 			expectWarning:  false,
 		},
+		{
+			name:           "merge artifacts ignored",
+			files:          []string{"issues.jsonl", "issues.base.jsonl", "issues.left.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
+		{
+			name:           "merge artifacts with right variant ignored",
+			files:          []string{"issues.jsonl", "issues.right.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
 	}
 
 	for _, tt := range tests {
