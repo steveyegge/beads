@@ -296,7 +296,8 @@ var rootCmd = &cobra.Command{
 					}
 
 					isNoDbMode := false
-					if configData, err := os.ReadFile(configPath); err == nil {
+					// configPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
+					if configData, err := os.ReadFile(configPath); err == nil { //nolint:gosec
 						isNoDbMode = strings.Contains(string(configData), "no-db: true")
 					}
 
@@ -678,6 +679,7 @@ func handleFreshCloneError(err error, beadsDir string) bool {
 			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
 				jsonlPath = candidate
 				// Count lines (approximately = issue count)
+				// #nosec G304 -- candidate is constructed from beadsDir which is .beads/
 				if data, readErr := os.ReadFile(candidate); readErr == nil {
 					for _, line := range strings.Split(string(data), "\n") {
 						if strings.TrimSpace(line) != "" {
