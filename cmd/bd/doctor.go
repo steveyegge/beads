@@ -636,26 +636,55 @@ func checkDatabaseVersion(path string) doctorCheck {
 
 	// Check if database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// Check if JSONL exists (--no-db mode)
+		// Check if JSONL exists
 		// Check canonical (issues.jsonl) first, then legacy (beads.jsonl)
 		issuesJSONL := filepath.Join(beadsDir, "issues.jsonl")
 		beadsJSONL := filepath.Join(beadsDir, "beads.jsonl")
 
+		var jsonlPath string
 		if _, err := os.Stat(issuesJSONL); err == nil {
-			return doctorCheck{
-				Name:    "Database",
-				Status:  statusOK,
-				Message: "JSONL-only mode",
-				Detail:  "Using issues.jsonl (no SQLite database)",
-			}
+			jsonlPath = issuesJSONL
+		} else if _, err := os.Stat(beadsJSONL); err == nil {
+			jsonlPath = beadsJSONL
 		}
 
-		if _, err := os.Stat(beadsJSONL); err == nil {
+		if jsonlPath != "" {
+			// JSONL exists but no database - check if this is no-db mode or fresh clone
+			// Check config.yaml for no-db: true
+			configPath := filepath.Join(beadsDir, "config.yaml")
+			isNoDbMode := false
+			if configData, err := os.ReadFile(configPath); err == nil {
+				// Simple check for no-db: true in config.yaml
+				isNoDbMode = strings.Contains(string(configData), "no-db: true")
+			}
+
+			if isNoDbMode {
+				return doctorCheck{
+					Name:    "Database",
+					Status:  statusOK,
+					Message: "JSONL-only mode",
+					Detail:  "Using issues.jsonl (no SQLite database)",
+				}
+			}
+
+			// This is a fresh clone - JSONL exists but no database and not no-db mode
+			// Count issues and detect prefix for helpful suggestion
+			issueCount := countIssuesInJSONLFile(jsonlPath)
+			prefix := detectPrefixFromJSONL(jsonlPath)
+
+			message := "Fresh clone detected (no database)"
+			detail := fmt.Sprintf("Found %d issue(s) in JSONL that need to be imported", issueCount)
+			fix := "Run 'bd init' to hydrate the database from JSONL"
+			if prefix != "" {
+				fix = fmt.Sprintf("Run 'bd init' to hydrate the database (detected prefix: %s)", prefix)
+			}
+
 			return doctorCheck{
 				Name:    "Database",
-				Status:  statusOK,
-				Message: "JSONL-only mode",
-				Detail:  "Using issues.jsonl (no SQLite database)",
+				Status:  statusWarning,
+				Message: message,
+				Detail:  detail,
+				Fix:     fix,
 			}
 		}
 
@@ -2219,6 +2248,31 @@ func checkUntrackedBeadsFiles(path string) doctorCheck {
 		Detail:  "These files should be committed to propagate changes to other clones",
 		Fix:     "Run 'bd doctor --fix' to stage and commit untracked files, or manually: git add .beads/*.jsonl && git commit",
 	}
+}
+
+// countIssuesInJSONLFile counts the number of issues in a JSONL file
+func countIssuesInJSONLFile(jsonlPath string) int {
+	count, _, _ := countJSONLIssues(jsonlPath)
+	return count
+}
+
+// detectPrefixFromJSONL detects the most common issue prefix from a JSONL file
+func detectPrefixFromJSONL(jsonlPath string) string {
+	_, prefixes, _ := countJSONLIssues(jsonlPath)
+	if len(prefixes) == 0 {
+		return ""
+	}
+
+	// Find the most common prefix
+	var mostCommonPrefix string
+	maxCount := 0
+	for prefix, count := range prefixes {
+		if count > maxCount {
+			maxCount = count
+			mostCommonPrefix = prefix
+		}
+	}
+	return mostCommonPrefix
 }
 
 func init() {
