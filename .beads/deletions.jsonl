@@ -2472,3 +2472,4 @@
 {"id":"bd-997","title":"Agent 7 Issue 98","description":"Created by agent 7","status":"open","priority":2,"issue_type":"task","created_at":"2025-10-21T00:29:10.829359-07:00","updated_at":"2025-11-27T18:49:34.524653-08:00"}
 {"id":"bd-998","title":"Agent 7 Issue 99","description":"Created by agent 7","status":"open","priority":2,"issue_type":"task","created_at":"2025-10-21T00:29:10.829853-07:00","updated_at":"2025-11-27T18:49:34.524799-08:00"}
 {"id":"bd-999","title":"Batch Issue 1","description":"","status":"open","priority":1,"issue_type":"task","created_at":"2025-10-21T00:29:10.944351-07:00","updated_at":"2025-11-27T18:49:34.524948-08:00"}
+{"id":"bd-dc9","ts":"2025-11-29T08:59:48.747002265Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
