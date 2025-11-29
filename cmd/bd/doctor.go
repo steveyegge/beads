@@ -451,6 +451,14 @@ func runDiagnostics(path string) doctorResult {
 		return result
 	}
 
+	// Check 1a: Fresh clone detection (bd-4ew)
+	// Must come early - if this is a fresh clone, other checks may be misleading
+	freshCloneCheck := convertDoctorCheck(doctor.CheckFreshClone(path))
+	result.Checks = append(result.Checks, freshCloneCheck)
+	if freshCloneCheck.Status == statusWarning || freshCloneCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
 	// Check 2: Database version
 	dbCheck := checkDatabaseVersion(path)
 	result.Checks = append(result.Checks, dbCheck)

@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -358,6 +359,119 @@ func TestCheckLegacyJSONLConfig(t *testing.T) {
 
 			if tt.expectWarning && check.Fix == "" {
 				t.Error("Expected fix message for warning, got empty string")
+			}
+		})
+	}
+}
+
+func TestCheckFreshClone(t *testing.T) {
+	tests := []struct {
+		name           string
+		hasBeadsDir    bool
+		jsonlFile      string   // name of JSONL file to create
+		jsonlIssues    []string // issue IDs to put in JSONL
+		hasDatabase    bool
+		expectedStatus string
+		expectPrefix   string // expected prefix in fix message
+	}{
+		{
+			name:           "no beads directory",
+			hasBeadsDir:    false,
+			expectedStatus: "ok",
+		},
+		{
+			name:           "no JSONL file",
+			hasBeadsDir:    true,
+			jsonlFile:      "",
+			expectedStatus: "ok",
+		},
+		{
+			name:           "database exists",
+			hasBeadsDir:    true,
+			jsonlFile:      "issues.jsonl",
+			jsonlIssues:    []string{"bd-abc", "bd-def"},
+			hasDatabase:    true,
+			expectedStatus: "ok",
+		},
+		{
+			name:           "empty JSONL",
+			hasBeadsDir:    true,
+			jsonlFile:      "issues.jsonl",
+			jsonlIssues:    []string{},
+			hasDatabase:    false,
+			expectedStatus: "ok",
+		},
+		{
+			name:           "fresh clone with issues.jsonl (bd-4ew)",
+			hasBeadsDir:    true,
+			jsonlFile:      "issues.jsonl",
+			jsonlIssues:    []string{"bd-abc", "bd-def", "bd-ghi"},
+			hasDatabase:    false,
+			expectedStatus: "warning",
+			expectPrefix:   "bd",
+		},
+		{
+			name:           "fresh clone with beads.jsonl",
+			hasBeadsDir:    true,
+			jsonlFile:      "beads.jsonl",
+			jsonlIssues:    []string{"proj-1", "proj-2"},
+			hasDatabase:    false,
+			expectedStatus: "warning",
+			expectPrefix:   "proj",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+
+			if tt.hasBeadsDir {
+				if err := os.Mkdir(beadsDir, 0750); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Create JSONL file with issues
+			if tt.jsonlFile != "" {
+				jsonlPath := filepath.Join(beadsDir, tt.jsonlFile)
+				file, err := os.Create(jsonlPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, issueID := range tt.jsonlIssues {
+					issue := map[string]string{"id": issueID, "title": "Test issue"}
+					data, _ := json.Marshal(issue)
+					file.Write(data)
+					file.WriteString("\n")
+				}
+				file.Close()
+			}
+
+			// Create database if needed
+			if tt.hasDatabase {
+				dbPath := filepath.Join(beadsDir, "beads.db")
+				if err := os.WriteFile(dbPath, []byte("fake db"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			check := CheckFreshClone(tmpDir)
+
+			if check.Status != tt.expectedStatus {
+				t.Errorf("Expected status %s, got %s (message: %s)", tt.expectedStatus, check.Status, check.Message)
+			}
+
+			if tt.expectedStatus == "warning" {
+				if check.Fix == "" {
+					t.Error("Expected fix message for warning, got empty string")
+				}
+				if tt.expectPrefix != "" && !strings.Contains(check.Fix, tt.expectPrefix) {
+					t.Errorf("Expected fix to contain prefix %q, got: %s", tt.expectPrefix, check.Fix)
+				}
+				if !strings.Contains(check.Fix, "bd init") {
+					t.Error("Expected fix to mention 'bd init'")
+				}
 			}
 		})
 	}
