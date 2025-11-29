@@ -296,9 +296,34 @@ func checkOrphanedDeps(ctx context.Context, store storage.Storage) ([]string, er
 //   - after: issue count in DB after import
 //   - jsonlPath: path to issues.jsonl (used to locate deletions.jsonl)
 func validatePostImport(before, after int, jsonlPath string) error {
+	return validatePostImportWithExpectedDeletions(before, after, 0, jsonlPath)
+}
+
+// validatePostImportWithExpectedDeletions checks that import didn't cause data loss,
+// accounting for expected deletions that were already sanitized from the JSONL.
+// Returns error if issue count decreased unexpectedly (data loss) or nil if OK.
+//
+// Parameters:
+//   - before: issue count in DB before import
+//   - after: issue count in DB after import
+//   - expectedDeletions: number of issues known to have been deleted (from sanitize step)
+//   - jsonlPath: path to issues.jsonl (used to locate deletions.jsonl)
+func validatePostImportWithExpectedDeletions(before, after, expectedDeletions int, jsonlPath string) error {
 	if after < before {
 		// Count decrease - check if this matches legitimate deletions
 		decrease := before - after
+
+		// First, account for expected deletions from the sanitize step (bd-tt0 fix)
+		// These were already removed from JSONL and will be purged from DB by import
+		if expectedDeletions > 0 && decrease <= expectedDeletions {
+			// Decrease is fully accounted for by expected deletions
+			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, expected from sanitize)\n",
+				before, after, decrease)
+			return nil
+		}
+
+		// If decrease exceeds expected deletions, check deletions manifest for additional legitimacy
+		unexplainedDecrease := decrease - expectedDeletions
 
 		// Load deletions manifest to check for legitimate deletions
 		beadsDir := filepath.Dir(jsonlPath)
@@ -314,17 +339,22 @@ func validatePostImport(before, after int, jsonlPath string) error {
 		// were deleted in this sync cycle vs previously. But if there are ANY
 		// deletions recorded and the decrease is reasonable, allow it.
 		numDeletions := len(loadResult.Records)
-		if numDeletions > 0 && decrease <= numDeletions {
+		if numDeletions > 0 && unexplainedDecrease <= numDeletions {
 			// Legitimate deletion - decrease is accounted for by deletions manifest
-			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, accounted for by %d deletion(s))\n",
-				before, after, decrease, numDeletions)
+			if expectedDeletions > 0 {
+				fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, %d from sanitize + %d from deletions manifest)\n",
+					before, after, decrease, expectedDeletions, unexplainedDecrease)
+			} else {
+				fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, accounted for by %d deletion(s))\n",
+					before, after, decrease, numDeletions)
+			}
 			return nil
 		}
 
 		// Decrease exceeds recorded deletions - potential data loss
-		if numDeletions > 0 {
-			return fmt.Errorf("import reduced issue count: %d → %d (-%d exceeds %d recorded deletion(s) - potential data loss!)",
-				before, after, decrease, numDeletions)
+		if numDeletions > 0 || expectedDeletions > 0 {
+			return fmt.Errorf("import reduced issue count: %d → %d (-%d exceeds %d expected + %d recorded deletion(s) - potential data loss!)",
+				before, after, decrease, expectedDeletions, numDeletions)
 		}
 		return fmt.Errorf("import reduced issue count: %d → %d (data loss detected! no deletions recorded)", before, after)
 	}

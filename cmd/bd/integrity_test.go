@@ -241,6 +241,102 @@ func TestValidatePostImport(t *testing.T) {
 	})
 }
 
+func TestValidatePostImportWithExpectedDeletions(t *testing.T) {
+	t.Run("decrease fully accounted for by expected deletions succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		// No deletions.jsonl needed - expected deletions from sanitize step
+		err := validatePostImportWithExpectedDeletions(26, 25, 1, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error when decrease matches expected deletions, got: %v", err)
+		}
+	})
+
+	t.Run("decrease exceeds expected deletions but within manifest succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+
+		// Create deletions file with 3 deletions
+		deletionsContent := `{"id":"del-1","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-2","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-3","ts":"2024-01-01T00:00:00Z","by":"test"}
+`
+		if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0600); err != nil {
+			t.Fatalf("Failed to write deletions file: %v", err)
+		}
+
+		// Decrease of 5, expected 2, remaining 3 covered by manifest
+		err := validatePostImportWithExpectedDeletions(20, 15, 2, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error when decrease covered by expected + manifest, got: %v", err)
+		}
+	})
+
+	t.Run("decrease exceeds expected and manifest fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+
+		// Create deletions file with only 1 deletion
+		deletionsContent := `{"id":"del-1","ts":"2024-01-01T00:00:00Z","by":"test"}
+`
+		if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0600); err != nil {
+			t.Fatalf("Failed to write deletions file: %v", err)
+		}
+
+		// Decrease of 10, expected 2, remaining 8 exceeds 1 in manifest
+		err := validatePostImportWithExpectedDeletions(20, 10, 2, jsonlPath)
+		if err == nil {
+			t.Error("Expected error when decrease exceeds expected + manifest, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("Expected 'exceeds' error, got: %v", err)
+		}
+	})
+
+	t.Run("zero expected deletions falls back to manifest check", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+
+		// Create deletions file with 5 deletions
+		deletionsContent := `{"id":"del-1","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-2","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-3","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-4","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-5","ts":"2024-01-01T00:00:00Z","by":"test"}
+`
+		if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0600); err != nil {
+			t.Fatalf("Failed to write deletions file: %v", err)
+		}
+
+		// Same as validatePostImport: decrease of 5 covered by 5 in manifest
+		err := validatePostImportWithExpectedDeletions(10, 5, 0, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error when decrease matches manifest with zero expected, got: %v", err)
+		}
+	})
+
+	t.Run("no decrease succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		err := validatePostImportWithExpectedDeletions(10, 10, 5, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error for same count, got: %v", err)
+		}
+	})
+
+	t.Run("increase succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		err := validatePostImportWithExpectedDeletions(10, 15, 0, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error for increased count, got: %v", err)
+		}
+	})
+}
+
 func TestCountDBIssuesSuite(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
