@@ -17,12 +17,15 @@ var (
 
 var mergeCmd = &cobra.Command{
 	Use:   "merge <output> <base> <left> <right>",
-	Short: "3-way merge tool for beads JSONL issue files",
-	Long: `bd merge is a 3-way merge tool for beads issue tracker JSONL files.
+	Short: "Git merge driver for beads JSONL files",
+	Long: `bd merge is a git merge driver for beads issue tracker JSONL files.
 
-It intelligently merges issues based on identity (id + created_at + created_by),
-applies field-specific merge rules, combines dependencies, and outputs conflict
-markers for unresolvable conflicts.
+NOTE: This command is for git merge operations, NOT for merging duplicate issues.
+To merge duplicate issues, use 'bd duplicates --auto-merge' instead.
+
+This tool handles 3-way merges during git pull/merge operations. It intelligently
+merges issues based on identity (id + created_at + created_by), applies field-specific
+merge rules, combines dependencies, and outputs conflict markers for unresolvable conflicts.
 
 Designed to work as a git merge driver. Configure with:
 
