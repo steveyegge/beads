@@ -278,41 +278,8 @@ func FindJSONLPath(dbPath string) string {
 		return ""
 	}
 
-	// Get the directory containing the database
-	dbDir := filepath.Dir(dbPath)
-
-	// Look for existing .jsonl files in the .beads directory
-	pattern := filepath.Join(dbDir, "*.jsonl")
-	matches, err := filepath.Glob(pattern)
-	if err == nil && len(matches) > 0 {
-		// bd-6xd: Prefer issues.jsonl over beads.jsonl (canonical name)
-		for _, match := range matches {
-			if filepath.Base(match) == "issues.jsonl" {
-				return match
-			}
-		}
-		// bd-tqo: Fall back to beads.jsonl for legacy support
-		for _, match := range matches {
-			if filepath.Base(match) == "beads.jsonl" {
-				return match
-			}
-		}
-		// bd-tqo: Skip deletions.jsonl and merge artifacts to prevent corruption
-		for _, match := range matches {
-			base := filepath.Base(match)
-			if base == "deletions.jsonl" ||
-				base == "beads.base.jsonl" ||
-				base == "beads.left.jsonl" ||
-				base == "beads.right.jsonl" {
-				continue
-			}
-			return match
-		}
-		// If only deletions/merge files exist, fall through to default
-	}
-
-	// bd-6xd: Default to issues.jsonl (canonical name)
-	return filepath.Join(dbDir, "issues.jsonl")
+	// Get the directory containing the database and delegate to shared utility
+	return utils.FindJSONLInDir(filepath.Dir(dbPath))
 }
 
 // DatabaseInfo contains information about a discovered beads database

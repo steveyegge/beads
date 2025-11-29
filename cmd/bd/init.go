@@ -1395,38 +1395,6 @@ Aborting.`, yellow("⚠"), filepath.Base(jsonlPath), issueCount, cyan("bd doctor
 	return nil // No existing data found, safe to init
 }
 
-// countIssuesInJSONLFile counts valid issue lines in a JSONL file
-func countIssuesInJSONLFile(path string) int {
-	// #nosec G304 -- helper reads JSONL file in .beads directory
-	file, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	count := 0
-	scanner := bufio.NewScanner(file)
-	// Use larger buffer for potentially large JSONL lines
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		// Quick validation: check if it's valid JSON with an "id" field
-		var issue struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(line), &issue); err == nil && issue.ID != "" {
-			count++
-		}
-	}
-
-	return count
-}
-
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
 func setupClaudeSettings(verbose bool) error {
 	claudeDir := ".claude"

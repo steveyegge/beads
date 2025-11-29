@@ -5,6 +5,56 @@ import (
 	"path/filepath"
 )
 
+// FindJSONLInDir finds the JSONL file in the given .beads directory.
+// It prefers issues.jsonl over other .jsonl files to prevent accidentally
+// reading/writing to deletions.jsonl or merge artifacts (bd-tqo fix).
+// Always returns a path (defaults to issues.jsonl if nothing suitable found).
+//
+// Search order:
+// 1. issues.jsonl (canonical name)
+// 2. beads.jsonl (legacy support)
+// 3. Any other .jsonl file except deletions/merge artifacts
+// 4. Default to issues.jsonl
+func FindJSONLInDir(dbDir string) string {
+	pattern := filepath.Join(dbDir, "*.jsonl")
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) == 0 {
+		// Default to issues.jsonl if glob fails or no matches
+		return filepath.Join(dbDir, "issues.jsonl")
+	}
+
+	// Prefer issues.jsonl over other .jsonl files (bd-tqo fix)
+	// This prevents accidentally using deletions.jsonl or merge artifacts
+	for _, match := range matches {
+		if filepath.Base(match) == "issues.jsonl" {
+			return match
+		}
+	}
+
+	// Fall back to beads.jsonl for legacy support
+	for _, match := range matches {
+		if filepath.Base(match) == "beads.jsonl" {
+			return match
+		}
+	}
+
+	// Last resort: use first match (but skip deletions.jsonl and merge artifacts)
+	for _, match := range matches {
+		base := filepath.Base(match)
+		// Skip deletions manifest and merge artifacts
+		if base == "deletions.jsonl" ||
+			base == "beads.base.jsonl" ||
+			base == "beads.left.jsonl" ||
+			base == "beads.right.jsonl" {
+			continue
+		}
+		return match
+	}
+
+	// If only deletions/merge files exist, default to issues.jsonl
+	return filepath.Join(dbDir, "issues.jsonl")
+}
+
 // CanonicalizePath converts a path to its canonical form by:
 // 1. Converting to absolute path
 // 2. Resolving symlinks

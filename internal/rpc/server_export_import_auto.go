@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // handleExport handles the export operation
@@ -443,7 +444,7 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	// Find JSONL path using database directory
 	// Use FindJSONLInDir to prefer issues.jsonl over other .jsonl files (bd-tqo fix)
 	dbDir := filepath.Dir(dbPath)
-	jsonlPath := autoimport.FindJSONLInDir(dbDir)
+	jsonlPath := utils.FindJSONLInDir(dbDir)
 
 	// Get all issues from storage
 	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
