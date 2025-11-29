@@ -58,6 +58,7 @@ func UntrackedJSONL(path string) error {
 			continue
 		}
 
+		// #nosec G204 -- file is validated against a whitelist of JSONL files
 		addCmd := exec.Command("git", "add", file)
 		addCmd.Dir = path
 		if err := addCmd.Run(); err != nil {

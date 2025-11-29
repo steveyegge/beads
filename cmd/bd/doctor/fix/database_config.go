@@ -163,6 +163,7 @@ func LegacyJSONLConfig(path string) error {
 
 		// Update .gitattributes if it references beads.jsonl
 		gitattrsPath := filepath.Join(path, ".gitattributes")
+		// #nosec G304 -- gitattrsPath is constructed from path which is the git root
 		if content, err := os.ReadFile(gitattrsPath); err == nil {
 			if strings.Contains(string(content), ".beads/beads.jsonl") {
 				newContent := strings.ReplaceAll(string(content), ".beads/beads.jsonl", ".beads/issues.jsonl")

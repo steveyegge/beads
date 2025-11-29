@@ -661,6 +661,7 @@ func checkDatabaseVersion(path string) doctorCheck {
 			// Check config.yaml for no-db: true
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			isNoDbMode := false
+			// #nosec G304 -- configPath is constructed from beadsDir which is in .beads/
 			if configData, err := os.ReadFile(configPath); err == nil {
 				// Simple check for no-db: true in config.yaml
 				isNoDbMode = strings.Contains(string(configData), "no-db: true")
