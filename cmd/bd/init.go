@@ -1395,12 +1395,7 @@ Aborting.`, yellow("⚠"), filepath.Base(jsonlPath), issueCount, cyan("bd doctor
 	return nil // No existing data found, safe to init
 }
 
-// countIssuesInJSONLFile counts the number of issues in a JSONL file.
-// Delegates to countJSONLIssues in doctor.go.
-func countIssuesInJSONLFile(jsonlPath string) int {
-	count, _, _ := countJSONLIssues(jsonlPath)
-	return count
-}
+
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
 func setupClaudeSettings(verbose bool) error {
