@@ -163,22 +163,78 @@ func TestValidatePreExportSuite(t *testing.T) {
 }
 
 func TestValidatePostImport(t *testing.T) {
-	t.Run("issue count decreased fails", func(t *testing.T) {
-		err := validatePostImport(10, 5)
+	t.Run("issue count decreased with no deletions fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		// No deletions.jsonl file exists
+		err := validatePostImport(10, 5, jsonlPath)
 		if err == nil {
-			t.Error("Expected error for decreased issue count, got nil")
+			t.Error("Expected error for decreased issue count with no deletions, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "no deletions recorded") {
+			t.Errorf("Expected 'no deletions recorded' error, got: %v", err)
+		}
+	})
+
+	t.Run("issue count decreased within deletion count succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+
+		// Create deletions file with 5 deletions
+		deletionsContent := `{"id":"del-1","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-2","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-3","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-4","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-5","ts":"2024-01-01T00:00:00Z","by":"test"}
+`
+		if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0600); err != nil {
+			t.Fatalf("Failed to write deletions file: %v", err)
+		}
+
+		// Decrease of 5 matches the 5 recorded deletions
+		err := validatePostImport(10, 5, jsonlPath)
+		if err != nil {
+			t.Errorf("Expected no error when decrease matches deletions, got: %v", err)
+		}
+	})
+
+	t.Run("issue count decreased exceeding deletion count fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+
+		// Create deletions file with only 2 deletions
+		deletionsContent := `{"id":"del-1","ts":"2024-01-01T00:00:00Z","by":"test"}
+{"id":"del-2","ts":"2024-01-01T00:00:00Z","by":"test"}
+`
+		if err := os.WriteFile(deletionsPath, []byte(deletionsContent), 0600); err != nil {
+			t.Fatalf("Failed to write deletions file: %v", err)
+		}
+
+		// Decrease of 5 exceeds the 2 recorded deletions
+		err := validatePostImport(10, 5, jsonlPath)
+		if err == nil {
+			t.Error("Expected error when decrease exceeds deletions, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("Expected 'exceeds' error, got: %v", err)
 		}
 	})
 
 	t.Run("issue count same succeeds", func(t *testing.T) {
-		err := validatePostImport(10, 10)
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		err := validatePostImport(10, 10, jsonlPath)
 		if err != nil {
 			t.Errorf("Expected no error for same count, got: %v", err)
 		}
 	})
 
 	t.Run("issue count increased succeeds", func(t *testing.T) {
-		err := validatePostImport(10, 15)
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+		err := validatePostImport(10, 15, jsonlPath)
 		if err != nil {
 			t.Errorf("Expected no error for increased count, got: %v", err)
 		}

@@ -332,7 +332,7 @@ Use --merge to merge the sync branch back to main branch.`,
 						if err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: failed to count issues after import: %v\n", err)
 						} else {
-							if err := validatePostImport(beforeCount, afterCount); err != nil {
+							if err := validatePostImport(beforeCount, afterCount, jsonlPath); err != nil {
 								fmt.Fprintf(os.Stderr, "Post-import validation failed: %v\n", err)
 								os.Exit(1)
 							}

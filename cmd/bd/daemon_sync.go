@@ -550,7 +550,7 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 			return
 		}
 
-		if err := validatePostImport(beforeCount, afterCount); err != nil {
+		if err := validatePostImport(beforeCount, afterCount, jsonlPath); err != nil {
 			log.log("Post-import validation failed: %v", err)
 			return
 		}
@@ -743,7 +743,7 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 
-		if err := validatePostImport(beforeCount, afterCount); err != nil {
+		if err := validatePostImport(beforeCount, afterCount, jsonlPath); err != nil {
 			log.log("Post-import validation failed: %v", err)
 			return
 		}

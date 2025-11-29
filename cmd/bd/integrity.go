@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -287,10 +288,45 @@ func checkOrphanedDeps(ctx context.Context, store storage.Storage) ([]string, er
 }
 
 // validatePostImport checks that import didn't cause data loss.
-// Returns error if issue count decreased (data loss) or nil if OK.
-func validatePostImport(before, after int) error {
+// Returns error if issue count decreased unexpectedly (data loss) or nil if OK.
+// A decrease is legitimate if it matches deletions recorded in deletions.jsonl.
+//
+// Parameters:
+//   - before: issue count in DB before import
+//   - after: issue count in DB after import
+//   - jsonlPath: path to issues.jsonl (used to locate deletions.jsonl)
+func validatePostImport(before, after int, jsonlPath string) error {
 	if after < before {
-		return fmt.Errorf("import reduced issue count: %d → %d (data loss detected!)", before, after)
+		// Count decrease - check if this matches legitimate deletions
+		decrease := before - after
+
+		// Load deletions manifest to check for legitimate deletions
+		beadsDir := filepath.Dir(jsonlPath)
+		deletionsPath := deletions.DefaultPath(beadsDir)
+		loadResult, err := deletions.LoadDeletions(deletionsPath)
+		if err != nil {
+			// If we can't load deletions, assume the worst
+			return fmt.Errorf("import reduced issue count: %d → %d (data loss detected! failed to verify deletions: %v)", before, after, err)
+		}
+
+		// If there are deletions recorded, the decrease is likely legitimate
+		// We can't perfectly match because we don't know exactly which issues
+		// were deleted in this sync cycle vs previously. But if there are ANY
+		// deletions recorded and the decrease is reasonable, allow it.
+		numDeletions := len(loadResult.Records)
+		if numDeletions > 0 && decrease <= numDeletions {
+			// Legitimate deletion - decrease is accounted for by deletions manifest
+			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, accounted for by %d deletion(s))\n",
+				before, after, decrease, numDeletions)
+			return nil
+		}
+
+		// Decrease exceeds recorded deletions - potential data loss
+		if numDeletions > 0 {
+			return fmt.Errorf("import reduced issue count: %d → %d (-%d exceeds %d recorded deletion(s) - potential data loss!)",
+				before, after, decrease, numDeletions)
+		}
+		return fmt.Errorf("import reduced issue count: %d → %d (data loss detected! no deletions recorded)", before, after)
 	}
 	if after == before {
 		fmt.Fprintf(os.Stderr, "Import complete: no changes\n")
