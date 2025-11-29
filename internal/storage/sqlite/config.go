@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 // SetConfig sets a configuration value
@@ -92,4 +93,38 @@ func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, er
 		return "", nil
 	}
 	return value, wrapDBError("get metadata", err)
+}
+
+// CustomStatusConfigKey is the config key for custom status states
+const CustomStatusConfigKey = "status.custom"
+
+// GetCustomStatuses retrieves the list of custom status states from config.
+// Custom statuses are stored as comma-separated values in the "status.custom" config key.
+// Returns an empty slice if no custom statuses are configured.
+func (s *SQLiteStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
+	value, err := s.GetConfig(ctx, CustomStatusConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCustomStatuses(value), nil
+}
+
+// parseCustomStatuses splits a comma-separated string into a slice of trimmed status names.
+// Empty entries are filtered out.
+func parseCustomStatuses(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

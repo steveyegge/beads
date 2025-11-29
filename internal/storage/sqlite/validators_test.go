@@ -149,3 +149,72 @@ func TestValidateFieldUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateFieldUpdateWithCustomStatuses(t *testing.T) {
+	customStatuses := []string{"awaiting_review", "awaiting_testing"}
+
+	tests := []struct {
+		name           string
+		key            string
+		value          interface{}
+		customStatuses []string
+		wantErr        bool
+	}{
+		// Built-in statuses work with or without custom statuses
+		{"built-in status no custom", "status", string(types.StatusOpen), nil, false},
+		{"built-in status with custom", "status", string(types.StatusOpen), customStatuses, false},
+		{"built-in closed with custom", "status", string(types.StatusClosed), customStatuses, false},
+
+		// Custom statuses work when configured
+		{"custom status configured", "status", "awaiting_review", customStatuses, false},
+		{"custom status awaiting_testing", "status", "awaiting_testing", customStatuses, false},
+
+		// Custom statuses fail without config
+		{"custom status not configured", "status", "awaiting_review", nil, true},
+		{"custom status not in list", "status", "unknown_status", customStatuses, true},
+
+		// Non-status fields work as before
+		{"valid priority", "priority", 1, customStatuses, false},
+		{"invalid priority", "priority", 5, customStatuses, true},
+		{"unknown field", "unknown_field", "any value", customStatuses, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFieldUpdateWithCustomStatuses(tt.key, tt.value, tt.customStatuses)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateFieldUpdateWithCustomStatuses() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseCustomStatuses(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  []string
+	}{
+		{"empty string", "", nil},
+		{"single status", "awaiting_review", []string{"awaiting_review"}},
+		{"multiple statuses", "awaiting_review,awaiting_testing", []string{"awaiting_review", "awaiting_testing"}},
+		{"with spaces", "awaiting_review, awaiting_testing, awaiting_docs", []string{"awaiting_review", "awaiting_testing", "awaiting_docs"}},
+		{"empty entries filtered", "awaiting_review,,awaiting_testing", []string{"awaiting_review", "awaiting_testing"}},
+		{"whitespace only entries", "awaiting_review, , awaiting_testing", []string{"awaiting_review", "awaiting_testing"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCustomStatuses(tt.value)
+			if len(got) != len(tt.want) {
+				t.Errorf("parseCustomStatuses() = %v, want %v", got, tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseCustomStatuses()[%d] = %v, want %v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}

@@ -28,8 +28,7 @@ var createCmd = &cobra.Command{
 		// If file flag is provided, parse markdown and create multiple issues
 		if file != "" {
 			if len(args) > 0 {
-				fmt.Fprintf(os.Stderr, "Error: cannot specify both title and --file flag\n")
-				os.Exit(1)
+				FatalError("cannot specify both title and --file flag")
 			}
 			createIssuesFromMarkdown(cmd, file)
 			return
@@ -43,10 +42,7 @@ var createCmd = &cobra.Command{
 		if len(args) > 0 && titleFlag != "" {
 			// Both provided - check if they match
 			if args[0] != titleFlag {
-				fmt.Fprintf(os.Stderr, "Error: cannot specify different titles as both positional argument and --title flag\n")
-				fmt.Fprintf(os.Stderr, "  Positional: %q\n", args[0])
-				fmt.Fprintf(os.Stderr, "  --title:    %q\n", titleFlag)
-				os.Exit(1)
+				FatalError("cannot specify different titles as both positional argument and --title flag\n  Positional: %q\n  --title:    %q", args[0], titleFlag)
 			}
 			title = args[0] // They're the same, use either
 		} else if len(args) > 0 {
@@ -54,8 +50,7 @@ var createCmd = &cobra.Command{
 		} else if titleFlag != "" {
 			title = titleFlag
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: title required (or use --file to create from markdown)\n")
-			os.Exit(1)
+			FatalError("title required (or use --file to create from markdown)")
 		}
 
 		// Warn if creating a test issue in production database
@@ -71,8 +66,7 @@ var createCmd = &cobra.Command{
 			var err error
 			tmpl, err = loadTemplate(fromTemplate)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 		}
 
@@ -104,8 +98,7 @@ var createCmd = &cobra.Command{
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 		if cmd.Flags().Changed("priority") == false && tmpl != nil {
 			priority = tmpl.Priority
@@ -167,8 +160,7 @@ var createCmd = &cobra.Command{
 
 		// Check for conflicting flags
 		if explicitID != "" && parentID != "" {
-			fmt.Fprintf(os.Stderr, "Error: cannot specify both --id and --parent flags\n")
-			os.Exit(1)
+			FatalError("cannot specify both --id and --parent flags")
 		}
 
 		// If parent is specified, generate child ID
@@ -179,17 +171,14 @@ var createCmd = &cobra.Command{
 			// Validate parent exists before generating child ID
 			parentIssue, err := store.GetIssue(ctx, parentID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to check parent issue: %v\n", err)
-				os.Exit(1)
+				FatalError("failed to check parent issue: %v", err)
 			}
 			if parentIssue == nil {
-				fmt.Fprintf(os.Stderr, "Error: parent issue %s not found\n", parentID)
-				os.Exit(1)
+				FatalError("parent issue %s not found", parentID)
 			}
 			childID, err := store.GetNextChildID(ctx, parentID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 			explicitID = childID // Set as explicit ID for the rest of the flow
 		}
@@ -198,8 +187,7 @@ var createCmd = &cobra.Command{
 		if explicitID != "" {
 			requestedPrefix, err := validation.ValidateIDFormat(explicitID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 
 			// Validate prefix matches database prefix
@@ -216,8 +204,7 @@ var createCmd = &cobra.Command{
 			}
 
 			if err := validation.ValidatePrefix(requestedPrefix, dbPrefix, forceCreate); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 		}
 
@@ -245,8 +232,7 @@ var createCmd = &cobra.Command{
 
 			resp, err := daemonClient.Create(createArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalError("%v", err)
 			}
 
 			if jsonOutput {
@@ -254,8 +240,7 @@ var createCmd = &cobra.Command{
 			} else {
 				var issue types.Issue
 				if err := json.Unmarshal(resp.Data, &issue); err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-					os.Exit(1)
+					FatalError("parsing response: %v", err)
 				}
 				green := color.New(color.FgGreen).SprintFunc()
 				fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
@@ -318,8 +303,7 @@ var createCmd = &cobra.Command{
 		}
 		
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalError("%v", err)
 		}
 
 		// If parent was specified, add parent-child dependency
@@ -330,14 +314,14 @@ var createCmd = &cobra.Command{
 				Type:        types.DepParentChild,
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add parent-child dependency %s -> %s: %v\n", issue.ID, parentID, err)
+				WarnError("failed to add parent-child dependency %s -> %s: %v", issue.ID, parentID, err)
 			}
 		}
 
 		// Add labels if specified
 		for _, label := range labels {
 			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add label %s: %v\n", label, err)
+				WarnError("failed to add label %s: %v", label, err)
 			}
 		}
 
@@ -356,7 +340,7 @@ var createCmd = &cobra.Command{
 			if strings.Contains(depSpec, ":") {
 				parts := strings.SplitN(depSpec, ":", 2)
 				if len(parts) != 2 {
-					fmt.Fprintf(os.Stderr, "Warning: invalid dependency format '%s', expected 'type:id' or 'id'\n", depSpec)
+					WarnError("invalid dependency format '%s', expected 'type:id' or 'id'", depSpec)
 					continue
 				}
 				depType = types.DependencyType(strings.TrimSpace(parts[0]))
@@ -369,7 +353,7 @@ var createCmd = &cobra.Command{
 
 			// Validate dependency type
 			if !depType.IsValid() {
-				fmt.Fprintf(os.Stderr, "Warning: invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)\n", depType)
+				WarnError("invalid dependency type '%s' (valid: blocks, related, parent-child, discovered-from)", depType)
 				continue
 			}
 
@@ -380,7 +364,7 @@ var createCmd = &cobra.Command{
 				Type:        depType,
 			}
 			if err := store.AddDependency(ctx, dep, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to add dependency %s -> %s: %v\n", issue.ID, dependsOnID, err)
+				WarnError("failed to add dependency %s -> %s: %v", issue.ID, dependsOnID, err)
 			}
 		}
 

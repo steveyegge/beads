@@ -16,10 +16,15 @@ func validatePriority(value interface{}) error {
 	return nil
 }
 
-// validateStatus validates a status value
+// validateStatus validates a status value (built-in statuses only)
 func validateStatus(value interface{}) error {
+	return validateStatusWithCustom(value, nil)
+}
+
+// validateStatusWithCustom validates a status value, allowing custom statuses.
+func validateStatusWithCustom(value interface{}, customStatuses []string) error {
 	if status, ok := value.(string); ok {
-		if !types.Status(status).IsValid() {
+		if !types.Status(status).IsValidWithCustom(customStatuses) {
 			return fmt.Errorf("invalid status: %s", status)
 		}
 	}
@@ -65,8 +70,18 @@ var fieldValidators = map[string]func(interface{}) error{
 	"estimated_minutes": validateEstimatedMinutes,
 }
 
-// validateFieldUpdate validates a field update value
+// validateFieldUpdate validates a field update value (built-in statuses only)
 func validateFieldUpdate(key string, value interface{}) error {
+	return validateFieldUpdateWithCustomStatuses(key, value, nil)
+}
+
+// validateFieldUpdateWithCustomStatuses validates a field update value,
+// allowing custom statuses for status field validation.
+func validateFieldUpdateWithCustomStatuses(key string, value interface{}, customStatuses []string) error {
+	// Special handling for status field to support custom statuses
+	if key == "status" {
+		return validateStatusWithCustom(value, customStatuses)
+	}
 	if validator, ok := fieldValidators[key]; ok {
 		return validator(value)
 	}

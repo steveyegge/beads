@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // Notifier handles user notifications during import
@@ -65,9 +66,9 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 		notify = NewStderrNotifier(debug.Enabled())
 	}
 
-	// Find JSONL using database directory (same logic as beads.FindJSONLPath)
+	// Find JSONL using database directory
 	dbDir := filepath.Dir(dbPath)
-	jsonlPath := FindJSONLInDir(dbDir)
+	jsonlPath := utils.FindJSONLInDir(dbDir)
 	if jsonlPath == "" {
 		notify.Debugf("auto-import skipped, JSONL not found")
 		return nil
@@ -83,10 +84,14 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 	hasher.Write(jsonlData)
 	currentHash := hex.EncodeToString(hasher.Sum(nil))
 
-	lastHash, err := store.GetMetadata(ctx, "last_import_hash")
-	if err != nil {
-		notify.Debugf("metadata read failed (%v), treating as first import", err)
-		lastHash = ""
+	// Try new key first, fall back to old key for migration (bd-39o)
+	lastHash, err := store.GetMetadata(ctx, "jsonl_content_hash")
+	if err != nil || lastHash == "" {
+		lastHash, err = store.GetMetadata(ctx, "last_import_hash")
+		if err != nil {
+			notify.Debugf("metadata read failed (%v), treating as first import", err)
+			lastHash = ""
+		}
 	}
 
 	if currentHash == lastHash {
@@ -129,8 +134,8 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 		onChanged(needsFullExport)
 	}
 
-	if err := store.SetMetadata(ctx, "last_import_hash", currentHash); err != nil {
-		notify.Warnf("failed to update last_import_hash after import: %v", err)
+	if err := store.SetMetadata(ctx, "jsonl_content_hash", currentHash); err != nil {
+		notify.Warnf("failed to update jsonl_content_hash after import: %v", err)
 		notify.Warnf("This may cause auto-import to retry the same import on next operation.")
 	}
 
@@ -282,7 +287,7 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 
 	// Find JSONL using database directory
 	dbDir := filepath.Dir(dbPath)
-	jsonlPath := FindJSONLInDir(dbDir)
+	jsonlPath := utils.FindJSONLInDir(dbDir)
 
 	stat, err := os.Stat(jsonlPath)
 	if err != nil {
@@ -297,46 +302,3 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 	return stat.ModTime().After(lastImportTime), nil
 }
 
-// FindJSONLInDir finds the JSONL file in the given directory.
-// It prefers issues.jsonl over other .jsonl files to prevent accidentally
-// reading/writing to deletions.jsonl or merge artifacts (bd-tqo fix).
-// Always returns a path (defaults to issues.jsonl if nothing suitable found).
-func FindJSONLInDir(dbDir string) string {
-	pattern := filepath.Join(dbDir, "*.jsonl")
-	matches, err := filepath.Glob(pattern)
-	if err != nil || len(matches) == 0 {
-		// Default to issues.jsonl if glob fails or no matches
-		return filepath.Join(dbDir, "issues.jsonl")
-	}
-
-	// Prefer issues.jsonl over other .jsonl files (bd-tqo fix)
-	// This prevents accidentally using deletions.jsonl or merge artifacts
-	for _, match := range matches {
-		if filepath.Base(match) == "issues.jsonl" {
-			return match
-		}
-	}
-
-	// Fall back to beads.jsonl for legacy support
-	for _, match := range matches {
-		if filepath.Base(match) == "beads.jsonl" {
-			return match
-		}
-	}
-
-	// Last resort: use first match (but skip deletions.jsonl and merge artifacts)
-	for _, match := range matches {
-		base := filepath.Base(match)
-		// Skip deletions manifest and merge artifacts
-		if base == "deletions.jsonl" ||
-			base == "beads.base.jsonl" ||
-			base == "beads.left.jsonl" ||
-			base == "beads.right.jsonl" {
-			continue
-		}
-		return match
-	}
-
-	// If only deletions/merge files exist, default to issues.jsonl
-	return filepath.Join(dbDir, "issues.jsonl")
-}

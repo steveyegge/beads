@@ -18,14 +18,26 @@ var configCmd = &cobra.Command{
 Configuration is stored per-project in .beads/*.db and is version-control-friendly.
 
 Common namespaces:
-  - jira.*     Jira integration settings
-  - linear.*   Linear integration settings
-  - github.*   GitHub integration settings
-  - custom.*   Custom integration settings
+  - jira.*       Jira integration settings
+  - linear.*     Linear integration settings
+  - github.*     GitHub integration settings
+  - custom.*     Custom integration settings
+  - status.*     Issue status configuration
+
+Custom Status States:
+  You can define custom status states for multi-step pipelines using the
+  status.custom config key. Statuses should be comma-separated.
+
+  Example:
+    bd config set status.custom "awaiting_review,awaiting_testing,awaiting_docs"
+
+  This enables issues to use statuses like 'awaiting_review' in addition to
+  the built-in statuses (open, in_progress, blocked, closed).
 
 Examples:
   bd config set jira.url "https://company.atlassian.net"
   bd config set jira.project "PROJ"
+  bd config set status.custom "awaiting_review,awaiting_testing"
   bd config get jira.url
   bd config list
   bd config unset jira.url`,

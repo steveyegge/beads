@@ -283,6 +283,42 @@ var rootCmd = &cobra.Command{
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
+				// No database found - check if this is JSONL-only mode (bd-5kj)
+				beadsDir := beads.FindBeadsDir()
+				if beadsDir != "" {
+					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+					configPath := filepath.Join(beadsDir, "config.yaml")
+
+					// Check if JSONL exists and config.yaml has no-db: true
+					jsonlExists := false
+					if _, err := os.Stat(jsonlPath); err == nil {
+						jsonlExists = true
+					}
+
+					isNoDbMode := false
+					if configData, err := os.ReadFile(configPath); err == nil {
+						isNoDbMode = strings.Contains(string(configData), "no-db: true")
+					}
+
+					// If JSONL-only mode is configured, auto-enable it
+					if jsonlExists && isNoDbMode {
+						noDb = true
+						if err := initializeNoDbMode(); err != nil {
+							fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
+							os.Exit(1)
+						}
+						// Set actor from flag, viper, or env
+						if actor == "" {
+							if user := os.Getenv("USER"); user != "" {
+								actor = user
+							} else {
+								actor = "unknown"
+							}
+						}
+						return
+					}
+				}
+
 				// Allow some commands to run without a database
 				// - import: auto-initializes database if missing
 				// - setup: creates editor integration files (no DB needed)
@@ -290,8 +326,8 @@ var rootCmd = &cobra.Command{
 					// No database found - error out instead of falling back to ~/.beads
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 					fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to create a database in the current directory\n")
+					fmt.Fprintf(os.Stderr, "      or use 'bd --no-db' to work with JSONL only (no SQLite)\n")
 					fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
-					fmt.Fprintf(os.Stderr, "      or set BEADS_DB to point to your database file (deprecated)\n")
 					os.Exit(1)
 				}
 				// For import/setup commands, set default database path

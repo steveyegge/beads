@@ -231,6 +231,28 @@ bd update bd-42 --status in_progress  # Reserves instantly
 
 See [AGENT_MAIL.md](AGENT_MAIL.md) for complete guide.
 
+## Background Daemon
+
+bd runs a background daemon for auto-sync and performance. You rarely need to manage it directly:
+
+```bash
+# Check daemon status
+bd info | grep daemon
+
+# List all running daemons
+bd daemons list
+
+# Force direct mode (skip daemon)
+bd --no-daemon ready
+```
+
+**When to disable daemon:**
+- Git worktrees (required: `bd --no-daemon`)
+- CI/CD pipelines
+- Resource-constrained environments
+
+See [DAEMON.md](DAEMON.md) for complete daemon management guide.
+
 ## Next Steps
 
 - Add labels: `./bd create "Task" -l "backend,urgent"`

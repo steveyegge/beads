@@ -1,11 +1,52 @@
 # Daemon Management Guide
 
-**For:** AI agents and developers managing bd background processes  
+**For:** AI agents and developers managing bd background processes
 **Version:** 0.21.0+
 
 ## Overview
 
 bd runs a background daemon per workspace for auto-sync, RPC operations, and real-time monitoring. This guide covers daemon management, event-driven mode, and troubleshooting.
+
+## Do I Need the Daemon?
+
+**TL;DR:** For most users, the daemon runs automatically and you don't need to think about it.
+
+### When Daemon Helps (default: enabled)
+
+| Scenario | Benefit |
+|----------|---------|
+| **Multi-agent workflows** | Prevents database locking conflicts |
+| **Team collaboration** | Auto-syncs JSONL to git in background |
+| **Long coding sessions** | Changes saved even if you forget `bd sync` |
+| **Real-time monitoring** | Enables `bd watch` and status updates |
+
+### When to Disable Daemon
+
+| Scenario | How to Disable |
+|----------|----------------|
+| **Git worktrees** | `bd --no-daemon <command>` (required!) |
+| **CI/CD pipelines** | `BEADS_NO_DAEMON=true` |
+| **Offline work** | `--no-daemon` (no git push available) |
+| **Resource-constrained** | `BEADS_NO_DAEMON=true` |
+| **Deterministic testing** | Use exclusive lock (see below) |
+
+### Local-Only Users
+
+If you're working alone on a local project with no git remote:
+- **Daemon still helps**: Batches writes, handles auto-export to JSONL
+- **But optional**: Use `--no-daemon` if you prefer direct database access
+- **No network calls**: Daemon doesn't phone home or require internet
+
+```bash
+# Check if daemon is running
+bd info | grep daemon
+
+# Force direct mode for one command
+bd --no-daemon list
+
+# Disable for entire session
+export BEADS_NO_DAEMON=true
+```
 
 ## Architecture
 

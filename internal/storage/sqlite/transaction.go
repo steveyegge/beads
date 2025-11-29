@@ -91,8 +91,14 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 // CreateIssue creates a new issue within the transaction.
 func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Validate issue before creating
-	if err := issue.Validate(); err != nil {
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := t.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
+	// Validate issue before creating (with custom status support)
+	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -108,7 +114,7 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 
 	// Get prefix from config (needed for both ID generation and validation)
 	var prefix string
-	err := t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
+	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
 	if err == sql.ErrNoRows || prefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing (bd-166)
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
@@ -170,10 +176,16 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 		return nil
 	}
 
-	// Validate and prepare all issues first
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := t.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
+	// Validate and prepare all issues first (with custom status support)
 	now := time.Now()
 	for _, issue := range issues {
-		if err := issue.Validate(); err != nil {
+		if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 			return fmt.Errorf("validation failed for issue: %w", err)
 		}
 		issue.CreatedAt = now
@@ -185,7 +197,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 
 	// Get prefix from config
 	var prefix string
-	err := t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
+	err = t.conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
 	if err == sql.ErrNoRows || prefix == "" {
 		return fmt.Errorf("database not initialized: issue_prefix config is missing")
 	} else if err != nil {
@@ -297,6 +309,12 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 		return fmt.Errorf("issue %s not found", id)
 	}
 
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := t.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
 	// Build update query with validated field names
 	setClauses := []string{"updated_at = ?"}
 	args := []interface{}{time.Now()}
@@ -307,8 +325,8 @@ func (t *sqliteTxStorage) UpdateIssue(ctx context.Context, id string, updates ma
 			return fmt.Errorf("invalid field for update: %s", key)
 		}
 
-		// Validate field values
-		if err := validateFieldUpdate(key, value); err != nil {
+		// Validate field values (with custom status support)
+		if err := validateFieldUpdateWithCustomStatuses(key, value, customStatuses); err != nil {
 			return fmt.Errorf("failed to validate field update: %w", err)
 		}
 
@@ -789,6 +807,18 @@ func (t *sqliteTxStorage) GetConfig(ctx context.Context, key string) (string, er
 		return "", fmt.Errorf("failed to get config: %w", err)
 	}
 	return value, nil
+}
+
+// GetCustomStatuses retrieves the list of custom status states from config within the transaction.
+func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
+	value, err := t.GetConfig(ctx, CustomStatusConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCustomStatuses(value), nil
 }
 
 // SetMetadata sets a metadata value within the transaction.
