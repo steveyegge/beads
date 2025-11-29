@@ -27,8 +27,14 @@ import (
 
 // CreateIssue creates a new issue
 func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Validate issue before creating
-	if err := issue.Validate(); err != nil {
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
+	// Validate issue before creating (with custom status support)
+	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -471,6 +477,12 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		return fmt.Errorf("issue %s not found", id)
 	}
 
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return wrapDBError("get custom statuses", err)
+	}
+
 	// Build update query with validated field names
 	setClauses := []string{"updated_at = ?"}
 	args := []interface{}{time.Now()}
@@ -481,8 +493,8 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			return fmt.Errorf("invalid field for update: %s", key)
 		}
 
-		// Validate field values
-		if err := validateFieldUpdate(key, value); err != nil {
+		// Validate field values (with custom status support)
+		if err := validateFieldUpdateWithCustomStatuses(key, value, customStatuses); err != nil {
 			return wrapDBError("validate field update", err)
 		}
 

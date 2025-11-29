@@ -10,7 +10,14 @@ import (
 )
 
 // validateBatchIssues validates all issues in a batch and sets timestamps if not provided
+// Uses built-in statuses only for backward compatibility.
 func validateBatchIssues(issues []*types.Issue) error {
+	return validateBatchIssuesWithCustomStatuses(issues, nil)
+}
+
+// validateBatchIssuesWithCustomStatuses validates all issues in a batch,
+// allowing custom statuses in addition to built-in ones (bd-1pj6).
+func validateBatchIssuesWithCustomStatuses(issues []*types.Issue, customStatuses []string) error {
 	now := time.Now()
 	for i, issue := range issues {
 		if issue == nil {
@@ -25,7 +32,7 @@ func validateBatchIssues(issues []*types.Issue) error {
 			issue.UpdatedAt = now
 		}
 
-		if err := issue.Validate(); err != nil {
+		if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 			return fmt.Errorf("validation failed for issue %d: %w", i, err)
 		}
 	}
@@ -146,8 +153,14 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 		return nil
 	}
 
-	// Phase 1: Validate all issues first (fail-fast)
-	if err := validateBatchIssues(issues); err != nil {
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
+	// Phase 1: Validate all issues first (fail-fast, with custom status support)
+	if err := validateBatchIssuesWithCustomStatuses(issues, customStatuses); err != nil {
 		return err
 	}
 

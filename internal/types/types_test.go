@@ -215,6 +215,108 @@ func TestStatusIsValid(t *testing.T) {
 	}
 }
 
+func TestStatusIsValidWithCustom(t *testing.T) {
+	customStatuses := []string{"awaiting_review", "awaiting_testing", "awaiting_docs"}
+
+	tests := []struct {
+		name           string
+		status         Status
+		customStatuses []string
+		valid          bool
+	}{
+		// Built-in statuses should always be valid
+		{"built-in open", StatusOpen, nil, true},
+		{"built-in open with custom", StatusOpen, customStatuses, true},
+		{"built-in closed", StatusClosed, customStatuses, true},
+
+		// Custom statuses with config
+		{"custom awaiting_review", Status("awaiting_review"), customStatuses, true},
+		{"custom awaiting_testing", Status("awaiting_testing"), customStatuses, true},
+		{"custom awaiting_docs", Status("awaiting_docs"), customStatuses, true},
+
+		// Custom statuses without config (should fail)
+		{"custom without config", Status("awaiting_review"), nil, false},
+		{"custom without config empty", Status("awaiting_review"), []string{}, false},
+
+		// Invalid statuses
+		{"invalid status", Status("not_a_status"), customStatuses, false},
+		{"empty status", Status(""), customStatuses, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.status.IsValidWithCustom(tt.customStatuses); got != tt.valid {
+				t.Errorf("Status(%q).IsValidWithCustom(%v) = %v, want %v", tt.status, tt.customStatuses, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestValidateWithCustomStatuses(t *testing.T) {
+	customStatuses := []string{"awaiting_review", "awaiting_testing"}
+
+	tests := []struct {
+		name           string
+		issue          Issue
+		customStatuses []string
+		wantErr        bool
+	}{
+		{
+			name: "valid issue with built-in status",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeTask,
+			},
+			customStatuses: nil,
+			wantErr:        false,
+		},
+		{
+			name: "valid issue with custom status",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    Status("awaiting_review"),
+				Priority:  1,
+				IssueType: TypeTask,
+			},
+			customStatuses: customStatuses,
+			wantErr:        false,
+		},
+		{
+			name: "invalid custom status without config",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    Status("awaiting_review"),
+				Priority:  1,
+				IssueType: TypeTask,
+			},
+			customStatuses: nil,
+			wantErr:        true,
+		},
+		{
+			name: "invalid custom status not in config",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    Status("unknown_status"),
+				Priority:  1,
+				IssueType: TypeTask,
+			},
+			customStatuses: customStatuses,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.issue.ValidateWithCustomStatuses(tt.customStatuses)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateWithCustomStatuses() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestIssueTypeIsValid(t *testing.T) {
 	tests := []struct {
 		issueType IssueType

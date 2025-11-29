@@ -146,6 +146,7 @@ type Storage interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	DeleteConfig(ctx context.Context, key string) error
+	GetCustomStatuses(ctx context.Context) ([]string, error) // Custom status states from status.custom config
 
 	// Metadata (for internal state like import hashes)
 	SetMetadata(ctx context.Context, key, value string) error

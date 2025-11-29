@@ -124,6 +124,12 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 	}
 	defer file.Close()
 
+	// Fetch custom statuses for validation (bd-1pj6)
+	customStatuses, err := s.GetCustomStatuses(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+
 	scanner := bufio.NewScanner(file)
 	// Increase buffer size for large issues
 	buf := make([]byte, 0, 64*1024)
@@ -161,8 +167,8 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
-		// Insert or update issue
-		if err := s.upsertIssueInTx(ctx, tx, &issue); err != nil {
+		// Insert or update issue (with custom status support)
+		if err := s.upsertIssueInTx(ctx, tx, &issue, customStatuses); err != nil {
 			return 0, fmt.Errorf("failed to import issue %s at line %d: %w", issue.ID, lineNum, err)
 		}
 
@@ -182,9 +188,9 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 
 // upsertIssueInTx inserts or updates an issue within a transaction.
 // Uses INSERT OR REPLACE to handle both new and existing issues.
-func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
-	// Validate issue
-	if err := issue.Validate(); err != nil {
+func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *types.Issue, customStatuses []string) error {
+	// Validate issue (with custom status support, bd-1pj6)
+	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 

@@ -1087,6 +1087,34 @@ func (m *MemoryStorage) GetAllConfig(ctx context.Context) (map[string]string, er
 	return result, nil
 }
 
+// GetCustomStatuses retrieves the list of custom status states from config.
+func (m *MemoryStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
+	value, err := m.GetConfig(ctx, "status.custom")
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCustomStatuses(value), nil
+}
+
+// parseCustomStatuses splits a comma-separated string into a slice of trimmed status names.
+func parseCustomStatuses(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
 // Metadata
 func (m *MemoryStorage) SetMetadata(ctx context.Context, key, value string) error {
 	m.mu.Lock()

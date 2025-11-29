@@ -69,8 +69,14 @@ func (i *Issue) ComputeContentHash() string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// Validate checks if the issue has valid field values
+// Validate checks if the issue has valid field values (built-in statuses only)
 func (i *Issue) Validate() error {
+	return i.ValidateWithCustomStatuses(nil)
+}
+
+// ValidateWithCustomStatuses checks if the issue has valid field values,
+// allowing custom statuses in addition to built-in ones.
+func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 	if len(i.Title) == 0 {
 		return fmt.Errorf("title is required")
 	}
@@ -80,7 +86,7 @@ func (i *Issue) Validate() error {
 	if i.Priority < 0 || i.Priority > 4 {
 		return fmt.Errorf("priority must be between 0 and 4 (got %d)", i.Priority)
 	}
-	if !i.Status.IsValid() {
+	if !i.Status.IsValidWithCustom(customStatuses) {
 		return fmt.Errorf("invalid status: %s", i.Status)
 	}
 	if !i.IssueType.IsValid() {
@@ -110,11 +116,27 @@ const (
 	StatusClosed     Status = "closed"
 )
 
-// IsValid checks if the status value is valid
+// IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
 	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed:
 		return true
+	}
+	return false
+}
+
+// IsValidWithCustom checks if the status is valid, including custom statuses.
+// Custom statuses are user-defined via bd config set status.custom "status1,status2,..."
+func (s Status) IsValidWithCustom(customStatuses []string) bool {
+	// First check built-in statuses
+	if s.IsValid() {
+		return true
+	}
+	// Then check custom statuses
+	for _, custom := range customStatuses {
+		if string(s) == custom {
+			return true
+		}
 	}
 	return false
 }
