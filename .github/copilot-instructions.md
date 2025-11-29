@@ -35,8 +35,8 @@
 - Update docs when changing behavior
 
 ### Git Workflow
-- Always commit `.beads/issues.jsonl` with code changes
-- Run `bd sync` at end of work sessions
+- **Before any commit**: `bd sync --flush-only` then `git add .beads/` with your code
+- **NEVER make separate "bd sync" commits** - include .beads/ in your code commit
 - Install git hooks: `bd hooks install` (ensures DB ↔ JSONL consistency)
 
 ## Issue Tracking with bd
@@ -59,8 +59,9 @@ bd close <id> --reason "Done" --json
 bd list --status open --priority 1 --json
 bd show <id> --json
 
-# Sync (CRITICAL at end of session!)
-bd sync  # Force immediate export/commit/push
+# Before any commit - include .beads/ with your code!
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads together
 ```
 
 ### Workflow
@@ -70,7 +71,7 @@ bd sync  # Force immediate export/commit/push
 3. **Work on it**: Implement, test, document
 4. **Discover new work?** `bd create "Found bug" --description="What was found and why" -p 1 --deps discovered-from:<parent-id> --json`
 5. **Complete**: `bd close <id> --reason "Done" --json`
-6. **Sync**: `bd sync` (flushes changes to git immediately)
+6. **Before commit**: `bd sync --flush-only` then `git add <files> .beads/` (single commit with code + beads)
 
 **IMPORTANT**: Always include `--description` when creating issues. Issues without descriptions lack context for future work.
 
@@ -123,9 +124,11 @@ Use the beads MCP server for native function calls instead of shell commands:
 
 - ✅ Use bd for ALL task tracking
 - ✅ Always use `--json` flag for programmatic use
-- ✅ Run `bd sync` at end of sessions
+- ✅ Before any commit: `bd sync --flush-only` then `git add .beads/`
+- ✅ Include .beads/ in every code commit (preserves task history)
 - ✅ Test with `BEADS_DB=/tmp/test.db`
 - ❌ Do NOT create markdown TODO lists
+- ❌ Do NOT make separate "bd sync" commits
 - ❌ Do NOT create test issues in production DB
 - ❌ Do NOT commit `.beads/beads.db` (JSONL only)
 

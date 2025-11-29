@@ -126,9 +126,9 @@ func outputMCPContext() error {
 
 	var closeProtocol string
 	if ephemeral {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync --from-main → git commit (no push - ephemeral branch)"
+		closeProtocol = "Before saying \"done\": git status → bd sync --flush-only → git add <files> .beads/ → git commit (no push - ephemeral branch)"
 	} else {
-		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit → bd sync → git push"
+		closeProtocol = "Before saying \"done\": git status → bd sync --flush-only → git add <files> .beads/ → git commit → git push"
 	}
 
 	context := `# Beads Issue Tracker Active
@@ -158,35 +158,42 @@ func outputCLIContext() error {
 
 	if ephemeral {
 		closeProtocol = `[ ] 1. git status              (check what changed)
-[ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync --from-main     (pull beads updates from main)
-[ ] 4. git commit -m "..."     (commit code changes)`
+[ ] 2. bd sync --flush-only    (export beads to JSONL)
+[ ] 3. git add <files> .beads/ (stage code AND beads together)
+[ ] 4. git commit -m "..."     (single commit with code+beads)`
 		closeNote = "**Note:** This is an ephemeral branch (no upstream). Code is merged to main locally, not pushed."
 		syncSection = `### Sync & Collaboration
+- ` + "`bd sync --flush-only`" + ` - Export DB to JSONL (run before every commit)
 - ` + "`bd sync --from-main`" + ` - Pull beads updates from main (for ephemeral branches)
 - ` + "`bd sync --status`" + ` - Check sync status without syncing`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
-bd close <id>           # Mark done
-bd sync --from-main     # Pull latest beads from main
-git add . && git commit -m "..."  # Commit your changes
+bd close <id>               # Mark done
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads
+git commit -m "..."         # Single commit includes both
 # Merge to main when ready (local merge, not push)
 ` + "```"
 	} else {
 		closeProtocol = `[ ] 1. git status              (check what changed)
-[ ] 2. git add <files>         (stage code changes)
-[ ] 3. bd sync                 (commit beads changes)
-[ ] 4. git commit -m "..."     (commit code)
-[ ] 5. bd sync                 (commit any new beads changes)
-[ ] 6. git push                (push to remote)`
-		closeNote = "**NEVER skip this.** Work is not done until pushed."
+[ ] 2. bd sync --flush-only    (export beads to JSONL)
+[ ] 3. git add <files> .beads/ (stage code AND beads together)
+[ ] 4. git commit -m "..."     (single commit with code+beads)
+[ ] 5. git push                (push to remote)`
+		closeNote = `**NEVER skip this.** Work is not done until pushed.
+
+**Why include .beads/ in every commit:** Preserves task history in git, enables recovery from corruption, and keeps task changes traceable alongside code.`
 		syncSection = `### Sync & Collaboration
-- ` + "`bd sync`" + ` - Sync with git remote (run at session end)
+- ` + "`bd sync --flush-only`" + ` - Export DB to JSONL (run before every commit)
+- ` + "`bd sync`" + ` - Full sync with git remote (push/pull)
 - ` + "`bd sync --status`" + ` - Check sync status without syncing`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
-bd close <id>      # Mark done
-bd sync            # Push to remote
+bd close <id>               # Mark done
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads
+git commit -m "..."         # Single commit includes both
+git push                    # Push to remote
 ` + "```"
 	}
 
@@ -208,7 +215,8 @@ bd sync            # Push to remote
 ## Core Rules
 - Track ALL work in beads (no TodoWrite tool, no markdown TODOs)
 - Use ` + "`bd create`" + ` to create issues, not TodoWrite tool
-- Git workflow: hooks auto-sync, run ` + "`bd sync`" + ` at session end
+- **ALWAYS** run ` + "`bd sync --flush-only`" + ` then ` + "`git add .beads/`" + ` before every commit
+- NEVER make separate "bd sync" commits - include .beads/ with your code commit
 - Session management: check ` + "`bd ready`" + ` for available work
 
 ## Essential Commands

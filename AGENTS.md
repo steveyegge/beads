@@ -134,8 +134,10 @@ bd list --status open --priority 1 --json
 bd list --label-any urgent,critical --json
 bd show <id> --json
 
-# Sync (CRITICAL at end of session!)
-bd sync  # Force immediate export/commit/push
+# Before any commit - include .beads/ with your code!
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads together
+git commit -m "..."         # Single commit (NEVER separate bd sync commits)
 ```
 
 **For comprehensive CLI documentation**, see [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
@@ -249,7 +251,7 @@ bd monitor --port 3000      # Custom port
    - Old way (two commands): `bd create "Found bug in auth" --description="Details about the bug" -t bug -p 1 --json` then `bd dep add <new-id> <current-id> --type discovered-from`
    - New way (one command): `bd create "Found bug in auth" --description="Login fails with 500 when password has special chars" -t bug -p 1 --deps discovered-from:<current-id> --json`
 5. **Complete**: `bd close <id> --reason "Implemented"`
-6. **Sync at end of session**: `bd sync` (see "Agent Session Workflow" below)
+6. **Before committing**: `bd sync --flush-only` then `git add <files> .beads/` (include beads in every commit)
 
 ### IMPORTANT: Always Include Issue Descriptions
 
@@ -482,7 +484,7 @@ bd show bd-41 --json  # Verify merged content
 - **Go version**: 1.21+
 - **Testing**: Use `BEADS_DB=/tmp/test.db` to avoid polluting production database
 - **Before committing**: Run tests (`go test -short ./...`) and linter (`golangci-lint run ./...`)
-- **End of session**: Always run `bd sync` to flush/commit/push changes
+- **Before any commit**: Run `bd sync --flush-only` then `git add .beads/` with your code
 - **Git hooks**: Run `bd hooks install` to ensure DB ↔ JSONL consistency
 
 See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for detailed workflows, testing patterns, and operational procedures.
@@ -525,12 +527,13 @@ See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for detailed instructions on:
 ## Pro Tips for Agents
 
 - Always use `--json` flags for programmatic use
-- **Always run `bd sync` at end of session** to flush/commit/push immediately
+- **Before any commit**: `bd sync --flush-only` then `git add .beads/` (include beads with code)
+- **NEVER make separate "bd sync" commits** - include .beads/ in your code commit
 - **Check `bd info --whats-new` at session start** if bd was recently upgraded
 - **Run `bd hooks install`** if `bd info` warns about outdated git hooks
 - Link discoveries with `discovered-from` to maintain context
 - Check `bd ready` before asking "what next?"
-- Auto-sync batches changes in 30-second window - use `bd sync` to force immediate flush
+- Auto-sync batches changes in 30-second window - use `bd sync --flush-only` before commit
 - Use `--no-auto-flush` or `--no-auto-import` to disable automatic sync if needed
 - Use `bd dep tree` to understand complex dependencies
 - Priority 0-1 issues are usually more important than 2-4

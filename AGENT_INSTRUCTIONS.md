@@ -90,7 +90,7 @@ The 30-second debounce provides a **transaction window** for batch operations - 
 1. **File beads issues for any remaining work** that needs follow-up
 2. **Ensure all quality gates pass** (only if code changes were made) - run tests, linters, builds (file P0 issues if broken)
 3. **Update beads issues** - close finished work, update status
-4. **PUSH TO REMOTE - NON-NEGOTIABLE** - This step is MANDATORY. Execute ALL commands below:
+4. **COMMIT AND PUSH - NON-NEGOTIABLE** - This step is MANDATORY. Execute ALL commands below:
    ```bash
    # Pull first to catch any remote changes
    git pull --rebase
@@ -100,8 +100,14 @@ The 30-second debounce provides a **transaction window** for batch operations - 
    #   - bd import -i .beads/beads.jsonl (re-import)
    #   - Or manual merge, then import
 
-   # Sync the database (exports to JSONL, commits)
-   bd sync
+   # Export beads to JSONL (NEVER make separate bd sync commits!)
+   bd sync --flush-only
+
+   # Stage code AND beads together - ALWAYS include .beads/
+   git add <your-files> .beads/
+
+   # Single commit with code + beads (preserves task history in git)
+   git commit -m "your commit message"
 
    # MANDATORY: Push everything to remote
    # DO NOT STOP BEFORE THIS COMMAND COMPLETES
@@ -143,15 +149,17 @@ golangci-lint run ./...
 # 3. Close finished issues
 bd close bd-42 bd-43 --reason "Completed" --json
 
-# 4. PUSH TO REMOTE - MANDATORY, NO STOPPING BEFORE THIS IS DONE
+# 4. COMMIT AND PUSH - MANDATORY, NO STOPPING BEFORE THIS IS DONE
 git pull --rebase
 # If conflicts in .beads/beads.jsonl, resolve thoughtfully:
 #   - git checkout --theirs .beads/beads.jsonl (accept remote)
 #   - bd import -i .beads/beads.jsonl (re-import)
 #   - Or manual merge, then import
-bd sync        # Export/import/commit
-git push       # MANDATORY - THE PLANE IS STILL IN THE AIR UNTIL THIS SUCCEEDS
-git status     # MUST verify "up to date with origin/main"
+bd sync --flush-only           # Export beads to JSONL
+git add <your-files> .beads/   # Stage code AND beads together
+git commit -m "your message"   # Single commit includes both
+git push                       # MANDATORY - THE PLANE IS STILL IN THE AIR UNTIL THIS SUCCEEDS
+git status                     # MUST verify "up to date with origin/main"
 
 # 5. Clean up git state
 git stash clear
@@ -177,19 +185,19 @@ bd show bd-44 --json
 
 ## Agent Session Workflow
 
-**IMPORTANT for AI agents:** When you finish making issue changes, always run:
+**IMPORTANT for AI agents:** Include beads in EVERY commit - never make separate "bd sync" commits.
 
+**Before any commit:**
 ```bash
-bd sync
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads together
+git commit -m "..."         # Single commit includes both
 ```
 
-This immediately:
-
-1. Exports pending changes to JSONL (no 30s wait)
-2. Commits to git
-3. Pulls from remote
-4. Imports any updates
-5. Pushes to remote
+**Why include .beads/ in every commit:**
+- Preserves task history in git (recovery from corruption)
+- Task changes are traceable alongside code changes
+- Local git repo becomes backup even without push
 
 **Example agent session:**
 
@@ -200,17 +208,19 @@ bd create "Add tests" -p 1
 bd update bd-42 --status in_progress
 bd close bd-40 --reason "Completed"
 
-# Force immediate sync at end of session
-bd sync
+# Before committing code changes:
+bd sync --flush-only        # Export beads to JSONL
+git add <files> .beads/     # Stage code AND beads
+git commit -m "..."         # Single commit with both
 
-# Now safe to end session - everything is committed and pushed
+# At session end - sync with remote:
+git push
 ```
 
-**Why this matters:**
-
-- Without `bd sync`, changes sit in 30-second debounce window
-- User might think you pushed but JSONL is still dirty
-- `bd sync` forces immediate flush/commit/push
+**When to use each command:**
+- `bd sync --flush-only` - Before every commit (export DB to JSONL)
+- `bd sync` - At session end for remote sync (push/pull)
+- NEVER run `bd sync` as a standalone commit
 
 **STRONGLY RECOMMENDED: Install git hooks for automatic sync** (prevents stale JSONL problems):
 
