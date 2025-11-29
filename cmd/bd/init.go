@@ -1324,9 +1324,15 @@ func setupClaudeSettings(verbose bool) error {
 	// #nosec G304 - user config path
 	if content, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(content, &existingSettings); err != nil {
-			existingSettings = make(map[string]interface{})
+			// Don't silently overwrite - the user has a file with invalid JSON
+			// that likely contains important settings they don't want to lose
+			return fmt.Errorf("existing %s contains invalid JSON: %w\nPlease fix the JSON syntax manually before running bd init", settingsPath, err)
 		}
+	} else if !os.IsNotExist(err) {
+		// File exists but couldn't be read (permissions issue, etc.)
+		return fmt.Errorf("failed to read existing %s: %w", settingsPath, err)
 	} else {
+		// File doesn't exist - create new empty settings
 		existingSettings = make(map[string]interface{})
 	}
 

@@ -996,3 +996,169 @@ func TestReadFirstIssueFromJSONL_EmptyFile(t *testing.T) {
 		t.Errorf("Expected nil issue for empty file, got %+v", issue)
 	}
 }
+
+// TestSetupClaudeSettings_InvalidJSON verifies that invalid JSON in existing
+// settings.local.json returns an error instead of silently overwriting.
+// This is a regression test for bd-5bj where user settings were lost.
+func TestSetupClaudeSettings_InvalidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// Create .claude directory
+	claudeDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatalf("Failed to create .claude directory: %v", err)
+	}
+
+	// Create settings.local.json with invalid JSON (array syntax in object context)
+	// This is the exact pattern that caused the bug in the user's file
+	invalidJSON := `{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)"
+    ],
+    "deny": [
+      "_comment": "Add commands to block here"
+    ]
+  }
+}`
+	settingsPath := filepath.Join(claudeDir, "settings.local.json")
+	if err := os.WriteFile(settingsPath, []byte(invalidJSON), 0644); err != nil {
+		t.Fatalf("Failed to write invalid settings: %v", err)
+	}
+
+	// Call setupClaudeSettings - should return an error
+	err = setupClaudeSettings(false)
+	if err == nil {
+		t.Fatal("Expected error for invalid JSON, got nil")
+	}
+
+	// Verify the error message mentions invalid JSON
+	if !strings.Contains(err.Error(), "invalid JSON") {
+		t.Errorf("Expected error to mention 'invalid JSON', got: %v", err)
+	}
+
+	// Verify the original file was NOT modified
+	content, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("Failed to read settings file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "permissions") {
+		t.Error("Original file content should be preserved")
+	}
+
+	if strings.Contains(string(content), "bd onboard") {
+		t.Error("File should NOT contain bd onboard prompt after error")
+	}
+}
+
+// TestSetupClaudeSettings_ValidJSON verifies that valid JSON is properly updated
+func TestSetupClaudeSettings_ValidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// Create .claude directory
+	claudeDir := filepath.Join(tmpDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatalf("Failed to create .claude directory: %v", err)
+	}
+
+	// Create settings.local.json with valid JSON
+	validJSON := `{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": []
+  }
+}`
+	settingsPath := filepath.Join(claudeDir, "settings.local.json")
+	if err := os.WriteFile(settingsPath, []byte(validJSON), 0644); err != nil {
+		t.Fatalf("Failed to write valid settings: %v", err)
+	}
+
+	// Call setupClaudeSettings - should succeed
+	err = setupClaudeSettings(false)
+	if err != nil {
+		t.Fatalf("Expected no error for valid JSON, got: %v", err)
+	}
+
+	// Verify the file was updated with prompt AND preserved existing settings
+	content, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("Failed to read settings file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Should contain the new prompt
+	if !strings.Contains(contentStr, "bd onboard") {
+		t.Error("File should contain bd onboard prompt")
+	}
+
+	// Should preserve existing permissions
+	if !strings.Contains(contentStr, "permissions") {
+		t.Error("File should preserve permissions section")
+	}
+
+	// Should preserve existing hooks
+	if !strings.Contains(contentStr, "hooks") {
+		t.Error("File should preserve hooks section")
+	}
+
+	if !strings.Contains(contentStr, "PreToolUse") {
+		t.Error("File should preserve PreToolUse hook")
+	}
+}
+
+// TestSetupClaudeSettings_NoExistingFile verifies behavior when no file exists
+func TestSetupClaudeSettings_NoExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// Don't create .claude directory - setupClaudeSettings should create it
+
+	// Call setupClaudeSettings - should succeed
+	err = setupClaudeSettings(false)
+	if err != nil {
+		t.Fatalf("Expected no error when no file exists, got: %v", err)
+	}
+
+	// Verify the file was created with prompt
+	settingsPath := filepath.Join(tmpDir, ".claude", "settings.local.json")
+	content, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("Failed to read settings file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "bd onboard") {
+		t.Error("File should contain bd onboard prompt")
+	}
+}
