@@ -387,6 +387,53 @@ Only `blocks` dependencies affect the ready work queue.
 
 **Note:** When creating an issue with a `discovered-from` dependency, the new issue automatically inherits the parent's `source_repo` field. This ensures discovered work stays in the same repository as the parent task.
 
+### Planning Work with Dependencies
+
+When breaking down large features into tasks, use **beads dependencies** to sequence work - NOT phases or numbered steps.
+
+**⚠️ COGNITIVE TRAP: Temporal Language Inverts Dependencies**
+
+Words like "Phase 1", "Step 1", "first", "before" trigger temporal reasoning that **flips dependency direction**. Your brain thinks:
+- "Phase 1 comes before Phase 2" → "Phase 1 blocks Phase 2" → `bd dep add phase1 phase2`
+
+But that's **backwards**! The correct mental model:
+- "Phase 2 **depends on** Phase 1" → `bd dep add phase2 phase1`
+
+**Solution: Use requirement language, not temporal language**
+
+Instead of phases, name tasks by what they ARE, and think about what they NEED:
+
+```bash
+# ❌ WRONG - temporal thinking leads to inverted deps
+bd create "Phase 1: Create buffer layout" ...
+bd create "Phase 2: Add message rendering" ...
+bd dep add phase1 phase2  # WRONG! Says phase1 depends on phase2
+
+# ✅ RIGHT - requirement thinking
+bd create "Create buffer layout" ...
+bd create "Add message rendering" ...
+bd dep add msg-rendering buffer-layout  # msg-rendering NEEDS buffer-layout
+```
+
+**Verification**: After adding deps, run `bd blocked` - tasks should be blocked by their prerequisites, not their dependents.
+
+**Example breakdown** (for a multi-part feature):
+```bash
+# Create tasks named by what they do, not what order they're in
+bd create "Implement conversation region" -t task -p 1
+bd create "Add header-line status display" -t task -p 1
+bd create "Render tool calls inline" -t task -p 2
+bd create "Add streaming content support" -t task -p 2
+
+# Set up dependencies: X depends on Y means "X needs Y first"
+bd dep add header-line conversation-region    # header needs region
+bd dep add tool-calls conversation-region     # tools need region
+bd dep add streaming tool-calls               # streaming needs tools
+
+# Verify with bd blocked - should show sensible blocking
+bd blocked
+```
+
 ### Duplicate Detection & Merging
 
 AI agents should proactively detect and merge duplicate issues to keep the database clean:
