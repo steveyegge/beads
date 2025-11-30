@@ -790,7 +790,7 @@ Check out the **[examples/](examples/)** directory for:
 - **[Git hooks](examples/git-hooks/)** - Automatic export/import on git operations
 - **[Branch merge workflow](examples/branch-merge/)** - Handle ID collisions when merging branches
 - **[Claude Desktop MCP](examples/claude-desktop-mcp/)** - MCP server for Claude Desktop
-- **[Claude Code Plugin](PLUGIN.md)** - One-command installation with slash commands
+- **[Claude Code Plugin](docs/PLUGIN.md)** - One-command installation with slash commands
 
 ## Advanced Features
 
