@@ -853,27 +853,34 @@ func gitPush(ctx context.Context) error {
 	return nil
 }
 
-// getDefaultBranch returns the default branch name (main or master)
+// getDefaultBranch returns the default branch name (main or master) for origin remote
 // Checks remote HEAD first, then falls back to checking if main/master exist
 func getDefaultBranch(ctx context.Context) string {
+	return getDefaultBranchForRemote(ctx, "origin")
+}
+
+// getDefaultBranchForRemote returns the default branch name for a specific remote
+// Checks remote HEAD first, then falls back to checking if main/master exist
+func getDefaultBranchForRemote(ctx context.Context, remote string) string {
 	// Try to get default branch from remote
-	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", fmt.Sprintf("refs/remotes/%s/HEAD", remote))
 	output, err := cmd.Output()
 	if err == nil {
 		ref := strings.TrimSpace(string(output))
-		// Extract branch name from refs/remotes/origin/main
-		if strings.HasPrefix(ref, "refs/remotes/origin/") {
-			return strings.TrimPrefix(ref, "refs/remotes/origin/")
+		// Extract branch name from refs/remotes/<remote>/main
+		prefix := fmt.Sprintf("refs/remotes/%s/", remote)
+		if strings.HasPrefix(ref, prefix) {
+			return strings.TrimPrefix(ref, prefix)
 		}
 	}
 
-	// Fallback: check if origin/main exists
-	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", "origin/main").Run() == nil {
+	// Fallback: check if <remote>/main exists
+	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", fmt.Sprintf("%s/main", remote)).Run() == nil {
 		return "main"
 	}
 
-	// Fallback: check if origin/master exists
-	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", "origin/master").Run() == nil {
+	// Fallback: check if <remote>/master exists
+	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", fmt.Sprintf("%s/master", remote)).Run() == nil {
 		return "master"
 	}
 
@@ -884,11 +891,21 @@ func getDefaultBranch(ctx context.Context) string {
 // doSyncFromMain performs a one-way sync from the default branch (main/master)
 // Used for ephemeral branches without upstream tracking (gt-ick9)
 // This fetches beads from main and imports them, discarding local beads changes.
+// If sync.remote is configured (e.g., "upstream" for fork workflows), uses that remote
+// instead of "origin" (bd-bx9).
 func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, dryRun bool, noGitHistory bool) error {
+	// Determine which remote to use (default: origin, but can be configured via sync.remote)
+	remote := "origin"
+	if err := ensureStoreActive(); err == nil && store != nil {
+		if configuredRemote, err := store.GetConfig(ctx, "sync.remote"); err == nil && configuredRemote != "" {
+			remote = configuredRemote
+		}
+	}
+
 	if dryRun {
 		fmt.Println("→ [DRY RUN] Would sync beads from main branch")
-		fmt.Println("  1. Fetch origin main")
-		fmt.Println("  2. Checkout .beads/ from origin/main")
+		fmt.Printf("  1. Fetch %s main\n", remote)
+		fmt.Printf("  2. Checkout .beads/ from %s/main\n", remote)
 		fmt.Println("  3. Import JSONL into database")
 		fmt.Println("\n✓ Dry run complete (no changes made)")
 		return nil
@@ -904,20 +921,26 @@ func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, 
 		return fmt.Errorf("no git remote configured")
 	}
 
-	defaultBranch := getDefaultBranch(ctx)
+	// Verify the configured remote exists
+	checkRemoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", remote)
+	if err := checkRemoteCmd.Run(); err != nil {
+		return fmt.Errorf("configured sync.remote '%s' does not exist (run 'git remote add %s <url>')", remote, remote)
+	}
+
+	defaultBranch := getDefaultBranchForRemote(ctx, remote)
 
 	// Step 1: Fetch from main
-	fmt.Printf("→ Fetching from origin/%s...\n", defaultBranch)
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", defaultBranch)
+	fmt.Printf("→ Fetching from %s/%s...\n", remote, defaultBranch)
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, defaultBranch)
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git fetch origin %s failed: %w\n%s", defaultBranch, err, output)
+		return fmt.Errorf("git fetch %s %s failed: %w\n%s", remote, defaultBranch, err, output)
 	}
 
 	// Step 2: Checkout .beads/ directory from main
-	fmt.Printf("→ Checking out beads from origin/%s...\n", defaultBranch)
-	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", fmt.Sprintf("origin/%s", defaultBranch), "--", ".beads/")
+	fmt.Printf("→ Checking out beads from %s/%s...\n", remote, defaultBranch)
+	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", fmt.Sprintf("%s/%s", remote, defaultBranch), "--", ".beads/")
 	if output, err := checkoutCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git checkout .beads/ from origin/%s failed: %w\n%s", defaultBranch, err, output)
+		return fmt.Errorf("git checkout .beads/ from %s/%s failed: %w\n%s", remote, defaultBranch, err, output)
 	}
 
 	// Step 3: Import JSONL
