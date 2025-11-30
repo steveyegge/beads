@@ -282,6 +282,134 @@ func TestFindJSONLPathSkipsDeletions(t *testing.T) {
 	}
 }
 
+// TestHasBeadsProjectFiles verifies that hasBeadsProjectFiles correctly
+// distinguishes between project directories and daemon-only directories (bd-420)
+func TestHasBeadsProjectFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    []string
+		expected bool
+	}{
+		{
+			name:     "empty directory",
+			files:    []string{},
+			expected: false,
+		},
+		{
+			name:     "daemon registry only",
+			files:    []string{"registry.json", "registry.lock"},
+			expected: false,
+		},
+		{
+			name:     "has database",
+			files:    []string{"beads.db"},
+			expected: true,
+		},
+		{
+			name:     "has issues.jsonl",
+			files:    []string{"issues.jsonl"},
+			expected: true,
+		},
+		{
+			name:     "has metadata.json",
+			files:    []string{"metadata.json"},
+			expected: true,
+		},
+		{
+			name:     "has config.yaml",
+			files:    []string{"config.yaml"},
+			expected: true,
+		},
+		{
+			name:     "ignores backup db",
+			files:    []string{"beads.backup.db"},
+			expected: false,
+		},
+		{
+			name:     "ignores vc.db",
+			files:    []string{"vc.db"},
+			expected: false,
+		},
+		{
+			name:     "real db with backup",
+			files:    []string{"beads.db", "beads.backup.db"},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "beads-project-test-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			// Create test files
+			for _, file := range tt.files {
+				path := filepath.Join(tmpDir, file)
+				if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result := hasBeadsProjectFiles(tmpDir)
+			if result != tt.expected {
+				t.Errorf("hasBeadsProjectFiles() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFindBeadsDirSkipsDaemonRegistry verifies that FindBeadsDir skips
+// directories containing only daemon registry files (bd-420)
+func TestFindBeadsDirSkipsDaemonRegistry(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	originalWd, _ := os.Getwd()
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		os.Chdir(originalWd)
+	}()
+	os.Unsetenv("BEADS_DIR")
+
+	// Create temp directory structure
+	tmpDir, err := os.MkdirTemp("", "beads-daemon-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create .beads with only daemon registry files (should be skipped)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "registry.json"), []byte("[]"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to temp dir
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should NOT find the daemon-only directory
+	result := FindBeadsDir()
+	if result != "" {
+		// Resolve symlinks for comparison
+		resultResolved, _ := filepath.EvalSymlinks(result)
+		beadsDirResolved, _ := filepath.EvalSymlinks(beadsDir)
+		if resultResolved == beadsDirResolved {
+			t.Errorf("FindBeadsDir() should skip daemon-only directory, got %q", result)
+		}
+	}
+}
+
 func TestFindDatabasePathHomeDefault(t *testing.T) {
 	// This test verifies that if no database is found, it falls back to home directory
 	// We can't reliably test this without modifying the home directory, so we'll skip
