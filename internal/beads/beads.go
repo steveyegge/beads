@@ -230,9 +230,45 @@ func FindDatabasePath() string {
 	return ""
 }
 
+// hasBeadsProjectFiles checks if a .beads directory contains actual project files.
+// Returns true if the directory contains any of:
+// - metadata.json or config.yaml (project configuration)
+// - Any *.db file (excluding backups and vc.db)
+// - Any *.jsonl file (JSONL-only mode or git-tracked issues)
+//
+// Returns false for directories that only contain daemon registry files (bd-420).
+// This prevents FindBeadsDir from returning ~/.beads/ which only has registry.json.
+func hasBeadsProjectFiles(beadsDir string) bool {
+	// Check for project configuration files
+	if _, err := os.Stat(filepath.Join(beadsDir, "metadata.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(beadsDir, "config.yaml")); err == nil {
+		return true
+	}
+
+	// Check for database files (excluding backups and vc.db)
+	dbMatches, _ := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+	for _, match := range dbMatches {
+		baseName := filepath.Base(match)
+		if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+			return true
+		}
+	}
+
+	// Check for JSONL files (JSONL-only mode or fresh clone)
+	jsonlMatches, _ := filepath.Glob(filepath.Join(beadsDir, "*.jsonl"))
+	if len(jsonlMatches) > 0 {
+		return true
+	}
+
+	return false
+}
+
 // FindBeadsDir finds the .beads/ directory in the current directory tree
 // Returns empty string if not found. Supports both database and JSONL-only mode.
 // Stops at the git repository root to avoid finding unrelated directories (bd-c8x).
+// Validates that the directory contains actual project files (bd-420).
 // This is useful for commands that need to detect beads projects without requiring a database.
 func FindBeadsDir() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
@@ -255,7 +291,10 @@ func FindBeadsDir() string {
 	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			return beadsDir
+			// Validate directory contains actual project files (bd-420)
+			if hasBeadsProjectFiles(beadsDir) {
+				return beadsDir
+			}
 		}
 
 		// Stop at git root to avoid finding unrelated directories (bd-c8x)

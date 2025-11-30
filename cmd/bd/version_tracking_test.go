@@ -124,11 +124,17 @@ func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
 }
 
 func TestTrackBdVersion_FirstRun(t *testing.T) {
-	// Create temp .beads directory
+	// Create temp .beads directory with a project file (bd-420)
+	// FindBeadsDir now requires actual project files, not just directory existence
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create .beads: %v", err)
+	}
+	// Create a database file so FindBeadsDir finds this directory
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to create db file: %v", err)
 	}
 
 	// Change to temp directory
