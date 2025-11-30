@@ -89,8 +89,6 @@ jobs:
         run: |
           cd npm-package
           npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   update-homebrew:
     runs-on: ubuntu-latest
