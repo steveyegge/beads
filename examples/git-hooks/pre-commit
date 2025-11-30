@@ -1,11 +1,14 @@
 #!/bin/sh
-# bd-hooks-version: 0.22.1
+# bd-hooks-version: 0.22.2
 #
 # bd (beads) pre-commit hook
 #
 # This hook ensures that any pending bd issue changes are flushed to
 # .beads/beads.jsonl before the commit is created, preventing the
 # race condition where daemon auto-flush fires after the commit.
+#
+# When sync.branch is configured, .beads changes are committed to a separate
+# branch via worktree, so auto-staging is skipped for the main branch.
 #
 # Installation:
 #   cp examples/git-hooks/pre-commit .git/hooks/pre-commit
@@ -23,6 +26,16 @@ fi
 # Check if we're in a bd workspace
 if [ ! -d .beads ]; then
     # Not a bd workspace, nothing to do
+    exit 0
+fi
+
+# Check if sync.branch is configured - if so, .beads changes go to a separate
+# branch via worktree, not the current branch
+# Use --json to get clean output (human-readable format prints "(not set)")
+SYNC_BRANCH=$(bd config get sync.branch --json 2>/dev/null | grep -o '"value": *"[^"]*"' | sed 's/"value": *"\([^"]*\)"/\1/')
+if [ -n "$SYNC_BRANCH" ]; then
+    # sync.branch is configured, skip flush and auto-staging
+    # Changes are synced to the separate branch via 'bd sync'
     exit 0
 fi
 
