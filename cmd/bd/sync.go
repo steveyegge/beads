@@ -302,6 +302,24 @@ Use --merge to merge the sync branch back to main branch.`,
 			}
 		}
 
+		// Check if sync.branch is configured for worktree-based sync (bd-e3w)
+		// This allows committing to a separate branch without changing the user's working directory
+		var syncBranchName string
+		var repoRoot string
+		var useSyncBranch bool
+		if err := ensureStoreActive(); err == nil && store != nil {
+			syncBranchName, _ = syncbranch.Get(ctx, store)
+			if syncBranchName != "" && syncbranch.HasGitRemote(ctx) {
+				repoRoot, err = syncbranch.GetRepoRoot(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: sync.branch configured but failed to get repo root: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Falling back to current branch commits\n")
+				} else {
+					useSyncBranch = true
+				}
+			}
+		}
+
 		// Step 2: Check if there are changes to commit (check entire .beads/ directory)
 		hasChanges, err := gitHasBeadsChanges(ctx)
 		if err != nil {
@@ -309,10 +327,33 @@ Use --merge to merge the sync branch back to main branch.`,
 			os.Exit(1)
 		}
 
+		// Track if we already pushed via worktree (to skip Step 5)
+		pushedViaSyncBranch := false
+
 		if hasChanges {
 			if dryRun {
-				fmt.Println("→ [DRY RUN] Would commit changes to git")
+				if useSyncBranch {
+					fmt.Printf("→ [DRY RUN] Would commit changes to sync branch '%s' via worktree\n", syncBranchName)
+				} else {
+					fmt.Println("→ [DRY RUN] Would commit changes to git")
+				}
+			} else if useSyncBranch {
+				// Use worktree to commit to sync branch (bd-e3w)
+				fmt.Printf("→ Committing changes to sync branch '%s'...\n", syncBranchName)
+				result, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath, !noPush)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error committing to sync branch: %v\n", err)
+					os.Exit(1)
+				}
+				if result.Committed {
+					fmt.Printf("✓ Committed to %s\n", syncBranchName)
+					if result.Pushed {
+						fmt.Printf("✓ Pushed %s to remote\n", syncBranchName)
+						pushedViaSyncBranch = true
+					}
+				}
 			} else {
+				// Regular commit to current branch
 				fmt.Println("→ Committing changes to git...")
 				if err := gitCommitBeadsDir(ctx, message); err != nil {
 					fmt.Fprintf(os.Stderr, "Error committing: %v\n", err)
@@ -327,59 +368,79 @@ Use --merge to merge the sync branch back to main branch.`,
 		// Note: If no upstream, we already handled it above with --from-main mode
 		if !noPull {
 			if dryRun {
-				fmt.Println("→ [DRY RUN] Would pull from remote")
+				if useSyncBranch {
+					fmt.Printf("→ [DRY RUN] Would pull from sync branch '%s' via worktree\n", syncBranchName)
+				} else {
+					fmt.Println("→ [DRY RUN] Would pull from remote")
+				}
 			} else {
-				// Check merge driver configuration before pulling
-				checkMergeDriverConfig()
-
-				fmt.Println("→ Pulling from remote...")
-				err := gitPull(ctx)
-				if err != nil {
-					// Check if it's a rebase conflict on beads.jsonl that we can auto-resolve
-					if isInRebase() && hasJSONLConflict() {
-						fmt.Println("→ Auto-resolving JSONL merge conflict...")
-
-						// Export clean JSONL from DB (database is source of truth)
-						if exportErr := exportToJSONL(ctx, jsonlPath); exportErr != nil {
-							fmt.Fprintf(os.Stderr, "Error: failed to export for conflict resolution: %v\n", exportErr)
-							fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
-							os.Exit(1)
-						}
-
-						// Mark conflict as resolved
-						addCmd := exec.CommandContext(ctx, "git", "add", jsonlPath)
-						if addErr := addCmd.Run(); addErr != nil {
-							fmt.Fprintf(os.Stderr, "Error: failed to mark conflict resolved: %v\n", addErr)
-							fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
-							os.Exit(1)
-						}
-
-						// Continue rebase
-						if continueErr := runGitRebaseContinue(ctx); continueErr != nil {
-							fmt.Fprintf(os.Stderr, "Error: failed to continue rebase: %v\n", continueErr)
-							fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
-							os.Exit(1)
-						}
-
-						fmt.Println("✓ Auto-resolved JSONL conflict")
-					} else {
-						// Not an auto-resolvable conflict, fail with original error
-						fmt.Fprintf(os.Stderr, "Error pulling: %v\n", err)
-
-						// Check if this looks like a merge driver failure
-						errStr := err.Error()
-						if strings.Contains(errStr, "merge driver") ||
-						   strings.Contains(errStr, "no such file or directory") ||
-						   strings.Contains(errStr, "MERGE DRIVER INVOKED") {
-							fmt.Fprintf(os.Stderr, "\nThis may be caused by an incorrect merge driver configuration.\n")
-							fmt.Fprintf(os.Stderr, "Fix: bd doctor --fix\n\n")
-						}
-
-						fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
+				// Execute pull - either via sync branch worktree or regular git pull
+				if useSyncBranch {
+					// Pull from sync branch via worktree (bd-e3w)
+					fmt.Printf("→ Pulling from sync branch '%s'...\n", syncBranchName)
+					pullResult, err := syncbranch.PullFromSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error pulling from sync branch: %v\n", err)
 						os.Exit(1)
+					}
+					if pullResult.Pulled {
+						fmt.Printf("✓ Pulled from %s\n", syncBranchName)
+					}
+					// JSONL is already copied to main repo by PullFromSyncBranch
+				} else {
+					// Check merge driver configuration before pulling
+					checkMergeDriverConfig()
+
+					fmt.Println("→ Pulling from remote...")
+					err := gitPull(ctx)
+					if err != nil {
+						// Check if it's a rebase conflict on beads.jsonl that we can auto-resolve
+						if isInRebase() && hasJSONLConflict() {
+							fmt.Println("→ Auto-resolving JSONL merge conflict...")
+
+							// Export clean JSONL from DB (database is source of truth)
+							if exportErr := exportToJSONL(ctx, jsonlPath); exportErr != nil {
+								fmt.Fprintf(os.Stderr, "Error: failed to export for conflict resolution: %v\n", exportErr)
+								fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
+								os.Exit(1)
+							}
+
+							// Mark conflict as resolved
+							addCmd := exec.CommandContext(ctx, "git", "add", jsonlPath)
+							if addErr := addCmd.Run(); addErr != nil {
+								fmt.Fprintf(os.Stderr, "Error: failed to mark conflict resolved: %v\n", addErr)
+								fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
+								os.Exit(1)
+							}
+
+							// Continue rebase
+							if continueErr := runGitRebaseContinue(ctx); continueErr != nil {
+								fmt.Fprintf(os.Stderr, "Error: failed to continue rebase: %v\n", continueErr)
+								fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
+								os.Exit(1)
+							}
+
+							fmt.Println("✓ Auto-resolved JSONL conflict")
+						} else {
+							// Not an auto-resolvable conflict, fail with original error
+							fmt.Fprintf(os.Stderr, "Error pulling: %v\n", err)
+
+							// Check if this looks like a merge driver failure
+							errStr := err.Error()
+							if strings.Contains(errStr, "merge driver") ||
+							   strings.Contains(errStr, "no such file or directory") ||
+							   strings.Contains(errStr, "MERGE DRIVER INVOKED") {
+								fmt.Fprintf(os.Stderr, "\nThis may be caused by an incorrect merge driver configuration.\n")
+								fmt.Fprintf(os.Stderr, "Fix: bd doctor --fix\n\n")
+							}
+
+							fmt.Fprintf(os.Stderr, "Hint: resolve conflicts manually and run 'bd import' then 'bd sync' again\n")
+							os.Exit(1)
+						}
 					}
 				}
 
+				// Import logic - shared for both sync branch and regular pull paths
 				// Count issues before import for validation
 				var beforeCount int
 				if err := ensureStoreActive(); err == nil && store != nil {
@@ -485,9 +546,21 @@ Use --merge to merge the sync branch back to main branch.`,
 							}
 							if hasPostImportChanges {
 								fmt.Println("→ Committing DB changes from import...")
-								if err := gitCommitBeadsDir(ctx, "bd sync: apply DB changes after import"); err != nil {
-									fmt.Fprintf(os.Stderr, "Error committing post-import changes: %v\n", err)
-									os.Exit(1)
+								if useSyncBranch {
+									// Commit to sync branch via worktree (bd-e3w)
+									result, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath, !noPush)
+									if err != nil {
+										fmt.Fprintf(os.Stderr, "Error committing to sync branch: %v\n", err)
+										os.Exit(1)
+									}
+									if result.Pushed {
+										pushedViaSyncBranch = true
+									}
+								} else {
+									if err := gitCommitBeadsDir(ctx, "bd sync: apply DB changes after import"); err != nil {
+										fmt.Fprintf(os.Stderr, "Error committing post-import changes: %v\n", err)
+										os.Exit(1)
+									}
 								}
 								hasChanges = true // Mark that we have changes to push
 							}
@@ -504,8 +577,8 @@ Use --merge to merge the sync branch back to main branch.`,
 			}
 		}
 
-		// Step 5: Push to remote
-		if !noPush && hasChanges {
+		// Step 5: Push to remote (skip if already pushed via sync branch worktree)
+		if !noPush && hasChanges && !pushedViaSyncBranch {
 			if dryRun {
 				fmt.Println("→ [DRY RUN] Would push to remote")
 			} else {
