@@ -1,5 +1,5 @@
 #!/bin/sh
-# bd-hooks-version: 0.27.0
+# bd-hooks-version: 0.27.1
 #
 # bd (beads) pre-push hook
 #
@@ -7,6 +7,9 @@
 # 1. Flushing any pending in-memory changes to JSONL (if bd available)
 # 2. Checking for uncommitted changes (staged, unstaged, untracked, deleted)
 # 3. Failing the push with clear instructions if changes found
+#
+# When sync.branch is configured, .beads changes are committed to a separate
+# branch via worktree, so the uncommitted check is skipped for the main branch.
 #
 # The pre-commit hook already exports changes, but this catches:
 # - Changes made between commit and push
@@ -23,6 +26,18 @@
 if [ ! -d .beads ]; then
     # Not a bd workspace, nothing to do
     exit 0
+fi
+
+# Check if sync.branch is configured - if so, .beads changes go to a separate
+# branch via worktree, not the current branch, so skip the uncommitted check
+if command -v bd >/dev/null 2>&1; then
+    # Use --json to get clean output (human-readable format prints "(not set)")
+    SYNC_BRANCH=$(bd config get sync.branch --json 2>/dev/null | grep -o '"value": *"[^"]*"' | sed 's/"value": *"\([^"]*\)"/\1/')
+    if [ -n "$SYNC_BRANCH" ]; then
+        # sync.branch is configured, skip .beads uncommitted check
+        # Changes are synced to the separate branch, not this one
+        exit 0
+    fi
 fi
 
 # Optionally flush pending bd changes so they surface in JSONL

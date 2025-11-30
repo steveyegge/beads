@@ -288,9 +288,10 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
-		Version: "0.27.0",
-		Date:    "2025-11-29",
+		Version: "0.27.1",
+		Date:    "2025-11-30",
 		Changes: []string{
+			"Git hooks now sync.branch aware - pre-commit/pre-push skip .beads checks when sync.branch configured",
 			"Custom Status States - Define project-specific statuses via config (testing, blocked, review)",
 			"Contributor Fork Workflows - `bd init --contributor` auto-configures sync.remote=upstream",
 			"Git Worktree Support - Full support for worktrees in hooks and detection",
