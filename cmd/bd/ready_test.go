@@ -183,6 +183,35 @@ func TestReadySuite(t *testing.T) {
 		}
 	})
 
+	t.Run("ReadyWorkUnassigned", func(t *testing.T) {
+		// Test filtering for unassigned issues
+		readyUnassigned, err := s.GetReadyWork(ctx, types.WorkFilter{
+			Unassigned: true,
+		})
+		if err != nil {
+			t.Fatalf("GetReadyWork with unassigned filter failed: %v", err)
+		}
+
+		// All returned issues should have no assignee
+		for _, issue := range readyUnassigned {
+			if issue.Assignee != "" {
+				t.Errorf("Expected empty assignee, got %q for issue %s", issue.Assignee, issue.ID)
+			}
+		}
+
+		// Should include test-unassigned from previous test
+		found := false
+		for _, issue := range readyUnassigned {
+			if issue.ID == "test-unassigned" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected to find test-unassigned in unassigned results")
+		}
+	})
+
 	t.Run("ReadyWorkInProgress", func(t *testing.T) {
 		// Create in-progress issue (should be in ready work)
 		issue := &types.Issue{
@@ -229,5 +258,93 @@ func TestReadyCommandInit(t *testing.T) {
 
 	if len(readyCmd.Short) == 0 {
 		t.Error("readyCmd should have Short description")
+	}
+}
+
+func TestReadyWorkUnassigned(t *testing.T) {
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+
+	// Create issues with different assignees
+	issues := []*types.Issue{
+		{
+			ID:        "test-unassigned-1",
+			Title:     "Unassigned task 1",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Assignee:  "",
+			CreatedAt: time.Now(),
+		},
+		{
+			ID:        "test-unassigned-2",
+			Title:     "Unassigned task 2",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+		},
+		{
+			ID:        "test-assigned-alice",
+			Title:     "Alice's task",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Assignee:  "alice",
+			CreatedAt: time.Now(),
+		},
+		{
+			ID:        "test-assigned-bob",
+			Title:     "Bob's task",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			Assignee:  "bob",
+			CreatedAt: time.Now(),
+		},
+	}
+
+	for _, issue := range issues {
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Test filtering by --unassigned
+	readyUnassigned, err := s.GetReadyWork(ctx, types.WorkFilter{
+		Unassigned: true,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork with Unassigned filter failed: %v", err)
+	}
+
+	// Should only have unassigned issues
+	if len(readyUnassigned) != 2 {
+		t.Errorf("Expected 2 unassigned issues, got %d", len(readyUnassigned))
+	}
+
+	for _, issue := range readyUnassigned {
+		if issue.Assignee != "" {
+			t.Errorf("Expected no assignee, got %q for issue %s", issue.Assignee, issue.ID)
+		}
+	}
+
+	// Test that Unassigned takes precedence over Assignee filter
+	alice := "alice"
+	readyConflict, err := s.GetReadyWork(ctx, types.WorkFilter{
+		Unassigned: true,
+		Assignee:   &alice,
+	})
+	if err != nil {
+		t.Fatalf("GetReadyWork with conflicting filters failed: %v", err)
+	}
+
+	// Unassigned should win, returning only unassigned issues
+	for _, issue := range readyConflict {
+		if issue.Assignee != "" {
+			t.Errorf("Unassigned should override Assignee filter, got %q for issue %s", issue.Assignee, issue.ID)
+		}
 	}
 }
