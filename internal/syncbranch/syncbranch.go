@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -57,10 +58,11 @@ func ValidateBranchName(name string) error {
 
 // Get retrieves the sync branch configuration with the following precedence:
 // 1. BEADS_SYNC_BRANCH environment variable
-// 2. sync.branch from database config
-// 3. Empty string (meaning use current branch)
+// 2. sync-branch from config.yaml (tracked in git, persists across clones)
+// 3. sync.branch from database config (local override)
+// 4. Empty string (meaning use current branch)
 func Get(ctx context.Context, store storage.Storage) (string, error) {
-	// Check environment variable first
+	// Check environment variable first (highest priority)
 	if envBranch := os.Getenv(EnvVar); envBranch != "" {
 		if err := ValidateBranchName(envBranch); err != nil {
 			return "", fmt.Errorf("invalid %s: %w", EnvVar, err)
@@ -68,7 +70,16 @@ func Get(ctx context.Context, store storage.Storage) (string, error) {
 		return envBranch, nil
 	}
 
-	// Check database config
+	// Check config.yaml (tracked in git, persists across clones)
+	// This is the recommended way to configure sync branch for teams
+	if yamlBranch := config.GetString("sync-branch"); yamlBranch != "" {
+		if err := ValidateBranchName(yamlBranch); err != nil {
+			return "", fmt.Errorf("invalid sync-branch in config.yaml: %w", err)
+		}
+		return yamlBranch, nil
+	}
+
+	// Check database config (local override, doesn't persist across clones)
 	dbBranch, err := store.GetConfig(ctx, ConfigKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to get %s from config: %w", ConfigKey, err)
