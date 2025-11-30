@@ -227,7 +227,7 @@ bd sync            # Push to remote
 - ` + "`bd close <id> --reason=\"explanation\"`" + ` - Close with reason
 
 ### Dependencies & Blocking
-- ` + "`bd dep <from> <to>`" + ` - Add blocker dependency (from blocks to)
+- ` + "`bd dep add <issue> <depends-on>`" + ` - Add dependency (issue depends on depends-on)
 - ` + "`bd blocked`" + ` - Show all blocked issues
 - ` + "`bd show <id>`" + ` - See what's blocking/blocked by this issue
 
@@ -252,7 +252,7 @@ bd update <id> --status=in_progress  # Claim it
 ` + "```bash" + `
 bd create --title="Implement feature X" --type=feature
 bd create --title="Write tests for X" --type=task
-bd dep beads-xxx beads-yyy  # Feature blocks tests
+bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
 ` + "```" + `
 `
 	fmt.Print(context)
