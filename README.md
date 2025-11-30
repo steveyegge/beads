@@ -375,7 +375,7 @@ Hash IDs use **birthday paradox probability** to determine length:
 | 5 chars     | 1,048,576   | ~1,217 issues             | ~153 issues              |
 | 6 chars     | 16,777,216  | ~4,869 issues             | ~612 issues              |
 
-**Our thresholds are conservative:** We switch from 4→5 chars at 500 issues (way before the 1% collision point at ~1,217) and from 5→6 chars at 1,500 issues.
+**Our thresholds are conservative:** We switch from 4→5 chars at 500 issues (well past the 4-char 1% threshold of ~38, giving headroom before 50% at ~304) and from 5→6 chars at 1,500 issues (same pattern for 5-char thresholds).
 
 **Progressive extension on collision:** If a hash collision does occur, bd automatically extends the hash to 7 or 8 characters instead of remapping to a new ID.
 
