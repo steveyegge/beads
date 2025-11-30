@@ -955,6 +955,7 @@ func (s *Server) handleReady(req *Request) Response {
 	wf := types.WorkFilter{
 		Status:     types.StatusOpen,
 		Priority:   readyArgs.Priority,
+		Unassigned: readyArgs.Unassigned,
 		Limit:      readyArgs.Limit,
 		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
 		Labels:     util.NormalizeLabels(readyArgs.Labels),

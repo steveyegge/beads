@@ -351,6 +351,7 @@ type WorkFilter struct {
 	Status     Status
 	Priority   *int
 	Assignee   *string
+	Unassigned bool       // Filter for issues with no assignee
 	Labels     []string   // AND semantics: issue must have ALL these labels
 	LabelsAny  []string   // OR semantics: issue must have AT LEAST ONE of these labels
 	Limit      int

@@ -16,18 +16,20 @@ var readyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
+		unassigned, _ := cmd.Flags().GetBool("unassigned")
 		sortPolicy, _ := cmd.Flags().GetString("sort")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		
+
 		// Normalize labels: trim, dedupe, remove empty
 		labels = util.NormalizeLabels(labels)
 		labelsAny = util.NormalizeLabels(labelsAny)
-		
+
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
 			Limit:      limit,
+			Unassigned: unassigned,
 			SortPolicy: types.SortPolicy(sortPolicy),
 			Labels:     labels,
 			LabelsAny:  labelsAny,
@@ -49,6 +51,7 @@ var readyCmd = &cobra.Command{
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
 				Assignee:   assignee,
+				Unassigned: unassigned,
 				Limit:      limit,
 				SortPolicy: sortPolicy,
 				Labels:     labels,
@@ -293,6 +296,7 @@ func init() {
 	readyCmd.Flags().IntP("limit", "n", 10, "Maximum issues to show")
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
+	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 	readyCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	readyCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")

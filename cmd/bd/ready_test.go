@@ -183,6 +183,35 @@ func TestReadySuite(t *testing.T) {
 		}
 	})
 
+	t.Run("ReadyWorkUnassigned", func(t *testing.T) {
+		// Test filtering for unassigned issues
+		readyUnassigned, err := s.GetReadyWork(ctx, types.WorkFilter{
+			Unassigned: true,
+		})
+		if err != nil {
+			t.Fatalf("GetReadyWork with unassigned filter failed: %v", err)
+		}
+
+		// All returned issues should have no assignee
+		for _, issue := range readyUnassigned {
+			if issue.Assignee != "" {
+				t.Errorf("Expected empty assignee, got %q for issue %s", issue.Assignee, issue.ID)
+			}
+		}
+
+		// Should include test-unassigned from previous test
+		found := false
+		for _, issue := range readyUnassigned {
+			if issue.ID == "test-unassigned" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected to find test-unassigned in unassigned results")
+		}
+	})
+
 	t.Run("ReadyWorkInProgress", func(t *testing.T) {
 		// Create in-progress issue (should be in ready work)
 		issue := &types.Issue{
