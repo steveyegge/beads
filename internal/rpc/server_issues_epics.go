@@ -961,7 +961,7 @@ func (s *Server) handleReady(req *Request) Response {
 		Labels:     util.NormalizeLabels(readyArgs.Labels),
 		LabelsAny:  util.NormalizeLabels(readyArgs.LabelsAny),
 	}
-	if readyArgs.Assignee != "" {
+	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
 		wf.Assignee = &readyArgs.Assignee
 	}
 

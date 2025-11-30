@@ -39,7 +39,7 @@ var readyCmd = &cobra.Command{
 			priority, _ := cmd.Flags().GetInt("priority")
 			filter.Priority = &priority
 		}
-		if assignee != "" {
+		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
 		// Validate sort policy

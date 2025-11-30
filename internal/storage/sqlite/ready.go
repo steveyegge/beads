@@ -29,6 +29,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		args = append(args, *filter.Priority)
 	}
 
+	// Unassigned takes precedence over Assignee filter
 	if filter.Unassigned {
 		whereClauses = append(whereClauses, "(i.assignee IS NULL OR i.assignee = '')")
 	} else if filter.Assignee != nil {
