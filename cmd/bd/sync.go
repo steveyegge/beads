@@ -171,25 +171,55 @@ Use --merge to merge the sync branch back to main branch.`,
 		if dryRun {
 			fmt.Println("→ [DRY RUN] Would export pending changes to JSONL")
 		} else {
-			// ZFC safety check (bd-l0r): if DB significantly diverges from JSONL,
-			// force import first to sync with JSONL source of truth
-			// After import, skip export to prevent overwriting JSONL (JSONL is source of truth)
+			// ZFC safety check (bd-l0r, bd-53c): if DB significantly diverges from JSONL,
+			// force import first to sync with JSONL source of truth.
+			// After import, skip export to prevent overwriting JSONL (JSONL is source of truth).
+			//
+			// bd-53c fix: Added REVERSE ZFC check - if JSONL has MORE issues than DB,
+			// this indicates the DB is stale and exporting would cause data loss.
+			// This catches the case where a fresh/stale clone tries to export an
+			// empty or outdated database over a JSONL with many issues.
 			if err := ensureStoreActive(); err == nil && store != nil {
 				dbCount, err := countDBIssuesFast(ctx, store)
 				if err == nil {
 					jsonlCount, err := countIssuesInJSONL(jsonlPath)
-					if err == nil && jsonlCount > 0 && dbCount > jsonlCount {
-						divergence := float64(dbCount-jsonlCount) / float64(jsonlCount)
-						if divergence > 0.5 { // >50% more issues in DB than JSONL
-							fmt.Printf("→ DB has %d issues but JSONL has %d (stale DB detected)\n", dbCount, jsonlCount)
-							fmt.Println("→ Importing JSONL first (ZFC)...")
-							if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
-								fmt.Fprintf(os.Stderr, "Error importing (ZFC): %v\n", err)
-								os.Exit(1)
+					if err == nil && jsonlCount > 0 {
+						// Case 1: DB has significantly more issues than JSONL
+						// (original ZFC check - DB is ahead of JSONL)
+						if dbCount > jsonlCount {
+							divergence := float64(dbCount-jsonlCount) / float64(jsonlCount)
+							if divergence > 0.5 { // >50% more issues in DB than JSONL
+								fmt.Printf("→ DB has %d issues but JSONL has %d (stale JSONL detected)\n", dbCount, jsonlCount)
+								fmt.Println("→ Importing JSONL first (ZFC)...")
+								if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+									fmt.Fprintf(os.Stderr, "Error importing (ZFC): %v\n", err)
+									os.Exit(1)
+								}
+								// Skip export after ZFC import - JSONL is source of truth
+								skipExport = true
+								fmt.Println("→ Skipping export (JSONL is source of truth after ZFC import)")
 							}
-							// Skip export after ZFC import - JSONL is source of truth
-							skipExport = true
-							fmt.Println("→ Skipping export (JSONL is source of truth after ZFC import)")
+						}
+
+						// Case 2 (bd-53c): JSONL has significantly more issues than DB
+						// This is the DANGEROUS case - exporting would lose issues!
+						// A stale/empty DB exporting over a populated JSONL causes data loss.
+						if jsonlCount > dbCount && !skipExport {
+							divergence := float64(jsonlCount-dbCount) / float64(jsonlCount)
+							// Use stricter threshold for this dangerous case:
+							// - Any loss > 20% is suspicious
+							// - Complete loss (DB empty) is always blocked
+							if dbCount == 0 || divergence > 0.2 {
+								fmt.Printf("→ JSONL has %d issues but DB has only %d (stale DB detected - bd-53c)\n", jsonlCount, dbCount)
+								fmt.Println("→ Importing JSONL first to prevent data loss...")
+								if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+									fmt.Fprintf(os.Stderr, "Error importing (reverse ZFC): %v\n", err)
+									os.Exit(1)
+								}
+								// Skip export after import - JSONL is source of truth
+								skipExport = true
+								fmt.Println("→ Skipping export (JSONL is source of truth after reverse ZFC import)")
+							}
 						}
 					}
 				}
@@ -886,6 +916,9 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	}
 
 	// Safety check: prevent exporting empty database over non-empty JSONL
+	// Note: The main bd-53c protection is the reverse ZFC check earlier in sync.go
+	// which runs BEFORE export. Here we only block the most catastrophic case (empty DB)
+	// to allow legitimate deletions.
 	if len(issues) == 0 {
 		existingCount, countErr := countIssuesInJSONL(jsonlPath)
 		if countErr != nil {
@@ -895,16 +928,6 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 			}
 		} else if existingCount > 0 {
 			return fmt.Errorf("refusing to export empty database over non-empty JSONL file (database: 0 issues, JSONL: %d issues)", existingCount)
-		}
-	}
-
-	// Warning: check if export would lose >50% of issues
-	existingCount, err := countIssuesInJSONL(jsonlPath)
-	if err == nil && existingCount > 0 {
-		lossPercent := float64(existingCount-len(issues)) / float64(existingCount) * 100
-		if lossPercent > 50 {
-			fmt.Fprintf(os.Stderr, "WARNING: Export would lose %.1f%% of issues (existing: %d, database: %d)\n",
-				lossPercent, existingCount, len(issues))
 		}
 	}
 
