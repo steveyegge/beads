@@ -661,6 +661,7 @@ func checkDatabaseVersion(path string) doctorCheck {
 			// Check config.yaml for no-db: true
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			isNoDbMode := false
+			// #nosec G304 -- configPath is constructed from beadsDir which is in .beads/
 			if configData, err := os.ReadFile(configPath); err == nil {
 				// Simple check for no-db: true in config.yaml
 				isNoDbMode = strings.Contains(string(configData), "no-db: true")
@@ -1511,6 +1512,13 @@ func countJSONLIssues(jsonlPath string) (int, map[string]int, error) {
 	}
 
 	return count, prefixes, nil
+}
+
+// countIssuesInJSONLFile counts the number of valid issues in a JSONL file.
+// This is a wrapper around countJSONLIssues that returns only the count.
+func countIssuesInJSONLFile(jsonlPath string) int {
+	count, _, _ := countJSONLIssues(jsonlPath)
+	return count
 }
 
 func checkPermissions(path string) doctorCheck {
