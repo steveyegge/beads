@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.0] - 2025-11-27
+## [0.26.1] - 2025-11-29
+
+### Fixed
+
+- **CRITICAL: Reverse ZFC Check (bd-53c)**: Prevents stale database from corrupting JSONL
+  - Root cause: `bd sync` exports DB to JSONL before pulling from remote
+  - If local DB is stale (fewer issues than JSONL), stale data would corrupt the JSONL
+  - Added reverse ZFC check: detects when JSONL has >20% more issues than DB
+  - When detected, imports JSONL first to sync database before any export
+  - Prevents fresh/stale clones from exporting incomplete database state
 
 ## [0.26.0] - 2025-11-27
 
