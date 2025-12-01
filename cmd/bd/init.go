@@ -1338,8 +1338,12 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 	return nil
 }
 
-// checkExistingBeadsData checks for existing JSONL or database files
+// checkExistingBeadsData checks for existing database files
 // and returns an error if found (safety guard for bd-emg)
+//
+// Note: This only blocks when a database already exists (workspace is initialized).
+// Fresh clones with JSONL but no database are allowed - init will create the database
+// and import from JSONL automatically (bd-4h9: fixes circular dependency with doctor --fix).
 func checkExistingBeadsData(prefix string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1373,44 +1377,12 @@ To completely reinitialize (data loss warning):
 Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 	}
 
-	// Check for existing JSONL files with issues
-	jsonlCandidates := []string{
-		filepath.Join(beadsDir, "issues.jsonl"),
-		filepath.Join(beadsDir, "beads.jsonl"),
-	}
+	// Fresh clones (JSONL exists but no database) are allowed - init will
+	// create the database and import from JSONL automatically.
+	// This fixes the circular dependency where init told users to run
+	// "bd doctor --fix" but doctor couldn't create a database (bd-4h9).
 
-	for _, jsonlPath := range jsonlCandidates {
-		if _, err := os.Stat(jsonlPath); err == nil {
-			// JSONL exists, count issues
-			issueCount := countIssuesInJSONLFile(jsonlPath)
-
-			if issueCount > 0 {
-				yellow := color.New(color.FgYellow).SprintFunc()
-				cyan := color.New(color.FgCyan).SprintFunc()
-
-				prefixHint := prefix
-				if prefixHint == "" {
-					prefixHint = "<prefix>"
-				}
-
-				return fmt.Errorf(`
-%s Found existing %s with %d issues.
-
-This appears to be a fresh clone, not a new project.
-
-To hydrate the database from existing JSONL:
-  %s
-
-To force re-initialization (may cause data loss):
-  bd init --prefix %s --force
-
-Aborting.`, yellow("⚠"), filepath.Base(jsonlPath), issueCount, cyan("bd doctor --fix"), prefixHint)
-			}
-			// Empty JSONL (0 issues) is OK - likely a new project
-		}
-	}
-
-	return nil // No existing data found, safe to init
+	return nil // No database found, safe to init
 }
 
 
