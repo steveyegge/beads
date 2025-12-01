@@ -392,8 +392,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool,
 		}
 	}
 
-	// Validate database fingerprint
-	if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
+	// Validate database fingerprint (skip in local mode - no git available)
+	if localMode {
+		log.log("Skipping fingerprint validation (local mode)")
+	} else if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {
 			log.log("Error: %v", err)
 			return // Use return instead of os.Exit to allow defers to run
