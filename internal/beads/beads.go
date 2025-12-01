@@ -25,8 +25,73 @@ import (
 // CanonicalDatabaseName is the required database filename for all beads repositories
 const CanonicalDatabaseName = "beads.db"
 
+// RedirectFileName is the name of the file that redirects to another .beads directory
+const RedirectFileName = "redirect"
+
 // LegacyDatabaseNames are old names that should be migrated
 var LegacyDatabaseNames = []string{"bd.db", "issues.db", "bugs.db"}
+
+// followRedirect checks if a .beads directory contains a redirect file and follows it.
+// If a redirect file exists, it returns the target .beads directory path.
+// If no redirect exists or there's an error, it returns the original path unchanged.
+//
+// The redirect file should contain a single path (relative or absolute) to the target
+// .beads directory. Relative paths are resolved from the parent directory of the
+// original .beads directory (i.e., the project root).
+//
+// Redirect chains are not followed - only one level of redirection is supported.
+// This prevents infinite loops and keeps the behavior predictable.
+func followRedirect(beadsDir string) string {
+	redirectFile := filepath.Join(beadsDir, RedirectFileName)
+	data, err := os.ReadFile(redirectFile)
+	if err != nil {
+		// No redirect file or can't read it - use original path
+		return beadsDir
+	}
+
+	// Parse the redirect target (trim whitespace and handle comments)
+	target := strings.TrimSpace(string(data))
+
+	// Skip empty lines and comments to find the actual path
+	lines := strings.Split(target, "\n")
+	target = ""
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			target = line
+			break
+		}
+	}
+
+	if target == "" {
+		return beadsDir
+	}
+
+	// Resolve relative paths from the parent of the .beads directory (project root)
+	if !filepath.IsAbs(target) {
+		projectRoot := filepath.Dir(beadsDir)
+		target = filepath.Join(projectRoot, target)
+	}
+
+	// Canonicalize the target path
+	target = utils.CanonicalizePath(target)
+
+	// Verify the target exists and is a directory
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		// Invalid redirect target - fall back to original
+		fmt.Fprintf(os.Stderr, "Warning: redirect target does not exist or is not a directory: %s\n", target)
+		return beadsDir
+	}
+
+	// Prevent redirect chains - don't follow if target also has a redirect
+	targetRedirect := filepath.Join(target, RedirectFileName)
+	if _, err := os.Stat(targetRedirect); err == nil {
+		fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
+	}
+
+	return target
+}
 
 // findDatabaseInBeadsDir searches for a database file within a .beads directory.
 // It implements the standard search order:
@@ -200,12 +265,18 @@ func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
 //  2. $BEADS_DB environment variable (points directly to database file, deprecated)
 //  3. .beads/*.db in current directory or ancestors
 //
+// Redirect files are supported: if a .beads/redirect file exists, its contents
+// are used as the actual .beads directory path.
+//
 // Returns empty string if no database is found.
 func FindDatabasePath() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
 		// Canonicalize the path to prevent nested .beads directories
 		absBeadsDir := utils.CanonicalizePath(beadsDir)
+
+		// Follow redirect if present
+		absBeadsDir = followRedirect(absBeadsDir)
 
 		// Use helper to find database (no warnings for BEADS_DIR - user explicitly set it)
 		if dbPath := findDatabaseInBeadsDir(absBeadsDir, false); dbPath != "" {
@@ -269,11 +340,17 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 // Returns empty string if not found. Supports both database and JSONL-only mode.
 // Stops at the git repository root to avoid finding unrelated directories (bd-c8x).
 // Validates that the directory contains actual project files (bd-420).
+// Redirect files are supported: if a .beads/redirect file exists, its contents
+// are used as the actual .beads directory path.
 // This is useful for commands that need to detect beads projects without requiring a database.
 func FindBeadsDir() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
 		absBeadsDir := utils.CanonicalizePath(beadsDir)
+
+		// Follow redirect if present
+		absBeadsDir = followRedirect(absBeadsDir)
+
 		if info, err := os.Stat(absBeadsDir); err == nil && info.IsDir() {
 			// Validate directory contains actual project files (bd-420)
 			if hasBeadsProjectFiles(absBeadsDir) {
@@ -294,6 +371,9 @@ func FindBeadsDir() string {
 	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Follow redirect if present
+			beadsDir = followRedirect(beadsDir)
+
 			// Validate directory contains actual project files (bd-420)
 			if hasBeadsProjectFiles(beadsDir) {
 				return beadsDir
@@ -345,7 +425,9 @@ func findGitRoot() string {
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
 // Stops at the git repository root to avoid finding unrelated databases (bd-c8x).
-// Prefers config.json, falls back to beads.db, and warns if multiple .db files exist
+// Prefers config.json, falls back to beads.db, and warns if multiple .db files exist.
+// Redirect files are supported: if a .beads/redirect file exists, its contents
+// are used as the actual .beads directory path.
 func findDatabaseInTree() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -365,6 +447,9 @@ func findDatabaseInTree() string {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Follow redirect if present
+			beadsDir = followRedirect(beadsDir)
+
 			// Use helper to find database (with warnings for auto-discovery)
 			if dbPath := findDatabaseInBeadsDir(beadsDir, true); dbPath != "" {
 				return dbPath
@@ -393,6 +478,8 @@ func findDatabaseInTree() string {
 // Returns a slice of DatabaseInfo for each database found, starting from the
 // closest to CWD (most relevant) to the furthest (least relevant).
 // Stops at the git repository root to avoid finding unrelated databases (bd-c8x).
+// Redirect files are supported: if a .beads/redirect file exists, its contents
+// are used as the actual .beads directory path.
 func FindAllDatabases() []DatabaseInfo {
 	databases := []DatabaseInfo{} // Initialize to empty slice, never return nil
 	seen := make(map[string]bool) // Track canonical paths to avoid duplicates
@@ -409,6 +496,9 @@ func FindAllDatabases() []DatabaseInfo {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			// Follow redirect if present
+			beadsDir = followRedirect(beadsDir)
+
 			// Found .beads/ directory, look for *.db files
 			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
 			if err == nil && len(matches) > 0 {

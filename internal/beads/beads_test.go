@@ -497,3 +497,315 @@ func TestFindDatabasePathHomeDefault(t *testing.T) {
 		t.Errorf("Expected absolute path or empty string, got '%s'", result)
 	}
 }
+
+// TestFollowRedirect tests the redirect file functionality
+func TestFollowRedirect(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupFunc      func(t *testing.T, tmpDir string) (stubDir, targetDir string)
+		expectRedirect bool
+	}{
+		{
+			name: "no redirect file - returns original",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				beadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(beadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				return beadsDir, ""
+			},
+			expectRedirect: false,
+		},
+		{
+			name: "relative path redirect",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				// Create stub .beads with redirect
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Create target .beads directory
+				targetDir := filepath.Join(tmpDir, "actual", ".beads")
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(targetDir, "beads.db"), []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write redirect file with relative path
+				redirectPath := filepath.Join(stubDir, "redirect")
+				if err := os.WriteFile(redirectPath, []byte("../actual/.beads\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, targetDir
+			},
+			expectRedirect: true,
+		},
+		{
+			name: "absolute path redirect",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				// Create stub .beads with redirect
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Create target .beads directory
+				targetDir := filepath.Join(tmpDir, "actual", ".beads")
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(targetDir, "beads.db"), []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write redirect file with absolute path
+				redirectPath := filepath.Join(stubDir, "redirect")
+				if err := os.WriteFile(redirectPath, []byte(targetDir+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, targetDir
+			},
+			expectRedirect: true,
+		},
+		{
+			name: "redirect with comments",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				// Create stub .beads with redirect
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Create target .beads directory
+				targetDir := filepath.Join(tmpDir, "actual", ".beads")
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(targetDir, "beads.db"), []byte{}, 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write redirect file with comments
+				redirectPath := filepath.Join(stubDir, "redirect")
+				content := "# Redirect to actual beads location\n# This is a workspace redirect\n" + targetDir + "\n"
+				if err := os.WriteFile(redirectPath, []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, targetDir
+			},
+			expectRedirect: true,
+		},
+		{
+			name: "redirect to non-existent directory - returns original",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write redirect to non-existent path
+				redirectPath := filepath.Join(stubDir, "redirect")
+				if err := os.WriteFile(redirectPath, []byte("/nonexistent/path/.beads\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, ""
+			},
+			expectRedirect: false, // Should fall back to original
+		},
+		{
+			name: "empty redirect file - returns original",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write empty redirect file
+				redirectPath := filepath.Join(stubDir, "redirect")
+				if err := os.WriteFile(redirectPath, []byte(""), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, ""
+			},
+			expectRedirect: false,
+		},
+		{
+			name: "redirect file with only comments - returns original",
+			setupFunc: func(t *testing.T, tmpDir string) (string, string) {
+				stubDir := filepath.Join(tmpDir, "project", ".beads")
+				if err := os.MkdirAll(stubDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+
+				// Write redirect file with only comments
+				redirectPath := filepath.Join(stubDir, "redirect")
+				if err := os.WriteFile(redirectPath, []byte("# Just a comment\n# Another comment\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				return stubDir, ""
+			},
+			expectRedirect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "beads-redirect-test-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			stubDir, targetDir := tt.setupFunc(t, tmpDir)
+
+			result := followRedirect(stubDir)
+
+			// Resolve symlinks for comparison (macOS uses /private/var)
+			resultResolved, _ := filepath.EvalSymlinks(result)
+			stubResolved, _ := filepath.EvalSymlinks(stubDir)
+
+			if tt.expectRedirect {
+				targetResolved, _ := filepath.EvalSymlinks(targetDir)
+				if resultResolved != targetResolved {
+					t.Errorf("followRedirect() = %q, want %q", result, targetDir)
+				}
+			} else {
+				if resultResolved != stubResolved {
+					t.Errorf("followRedirect() = %q, want original %q", result, stubDir)
+				}
+			}
+		})
+	}
+}
+
+// TestFindDatabasePathWithRedirect tests that FindDatabasePath follows redirects
+func TestFindDatabasePathWithRedirect(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	originalWd, _ := os.Getwd()
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		os.Chdir(originalWd)
+	}()
+	os.Unsetenv("BEADS_DIR")
+
+	// Create temp directory structure
+	tmpDir, err := os.MkdirTemp("", "beads-redirect-finddb-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create stub .beads with redirect
+	stubDir := filepath.Join(tmpDir, "project", ".beads")
+	if err := os.MkdirAll(stubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create target .beads directory with actual database
+	targetDir := filepath.Join(tmpDir, "actual", ".beads")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	targetDB := filepath.Join(targetDir, "beads.db")
+	if err := os.WriteFile(targetDB, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file
+	redirectPath := filepath.Join(stubDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte("../actual/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to project directory
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// FindDatabasePath should follow the redirect
+	result := FindDatabasePath()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	targetDBResolved, _ := filepath.EvalSymlinks(targetDB)
+
+	if resultResolved != targetDBResolved {
+		t.Errorf("FindDatabasePath() = %q, want %q (via redirect)", result, targetDB)
+	}
+}
+
+// TestFindBeadsDirWithRedirect tests that FindBeadsDir follows redirects
+func TestFindBeadsDirWithRedirect(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	originalWd, _ := os.Getwd()
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		os.Chdir(originalWd)
+	}()
+	os.Unsetenv("BEADS_DIR")
+
+	// Create temp directory structure
+	tmpDir, err := os.MkdirTemp("", "beads-redirect-finddir-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create stub .beads with redirect
+	stubDir := filepath.Join(tmpDir, "project", ".beads")
+	if err := os.MkdirAll(stubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create target .beads directory with project files
+	targetDir := filepath.Join(tmpDir, "actual", ".beads")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "issues.jsonl"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file
+	redirectPath := filepath.Join(stubDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte("../actual/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to project directory
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// FindBeadsDir should follow the redirect
+	result := FindBeadsDir()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	targetDirResolved, _ := filepath.EvalSymlinks(targetDir)
+
+	if resultResolved != targetDirResolved {
+		t.Errorf("FindBeadsDir() = %q, want %q (via redirect)", result, targetDir)
+	}
+}
