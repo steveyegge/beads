@@ -618,7 +618,8 @@ func createLocalSyncFunc(ctx context.Context, store storage.Storage, log daemonL
 }
 
 // performSync is the shared implementation for sync functions.
-// skipGit: if true, skips all git operations (commits, pulls, pushes, 3-way merge).
+// skipGit: if true, skips all git operations (commits, pulls, pushes, snapshot capture, 3-way merge, import).
+// Local-only mode only performs validation and export since there's no remote to sync with.
 func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log daemonLogger) func() {
 	return func() {
 		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -651,7 +652,7 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			return
 		}
 		if holder != "" {
-			log.log("Removed stale lock (%s), proceeding with sync", holder)
+			log.log("Removed stale lock (%s), proceeding with %s", holder, mode)
 		}
 
 		// Integrity check: validate before export
@@ -698,11 +699,14 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			log.log("Warning: failed to update database mtime: %v", err)
 		}
 
-		// Skip git operations and 3-way merge in local mode
+		// Skip git operations, snapshot capture, deletion tracking, and import in local-only mode
+		// Local-only sync is export-only since there's no remote to sync with
 		if skipGit {
 			log.log("Local %s complete", mode)
 			return
 		}
+
+		// ---- Git operations start here ----
 
 		// Capture left snapshot (pre-pull state) for 3-way merge
 		// This is mandatory for deletion tracking integrity
