@@ -560,8 +560,8 @@ func TestInitMergeDriverAutoConfiguration(t *testing.T) {
 			t.Fatalf("Init failed: %v", err)
 		}
 
-		// Verify git config was NOT set
-		_, err = runCommandInDirWithOutput(tmpDir, "git", "config", "merge.beads.driver")
+		// Verify git config was NOT set locally (use --local to avoid picking up global config)
+		_, err = runCommandInDirWithOutput(tmpDir, "git", "config", "--local", "merge.beads.driver")
 		if err == nil {
 			t.Error("Expected git config to not be set with --skip-merge-driver")
 		}
