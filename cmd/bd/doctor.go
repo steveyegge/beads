@@ -2045,18 +2045,40 @@ func checkSyncBranchConfig(path string) doctorCheck {
 	// This is the source of truth for multi-clone setups
 	syncBranch := syncbranch.GetFromYAML()
 
+	// Get current branch
+	currentBranch := ""
+	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd.Dir = path
+	if output, err := cmd.Output(); err == nil {
+		currentBranch = strings.TrimSpace(string(output))
+	}
+
+	// CRITICAL: Check if we're on the sync branch - this is a misconfiguration
+	// that will cause bd sync to fail trying to create a worktree for a branch
+	// that's already checked out
+	if syncBranch != "" && currentBranch == syncBranch {
+		return doctorCheck{
+			Name:    "Sync Branch Config",
+			Status:  statusError,
+			Message: fmt.Sprintf("On sync branch '%s'", syncBranch),
+			Detail:  fmt.Sprintf("Currently on branch '%s' which is configured as the sync branch. bd sync cannot create a worktree for a branch that's already checked out.", syncBranch),
+			Fix:     "Switch to your main working branch: git checkout main",
+		}
+	}
+
 	if syncBranch != "" {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
 			Status:  statusOK,
 			Message: fmt.Sprintf("Configured (%s)", syncBranch),
+			Detail:  fmt.Sprintf("Current branch: %s, sync branch: %s", currentBranch, syncBranch),
 		}
 	}
 
 	// Not configured - this is optional but recommended for multi-clone setups
 	// Check if this looks like a multi-clone setup (has remote)
 	hasRemote := false
-	cmd := exec.Command("git", "remote")
+	cmd = exec.Command("git", "remote")
 	cmd.Dir = path
 	if output, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(output))) > 0 {
 		hasRemote = true
