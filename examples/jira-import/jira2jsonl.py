@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 
 
 def encode_base36(data: bytes, length: int) -> str:
@@ -378,9 +379,10 @@ class JiraToBeads:
         all_issues = []
 
         while True:
-            # Use API v2 for broader compatibility
-            api_url = f"{url}/rest/api/2/search"
-            params = f"jql={query}&startAt={start_at}&maxResults={max_results}&expand=changelog"
+            # Use API v3 (v2 deprecated and returns HTTP 410 Gone)
+            # See: https://developer.atlassian.com/changelog/#CHANGE-2046
+            api_url = f"{url}/rest/api/3/search/jql"
+            params = f"jql={quote(query)}&startAt={start_at}&maxResults={max_results}&expand=changelog"
             full_url = f"{api_url}?{params}"
 
             headers = {
