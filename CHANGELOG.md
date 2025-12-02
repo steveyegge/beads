@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.28.0] - 2025-12-01
 
+## [0.28.0] - 2025-12-01
+
 ### Added
 
 - **`bd daemon --local` flag (#433)** - Run daemon without git operations
