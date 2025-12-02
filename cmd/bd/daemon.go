@@ -33,10 +33,11 @@ The daemon will:
 - Auto-import when remote changes detected
 
 Common operations:
-  bd daemon --start          Start the daemon
-  bd daemon --stop           Stop a running daemon
-  bd daemon --status         Check if daemon is running
-  bd daemon --health         Check daemon health and metrics
+  bd daemon --start              Start the daemon (background)
+  bd daemon --start --foreground Start in foreground (for systemd/supervisord)
+  bd daemon --stop               Stop a running daemon
+  bd daemon --status             Check if daemon is running
+  bd daemon --health             Check daemon health and metrics
 
 Run 'bd daemon' with no flags to see available options.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -50,6 +51,7 @@ Run 'bd daemon' with no flags to see available options.`,
 		autoPush, _ := cmd.Flags().GetBool("auto-push")
 		localMode, _ := cmd.Flags().GetBool("local")
 		logFile, _ := cmd.Flags().GetString("log")
+		foreground, _ := cmd.Flags().GetBool("foreground")
 
 		// If no operation flags provided, show help
 		if !start && !stop && !status && !health && !metrics {
@@ -209,7 +211,7 @@ Run 'bd daemon' with no flags to see available options.`,
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		startDaemon(interval, autoCommit, autoPush, localMode, logFile, pidFile)
+		startDaemon(interval, autoCommit, autoPush, localMode, foreground, logFile, pidFile)
 	},
 }
 
@@ -224,6 +226,7 @@ func init() {
 	daemonCmd.Flags().Bool("health", false, "Check daemon health and metrics")
 	daemonCmd.Flags().Bool("metrics", false, "Show detailed daemon metrics")
 	daemonCmd.Flags().String("log", "", "Log file path (default: .beads/daemon.log)")
+	daemonCmd.Flags().Bool("foreground", false, "Run in foreground (don't daemonize)")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
 }
