@@ -607,6 +607,17 @@ Use --merge to merge the sync branch back to main branch.`,
 				fmt.Fprintf(os.Stderr, "Warning: auto-compact deletions failed: %v\n", err)
 			}
 
+			// When using sync.branch, restore .beads/ from current branch to keep
+			// working directory clean. The actual beads data lives on the sync branch,
+			// and the main branch's .beads/ should match what's committed there.
+			// This prevents "modified .beads/" showing in git status after sync.
+			if useSyncBranch {
+				if err := restoreBeadsDirFromBranch(ctx); err != nil {
+					// Non-fatal - just means git status will show modified files
+					debug.Logf("sync: failed to restore .beads/ from branch: %v", err)
+				}
+			}
+
 			fmt.Println("\n✓ Sync complete")
 		}
 	},
@@ -922,6 +933,25 @@ func gitPush(ctx context.Context) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git push failed: %w\n%s", err, output)
+	}
+	return nil
+}
+
+// restoreBeadsDirFromBranch restores .beads/ directory from the current branch's committed state.
+// This is used after sync when sync.branch is configured to keep the working directory clean.
+// The actual beads data lives on the sync branch; the main branch's .beads/ is just a snapshot.
+func restoreBeadsDirFromBranch(ctx context.Context) error {
+	beadsDir := findBeadsDir()
+	if beadsDir == "" {
+		return fmt.Errorf("no .beads directory found")
+	}
+
+	// Restore .beads/ from HEAD (current branch's committed state)
+	// Using -- to ensure .beads/ is treated as a path, not a branch name
+	cmd := exec.CommandContext(ctx, "git", "checkout", "HEAD", "--", beadsDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout failed: %w\n%s", err, output)
 	}
 	return nil
 }
