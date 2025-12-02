@@ -1,0 +1,34 @@
+#!/bin/sh
+# bd-hooks-version: 0.28.0
+#
+# bd (beads) post-commit hook
+#
+# Commits beads JSONL changes separately from user commits.
+# This keeps beads sync commits isolated from code commits.
+
+if ! command -v bd >/dev/null 2>&1; then exit 0; fi
+if [ ! -d .beads ]; then exit 0; fi
+
+# Skip if sync-branch configured
+SYNC_BRANCH="${BEADS_SYNC_BRANCH:-}"
+if [ -z "$SYNC_BRANCH" ] && [ -f .beads/config.yaml ]; then
+    SYNC_BRANCH=$(grep -E '^sync-branch:' .beads/config.yaml 2>/dev/null | head -1 | sed 's/^sync-branch:[[:space:]]*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+fi
+if [ -n "$SYNC_BRANCH" ]; then exit 0; fi
+
+# Check if any beads files changed (not yet committed)
+CHANGED=0
+for f in .beads/beads.jsonl .beads/issues.jsonl; do
+    if [ -f "$f" ] && ! git diff --quiet "$f" 2>/dev/null; then
+        CHANGED=1
+        break
+    fi
+done
+
+# Commit beads changes separately
+if [ "$CHANGED" = "1" ]; then
+    git add -f .beads/beads.jsonl .beads/issues.jsonl 2>/dev/null || true
+    git commit -m "chore(beads): sync issues" --no-verify
+fi
+
+exit 0
