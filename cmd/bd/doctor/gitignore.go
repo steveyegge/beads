@@ -14,6 +14,10 @@ const GitignoreTemplate = `# SQLite databases
 *.db-wal
 *.db-shm
 
+# JSONL files - ignored to prevent mixing with user commits
+# post-commit hook force-adds them in separate commits
+*.jsonl
+
 # Daemon runtime files
 daemon.lock
 daemon.log
@@ -35,10 +39,11 @@ beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
 
-# Keep JSONL exports and config (source of truth for git)
-!issues.jsonl
+# Keep config files (must be explicitly added)
 !metadata.json
 !config.json
+!config.yaml
+!.gitignore
 `
 
 // requiredPatterns are patterns that MUST be in .beads/.gitignore
