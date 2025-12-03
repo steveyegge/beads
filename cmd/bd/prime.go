@@ -167,8 +167,8 @@ func outputCLIContext() error {
 - ` + "`bd sync --status`" + ` - Check sync status without syncing`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
-bd close <id>           # Mark done
-bd sync --from-main     # Pull latest beads from main
+bd close <id1> <id2> ...    # Close all completed issues at once
+bd sync --from-main         # Pull latest beads from main
 git add . && git commit -m "..."  # Commit your changes
 # Merge to main when ready (local merge, not push)
 ` + "```"
@@ -185,8 +185,8 @@ git add . && git commit -m "..."  # Commit your changes
 - ` + "`bd sync --status`" + ` - Check sync status without syncing`
 		completingWorkflow = `**Completing work:**
 ` + "```bash" + `
-bd close <id>      # Mark done
-bd sync            # Push to remote
+bd close <id1> <id2> ...    # Close all completed issues at once
+bd sync                     # Push to remote
 ` + "```"
 	}
 
@@ -224,6 +224,7 @@ bd sync            # Push to remote
 - ` + "`bd update <id> --status=in_progress`" + ` - Claim work
 - ` + "`bd update <id> --assignee=username`" + ` - Assign to someone
 - ` + "`bd close <id>`" + ` - Mark complete
+- ` + "`bd close <id1> <id2> ...`" + ` - Close multiple issues at once (more efficient)
 - ` + "`bd close <id> --reason=\"explanation\"`" + ` - Close with reason
 
 ### Dependencies & Blocking
