@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -156,7 +155,7 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 	versionUpgradeDetected = false
 	previousVersion = ""
 
-	// trackBdVersion should create metadata.json
+	// trackBdVersion should create .local_version
 	trackBdVersion()
 
 	// Should not detect upgrade on first run
@@ -164,13 +163,11 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 		t.Error("Expected no upgrade detection on first run")
 	}
 
-	// Should have created metadata.json with current version
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil {
-		t.Fatalf("Failed to load config after tracking: %v", err)
-	}
-	if cfg.LastBdVersion != Version {
-		t.Errorf("LastBdVersion = %q, want %q", cfg.LastBdVersion, Version)
+	// Should have created .local_version with current version
+	localVersionPath := filepath.Join(beadsDir, localVersionFile)
+	localVersion := readLocalVersion(localVersionPath)
+	if localVersion != Version {
+		t.Errorf(".local_version = %q, want %q", localVersion, Version)
 	}
 }
 
@@ -189,11 +186,16 @@ func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
 		t.Fatalf("Failed to change to temp dir: %v", err)
 	}
 
-	// Create metadata.json with old version
-	cfg := configfile.DefaultConfig()
-	cfg.LastBdVersion = "0.22.0"
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+	// Create minimal metadata.json so FindBeadsDir can find the directory (bd-420)
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"database":"beads.db"}`), 0600); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+
+	// Create .local_version with old version (simulating previous bd run)
+	localVersionPath := filepath.Join(beadsDir, localVersionFile)
+	if err := writeLocalVersion(localVersionPath, "0.22.0"); err != nil {
+		t.Fatalf("Failed to write local version: %v", err)
 	}
 
 	// Save original state
@@ -220,13 +222,10 @@ func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
 		t.Errorf("previousVersion = %q, want %q", previousVersion, "0.22.0")
 	}
 
-	// Should have updated metadata.json to current version
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil {
-		t.Fatalf("Failed to load config after tracking: %v", err)
-	}
-	if cfg.LastBdVersion != Version {
-		t.Errorf("LastBdVersion = %q, want %q", cfg.LastBdVersion, Version)
+	// Should have updated .local_version to current version
+	localVersion := readLocalVersion(localVersionPath)
+	if localVersion != Version {
+		t.Errorf(".local_version = %q, want %q", localVersion, Version)
 	}
 }
 
@@ -245,11 +244,10 @@ func TestTrackBdVersion_SameVersion(t *testing.T) {
 		t.Fatalf("Failed to change to temp dir: %v", err)
 	}
 
-	// Create metadata.json with current version
-	cfg := configfile.DefaultConfig()
-	cfg.LastBdVersion = Version
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
+	// Create .local_version with current version
+	localVersionPath := filepath.Join(beadsDir, localVersionFile)
+	if err := writeLocalVersion(localVersionPath, Version); err != nil {
+		t.Fatalf("Failed to write local version: %v", err)
 	}
 
 	// Save original state

@@ -10,12 +10,17 @@ import (
 const ConfigFileName = "metadata.json"
 
 type Config struct {
-	Database      string `json:"database"`
-	JSONLExport   string `json:"jsonl_export,omitempty"`
-	LastBdVersion string `json:"last_bd_version,omitempty"`
+	Database    string `json:"database"`
+	JSONLExport string `json:"jsonl_export,omitempty"`
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (7 days)
+
+	// Deprecated: LastBdVersion is no longer used for version tracking.
+	// Version is now stored in .local_version (gitignored) to prevent
+	// upgrade notifications firing after git operations reset metadata.json.
+	// bd-tok: This field is kept for backwards compatibility when reading old configs.
+	LastBdVersion string `json:"last_bd_version,omitempty"`
 }
 
 func DefaultConfig() *Config {
