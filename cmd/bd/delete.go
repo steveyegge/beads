@@ -43,6 +43,7 @@ Force: Delete and orphan dependents
   bd delete bd-1 --force`,
 	Args: cobra.MinimumNArgs(0),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("delete")
 		fromFile, _ := cmd.Flags().GetString("from-file")
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")

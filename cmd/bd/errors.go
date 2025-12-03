@@ -51,3 +51,21 @@ func FatalErrorWithHint(message, hint string) {
 func WarnError(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
 }
+
+// CheckReadonly exits with an error if readonly mode is enabled.
+// Call this at the start of write commands (create, update, close, delete, sync, etc.).
+// Used by worker sandboxes that should only read beads, not modify them.
+//
+// Example:
+//
+//	var createCmd = &cobra.Command{
+//	    Run: func(cmd *cobra.Command, args []string) {
+//	        CheckReadonly("create")
+//	        // ... rest of command
+//	    },
+//	}
+func CheckReadonly(operation string) {
+	if readonlyMode {
+		FatalError("operation '%s' is not allowed in read-only mode", operation)
+	}
+}

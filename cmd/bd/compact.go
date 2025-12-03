@@ -74,6 +74,10 @@ Examples:
   bd compact --auto --all --retention=14   # Keep 14 days of deletions
 `,
 	Run: func(_ *cobra.Command, _ []string) {
+		// Compact modifies data unless --stats or --analyze or --dry-run
+		if !compactStats && !compactAnalyze && !compactDryRun {
+			CheckReadonly("compact")
+		}
 		ctx := rootCtx
 
 		// Handle compact stats first

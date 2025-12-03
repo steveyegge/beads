@@ -25,6 +25,7 @@ var depAddCmd = &cobra.Command{
 	Short: "Add a dependency",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("dep add")
 		depType, _ := cmd.Flags().GetString("type")
 
 		ctx := rootCtx
@@ -154,6 +155,7 @@ var depRemoveCmd = &cobra.Command{
 	Short: "Remove a dependency",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("dep remove")
 		ctx := rootCtx
 		
 		// Resolve partial IDs first

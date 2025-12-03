@@ -52,6 +52,11 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		repair, _ := cmd.Flags().GetBool("repair")
 
+		// Block writes in readonly mode
+		if !dryRun {
+			CheckReadonly("rename-prefix")
+		}
+
 		ctx := rootCtx
 
 		// rename-prefix requires direct mode (not supported by daemon)

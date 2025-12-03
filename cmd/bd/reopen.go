@@ -16,6 +16,7 @@ var reopenCmd = &cobra.Command{
 This is more explicit than 'bd update --status open' and emits a Reopened event.`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("reopen")
 		reason, _ := cmd.Flags().GetString("reason")
 		// Use global jsonOutput set by PersistentPreRun
 		ctx := rootCtx

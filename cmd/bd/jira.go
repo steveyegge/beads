@@ -90,6 +90,11 @@ Examples:
 		updateRefs, _ := cmd.Flags().GetBool("update-refs")
 		state, _ := cmd.Flags().GetString("state")
 
+		// Block writes in readonly mode (sync modifies data)
+		if !dryRun {
+			CheckReadonly("jira sync")
+		}
+
 		// Validate conflicting flags
 		if preferLocal && preferJira {
 			fmt.Fprintf(os.Stderr, "Error: cannot use both --prefer-local and --prefer-jira\n")

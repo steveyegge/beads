@@ -100,6 +100,10 @@ var closeEligibleEpicsCmd = &cobra.Command{
 	Short: "Close epics where all children are complete",
 	Run: func(cmd *cobra.Command, args []string) {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		// Block writes in readonly mode (closing modifies data)
+		if !dryRun {
+			CheckReadonly("epic close-eligible")
+		}
 		// Use global jsonOutput set by PersistentPreRun
 		var eligibleEpics []*types.EpicStatus
 		if daemonClient != nil {

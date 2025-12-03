@@ -101,6 +101,7 @@ var (
 	sandboxMode  bool
 	allowStale   bool // Use --allow-stale: skip staleness check (emergency escape hatch)
 	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
+	readonlyMode bool // Read-only mode: block write operations (for worker sandboxes)
 	profileEnabled bool
 	profileFile    *os.File
 	traceFile      *os.File
@@ -124,6 +125,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
+	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -172,6 +174,9 @@ var rootCmd = &cobra.Command{
 		}
 		if !cmd.Flags().Changed("no-db") {
 			noDb = config.GetBool("no-db")
+		}
+		if !cmd.Flags().Changed("readonly") {
+			readonlyMode = config.GetBool("readonly")
 		}
 		if !cmd.Flags().Changed("db") && dbPath == "" {
 			dbPath = config.GetString("db")

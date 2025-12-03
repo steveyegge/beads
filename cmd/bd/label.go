@@ -68,6 +68,7 @@ var labelAddCmd = &cobra.Command{
 	Short: "Add a label to one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("label add")
 		// Use global jsonOutput set by PersistentPreRun
 		issueIDs, label := parseLabelArgs(args)
 		// Resolve partial IDs
@@ -113,6 +114,7 @@ var labelRemoveCmd = &cobra.Command{
 	Short: "Remove a label from one or more issues",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("label remove")
 		// Use global jsonOutput set by PersistentPreRun
 		issueIDs, label := parseLabelArgs(args)
 		// Resolve partial IDs

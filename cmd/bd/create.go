@@ -22,6 +22,7 @@ var createCmd = &cobra.Command{
 	Short:   "Create a new issue (or multiple issues from markdown file)",
 	Args:    cobra.MinimumNArgs(0), // Changed to allow no args when using -f
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("create")
 		file, _ := cmd.Flags().GetString("file")
 		fromTemplate, _ := cmd.Flags().GetString("from-template")
 

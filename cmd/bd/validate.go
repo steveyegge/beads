@@ -24,13 +24,17 @@ Example:
   bd validate --checks=conflicts        # Check for git conflicts
   bd validate --json                    # Output in JSON format`,
 	Run: func(cmd *cobra.Command, _ []string) {
+		fixAll, _ := cmd.Flags().GetBool("fix-all")
+		// Block writes in readonly mode (--fix-all modifies data)
+		if fixAll {
+			CheckReadonly("validate --fix-all")
+		}
 		// Check daemon mode - not supported yet (uses direct storage access)
 		if daemonClient != nil {
 			fmt.Fprintf(os.Stderr, "Error: validate command not yet supported in daemon mode\n")
 			fmt.Fprintf(os.Stderr, "Use: bd --no-daemon validate\n")
 			os.Exit(1)
 		}
-		fixAll, _ := cmd.Flags().GetBool("fix-all")
 		checksFlag, _ := cmd.Flags().GetString("checks")
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		ctx := rootCtx

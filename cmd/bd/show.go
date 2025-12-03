@@ -456,6 +456,7 @@ var updateCmd = &cobra.Command{
 	Short: "Update one or more issues",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("update")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		updates := make(map[string]interface{})
 
@@ -717,6 +718,7 @@ Examples:
   bd edit bd-42 --acceptance       # Edit acceptance criteria`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("edit")
 		id := args[0]
 		ctx := rootCtx
 
@@ -904,6 +906,7 @@ var closeCmd = &cobra.Command{
 	Short: "Close one or more issues",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("close")
 		reason, _ := cmd.Flags().GetString("reason")
 		if reason == "" {
 			reason = "Closed"

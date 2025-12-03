@@ -37,6 +37,7 @@ Behavior:
 NOTE: Import requires direct database access and does not work with daemon mode.
       The command automatically uses --no-daemon when executed.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("import")
 		// Check for positional arguments (common mistake: bd import file.jsonl instead of bd import -i file.jsonl)
 		if len(args) > 0 {
 			fmt.Fprintf(os.Stderr, "Error: Unexpected argument(s): %v\n\n", args)
