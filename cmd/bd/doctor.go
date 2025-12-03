@@ -50,12 +50,13 @@ type doctorResult struct {
 }
 
 var (
-	doctorFix       bool
-	doctorYes       bool
-	doctorDryRun    bool   // bd-a5z: preview fixes without applying
-	doctorOutput    string // bd-9cc: export diagnostics to file
-	perfMode        bool
-	checkHealthMode bool
+	doctorFix         bool
+	doctorYes         bool
+	doctorInteractive bool   // bd-3xl: per-fix confirmation mode
+	doctorDryRun      bool   // bd-a5z: preview fixes without applying
+	doctorOutput      string // bd-9cc: export diagnostics to file
+	perfMode          bool
+	checkHealthMode   bool
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -99,6 +100,7 @@ Examples:
   bd doctor --json       # Machine-readable output
   bd doctor --fix        # Automatically fix issues (with confirmation)
   bd doctor --fix --yes  # Automatically fix issues (no confirmation)
+  bd doctor --fix -i     # Confirm each fix individually (bd-3xl)
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file`,
@@ -175,6 +177,7 @@ Examples:
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Automatically fix issues where possible")
 	doctorCmd.Flags().BoolVarP(&doctorYes, "yes", "y", false, "Skip confirmation prompt (for non-interactive use)")
+	doctorCmd.Flags().BoolVarP(&doctorInteractive, "interactive", "i", false, "Confirm each fix individually (bd-3xl)")
 	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes (bd-a5z)")
 }
 
@@ -236,6 +239,12 @@ func applyFixes(result doctorResult) {
 		fmt.Printf("  %d. %s: %s\n", i+1, issue.Name, issue.Message)
 	}
 
+	// bd-3xl: Interactive mode - confirm each fix individually
+	if doctorInteractive {
+		applyFixesInteractive(result.Path, fixableIssues)
+		return
+	}
+
 	// Ask for confirmation (skip if --yes flag is set)
 	if !doctorYes {
 		fmt.Printf("\nThis will attempt to fix %d issue(s). Continue? (Y/n): ", len(fixableIssues))
@@ -255,10 +264,93 @@ func applyFixes(result doctorResult) {
 
 	// Apply fixes
 	fmt.Println("\nApplying fixes...")
+	applyFixList(result.Path, fixableIssues)
+}
+
+// applyFixesInteractive prompts for each fix individually (bd-3xl)
+func applyFixesInteractive(path string, issues []doctorCheck) {
+	reader := bufio.NewReader(os.Stdin)
+	applyAll := false
+	var approvedFixes []doctorCheck
+
+	fmt.Println("\nReview each fix:")
+	fmt.Println("  [y]es - apply this fix")
+	fmt.Println("  [n]o  - skip this fix")
+	fmt.Println("  [a]ll - apply all remaining fixes")
+	fmt.Println("  [q]uit - stop without applying more fixes")
+	fmt.Println()
+
+	for i, issue := range issues {
+		// Show issue details
+		fmt.Printf("(%d/%d) %s\n", i+1, len(issues), issue.Name)
+		if issue.Status == statusError {
+			color.Red("  Status: ERROR\n")
+		} else {
+			color.Yellow("  Status: WARNING\n")
+		}
+		fmt.Printf("  Issue:  %s\n", issue.Message)
+		if issue.Detail != "" {
+			fmt.Printf("  Detail: %s\n", issue.Detail)
+		}
+		fmt.Printf("  Fix:    %s\n", issue.Fix)
+
+		// Check if we should apply all remaining
+		if applyAll {
+			fmt.Println("  → Auto-approved (apply all)")
+			approvedFixes = append(approvedFixes, issue)
+			continue
+		}
+
+		// Prompt for this fix
+		fmt.Print("\n  Apply this fix? [y/n/a/q]: ")
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			return
+		}
+
+		response = strings.TrimSpace(strings.ToLower(response))
+		switch response {
+		case "y", "yes":
+			approvedFixes = append(approvedFixes, issue)
+			fmt.Println("  → Approved")
+		case "n", "no", "":
+			fmt.Println("  → Skipped")
+		case "a", "all":
+			applyAll = true
+			approvedFixes = append(approvedFixes, issue)
+			fmt.Println("  → Approved (applying all remaining)")
+		case "q", "quit":
+			fmt.Println("  → Quit")
+			if len(approvedFixes) > 0 {
+				fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
+				applyFixList(path, approvedFixes)
+			} else {
+				fmt.Println("\nNo fixes applied.")
+			}
+			return
+		default:
+			// Treat unknown input as skip
+			fmt.Println("  → Skipped (unrecognized input)")
+		}
+		fmt.Println()
+	}
+
+	// Apply all approved fixes
+	if len(approvedFixes) > 0 {
+		fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
+		applyFixList(path, approvedFixes)
+	} else {
+		fmt.Println("\nNo fixes approved.")
+	}
+}
+
+// applyFixList applies a list of fixes and reports results
+func applyFixList(path string, fixes []doctorCheck) {
 	fixedCount := 0
 	errorCount := 0
 
-	for _, check := range fixableIssues {
+	for _, check := range fixes {
 		fmt.Printf("\nFixing %s...\n", check.Name)
 
 		var err error
@@ -266,31 +358,31 @@ func applyFixes(result doctorResult) {
 		case "Gitignore":
 			err = doctor.FixGitignore()
 		case "Git Hooks":
-			err = fix.GitHooks(result.Path)
+			err = fix.GitHooks(path)
 		case "Daemon Health":
-			err = fix.Daemon(result.Path)
+			err = fix.Daemon(path)
 		case "DB-JSONL Sync":
-			err = fix.DBJSONLSync(result.Path)
+			err = fix.DBJSONLSync(path)
 		case "Permissions":
-			err = fix.Permissions(result.Path)
+			err = fix.Permissions(path)
 		case "Database":
-			err = fix.DatabaseVersion(result.Path)
+			err = fix.DatabaseVersion(path)
 		case "Schema Compatibility":
-			err = fix.SchemaCompatibility(result.Path)
+			err = fix.SchemaCompatibility(path)
 		case "Git Merge Driver":
-			err = fix.MergeDriver(result.Path)
+			err = fix.MergeDriver(path)
 		case "Sync Branch Config":
 			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
 			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")
 			continue
 		case "Database Config":
-			err = fix.DatabaseConfig(result.Path)
+			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
-			err = fix.LegacyJSONLConfig(result.Path)
+			err = fix.LegacyJSONLConfig(path)
 		case "Deletions Manifest":
-			err = fix.HydrateDeletionsManifest(result.Path)
+			err = fix.HydrateDeletionsManifest(path)
 		case "Untracked Files":
-			err = fix.UntrackedJSONL(result.Path)
+			err = fix.UntrackedJSONL(path)
 		case "Sync Branch Health":
 			// Get sync branch from config
 			syncBranch := syncbranch.GetFromYAML()
@@ -298,7 +390,7 @@ func applyFixes(result doctorResult) {
 				fmt.Printf("  ⚠ No sync branch configured in config.yaml\n")
 				continue
 			}
-			err = fix.SyncBranchHealth(result.Path, syncBranch)
+			err = fix.SyncBranchHealth(path, syncBranch)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)

@@ -956,3 +956,18 @@ func TestCheckSyncBranchConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestInteractiveFlagParsing verifies the --interactive flag is registered (bd-3xl)
+func TestInteractiveFlagParsing(t *testing.T) {
+	// Verify the flag exists and has the right short form
+	flag := doctorCmd.Flags().Lookup("interactive")
+	if flag == nil {
+		t.Fatal("--interactive flag not found")
+	}
+	if flag.Shorthand != "i" {
+		t.Errorf("Expected shorthand 'i', got %q", flag.Shorthand)
+	}
+	if flag.DefValue != "false" {
+		t.Errorf("Expected default value 'false', got %q", flag.DefValue)
+	}
+}
