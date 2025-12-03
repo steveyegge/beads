@@ -226,6 +226,7 @@ bd sync                     # Push to remote
 - ` + "`bd close <id>`" + ` - Mark complete
 - ` + "`bd close <id1> <id2> ...`" + ` - Close multiple issues at once (more efficient)
 - ` + "`bd close <id> --reason=\"explanation\"`" + ` - Close with reason
+- **Tip**: When creating multiple issues/tasks/epics, use parallel subagents for efficiency
 
 ### Dependencies & Blocking
 - ` + "`bd dep add <issue> <depends-on>`" + ` - Add dependency (issue depends on depends-on)
@@ -251,6 +252,7 @@ bd update <id> --status=in_progress  # Claim it
 
 **Creating dependent work:**
 ` + "```bash" + `
+# Run bd create commands in parallel (use subagents for many items)
 bd create --title="Implement feature X" --type=feature
 bd create --title="Write tests for X" --type=task
 bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
