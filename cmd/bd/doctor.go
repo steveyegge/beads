@@ -224,6 +224,14 @@ func applyFixes(result doctorResult) {
 			err = fix.HydrateDeletionsManifest(result.Path)
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(result.Path)
+		case "Sync Branch Health":
+			// Get sync branch from config
+			syncBranch := syncbranch.GetFromYAML()
+			if syncBranch == "" {
+				fmt.Printf("  ⚠ No sync branch configured in config.yaml\n")
+				continue
+			}
+			err = fix.SyncBranchHealth(result.Path, syncBranch)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -595,6 +603,11 @@ func runDiagnostics(path string) doctorResult {
 	syncBranchCheck := checkSyncBranchConfig(path)
 	result.Checks = append(result.Checks, syncBranchCheck)
 	// Don't fail overall check for missing sync.branch, just warn
+
+	// Check 17a: Sync branch health (bd-6rf)
+	syncBranchHealthCheck := checkSyncBranchHealth(path)
+	result.Checks = append(result.Checks, syncBranchHealthCheck)
+	// Don't fail overall check for sync branch health, just warn
 
 	// Check 18: Deletions manifest (prevents zombie resurrection)
 	deletionsCheck := checkDeletionsManifest(path)
@@ -2099,6 +2112,165 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		Name:    "Sync Branch Config",
 		Status:  statusOK,
 		Message: "N/A (no remote configured)",
+	}
+}
+
+// checkSyncBranchHealth detects when the sync branch has diverged from main
+// or from the remote sync branch (after a force-push reset).
+// bd-6rf: Detect and fix stale beads-sync branch
+func checkSyncBranchHealth(path string) doctorCheck {
+	// Skip if not in a git repo
+	gitDir := filepath.Join(path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "N/A (not a git repository)",
+		}
+	}
+
+	// Get configured sync branch
+	syncBranch := syncbranch.GetFromYAML()
+	if syncBranch == "" {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "N/A (no sync branch configured)",
+		}
+	}
+
+	// Check if local sync branch exists
+	cmd := exec.Command("git", "rev-parse", "--verify", syncBranch)
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Local branch doesn't exist - that's fine, bd sync will create it
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("N/A (local %s branch not created yet)", syncBranch),
+		}
+	}
+
+	// Check if remote sync branch exists
+	remote := "origin"
+	remoteBranch := fmt.Sprintf("%s/%s", remote, syncBranch)
+	cmd = exec.Command("git", "rev-parse", "--verify", remoteBranch)
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Remote branch doesn't exist - that's fine
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("N/A (remote %s not found)", remoteBranch),
+		}
+	}
+
+	// Check 1: Is local sync branch diverged from remote? (after force-push)
+	// If they have no common ancestor in recent history, the remote was likely force-pushed
+	cmd = exec.Command("git", "merge-base", syncBranch, remoteBranch)
+	cmd.Dir = path
+	mergeBaseOutput, err := cmd.Output()
+	if err != nil {
+		// No common ancestor - branches have completely diverged
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusWarning,
+			Message: fmt.Sprintf("Local %s diverged from remote", syncBranch),
+			Detail:  "The remote sync branch was likely reset/force-pushed. Your local branch has orphaned history.",
+			Fix:     fmt.Sprintf("Reset local branch: git branch -D %s (it will be recreated on next bd sync)", syncBranch),
+		}
+	}
+
+	// Check if local is behind remote (needs to fast-forward)
+	mergeBase := strings.TrimSpace(string(mergeBaseOutput))
+	cmd = exec.Command("git", "rev-parse", syncBranch)
+	cmd.Dir = path
+	localHead, _ := cmd.Output()
+	localHeadStr := strings.TrimSpace(string(localHead))
+
+	cmd = exec.Command("git", "rev-parse", remoteBranch)
+	cmd.Dir = path
+	remoteHead, _ := cmd.Output()
+	remoteHeadStr := strings.TrimSpace(string(remoteHead))
+
+	// If merge base equals local but not remote, local is behind
+	if mergeBase == localHeadStr && mergeBase != remoteHeadStr {
+		// Count how far behind
+		cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, remoteBranch))
+		cmd.Dir = path
+		countOutput, _ := cmd.Output()
+		behindCount := strings.TrimSpace(string(countOutput))
+
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("Local %s is %s commits behind remote (will sync)", syncBranch, behindCount),
+		}
+	}
+
+	// Check 2: Is sync branch far behind main on source files?
+	// Get the main branch name
+	mainBranch := "main"
+	cmd = exec.Command("git", "rev-parse", "--verify", "main")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Try "master" as fallback
+		cmd = exec.Command("git", "rev-parse", "--verify", "master")
+		cmd.Dir = path
+		if err := cmd.Run(); err != nil {
+			// Can't determine main branch
+			return doctorCheck{
+				Name:    "Sync Branch Health",
+				Status:  statusOK,
+				Message: "OK",
+			}
+		}
+		mainBranch = "master"
+	}
+
+	// Count commits main is ahead of sync branch
+	cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, mainBranch))
+	cmd.Dir = path
+	aheadOutput, err := cmd.Output()
+	if err != nil {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "OK",
+		}
+	}
+	aheadCount := strings.TrimSpace(string(aheadOutput))
+
+	// Check if there are non-.beads/ file differences (stale source code)
+	cmd = exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..%s", syncBranch, mainBranch), "--", ":(exclude).beads/")
+	cmd.Dir = path
+	diffOutput, _ := cmd.Output()
+	diffFiles := strings.TrimSpace(string(diffOutput))
+
+	if diffFiles != "" && aheadCount != "0" {
+		// Count the number of different files
+		fileCount := len(strings.Split(diffFiles, "\n"))
+		// Parse ahead count as int for comparison
+		aheadCountInt := 0
+		fmt.Sscanf(aheadCount, "%d", &aheadCountInt)
+
+		// Only warn if significantly behind (20+ commits AND 50+ source files)
+		// Small drift is normal between bd sync operations
+		if fileCount > 50 && aheadCountInt > 20 {
+			return doctorCheck{
+				Name:    "Sync Branch Health",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Sync branch %s commits behind %s on source files", aheadCount, mainBranch),
+				Detail:  fmt.Sprintf("%d source files differ between %s and %s. The sync branch has stale code.", fileCount, syncBranch, mainBranch),
+				Fix:     fmt.Sprintf("Reset sync branch: git branch -f %s %s && git push --force-with-lease origin %s", syncBranch, mainBranch, syncBranch),
+			}
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Sync Branch Health",
+		Status:  statusOK,
+		Message: "OK",
 	}
 }
 
