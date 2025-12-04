@@ -41,6 +41,7 @@ Thumbs.db
 .beads/daemon.log
 .beads/daemon.pid
 .beads/daemon.lock
+.beads/daemon-error
 .beads/bd.sock
 .beads/.exclusive-lock
 
