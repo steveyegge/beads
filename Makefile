@@ -36,7 +36,7 @@ bench-quick:
 # Install bd to GOPATH/bin
 install: build
 	@echo "Installing bd to $$(go env GOPATH)/bin..."
-	go install ./cmd/bd
+	cp -v bd ~/.local/bin
 
 # Clean build artifacts and benchmark profiles
 clean:
