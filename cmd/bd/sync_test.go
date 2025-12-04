@@ -141,6 +141,7 @@ func TestGitCommit_AutoMessage(t *testing.T) {
 }
 
 func TestCountIssuesInJSONL_NonExistent(t *testing.T) {
+	t.Parallel()
 	count, err := countIssuesInJSONL("/nonexistent/path.jsonl")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
@@ -151,6 +152,7 @@ func TestCountIssuesInJSONL_NonExistent(t *testing.T) {
 }
 
 func TestCountIssuesInJSONL_EmptyFile(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	jsonlPath := filepath.Join(tmpDir, "empty.jsonl")
 	os.WriteFile(jsonlPath, []byte(""), 0644)
@@ -165,6 +167,7 @@ func TestCountIssuesInJSONL_EmptyFile(t *testing.T) {
 }
 
 func TestCountIssuesInJSONL_MultipleIssues(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
 	content := `{"id":"bd-1"}
@@ -183,6 +186,7 @@ func TestCountIssuesInJSONL_MultipleIssues(t *testing.T) {
 }
 
 func TestCountIssuesInJSONL_WithMalformedLines(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	jsonlPath := filepath.Join(tmpDir, "mixed.jsonl")
 	content := `{"id":"bd-1"}
@@ -797,6 +801,7 @@ func TestMaybeAutoCompactDeletions_BelowThreshold(t *testing.T) {
 }
 
 func TestSanitizeJSONLWithDeletions_NoDeletions(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -825,6 +830,7 @@ func TestSanitizeJSONLWithDeletions_NoDeletions(t *testing.T) {
 }
 
 func TestSanitizeJSONLWithDeletions_EmptyDeletions(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -848,6 +854,7 @@ func TestSanitizeJSONLWithDeletions_EmptyDeletions(t *testing.T) {
 }
 
 func TestSanitizeJSONLWithDeletions_RemovesDeletedIssues(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -911,6 +918,7 @@ func TestSanitizeJSONLWithDeletions_RemovesDeletedIssues(t *testing.T) {
 }
 
 func TestSanitizeJSONLWithDeletions_NoMatchingDeletions(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -947,6 +955,7 @@ func TestSanitizeJSONLWithDeletions_NoMatchingDeletions(t *testing.T) {
 }
 
 func TestSanitizeJSONLWithDeletions_PreservesMalformedLines(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -987,6 +996,7 @@ this is not valid json
 }
 
 func TestSanitizeJSONLWithDeletions_NonexistentJSONL(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	os.MkdirAll(beadsDir, 0755)
@@ -1110,6 +1120,7 @@ func TestHashBasedStalenessDetection_bd_f2f(t *testing.T) {
 // to prevent creating incorrect deletion records for locally-created beads.
 // See: https://github.com/steveyegge/beads/issues/417
 func TestResolveNoGitHistoryForFromMain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		fromMain     bool
@@ -1143,7 +1154,9 @@ func TestResolveNoGitHistoryForFromMain(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := resolveNoGitHistoryForFromMain(tt.fromMain, tt.noGitHistory)
 			if got != tt.want {
 				t.Errorf("resolveNoGitHistoryForFromMain(%v, %v) = %v, want %v",

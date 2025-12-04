@@ -283,6 +283,7 @@ func TestCheckGitForIssues_NoBeadsDir(t *testing.T) {
 }
 
 func TestBoolToFlag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		condition bool
@@ -296,7 +297,9 @@ func TestBoolToFlag(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := boolToFlag(tt.condition, tt.flag)
 			if got != tt.want {
 				t.Errorf("boolToFlag(%v, %q) = %q, want %q", tt.condition, tt.flag, got, tt.want)
