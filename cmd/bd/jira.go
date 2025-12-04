@@ -642,7 +642,7 @@ func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
 // reimportConflicts re-imports conflicting issues from Jira (Jira wins).
 // NOTE: This is a placeholder - full implementation requires fetching individual
 // issues from Jira API and updating local copies.
-func reimportConflicts(ctx context.Context, conflicts []JiraConflict) error {
+func reimportConflicts(_ context.Context, conflicts []JiraConflict) error {
 	if len(conflicts) == 0 {
 		return nil
 	}
@@ -657,7 +657,7 @@ func reimportConflicts(ctx context.Context, conflicts []JiraConflict) error {
 // resolveConflictsByTimestamp resolves conflicts by keeping the newer version.
 // NOTE: This is a placeholder - full implementation requires fetching Jira
 // timestamps and comparing with local timestamps.
-func resolveConflictsByTimestamp(ctx context.Context, conflicts []JiraConflict) error {
+func resolveConflictsByTimestamp(_ context.Context, conflicts []JiraConflict) error {
 	if len(conflicts) == 0 {
 		return nil
 	}

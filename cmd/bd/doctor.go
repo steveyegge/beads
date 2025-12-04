@@ -2515,7 +2515,7 @@ func checkSyncBranchHealth(path string) doctorCheck {
 		fileCount := len(strings.Split(diffFiles, "\n"))
 		// Parse ahead count as int for comparison
 		aheadCountInt := 0
-		fmt.Sscanf(aheadCount, "%d", &aheadCountInt)
+		_, _ = fmt.Sscanf(aheadCount, "%d", &aheadCountInt)
 
 		// Only warn if significantly behind (20+ commits AND 50+ source files)
 		// Small drift is normal between bd sync operations

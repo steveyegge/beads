@@ -473,7 +473,7 @@ func performContentMerge(ctx context.Context, worktreePath, branch, remote, json
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	baseFile := filepath.Join(tmpDir, "base.jsonl")
 	localFile := filepath.Join(tmpDir, "local.jsonl")

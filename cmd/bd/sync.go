@@ -419,7 +419,7 @@ Use --merge to merge the sync branch back to main branch.`,
 									fmt.Printf("✓ Pushed merged changes to %s\n", syncBranchName)
 									pushedViaSyncBranch = true
 								} else {
-									fmt.Println("Push cancelled. Run 'bd sync' again to retry.")
+									fmt.Println("Push canceled. Run 'bd sync' again to retry.")
 									fmt.Println("If this was unintended, use 'git reflog' on the sync branch to recover.")
 								}
 							} else if pullResult.Pushed {

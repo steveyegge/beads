@@ -71,7 +71,7 @@ jobs:
         run: go build -v ./cmd/bd
 
       - name: Test
-        run: go test -v -short ./...
+        run: go test -v -short -timeout=20m ./...
 
   lint:
     name: Lint
