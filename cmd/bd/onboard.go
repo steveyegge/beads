@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const copilotInstructionsContent = `# GitHub Copilot Instructions for Beads
+const copilotInstructionsContent = `# GitHub Copilot Instructions
 
-## Project Overview
+## Issue Tracking with bd
 
-**beads** (command: ` + "`bd`" + `) is a Git-backed issue tracker designed for AI-supervised coding workflows. We dogfood our own tool for all task tracking.
+This project uses **bd (beads)** for issue tracking - a Git-backed tracker designed for AI-supervised coding workflows.
 
 **Key Features:**
 - Dependency-aware issue tracking
@@ -22,37 +22,7 @@ const copilotInstructionsContent = `# GitHub Copilot Instructions for Beads
 - Built-in daemon for background operations
 - MCP server integration for Claude and other AI assistants
 
-## Tech Stack
-
-- **Language**: Go 1.21+
-- **Storage**: SQLite (internal/storage/sqlite/)
-- **CLI Framework**: Cobra
-- **Testing**: Go standard testing + table-driven tests
-- **CI/CD**: GitHub Actions
-- **MCP Server**: Python (integrations/beads-mcp/)
-
-## Coding Guidelines
-
-### Testing
-- Always write tests for new features
-- Use ` + "`BEADS_DB=/tmp/test.db`" + ` to avoid polluting production database
-- Run ` + "`go test -short ./...`" + ` before committing
-- Never create test issues in production DB (use temporary DB)
-
-### Code Style
-- Run ` + "`golangci-lint run ./...`" + ` before committing
-- Follow existing patterns in ` + "`cmd/bd/`" + ` for new commands
-- Add ` + "`--json`" + ` flag to all commands for programmatic use
-- Update docs when changing behavior
-
-### Git Workflow
-- Always commit ` + "`.beads/issues.jsonl`" + ` with code changes
-- Run ` + "`bd sync`" + ` at end of work sessions
-- Install git hooks: ` + "`bd hooks install`" + ` (ensures DB ↔ JSONL consistency)
-
-## Issue Tracking with bd
-
-**CRITICAL**: This project uses **bd** for ALL task tracking. Do NOT create markdown TODO lists.
+**CRITICAL**: Use bd for ALL task tracking. Do NOT create markdown TODO lists.
 
 ### Essential Commands
 
@@ -92,42 +62,17 @@ bd sync  # Force immediate export/commit/push
 - ` + "`3`" + ` - Low (polish, optimization)
 - ` + "`4`" + ` - Backlog (future ideas)
 
-## Project Structure
+### Git Workflow
 
-` + "```" + `
-beads/
-├── cmd/bd/              # CLI commands (add new commands here)
-├── internal/
-│   ├── types/           # Core data types
-│   └── storage/         # Storage layer
-│       └── sqlite/      # SQLite implementation
-├── integrations/
-│   └── beads-mcp/       # MCP server (Python)
-├── examples/            # Integration examples
-├── docs/                # Documentation
-└── .beads/
-    ├── beads.db         # SQLite database (DO NOT COMMIT)
-    └── issues.jsonl     # Git-synced issue storage
-` + "```" + `
-
-## Available Resources
+- Always commit ` + "`.beads/issues.jsonl`" + ` with code changes
+- Run ` + "`bd sync`" + ` at end of work sessions
+- Install git hooks: ` + "`bd hooks install`" + ` (ensures DB ↔ JSONL consistency)
 
 ### MCP Server (Recommended)
-Use the beads MCP server for native function calls instead of shell commands:
+
+For MCP-compatible clients (Claude Desktop, etc.), install the beads MCP server:
 - Install: ` + "`pip install beads-mcp`" + `
 - Functions: ` + "`mcp__beads__ready()`" + `, ` + "`mcp__beads__create()`" + `, etc.
-- See ` + "`integrations/beads-mcp/README.md`" + `
-
-### Scripts
-- ` + "`./scripts/bump-version.sh <version> --commit`" + ` - Update all version files atomically
-- ` + "`./scripts/release.sh <version>`" + ` - Complete release workflow
-- ` + "`./scripts/update-homebrew.sh <version>`" + ` - Update Homebrew formula
-
-### Key Documentation
-- **AGENTS.md** - Comprehensive AI agent guide (detailed workflows, advanced features)
-- **AGENT_INSTRUCTIONS.md** - Development procedures, testing, releases
-- **README.md** - User-facing documentation
-- **docs/CLI_REFERENCE.md** - Complete command reference
 
 ## CLI Help
 
@@ -139,15 +84,9 @@ For example: ` + "`bd create --help`" + ` shows ` + "`--parent`" + `, ` + "`--de
 - ✅ Use bd for ALL task tracking
 - ✅ Always use ` + "`--json`" + ` flag for programmatic use
 - ✅ Run ` + "`bd sync`" + ` at end of sessions
-- ✅ Test with ` + "`BEADS_DB=/tmp/test.db`" + `
 - ✅ Run ` + "`bd <cmd> --help`" + ` to discover available flags
 - ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT create test issues in production DB
-- ❌ Do NOT commit ` + "`.beads/beads.db`" + ` (JSONL only)
-
----
-
-**For detailed workflows and advanced features, see [AGENTS.md](../AGENTS.md)**`
+- ❌ Do NOT commit ` + "`.beads/beads.db`" + ` (JSONL only)`
 
 const agentsContent = `## Issue Tracking with bd (beads)
 
