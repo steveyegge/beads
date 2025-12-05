@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -244,41 +246,88 @@ func isClaudeDetected() bool {
 }
 
 // isClaudeSetupComplete checks if the beads Claude integration is properly configured.
-// Checks for either global or project-level installation of the beads hooks.
+// Returns true if the beads plugin is installed (provides hooks via plugin.json),
+// or if hooks were manually installed via 'bd setup claude'.
 func isClaudeSetupComplete() bool {
-	// Check for global installation
 	home, err := os.UserHomeDir()
-	if err == nil {
-		commandFile := filepath.Join(home, ".claude", "commands", "prime_beads.md")
-		hooksDir := filepath.Join(home, ".claude", "hooks")
+	if err != nil {
+		return false
+	}
 
-		// Check for prime_beads command
-		if _, err := os.Stat(commandFile); err == nil {
-			// Check for sessionstart hook (could be a file or directory)
-			hookPath := filepath.Join(hooksDir, "sessionstart")
-			if _, err := os.Stat(hookPath); err == nil {
-				return true // Global hooks installed
-			}
-			// Also check PreToolUse hook which is used by beads
-			preToolUsePath := filepath.Join(hooksDir, "PreToolUse")
-			if _, err := os.Stat(preToolUsePath); err == nil {
-				return true // Global hooks installed
+	// Check if beads plugin is installed - plugin now provides hooks automatically
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		var settings map[string]interface{}
+		if err := json.Unmarshal(data, &settings); err == nil {
+			if enabledPlugins, ok := settings["enabledPlugins"].(map[string]interface{}); ok {
+				for key, value := range enabledPlugins {
+					if strings.Contains(strings.ToLower(key), "beads") {
+						if enabled, ok := value.(bool); ok && enabled {
+							return true // Plugin installed - provides hooks
+						}
+					}
+				}
 			}
 		}
 	}
 
-	// Check for project-level installation
-	commandFile := ".claude/commands/prime_beads.md"
-	hooksDir := ".claude/hooks"
+	// Check for manual hooks installation via 'bd setup claude'
+	// Global hooks in settings.json
+	if hasBeadsPrimeHooks(settingsPath) {
+		return true
+	}
 
-	if _, err := os.Stat(commandFile); err == nil {
-		hookPath := filepath.Join(hooksDir, "sessionstart")
-		if _, err := os.Stat(hookPath); err == nil {
-			return true // Project hooks installed
+	// Project-level hooks in .claude/settings.local.json
+	if hasBeadsPrimeHooks(".claude/settings.local.json") {
+		return true
+	}
+
+	return false
+}
+
+// hasBeadsPrimeHooks checks if a settings file has bd prime hooks configured
+func hasBeadsPrimeHooks(settingsPath string) bool {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return false
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	// Check SessionStart and PreCompact for "bd prime"
+	for _, event := range []string{"SessionStart", "PreCompact"} {
+		eventHooks, ok := hooks[event].([]interface{})
+		if !ok {
+			continue
 		}
-		preToolUsePath := filepath.Join(hooksDir, "PreToolUse")
-		if _, err := os.Stat(preToolUsePath); err == nil {
-			return true // Project hooks installed
+
+		for _, hook := range eventHooks {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			commands, ok := hookMap["hooks"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, cmd := range commands {
+				cmdMap, ok := cmd.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				cmdStr, _ := cmdMap["command"].(string)
+				if cmdStr == "bd prime" || cmdStr == "bd prime --stealth" {
+					return true
+				}
+			}
 		}
 	}
 
@@ -288,11 +337,11 @@ func isClaudeSetupComplete() bool {
 // initDefaultTips registers the built-in tips.
 // Called during initialization to populate the tip registry.
 func initDefaultTips() {
-	// Claude setup tip - suggest running bd setup claude when Claude is detected
+	// Claude setup tip - suggest installing the beads plugin when Claude is detected
 	// but the integration is not configured
 	InjectTip(
 		"claude_setup",
-		"Run 'bd setup claude' to enable automatic context recovery in Claude Code",
+		"Install the beads plugin for automatic workflow context, or run 'bd setup claude' for CLI-only mode",
 		100,              // Highest priority - this is important for Claude users
 		24*time.Hour,     // Daily minimum gap
 		0.6,              // 60% chance when eligible (~4 times per week)
