@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS issues (
     compacted_at DATETIME,
     compacted_at_commit TEXT,
     original_size INTEGER,
+    deleted_at TEXT,
+    deleted_by TEXT DEFAULT '',
+    delete_reason TEXT DEFAULT '',
+    original_type TEXT DEFAULT '',
     CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 );
 

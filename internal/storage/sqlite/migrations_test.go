@@ -464,7 +464,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				design TEXT NOT NULL DEFAULT '',
 				acceptance_criteria TEXT NOT NULL DEFAULT '',
 				notes TEXT NOT NULL DEFAULT '',
-				status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'blocked', 'closed')),
+				status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'blocked', 'closed', 'tombstone')),
 				priority INTEGER NOT NULL,
 				issue_type TEXT NOT NULL CHECK (issue_type IN ('bug', 'feature', 'task', 'epic', 'chore')),
 				assignee TEXT,
@@ -479,9 +479,13 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				compacted_at_commit TEXT,
 				source_repo TEXT DEFAULT '.',
 				close_reason TEXT DEFAULT '',
+				deleted_at TEXT,
+				deleted_by TEXT DEFAULT '',
+				delete_reason TEXT DEFAULT '',
+				original_type TEXT DEFAULT '',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '' FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

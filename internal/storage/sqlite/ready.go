@@ -99,7 +99,8 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	query := fmt.Sprintf(`
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason
+		i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (
@@ -126,34 +127,35 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, updated_at, closed_at, external_ref, source_repo,
-			compaction_level, compacted_at, compacted_at_commit, original_size, close_reason
+			compaction_level, compacted_at, compacted_at_commit, original_size, close_reason,
+			deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE status != 'closed'
 		  AND datetime(updated_at) < datetime('now', '-' || ? || ' days')
 	`
-	
+
 	args := []interface{}{filter.Days}
-	
+
 	// Add optional status filter
 	if filter.Status != "" {
 		query += " AND status = ?"
 		args = append(args, filter.Status)
 	}
-	
+
 	query += " ORDER BY updated_at ASC"
-	
+
 	// Add limit
 	if filter.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, filter.Limit)
 	}
-	
+
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale issues: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	
+
 	var issues []*types.Issue
 	for rows.Next() {
 		var issue types.Issue
@@ -168,6 +170,10 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		var compactedAtCommit sql.NullString
 		var originalSize sql.NullInt64
 		var closeReason sql.NullString
+		var deletedAt sql.NullTime
+		var deletedBy sql.NullString
+		var deleteReason sql.NullString
+		var originalType sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -175,6 +181,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&compactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &closeReason,
+			&deletedAt, &deletedBy, &deleteReason, &originalType,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan stale issue: %w", err)
@@ -213,6 +220,18 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		}
 		if closeReason.Valid {
 			issue.CloseReason = closeReason.String
+		}
+		if deletedAt.Valid {
+			issue.DeletedAt = &deletedAt.Time
+		}
+		if deletedBy.Valid {
+			issue.DeletedBy = deletedBy.String
+		}
+		if deleteReason.Valid {
+			issue.DeleteReason = deleteReason.String
+		}
+		if originalType.Valid {
+			issue.OriginalType = originalType.String
 		}
 
 		issues = append(issues, &issue)

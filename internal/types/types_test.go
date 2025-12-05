@@ -202,6 +202,7 @@ func TestStatusIsValid(t *testing.T) {
 		{StatusInProgress, true},
 		{StatusBlocked, true},
 		{StatusClosed, true},
+		{StatusTombstone, true},
 		{Status("invalid"), false},
 		{Status(""), false},
 	}
@@ -210,6 +211,79 @@ func TestStatusIsValid(t *testing.T) {
 		t.Run(string(tt.status), func(t *testing.T) {
 			if got := tt.status.IsValid(); got != tt.valid {
 				t.Errorf("Status(%q).IsValid() = %v, want %v", tt.status, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestIsTombstone(t *testing.T) {
+	tests := []struct {
+		name   string
+		issue  Issue
+		expect bool
+	}{
+		{
+			name: "tombstone issue",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "(deleted)",
+				Status:    StatusTombstone,
+				Priority:  0,
+				IssueType: TypeTask,
+			},
+			expect: true,
+		},
+		{
+			name: "open issue",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Open issue",
+				Status:    StatusOpen,
+				Priority:  2,
+				IssueType: TypeTask,
+			},
+			expect: false,
+		},
+		{
+			name: "closed issue",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Closed issue",
+				Status:    StatusClosed,
+				Priority:  2,
+				IssueType: TypeTask,
+				ClosedAt:  timePtr(time.Now()),
+			},
+			expect: false,
+		},
+		{
+			name: "in_progress issue",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "In progress issue",
+				Status:    StatusInProgress,
+				Priority:  2,
+				IssueType: TypeTask,
+			},
+			expect: false,
+		},
+		{
+			name: "blocked issue",
+			issue: Issue{
+				ID:        "test-1",
+				Title:     "Blocked issue",
+				Status:    StatusBlocked,
+				Priority:  2,
+				IssueType: TypeTask,
+			},
+			expect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.issue.IsTombstone(); got != tt.expect {
+				t.Errorf("Issue.IsTombstone() = %v, want %v", got, tt.expect)
 			}
 		})
 	}

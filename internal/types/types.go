@@ -34,6 +34,11 @@ type Issue struct {
 	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
 	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
+	// Tombstone fields (bd-vw8): inline soft-delete support
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`     // When the issue was deleted
+	DeletedBy     string     `json:"deleted_by,omitempty"`     // Who deleted the issue
+	DeleteReason  string     `json:"delete_reason,omitempty"`  // Why the issue was deleted
+	OriginalType  string     `json:"original_type,omitempty"`  // Issue type before deletion (for tombstones)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -67,6 +72,11 @@ func (i *Issue) ComputeContentHash() string {
 	}
 	
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// IsTombstone returns true if the issue has been soft-deleted (bd-vw8)
+func (i *Issue) IsTombstone() bool {
+	return i.Status == StatusTombstone
 }
 
 // Validate checks if the issue has valid field values (built-in statuses only)
@@ -114,12 +124,13 @@ const (
 	StatusInProgress Status = "in_progress"
 	StatusBlocked    Status = "blocked"
 	StatusClosed     Status = "closed"
+	StatusTombstone  Status = "tombstone" // Soft-deleted issue (bd-vw8)
 )
 
 // IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed:
+	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed, StatusTombstone:
 		return true
 	}
 	return false

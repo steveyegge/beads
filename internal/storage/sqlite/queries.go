@@ -158,6 +158,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
 	var closeReason sql.NullString
+	var deletedAt sql.NullTime
+	var deletedBy sql.NullString
+	var deleteReason sql.NullString
+	var originalType sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -165,7 +169,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -174,6 +179,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -213,6 +219,18 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if closeReason.Valid {
 		issue.CloseReason = closeReason.String
+	}
+	if deletedAt.Valid {
+		issue.DeletedAt = &deletedAt.Time
+	}
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
 	}
 
 	// Fetch labels for this issue
@@ -311,12 +329,19 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var originalSize sql.NullInt64
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
+	var sourceRepo sql.NullString
+	var closeReason sql.NullString
+	var deletedAt sql.NullTime
+	var deletedBy sql.NullString
+	var deleteReason sql.NullString
+	var originalType sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -324,7 +349,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -358,6 +384,24 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if originalSize.Valid {
 		issue.OriginalSize = int(originalSize.Int64)
+	}
+	if sourceRepo.Valid {
+		issue.SourceRepo = sourceRepo.String
+	}
+	if closeReason.Valid {
+		issue.CloseReason = closeReason.String
+	}
+	if deletedAt.Valid {
+		issue.DeletedAt = &deletedAt.Time
+	}
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
 	}
 
 	// Fetch labels for this issue
@@ -1249,7 +1293,8 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason
+		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
