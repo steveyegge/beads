@@ -1,9 +1,9 @@
 ---
-name: bd-issue-tracking
-description: Track complex, multi-session work with dependency graphs using bd (beads) issue tracker. Use when work spans multiple sessions, has complex dependencies, or requires persistent context across compaction cycles. For simple single-session linear tasks, TodoWrite remains appropriate.
+name: beads
+description: Track complex, multi-session work with dependency graphs using beads issue tracker. Use when work spans multiple sessions, has complex dependencies, or requires persistent context across compaction cycles. For simple single-session linear tasks, TodoWrite remains appropriate.
 ---
 
-# bd Issue Tracking
+# Beads
 
 ## Overview
 
