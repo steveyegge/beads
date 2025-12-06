@@ -184,7 +184,12 @@ func findBeadsDir() string {
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			return beadsDir
+			// Resolve symlinks to get canonical path (fixes macOS /var -> /private/var)
+			resolved, err := filepath.EvalSymlinks(beadsDir)
+			if err != nil {
+				return beadsDir // Fall back to unresolved if EvalSymlinks fails
+			}
+			return resolved
 		}
 
 		parent := filepath.Dir(dir)
@@ -206,7 +211,7 @@ func findGitRoot() string {
 		return ""
 	}
 	root := string(bytes.TrimSpace(output))
-	
+
 	// Normalize path for the current OS
 	// Git on Windows may return paths with forward slashes (C:/Users/...)
 	// or Unix-style paths (/c/Users/...), convert to native format
@@ -219,7 +224,13 @@ func findGitRoot() string {
 			root = filepath.FromSlash(root)
 		}
 	}
-	return root
+
+	// Resolve symlinks to get canonical path (fixes macOS /var -> /private/var)
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return root // Fall back to unresolved if EvalSymlinks fails
+	}
+	return resolved
 }
 
 // importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
