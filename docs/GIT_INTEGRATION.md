@@ -272,6 +272,10 @@ See [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) for complete setup guide, tro
 - Prevents stale JSONL from reaching remote
 - **Critical for multi-workspace consistency**
 
+**post-checkout hook:**
+- Imports updated JSONL after branch switches
+- Ensures database reflects checked-out branch state
+
 ### Why Hooks Matter
 
 **Without pre-push hook:**
@@ -285,6 +289,58 @@ See [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) for complete setup guide, tro
 - No manual `bd sync` needed
 
 See [examples/git-hooks/README.md](../examples/git-hooks/README.md) for details.
+
+### Implementation Details
+
+#### Hook Installation (`cmd/bd/hooks.go`)
+
+The `installHooks()` function:
+- Writes embedded hook scripts to the `.git/hooks/` directory
+- Creates the hooks directory with `os.MkdirAll()` if needed
+- Backs up existing hooks with `.backup` extension (unless `--force` flag used)
+- Sets execute permissions (0755) on installed hooks
+- Supports shared mode via `--shared` flag (installs to `.beads-hooks/` instead)
+
+#### Git Directory Resolution
+
+**Critical for worktree support:** The `getGitDir()` helper uses `git rev-parse --git-dir` to resolve the actual git directory:
+
+```go
+// Returns ".git" in normal repos
+// Returns "/path/to/shared/.git" in git worktrees
+// (where .git is a file containing "gitdir: /path/to/actual/git/dir")
+gitDir, err := getGitDir()
+```
+
+In **normal repositories**, `.git` is a directory containing the git internals.
+In **git worktrees**, `.git` is a file containing `gitdir: /path/to/actual/git/dir`, pointing to the shared git directory.
+
+This difference breaks code that assumes `.git` is always a directory. Using `getGitDir()` ensures hooks work correctly in both cases.
+
+#### Hook Detection (`cmd/bd/init.go`)
+
+The `detectExistingHooks()` function scans for existing hooks and classifies them:
+
+- **bd hooks**: Identified by "bd (beads) pre-commit hook" comment in content
+- **pre-commit framework hooks**: Detected by "pre-commit framework" or "pre-commit.com" in content
+- **Custom hooks**: Any other existing hook
+
+This classification allows bd to:
+- Avoid re-installing already-installed bd hooks
+- Support chaining with pre-commit framework hooks
+- Warn when overwriting custom hooks
+
+#### Hook Testing
+
+Tests in `hooks_test.go` and `init_hooks_test.go`:
+
+1. Initialize real git repositories via `exec.Command("git", "init")`
+2. Call `getGitDir()` to get the actual git directory path
+3. Construct hooks path with `filepath.Join(gitDirPath, "hooks")`
+4. Create hooks directory if needed with `os.MkdirAll()`
+5. Execute hook operations and verify results
+
+This approach ensures tests work correctly in both normal repos and git worktrees, preventing failures when running in worktree environments where `.git` is a file.
 
 ## Multi-Workspace Sync Strategies
 
