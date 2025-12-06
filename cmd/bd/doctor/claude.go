@@ -24,20 +24,14 @@ func CheckClaude() DoctorCheck {
 	hasMCP := isMCPServerInstalled()
 	hasHooks := hasClaudeHooks()
 
-	// Plugin provides slash commands and MCP server
-	if hasPlugin && hasHooks {
+	// Plugin now provides hooks directly via plugin.json, so if plugin is installed
+	// we consider hooks to be available (plugin hooks + any user-configured hooks)
+	if hasPlugin {
 		return DoctorCheck{
 			Name:    "Claude Integration",
 			Status:  "ok",
-			Message: "Plugin and hooks installed",
-			Detail:  "Slash commands and workflow reminders enabled",
-		}
-	} else if hasPlugin && !hasHooks {
-		return DoctorCheck{
-			Name:    "Claude Integration",
-			Status:  "warning",
-			Message: "Plugin installed but hooks missing",
-			Fix:     "Run: bd setup claude",
+			Message: "Plugin installed",
+			Detail:  "Slash commands and workflow hooks enabled via plugin",
 		}
 	} else if hasMCP && hasHooks {
 		return DoctorCheck{
@@ -75,17 +69,19 @@ func CheckClaude() DoctorCheck {
 			Name:    "Claude Integration",
 			Status:  "warning",
 			Message: "Not configured",
-			Detail: "Claude can use bd more effectively with hooks and optional plugin",
+			Detail:  "Claude can use bd more effectively with the beads plugin",
 			Fix: "Set up Claude integration:\n" +
-				"  1. Run 'bd setup claude' to add SessionStart/PreCompact hooks\n" +
-				"  2. (Optional) Install beads plugin for slash commands\n" +
+				"  Option 1: Install the beads plugin (recommended)\n" +
+				"    • Provides hooks, slash commands, and MCP tools automatically\n" +
+				"    • See: https://github.com/steveyegge/beads#claude-code-plugin\n" +
+				"\n" +
+				"  Option 2: CLI-only mode\n" +
+				"    • Run 'bd setup claude' to add SessionStart/PreCompact hooks\n" +
+				"    • No slash commands, but hooks provide workflow context\n" +
 				"\n" +
 				"Benefits:\n" +
-				"  • Hooks: Auto-inject workflow context (~50-2k tokens)\n" +
-				"  • Plugin: Convenient slash commands + MCP tools\n" +
-				"  • CLI mode: Works without plugin (hooks + manual 'bd prime')\n" +
-				"\n" +
-				"See: bd setup claude --help",
+				"  • Auto-inject workflow context on session start (~50-2k tokens)\n" +
+				"  • Automatic context recovery before compaction",
 		}
 	}
 }

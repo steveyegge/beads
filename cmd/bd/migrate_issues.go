@@ -35,6 +35,13 @@ Examples:
   # Move issues with label filter
   bd migrate-issues --from . --to ~/feature-work --label frontend --label urgent`,
 	Run: func(cmd *cobra.Command, args []string) {
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		// Block writes in readonly mode
+		if !dryRun {
+			CheckReadonly("migrate-issues")
+		}
+
 		ctx := rootCtx
 
 		// Parse flags
@@ -48,7 +55,6 @@ Examples:
 		idsFile, _ := cmd.Flags().GetString("ids-file")
 		include, _ := cmd.Flags().GetString("include")
 		withinFromOnly, _ := cmd.Flags().GetBool("within-from-only")
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		strict, _ := cmd.Flags().GetBool("strict")
 		yes, _ := cmd.Flags().GetBool("yes")
 

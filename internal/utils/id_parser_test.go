@@ -367,6 +367,56 @@ func TestExtractIssuePrefix(t *testing.T) {
 			issueID:  "beads-vscode-1",
 			expected: "beads-vscode", // Last hyphen before numeric suffix
 		},
+		{
+			name:     "web-app style prefix",
+			issueID:  "web-app-123",
+			expected: "web-app", // Should extract "web-app", not "web-"
+		},
+		{
+			name:     "three-part prefix with hash",
+			issueID:  "my-cool-app-a3f8e9",
+			expected: "my-cool-app", // Hash suffix should use last hyphen logic
+		},
+		{
+			name:     "four-part prefix with 4-char hash",
+			issueID:  "super-long-project-name-1a2b",
+			expected: "super-long-project-name", // 4-char hash
+		},
+		{
+			name:     "prefix with 5-char hash",
+			issueID:  "my-app-1a2b3",
+			expected: "my-app", // 5-char hash
+		},
+		{
+			name:     "prefix with 6-char hash",
+			issueID:  "web-app-a1b2c3",
+			expected: "web-app", // 6-char hash
+		},
+		{
+			name:     "uppercase hash",
+			issueID:  "my-app-A3F8E9",
+			expected: "my-app", // Uppercase hash should work
+		},
+		{
+			name:     "mixed case hash",
+			issueID:  "proj-AbCd12",
+			expected: "proj", // Mixed case hash should work
+		},
+		{
+			name:     "3-char hash with hyphenated prefix",
+			issueID:  "document-intelligence-0sa",
+			expected: "document-intelligence", // 3-char hash (base36) should use last hyphen
+		},
+		{
+			name:     "3-char hash with multi-part prefix",
+			issueID:  "my-cool-app-1x7",
+			expected: "my-cool-app", // 3-char base36 hash
+		},
+		{
+			name:     "3-char all-letters suffix (now treated as hash, GH #446)",
+			issueID:  "test-proj-abc",
+			expected: "test-proj", // 3-char all-letter now accepted as hash (GH #446)
+		},
 	}
 
 	for _, tt := range tests {

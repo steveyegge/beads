@@ -22,14 +22,18 @@ Example:
   bd duplicates --auto-merge       # Automatically merge all duplicates
   bd duplicates --dry-run          # Show what would be merged`,
 	Run: func(cmd *cobra.Command, _ []string) {
+		autoMerge, _ := cmd.Flags().GetBool("auto-merge")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		// Block writes in readonly mode (merging modifies data)
+		if autoMerge && !dryRun {
+			CheckReadonly("duplicates --auto-merge")
+		}
 		// Check daemon mode - not supported yet (merge command limitation)
 		if daemonClient != nil {
 			fmt.Fprintf(os.Stderr, "Error: duplicates command not yet supported in daemon mode (see bd-190)\n")
 			fmt.Fprintf(os.Stderr, "Use: bd --no-daemon duplicates\n")
 			os.Exit(1)
 		}
-		autoMerge, _ := cmd.Flags().GetBool("auto-merge")
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		// Use global jsonOutput set by PersistentPreRun
 		ctx := rootCtx
 

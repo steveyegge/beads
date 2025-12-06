@@ -185,9 +185,46 @@ var showCmd = &cobra.Command{
 					}
 
 					if len(details.Dependents) > 0 {
-						fmt.Printf("\nBlocks (%d):\n", len(details.Dependents))
+						// Group by dependency type for clarity
+						var blocks, children, related, discovered []*types.IssueWithDependencyMetadata
 						for _, dep := range details.Dependents {
-							fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							switch dep.DependencyType {
+							case types.DepBlocks:
+								blocks = append(blocks, dep)
+							case types.DepParentChild:
+								children = append(children, dep)
+							case types.DepRelated:
+								related = append(related, dep)
+							case types.DepDiscoveredFrom:
+								discovered = append(discovered, dep)
+							default:
+								blocks = append(blocks, dep)
+							}
+						}
+
+						if len(children) > 0 {
+							fmt.Printf("\nChildren (%d):\n", len(children))
+							for _, dep := range children {
+								fmt.Printf("  ↳ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							}
+						}
+						if len(blocks) > 0 {
+							fmt.Printf("\nBlocks (%d):\n", len(blocks))
+							for _, dep := range blocks {
+								fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							}
+						}
+						if len(related) > 0 {
+							fmt.Printf("\nRelated (%d):\n", len(related))
+							for _, dep := range related {
+								fmt.Printf("  ↔ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							}
+						}
+						if len(discovered) > 0 {
+							fmt.Printf("\nDiscovered (%d):\n", len(discovered))
+							for _, dep := range discovered {
+								fmt.Printf("  ◊ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							}
 						}
 					}
 
@@ -334,12 +371,62 @@ var showCmd = &cobra.Command{
 				}
 			}
 
-			// Show dependents
-			dependents, _ := store.GetDependents(ctx, issue.ID)
-			if len(dependents) > 0 {
-				fmt.Printf("\nBlocks (%d):\n", len(dependents))
-				for _, dep := range dependents {
-					fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+			// Show dependents - grouped by dependency type for clarity
+			// Use GetDependentsWithMetadata to get the dependency type
+			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			if ok {
+				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+				if len(dependentsWithMeta) > 0 {
+					// Group by dependency type
+					var blocks, children, related, discovered []*types.IssueWithDependencyMetadata
+					for _, dep := range dependentsWithMeta {
+						switch dep.DependencyType {
+						case types.DepBlocks:
+							blocks = append(blocks, dep)
+						case types.DepParentChild:
+							children = append(children, dep)
+						case types.DepRelated:
+							related = append(related, dep)
+						case types.DepDiscoveredFrom:
+							discovered = append(discovered, dep)
+						default:
+							blocks = append(blocks, dep) // Default to blocks
+						}
+					}
+
+					if len(children) > 0 {
+						fmt.Printf("\nChildren (%d):\n", len(children))
+						for _, dep := range children {
+							fmt.Printf("  ↳ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+						}
+					}
+					if len(blocks) > 0 {
+						fmt.Printf("\nBlocks (%d):\n", len(blocks))
+						for _, dep := range blocks {
+							fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+						}
+					}
+					if len(related) > 0 {
+						fmt.Printf("\nRelated (%d):\n", len(related))
+						for _, dep := range related {
+							fmt.Printf("  ↔ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+						}
+					}
+					if len(discovered) > 0 {
+						fmt.Printf("\nDiscovered (%d):\n", len(discovered))
+						for _, dep := range discovered {
+							fmt.Printf("  ◊ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+						}
+					}
+				}
+			} else {
+				// Fallback for non-SQLite storage
+				dependents, _ := store.GetDependents(ctx, issue.ID)
+				if len(dependents) > 0 {
+					fmt.Printf("\nBlocks (%d):\n", len(dependents))
+					for _, dep := range dependents {
+						fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+					}
 				}
 			}
 
@@ -369,6 +456,7 @@ var updateCmd = &cobra.Command{
 	Short: "Update one or more issues",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("update")
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		updates := make(map[string]interface{})
 
@@ -417,6 +505,14 @@ var updateCmd = &cobra.Command{
 		if cmd.Flags().Changed("external-ref") {
 			externalRef, _ := cmd.Flags().GetString("external-ref")
 			updates["external_ref"] = externalRef
+		}
+		if cmd.Flags().Changed("estimate") {
+			estimate, _ := cmd.Flags().GetInt("estimate")
+			if estimate < 0 {
+				fmt.Fprintf(os.Stderr, "Error: estimate must be a non-negative number of minutes\n")
+				os.Exit(1)
+			}
+			updates["estimated_minutes"] = estimate
 		}
 		if cmd.Flags().Changed("add-label") {
 			addLabels, _ := cmd.Flags().GetStringSlice("add-label")
@@ -495,8 +591,11 @@ var updateCmd = &cobra.Command{
 				if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
 					updateArgs.AcceptanceCriteria = &acceptanceCriteria
 				}
-				if externalRef, ok := updates["external_ref"].(string); ok { // NEW: Map external_ref
+				if externalRef, ok := updates["external_ref"].(string); ok {
 					updateArgs.ExternalRef = &externalRef
+				}
+				if estimate, ok := updates["estimated_minutes"].(int); ok {
+					updateArgs.EstimatedMinutes = &estimate
 				}
 				if addLabels, ok := updates["add_labels"].([]string); ok {
 					updateArgs.AddLabels = addLabels
@@ -630,6 +729,7 @@ Examples:
   bd edit bd-42 --acceptance       # Edit acceptance criteria`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("edit")
 		id := args[0]
 		ctx := rootCtx
 
@@ -817,6 +917,7 @@ var closeCmd = &cobra.Command{
 	Short: "Close one or more issues",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("close")
 		reason, _ := cmd.Flags().GetString("reason")
 		if reason == "" {
 			reason = "Closed"
@@ -922,6 +1023,7 @@ func init() {
 	updateCmd.Flags().String("notes", "", "Additional notes")
 	updateCmd.Flags().String("acceptance-criteria", "", "DEPRECATED: use --acceptance")
 	_ = updateCmd.Flags().MarkHidden("acceptance-criteria")
+	updateCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	updateCmd.Flags().StringSlice("add-label", nil, "Add labels (repeatable)")
 	updateCmd.Flags().StringSlice("remove-label", nil, "Remove labels (repeatable)")
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")

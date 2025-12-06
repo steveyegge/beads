@@ -41,6 +41,11 @@ This command:
 		inspect, _ := cmd.Flags().GetBool("inspect")
 		toSeparateBranch, _ := cmd.Flags().GetString("to-separate-branch")
 
+		// Block writes in readonly mode (migration modifies data, --inspect is read-only)
+		if !dryRun && !inspect {
+			CheckReadonly("migrate")
+		}
+
 		// Handle --update-repo-id first
 		if updateRepoID {
 			handleUpdateRepoID(dryRun, autoYes)

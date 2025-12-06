@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
@@ -12,11 +13,19 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
-// trackBdVersion checks if bd version has changed since last run and updates metadata.json.
+// localVersionFile is the gitignored file that stores the last bd version used locally.
+// This prevents the upgrade notification from firing repeatedly when git operations
+// reset the tracked metadata.json file.
+//
+// bd-tok: Fix upgrade notification persisting after git operations
+const localVersionFile = ".local_version"
+
+// trackBdVersion checks if bd version has changed since last run and updates the local version file.
 // This function is best-effort - failures are silent to avoid disrupting commands.
 // Sets global variables versionUpgradeDetected and previousVersion if upgrade detected.
 //
 // bd-loka: Built-in version tracking for upgrade awareness
+// bd-tok: Use gitignored .local_version file instead of metadata.json
 func trackBdVersion() {
 	// Find the beads directory
 	beadsDir := beads.FindBeadsDir()
@@ -25,16 +34,32 @@ func trackBdVersion() {
 		return
 	}
 
-	// Load current config
+	// Read last version from local (gitignored) file
+	localVersionPath := filepath.Join(beadsDir, localVersionFile)
+	lastVersion := readLocalVersion(localVersionPath)
+
+	// Check if version changed
+	if lastVersion != "" && lastVersion != Version {
+		// Version upgrade detected!
+		versionUpgradeDetected = true
+		previousVersion = lastVersion
+	}
+
+	// Update local version file (best effort)
+	// Only write if version actually changed to minimize I/O
+	if lastVersion != Version {
+		_ = writeLocalVersion(localVersionPath, Version)
+	}
+
+	// Also ensure metadata.json exists with proper defaults (for JSONL export name)
+	// but don't use it for version tracking anymore
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
-		// Silent failure - config might not exist yet
 		return
 	}
 	if cfg == nil {
-		// No config file yet - create one with current version
+		// No config file yet - create one
 		cfg = configfile.DefaultConfig()
-		cfg.LastBdVersion = Version
 
 		// bd-afd: Auto-detect actual JSONL file instead of using hardcoded default
 		// This prevents mismatches when metadata.json gets deleted (git clean, merge conflict, etc.)
@@ -43,23 +68,23 @@ func trackBdVersion() {
 		}
 
 		_ = cfg.Save(beadsDir) // Best effort
-		return
 	}
+}
 
-	// Check if version changed
-	if cfg.LastBdVersion != "" && cfg.LastBdVersion != Version {
-		// Version upgrade detected!
-		versionUpgradeDetected = true
-		previousVersion = cfg.LastBdVersion
+// readLocalVersion reads the last bd version from the local version file.
+// Returns empty string if file doesn't exist or can't be read.
+func readLocalVersion(path string) string {
+	// #nosec G304 - path is constructed from beadsDir + constant
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
 	}
+	return strings.TrimSpace(string(data))
+}
 
-	// Update metadata.json with current version (best effort)
-	// Only write if version actually changed to minimize I/O
-	// Also update on first run (when LastBdVersion is empty) to initialize tracking
-	if cfg.LastBdVersion != Version {
-		cfg.LastBdVersion = Version
-		_ = cfg.Save(beadsDir) // Silent failure is fine
-	}
+// writeLocalVersion writes the current version to the local version file.
+func writeLocalVersion(path, version string) error {
+	return os.WriteFile(path, []byte(version+"\n"), 0600)
 }
 
 // getVersionsSince returns all version changes since the given version.

@@ -179,6 +179,16 @@ Created by: bd init --contributor
 
 	fmt.Printf("%s Auto-routing enabled\n", green("✓"))
 
+	// If this is a fork, configure sync to pull beads from upstream (bd-bx9)
+	// This ensures `bd sync` gets the latest issues from the source repo,
+	// not from the fork's potentially outdated origin/main
+	if isFork {
+		if err := store.SetConfig(ctx, "sync.remote", "upstream"); err != nil {
+			return fmt.Errorf("failed to set sync remote: %w", err)
+		}
+		fmt.Printf("%s Sync configured to pull from upstream (source repo)\n", green("✓"))
+	}
+
 	// Step 5: Summary
 	fmt.Printf("\n%s %s\n\n", green("✓"), bold("Contributor setup complete!"))
 

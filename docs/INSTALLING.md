@@ -312,3 +312,7 @@ git pull
 go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/
 ```
+
+## Uninstalling
+
+To completely remove Beads from a repository, see [UNINSTALLING.md](UNINSTALLING.md).

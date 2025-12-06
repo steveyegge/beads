@@ -275,16 +275,17 @@ func stopDaemon(pidFile string) {
 	fmt.Println("Daemon killed")
 }
 
-// startDaemon starts the daemon in background
-func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pidFile string) {
+// startDaemon starts the daemon (in foreground if requested, otherwise background)
+func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foreground bool, logFile, pidFile string) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, logPath, pidFile)
+	// Run in foreground if --foreground flag set or if we're the forked child process
+	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
+		runDaemonLoop(interval, autoCommit, autoPush, localMode, logPath, pidFile)
 		return
 	}
 
@@ -302,6 +303,9 @@ func startDaemon(interval time.Duration, autoCommit, autoPush bool, logFile, pid
 	}
 	if autoPush {
 		args = append(args, "--auto-push")
+	}
+	if localMode {
+		args = append(args, "--local")
 	}
 	if logFile != "" {
 		args = append(args, "--log", logFile)

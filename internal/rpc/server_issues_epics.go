@@ -70,6 +70,9 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.ExternalRef != nil {
 		u["external_ref"] = *a.ExternalRef
 	}
+	if a.EstimatedMinutes != nil {
+		u["estimated_minutes"] = *a.EstimatedMinutes
+	}
 	return u
 }
 
@@ -142,6 +145,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		AcceptanceCriteria: strValue(acceptance),
 		Assignee:           strValue(assignee),
 		ExternalRef:        externalRef,
+		EstimatedMinutes:   createArgs.EstimatedMinutes,
 		Status:             types.StatusOpen,
 	}
 	
@@ -955,12 +959,13 @@ func (s *Server) handleReady(req *Request) Response {
 	wf := types.WorkFilter{
 		Status:     types.StatusOpen,
 		Priority:   readyArgs.Priority,
+		Unassigned: readyArgs.Unassigned,
 		Limit:      readyArgs.Limit,
 		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
 		Labels:     util.NormalizeLabels(readyArgs.Labels),
 		LabelsAny:  util.NormalizeLabels(readyArgs.LabelsAny),
 	}
-	if readyArgs.Assignee != "" {
+	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
 		wf.Assignee = &readyArgs.Assignee
 	}
 

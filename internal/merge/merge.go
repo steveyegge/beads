@@ -34,7 +34,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Issue represents a beads issue with all possible fields
@@ -52,6 +52,11 @@ type Issue struct {
 	CreatedBy    string       `json:"created_by,omitempty"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 	RawLine      string       `json:"-"` // Store original line for conflict output
+	// Tombstone fields (bd-0ih): inline soft-delete support for merge
+	DeletedAt    string `json:"deleted_at,omitempty"`    // When the issue was deleted
+	DeletedBy    string `json:"deleted_by,omitempty"`    // Who deleted the issue
+	DeleteReason string `json:"delete_reason,omitempty"` // Why the issue was deleted
+	OriginalType string `json:"original_type,omitempty"` // Issue type before deletion
 }
 
 // Dependency represents an issue dependency
@@ -235,7 +240,64 @@ func makeKey(issue Issue) IssueKey {
 	}
 }
 
+// bd-ig5: Use constants from types package to avoid duplication
+const StatusTombstone = string(types.StatusTombstone)
+
+// Alias TTL constants from types package for local use
+var (
+	DefaultTombstoneTTL = types.DefaultTombstoneTTL
+	ClockSkewGrace      = types.ClockSkewGrace
+)
+
+// IsTombstone returns true if the issue has been soft-deleted
+func IsTombstone(issue Issue) bool {
+	return issue.Status == StatusTombstone
+}
+
+// IsExpiredTombstone returns true if the tombstone has exceeded its TTL.
+// Non-tombstone issues always return false.
+// ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
+func IsExpiredTombstone(issue Issue, ttl time.Duration) bool {
+	// Non-tombstones never expire
+	if !IsTombstone(issue) {
+		return false
+	}
+
+	// Tombstones without DeletedAt are not expired (safety: shouldn't happen in valid data)
+	if issue.DeletedAt == "" {
+		return false
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = DefaultTombstoneTTL
+	}
+
+	// Parse the deleted_at timestamp
+	deletedAt, err := time.Parse(time.RFC3339Nano, issue.DeletedAt)
+	if err != nil {
+		deletedAt, err = time.Parse(time.RFC3339, issue.DeletedAt)
+		if err != nil {
+			// Invalid timestamp means not expired (safety)
+			return false
+		}
+	}
+
+	// Add clock skew grace period to the TTL
+	effectiveTTL := ttl + ClockSkewGrace
+
+	// Check if the tombstone has exceeded its TTL
+	expirationTime := deletedAt.Add(effectiveTTL)
+	return time.Now().After(expirationTime)
+}
+
 func merge3Way(base, left, right []Issue) ([]Issue, []string) {
+	return merge3WayWithTTL(base, left, right, DefaultTombstoneTTL)
+}
+
+// merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
+// This is the core merge function that handles tombstone semantics.
+func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []string) {
 	// Build maps for quick lookup
 	baseMap := make(map[IssueKey]Issue)
 	for _, issue := range base {
@@ -279,9 +341,46 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 		leftIssue, inLeft := leftMap[key]
 		rightIssue, inRight := rightMap[key]
 
+		// Determine tombstone status
+		leftTombstone := inLeft && IsTombstone(leftIssue)
+		rightTombstone := inRight && IsTombstone(rightIssue)
+
 		// Handle different scenarios
 		if inBase && inLeft && inRight {
-			// All three present - merge
+			// All three present - handle tombstone cases first
+
+			// CASE: Both are tombstones - merge tombstones (later deleted_at wins)
+			if leftTombstone && rightTombstone {
+				merged := mergeTombstones(leftIssue, rightIssue)
+				result = append(result, merged)
+				continue
+			}
+
+			// CASE: Left is tombstone, right is live
+			if leftTombstone && !rightTombstone {
+				if IsExpiredTombstone(leftIssue, ttl) {
+					// Tombstone expired - resurrection allowed, keep live issue
+					result = append(result, rightIssue)
+				} else {
+					// Tombstone wins
+					result = append(result, leftIssue)
+				}
+				continue
+			}
+
+			// CASE: Right is tombstone, left is live
+			if rightTombstone && !leftTombstone {
+				if IsExpiredTombstone(rightIssue, ttl) {
+					// Tombstone expired - resurrection allowed, keep live issue
+					result = append(result, leftIssue)
+				} else {
+					// Tombstone wins
+					result = append(result, rightIssue)
+				}
+				continue
+			}
+
+			// CASE: Both are live issues - standard merge
 			merged, conflict := mergeIssue(baseIssue, leftIssue, rightIssue)
 			if conflict != "" {
 				conflicts = append(conflicts, conflict)
@@ -289,32 +388,104 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 				result = append(result, merged)
 			}
 		} else if !inBase && inLeft && inRight {
-			// Added in both - check if identical
-			if issuesEqual(leftIssue, rightIssue) {
-				result = append(result, leftIssue)
-			} else {
-				conflicts = append(conflicts, makeConflict(leftIssue.RawLine, rightIssue.RawLine))
+			// Added in both - handle tombstone cases
+
+			// CASE: Both are tombstones - merge tombstones
+			if leftTombstone && rightTombstone {
+				merged := mergeTombstones(leftIssue, rightIssue)
+				result = append(result, merged)
+				continue
 			}
+
+			// CASE: Left is tombstone, right is live
+			if leftTombstone && !rightTombstone {
+				if IsExpiredTombstone(leftIssue, ttl) {
+					result = append(result, rightIssue)
+				} else {
+					result = append(result, leftIssue)
+				}
+				continue
+			}
+
+			// CASE: Right is tombstone, left is live
+			if rightTombstone && !leftTombstone {
+				if IsExpiredTombstone(rightIssue, ttl) {
+					result = append(result, leftIssue)
+				} else {
+					result = append(result, rightIssue)
+				}
+				continue
+			}
+
+			// CASE: Both are live - merge using deterministic rules with empty base
+			emptyBase := Issue{
+				ID:        leftIssue.ID,
+				CreatedAt: leftIssue.CreatedAt,
+				CreatedBy: leftIssue.CreatedBy,
+			}
+			merged, _ := mergeIssue(emptyBase, leftIssue, rightIssue)
+			result = append(result, merged)
 		} else if inBase && inLeft && !inRight {
-			// Deleted in right, maybe modified in left
+			// Deleted in right (implicitly), maybe modified in left
+			// bd-ki14: Check if left is a tombstone - tombstones must be preserved
+			if leftTombstone {
+				result = append(result, leftIssue)
+				continue
+			}
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
 		} else if inBase && !inLeft && inRight {
-			// Deleted in left, maybe modified in right
+			// Deleted in left (implicitly), maybe modified in right
+			// bd-ki14: Check if right is a tombstone - tombstones must be preserved
+			if rightTombstone {
+				result = append(result, rightIssue)
+				continue
+			}
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
 		} else if !inBase && inLeft && !inRight {
-			// Added only in left
+			// Added only in left (could be a tombstone)
 			result = append(result, leftIssue)
 		} else if !inBase && !inLeft && inRight {
-			// Added only in right
+			// Added only in right (could be a tombstone)
 			result = append(result, rightIssue)
 		}
 	}
 
 	return result, conflicts
+}
+
+// mergeTombstones merges two tombstones for the same issue.
+// The tombstone with the later deleted_at timestamp wins.
+//
+// bd-6x5: Edge cases for empty DeletedAt:
+//   - If both empty: left wins (arbitrary but deterministic)
+//   - If left empty, right not: right wins (has timestamp)
+//   - If right empty, left not: left wins (has timestamp)
+//
+// Empty DeletedAt shouldn't happen in valid data (validation catches it),
+// but we handle it defensively here.
+func mergeTombstones(left, right Issue) Issue {
+	// bd-6x5: Handle empty DeletedAt explicitly for clarity
+	if left.DeletedAt == "" && right.DeletedAt == "" {
+		// Both invalid - left wins as tie-breaker
+		return left
+	}
+	if left.DeletedAt == "" {
+		// Left invalid, right valid - right wins
+		return right
+	}
+	if right.DeletedAt == "" {
+		// Right invalid, left valid - left wins
+		return left
+	}
+	// Both valid - use later deleted_at as the authoritative tombstone
+	if isTimeAfter(left.DeletedAt, right.DeletedAt) {
+		return left
+	}
+	return right
 }
 
 func mergeIssue(base, left, right Issue) (Issue, string) {
@@ -324,31 +495,22 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 		CreatedBy: base.CreatedBy,
 	}
 
-	// Merge title
-	result.Title = mergeField(base.Title, left.Title, right.Title)
+	// Merge title - on conflict, side with latest updated_at wins
+	result.Title = mergeFieldByUpdatedAt(base.Title, left.Title, right.Title, left.UpdatedAt, right.UpdatedAt)
 
-	// Merge description
-	result.Description = mergeField(base.Description, left.Description, right.Description)
+	// Merge description - on conflict, side with latest updated_at wins
+	result.Description = mergeFieldByUpdatedAt(base.Description, left.Description, right.Description, left.UpdatedAt, right.UpdatedAt)
 
-	// Merge notes
-	result.Notes = mergeField(base.Notes, left.Notes, right.Notes)
+	// Merge notes - on conflict, concatenate both sides
+	result.Notes = mergeNotes(base.Notes, left.Notes, right.Notes)
 
 	// Merge status - SPECIAL RULE: closed always wins over open
 	result.Status = mergeStatus(base.Status, left.Status, right.Status)
 
-	// Merge priority (as int)
-	if base.Priority == left.Priority && base.Priority != right.Priority {
-		result.Priority = right.Priority
-	} else if base.Priority == right.Priority && base.Priority != left.Priority {
-		result.Priority = left.Priority
-	} else if left.Priority == right.Priority {
-		result.Priority = left.Priority
-	} else {
-		// Conflict - take left for now
-		result.Priority = left.Priority
-	}
+	// Merge priority - on conflict, higher priority wins (lower number = more urgent)
+	result.Priority = mergePriority(base.Priority, left.Priority, right.Priority)
 
-	// Merge issue_type
+	// Merge issue_type - on conflict, local (left) wins
 	result.IssueType = mergeField(base.IssueType, left.IssueType, right.IssueType)
 
 	// Merge updated_at - take the max
@@ -365,15 +527,46 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	// Merge dependencies - combine and deduplicate
 	result.Dependencies = mergeDependencies(left.Dependencies, right.Dependencies)
 
-	// Check if we have a real conflict
-	if hasConflict(base, left, right) {
-		return result, makeConflictWithBase(base.RawLine, left.RawLine, right.RawLine)
+	// bd-1sn: If status became tombstone via mergeStatus safety fallback,
+	// copy tombstone fields from whichever side has them
+	if result.Status == StatusTombstone {
+		// Prefer the side with more recent deleted_at, or left if tied
+		if isTimeAfter(left.DeletedAt, right.DeletedAt) {
+			result.DeletedAt = left.DeletedAt
+			result.DeletedBy = left.DeletedBy
+			result.DeleteReason = left.DeleteReason
+			result.OriginalType = left.OriginalType
+		} else if right.DeletedAt != "" {
+			result.DeletedAt = right.DeletedAt
+			result.DeletedBy = right.DeletedBy
+			result.DeleteReason = right.DeleteReason
+			result.OriginalType = right.OriginalType
+		} else if left.DeletedAt != "" {
+			result.DeletedAt = left.DeletedAt
+			result.DeletedBy = left.DeletedBy
+			result.DeleteReason = left.DeleteReason
+			result.OriginalType = left.OriginalType
+		}
+		// Note: if neither has DeletedAt, tombstone fields remain empty
+		// This represents invalid data that validation should catch
 	}
 
+	// All field conflicts are now auto-resolved deterministically
 	return result, ""
 }
 
 func mergeStatus(base, left, right string) string {
+	// RULE 0: tombstone is handled at the merge3Way level, not here.
+	// If a tombstone status reaches here, it means both sides have the same
+	// issue with possibly different statuses - tombstone should not be one of them
+	// (that case is handled by the tombstone merge logic).
+	// However, if somehow one side has tombstone status, preserve it as a safety measure.
+	if left == StatusTombstone || right == StatusTombstone {
+		// This shouldn't happen in normal flow - tombstones are handled earlier
+		// But if it does, tombstone wins (deletion is explicit)
+		return StatusTombstone
+	}
+
 	// RULE 1: closed always wins over open
 	// This prevents the insane situation where issues never die
 	if left == "closed" || right == "closed" {
@@ -391,8 +584,120 @@ func mergeField(base, left, right string) string {
 	if base == right && base != left {
 		return left
 	}
-	// Both changed to same value or no change
+	// Both changed to same value or no change - left wins
 	return left
+}
+
+// mergeFieldByUpdatedAt resolves conflicts by picking the value from the side
+// with the latest updated_at timestamp
+func mergeFieldByUpdatedAt(base, left, right, leftUpdatedAt, rightUpdatedAt string) string {
+	// Standard 3-way merge for non-conflict cases
+	if base == left && base != right {
+		return right
+	}
+	if base == right && base != left {
+		return left
+	}
+	if left == right {
+		return left
+	}
+	// True conflict: both sides changed to different values
+	// Pick the value from the side with the latest updated_at
+	if isTimeAfter(leftUpdatedAt, rightUpdatedAt) {
+		return left
+	}
+	return right
+}
+
+// mergeNotes handles notes merging - on conflict, concatenate both sides
+func mergeNotes(base, left, right string) string {
+	// Standard 3-way merge for non-conflict cases
+	if base == left && base != right {
+		return right
+	}
+	if base == right && base != left {
+		return left
+	}
+	if left == right {
+		return left
+	}
+	// True conflict: both sides changed to different values - concatenate
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return left + "\n\n---\n\n" + right
+}
+
+// mergePriority handles priority merging - on conflict, higher priority wins (lower number)
+// Special case: 0 is treated as "unset/no priority" due to Go's zero value.
+// Any explicitly set priority (!=0) wins over 0. (bd-d0t fix, bd-1kf fix)
+func mergePriority(base, left, right int) int {
+	// Standard 3-way merge for non-conflict cases
+	if base == left && base != right {
+		return right
+	}
+	if base == right && base != left {
+		return left
+	}
+	if left == right {
+		return left
+	}
+	// True conflict: both sides changed to different values
+
+	// bd-d0t fix: Treat 0 as "unset" - explicitly set priority wins over unset
+	// bd-1kf fix: Use != 0 instead of > 0 to handle negative priorities
+	if left == 0 && right != 0 {
+		return right // right has explicit priority, left is unset
+	}
+	if right == 0 && left != 0 {
+		return left // left has explicit priority, right is unset
+	}
+
+	// Both have explicit priorities (or both are 0) - higher priority wins (lower number = more urgent)
+	if left < right {
+		return left
+	}
+	return right
+}
+
+// isTimeAfter returns true if t1 is after t2
+func isTimeAfter(t1, t2 string) bool {
+	if t1 == "" {
+		return false
+	}
+	if t2 == "" {
+		return true
+	}
+
+	time1, err1 := time.Parse(time.RFC3339Nano, t1)
+	if err1 != nil {
+		time1, err1 = time.Parse(time.RFC3339, t1)
+	}
+
+	time2, err2 := time.Parse(time.RFC3339Nano, t2)
+	if err2 != nil {
+		time2, err2 = time.Parse(time.RFC3339, t2)
+	}
+
+	// Handle parse errors consistently with maxTime:
+	// - Valid timestamp beats invalid
+	// - If both invalid, prefer left (t1) for consistency
+	if err1 != nil && err2 != nil {
+		return true // both invalid, prefer left
+	}
+	if err1 != nil {
+		return false // t1 invalid, t2 valid - t2 wins
+	}
+	if err2 != nil {
+		return true // t1 valid, t2 invalid - t1 wins
+	}
+
+	// Both valid - compare. On exact tie, left wins for consistency with IssueType rule (bd-8nz)
+	// Using !time2.After(time1) returns true when t1 > t2 OR t1 == t2
+	return !time2.After(time1)
 }
 
 func maxTime(t1, t2 string) string {
@@ -459,62 +764,3 @@ func mergeDependencies(left, right []Dependency) []Dependency {
 	return result
 }
 
-func hasConflict(base, left, right Issue) bool {
-	// Check if any field has conflicting changes
-	if base.Title != left.Title && base.Title != right.Title && left.Title != right.Title {
-		return true
-	}
-	if base.Description != left.Description && base.Description != right.Description && left.Description != right.Description {
-		return true
-	}
-	if base.Notes != left.Notes && base.Notes != right.Notes && left.Notes != right.Notes {
-		return true
-	}
-	if base.Status != left.Status && base.Status != right.Status && left.Status != right.Status {
-		return true
-	}
-	if base.Priority != left.Priority && base.Priority != right.Priority && left.Priority != right.Priority {
-		return true
-	}
-	if base.IssueType != left.IssueType && base.IssueType != right.IssueType && left.IssueType != right.IssueType {
-		return true
-	}
-	return false
-}
-
-func issuesEqual(a, b Issue) bool {
-	// Use go-cmp for deep equality comparison, ignoring RawLine field
-	return cmp.Equal(a, b, cmp.FilterPath(func(p cmp.Path) bool {
-		return p.String() == "RawLine"
-	}, cmp.Ignore()))
-}
-
-func makeConflict(left, right string) string {
-	conflict := "<<<<<<< left\n"
-	if left != "" {
-		conflict += left + "\n"
-	}
-	conflict += "=======\n"
-	if right != "" {
-		conflict += right + "\n"
-	}
-	conflict += ">>>>>>> right\n"
-	return conflict
-}
-
-func makeConflictWithBase(base, left, right string) string {
-	conflict := "<<<<<<< left\n"
-	if left != "" {
-		conflict += left + "\n"
-	}
-	conflict += "||||||| base\n"
-	if base != "" {
-		conflict += base + "\n"
-	}
-	conflict += "=======\n"
-	if right != "" {
-		conflict += right + "\n"
-	}
-	conflict += ">>>>>>> right\n"
-	return conflict
-}

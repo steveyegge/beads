@@ -53,7 +53,7 @@ Tiers:
 
 Deletions Pruning:
   All modes also prune old deletion records from deletions.jsonl to prevent
-  unbounded growth. Default retention is 7 days (configurable via --retention
+  unbounded growth. Default retention is 3 days (configurable via --retention
   or deletions_retention_days in metadata.json).
 
 Examples:
@@ -74,6 +74,10 @@ Examples:
   bd compact --auto --all --retention=14   # Keep 14 days of deletions
 `,
 	Run: func(_ *cobra.Command, _ []string) {
+		// Compact modifies data unless --stats or --analyze or --dry-run
+		if !compactStats && !compactAnalyze && !compactDryRun {
+			CheckReadonly("compact")
+		}
 		ctx := rootCtx
 
 		// Handle compact stats first

@@ -33,7 +33,7 @@ This project uses **Beads (bd)** for issue tracking. Aider requires explicit com
 - ` + "`bd create --title=\"...\" --type=task`" + ` - Create new issue
 - ` + "`bd update <id> --status=in_progress`" + ` - Claim work
 - ` + "`bd close <id>`" + ` - Mark complete
-- ` + "`bd dep <from> <to>`" + ` - Add dependency (from blocks to)
+- ` + "`bd dep add <issue> <depends-on>`" + ` - Add dependency (issue depends on depends-on)
 - ` + "`bd sync`" + ` - Sync with git remote
 
 ## Workflow Pattern to Suggest

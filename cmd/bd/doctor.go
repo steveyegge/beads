@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // Status constants for doctor checks
@@ -40,17 +41,22 @@ type doctorCheck struct {
 }
 
 type doctorResult struct {
-	Path       string        `json:"path"`
-	Checks     []doctorCheck `json:"checks"`
-	OverallOK  bool          `json:"overall_ok"`
-	CLIVersion string        `json:"cli_version"`
+	Path       string            `json:"path"`
+	Checks     []doctorCheck     `json:"checks"`
+	OverallOK  bool              `json:"overall_ok"`
+	CLIVersion string            `json:"cli_version"`
+	Timestamp  string            `json:"timestamp,omitempty"`  // bd-9cc: ISO8601 timestamp for historical tracking
+	Platform   map[string]string `json:"platform,omitempty"`   // bd-9cc: platform info for debugging
 }
 
 var (
-	doctorFix       bool
-	doctorYes       bool
-	perfMode        bool
-	checkHealthMode bool
+	doctorFix         bool
+	doctorYes         bool
+	doctorInteractive bool   // bd-3xl: per-fix confirmation mode
+	doctorDryRun      bool   // bd-a5z: preview fixes without applying
+	doctorOutput      string // bd-9cc: export diagnostics to file
+	perfMode          bool
+	checkHealthMode   bool
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -84,13 +90,20 @@ Performance Mode (--perf):
   - Generates CPU profile for analysis
   - Outputs shareable report for bug reports
 
+Export Mode (--output):
+  Save diagnostics to a JSON file for historical analysis and bug reporting.
+  Includes timestamp and platform info for tracking intermittent issues.
+
 Examples:
   bd doctor              # Check current directory
   bd doctor /path/to/repo # Check specific repository
   bd doctor --json       # Machine-readable output
   bd doctor --fix        # Automatically fix issues (with confirmation)
   bd doctor --fix --yes  # Automatically fix issues (no confirmation)
-  bd doctor --perf       # Performance diagnostics`,
+  bd doctor --fix -i     # Confirm each fix individually (bd-3xl)
+  bd doctor --dry-run    # Preview what --fix would do without making changes
+  bd doctor --perf       # Performance diagnostics
+  bd doctor --output diagnostics.json  # Export diagnostics to file`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 
@@ -122,17 +135,35 @@ Examples:
 		// Run diagnostics
 		result := runDiagnostics(absPath)
 
-		// Apply fixes if requested
-		if doctorFix {
+		// bd-a5z: Preview fixes (dry-run) or apply fixes if requested
+		if doctorDryRun {
+			previewFixes(result)
+		} else if doctorFix {
 			applyFixes(result)
 			// Re-run diagnostics to show results
 			result = runDiagnostics(absPath)
 		}
 
+		// bd-9cc: Add timestamp and platform info for export
+		if doctorOutput != "" || jsonOutput {
+			result.Timestamp = time.Now().UTC().Format(time.RFC3339)
+			result.Platform = doctor.CollectPlatformInfo(absPath)
+		}
+
+		// bd-9cc: Export to file if --output specified
+		if doctorOutput != "" {
+			if err := exportDiagnostics(result, doctorOutput); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to export diagnostics: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("✓ Diagnostics exported to %s\n", doctorOutput)
+		}
+
 		// Output results
 		if jsonOutput {
 			outputJSON(result)
-		} else {
+		} else if doctorOutput == "" {
+			// Only print to console if not exporting (to avoid duplicate output)
 			printDiagnostics(result)
 		}
 
@@ -146,6 +177,46 @@ Examples:
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Automatically fix issues where possible")
 	doctorCmd.Flags().BoolVarP(&doctorYes, "yes", "y", false, "Skip confirmation prompt (for non-interactive use)")
+	doctorCmd.Flags().BoolVarP(&doctorInteractive, "interactive", "i", false, "Confirm each fix individually (bd-3xl)")
+	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes (bd-a5z)")
+}
+
+// previewFixes shows what would be fixed without applying changes (bd-a5z)
+func previewFixes(result doctorResult) {
+	// Collect all fixable issues
+	var fixableIssues []doctorCheck
+	for _, check := range result.Checks {
+		if (check.Status == statusWarning || check.Status == statusError) && check.Fix != "" {
+			fixableIssues = append(fixableIssues, check)
+		}
+	}
+
+	if len(fixableIssues) == 0 {
+		fmt.Println("\n✓ No fixable issues found (dry-run)")
+		return
+	}
+
+	fmt.Println("\n[DRY-RUN] The following issues would be fixed with --fix:")
+	fmt.Println()
+
+	for i, issue := range fixableIssues {
+		// Show the issue details
+		fmt.Printf("  %d. %s\n", i+1, issue.Name)
+		if issue.Status == statusError {
+			color.Red("     Status: ERROR\n")
+		} else {
+			color.Yellow("     Status: WARNING\n")
+		}
+		fmt.Printf("     Issue:  %s\n", issue.Message)
+		if issue.Detail != "" {
+			fmt.Printf("     Detail: %s\n", issue.Detail)
+		}
+		fmt.Printf("     Fix:    %s\n", issue.Fix)
+		fmt.Println()
+	}
+
+	fmt.Printf("[DRY-RUN] Would attempt to fix %d issue(s)\n", len(fixableIssues))
+	fmt.Println("Run 'bd doctor --fix' to apply these fixes")
 }
 
 func applyFixes(result doctorResult) {
@@ -168,6 +239,12 @@ func applyFixes(result doctorResult) {
 		fmt.Printf("  %d. %s: %s\n", i+1, issue.Name, issue.Message)
 	}
 
+	// bd-3xl: Interactive mode - confirm each fix individually
+	if doctorInteractive {
+		applyFixesInteractive(result.Path, fixableIssues)
+		return
+	}
+
 	// Ask for confirmation (skip if --yes flag is set)
 	if !doctorYes {
 		fmt.Printf("\nThis will attempt to fix %d issue(s). Continue? (Y/n): ", len(fixableIssues))
@@ -187,10 +264,93 @@ func applyFixes(result doctorResult) {
 
 	// Apply fixes
 	fmt.Println("\nApplying fixes...")
+	applyFixList(result.Path, fixableIssues)
+}
+
+// applyFixesInteractive prompts for each fix individually (bd-3xl)
+func applyFixesInteractive(path string, issues []doctorCheck) {
+	reader := bufio.NewReader(os.Stdin)
+	applyAll := false
+	var approvedFixes []doctorCheck
+
+	fmt.Println("\nReview each fix:")
+	fmt.Println("  [y]es - apply this fix")
+	fmt.Println("  [n]o  - skip this fix")
+	fmt.Println("  [a]ll - apply all remaining fixes")
+	fmt.Println("  [q]uit - stop without applying more fixes")
+	fmt.Println()
+
+	for i, issue := range issues {
+		// Show issue details
+		fmt.Printf("(%d/%d) %s\n", i+1, len(issues), issue.Name)
+		if issue.Status == statusError {
+			color.Red("  Status: ERROR\n")
+		} else {
+			color.Yellow("  Status: WARNING\n")
+		}
+		fmt.Printf("  Issue:  %s\n", issue.Message)
+		if issue.Detail != "" {
+			fmt.Printf("  Detail: %s\n", issue.Detail)
+		}
+		fmt.Printf("  Fix:    %s\n", issue.Fix)
+
+		// Check if we should apply all remaining
+		if applyAll {
+			fmt.Println("  → Auto-approved (apply all)")
+			approvedFixes = append(approvedFixes, issue)
+			continue
+		}
+
+		// Prompt for this fix
+		fmt.Print("\n  Apply this fix? [y/n/a/q]: ")
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			return
+		}
+
+		response = strings.TrimSpace(strings.ToLower(response))
+		switch response {
+		case "y", "yes":
+			approvedFixes = append(approvedFixes, issue)
+			fmt.Println("  → Approved")
+		case "n", "no", "":
+			fmt.Println("  → Skipped")
+		case "a", "all":
+			applyAll = true
+			approvedFixes = append(approvedFixes, issue)
+			fmt.Println("  → Approved (applying all remaining)")
+		case "q", "quit":
+			fmt.Println("  → Quit")
+			if len(approvedFixes) > 0 {
+				fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
+				applyFixList(path, approvedFixes)
+			} else {
+				fmt.Println("\nNo fixes applied.")
+			}
+			return
+		default:
+			// Treat unknown input as skip
+			fmt.Println("  → Skipped (unrecognized input)")
+		}
+		fmt.Println()
+	}
+
+	// Apply all approved fixes
+	if len(approvedFixes) > 0 {
+		fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
+		applyFixList(path, approvedFixes)
+	} else {
+		fmt.Println("\nNo fixes approved.")
+	}
+}
+
+// applyFixList applies a list of fixes and reports results
+func applyFixList(path string, fixes []doctorCheck) {
 	fixedCount := 0
 	errorCount := 0
 
-	for _, check := range fixableIssues {
+	for _, check := range fixes {
 		fmt.Printf("\nFixing %s...\n", check.Name)
 
 		var err error
@@ -198,29 +358,39 @@ func applyFixes(result doctorResult) {
 		case "Gitignore":
 			err = doctor.FixGitignore()
 		case "Git Hooks":
-			err = fix.GitHooks(result.Path)
+			err = fix.GitHooks(path)
 		case "Daemon Health":
-			err = fix.Daemon(result.Path)
+			err = fix.Daemon(path)
 		case "DB-JSONL Sync":
-			err = fix.DBJSONLSync(result.Path)
+			err = fix.DBJSONLSync(path)
 		case "Permissions":
-			err = fix.Permissions(result.Path)
+			err = fix.Permissions(path)
 		case "Database":
-			err = fix.DatabaseVersion(result.Path)
+			err = fix.DatabaseVersion(path)
 		case "Schema Compatibility":
-			err = fix.SchemaCompatibility(result.Path)
+			err = fix.SchemaCompatibility(path)
 		case "Git Merge Driver":
-			err = fix.MergeDriver(result.Path)
+			err = fix.MergeDriver(path)
 		case "Sync Branch Config":
-			err = fix.SyncBranchConfig(result.Path)
+			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
+			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")
+			continue
 		case "Database Config":
-			err = fix.DatabaseConfig(result.Path)
+			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
-			err = fix.LegacyJSONLConfig(result.Path)
+			err = fix.LegacyJSONLConfig(path)
 		case "Deletions Manifest":
-			err = fix.HydrateDeletionsManifest(result.Path)
+			err = fix.HydrateDeletionsManifest(path)
 		case "Untracked Files":
-			err = fix.UntrackedJSONL(result.Path)
+			err = fix.UntrackedJSONL(path)
+		case "Sync Branch Health":
+			// Get sync branch from config
+			syncBranch := syncbranch.GetFromYAML()
+			if syncBranch == "" {
+				fmt.Printf("  ⚠ No sync branch configured in config.yaml\n")
+				continue
+			}
+			err = fix.SyncBranchHealth(path, syncBranch)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -292,8 +462,8 @@ func runCheckHealth(path string) {
 		issues = append(issues, issue)
 	}
 
-	// Check 2: Sync branch not configured
-	if issue := checkSyncBranchQuickDB(db); issue != "" {
+	// Check 2: Sync branch not configured (now reads from config.yaml, not DB)
+	if issue := checkSyncBranchQuick(); issue != "" {
 		issues = append(issues, issue)
 	}
 
@@ -356,24 +526,33 @@ func checkVersionMismatchDB(db *sql.DB) string {
 	return ""
 }
 
-// checkSyncBranchQuickDB checks if sync.branch is configured.
-// Uses an existing DB connection (bd-xyc).
-func checkSyncBranchQuickDB(db *sql.DB) string {
-	var value string
-	err := db.QueryRow("SELECT value FROM config WHERE key = 'sync.branch'").Scan(&value)
-	if err != nil || value == "" {
-		return "sync.branch not configured"
+// checkSyncBranchQuick checks if sync-branch is configured in config.yaml.
+// Fast check that doesn't require database access.
+func checkSyncBranchQuick() string {
+	if syncbranch.IsConfigured() {
+		return ""
 	}
-
-	return ""
+	return "sync-branch not configured in config.yaml"
 }
 
 // checkHooksQuick does a fast check for outdated git hooks.
 // Checks all beads hooks: pre-commit, post-merge, pre-push, post-checkout (bd-2em).
 func checkHooksQuick(path string) string {
-	hooksDir := filepath.Join(path, ".git", "hooks")
+	// Get actual git directory (handles worktrees where .git is a file)
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return "" // Not a git repo, skip
+	}
+	gitDir := strings.TrimSpace(string(output))
+	// Make absolute if relative
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	hooksDir := filepath.Join(gitDir, "hooks")
 
-	// Check if .git/hooks exists
+	// Check if hooks dir exists
 	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
 		return "" // No git hooks directory, skip
 	}
@@ -473,6 +652,13 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 2b: Database integrity (bd-2au)
+	integrityCheck := checkDatabaseIntegrity(path)
+	result.Checks = append(result.Checks, integrityCheck)
+	if integrityCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
 	// Check 3: ID format (hash vs sequential)
 	idCheck := checkIDFormat(path)
 	result.Checks = append(result.Checks, idCheck)
@@ -510,6 +696,11 @@ func runDiagnostics(path string) doctorResult {
 	if configCheck.Status == statusWarning || configCheck.Status == statusError {
 		result.OverallOK = false
 	}
+
+	// Check 7a: Configuration value validation (bd-alz)
+	configValuesCheck := convertDoctorCheck(doctor.CheckConfigValues(path))
+	result.Checks = append(result.Checks, configValuesCheck)
+	// Don't fail overall check for config value warnings, just warn
 
 	// Check 8: Daemon health
 	daemonCheck := checkDaemonStatus(path)
@@ -583,6 +774,11 @@ func runDiagnostics(path string) doctorResult {
 	syncBranchCheck := checkSyncBranchConfig(path)
 	result.Checks = append(result.Checks, syncBranchCheck)
 	// Don't fail overall check for missing sync.branch, just warn
+
+	// Check 17a: Sync branch health (bd-6rf)
+	syncBranchHealthCheck := checkSyncBranchHealth(path)
+	result.Checks = append(result.Checks, syncBranchHealthCheck)
+	// Don't fail overall check for sync branch health, just warn
 
 	// Check 18: Deletions manifest (prevents zombie resurrection)
 	deletionsCheck := checkDeletionsManifest(path)
@@ -1086,6 +1282,24 @@ func fetchLatestGitHubRelease() (string, error) {
 	return version, nil
 }
 
+// exportDiagnostics writes the doctor result to a JSON file (bd-9cc)
+func exportDiagnostics(result doctorResult, outputPath string) error {
+	// #nosec G304 - outputPath is a user-provided flag value for file generation
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer f.Close()
+
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		return fmt.Errorf("failed to write JSON: %w", err)
+	}
+
+	return nil
+}
+
 func printDiagnostics(result doctorResult) {
 	// Print header
 	fmt.Println("\nDiagnostics")
@@ -1514,6 +1728,13 @@ func countJSONLIssues(jsonlPath string) (int, map[string]int, error) {
 	return count, prefixes, nil
 }
 
+// countIssuesInJSONLFile counts the number of valid issues in a JSONL file.
+// This is a wrapper around countJSONLIssues that returns only the count.
+func countIssuesInJSONLFile(jsonlPath string) int {
+	count, _, _ := countJSONLIssues(jsonlPath)
+	return count
+}
+
 func checkPermissions(path string) doctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
 
@@ -1761,7 +1982,7 @@ func checkSchemaCompatibility(path string) doctorCheck {
 	// This is a simplified version since we can't import the internal package directly
 	// Check all critical tables and columns
 	criticalChecks := map[string][]string{
-		"issues":         {"id", "title", "content_hash", "external_ref", "compacted_at"},
+		"issues":         {"id", "title", "content_hash", "external_ref", "compacted_at", "close_reason"},
 		"dependencies":   {"issue_id", "depends_on_id", "type"},
 		"child_counters": {"parent_id", "last_child"},
 		"export_hashes":  {"issue_id", "content_hash"},
@@ -1807,6 +2028,80 @@ func checkSchemaCompatibility(path string) doctorCheck {
 		Name:    "Schema Compatibility",
 		Status:  statusOK,
 		Message: "All required tables and columns present",
+	}
+}
+
+// checkDatabaseIntegrity runs SQLite's PRAGMA integrity_check (bd-2au)
+func checkDatabaseIntegrity(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Get database path (same logic as checkSchemaCompatibility)
+	var dbPath string
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	} else {
+		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	}
+
+	// If no database, skip this check
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Database Integrity",
+			Status:  statusOK,
+			Message: "N/A (no database)",
+		}
+	}
+
+	// Open database in read-only mode for integrity check
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(30000)")
+	if err != nil {
+		return doctorCheck{
+			Name:    "Database Integrity",
+			Status:  statusError,
+			Message: "Failed to open database for integrity check",
+			Detail:  err.Error(),
+		}
+	}
+	defer db.Close()
+
+	// Run PRAGMA integrity_check
+	// This checks the entire database for corruption
+	rows, err := db.Query("PRAGMA integrity_check")
+	if err != nil {
+		return doctorCheck{
+			Name:    "Database Integrity",
+			Status:  statusError,
+			Message: "Failed to run integrity check",
+			Detail:  err.Error(),
+		}
+	}
+	defer rows.Close()
+
+	var results []string
+	for rows.Next() {
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			continue
+		}
+		results = append(results, result)
+	}
+
+	// "ok" means no corruption detected
+	if len(results) == 1 && results[0] == "ok" {
+		return doctorCheck{
+			Name:    "Database Integrity",
+			Status:  statusOK,
+			Message: "No corruption detected",
+		}
+	}
+
+	// Any other result indicates corruption
+	return doctorCheck{
+		Name:    "Database Integrity",
+		Status:  statusError,
+		Message: "Database corruption detected",
+		Detail:  strings.Join(results, "; "),
+		Fix:     "Database may need recovery. Export with 'bd export' if possible, then restore from backup or reinitialize",
 	}
 }
 
@@ -2022,78 +2317,223 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		}
 	}
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		// Fall back to canonical database name
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	// Check sync-branch from config.yaml or environment variable
+	// This is the source of truth for multi-clone setups
+	syncBranch := syncbranch.GetFromYAML()
+
+	// Get current branch
+	currentBranch := ""
+	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd.Dir = path
+	if output, err := cmd.Output(); err == nil {
+		currentBranch = strings.TrimSpace(string(output))
 	}
 
-	// Skip if no database (JSONL-only mode)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// CRITICAL: Check if we're on the sync branch - this is a misconfiguration
+	// that will cause bd sync to fail trying to create a worktree for a branch
+	// that's already checked out
+	if syncBranch != "" && currentBranch == syncBranch {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
-			Status:  statusOK,
-			Message: "N/A (JSONL-only mode)",
+			Status:  statusError,
+			Message: fmt.Sprintf("On sync branch '%s'", syncBranch),
+			Detail:  fmt.Sprintf("Currently on branch '%s' which is configured as the sync branch. bd sync cannot create a worktree for a branch that's already checked out.", syncBranch),
+			Fix:     "Switch to your main working branch: git checkout main",
 		}
 	}
 
-	// Open database to check config
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return doctorCheck{
-			Name:    "Sync Branch Config",
-			Status:  statusWarning,
-			Message: "Unable to check sync.branch config",
-			Detail:  err.Error(),
-		}
-	}
-	defer db.Close()
-
-	// Check if sync.branch is configured
-	var syncBranch string
-	err = db.QueryRow("SELECT value FROM config WHERE key = ?", "sync.branch").Scan(&syncBranch)
-	if err != nil && err != sql.ErrNoRows {
-		return doctorCheck{
-			Name:    "Sync Branch Config",
-			Status:  statusWarning,
-			Message: "Unable to read sync.branch config",
-			Detail:  err.Error(),
-		}
-	}
-
-	// If sync.branch is already configured, we're good
 	if syncBranch != "" {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
 			Status:  statusOK,
 			Message: fmt.Sprintf("Configured (%s)", syncBranch),
+			Detail:  fmt.Sprintf("Current branch: %s, sync branch: %s", currentBranch, syncBranch),
 		}
 	}
 
-	// sync.branch is not configured - get current branch for the fix message
-	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	// Not configured - this is optional but recommended for multi-clone setups
+	// Check if this looks like a multi-clone setup (has remote)
+	hasRemote := false
+	cmd = exec.Command("git", "remote")
 	cmd.Dir = path
-	output, err := cmd.Output()
-	if err != nil {
+	if output, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		hasRemote = true
+	}
+
+	if hasRemote {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
 			Status:  statusWarning,
-			Message: "sync.branch not configured",
-			Detail:  "Unable to detect current branch",
-			Fix:     "Run 'bd config set sync.branch <branch-name>' or 'bd doctor --fix' to auto-configure",
+			Message: "sync-branch not configured",
+			Detail:  "Multi-clone setups should configure sync-branch in config.yaml",
+			Fix:     "Add 'sync-branch: beads-sync' to .beads/config.yaml",
 		}
 	}
 
-	currentBranch := strings.TrimSpace(string(output))
+	// No remote - probably a local-only repo, sync-branch not needed
 	return doctorCheck{
 		Name:    "Sync Branch Config",
-		Status:  statusWarning,
-		Message: "sync.branch not configured",
-		Detail:  fmt.Sprintf("Current branch: %s", currentBranch),
-		Fix:     fmt.Sprintf("Run 'bd doctor --fix' to auto-configure to '%s', or manually: bd config set sync.branch <branch-name>", currentBranch),
+		Status:  statusOK,
+		Message: "N/A (no remote configured)",
+	}
+}
+
+// checkSyncBranchHealth detects when the sync branch has diverged from main
+// or from the remote sync branch (after a force-push reset).
+// bd-6rf: Detect and fix stale beads-sync branch
+func checkSyncBranchHealth(path string) doctorCheck {
+	// Skip if not in a git repo
+	gitDir := filepath.Join(path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "N/A (not a git repository)",
+		}
+	}
+
+	// Get configured sync branch
+	syncBranch := syncbranch.GetFromYAML()
+	if syncBranch == "" {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "N/A (no sync branch configured)",
+		}
+	}
+
+	// Check if local sync branch exists
+	cmd := exec.Command("git", "rev-parse", "--verify", syncBranch)
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Local branch doesn't exist - that's fine, bd sync will create it
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("N/A (local %s branch not created yet)", syncBranch),
+		}
+	}
+
+	// Check if remote sync branch exists
+	remote := "origin"
+	remoteBranch := fmt.Sprintf("%s/%s", remote, syncBranch)
+	cmd = exec.Command("git", "rev-parse", "--verify", remoteBranch)
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Remote branch doesn't exist - that's fine
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("N/A (remote %s not found)", remoteBranch),
+		}
+	}
+
+	// Check 1: Is local sync branch diverged from remote? (after force-push)
+	// If they have no common ancestor in recent history, the remote was likely force-pushed
+	cmd = exec.Command("git", "merge-base", syncBranch, remoteBranch)
+	cmd.Dir = path
+	mergeBaseOutput, err := cmd.Output()
+	if err != nil {
+		// No common ancestor - branches have completely diverged
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusWarning,
+			Message: fmt.Sprintf("Local %s diverged from remote", syncBranch),
+			Detail:  "The remote sync branch was likely reset/force-pushed. Your local branch has orphaned history.",
+			Fix:     fmt.Sprintf("Reset local branch: git branch -D %s (it will be recreated on next bd sync)", syncBranch),
+		}
+	}
+
+	// Check if local is behind remote (needs to fast-forward)
+	mergeBase := strings.TrimSpace(string(mergeBaseOutput))
+	cmd = exec.Command("git", "rev-parse", syncBranch)
+	cmd.Dir = path
+	localHead, _ := cmd.Output()
+	localHeadStr := strings.TrimSpace(string(localHead))
+
+	cmd = exec.Command("git", "rev-parse", remoteBranch)
+	cmd.Dir = path
+	remoteHead, _ := cmd.Output()
+	remoteHeadStr := strings.TrimSpace(string(remoteHead))
+
+	// If merge base equals local but not remote, local is behind
+	if mergeBase == localHeadStr && mergeBase != remoteHeadStr {
+		// Count how far behind
+		cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, remoteBranch))
+		cmd.Dir = path
+		countOutput, _ := cmd.Output()
+		behindCount := strings.TrimSpace(string(countOutput))
+
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: fmt.Sprintf("Local %s is %s commits behind remote (will sync)", syncBranch, behindCount),
+		}
+	}
+
+	// Check 2: Is sync branch far behind main on source files?
+	// Get the main branch name
+	mainBranch := "main"
+	cmd = exec.Command("git", "rev-parse", "--verify", "main")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		// Try "master" as fallback
+		cmd = exec.Command("git", "rev-parse", "--verify", "master")
+		cmd.Dir = path
+		if err := cmd.Run(); err != nil {
+			// Can't determine main branch
+			return doctorCheck{
+				Name:    "Sync Branch Health",
+				Status:  statusOK,
+				Message: "OK",
+			}
+		}
+		mainBranch = "master"
+	}
+
+	// Count commits main is ahead of sync branch
+	cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, mainBranch))
+	cmd.Dir = path
+	aheadOutput, err := cmd.Output()
+	if err != nil {
+		return doctorCheck{
+			Name:    "Sync Branch Health",
+			Status:  statusOK,
+			Message: "OK",
+		}
+	}
+	aheadCount := strings.TrimSpace(string(aheadOutput))
+
+	// Check if there are non-.beads/ file differences (stale source code)
+	cmd = exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..%s", syncBranch, mainBranch), "--", ":(exclude).beads/")
+	cmd.Dir = path
+	diffOutput, _ := cmd.Output()
+	diffFiles := strings.TrimSpace(string(diffOutput))
+
+	if diffFiles != "" && aheadCount != "0" {
+		// Count the number of different files
+		fileCount := len(strings.Split(diffFiles, "\n"))
+		// Parse ahead count as int for comparison
+		aheadCountInt := 0
+		_, _ = fmt.Sscanf(aheadCount, "%d", &aheadCountInt)
+
+		// Only warn if significantly behind (20+ commits AND 50+ source files)
+		// Small drift is normal between bd sync operations
+		if fileCount > 50 && aheadCountInt > 20 {
+			return doctorCheck{
+				Name:    "Sync Branch Health",
+				Status:  statusWarning,
+				Message: fmt.Sprintf("Sync branch %s commits behind %s on source files", aheadCount, mainBranch),
+				Detail:  fmt.Sprintf("%d source files differ between %s and %s. The sync branch has stale code.", fileCount, syncBranch, mainBranch),
+				Fix:     fmt.Sprintf("Reset sync branch: git branch -f %s %s && git push --force-with-lease origin %s", syncBranch, mainBranch, syncBranch),
+			}
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Sync Branch Health",
+		Status:  statusOK,
+		Message: "OK",
 	}
 }
 
@@ -2284,4 +2724,5 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	doctorCmd.Flags().BoolVar(&perfMode, "perf", false, "Run performance diagnostics and generate CPU profile")
 	doctorCmd.Flags().BoolVar(&checkHealthMode, "check-health", false, "Quick health check for git hooks (silent on success)")
+	doctorCmd.Flags().StringVarP(&doctorOutput, "output", "o", "", "Export diagnostics to JSON file (bd-9cc)")
 }

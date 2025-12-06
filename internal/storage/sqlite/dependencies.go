@@ -224,6 +224,7 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
@@ -244,6 +245,7 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
@@ -678,7 +680,7 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
 	var issues []*types.Issue
 	var issueIDs []string
-	
+
 	// First pass: scan all issues
 	for rows.Next() {
 		var issue types.Issue
@@ -688,12 +690,18 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var assignee sql.NullString
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
+		var closeReason sql.NullString
+		var deletedAt sql.NullTime
+		var deletedBy sql.NullString
+		var deleteReason sql.NullString
+		var originalType sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&deletedAt, &deletedBy, &deleteReason, &originalType,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -718,6 +726,21 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String
 		}
+		if closeReason.Valid {
+			issue.CloseReason = closeReason.String
+		}
+		if deletedAt.Valid {
+			issue.DeletedAt = &deletedAt.Time
+		}
+		if deletedBy.Valid {
+			issue.DeletedBy = deletedBy.String
+		}
+		if deleteReason.Valid {
+			issue.DeleteReason = deleteReason.String
+		}
+		if originalType.Valid {
+			issue.OriginalType = originalType.String
+		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
@@ -736,19 +759,6 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 	}
 
-	// Third pass: batch-load close reasons for closed issues
-	closeReasonsMap, err := s.GetCloseReasonsForIssues(ctx, issueIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to batch get close reasons: %w", err)
-	}
-
-	// Assign close reasons to issues
-	for _, issue := range issues {
-		if reason, ok := closeReasonsMap[issue.ID]; ok {
-			issue.CloseReason = reason
-		}
-	}
-
 	return issues, nil
 }
 
@@ -763,6 +773,10 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var assignee sql.NullString
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
+		var deletedAt sql.NullTime
+		var deletedBy sql.NullString
+		var deleteReason sql.NullString
+		var originalType sql.NullString
 		var depType types.DependencyType
 
 		err := rows.Scan(
@@ -770,6 +784,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&depType,
 		)
 		if err != nil {
@@ -794,6 +809,18 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String
+		}
+		if deletedAt.Valid {
+			issue.DeletedAt = &deletedAt.Time
+		}
+		if deletedBy.Valid {
+			issue.DeletedBy = deletedBy.String
+		}
+		if deleteReason.Valid {
+			issue.DeleteReason = deleteReason.String
+		}
+		if originalType.Valid {
+			issue.OriginalType = originalType.String
 		}
 
 		// Fetch labels for this issue

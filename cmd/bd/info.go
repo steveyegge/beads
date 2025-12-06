@@ -288,6 +288,60 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.29.0",
+		Date:    "2025-12-03",
+		Changes: []string{
+			"--estimate flag for bd create/update (GH #443) - Add time estimates to issues in minutes",
+			"bd doctor improvements - SQLite integrity check, config validation, stale sync branch detection",
+			"bd doctor --output flag (bd-9cc) - Export diagnostics to file for sharing/debugging",
+			"bd doctor --dry-run flag (bd-qn5) - Preview fixes without applying them",
+			"bd doctor per-fix confirmation mode (bd-3xl) - Approve each fix individually",
+			"--readonly flag (bd-ymo) - Read-only mode for worker sandboxes",
+			"bd sync safety improvements - Auto-push after merge, diverged history handling (bd-3s8)",
+			"Auto-resolve merge conflicts deterministically (bd-6l8) - All field conflicts resolved without prompts",
+			"3-char all-letter base36 hash support (GH #446) - Fixes prefix extraction edge case",
+		},
+	},
+	{
+		Version: "0.28.0",
+		Date:    "2025-12-01",
+		Changes: []string{
+			"bd daemon --local flag (#433) - Run daemon without git operations for multi-repo/worktree setups",
+			"bd daemon --foreground flag - Run in foreground for systemd/supervisord integration",
+			"bd migrate-sync command (bd-epn) - Migrate to sync.branch workflow for cleaner main branch",
+			"Database migration: close_reason column (bd-uyu) - Fixes sync loops with close_reason",
+			"Multi-repo prefix filtering (GH #437) - Issues filtered by prefix when flushing from non-primary repos",
+			"Parent-child dependency UX (GH #440) - Fixed documentation and UI labels for dependencies",
+			"sync.branch workflow fixes (bd-epn) - Fixed .beads/ restoration and doctor detection",
+			"Jira API migration - Updated from deprecated v2 to v3 API",
+		},
+	},
+	{
+		Version: "0.27.2",
+		Date:    "2025-11-30",
+		Changes: []string{
+			"CRITICAL: Mass database deletion protection - Safety guard prevents purging entire DB on JSONL reset (bd-t5m)",
+			"Fresh Clone Initialization - bd init auto-detects prefix from existing JSONL, works without --prefix flag (bd-4h9)",
+			"3-Character Hash Support - ExtractIssuePrefix now handles base36 hashes 3+ chars (#425)",
+			"Import Warnings - New warning when issues skipped due to deletions manifest (bd-4zy)",
+		},
+	},
+	{
+		Version: "0.27.0",
+		Date:    "2025-11-29",
+		Changes: []string{
+			"Git hooks now sync.branch aware - pre-commit/pre-push skip .beads checks when sync.branch configured",
+			"Custom Status States - Define project-specific statuses via config (testing, blocked, review)",
+			"Contributor Fork Workflows - `bd init --contributor` auto-configures sync.remote=upstream",
+			"Git Worktree Support - Full support for worktrees in hooks and detection",
+			"CRITICAL: Sync corruption prevention - Hash-based staleness + reverse ZFC checks",
+			"Out-of-Order Dependencies (#414) - JSONL import handles deps before targets exist",
+			"--from-main defaults to noGitHistory=true - Prevents spurious deletions",
+			"bd sync --squash - Batch multiple sync commits into one",
+			"Fresh Clone Detection - bd doctor suggests 'bd init' when JSONL exists but no DB",
+		},
+	},
+	{
 		Version: "0.26.0",
 		Date:    "2025-11-27",
 		Changes: []string{
@@ -376,41 +430,6 @@ var versionChanges = []VersionChange{
 			"Daemon crash recovery - Panic handler with socket cleanup prevents orphaned processes",
 			"Auto-import when database missing - `bd import` now auto-initializes",
 			"Stale database export prevention - ID-based staleness detection",
-		},
-	},
-	{
-		Version: "0.22.1",
-		Date:    "2025-11-06",
-		Changes: []string{
-			"Native `bd merge` command vendored from beads-merge - no external binary needed",
-			"`bd info` detects outdated git hooks - warns if version mismatch",
-			"Multi-workspace deletion tracking fixed - deletions now propagate correctly",
-			"Hash ID recognition improved - recognizes Base36 IDs without a-f letters",
-			"Import/export deadlock fixed - no hanging when daemon running",
-		},
-	},
-	{
-		Version: "0.22.0",
-		Date:    "2025-11-05",
-		Changes: []string{
-			"Intelligent merge driver auto-configured - eliminates most JSONL conflicts",
-			"Onboarding wizards: `bd init --contributor` and `bd init --team`",
-			"New `bd migrate-issues` command - migrate issues between repos with dependencies",
-			"`bd show` displays blocker status - 'Blocked by N open issues' or 'Ready to work'",
-			"SearchIssues N+1 query fixed - batch-loads labels for better performance",
-			"Sync validation prevents infinite dirty loop - verifies JSONL export",
-		},
-	},
-	{
-		Version: "0.21.0",
-		Date:    "2025-11-04",
-		Changes: []string{
-			"Hash-based IDs eliminate collisions - remove ID coordination workarounds",
-			"Event-driven daemon mode (opt-in) - set BEADS_DAEMON_MODE=events",
-			"Agent Mail integration - real-time multi-agent coordination (<100ms latency)",
-			"`bd duplicates --auto-merge` - automated duplicate detection and merging",
-			"Hierarchical children for epics - dotted IDs (bd-abc.1, bd-abc.2) up to 3 levels",
-			"`--discovered-from` inline syntax - create with dependency in one command",
 		},
 	},
 }

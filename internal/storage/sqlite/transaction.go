@@ -253,7 +253,8 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -918,6 +919,10 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
+	} else if !filter.IncludeTombstones {
+		// Exclude tombstones by default unless explicitly filtering for them (bd-1bu)
+		whereClauses = append(whereClauses, "status != ?")
+		args = append(args, types.StatusTombstone)
 	}
 
 	if filter.Priority != nil {
@@ -1026,7 +1031,8 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1061,13 +1067,19 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
 	var compactedAtCommit sql.NullString
+	var closeReason sql.NullString
+	var deletedAt sql.NullTime
+	var deletedBy sql.NullString
+	var deleteReason sql.NullString
+	var originalType sql.NullString
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1100,6 +1112,21 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	}
 	if sourceRepo.Valid {
 		issue.SourceRepo = sourceRepo.String
+	}
+	if closeReason.Valid {
+		issue.CloseReason = closeReason.String
+	}
+	if deletedAt.Valid {
+		issue.DeletedAt = &deletedAt.Time
+	}
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
 	}
 
 	return &issue, nil

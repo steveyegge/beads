@@ -28,6 +28,7 @@ linters:
         - (os).Unsetenv
         - (os).Chdir
         - (os).MkdirAll
+        - (fmt).Sscanf
     misspell:
       locale: US
 
@@ -44,7 +45,7 @@ linters:
           - gosec
         text: "G306"
       # G304: Safe file reads from known JSONL and error paths
-      - path: 'cmd/bd/autoflush\.go|internal/daemon/discovery\.go|internal/daemonrunner/sync\.go'
+      - path: 'cmd/bd/autoflush\.go|internal/beads/beads\.go|internal/daemon/discovery\.go|internal/daemonrunner/sync\.go|internal/syncbranch/worktree\.go'
         linters:
           - gosec
         text: "G304"
@@ -63,7 +64,7 @@ linters:
           - gosec
         text: "G306.*0700"
       # G204: Safe subprocess launches with validated arguments
-      - path: 'cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go'
+      - path: 'cmd/bd/daemon_autostart\.go|cmd/bd/daemon_sync_branch\.go|cmd/bd/doctor\.go|cmd/bd/doctor/fix/sync_branch\.go|cmd/bd/jira\.go|cmd/bd/migrate_sync\.go|cmd/bd/show\.go|cmd/bd/sync\.go|internal/git/worktree\.go|internal/syncbranch/worktree\.go'
         linters:
           - gosec
         text: 'G204'
@@ -87,6 +88,12 @@ linters:
         linters:
           - errcheck
         text: "Error return value of .*(Close|Rollback|RemoveAll|Setenv|Unsetenv|Chdir|MkdirAll|Remove|Write|SetReadDeadline|SetDeadline|Start|Stop).* is not checked"
+
+      # unparam: Placeholder functions that may return errors in future implementation
+      - path: 'cmd/bd/jira\.go'
+        linters:
+          - unparam
+        text: 'reimportConflicts|resolveConflictsByTimestamp'
 
 issues:
   uniq-by-line: true

@@ -11,6 +11,10 @@ daemon.log
 daemon.pid
 bd.sock
 
+# Local version tracking (prevents upgrade notification spam after git operations)
+# bd-tok: Store version locally instead of in tracked metadata.json
+.local_version
+
 # Legacy database files
 db.sqlite
 bd.db

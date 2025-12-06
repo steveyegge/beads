@@ -37,6 +37,7 @@ Behavior:
 NOTE: Import requires direct database access and does not work with daemon mode.
       The command automatically uses --no-daemon when executed.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("import")
 		// Check for positional arguments (common mistake: bd import file.jsonl instead of bd import -i file.jsonl)
 		if len(args) > 0 {
 			fmt.Fprintf(os.Stderr, "Error: Unexpected argument(s): %v\n\n", args)
@@ -58,6 +59,12 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 
 		// Import requires direct database access due to complex transaction handling
 		// and collision detection. Force direct mode regardless of daemon state.
+		//
+		// NOTE: We only close the daemon client connection here, not stop the daemon
+		// process. This is because import may be called as a subprocess from sync,
+		// and stopping the daemon would break the parent sync's connection.
+		// The daemon-stale-DB issue (bd-sync-corruption) is addressed separately by
+		// having sync use --no-daemon mode for consistency.
 		if daemonClient != nil {
 			debug.Logf("Debug: import command forcing direct mode (closes daemon connection)\n")
 			_ = daemonClient.Close()
@@ -90,6 +97,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		orphanHandling, _ := cmd.Flags().GetString("orphan-handling")
 		force, _ := cmd.Flags().GetBool("force")
 		noGitHistory, _ := cmd.Flags().GetBool("no-git-history")
+		ignoreDeletions, _ := cmd.Flags().GetBool("ignore-deletions")
 
 		// Check if stdin is being used interactively (not piped)
 		if input == "" && term.IsTerminal(int(os.Stdin.Fd())) {
@@ -249,6 +257,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			ClearDuplicateExternalRefs: clearDuplicateExternalRefs,
 			OrphanHandling:             orphanHandling,
 			NoGitHistory:               noGitHistory,
+			IgnoreDeletions:            ignoreDeletions,
 		}
 
 		result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
@@ -396,7 +405,17 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		if len(result.IDMapping) > 0 {
 			fmt.Fprintf(os.Stderr, ", %d issues remapped", len(result.IDMapping))
 		}
+		if result.SkippedDeleted > 0 {
+			fmt.Fprintf(os.Stderr, ", %d skipped (deleted)", result.SkippedDeleted)
+		}
 		fmt.Fprintf(os.Stderr, "\n")
+
+		// Print skipped deleted issues summary if any (bd-4zy)
+		if result.SkippedDeleted > 0 {
+			fmt.Fprintf(os.Stderr, "\n⚠️  Skipped %d issue(s) found in deletions manifest\n", result.SkippedDeleted)
+			fmt.Fprintf(os.Stderr, "   These issues were previously deleted and will not be resurrected.\n")
+			fmt.Fprintf(os.Stderr, "   Use --ignore-deletions to force import anyway.\n")
+		}
 
 		// Print skipped dependencies summary if any
 		if len(result.SkippedDependencies) > 0 {
@@ -479,8 +498,9 @@ func TouchDatabaseFile(dbPath, jsonlPath string) error {
 	targetTime := time.Now()
 
 	// If we have the JSONL path, use max(JSONL mtime, now) to handle clock skew
+	// Use Lstat to get the symlink's own mtime, not the target's (NixOS fix).
 	if jsonlPath != "" {
-		if info, err := os.Stat(jsonlPath); err == nil {
+		if info, err := os.Lstat(jsonlPath); err == nil {
 			jsonlTime := info.ModTime()
 			if jsonlTime.After(targetTime) {
 				targetTime = jsonlTime.Add(time.Nanosecond)
@@ -753,6 +773,7 @@ func init() {
 	importCmd.Flags().String("orphan-handling", "", "How to handle missing parent issues: strict/resurrect/skip/allow (default: use config or 'allow')")
 	importCmd.Flags().Bool("force", false, "Force metadata update even when database is already in sync with JSONL")
 	importCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (use during JSONL filename migrations)")
+	importCmd.Flags().Bool("ignore-deletions", false, "Import issues even if they're in the deletions manifest")
 	importCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output import statistics in JSON format")
 	rootCmd.AddCommand(importCmd)
 }

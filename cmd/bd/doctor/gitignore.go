@@ -20,6 +20,9 @@ daemon.log
 daemon.pid
 bd.sock
 
+# Local version tracking (prevents upgrade notification spam after git ops)
+.local_version
+
 # Legacy database files
 db.sqlite
 bd.db

@@ -82,6 +82,10 @@ var (
 	// Auto-flush manager (replaces timer-based approach to fix bd-52)
 	flushManager *FlushManager
 
+	// skipFinalFlush is set by sync command when sync.branch mode completes successfully.
+	// This prevents PersistentPostRun from re-exporting and dirtying the working directory.
+	skipFinalFlush = false
+
 	// Auto-import state
 	autoImportEnabled = true // Can be disabled with --no-auto-import
 
@@ -97,6 +101,7 @@ var (
 	sandboxMode  bool
 	allowStale   bool // Use --allow-stale: skip staleness check (emergency escape hatch)
 	noDb         bool // Use --no-db mode: load from JSONL, write back after each command
+	readonlyMode bool // Read-only mode: block write operations (for worker sandboxes)
 	profileEnabled bool
 	profileFile    *os.File
 	traceFile      *os.File
@@ -120,6 +125,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&sandboxMode, "sandbox", false, "Sandbox mode: disables daemon and auto-sync")
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
+	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
@@ -168,6 +174,9 @@ var rootCmd = &cobra.Command{
 		}
 		if !cmd.Flags().Changed("no-db") {
 			noDb = config.GetBool("no-db")
+		}
+		if !cmd.Flags().Changed("readonly") {
+			readonlyMode = config.GetBool("readonly")
 		}
 		if !cmd.Flags().Changed("db") && dbPath == "" {
 			dbPath = config.GetString("db")
@@ -296,7 +305,8 @@ var rootCmd = &cobra.Command{
 					}
 
 					isNoDbMode := false
-					if configData, err := os.ReadFile(configPath); err == nil {
+					// configPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
+					if configData, err := os.ReadFile(configPath); err == nil { //nolint:gosec
 						isNoDbMode = strings.Contains(string(configData), "no-db: true")
 					}
 
@@ -612,7 +622,8 @@ var rootCmd = &cobra.Command{
 
 		// Otherwise, handle direct mode cleanup
 		// Shutdown flush manager (performs final flush if needed)
-		if flushManager != nil {
+		// Skip if sync command already handled export and restore (sync.branch mode)
+		if flushManager != nil && !skipFinalFlush {
 			if err := flushManager.Shutdown(); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: flush manager shutdown error: %v\n", err)
 			}

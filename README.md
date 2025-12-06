@@ -91,6 +91,12 @@ go build -o bd ./cmd/bd
 npm install -g @beads/bd
 ```
 
+**Claude Code web fallback** (if npm postinstall fails due to network restrictions):
+```bash
+go install github.com/steveyegge/beads/cmd/bd@latest
+export PATH="$PATH:$HOME/go/bin"  # Required each session
+```
+
 **Quick install (macOS / Linux):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
@@ -139,7 +145,7 @@ bd init --branch beads-metadata
 # - Auto-start daemon for sync
 
 # Then tell your agent about bd:
-echo "\nBEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
+echo -e "\nBEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >> AGENTS.md
 ```
 
 **Protected branches?** If your `main` branch is protected, use `bd init --branch beads-metadata` to commit issue updates to a separate branch. See [docs/PROTECTED_BRANCHES.md](docs/PROTECTED_BRANCHES.md) for details.
@@ -375,7 +381,7 @@ Hash IDs use **birthday paradox probability** to determine length:
 | 5 chars     | 1,048,576   | ~1,217 issues             | ~153 issues              |
 | 6 chars     | 16,777,216  | ~4,869 issues             | ~612 issues              |
 
-**Our thresholds are conservative:** We switch from 4→5 chars at 500 issues (way before the 1% collision point at ~1,217) and from 5→6 chars at 1,500 issues.
+**Our thresholds are conservative:** We switch from 4→5 chars at 500 issues (well past the 4-char 1% threshold of ~38, giving headroom before 50% at ~304) and from 5→6 chars at 1,500 issues (same pattern for 5-char thresholds).
 
 **Progressive extension on collision:** If a hash collision does occur, bd automatically extends the hash to 7 or 8 characters instead of remapping to a new ID.
 
@@ -790,7 +796,7 @@ Check out the **[examples/](examples/)** directory for:
 - **[Git hooks](examples/git-hooks/)** - Automatic export/import on git operations
 - **[Branch merge workflow](examples/branch-merge/)** - Handle ID collisions when merging branches
 - **[Claude Desktop MCP](examples/claude-desktop-mcp/)** - MCP server for Claude Desktop
-- **[Claude Code Plugin](PLUGIN.md)** - One-command installation with slash commands
+- **[Claude Code Plugin](docs/PLUGIN.md)** - One-command installation with slash commands
 
 ## Advanced Features
 
@@ -827,6 +833,8 @@ For advanced usage, see:
 
 - **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates, kanban board, and keyboard navigation. Zero-setup launch with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni).
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with kanban board, tree view, dependency graph, and statistics dashboard. Vim-style navigation, search/filter, themes, and native notifications. Built by [@assimelha](https://github.com/assimelha).
+- **[perles](https://github.com/zjrosen/perles)** - Terminal UI with BQL (Beads Query Language) for local search and multi-view kanban boards with custom colors. Built by [@zjrosen](https://github.com/zjrosen).
+- **[vscode-beads](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads)** - VS Code extension with issues panel, details view, and daemon management. Built by [@jdillon](https://github.com/jdillon).
 
 Have you built something cool with bd? [Open an issue](https://github.com/steveyegge/beads/issues) to get it featured here!
 

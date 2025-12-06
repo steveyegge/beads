@@ -16,18 +16,20 @@ var readyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
+		unassigned, _ := cmd.Flags().GetBool("unassigned")
 		sortPolicy, _ := cmd.Flags().GetString("sort")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		
+
 		// Normalize labels: trim, dedupe, remove empty
 		labels = util.NormalizeLabels(labels)
 		labelsAny = util.NormalizeLabels(labelsAny)
-		
+
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
 			Limit:      limit,
+			Unassigned: unassigned,
 			SortPolicy: types.SortPolicy(sortPolicy),
 			Labels:     labels,
 			LabelsAny:  labelsAny,
@@ -37,7 +39,7 @@ var readyCmd = &cobra.Command{
 			priority, _ := cmd.Flags().GetInt("priority")
 			filter.Priority = &priority
 		}
-		if assignee != "" {
+		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
 		}
 		// Validate sort policy
@@ -49,6 +51,7 @@ var readyCmd = &cobra.Command{
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
 				Assignee:   assignee,
+				Unassigned: unassigned,
 				Limit:      limit,
 				SortPolicy: sortPolicy,
 				Labels:     labels,
@@ -80,9 +83,23 @@ var readyCmd = &cobra.Command{
 			maybeShowUpgradeNotification()
 
 			if len(issues) == 0 {
+				// Check if there are any open issues at all (bd-r4n)
+				statsResp, statsErr := daemonClient.Stats()
+				hasOpenIssues := false
+				if statsErr == nil {
+					var stats types.Statistics
+					if json.Unmarshal(statsResp.Data, &stats) == nil {
+						hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
+					}
+				}
 				yellow := color.New(color.FgYellow).SprintFunc()
-				fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-					yellow("✨"))
+				if hasOpenIssues {
+					fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
+						yellow("✨"))
+				} else {
+					green := color.New(color.FgGreen).SprintFunc()
+					fmt.Printf("\n%s No open issues\n\n", green("✨"))
+				}
 				return
 			}
 			cyan := color.New(color.FgCyan).SprintFunc()
@@ -139,9 +156,19 @@ var readyCmd = &cobra.Command{
 		maybeShowUpgradeNotification()
 
 		if len(issues) == 0 {
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-				yellow("✨"))
+			// Check if there are any open issues at all (bd-r4n)
+			hasOpenIssues := false
+			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
+				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
+			}
+			if hasOpenIssues {
+				yellow := color.New(color.FgYellow).SprintFunc()
+				fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
+					yellow("✨"))
+			} else {
+				green := color.New(color.FgGreen).SprintFunc()
+				fmt.Printf("\n%s No open issues\n\n", green("✨"))
+			}
 			// Show tip even when no ready work found
 			maybeShowTip(store)
 			return
@@ -242,6 +269,9 @@ var statsCmd = &cobra.Command{
 			fmt.Printf("Closed:            %d\n", stats.ClosedIssues)
 			fmt.Printf("Blocked:           %d\n", stats.BlockedIssues)
 			fmt.Printf("Ready:             %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
+			if stats.TombstoneIssues > 0 {
+				fmt.Printf("Deleted:           %d (tombstones)\n", stats.TombstoneIssues)
+			}
 			if stats.AverageLeadTime > 0 {
 				fmt.Printf("Avg Lead Time:     %.1f hours\n", stats.AverageLeadTime)
 			}
@@ -280,6 +310,9 @@ var statsCmd = &cobra.Command{
 		fmt.Printf("Closed:                 %d\n", stats.ClosedIssues)
 		fmt.Printf("Blocked:                %d\n", stats.BlockedIssues)
 		fmt.Printf("Ready:                  %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
+		if stats.TombstoneIssues > 0 {
+			fmt.Printf("Deleted:                %d (tombstones)\n", stats.TombstoneIssues)
+		}
 		if stats.EpicsEligibleForClosure > 0 {
 			fmt.Printf("Epics Ready to Close:   %s\n", green(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
 		}
@@ -293,6 +326,7 @@ func init() {
 	readyCmd.Flags().IntP("limit", "n", 10, "Maximum issues to show")
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
+	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 	readyCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	readyCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")

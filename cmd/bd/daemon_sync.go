@@ -43,6 +43,8 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	}
 
 	// Safety check: prevent exporting empty database over non-empty JSONL
+	// Note: The main bd-53c protection is in sync.go's reverse ZFC check which runs BEFORE export.
+	// Here we only block the most catastrophic case (empty DB) to allow legitimate deletions.
 	if len(issues) == 0 {
 		existingCount, err := countIssuesInJSONL(jsonlPath)
 		if err != nil {
@@ -373,11 +375,27 @@ Solutions:
 // createExportFunc creates a function that only exports database to JSONL
 // and optionally commits/pushes (no git pull or import). Used for mutation events.
 func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log daemonLogger) func() {
+	return performExport(ctx, store, autoCommit, autoPush, false, log)
+}
+
+// createLocalExportFunc creates a function that only exports database to JSONL
+// without any git operations. Used for local-only mode with mutation events.
+func createLocalExportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+	return performExport(ctx, store, false, false, true, log)
+}
+
+// performExport is the shared implementation for export-only functions.
+// skipGit: if true, skips all git operations (commits, pushes).
+func performExport(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log daemonLogger) func() {
 	return func() {
 		exportCtx, exportCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer exportCancel()
 
-		log.log("Starting export...")
+		mode := "export"
+		if skipGit {
+			mode = "local export"
+		}
+		log.log("Starting %s...", mode)
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
@@ -390,9 +408,9 @@ func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, au
 		skip, holder, err := types.ShouldSkipDatabase(beadsDir)
 		if skip {
 			if err != nil {
-				log.log("Skipping export (lock check failed: %v)", err)
+				log.log("Skipping %s (lock check failed: %v)", mode, err)
 			} else {
-				log.log("Skipping export (locked by %s)", holder)
+				log.log("Skipping %s (locked by %s)", mode, holder)
 			}
 			return
 		}
@@ -434,8 +452,8 @@ func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, au
 			log.log("Warning: failed to update database mtime: %v", err)
 		}
 
-		// Auto-commit if enabled
-		if autoCommit {
+		// Auto-commit if enabled (skip in git-free mode)
+		if autoCommit && !skipGit {
 			// Try sync branch commit first
 			committed, err := syncBranchCommitAndPush(exportCtx, store, autoPush, log)
 			if err != nil {
@@ -471,18 +489,38 @@ func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, au
 			}
 		}
 
-		log.log("Export complete")
+		if skipGit {
+			log.log("Local export complete")
+		} else {
+			log.log("Export complete")
+		}
 	}
 }
 
 // createAutoImportFunc creates a function that pulls from git and imports JSONL
 // to database (no export). Used for file system change events.
 func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+	return performAutoImport(ctx, store, false, log)
+}
+
+// createLocalAutoImportFunc creates a function that imports from JSONL to database
+// without any git operations. Used for local-only mode with file system change events.
+func createLocalAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+	return performAutoImport(ctx, store, true, log)
+}
+
+// performAutoImport is the shared implementation for import-only functions.
+// skipGit: if true, skips git pull operations.
+func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool, log daemonLogger) func() {
 	return func() {
 		importCtx, importCancel := context.WithTimeout(ctx, 1*time.Minute)
 		defer importCancel()
 
-		log.log("Starting auto-import...")
+		mode := "auto-import"
+		if skipGit {
+			mode = "local auto-import"
+		}
+		log.log("Starting %s...", mode)
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
@@ -495,9 +533,9 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 		skip, holder, err := types.ShouldSkipDatabase(beadsDir)
 		if skip {
 			if err != nil {
-				log.log("Skipping import (lock check failed: %v)", err)
+				log.log("Skipping %s (lock check failed: %v)", mode, err)
 			} else {
-				log.log("Skipping import (locked by %s)", holder)
+				log.log("Skipping %s (locked by %s)", mode, holder)
 			}
 			return
 		}
@@ -510,25 +548,28 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 		// Use getRepoKeyForPath for multi-repo support (bd-ar2.10, bd-ar2.11)
 		repoKey := getRepoKeyForPath(jsonlPath)
 		if !hasJSONLChanged(importCtx, store, jsonlPath, repoKey) {
-			log.log("Skipping import: JSONL content unchanged")
+			log.log("Skipping %s: JSONL content unchanged", mode)
 			return
 		}
-		log.log("JSONL content changed, proceeding with import...")
+		log.log("JSONL content changed, proceeding with %s...", mode)
 
-		// Pull from git (try sync branch first)
-		pulled, err := syncBranchPull(importCtx, store, log)
-		if err != nil {
-			log.log("Sync branch pull failed: %v", err)
-			return
-		}
-
-		// If sync branch not configured, use regular pull
-		if !pulled {
-			if err := gitPull(importCtx); err != nil {
-				log.log("Pull failed: %v", err)
+		// Pull from git if not in git-free mode
+		if !skipGit {
+			// Try sync branch first
+			pulled, err := syncBranchPull(importCtx, store, log)
+			if err != nil {
+				log.log("Sync branch pull failed: %v", err)
 				return
 			}
-			log.log("Pulled from remote")
+
+			// If sync branch not configured, use regular pull
+			if !pulled {
+				if err := gitPull(importCtx); err != nil {
+					log.log("Pull failed: %v", err)
+					return
+				}
+				log.log("Pulled from remote")
+			}
 		}
 
 		// Count issues before import
@@ -557,17 +598,38 @@ func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemon
 			return
 		}
 
-		log.log("Auto-import complete")
+		if skipGit {
+			log.log("Local auto-import complete")
+		} else {
+			log.log("Auto-import complete")
+		}
 	}
 }
 
 // createSyncFunc creates a function that performs full sync cycle (export, commit, pull, import, push)
 func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log daemonLogger) func() {
+	return performSync(ctx, store, autoCommit, autoPush, false, log)
+}
+
+// createLocalSyncFunc creates a function that performs local-only sync (export only, no git).
+// Used when daemon is started with --local flag.
+func createLocalSyncFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+	return performSync(ctx, store, false, false, true, log)
+}
+
+// performSync is the shared implementation for sync functions.
+// skipGit: if true, skips all git operations (commits, pulls, pushes, snapshot capture, 3-way merge, import).
+// Local-only mode only performs validation and export since there's no remote to sync with.
+func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log daemonLogger) func() {
 	return func() {
 		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer syncCancel()
 
-		log.log("Starting sync cycle...")
+		mode := "sync cycle"
+		if skipGit {
+			mode = "local sync cycle"
+		}
+		log.log("Starting %s...", mode)
 
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
@@ -590,7 +652,7 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 			return
 		}
 		if holder != "" {
-			log.log("Removed stale lock (%s), proceeding with sync", holder)
+			log.log("Removed stale lock (%s), proceeding with %s", holder, mode)
 		}
 
 		// Integrity check: validate before export
@@ -636,6 +698,15 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 			log.log("Warning: failed to update database mtime: %v", err)
 		}
+
+		// Skip git operations, snapshot capture, deletion tracking, and import in local-only mode
+		// Local-only sync is export-only since there's no remote to sync with
+		if skipGit {
+			log.log("Local %s complete", mode)
+			return
+		}
+
+		// ---- Git operations start here ----
 
 		// Capture left snapshot (pre-pull state) for 3-way merge
 		// This is mandatory for deletion tracking integrity
@@ -710,8 +781,8 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		// Perform 3-way merge and prune deletions
 		// In multi-repo mode, apply deletions for each JSONL file
 		if multiRepoPaths != nil {
-		 // Multi-repo mode: merge/prune for each JSONL
-		for _, path := range multiRepoPaths {
+			// Multi-repo mode: merge/prune for each JSONL
+			for _, path := range multiRepoPaths {
 				if err := applyDeletionsFromMerge(syncCtx, store, path); err != nil {
 					log.log("Error during 3-way merge for %s: %v", path, err)
 					return
@@ -753,7 +824,7 @@ func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, auto
 		// Update base snapshot after successful import
 		// In multi-repo mode, update snapshots for all JSONL files
 		if multiRepoPaths != nil {
-		 for _, path := range multiRepoPaths {
+			for _, path := range multiRepoPaths {
 				if err := updateBaseSnapshot(path); err != nil {
 					log.log("Warning: failed to update base snapshot for %s: %v", path, err)
 				}

@@ -71,7 +71,8 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 	jsonlPath := filepath.Join(absRepoPath, ".beads", "issues.jsonl")
 
 	// Check if file exists
-	fileInfo, err := os.Stat(jsonlPath)
+	// Use Lstat to get the symlink's own mtime, not the target's (NixOS fix).
+	fileInfo, err := os.Lstat(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No JSONL file - skip this repo
@@ -117,6 +118,7 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 }
 
 // importJSONLFile imports issues from a JSONL file, setting the source_repo field.
+// Disables FK checks during import to handle out-of-order dependencies.
 func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRepo string) (int, error) {
 	file, err := os.Open(jsonlPath) // #nosec G304 -- jsonlPath is from trusted source
 	if err != nil {
@@ -138,8 +140,22 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 	count := 0
 	lineNum := 0
 
+	// Get exclusive connection to ensure PRAGMA applies
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Disable foreign keys on this connection to handle out-of-order deps
+	// (issue A may depend on issue B that appears later in the file)
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to disable foreign keys: %w", err)
+	}
+
 	// Begin transaction for bulk import
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -179,6 +195,28 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 		return 0, fmt.Errorf("failed to read JSONL file: %w", err)
 	}
 
+	// Re-enable foreign keys before commit to validate data integrity
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to re-enable foreign keys: %w", err)
+	}
+
+	// Validate FK constraints on imported data
+	rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check foreign keys: %w", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var table, rowid, parent, fkid string
+		_ = rows.Scan(&table, &rowid, &parent, &fkid)
+		return 0, fmt.Errorf(
+			"foreign key violation in imported data: table=%s rowid=%s parent=%s",
+			table, rowid, parent,
+		)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -197,21 +235,23 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 	// Check if issue exists
 	var existingID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM issues WHERE id = ?`, issue.ID).Scan(&existingID)
-	
+
 	if err == sql.ErrNoRows {
 		// Issue doesn't exist - insert it
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO issues (
 				id, content_hash, title, description, design, acceptance_criteria, notes,
 				status, priority, issue_type, assignee, estimated_minutes,
-				created_at, updated_at, closed_at, external_ref, source_repo
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
+				deleted_at, deleted_by, delete_reason, original_type
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
 			issue.Priority, issue.IssueType, issue.Assignee,
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
-			issue.ClosedAt, issue.ExternalRef, issue.SourceRepo,
+			issue.ClosedAt, issue.ExternalRef, issue.SourceRepo, issue.CloseReason,
+			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue: %w", err)
@@ -233,13 +273,15 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 					content_hash = ?, title = ?, description = ?, design = ?,
 					acceptance_criteria = ?, notes = ?, status = ?, priority = ?,
 					issue_type = ?, assignee = ?, estimated_minutes = ?,
-					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?
+					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?,
+					deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?
 				WHERE id = ?
 			`,
 				issue.ContentHash, issue.Title, issue.Description, issue.Design,
 				issue.AcceptanceCriteria, issue.Notes, issue.Status, issue.Priority,
 				issue.IssueType, issue.Assignee, issue.EstimatedMinutes,
 				issue.UpdatedAt, issue.ClosedAt, issue.ExternalRef, issue.SourceRepo,
+				issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 				issue.ID,
 			)
 			if err != nil {

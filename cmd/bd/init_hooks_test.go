@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,22 +11,15 @@ import (
 func TestDetectExistingHooks(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
+	t.Chdir(tmpDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
+	// Initialize a real git repo (required for git rev-parse)
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	// Initialize a git repository
 	gitDir := filepath.Join(tmpDir, ".git")
 	hooksDir := filepath.Join(gitDir, "hooks")
-	if err := os.MkdirAll(hooksDir, 0750); err != nil {
-		t.Fatal(err)
-	}
 
 	tests := []struct {
 		name            string
@@ -108,22 +102,15 @@ func TestDetectExistingHooks(t *testing.T) {
 func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
+	t.Chdir(tmpDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
+	// Initialize a real git repo (required for git rev-parse)
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	// Initialize a git repository
 	gitDir := filepath.Join(tmpDir, ".git")
 	hooksDir := filepath.Join(gitDir, "hooks")
-	if err := os.MkdirAll(hooksDir, 0750); err != nil {
-		t.Fatal(err)
-	}
 
 	// Note: Can't fully test interactive prompt in automated tests
 	// This test verifies the logic works when no existing hooks present
@@ -154,22 +141,15 @@ func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 func TestInstallGitHooks_ExistingHookBackup(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
-	oldDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
+	t.Chdir(tmpDir)
 
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
+	// Initialize a real git repo (required for git rev-parse)
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	// Initialize a git repository
 	gitDir := filepath.Join(tmpDir, ".git")
 	hooksDir := filepath.Join(gitDir, "hooks")
-	if err := os.MkdirAll(hooksDir, 0750); err != nil {
-		t.Fatal(err)
-	}
 
 	// Create an existing pre-commit hook
 	preCommitPath := filepath.Join(hooksDir, "pre-commit")

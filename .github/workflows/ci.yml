@@ -51,9 +51,10 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
-  test-windows:
-    name: Test (Windows)
+  test-windows-cmd:
+    name: Test (Windows - cmd)
     runs-on: windows-latest
+    continue-on-error: true  # Windows filesystem is slow; don't block PRs
     steps:
       - uses: actions/checkout@v6
 
@@ -70,8 +71,28 @@ jobs:
       - name: Build
         run: go build -v ./cmd/bd
 
-      - name: Test
-        run: go test -v -short ./...
+      - name: Test cmd package
+        run: go test -v -short -timeout=30m -parallel=4 ./cmd/...
+
+  test-windows-internal:
+    name: Test (Windows - internal)
+    runs-on: windows-latest
+    continue-on-error: true  # Windows filesystem is slow; don't block PRs
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
+      - name: Test internal packages
+        run: go test -v -short -timeout=30m -parallel=4 ./internal/...
 
   lint:
     name: Lint

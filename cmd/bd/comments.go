@@ -115,6 +115,7 @@ Examples:
   bd comments add bd-123 -f notes.txt`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("comment add")
 		issueID := args[0]
 
 		// Get comment text from flag or argument

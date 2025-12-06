@@ -19,6 +19,7 @@ var repairDepsCmd = &cobra.Command{
 Reports orphaned dependencies and optionally removes them with --fix.
 Interactive mode with --interactive prompts for each orphan.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		CheckReadonly("repair-deps")
 		fix, _ := cmd.Flags().GetBool("fix")
 		interactive, _ := cmd.Flags().GetBool("interactive")
 

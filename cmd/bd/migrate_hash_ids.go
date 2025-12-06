@@ -48,9 +48,14 @@ EXAMPLES:
 WARNING: Backup your database before running this command, even though it creates one automatically.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		
+
+		// Block writes in readonly mode
+		if !dryRun {
+			CheckReadonly("migrate-hash-ids")
+		}
+
 		ctx := rootCtx
-		
+
 		// Find database
 		dbPath := beads.FindDatabasePath()
 		if dbPath == "" {

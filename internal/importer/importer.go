@@ -43,6 +43,7 @@ type Options struct {
 	OrphanHandling             OrphanHandling // How to handle missing parent issues (default: allow)
 	ClearDuplicateExternalRefs bool           // Clear duplicate external_ref values instead of erroring
 	NoGitHistory               bool           // Skip git history backfill for deletions (prevents spurious deletion during JSONL migrations)
+	IgnoreDeletions            bool           // Import issues even if they're in the deletions manifest
 }
 
 // Result contains statistics about the import operation
@@ -60,6 +61,8 @@ type Result struct {
 	SkippedDependencies []string          // Dependencies skipped due to FK constraint violations
 	Purged              int               // Issues purged from DB (found in deletions manifest)
 	PurgedIDs           []string          // IDs that were purged
+	SkippedDeleted      int               // Issues skipped because they're in deletions manifest
+	SkippedDeletedIDs   []string          // IDs that were skipped due to deletions manifest
 }
 
 // ImportIssues handles the core import logic used by both manual and auto-import.
@@ -112,6 +115,29 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	// Read orphan handling from config if not explicitly set
 	if opts.OrphanHandling == "" {
 		opts.OrphanHandling = sqliteStore.GetOrphanHandling(ctx)
+	}
+
+	// Filter out issues that are in the deletions manifest (bd-4zy)
+	// Unless IgnoreDeletions is set, skip importing deleted issues
+	if !opts.IgnoreDeletions && dbPath != "" {
+		beadsDir := filepath.Dir(dbPath)
+		deletionsPath := deletions.DefaultPath(beadsDir)
+		loadResult, err := deletions.LoadDeletions(deletionsPath)
+		if err == nil && len(loadResult.Records) > 0 {
+			var filteredIssues []*types.Issue
+			for _, issue := range issues {
+				if del, found := loadResult.Records[issue.ID]; found {
+					// Issue is in deletions manifest - skip it
+					result.SkippedDeleted++
+					result.SkippedDeletedIDs = append(result.SkippedDeletedIDs, issue.ID)
+					fmt.Fprintf(os.Stderr, "Skipping %s (in deletions manifest: deleted %s by %s)\n",
+						issue.ID, del.Timestamp.Format("2006-01-02"), del.Actor)
+				} else {
+					filteredIssues = append(filteredIssues, issue)
+				}
+			}
+			issues = filteredIssues
+		}
 	}
 
 	// Check and handle prefix mismatches
@@ -833,6 +859,33 @@ func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, 
 	// Skip if --no-git-history flag is set (prevents spurious deletions during JSONL migrations)
 	if len(needGitCheck) > 0 && !opts.NoGitHistory {
 		deletedViaGit := checkGitHistoryForDeletions(beadsDir, needGitCheck)
+
+		// Safety guard (bd-21a): Prevent mass deletion when JSONL appears reset
+		// If git-history-backfill would delete a large percentage of issues,
+		// this likely indicates the JSONL was reset (git reset, branch switch, etc.)
+		// rather than intentional deletions
+		totalDBIssues := len(dbIssues)
+		deleteCount := len(deletedViaGit)
+
+		if deleteCount > 0 && totalDBIssues > 0 {
+			deletePercent := float64(deleteCount) / float64(totalDBIssues) * 100
+
+			// Abort if would delete >50% of issues - this is almost certainly a reset
+			if deletePercent > 50 {
+				fmt.Fprintf(os.Stderr, "Warning: git-history-backfill would delete %d of %d issues (%.1f%%) - aborting\n",
+					deleteCount, totalDBIssues, deletePercent)
+				fmt.Fprintf(os.Stderr, "This usually means the JSONL was reset (git reset, branch switch, etc.)\n")
+				fmt.Fprintf(os.Stderr, "If these are legitimate deletions, add them to deletions.jsonl manually\n")
+				// Don't delete anything - abort the backfill
+				deleteCount = 0
+				deletedViaGit = nil
+			} else if deleteCount > 10 {
+				// Warn (but proceed) if deleting >10 issues
+				fmt.Fprintf(os.Stderr, "Warning: git-history-backfill will delete %d issues (%.1f%% of %d total)\n",
+					deleteCount, deletePercent, totalDBIssues)
+			}
+		}
+
 		for _, id := range deletedViaGit {
 			// Backfill the deletions manifest (self-healing)
 			backfillRecord := deletions.DeletionRecord{

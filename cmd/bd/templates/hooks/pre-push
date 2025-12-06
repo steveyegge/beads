@@ -1,5 +1,5 @@
 #!/bin/sh
-# bd-hooks-version: 0.26.0
+# bd-hooks-version: 0.29.0
 #
 # bd (beads) pre-push hook
 #
@@ -7,6 +7,9 @@
 # 1. Flushing any pending in-memory changes to JSONL (if bd available)
 # 2. Checking for uncommitted changes (staged, unstaged, untracked, deleted)
 # 3. Failing the push with clear instructions if changes found
+#
+# When sync-branch is configured in config.yaml, .beads changes are committed
+# to a separate branch via worktree, so the uncommitted check is skipped.
 #
 # The pre-commit hook already exports changes, but this catches:
 # - Changes made between commit and push
@@ -22,6 +25,20 @@
 # Check if we're in a bd workspace
 if [ ! -d .beads ]; then
     # Not a bd workspace, nothing to do
+    exit 0
+fi
+
+# Check if sync-branch is configured in config.yaml or env var
+# If so, .beads changes go to a separate branch via worktree, not the current branch
+SYNC_BRANCH="${BEADS_SYNC_BRANCH:-}"
+if [ -z "$SYNC_BRANCH" ] && [ -f .beads/config.yaml ]; then
+    # Extract sync-branch value from YAML (handles quoted and unquoted values)
+    # Use head -1 to only take first match if file is malformed
+    SYNC_BRANCH=$(grep -E '^sync-branch:' .beads/config.yaml 2>/dev/null | head -1 | sed 's/^sync-branch:[[:space:]]*//' | sed 's/^["'"'"']//' | sed 's/["'"'"']$//')
+fi
+if [ -n "$SYNC_BRANCH" ]; then
+    # sync-branch is configured, skip .beads uncommitted check
+    # Changes are synced to the separate branch, not this one
     exit 0
 fi
 

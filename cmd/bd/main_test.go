@@ -152,6 +152,7 @@ func TestAutoFlushOnExit(t *testing.T) {
 	}
 }
 
+
 // TestAutoFlushConcurrency tests that concurrent operations don't cause races
 // TestAutoFlushStoreInactive tests that flush doesn't run when store is inactive
 // TestAutoFlushJSONLContent tests that flushed JSONL has correct content
@@ -339,7 +340,7 @@ func TestAutoImportIfNewer(t *testing.T) {
 	}
 
 	// Wait a moment to ensure different timestamps
-	time.Sleep(10 * time.Millisecond)  // 10x faster
+	time.Sleep(10 * time.Millisecond) // 10x faster
 
 	// Create a JSONL file with different content (simulating a git pull)
 	jsonlIssue := &types.Issue{

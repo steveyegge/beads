@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -89,9 +90,9 @@ With --stealth: configures global git settings for invisible beads usage:
 
 		// auto-detect prefix from first issue in JSONL file
 		if prefix == "" {
-			issueCount, jsonlPath := checkGitForIssues()
+			issueCount, jsonlPath, gitRef := checkGitForIssues()
 			if issueCount > 0 {
-				firstIssue, err := readFirstIssueFromJSONL(jsonlPath)
+				firstIssue, err := readFirstIssueFromGit(jsonlPath, gitRef)
 				if firstIssue != nil && err == nil {
 					prefix = utils.ExtractIssuePrefix(firstIssue.ID)
 				}
@@ -347,16 +348,16 @@ With --stealth: configures global git settings for invisible beads usage:
 		}
 
 		// Check if git has existing issues to import (fresh clone scenario)
-		issueCount, jsonlPath := checkGitForIssues()
+		issueCount, jsonlPath, gitRef := checkGitForIssues()
 		if issueCount > 0 {
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
 			}
 
-			if err := importFromGit(ctx, initDBPath, store, jsonlPath); err != nil {
+			if err := importFromGit(ctx, initDBPath, store, jsonlPath, gitRef); err != nil {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
-					fmt.Fprintf(os.Stderr, "Try manually: git show HEAD:%s | bd import -i /dev/stdin\n", jsonlPath)
+					fmt.Fprintf(os.Stderr, "Try manually: git show %s:%s | bd import -i /dev/stdin\n", gitRef, jsonlPath)
 				}
 				// Non-fatal - continue with empty database
 			} else if !quiet {
@@ -459,8 +460,12 @@ func init() {
 
 // hooksInstalled checks if bd git hooks are installed
 func hooksInstalled() bool {
-	preCommit := filepath.Join(".git", "hooks", "pre-commit")
-	postMerge := filepath.Join(".git", "hooks", "post-merge")
+	gitDir, err := getGitDir()
+	if err != nil {
+		return false
+	}
+	preCommit := filepath.Join(gitDir, "hooks", "pre-commit")
+	postMerge := filepath.Join(gitDir, "hooks", "post-merge")
 
 	// Check if both hooks exist
 	_, err1 := os.Stat(preCommit)
@@ -515,7 +520,11 @@ type hookInfo struct {
 
 // detectExistingHooks scans for existing git hooks
 func detectExistingHooks() []hookInfo {
-	hooksDir := filepath.Join(".git", "hooks")
+	gitDir, err := getGitDir()
+	if err != nil {
+		return nil
+	}
+	hooksDir := filepath.Join(gitDir, "hooks")
 	hooks := []hookInfo{
 		{name: "pre-commit", path: filepath.Join(hooksDir, "pre-commit")},
 		{name: "post-merge", path: filepath.Join(hooksDir, "post-merge")},
@@ -569,7 +578,11 @@ func promptHookAction(existingHooks []hookInfo) string {
 
 // installGitHooks installs git hooks inline (no external dependencies)
 func installGitHooks() error {
-	hooksDir := filepath.Join(".git", "hooks")
+	gitDir, err := getGitDir()
+	if err != nil {
+		return err
+	}
+	hooksDir := filepath.Join(gitDir, "hooks")
 
 	// Ensure hooks directory exists
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {
@@ -1026,6 +1039,13 @@ func createConfigYaml(beadsDir string, noDbMode bool) error {
 # Debounce interval for auto-flush (can also use BEADS_FLUSH_DEBOUNCE)
 # flush-debounce: "5s"
 
+# Git branch for beads commits (bd sync will commit to this branch)
+# IMPORTANT: Set this for team projects so all clones use the same sync branch.
+# This setting persists across clones (unlike database config which is gitignored).
+# Can also use BEADS_SYNC_BRANCH env var for local override.
+# If not set, bd sync will require you to run 'bd config set sync.branch <branch>'.
+# sync-branch: "beads-sync"
+
 # Multi-repo configuration (experimental - bd-307)
 # Allows hydrating from multiple repositories and routing writes to the correct JSONL
 # repos:
@@ -1042,7 +1062,6 @@ func createConfigYaml(beadsDir string, noDbMode bool) error {
 # - linear.api-key
 # - github.org
 # - github.repo
-# - sync.branch - Git branch for beads commits (use BEADS_SYNC_BRANCH env var or bd config set)
 `, noDbLine)
 
 	if err := os.WriteFile(configYamlPath, []byte(configYamlTemplate), 0600); err != nil {
@@ -1086,7 +1105,7 @@ bd list
 bd show <issue-id>
 
 # Update issue status
-bd update <issue-id> --status in-progress
+bd update <issue-id> --status in_progress
 bd update <issue-id> --status done
 
 # Sync with git remote
@@ -1185,6 +1204,39 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading JSONL file: %w", err)
+	}
+
+	return nil, nil
+}
+
+// readFirstIssueFromGit reads the first issue from a git ref (bd-0is: supports sync-branch)
+func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
+	// Get content from git (use ToSlash for Windows compatibility)
+	gitPath := filepath.ToSlash(jsonlPath)
+	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from git: %w", err)
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// skip empty lines
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err == nil {
+			return &issue, nil
+		}
+		// Skip malformed lines silently (called during auto-detection)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error scanning git content: %w", err)
 	}
 
 	return nil, nil
@@ -1320,8 +1372,12 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 	return nil
 }
 
-// checkExistingBeadsData checks for existing JSONL or database files
+// checkExistingBeadsData checks for existing database files
 // and returns an error if found (safety guard for bd-emg)
+//
+// Note: This only blocks when a database already exists (workspace is initialized).
+// Fresh clones with JSONL but no database are allowed - init will create the database
+// and import from JSONL automatically (bd-4h9: fixes circular dependency with doctor --fix).
 func checkExistingBeadsData(prefix string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1355,52 +1411,14 @@ To completely reinitialize (data loss warning):
 Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 	}
 
-	// Check for existing JSONL files with issues
-	jsonlCandidates := []string{
-		filepath.Join(beadsDir, "issues.jsonl"),
-		filepath.Join(beadsDir, "beads.jsonl"),
-	}
+	// Fresh clones (JSONL exists but no database) are allowed - init will
+	// create the database and import from JSONL automatically.
+	// This fixes the circular dependency where init told users to run
+	// "bd doctor --fix" but doctor couldn't create a database (bd-4h9).
 
-	for _, jsonlPath := range jsonlCandidates {
-		if _, err := os.Stat(jsonlPath); err == nil {
-			// JSONL exists, count issues
-			issueCount := countIssuesInJSONLFile(jsonlPath)
-
-			if issueCount > 0 {
-				yellow := color.New(color.FgYellow).SprintFunc()
-				cyan := color.New(color.FgCyan).SprintFunc()
-
-				prefixHint := prefix
-				if prefixHint == "" {
-					prefixHint = "<prefix>"
-				}
-
-				return fmt.Errorf(`
-%s Found existing %s with %d issues.
-
-This appears to be a fresh clone, not a new project.
-
-To hydrate the database from existing JSONL:
-  %s
-
-To force re-initialization (may cause data loss):
-  bd init --prefix %s --force
-
-Aborting.`, yellow("⚠"), filepath.Base(jsonlPath), issueCount, cyan("bd doctor --fix"), prefixHint)
-			}
-			// Empty JSONL (0 issues) is OK - likely a new project
-		}
-	}
-
-	return nil // No existing data found, safe to init
+	return nil // No database found, safe to init
 }
 
-// countIssuesInJSONLFile counts the number of issues in a JSONL file.
-// Delegates to countJSONLIssues in doctor.go.
-func countIssuesInJSONLFile(jsonlPath string) int {
-	count, _, _ := countJSONLIssues(jsonlPath)
-	return count
-}
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
 func setupClaudeSettings(verbose bool) error {

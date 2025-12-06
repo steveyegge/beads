@@ -7,7 +7,244 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.0] - 2025-11-27
+## [0.29.0] - 2025-12-03
+
+## [0.29.0] - 2025-12-03
+
+### Added
+
+- **`--estimate` / `-e` flag for `bd create` and `bd update` (GH #443)**
+  - Add time estimates to issues in minutes
+  - Example: `bd create "My task" --estimate 120` (2 hours)
+  - Example: `bd update bd-xyz --estimate 60` (1 hour)
+  - Enables planning and prioritization features in vscode-beads
+
+- **`bd doctor` improvements**
+  - SQLite integrity check (bd-2au) - Detects database corruption
+  - Configuration value validation (bd-alz) - Validates config settings
+  - Stale sync branch detection (bd-6rf) - Warns about abandoned beads-sync branches
+  - `--output` flag (bd-9cc) - Export diagnostics to file for sharing
+  - `--dry-run` flag (bd-qn5) - Preview fixes without applying
+  - Per-fix confirmation mode (bd-3xl) - Approve each fix individually
+
+- **`--readonly` flag (bd-ymo)** - Read-only mode for worker sandboxes
+  - Blocks all write operations
+  - Useful for parallel worker processes that should only read
+
+### Fixed
+
+- **`bd sync` safety improvements**
+  - Auto-push after merge with safety check (bd-7ch)
+  - Handle diverged histories with content-based merge (bd-3s8)
+  - Multiple safety check enhancements
+
+- **Auto-resolve merge conflicts deterministically (bd-6l8)**
+  - All field conflicts resolved without prompts
+  - Uses consistent rules for field-level merging
+
+- **3-char all-letter base36 hash support (GH #446)**
+  - Fixes prefix extraction for edge case hashes like "bd-abc"
+
+- **`bd ready` message fix (bd-r4n)**
+  - Shows correct message when all issues are closed
+
+- **Version notification spam fix (bd-tok)**
+  - Store version in gitignored .local_version file
+
+- **Nix flake vendorHash update (bd-gmf)**
+  - Fixed build after dependency bumps
+
+### Documentation
+
+- Added perles and vscode-beads to Third-Party Tools
+- Encourage batch close and parallel creation in `bd prime` output
+
+## [0.28.0] - 2025-12-01
+
+### Added
+
+- **`bd daemon --local` flag (#433)** - Run daemon without git operations
+  - Ideal for multi-repo setups where git sync happens externally
+  - Prevents daemon from triggering git commits/pushes
+  - Use with worktrees or when beads sync is handled by another process
+
+- **`bd daemon --foreground` flag** - Run daemon in foreground mode
+  - For systemd/supervisord/launchd integration
+  - Logs to stdout instead of background file
+  - Process stays attached to terminal
+
+- **`bd migrate-sync` command (bd-epn)** - Migrate to sync.branch workflow
+  - Moves beads data to a dedicated sync branch
+  - Keeps main branch clean of .beads/ commits
+  - Automated setup of sync.branch configuration
+
+### Fixed
+
+- **Database Migration: close_reason column (bd-uyu)**
+  - Added missing database column for close_reason field
+  - Fixes sync loops where close_reason was lost on import/export
+  - Automatic migration on first run
+
+- **Multi-repo Prefix Filtering (GH #437)**
+  - Issues now filtered by prefix when flushing from non-primary repos
+  - Prevents issues from other projects appearing in exports
+
+- **Parent-Child Dependency UX (GH #440)**
+  - Fixed backwards documentation in DEPENDENCIES.md
+  - `bd show` now displays epic children under "Children" not "Blocks"
+  - Clearer UI labels for dependency relationships
+
+- **sync.branch Workflow Fixes (bd-epn)**
+  - Fixed .beads/ restoration from branch after sync
+  - Prevents final flush after sync.branch restore
+  - `bd doctor` now detects when on sync branch
+
+- **Jira API Migration**
+  - Updated from deprecated Jira API v2 to v3
+  - Fixes authentication issues with newer Jira instances
+
+- **Redundant Database Queries (bd-bbh)**
+  - Removed extra GetCloseReason() calls after column migration
+  - Improves query performance for issue retrieval
+
+### Documentation
+
+- Added go install fallback instructions for Claude Code web (GH #439)
+- Added uninstall documentation (GH #445)
+
+### Internal
+
+- Refactored daemon sync functions to reduce ~200 lines of duplication (bd-73u)
+- Consolidated local-only sync functions into shared implementation
+
+## [0.27.2] - 2025-11-30
+
+### Fixed
+
+- **CRITICAL: Prevent Mass Database Deletion on JSONL Reset (bd-t5m)**
+  - git-history-backfill now includes safety guard to prevent purging entire database
+  - If >50% of issues would be deleted via git history, operation is aborted with warning
+  - Threshold prevents accidental deletion when JSONL is reset (git reset, branch switch, etc.)
+  - If 10-50% would be deleted, operation proceeds but shows warning message
+  - Fixes bug where `git reset --hard origin/main` would lose all issues
+
+- **Fix Fresh Clone Initialization (bd-4h9)**
+  - `bd init` now works on fresh clones that have JSONL but no database
+  - Auto-detects issue prefix from existing JSONL (no `--prefix` flag needed)
+  - Prevents "database not found" errors on first run in a cloned repository
+  
+- **Import Warning for Deleted Issues (bd-4zy)**
+  - New warning message when issues are skipped due to deletions manifest
+  - Helps users understand why expected issues aren't being imported
+  - Warns user to check `bd deleted` for history of removed issues
+
+- **Extract Issue Prefix for 3-char Hashes (#425)**
+  - `ExtractIssuePrefix()` now handles base36 hashes as short as 3 characters
+  - Previously required 4+ chars, breaking hyphenated prefixes (e.g., `document-intelligence-0sa`)
+  - Updated hash validation to accept base36 (0-9, a-z) instead of just hex
+  - Requires at least one digit to distinguish hashes from English words
+
+## [0.27.0] - 2025-11-29
+
+### Added
+
+- **Custom Status States**: Define custom issue statuses via config (bd-1pj6)
+  - Configure project-specific statuses like `testing`, `blocked`, `review`
+  - Status validation ensures only configured statuses are used
+  - Backwards compatible: open/in_progress/closed always work
+
+- **Contributor Fork Workflows**: `bd init --contributor` now auto-configures `sync.remote=upstream` (bd-bx9)
+  - Syncs issues from upstream rather than origin
+  - Ideal for contributors working on forks
+
+- **Git Worktree Support**: Full support for git worktrees (#416)
+  - `bd hooks install` now works correctly in worktrees
+  - Helpful message when entering worktree repo without beads initialized
+  - Hooks properly detect worktree vs main repository
+
+- **Daemon Health Checks**: Health monitoring in daemon event loop (bd-gqo)
+  - Periodic health checks detect stale database state
+  - Auto-recovery from detected inconsistencies
+
+- **Fresh Clone Detection**: `bd doctor` now detects fresh clones (bd-4ew)
+  - Suggests `bd init` when JSONL exists but no database
+  - Improved onboarding experience for new contributors
+
+- **bd sync --squash**: Batch multiple sync commits into one (bd-o2e)
+  - Reduces commit noise when syncing frequently
+  - Optional flag for cleaner git history
+
+- **Error Handling Helpers**: Extracted FatalError/WarnError utilities (bd-s0z)
+  - Consistent error formatting across codebase
+  - Better error messages for users
+
+### Fixed
+
+- **CRITICAL: Sync Corruption Prevention**: Multiple fixes prevent stale database from corrupting JSONL
+  - **Hash-based staleness detection** (bd-f2f): SHA256 hash comparison catches content mismatches
+  - **Reverse ZFC check** (bd-53c): Detects when JSONL has more issues than DB
+  - **Stale daemon connection** (eb4b81d): Prevents corruption from stale SQLite connections
+  - Combined, these fixes eliminate the sync corruption bugs that affected v0.26.x
+
+- **Multi-Hyphen Prefix Support** (#419): Hash IDs with multi-part prefixes now handled correctly
+  - Example: `my-app-abc123` correctly parsed as prefix `my-app`
+
+- **Out-of-Order Dependencies** (#414): JSONL import handles dependencies before their targets exist
+  - Fixes import failures when issues reference not-yet-imported dependencies
+
+- **--from-main Sync Mode** (#418): Now defaults to `noGitHistory=true`
+  - Prevents spurious deletions when syncing from main branch
+
+- **JSONL-Only Mode Detection**: Auto-detects when config has `no-db: true` (bd-5kj)
+  - Properly handles repositories using JSONL without SQLite
+
+- **Init Safety Guard**: Prevents overwriting existing JSONL data on init
+  - Warns user when data already exists, requires confirmation
+
+- **Snapshot Cleanup** (bd-0io): Properly cleans up snapshot files after sync
+  - Removes `.beads/*.snapshot` files that could cause conflicts
+
+- **Daemon Registry Locking** (bd-5bj): Cross-process locking prevents registry corruption
+  - Fixes race conditions when multiple processes access daemon registry
+
+- **Doctor Merge Artifacts**: Excludes merge artifacts from "multiple JSONL" warning
+  - Reduces false positives during merge resolution
+
+### Changed
+
+- **Documentation**: Fixed birthday paradox threshold explanation in README
+- **Documentation**: Corrected `bd dep add` syntax and semantics
+
+### Community
+
+- PR #419: Multi-hyphen prefix support
+- PR #418: --from-main noGitHistory default
+- PR #416: Git worktree hooks support
+- PR #415: CI fixes
+- PR #414: Out-of-order dependency handling
+- PR #404: Error on invalid JSON during init (@joelklabo)
+
+## [0.26.2] - 2025-11-29
+
+### Fixed
+
+- **Hash-Based Staleness Detection (bd-f2f)**: Prevents stale DB from corrupting JSONL when counts match
+  - Previous count-based check (0.26.1) missed cases where DB and JSONL had similar issue counts
+  - New detection computes SHA256 hash of JSONL content and stores it after import
+  - On export, compares current JSONL hash against stored hash to detect modifications
+  - If JSONL was modified externally (e.g., by git pull), triggers re-import before export
+  - Ensures database is always synchronized with JSONL before exporting changes
+
+## [0.26.1] - 2025-11-29
+
+### Fixed
+
+- **CRITICAL: Reverse ZFC Check (bd-53c)**: Prevents stale database from corrupting JSONL
+  - Root cause: `bd sync` exports DB to JSONL before pulling from remote
+  - If local DB is stale (fewer issues than JSONL), stale data would corrupt the JSONL
+  - Added reverse ZFC check: detects when JSONL has >20% more issues than DB
+  - When detected, imports JSONL first to sync database before any export
+  - Prevents fresh/stale clones from exporting incomplete database state
 
 ## [0.26.0] - 2025-11-27
 

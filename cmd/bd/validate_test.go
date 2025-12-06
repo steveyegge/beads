@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseChecks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		input     string
@@ -63,7 +64,9 @@ func TestParseChecks(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := parseChecks(tt.input)
 			if tt.wantError {
 				if err == nil {
@@ -88,6 +91,7 @@ func TestParseChecks(t *testing.T) {
 }
 
 func TestValidationResultsHasFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		checks map[string]checkResult
@@ -125,7 +129,9 @@ func TestValidationResultsHasFailures(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			r := &validationResults{checks: tt.checks}
 			got := r.hasFailures()
 			if got != tt.want {
@@ -136,6 +142,7 @@ func TestValidationResultsHasFailures(t *testing.T) {
 }
 
 func TestValidationResultsToJSON(t *testing.T) {
+	t.Parallel()
 	r := &validationResults{
 		checks: map[string]checkResult{
 			"orphans": {
