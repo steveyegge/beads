@@ -50,6 +50,11 @@ type Issue struct {
 	CreatedBy    string       `json:"created_by,omitempty"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 	RawLine      string       `json:"-"` // Store original line for conflict output
+	// Tombstone fields (bd-0ih): inline soft-delete support for merge
+	DeletedAt    string `json:"deleted_at,omitempty"`    // When the issue was deleted
+	DeletedBy    string `json:"deleted_by,omitempty"`    // Who deleted the issue
+	DeleteReason string `json:"delete_reason,omitempty"` // Why the issue was deleted
+	OriginalType string `json:"original_type,omitempty"` // Issue type before deletion
 }
 
 // Dependency represents an issue dependency
@@ -233,7 +238,64 @@ func makeKey(issue Issue) IssueKey {
 	}
 }
 
+// StatusTombstone is the status value for soft-deleted issues
+const StatusTombstone = "tombstone"
+
+// DefaultTombstoneTTL is the default time-to-live for tombstones (30 days)
+const DefaultTombstoneTTL = 30 * 24 * time.Hour
+
+// ClockSkewGrace is added to TTL to handle clock drift between machines
+const ClockSkewGrace = 1 * time.Hour
+
+// IsTombstone returns true if the issue has been soft-deleted
+func IsTombstone(issue Issue) bool {
+	return issue.Status == StatusTombstone
+}
+
+// IsExpiredTombstone returns true if the tombstone has exceeded its TTL.
+// Non-tombstone issues always return false.
+// ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
+func IsExpiredTombstone(issue Issue, ttl time.Duration) bool {
+	// Non-tombstones never expire
+	if !IsTombstone(issue) {
+		return false
+	}
+
+	// Tombstones without DeletedAt are not expired (safety: shouldn't happen in valid data)
+	if issue.DeletedAt == "" {
+		return false
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = DefaultTombstoneTTL
+	}
+
+	// Parse the deleted_at timestamp
+	deletedAt, err := time.Parse(time.RFC3339Nano, issue.DeletedAt)
+	if err != nil {
+		deletedAt, err = time.Parse(time.RFC3339, issue.DeletedAt)
+		if err != nil {
+			// Invalid timestamp means not expired (safety)
+			return false
+		}
+	}
+
+	// Add clock skew grace period to the TTL
+	effectiveTTL := ttl + ClockSkewGrace
+
+	// Check if the tombstone has exceeded its TTL
+	expirationTime := deletedAt.Add(effectiveTTL)
+	return time.Now().After(expirationTime)
+}
+
 func merge3Way(base, left, right []Issue) ([]Issue, []string) {
+	return merge3WayWithTTL(base, left, right, DefaultTombstoneTTL)
+}
+
+// merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
+// This is the core merge function that handles tombstone semantics.
+func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []string) {
 	// Build maps for quick lookup
 	baseMap := make(map[IssueKey]Issue)
 	for _, issue := range base {
@@ -277,9 +339,46 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 		leftIssue, inLeft := leftMap[key]
 		rightIssue, inRight := rightMap[key]
 
+		// Determine tombstone status
+		leftTombstone := inLeft && IsTombstone(leftIssue)
+		rightTombstone := inRight && IsTombstone(rightIssue)
+
 		// Handle different scenarios
 		if inBase && inLeft && inRight {
-			// All three present - merge
+			// All three present - handle tombstone cases first
+
+			// CASE: Both are tombstones - merge tombstones (later deleted_at wins)
+			if leftTombstone && rightTombstone {
+				merged := mergeTombstones(leftIssue, rightIssue)
+				result = append(result, merged)
+				continue
+			}
+
+			// CASE: Left is tombstone, right is live
+			if leftTombstone && !rightTombstone {
+				if IsExpiredTombstone(leftIssue, ttl) {
+					// Tombstone expired - resurrection allowed, keep live issue
+					result = append(result, rightIssue)
+				} else {
+					// Tombstone wins
+					result = append(result, leftIssue)
+				}
+				continue
+			}
+
+			// CASE: Right is tombstone, left is live
+			if rightTombstone && !leftTombstone {
+				if IsExpiredTombstone(rightIssue, ttl) {
+					// Tombstone expired - resurrection allowed, keep live issue
+					result = append(result, leftIssue)
+				} else {
+					// Tombstone wins
+					result = append(result, rightIssue)
+				}
+				continue
+			}
+
+			// CASE: Both are live issues - standard merge
 			merged, conflict := mergeIssue(baseIssue, leftIssue, rightIssue)
 			if conflict != "" {
 				conflicts = append(conflicts, conflict)
@@ -287,7 +386,36 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 				result = append(result, merged)
 			}
 		} else if !inBase && inLeft && inRight {
-			// Added in both - merge using deterministic rules with empty base
+			// Added in both - handle tombstone cases
+
+			// CASE: Both are tombstones - merge tombstones
+			if leftTombstone && rightTombstone {
+				merged := mergeTombstones(leftIssue, rightIssue)
+				result = append(result, merged)
+				continue
+			}
+
+			// CASE: Left is tombstone, right is live
+			if leftTombstone && !rightTombstone {
+				if IsExpiredTombstone(leftIssue, ttl) {
+					result = append(result, rightIssue)
+				} else {
+					result = append(result, leftIssue)
+				}
+				continue
+			}
+
+			// CASE: Right is tombstone, left is live
+			if rightTombstone && !leftTombstone {
+				if IsExpiredTombstone(rightIssue, ttl) {
+					result = append(result, leftIssue)
+				} else {
+					result = append(result, rightIssue)
+				}
+				continue
+			}
+
+			// CASE: Both are live - merge using deterministic rules with empty base
 			emptyBase := Issue{
 				ID:        leftIssue.ID,
 				CreatedAt: leftIssue.CreatedAt,
@@ -296,25 +424,35 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 			merged, _ := mergeIssue(emptyBase, leftIssue, rightIssue)
 			result = append(result, merged)
 		} else if inBase && inLeft && !inRight {
-			// Deleted in right, maybe modified in left
+			// Deleted in right (implicitly), maybe modified in left
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
 		} else if inBase && !inLeft && inRight {
-			// Deleted in left, maybe modified in right
+			// Deleted in left (implicitly), maybe modified in right
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
 		} else if !inBase && inLeft && !inRight {
-			// Added only in left
+			// Added only in left (could be a tombstone)
 			result = append(result, leftIssue)
 		} else if !inBase && !inLeft && inRight {
-			// Added only in right
+			// Added only in right (could be a tombstone)
 			result = append(result, rightIssue)
 		}
 	}
 
 	return result, conflicts
+}
+
+// mergeTombstones merges two tombstones for the same issue.
+// The tombstone with the later deleted_at timestamp wins.
+func mergeTombstones(left, right Issue) Issue {
+	// Use later deleted_at as the authoritative tombstone
+	if isTimeAfter(left.DeletedAt, right.DeletedAt) {
+		return left
+	}
+	return right
 }
 
 func mergeIssue(base, left, right Issue) (Issue, string) {
@@ -361,6 +499,17 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 }
 
 func mergeStatus(base, left, right string) string {
+	// RULE 0: tombstone is handled at the merge3Way level, not here.
+	// If a tombstone status reaches here, it means both sides have the same
+	// issue with possibly different statuses - tombstone should not be one of them
+	// (that case is handled by the tombstone merge logic).
+	// However, if somehow one side has tombstone status, preserve it as a safety measure.
+	if left == StatusTombstone || right == StatusTombstone {
+		// This shouldn't happen in normal flow - tombstones are handled earlier
+		// But if it does, tombstone wins (deletion is explicit)
+		return StatusTombstone
+	}
+
 	// RULE 1: closed always wins over open
 	// This prevents the insane situation where issues never die
 	if left == "closed" || right == "closed" {
