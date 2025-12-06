@@ -33,6 +33,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Issue represents a beads issue with all possible fields
@@ -238,14 +240,14 @@ func makeKey(issue Issue) IssueKey {
 	}
 }
 
-// StatusTombstone is the status value for soft-deleted issues
-const StatusTombstone = "tombstone"
+// bd-ig5: Use constants from types package to avoid duplication
+const StatusTombstone = string(types.StatusTombstone)
 
-// DefaultTombstoneTTL is the default time-to-live for tombstones (30 days)
-const DefaultTombstoneTTL = 30 * 24 * time.Hour
-
-// ClockSkewGrace is added to TTL to handle clock drift between machines
-const ClockSkewGrace = 1 * time.Hour
+// Alias TTL constants from types package for local use
+var (
+	DefaultTombstoneTTL = types.DefaultTombstoneTTL
+	ClockSkewGrace      = types.ClockSkewGrace
+)
 
 // IsTombstone returns true if the issue has been soft-deleted
 func IsTombstone(issue Issue) bool {
@@ -425,11 +427,21 @@ func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			result = append(result, merged)
 		} else if inBase && inLeft && !inRight {
 			// Deleted in right (implicitly), maybe modified in left
+			// bd-ki14: Check if left is a tombstone - tombstones must be preserved
+			if leftTombstone {
+				result = append(result, leftIssue)
+				continue
+			}
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
 		} else if inBase && !inLeft && inRight {
 			// Deleted in left (implicitly), maybe modified in right
+			// bd-ki14: Check if right is a tombstone - tombstones must be preserved
+			if rightTombstone {
+				result = append(result, rightIssue)
+				continue
+			}
 			// RULE 2: deletion always wins over modification
 			// This is because deletion is an explicit action that should be preserved
 			continue
@@ -447,8 +459,29 @@ func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 
 // mergeTombstones merges two tombstones for the same issue.
 // The tombstone with the later deleted_at timestamp wins.
+//
+// bd-6x5: Edge cases for empty DeletedAt:
+//   - If both empty: left wins (arbitrary but deterministic)
+//   - If left empty, right not: right wins (has timestamp)
+//   - If right empty, left not: left wins (has timestamp)
+//
+// Empty DeletedAt shouldn't happen in valid data (validation catches it),
+// but we handle it defensively here.
 func mergeTombstones(left, right Issue) Issue {
-	// Use later deleted_at as the authoritative tombstone
+	// bd-6x5: Handle empty DeletedAt explicitly for clarity
+	if left.DeletedAt == "" && right.DeletedAt == "" {
+		// Both invalid - left wins as tie-breaker
+		return left
+	}
+	if left.DeletedAt == "" {
+		// Left invalid, right valid - right wins
+		return right
+	}
+	if right.DeletedAt == "" {
+		// Right invalid, left valid - left wins
+		return left
+	}
+	// Both valid - use later deleted_at as the authoritative tombstone
 	if isTimeAfter(left.DeletedAt, right.DeletedAt) {
 		return left
 	}
@@ -493,6 +526,30 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 
 	// Merge dependencies - combine and deduplicate
 	result.Dependencies = mergeDependencies(left.Dependencies, right.Dependencies)
+
+	// bd-1sn: If status became tombstone via mergeStatus safety fallback,
+	// copy tombstone fields from whichever side has them
+	if result.Status == StatusTombstone {
+		// Prefer the side with more recent deleted_at, or left if tied
+		if isTimeAfter(left.DeletedAt, right.DeletedAt) {
+			result.DeletedAt = left.DeletedAt
+			result.DeletedBy = left.DeletedBy
+			result.DeleteReason = left.DeleteReason
+			result.OriginalType = left.OriginalType
+		} else if right.DeletedAt != "" {
+			result.DeletedAt = right.DeletedAt
+			result.DeletedBy = right.DeletedBy
+			result.DeleteReason = right.DeleteReason
+			result.OriginalType = right.OriginalType
+		} else if left.DeletedAt != "" {
+			result.DeletedAt = left.DeletedAt
+			result.DeletedBy = left.DeletedBy
+			result.DeleteReason = left.DeleteReason
+			result.OriginalType = left.OriginalType
+		}
+		// Note: if neither has DeletedAt, tombstone fields remain empty
+		// This represents invalid data that validation should catch
+	}
 
 	// All field conflicts are now auto-resolved deterministically
 	return result, ""

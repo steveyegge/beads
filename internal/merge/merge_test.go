@@ -1684,3 +1684,224 @@ func TestMergeStatus_Tombstone(t *testing.T) {
 		})
 	}
 }
+
+// TestMerge3Way_TombstoneWithImplicitDeletion tests bd-ki14 fix:
+// tombstones should be preserved even when the other side implicitly deleted
+func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
+	baseIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original",
+		Status:    "open",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	tombstone := Issue{
+		ID:           "bd-abc123",
+		Title:        "Original",
+		Status:       StatusTombstone,
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		CreatedBy:    "user1",
+		DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+		DeletedBy:    "user2",
+		DeleteReason: "Duplicate",
+	}
+
+	t.Run("bd-ki14: tombstone in left preserved when right implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{tombstone}
+		right := []Issue{} // Implicitly deleted in right
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (tombstone preserved), got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to be preserved, got status %q", result[0].Status)
+		}
+		if result[0].DeletedBy != "user2" {
+			t.Errorf("expected tombstone fields preserved, got DeletedBy %q", result[0].DeletedBy)
+		}
+	})
+
+	t.Run("bd-ki14: tombstone in right preserved when left implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{} // Implicitly deleted in left
+		right := []Issue{tombstone}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (tombstone preserved), got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to be preserved, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("bd-ki14: live issue in left still deleted when right implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		modifiedLive := Issue{
+			ID:        "bd-abc123",
+			Title:     "Modified",
+			Status:    "in_progress",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := []Issue{modifiedLive}
+		right := []Issue{} // Implicitly deleted in right
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		// Live issue should be deleted (implicit deletion wins for non-tombstones)
+		if len(result) != 0 {
+			t.Errorf("expected implicit deletion to win for live issue, got %d results", len(result))
+		}
+	})
+}
+
+// TestMergeTombstones_EmptyDeletedAt tests bd-6x5 fix:
+// handling empty DeletedAt timestamps in tombstone merging
+func TestMergeTombstones_EmptyDeletedAt(t *testing.T) {
+	tests := []struct {
+		name           string
+		leftDeletedAt  string
+		rightDeletedAt string
+		expectedSide   string // "left" or "right"
+	}{
+		{
+			name:           "bd-6x5: both empty - left wins as tie-breaker",
+			leftDeletedAt:  "",
+			rightDeletedAt: "",
+			expectedSide:   "left",
+		},
+		{
+			name:           "bd-6x5: left empty, right valid - right wins",
+			leftDeletedAt:  "",
+			rightDeletedAt: "2024-01-01T00:00:00Z",
+			expectedSide:   "right",
+		},
+		{
+			name:           "bd-6x5: left valid, right empty - left wins",
+			leftDeletedAt:  "2024-01-01T00:00:00Z",
+			rightDeletedAt: "",
+			expectedSide:   "left",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.leftDeletedAt,
+				DeletedBy: "user-left",
+			}
+			right := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.rightDeletedAt,
+				DeletedBy: "user-right",
+			}
+			result := mergeTombstones(left, right)
+			if tt.expectedSide == "left" && result.DeletedBy != "user-left" {
+				t.Errorf("expected left tombstone to win, got DeletedBy %q", result.DeletedBy)
+			}
+			if tt.expectedSide == "right" && result.DeletedBy != "user-right" {
+				t.Errorf("expected right tombstone to win, got DeletedBy %q", result.DeletedBy)
+			}
+		})
+	}
+}
+
+// TestMergeIssue_TombstoneFields tests bd-1sn fix:
+// tombstone fields should be copied when status becomes tombstone via safety fallback
+func TestMergeIssue_TombstoneFields(t *testing.T) {
+	t.Run("bd-1sn: tombstone fields copied from left when tombstone via mergeStatus", func(t *testing.T) {
+		base := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-02T00:00:00Z",
+			DeletedBy:    "user2",
+			DeleteReason: "Duplicate",
+			OriginalType: "task",
+		}
+		right := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+
+		result, _ := mergeIssue(base, left, right)
+		if result.Status != StatusTombstone {
+			t.Errorf("expected tombstone status, got %q", result.Status)
+		}
+		if result.DeletedAt != "2024-01-02T00:00:00Z" {
+			t.Errorf("expected DeletedAt to be copied, got %q", result.DeletedAt)
+		}
+		if result.DeletedBy != "user2" {
+			t.Errorf("expected DeletedBy to be copied, got %q", result.DeletedBy)
+		}
+		if result.DeleteReason != "Duplicate" {
+			t.Errorf("expected DeleteReason to be copied, got %q", result.DeleteReason)
+		}
+		if result.OriginalType != "task" {
+			t.Errorf("expected OriginalType to be copied, got %q", result.OriginalType)
+		}
+	})
+
+	t.Run("bd-1sn: tombstone fields copied from right when it has later deleted_at", func(t *testing.T) {
+		base := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-02T00:00:00Z",
+			DeletedBy:    "user-left",
+			DeleteReason: "Left reason",
+		}
+		right := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-03T00:00:00Z", // Later
+			DeletedBy:    "user-right",
+			DeleteReason: "Right reason",
+		}
+
+		result, _ := mergeIssue(base, left, right)
+		if result.Status != StatusTombstone {
+			t.Errorf("expected tombstone status, got %q", result.Status)
+		}
+		// Right has later deleted_at, so right's fields should be used
+		if result.DeletedBy != "user-right" {
+			t.Errorf("expected DeletedBy from right (later), got %q", result.DeletedBy)
+		}
+		if result.DeleteReason != "Right reason" {
+			t.Errorf("expected DeleteReason from right, got %q", result.DeleteReason)
+		}
+	})
+}
