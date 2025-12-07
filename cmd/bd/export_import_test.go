@@ -260,3 +260,103 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("EstimatedMinutes = %v, want %v", decoded.EstimatedMinutes, original.EstimatedMinutes)
 	}
 }
+
+// TestExportIncludesTombstones verifies that tombstones are included in JSONL export (bd-yk8w)
+func TestExportIncludesTombstones(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store := newTestStoreWithPrefix(t, dbPath, "test")
+
+	// Create a regular issue
+	regularIssue := &types.Issue{
+		ID:        "test-abc",
+		Title:     "Regular issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, regularIssue, "test"); err != nil {
+		t.Fatalf("Failed to create regular issue: %v", err)
+	}
+
+	// Create a tombstone issue
+	deletedAt := time.Now().Add(-time.Hour)
+	tombstone := &types.Issue{
+		ID:           "test-def",
+		Title:        "(deleted)",
+		Status:       types.StatusTombstone,
+		Priority:     2,
+		IssueType:    types.TypeTask,
+		CreatedAt:    time.Now().Add(-48 * time.Hour),
+		UpdatedAt:    deletedAt,
+		DeletedAt:    &deletedAt,
+		DeletedBy:    "alice",
+		DeleteReason: "duplicate issue",
+		OriginalType: "bug",
+	}
+	if err := store.CreateIssue(ctx, tombstone, "test"); err != nil {
+		t.Fatalf("Failed to create tombstone: %v", err)
+	}
+
+	// Export all issues (including tombstones)
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+
+	// Verify we got both issues
+	if len(allIssues) != 2 {
+		t.Fatalf("Expected 2 issues (1 regular + 1 tombstone), got %d", len(allIssues))
+	}
+
+	// Encode to JSONL
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	for _, issue := range allIssues {
+		if err := encoder.Encode(issue); err != nil {
+			t.Fatalf("Failed to encode issue: %v", err)
+		}
+	}
+
+	// Verify JSONL contains both issues
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("Expected 2 JSONL lines, got %d", len(lines))
+	}
+
+	// Parse and verify tombstone fields are present
+	foundTombstone := false
+	for _, line := range lines {
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			t.Fatalf("Failed to parse JSONL line: %v", err)
+		}
+
+		if issue.ID == "test-def" {
+			foundTombstone = true
+			if issue.Status != types.StatusTombstone {
+				t.Errorf("Expected tombstone status, got %q", issue.Status)
+			}
+			if issue.DeletedBy != "alice" {
+				t.Errorf("Expected DeletedBy 'alice', got %q", issue.DeletedBy)
+			}
+			if issue.DeleteReason != "duplicate issue" {
+				t.Errorf("Expected DeleteReason 'duplicate issue', got %q", issue.DeleteReason)
+			}
+			if issue.OriginalType != "bug" {
+				t.Errorf("Expected OriginalType 'bug', got %q", issue.OriginalType)
+			}
+			if issue.DeletedAt == nil {
+				t.Error("Expected DeletedAt to be set")
+			}
+		}
+	}
+
+	if !foundTombstone {
+		t.Error("Tombstone not found in JSONL output")
+	}
+}
