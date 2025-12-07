@@ -227,3 +227,202 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestIsValidBoolString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"true", "true", true},
+		{"false", "false", true},
+		{"True uppercase", "True", true},
+		{"FALSE uppercase", "FALSE", true},
+		{"yes", "yes", true},
+		{"no", "no", true},
+		{"1", "1", true},
+		{"0", "0", true},
+		{"on", "on", true},
+		{"off", "off", true},
+		{"t", "t", true},
+		{"f", "f", true},
+		{"y", "y", true},
+		{"n", "n", true},
+
+		{"invalid string", "invalid", false},
+		{"maybe", "maybe", false},
+		{"2", "2", false},
+		{"empty", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidBoolString(tt.input)
+			if got != tt.expected {
+				t.Errorf("isValidBoolString(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExpandPath(t *testing.T) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot get home directory")
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"tilde only", "~", homeDir},
+		{"tilde path", "~/foo/bar", filepath.Join(homeDir, "foo/bar")},
+		{"no tilde", "/absolute/path", "/absolute/path"},
+		{"relative", "relative/path", "relative/path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := expandPath(tt.input)
+			if got != tt.expected {
+				t.Errorf("expandPath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidActorRegex(t *testing.T) {
+	tests := []struct {
+		name     string
+		actor    string
+		expected bool
+	}{
+		{"simple name", "alice", true},
+		{"with numbers", "user123", true},
+		{"with dash", "alice-bob", true},
+		{"with underscore", "alice_bob", true},
+		{"with dot", "alice.bob", true},
+		{"email", "alice@example.com", true},
+		{"starts with number", "123user", true},
+
+		{"empty", "", false},
+		{"starts with dash", "-user", false},
+		{"starts with dot", ".user", false},
+		{"starts with at", "@user", false},
+		{"contains space", "alice bob", false},
+		{"contains special", "alice$bob", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validActorRegex.MatchString(tt.actor)
+			if got != tt.expected {
+				t.Errorf("validActorRegex.MatchString(%q) = %v, want %v", tt.actor, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidCustomStatusRegex(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		expected bool
+	}{
+		{"simple", "awaiting_review", true},
+		{"with numbers", "stage1", true},
+		{"lowercase only", "testing", true},
+		{"underscore prefix", "a_test", true},
+
+		{"uppercase", "Awaiting_Review", false},
+		{"starts with number", "1stage", false},
+		{"starts with underscore", "_test", false},
+		{"contains dash", "awaiting-review", false},
+		{"empty", "", false},
+		{"space", "awaiting review", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validCustomStatusRegex.MatchString(tt.status)
+			if got != tt.expected {
+				t.Errorf("validCustomStatusRegex.MatchString(%q) = %v, want %v", tt.status, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCheckConfigValuesActor(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	t.Run("invalid actor", func(t *testing.T) {
+		configContent := `actor: "@invalid-actor"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		check := CheckConfigValues(tmpDir)
+		if check.Status != "warning" {
+			t.Errorf("expected warning status, got %s", check.Status)
+		}
+		if check.Detail == "" || !contains(check.Detail, "actor") {
+			t.Errorf("expected detail to mention actor, got: %s", check.Detail)
+		}
+	})
+
+	t.Run("valid actor", func(t *testing.T) {
+		configContent := `actor: "alice@example.com"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		check := CheckConfigValues(tmpDir)
+		if check.Status != "ok" {
+			t.Errorf("expected ok status, got %s: %s", check.Status, check.Detail)
+		}
+	})
+}
+
+func TestCheckConfigValuesDbPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	t.Run("unusual db extension", func(t *testing.T) {
+		configContent := `db: "/path/to/database.txt"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		check := CheckConfigValues(tmpDir)
+		if check.Status != "warning" {
+			t.Errorf("expected warning status, got %s", check.Status)
+		}
+		if check.Detail == "" || !contains(check.Detail, "db") {
+			t.Errorf("expected detail to mention db, got: %s", check.Detail)
+		}
+	})
+
+	t.Run("valid db path", func(t *testing.T) {
+		configContent := `db: "/path/to/database.db"
+`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		check := CheckConfigValues(tmpDir)
+		if check.Status != "ok" {
+			t.Errorf("expected ok status, got %s: %s", check.Status, check.Detail)
+		}
+	})
+}

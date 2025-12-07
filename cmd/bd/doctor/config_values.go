@@ -1,14 +1,19 @@
 package doctor
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/viper"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
@@ -24,6 +29,12 @@ var validRoutingModes = map[string]bool{
 // Can't start with -, can't end with ., can't contain ..
 var validBranchNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$`)
 
+// validActorRegex validates actor names (alphanumeric with dashes, underscores, dots, and @ for emails)
+var validActorRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]*$`)
+
+// validCustomStatusRegex validates custom status names (alphanumeric with underscores)
+var validCustomStatusRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 // CheckConfigValues validates configuration values in config.yaml and metadata.json
 // Returns issues found, or OK if all values are valid
 func CheckConfigValues(repoPath string) DoctorCheck {
@@ -36,6 +47,10 @@ func CheckConfigValues(repoPath string) DoctorCheck {
 	// Check metadata.json values
 	metadataIssues := checkMetadataConfigValues(repoPath)
 	issues = append(issues, metadataIssues...)
+
+	// Check database config values (status.custom, etc.)
+	dbIssues := checkDatabaseConfigValues(repoPath)
+	issues = append(issues, dbIssues...)
 
 	if len(issues) == 0 {
 		return DoctorCheck{
@@ -158,7 +173,106 @@ func checkYAMLConfigValues(repoPath string) []string {
 		}
 	}
 
+	// Validate actor (should be alphanumeric with common special chars if set)
+	if v.IsSet("actor") {
+		actor := v.GetString("actor")
+		if actor != "" && !validActorRegex.MatchString(actor) {
+			issues = append(issues, fmt.Sprintf("actor: %q is invalid (must start with letter/number, contain only letters, numbers, dashes, underscores, dots, or @)", actor))
+		}
+	}
+
+	// Validate db path (should be a valid file path if set)
+	if v.IsSet("db") {
+		dbPath := v.GetString("db")
+		if dbPath != "" {
+			// Check for invalid path characters (null bytes, etc.)
+			if strings.ContainsAny(dbPath, "\x00") {
+				issues = append(issues, fmt.Sprintf("db: %q contains invalid characters", dbPath))
+			}
+			// Check if it has a valid database extension
+			if !strings.HasSuffix(dbPath, ".db") && !strings.HasSuffix(dbPath, ".sqlite") && !strings.HasSuffix(dbPath, ".sqlite3") {
+				issues = append(issues, fmt.Sprintf("db: %q has unusual extension (expected .db, .sqlite, or .sqlite3)", dbPath))
+			}
+		}
+	}
+
+	// Validate boolean config values are actually booleans
+	for _, key := range []string{"json", "no-daemon", "no-auto-flush", "no-auto-import", "no-db", "auto-start-daemon"} {
+		if v.IsSet(key) {
+			// Try to get as string first to check if it's a valid boolean representation
+			strVal := v.GetString(key)
+			if strVal != "" {
+				// Valid boolean strings: true, false, 1, 0, yes, no, on, off (case insensitive)
+				if !isValidBoolString(strVal) {
+					issues = append(issues, fmt.Sprintf("%s: %q is not a valid boolean value (expected true/false, yes/no, 1/0, on/off)", key, strVal))
+				}
+			}
+		}
+	}
+
+	// Validate sync.require_confirmation_on_mass_delete (should be boolean)
+	if v.IsSet("sync.require_confirmation_on_mass_delete") {
+		strVal := v.GetString("sync.require_confirmation_on_mass_delete")
+		if strVal != "" && !isValidBoolString(strVal) {
+			issues = append(issues, fmt.Sprintf("sync.require_confirmation_on_mass_delete: %q is not a valid boolean value", strVal))
+		}
+	}
+
+	// Validate repos.primary (should be a directory path if set)
+	if v.IsSet("repos.primary") {
+		primary := v.GetString("repos.primary")
+		if primary != "" {
+			expandedPath := expandPath(primary)
+			if info, err := os.Stat(expandedPath); err == nil {
+				if !info.IsDir() {
+					issues = append(issues, fmt.Sprintf("repos.primary: %q is not a directory", primary))
+				}
+			} else if !os.IsNotExist(err) {
+				issues = append(issues, fmt.Sprintf("repos.primary: cannot access %q: %v", primary, err))
+			}
+			// Note: path not existing is OK - might be created later
+		}
+	}
+
+	// Validate repos.additional (should be directory paths if set)
+	if v.IsSet("repos.additional") {
+		additional := v.GetStringSlice("repos.additional")
+		for _, path := range additional {
+			if path != "" {
+				expandedPath := expandPath(path)
+				if info, err := os.Stat(expandedPath); err == nil {
+					if !info.IsDir() {
+						issues = append(issues, fmt.Sprintf("repos.additional: %q is not a directory", path))
+					}
+				}
+				// Note: path not existing is OK - might be created later
+			}
+		}
+	}
+
 	return issues
+}
+
+// isValidBoolString checks if a string represents a valid boolean value
+func isValidBoolString(s string) bool {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	switch lower {
+	case "true", "false", "yes", "no", "1", "0", "on", "off", "t", "f", "y", "n":
+		return true
+	}
+	// Also check if it parses as a bool
+	_, err := strconv.ParseBool(s)
+	return err == nil
+}
+
+// expandPath expands ~ to home directory and resolves the path
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[1:])
+		}
+	}
+	return path
 }
 
 // checkMetadataConfigValues validates values in metadata.json
@@ -200,6 +314,66 @@ func checkMetadataConfigValues(repoPath string) []string {
 	// Validate deletions_retention_days
 	if cfg.DeletionsRetentionDays < 0 {
 		issues = append(issues, fmt.Sprintf("metadata.json deletions_retention_days: %d is invalid (must be >= 0)", cfg.DeletionsRetentionDays))
+	}
+
+	return issues
+}
+
+// checkDatabaseConfigValues validates configuration values stored in the database
+func checkDatabaseConfigValues(repoPath string) []string {
+	var issues []string
+
+	beadsDir := filepath.Join(repoPath, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return issues // No .beads directory, nothing to check
+	}
+
+	// Get database path
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	// Check metadata.json for custom database name
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	}
+
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return issues // No database, nothing to check
+	}
+
+	// Open database in read-only mode
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return issues // Can't open database, skip
+	}
+	defer db.Close()
+
+	// Check status.custom - custom status names should be lowercase alphanumeric with underscores
+	var statusCustom string
+	err = db.QueryRow("SELECT value FROM config WHERE key = 'status.custom'").Scan(&statusCustom)
+	if err == nil && statusCustom != "" {
+		statuses := strings.Split(statusCustom, ",")
+		for _, status := range statuses {
+			status = strings.TrimSpace(status)
+			if status == "" {
+				continue
+			}
+			if !validCustomStatusRegex.MatchString(status) {
+				issues = append(issues, fmt.Sprintf("status.custom: %q is invalid (must start with lowercase letter, contain only lowercase letters, numbers, and underscores)", status))
+			}
+			// Check for conflicts with built-in statuses
+			switch status {
+			case "open", "in_progress", "blocked", "closed":
+				issues = append(issues, fmt.Sprintf("status.custom: %q conflicts with built-in status", status))
+			}
+		}
+	}
+
+	// Check sync.branch if stored in database (legacy location)
+	var syncBranch string
+	err = db.QueryRow("SELECT value FROM config WHERE key = 'sync.branch'").Scan(&syncBranch)
+	if err == nil && syncBranch != "" {
+		if !isValidBranchName(syncBranch) {
+			issues = append(issues, fmt.Sprintf("sync.branch (database): %q is not a valid git branch name", syncBranch))
+		}
 	}
 
 	return issues
