@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"gopkg.in/yaml.v3"
 )
 
 // checkAndAutoImport checks if the database is empty but git has issues.
@@ -142,6 +143,12 @@ func checkGitForIssues() (int, string, string) {
 	return 0, "", ""
 }
 
+// localConfig represents the subset of config.yaml we need for auto-import.
+// Using proper YAML parsing handles edge cases like comments, indentation, and special characters.
+type localConfig struct {
+	SyncBranch string `yaml:"sync-branch"`
+}
+
 // getLocalSyncBranch reads sync-branch from the local config.yaml file.
 // This reads directly from the file rather than using cached config to handle
 // cases where CWD has changed since config initialization.
@@ -158,20 +165,13 @@ func getLocalSyncBranch(beadsDir string) string {
 		return ""
 	}
 
-	// Simple YAML parsing for sync-branch key
-	// Format: "sync-branch: value" or "sync-branch: \"value\""
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "sync-branch:") {
-			value := strings.TrimPrefix(line, "sync-branch:")
-			value = strings.TrimSpace(value)
-			// Remove quotes if present
-			value = strings.Trim(value, "\"'")
-			return value
-		}
+	// Parse YAML properly to handle edge cases (comments, indentation, special chars)
+	var cfg localConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
 	}
 
-	return ""
+	return cfg.SyncBranch
 }
 
 // findBeadsDir finds the .beads directory in current or parent directories
