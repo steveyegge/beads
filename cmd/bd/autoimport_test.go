@@ -298,3 +298,121 @@ func TestBoolToFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestGetLocalSyncBranch(t *testing.T) {
+	tests := []struct {
+		name        string
+		configYAML  string
+		envVar      string
+		want        string
+		createFile  bool
+	}{
+		{
+			name:       "no config.yaml exists",
+			createFile: false,
+			want:       "",
+		},
+		{
+			name:       "config.yaml has no sync-branch key",
+			configYAML: "issue-prefix: test\nauthor: testuser\n",
+			createFile: true,
+			want:       "",
+		},
+		{
+			name:       "sync-branch without quotes",
+			configYAML: "sync-branch: my-branch\n",
+			createFile: true,
+			want:       "my-branch",
+		},
+		{
+			name:       "sync-branch with double quotes",
+			configYAML: `sync-branch: "my-quoted-branch"` + "\n",
+			createFile: true,
+			want:       "my-quoted-branch",
+		},
+		{
+			name:       "sync-branch with single quotes",
+			configYAML: `sync-branch: 'single-quoted'` + "\n",
+			createFile: true,
+			want:       "single-quoted",
+		},
+		{
+			name:       "env var takes precedence",
+			configYAML: "sync-branch: config-branch\n",
+			createFile: true,
+			envVar:     "env-branch",
+			want:       "env-branch",
+		},
+		{
+			name:       "empty file",
+			configYAML: "",
+			createFile: true,
+			want:       "",
+		},
+		{
+			name:       "whitespace-only lines",
+			configYAML: "   \n\t\n  \n",
+			createFile: true,
+			want:       "",
+		},
+		{
+			name:       "sync-branch after comments",
+			configYAML: "# This is a comment\n# sync-branch: fake\nsync-branch: real-branch\n",
+			createFile: true,
+			want:       "real-branch",
+		},
+		{
+			name:       "sync-branch with trailing comment",
+			configYAML: "sync-branch: branch-name # inline comment not valid YAML but test it\n",
+			createFile: true,
+			want:       "branch-name",
+		},
+		{
+			name:       "sync-branch with special characters",
+			configYAML: "sync-branch: feature/my-branch_v2.0\n",
+			createFile: true,
+			want:       "feature/my-branch_v2.0",
+		},
+		{
+			name:       "sync-branch indented under section (not top-level)",
+			configYAML: "settings:\n  sync-branch: nested-branch\n",
+			createFile: true,
+			want:       "", // Only top-level sync-branch should be read
+		},
+		{
+			name:       "mixed config with sync-branch",
+			configYAML: "issue-prefix: bd\nauthor: steve\nsync-branch: beads-sync\npriority: P2\n",
+			createFile: true,
+			want:       "beads-sync",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp beads directory
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.MkdirAll(beadsDir, 0755); err != nil {
+				t.Fatalf("Failed to create beads dir: %v", err)
+			}
+
+			// Create config.yaml if needed
+			if tt.createFile {
+				configPath := filepath.Join(beadsDir, "config.yaml")
+				if err := os.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
+					t.Fatalf("Failed to write config.yaml: %v", err)
+				}
+			}
+
+			// Set env var if specified
+			if tt.envVar != "" {
+				t.Setenv("BEADS_SYNC_BRANCH", tt.envVar)
+			}
+
+			got := getLocalSyncBranch(beadsDir)
+			if got != tt.want {
+				t.Errorf("getLocalSyncBranch() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
