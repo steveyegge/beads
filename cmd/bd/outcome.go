@@ -58,6 +58,8 @@ var outcomeRecordCmd = &cobra.Command{
 	Short: "Record outcome when closing an issue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		TrackUsage("outcome", "record", args)
+
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: not in a beads project")
@@ -124,6 +126,7 @@ var outcomeShowCmd = &cobra.Command{
 	Short: "Show outcome for a specific issue",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		TrackUsage("outcome", "show", args)
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: not in a beads project")
@@ -149,6 +152,7 @@ var outcomeStatsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show aggregate statistics",
 	Run: func(cmd *cobra.Command, args []string) {
+		TrackUsage("outcome", "stats", args)
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: not in a beads project")
@@ -177,6 +181,7 @@ var outcomeRecentCmd = &cobra.Command{
 	Use:   "recent [n]",
 	Short: "Show n most recent outcomes",
 	Run: func(cmd *cobra.Command, args []string) {
+		TrackUsage("outcome", "recent", args)
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: not in a beads project")

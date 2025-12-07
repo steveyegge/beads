@@ -71,6 +71,17 @@ Examples:
   bd context --search "bottleneck"              Search all context
   bd context --list                             List issues with context`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Track usage
+		subcmd := "show"
+		if contextSearch != "" {
+			subcmd = "search"
+		} else if contextList {
+			subcmd = "list"
+		} else if contextAddNote != "" || contextAddFinding != "" || contextAddDecision != "" {
+			subcmd = "add"
+		}
+		TrackUsage("context", subcmd, args)
+
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: not in a beads project")
