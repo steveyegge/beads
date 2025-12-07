@@ -296,7 +296,6 @@ var rootCmd = &cobra.Command{
 				beadsDir := beads.FindBeadsDir()
 				if beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-					configPath := filepath.Join(beadsDir, "config.yaml")
 
 					// Check if JSONL exists and config.yaml has no-db: true
 					jsonlExists := false
@@ -304,11 +303,8 @@ var rootCmd = &cobra.Command{
 						jsonlExists = true
 					}
 
-					isNoDbMode := false
-					// configPath is safe: constructed from filepath.Join(beadsDir, hardcoded name)
-					if configData, err := os.ReadFile(configPath); err == nil { //nolint:gosec
-						isNoDbMode = strings.Contains(string(configData), "no-db: true")
-					}
+					// Use proper YAML parsing to detect no-db mode (bd-r6k2)
+					isNoDbMode := isNoDbModeConfigured(beadsDir)
 
 					// If JSONL-only mode is configured, auto-enable it
 					if jsonlExists && isNoDbMode {

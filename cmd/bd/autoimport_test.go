@@ -299,6 +299,85 @@ func TestBoolToFlag(t *testing.T) {
 	}
 }
 
+func TestIsNoDbModeConfigured(t *testing.T) {
+	tests := []struct {
+		name       string
+		configYAML string
+		createFile bool
+		want       bool
+	}{
+		{
+			name:       "no config.yaml exists",
+			createFile: false,
+			want:       false,
+		},
+		{
+			name:       "config.yaml without no-db key",
+			configYAML: "issue-prefix: test\nauthor: testuser\n",
+			createFile: true,
+			want:       false,
+		},
+		{
+			name:       "no-db: true",
+			configYAML: "no-db: true\n",
+			createFile: true,
+			want:       true,
+		},
+		{
+			name:       "no-db: false",
+			configYAML: "no-db: false\n",
+			createFile: true,
+			want:       false,
+		},
+		{
+			name:       "no-db in comment should not match",
+			configYAML: "# no-db: true\nissue-prefix: test\n",
+			createFile: true,
+			want:       false,
+		},
+		{
+			name:       "no-db nested under section should not match",
+			configYAML: "settings:\n  no-db: true\n",
+			createFile: true,
+			want:       false,
+		},
+		{
+			name:       "no-db with other config",
+			configYAML: "issue-prefix: bd\nno-db: true\nauthor: steve\n",
+			createFile: true,
+			want:       true,
+		},
+		{
+			name:       "empty file",
+			configYAML: "",
+			createFile: true,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.MkdirAll(beadsDir, 0755); err != nil {
+				t.Fatalf("Failed to create beads dir: %v", err)
+			}
+
+			if tt.createFile {
+				configPath := filepath.Join(beadsDir, "config.yaml")
+				if err := os.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
+					t.Fatalf("Failed to write config.yaml: %v", err)
+				}
+			}
+
+			got := isNoDbModeConfigured(beadsDir)
+			if got != tt.want {
+				t.Errorf("isNoDbModeConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetLocalSyncBranch(t *testing.T) {
 	tests := []struct {
 		name        string

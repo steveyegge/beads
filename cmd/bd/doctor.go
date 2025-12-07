@@ -854,16 +854,8 @@ func checkDatabaseVersion(path string) doctorCheck {
 
 		if jsonlPath != "" {
 			// JSONL exists but no database - check if this is no-db mode or fresh clone
-			// Check config.yaml for no-db: true
-			configPath := filepath.Join(beadsDir, "config.yaml")
-			isNoDbMode := false
-			// #nosec G304 -- configPath is constructed from beadsDir which is in .beads/
-			if configData, err := os.ReadFile(configPath); err == nil {
-				// Simple check for no-db: true in config.yaml
-				isNoDbMode = strings.Contains(string(configData), "no-db: true")
-			}
-
-			if isNoDbMode {
+			// Use proper YAML parsing to detect no-db mode (bd-r6k2)
+			if isNoDbModeConfigured(beadsDir) {
 				return doctorCheck{
 					Name:    "Database",
 					Status:  statusOK,

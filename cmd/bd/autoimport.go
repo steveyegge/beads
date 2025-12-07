@@ -143,10 +143,28 @@ func checkGitForIssues() (int, string, string) {
 	return 0, "", ""
 }
 
-// localConfig represents the subset of config.yaml we need for auto-import.
+// localConfig represents the subset of config.yaml we need for auto-import and no-db detection.
 // Using proper YAML parsing handles edge cases like comments, indentation, and special characters.
 type localConfig struct {
 	SyncBranch string `yaml:"sync-branch"`
+	NoDb       bool   `yaml:"no-db"`
+}
+
+// isNoDbModeConfigured checks if no-db: true is set in config.yaml.
+// Uses proper YAML parsing to avoid false matches in comments or nested keys.
+func isNoDbModeConfigured(beadsDir string) bool {
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from beadsDir
+	if err != nil {
+		return false
+	}
+
+	var cfg localConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.NoDb
 }
 
 // getLocalSyncBranch reads sync-branch from the local config.yaml file.
