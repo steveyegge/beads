@@ -8,9 +8,8 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.18.1
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/google/go-cmp v0.7.0
 	github.com/ncruces/go-sqlite3 v0.30.1
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tetratelabs/wazero v1.10.1
 	golang.org/x/mod v0.30.0
@@ -23,6 +22,7 @@ require (
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
