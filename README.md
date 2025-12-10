@@ -328,7 +328,7 @@ bd sync  # Immediately flush pending changes and import latest JSONL
 
 **For zero-lag sync**, install the git hooks:
 ```bash
-cd examples/git-hooks && ./install.sh
+bd hooks install
 ```
 
 This adds:
