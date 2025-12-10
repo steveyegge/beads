@@ -31,25 +31,29 @@ There are two ways to install the beads plugin:
 
 #### Option 1: From GitHub (Recommended)
 
-```bash
-# In Claude Code
-/plugin marketplace add steveyegge/beads
-/plugin install beads
-```
+In Claude Code, run these commands:
+
+    /plugin marketplace add steveyegge/beads
+    /plugin install beads
 
 #### Option 2: Local Development
 
 ```bash
 # Clone the repository
 git clone https://github.com/steveyegge/beads
-cd beads
-
-# Add local marketplace
-/plugin marketplace add .
-
-# Install plugin
-/plugin install beads
 ```
+
+Then start Claude Code, and add the local marketplace via:
+
+    /plugin marketplace add ./beads
+
+If you only want the plugin installed in your code repo
+rather than globally, you'll now need to exit Claude,
+`cd` to your code repo, and start Claude again from there.
+
+Finally, install the plugin via this command in Claude:
+
+    /plugin install beads
 
 ### Restart Claude Code
 
