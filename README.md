@@ -317,7 +317,7 @@ git push
 git pull
 # bd automatically detects JSONL is newer and imports on next command
 
-bd ready  # Fresh data from git!
+bd ready  # Show fresh issue data from git!
 bd list   # Shows issues from other machines
 ```
 
