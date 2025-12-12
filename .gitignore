@@ -111,3 +111,4 @@ beads-perf-*.prof
 bench-cpu-*.prof
 bd-profile-*.prof
 bd-trace-*.out
+.beads/events.log

@@ -259,6 +259,9 @@ var createCmd = &cobra.Command{
 				fmt.Printf("  Title: %s\n", issue.Title)
 				fmt.Printf("  Priority: P%d\n", issue.Priority)
 				fmt.Printf("  Status: %s\n", issue.Status)
+
+				// Log event
+				debug.LogEvent("bd.issue.create", issue.ID, issue.Title)
 			}
 			return
 		}
@@ -392,6 +395,9 @@ var createCmd = &cobra.Command{
 			fmt.Printf("  Title: %s\n", issue.Title)
 			fmt.Printf("  Priority: P%d\n", issue.Priority)
 			fmt.Printf("  Status: %s\n", issue.Status)
+
+			// Log event
+			debug.LogEvent("bd.issue.create", issue.ID, issue.Title)
 
 			// Show tip after successful create (direct mode only)
 			maybeShowTip(store)
