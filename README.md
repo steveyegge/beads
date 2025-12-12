@@ -835,6 +835,7 @@ For advanced usage, see:
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with kanban board, tree view, dependency graph, and statistics dashboard. Vim-style navigation, search/filter, themes, and native notifications. Built by [@assimelha](https://github.com/assimelha).
 - **[perles](https://github.com/zjrosen/perles)** - Terminal UI with BQL (Beads Query Language) for local search and multi-view kanban boards with custom colors. Built by [@zjrosen](https://github.com/zjrosen).
 - **[vscode-beads](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads)** - VS Code extension with issues panel, details view, and daemon management. Built by [@jdillon](https://github.com/jdillon).
+- **[beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)** - keyboard-driven terminal UI with kanban board, insights panel, and graph view
 
 Have you built something cool with bd? [Open an issue](https://github.com/steveyegge/beads/issues) to get it featured here!
 
