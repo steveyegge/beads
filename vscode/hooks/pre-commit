@@ -1,0 +1,32 @@
+#!/bin/bash
+# pre-commit hook - Beads-First Application
+# STATUS: GREEN FIELD - LOGGING ONLY
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_SCRIPT="$PROJECT_ROOT/scripts/beads-log-event.sh"
+
+# Log hook trigger
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-commit.start" "none" "pre-commit hook triggered"
+fi
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "HOOK TRIGGERED: pre-commit"
+echo "STATUS: Logging only - no enforcement implemented"
+echo "EVENT: hk.pre-commit.start logged to .beads/events.log"
+echo "═══════════════════════════════════════════════════════════════"
+
+# FUTURE ENFORCEMENT (not active):
+# - Check if beads are synced
+# - Verify commit message format (bd-XXXX: description)
+# - Check scope violations
+# - Verify tests pass
+
+# Log pass (since we're not enforcing yet)
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-commit.pass" "none" "green field - no checks"
+fi
+
+# Green field: always pass
+exit 0

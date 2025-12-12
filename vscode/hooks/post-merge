@@ -1,0 +1,29 @@
+#!/bin/bash
+# post-merge hook - Beads-First Application
+# STATUS: GREEN FIELD - LOGGING ONLY
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_SCRIPT="$PROJECT_ROOT/scripts/beads-log-event.sh"
+
+# Log hook trigger
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.post-merge" "none" "post-merge hook triggered"
+fi
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "HOOK TRIGGERED: post-merge"
+echo "STATUS: Logging only - no processing implemented"
+echo "EVENT: hk.post-merge logged to .beads/events.log"
+echo "═══════════════════════════════════════════════════════════════"
+
+# FUTURE PROCESSING (not active):
+# - Auto-sync beads after merge
+# - Rebuild SQLite cache
+# - Check for beads merge conflicts
+
+# Example future processing:
+# bd sync --quiet
+# "$LOG_SCRIPT" "bd.sync.complete" "none" "post-merge auto-sync"
+
+exit 0

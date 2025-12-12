@@ -1,0 +1,39 @@
+#!/bin/bash
+# pre-push hook - Beads-First Application
+# STATUS: GREEN FIELD - LOGGING ONLY
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_SCRIPT="$PROJECT_ROOT/scripts/beads-log-event.sh"
+
+# Log hook trigger
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-push.start" "none" "pre-push hook triggered"
+fi
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "HOOK TRIGGERED: pre-push"
+echo "STATUS: Logging only - no enforcement implemented"
+echo "EVENT: hk.pre-push.start logged to .beads/events.log"
+echo "═══════════════════════════════════════════════════════════════"
+
+# FUTURE ENFORCEMENT (not active):
+# - Check if landing ritual was completed
+# - Verify beads are synced (.beads/beads.jsonl committed)
+# - Check for uncommitted changes
+# - Verify handoff document exists
+
+# Example future check:
+# if [ ! -f ".beads/last-handoff.md" ]; then
+#     "$LOG_SCRIPT" "hk.pre-push.fail" "none" "no handoff document"
+#     echo "ERROR: Landing ritual not complete. Run beads-landing skill."
+#     exit 1
+# fi
+
+# Log pass (since we're not enforcing yet)
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-push.pass" "none" "green field - no checks"
+fi
+
+# Green field: always pass
+exit 0

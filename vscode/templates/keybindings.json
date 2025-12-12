@@ -1,0 +1,45 @@
+[
+  {
+    "// BEADS SESSION SHORTCUTS": ""
+  },
+  {
+    "key": "ctrl+shift+b",
+    "command": "workbench.action.chat.open",
+    "args": {
+      "query": "Load beads-bootup skill and start session"
+    },
+    "when": "!terminalFocus"
+  },
+  {
+    "key": "ctrl+shift+l",
+    "command": "workbench.action.chat.open",
+    "args": {
+      "query": "Load beads-landing skill and end session"
+    },
+    "when": "!terminalFocus"
+  },
+  {
+    "key": "ctrl+shift+r",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "bd ready --json\n"
+    },
+    "when": "terminalFocus"
+  },
+  {
+    "key": "ctrl+shift+s",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "bd sync && git status\n"
+    },
+    "when": "terminalFocus"
+  },
+  {
+    "key": "ctrl+shift+e",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "tail -10 .beads/events.log\n"
+    },
+    "when": "terminalFocus"
+  }
+]

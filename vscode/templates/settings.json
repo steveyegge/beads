@@ -1,0 +1,36 @@
+{
+  "// BEADS-FIRST APPLICATION SETTINGS": "",
+  
+  "// Chat and Agent Features": "",
+  "chat.agent.enabled": true,
+  "chat.commandCenter.enabled": true,
+  "chat.extensionContentShowMode": "focus",
+  
+  "// Claude Skills Support": "",
+  "chat.experimental.claudeSkills.enabled": true,
+  
+  "// Agent View": "",
+  "workbench.view.extension.chat.visible": true,
+  
+  "// Terminal for bd commands": "",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.defaultProfile.linux": "bash",
+  
+  "// Git Integration": "",
+  "git.autofetch": true,
+  "git.confirmSync": false,
+  "git.enableSmartCommit": true,
+  "scm.repositories.visible": 10,
+  
+  "// File Associations": "",
+  "files.associations": {
+    "*.beads": "json",
+    "beads.jsonl": "json"
+  },
+  
+  "// Recommended Extensions": "",
+  "recommendations": [
+    "github.copilot",
+    "github.copilot-chat"
+  ]
+}
