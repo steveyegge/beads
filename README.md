@@ -97,6 +97,11 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 export PATH="$PATH:$HOME/go/bin"  # Required each session
 ```
 
+**Quick install using `mise` (macOS / Linux / Windows):**
+```bash
+mise use -g aqua:steveyegge/beads
+```
+
 **Quick install (macOS / Linux):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
