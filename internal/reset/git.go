@@ -70,8 +70,9 @@ func GitRemoveBeads(beadsDir string) error {
 	}
 
 	// Try to remove each file (git rm ignores non-existent files with --ignore-unmatch)
+	// Use --force to handle files with staged changes
 	for _, file := range jsonlFiles {
-		cmd := exec.Command("git", "rm", "--ignore-unmatch", "--quiet", file)
+		cmd := exec.Command("git", "rm", "--ignore-unmatch", "--quiet", "--force", file)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
