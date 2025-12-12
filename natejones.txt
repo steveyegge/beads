@@ -1,0 +1,706 @@
+
+We're going to talk about agents and
+0:01
+we're going to talk about memory.
+0:03
+Anthropic dropped a piece of golden
+0:05
+wisdom. I'm going to give you my
+0:06
+takeaways as a builder of agents and
+0:08
+we're going to get through it in five or
+0:09
+six minutes and you're going to walk
+0:10
+away knowing more than like 90% of
+0:12
+people who talk about agents. Because
+0:14
+honestly, most of the time when I see
+0:16
+someone brag on Twitter about agents,
+0:18
+it's immediately apparent that they
+0:20
+don't know what they're talking about
+0:22
+because they are talking about
+0:23
+generalized agents. And if you've ever
+0:26
+built a generalized agent, you know it
+0:30
+tends to be an amnesiac walking around
+0:33
+with a tool belt. It's basically a super
+0:35
+forgetful little agent and you can give
+0:37
+it a big goal and maybe it will do
+0:39
+everything in one manic burst and fail
+0:41
+or maybe it will wander around and make
+0:43
+partial progress and tell you it
+0:44
+succeeded. But neither one is
+0:46
+satisfactory. Anthropic confronted that
+0:49
+directly. I've confronted it. I want to
+0:51
+tell you how it actually works. The key
+0:53
+is moving from a generalized agent to
+0:58
+domain memory as a stateful
+1:00
+representation. I'm going to get into
+1:02
+all of that. That sounds complicated,
+1:03
+but it really isn't. Basically, you can
+1:06
+start with a really strong coding model.
+1:08
+Take Opus 4.5, take Gemini 3, take Chat
+1:10
+GBT 5.1, what have you. And you can
+1:13
+start with it inside a general purpose
+1:15
+agent harness like the Claude agent SDK.
+1:18
+There's other SDKs out there, too. And
+1:20
+that will have context compaction. It
+1:22
+will have tool sets. It will have
+1:23
+planning and execution. And on paper,
+1:26
+you would think, I have an agent. It has
+1:29
+tools. It's in this harness. This should
+1:31
+be enough to keep going. And we have
+1:33
+found in practice it doesn't. No one is
+1:35
+surprised anthropic is admitting it
+1:37
+doesn't. No one who's building agents
+1:39
+seriously thinks that it really works
+1:41
+that way. Domain memory is the other
+1:43
+side of the bridge. Domain memory is
+1:45
+what we get to when we start to take
+1:46
+agents seriously. Domain memory is not.
+1:49
+We have a vector database and we go and
+1:51
+get stuff out of the vector database.
+1:53
+Instead, it's a persistent structured
+1:55
+representation of the work. Remember I
+1:57
+said stateful, it's serious about making
+2:00
+sure the the agent is no longer an
+2:03
+amnesiac that the agent no longer
+2:05
+forgets. Remember how I said we talk
+2:07
+about agents in memory? This is where
+2:10
+the meat and potatoes of memory happens.
+2:12
+So you have to have in a particular
+2:14
+domain a persistent set of goals, an
+2:17
+explicit future list, requirements,
+2:20
+constraints. You have to have a state
+2:22
+like what is passing? What is failing?
+2:24
+What's been tried before? What broke?
+2:27
+What was reverted? You have to have
+2:29
+scaffolding. How do you run? How do you
+2:31
+test? How do you extend the system? And
+2:34
+this shows up in a variety of different
+2:36
+ways. It can show up as a JSON blob,
+2:39
+like a big coded list with a bunch of
+2:42
+features and all of them could initially
+2:45
+be marked failing and all the agent is
+2:48
+doing is going back to that feature list
+2:50
+in the JSON blob and it only gets to
+2:52
+change something when it passes a unit
+2:54
+test. It could look like a cloud
+2:56
+progress text file where you log what
+3:00
+each agent run did. The agent can go
+3:03
+back and read that. These are not these
+3:06
+sound obvious, don't they? I promise
+3:08
+you, most of the people building general
+3:10
+agents are not thinking with this degree
+3:13
+of specificity. They aren't thinking of
+3:16
+memory as a problem that you have to
+3:19
+manage. Really, the story in that
+3:21
+anthropic blog post that I want to give
+3:23
+to you in just a couple minutes here is
+3:25
+that the key to running agents for a
+3:28
+long period of time is building a domain
+3:32
+memory factory. So they've put together
+3:35
+a two agent pattern, but it's not about
+3:37
+personalities. It's not about roles.
+3:40
+It's about who owns the memory. There's
+3:42
+an initializer agent that expands the
+3:45
+user prompt into a detailed feature
+3:47
+list. Say it has structured JSON and
+3:50
+like it talks about the features and
+3:52
+just like I described, maybe all the
+3:53
+features are initially failing because
+3:55
+they haven't passed their unit tests.
+3:56
+Maybe it will set up a progress log etc.
+3:59
+It bootstraps domain memory from the
+4:02
+user prompt and sets out best practice
+4:06
+rules of engagement. You can think of it
+4:08
+if you're not a technical person as if
+4:10
+the initializer agent is setting the
+4:14
+stage. It is a stage manager. It is
+4:16
+building the stage and the coding agent
+4:19
+is the actor in the setting. Every
+4:21
+subsequent run, the coding agent comes
+4:24
+in and it has no memory, just amnesiac.
+4:27
+And by the way, if you think about it,
+4:29
+the initializer agent didn't need memory
+4:33
+to do what I just described. All it
+4:35
+needed to do was to transform the prompt
+4:38
+into a set of artifacts that acted as
+4:41
+the scaffolding, the set, if you will,
+4:44
+for the coding agent to come in and play
+4:47
+its part. And so the coding agent reads
+4:49
+progress. The coding agent gets the
+4:51
+history of previous commits from Git.
+4:54
+The coding agent reads the feature list
+4:56
+and picks a single failing feature to
+4:58
+work on for this run. It then implements
+5:01
+it. It tests it end to end. It will
+5:03
+update the feature status as either
+5:04
+failed or passing. It writes a progress
+5:06
+note. It commits to get and it
+5:08
+disappears. It has no more memory. It's
+5:10
+gone because long running memory just
+5:13
+doesn't work with these LLMs. We are
+5:16
+building a memory scaffold because these
+5:19
+LLMs need a setting to play their part
+5:24
+to strut upon the stage. To quote
+5:26
+Shakespeare, the agent is now just a
+5:29
+policy that transforms one consistent
+5:33
+memory state into another. The magic is
+5:36
+in the memory. The magic is in the
+5:38
+harness. The magic is not in the
+5:40
+personality layer. And and harness is a
+5:42
+fancy word for all the stuff that goes
+5:43
+around the agent, right? It's the
+5:44
+setting. It's what I'm describing. So
+5:46
+the deeper lesson is that if you don't
+5:48
+have domain memory, agents can't be
+5:51
+longunning in any meaningful sense. And
+5:54
+that is what anthropic is discovering.
+5:56
+Although we've all sort of known that,
+5:57
+but at least they're writing it up. And
+5:58
+I really appreciate it. The core long
+6:00
+horizon failure mode was not the model
+6:04
+is too dumb. It was every session starts
+6:08
+with no grounded sense of where we are
+6:10
+in the world. And what they are doing to
+6:12
+solve that is not make the model
+6:15
+smarter, right? What they're doing to
+6:16
+solve that is give the model a sense of
+6:19
+its lived context. Now we would say
+6:21
+instantiate it. And that's why it's
+6:24
+called an initializer agent. It
+6:25
+initializes the state so that the coding
+6:28
+agent on every subsequent run knows
+6:30
+where it is. If you have no shared
+6:32
+feature list, think about it. Every run
+6:34
+will rederive its own definition of
+6:36
+done. If you have no durable progress
+6:38
+log, every run will guess what happened
+6:41
+wrongly. If you have no stable test
+6:44
+harness or test pass in what counts as a
+6:47
+successful software application and what
+6:49
+counts as a successful unit test or
+6:50
+feature test, everyone will discover a
+6:53
+different sense of what works. And this
+6:55
+is why when you loop an LLM with tools,
+6:58
+it will just give you an infinite
+7:00
+sequence of disconnected interns. It's
+7:03
+just not going to work. And by the way,
+7:05
+if you think there are implications here
+7:07
+for prompting, you would be correct. So
+7:10
+much of what we do with prompting is
+7:13
+being that initializer agent. We are
+7:16
+setting the context. We are setting the
+7:18
+structure so that you can set up a
+7:22
+successful activity for the agent. So,
+7:24
+so when the LLM wakes up, as you hit
+7:26
+enter on the chat, it knows where it is
+7:28
+and it knows what the task is. It's a
+7:30
+wonderful way of thinking about
+7:32
+prompting. prompting is setting the
+7:34
+stage so the agent can play its part. So
+7:36
+domain memory forces agents to behave
+7:39
+like disciplined engineers instead of
+7:41
+like autocomplete. And so once you have
+7:44
+a harness like the one Anthropic is
+7:45
+describing or the one so many other
+7:47
+companies are building, every single
+7:49
+coding session starts by actually
+7:51
+checking where the agent is, right? Like
+7:53
+it reads the previous commit logs, it
+7:55
+reads the progress files, it reads the
+7:57
+feature list, and it picks something to
+7:59
+work on. This is exactly how good humans
+8:01
+behave on a shared codebase. They
+8:03
+orient, they test, they change. The
+8:06
+harness insists or bakes that discipline
+8:09
+right into the agent by tying its
+8:11
+actions to persistent domain memory, not
+8:14
+to whatever happens to be in the current
+8:15
+context window. That means that
+8:17
+generalization moves up a layer from
+8:20
+general agent as a concept to general
+8:24
+harness pattern with a domain specific
+8:26
+memory schema which is really fancy
+8:28
+wording but it's important wording
+8:31
+because it means this is not just for
+8:33
+coders. You can use the same pattern of
+8:35
+having a setting a context an agent that
+8:39
+can do its task in that context and you
+8:42
+can apply that beyond coding. You can
+8:43
+apply that for any workflow where you
+8:46
+need an agent to use tools to get
+8:48
+something done and you need it to
+8:51
+effectively have long-term memory when
+8:54
+it actually doesn't. So the anthropic
+8:56
+work implicitly suggests an a framing of
+8:59
+agents that feels much more honest than
+9:01
+a lot of the Twitter hype. You can have
+9:03
+a relatively general agent harness
+9:06
+pattern. You can use an initializer. You
+9:08
+can build the scaffolding. You can have
+9:10
+a repeated worker that reads memory and
+9:12
+makes small testable progress and
+9:14
+updates memory. That by the way doesn't
+9:16
+have to be code, right? But you can only
+9:18
+have that if your schemas and your
+9:20
+rituals are domain specific. And I think
+9:22
+part of why this is working for code is
+9:25
+that we have rituals and we have schemas
+9:28
+that we've all worked out and agreed on
+9:30
+and that makes it easier here. Right? If
+9:32
+you are working in development, you
+9:34
+understand that having tests get
+9:37
+progress logs feature list.json JSON
+9:40
+those all make a ton of sense. We have
+9:41
+to invent some of those and align on
+9:43
+some of those in less technical
+9:45
+disciplines. So for research it might
+9:46
+look like a hypothesis backlog, an
+9:48
+experiment registry, an evidence log, a
+9:51
+decision journal. For operations it
+9:53
+could look like a runbook, an incident
+9:54
+timeline, a ticket queue, an SLA. So
+9:57
+generalized agents are really just a
+9:59
+meta pattern, right? They instantiate
+10:00
+the same harness structure, but you have
+10:03
+to design the right domain memory
+10:05
+objects to make them real in a
+10:07
+particular space to make them operations
+10:09
+agents or research agents. What I'm
+10:12
+telling you is that the magic pattern
+10:15
+for general purpose agents lies in being
+10:18
+domainspecific about their context. So
+10:21
+this kills the idea of just drop an
+10:23
+agent on your company and it will work.
+10:25
+That was always a fantasy, but I really
+10:28
+think we have good evidence to drop it
+10:29
+here. If you buy the domain memory
+10:31
+argument, you can write off a bunch of
+10:33
+vendor claims right away. Right? A
+10:36
+universal agent for your enterprise with
+10:38
+no opinionated schemas on work or
+10:41
+testing is a function that's going to
+10:42
+thrash and go into the trash. If you can
+10:45
+plug a model into Slack and you can call
+10:48
+it an agent, I guess you can do that.
+10:50
+But most of the time that's going to
+10:52
+lead to problems because they're going
+10:55
+to not have any kind of clean context or
+10:58
+schema or all of the good structure
+11:00
+stuff I talked about to work. Well,
+11:02
+that's different from saying, "I want to
+11:04
+have an agent that has an API hook or
+11:06
+web hook into Slack to send messages."
+11:08
+By the way, that happens all the time.
+11:10
+But if you're trying to just give your
+11:13
+agent a generalized context dump and
+11:15
+expect it to work, that's not going to
+11:17
+go well. The hard work is going to be
+11:20
+designing artifacts and processes that
+11:22
+define memory for domainspecific tasks
+11:25
+for agents. The JSONs, the logs, the
+11:28
+test harnesses that are not necessarily
+11:30
+just for coding but for other tasks and
+11:33
+disciplines too. So if you were to look
+11:35
+at this and pull design principles out
+11:37
+from this whole conversation around
+11:40
+agents, I would suggest a few for any
+11:42
+serious agent that you build, you want
+11:44
+to externalize the goal. turn do X into
+11:48
+something that is a machine readable
+11:50
+backlog, right? Something with past fail
+11:52
+criteria. Get really specific. You want
+11:55
+to make progress atomic. You want to
+11:57
+make it observable. You want to force
+11:59
+the agent to pick one item. You want to
+12:01
+work on it and then update a shared
+12:03
+state. So progress needs to be something
+12:05
+you can test and increment. You want to
+12:07
+enforce the practice of leaving your
+12:09
+campsite cleaner than you found it,
+12:11
+right? You want to end every run with a
+12:13
+clean test passing state with human and
+12:15
+machine readable documentation. You want
+12:18
+to standardize your bootup ritual,
+12:20
+right? On every run, the agent must
+12:21
+regground with the same exact protocol.
+12:24
+Read the memory. Run basic checks. Then
+12:26
+and only then do you act. You want to
+12:28
+keep your tests close to memory. Right?
+12:30
+Treat passes false and true as the
+12:33
+source of truth for whether the domain
+12:36
+is in a good state. In other words, if
+12:38
+you are not tying in test results to
+12:40
+memory, you're going to be in trouble.
+12:42
+The strategic implication here, by the
+12:44
+way, is that the moat isn't a smarter AI
+12:46
+agent, which most people think it is,
+12:49
+the mode is actually your domain,
+12:50
+memory, and your harness that you have
+12:52
+put together. It's a lot of work, right?
+12:53
+Models will get better and models will
+12:56
+be interchangeable. What won't be
+12:57
+commoditized as quickly are the schemas
+13:00
+that you define for your work, the
+13:01
+harnesses that turn your LLM calls into
+13:03
+durable progress, the testing loops that
+13:06
+keep your agents honest. In a sense, the
+13:08
+generalized agents fantasy is hiding
+13:12
+from everyone a nice clean reusable
+13:16
+harness pattern that we can use to build
+13:18
+competitive differentiation with
+13:21
+well-designed domain memory. We actually
+13:23
+have a chance now to design really
+13:25
+useful agents. And the whole purpose of
+13:28
+this video has been to take the mystery
+13:30
+out of it. The mystery of agents is
+13:32
+memory. And this is how you solve
+
+All
+
+From AI News & Strategy Daily | Nate B Jones

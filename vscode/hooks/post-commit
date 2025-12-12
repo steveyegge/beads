@@ -1,6 +1,6 @@
 #!/bin/bash
 # post-commit hook - Beads-First Application
-# STATUS: GREEN FIELD - LOGGING ONLY
+# STATUS: ACTIVE - AUTO-SYNC
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -8,24 +8,31 @@ LOG_SCRIPT="$PROJECT_ROOT/scripts/beads-log-event.sh"
 
 # Get the commit hash
 COMMIT_HASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-COMMIT_MSG=$(git log -1 --pretty=%s 2>/dev/null || echo "unknown")
+COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "unknown")
 
 # Log hook trigger
 if [ -x "$LOG_SCRIPT" ]; then
-    "$LOG_SCRIPT" "hk.post-commit" "$COMMIT_HASH" "$COMMIT_MSG"
+    "$LOG_SCRIPT" "hk.post-commit" "$COMMIT_HASH" "$(echo "$COMMIT_MSG" | head -1)"
 fi
 
-echo "═══════════════════════════════════════════════════════════════"
-echo "HOOK TRIGGERED: post-commit"
-echo "COMMIT: $COMMIT_HASH"
-echo "MESSAGE: $COMMIT_MSG"
-echo "STATUS: Logging only - no processing implemented"
-echo "EVENT: hk.post-commit logged to .beads/events.log"
-echo "═══════════════════════════════════════════════════════════════"
+echo "post-commit: Auto-syncing beads..."
 
-# FUTURE PROCESSING (not active):
-# - Auto-sync beads after commit
-# - Extract issue ID from commit message
-# - Update issue with commit reference
+# AUTO-SYNC: Sync beads after commit
+if command -v bd &> /dev/null; then
+    if bd sync --quiet 2>/dev/null; then
+        if [ -x "$LOG_SCRIPT" ]; then
+            "$LOG_SCRIPT" "bd.sync.complete" "none" "auto-sync after commit"
+        fi
+    fi
+fi
+
+# ISSUE LINKING: Extract issue ID from commit message
+if [[ $COMMIT_MSG =~ bd-([a-z0-9]+) ]]; then
+    ISSUE_ID="bd-${BASH_REMATCH[1]}"
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "gt.commit.issue" "$ISSUE_ID" "commit $COMMIT_HASH"
+    fi
+    echo "post-commit: Linked to $ISSUE_ID"
+fi
 
 exit 0

@@ -1,6 +1,6 @@
 #!/bin/bash
 # pre-commit hook - Beads-First Application
-# STATUS: GREEN FIELD - LOGGING ONLY
+# STATUS: ACTIVE - ENFORCING WORKFLOW
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -12,21 +12,49 @@ if [ -x "$LOG_SCRIPT" ]; then
 fi
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "HOOK TRIGGERED: pre-commit"
-echo "STATUS: Logging only - no enforcement implemented"
-echo "EVENT: hk.pre-commit.start logged to .beads/events.log"
+echo "HOOK: pre-commit (ENFORCING)"
 echo "═══════════════════════════════════════════════════════════════"
 
-# FUTURE ENFORCEMENT (not active):
-# - Check if beads are synced
-# - Verify commit message format (bd-XXXX: description)
-# - Check scope violations
-# - Verify tests pass
-
-# Log pass (since we're not enforcing yet)
-if [ -x "$LOG_SCRIPT" ]; then
-    "$LOG_SCRIPT" "hk.pre-commit.pass" "none" "green field - no checks"
+# ENFORCEMENT: Check if session was started with bootup skill
+if [ ! -f ".beads/.session-active" ]; then
+    echo "ERROR: No active beads session detected"
+    echo ""
+    echo "REQUIRED: Load beads-bootup skill before committing"
+    echo ""
+    echo "In VS Code:"
+    echo "  1. Open chat (Ctrl+Shift+B or manually)"
+    echo "  2. Type: 'Load beads-bootup skill'"
+    echo "  3. Execute the bootup commands"
+    echo "  4. Try commit again"
+    echo ""
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "hk.pre-commit.fail" "none" "no session marker"
+    fi
+    exit 1
 fi
 
-# Green field: always pass
+# ENFORCEMENT: Check if beads are healthy
+if command -v bd &> /dev/null; then
+    if ! bd doctor --quiet 2>/dev/null; then
+        echo "ERROR: beads doctor checks failed"
+        echo ""
+        echo "Run: bd doctor"
+        echo "Fix reported issues, then try again"
+        echo ""
+        if [ -x "$LOG_SCRIPT" ]; then
+            "$LOG_SCRIPT" "hk.pre-commit.fail" "none" "doctor failed"
+        fi
+        exit 1
+    fi
+fi
+
+echo "✓ Session active"
+echo "✓ Beads healthy"
+echo ""
+
+# Log pass
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-commit.pass" "none" "checks passed"
+fi
+
 exit 0

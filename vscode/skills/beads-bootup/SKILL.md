@@ -16,9 +16,15 @@ When this skill is loaded, IMMEDIATELY execute:
 
 ```bash
 # Bash
+# Create session marker
+mkdir -p .beads
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .beads/.session-active
 ./scripts/beads-log-event.sh sk.bootup.activated
 
 # Or PowerShell
+# Create session marker
+New-Item -ItemType Directory -Force -Path .beads | Out-Null
+Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" | Out-File -FilePath .beads\.session-active -NoNewline
 .\scripts\beads-log-event.ps1 -EventCode sk.bootup.activated
 ```
 

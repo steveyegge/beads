@@ -1,6 +1,6 @@
 #!/bin/bash
 # pre-push hook - Beads-First Application
-# STATUS: GREEN FIELD - LOGGING ONLY
+# STATUS: ACTIVE - ENFORCING WORKFLOW
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -12,28 +12,55 @@ if [ -x "$LOG_SCRIPT" ]; then
 fi
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "HOOK TRIGGERED: pre-push"
-echo "STATUS: Logging only - no enforcement implemented"
-echo "EVENT: hk.pre-push.start logged to .beads/events.log"
+echo "HOOK: pre-push (ENFORCING)"
 echo "═══════════════════════════════════════════════════════════════"
 
-# FUTURE ENFORCEMENT (not active):
-# - Check if landing ritual was completed
-# - Verify beads are synced (.beads/beads.jsonl committed)
-# - Check for uncommitted changes
-# - Verify handoff document exists
-
-# Example future check:
-# if [ ! -f ".beads/last-handoff.md" ]; then
-#     "$LOG_SCRIPT" "hk.pre-push.fail" "none" "no handoff document"
-#     echo "ERROR: Landing ritual not complete. Run beads-landing skill."
-#     exit 1
-# fi
-
-# Log pass (since we're not enforcing yet)
-if [ -x "$LOG_SCRIPT" ]; then
-    "$LOG_SCRIPT" "hk.pre-push.pass" "none" "green field - no checks"
+# ENFORCEMENT: Check if landing ritual was completed
+if [ ! -f ".beads/.landing-complete" ]; then
+    echo "ERROR: Landing ritual not completed"
+    echo ""
+    echo "REQUIRED: Load beads-landing skill before pushing"
+    echo ""
+    echo "In VS Code:"
+    echo "  1. Open chat (Ctrl+Shift+L or manually)"
+    echo "  2. Type: 'Load beads-landing skill'"
+    echo "  3. Complete landing checklist"
+    echo "  4. Try push again"
+    echo ""
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "hk.pre-push.fail" "none" "no landing marker"
+    fi
+    exit 1
 fi
 
-# Green field: always pass
+# ENFORCEMENT: Check if beads are synced (no uncommitted changes in .beads/)
+if ! git diff --quiet .beads/ 2>/dev/null; then
+    echo "ERROR: Uncommitted changes in .beads/"
+    echo ""
+    echo "REQUIRED: Sync and commit beads changes"
+    echo ""
+    echo "Run:"
+    echo "  bd sync"
+    echo "  git add .beads/"
+    echo "  git commit -m 'Update beads state'"
+    echo "  git push"
+    echo ""
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "hk.pre-push.fail" "none" "beads not synced"
+    fi
+    exit 1
+fi
+
+echo "✓ Landing complete"
+echo "✓ Beads synced"
+echo ""
+
+# Success! Clean up session markers to end session
+rm -f .beads/.session-active .beads/.landing-complete
+
+# Log pass
+if [ -x "$LOG_SCRIPT" ]; then
+    "$LOG_SCRIPT" "hk.pre-push.pass" "none" "checks passed, session ended"
+fi
+
 exit 0

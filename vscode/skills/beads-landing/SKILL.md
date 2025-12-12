@@ -18,9 +18,15 @@ When this skill is loaded, IMMEDIATELY execute:
 
 ```bash
 # Bash
+# Create landing marker
+mkdir -p .beads
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .beads/.landing-complete
 ./scripts/beads-log-event.sh sk.landing.activated
 
 # Or PowerShell
+# Create landing marker
+New-Item -ItemType Directory -Force -Path .beads | Out-Null
+Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" | Out-File -FilePath .beads\.landing-complete -NoNewline
 .\scripts\beads-log-event.ps1 -EventCode sk.landing.activated
 ```
 

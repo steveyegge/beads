@@ -1,0 +1,4 @@
+# Beads Session Markers
+# These files track active agent sessions and are created by skills
+.beads/.session-active
+.beads/.landing-complete

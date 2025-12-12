@@ -9,7 +9,20 @@ This package provides VS Code integration for Beads-First applications, includin
 
 ## Quick Start
 
-### 1. Copy to Your Project
+### Option A: Automated Installation (Recommended)
+
+```bash
+# From the beads repository root
+./vscode/install.sh
+```
+
+This script will:
+- Copy all hooks, scripts, skills, and templates
+- Update your .gitignore
+- Optionally initialize beads
+- Set correct permissions
+
+### Option B: Manual Installation
 
 ```bash
 # From your project root
@@ -19,25 +32,12 @@ cp -r /path/to/beads/vscode/* ./
 xcopy /E /I C:\path\to\beads\vscode .\vscode-beads
 ```
 
-### 2. Run Initialization
-
-```bash
-# Make scripts executable (Linux/Mac)
-chmod +x scripts/*.sh hooks/*
-
-# Initialize beads (if not already done)
-bd init
-
-# Install hooks
-cp hooks/* .git/hooks/
-
-# Copy skills to .claude directory
-mkdir -p .claude/skills
-cp -r skills/* .claude/skills/
-
-# Copy CLAUDE.md template
-cp templates/CLAUDE.md ./CLAUDE.md
-```
+Then manually:
+- Copy hooks to `.git/hooks/`
+- Copy scripts to `scripts/`
+- Copy skills to `.claude/skills/`
+- Copy templates to project root
+- Add session markers to `.gitignore`
 
 ### 3. Run InitApp Ceremony
 
@@ -105,15 +105,48 @@ your-project/
 | `Ctrl+Shift+S` | Sync beads and git status |
 | `Ctrl+Shift+E` | View recent events |
 
-## Green Field Status
+## Implementation Status
 
-All skills are currently in **GREEN FIELD** mode:
-- They log their activation
-- They don't perform processing yet
-- This allows verification of event logging
+| Component | Status | Functionality |
+|-----------|--------|---------------|
+| **Skills** | 🟡 GREEN FIELD | Log activation only (processing comes later) |
+| **Git Hooks** | 🟢 ACTIVE | **Enforcing workflow** |
+| **Event Logging** | 🟢 ACTIVE | Fully functional |
+| **Templates** | 🟢 ACTIVE | Ready to use |
 
-Once you verify events are logging correctly (check `.beads/events.log`),
-you can enable full processing in each skill.
+### Skills (Logging Only)
+
+All skills currently:
+- ✅ Create session marker files
+- ✅ Log activation events
+- ⏳ Don't perform ritual processing (future enhancement)
+
+Skills serve as an **observability layer** - they track when rituals are triggered.
+
+### Git Hooks (ENFORCING)
+
+Hooks are **ACTIVE** and will block operations if rituals aren't followed:
+
+- **pre-commit** 🔴 **BLOCKS** commits without active session
+- **pre-push** 🔴 **BLOCKS** pushes without completed landing
+- **post-commit** ✅ Auto-syncs beads state
+- **post-merge** ✅ Auto-imports remote changes
+
+## Session Marker Mechanism
+
+The workflow enforcement uses marker files:
+
+**`.beads/.session-active`**
+- Created when beads-bootup skill loads
+- Checked by pre-commit hook
+- Contains timestamp
+
+**`.beads/.landing-complete`**
+- Created when beads-landing skill loads
+- Checked by pre-push hook
+- Deleted after successful push
+
+These files are gitignored and serve as proof that rituals were followed.
 
 ## Event Logging
 
@@ -138,6 +171,30 @@ See `events/EVENT_TAXONOMY.md` for all event codes.
 - **Bash** or **PowerShell** for scripts
 
 ## Troubleshooting
+
+### "No active beads session detected" on commit
+
+**Cause**: You didn't load the beads-bootup skill before committing.
+
+**Solution**:
+```
+1. Open VS Code chat (Ctrl+Shift+B)
+2. Type: "Load beads-bootup skill"
+3. Execute the bootup commands (creates .beads/.session-active)
+4. Try commit again
+```
+
+### "Landing ritual not completed" on push
+
+**Cause**: You didn't load the beads-landing skill before pushing.
+
+**Solution**:
+```
+1. Open VS Code chat (Ctrl+Shift+L)
+2. Type: "Load beads-landing skill"
+3. Execute the landing commands (creates .beads/.landing-complete)
+4. Try push again
+```
 
 ### Events not logging
 ```bash
@@ -164,9 +221,19 @@ chmod +x .git/hooks/*
 .git/hooks/pre-commit
 ```
 
+### Beads doctor failures
+```bash
+# Run doctor to see issues
+bd doctor
+
+# Common fixes:
+bd sync              # Sync beads state
+bd import --force    # Reimport from JSONL
+```
+
 ### Skills not loading
 - Verify `.claude/skills/` structure
-- Check VS Code version supports Claude Skills
+- Check VS Code version supports Claude Skills (1.107+)
 - Restart VS Code after adding skills
 
 ## Documentation

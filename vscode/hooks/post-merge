@@ -1,6 +1,6 @@
 #!/bin/bash
 # post-merge hook - Beads-First Application
-# STATUS: GREEN FIELD - LOGGING ONLY
+# STATUS: ACTIVE - AUTO-IMPORT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -11,19 +11,32 @@ if [ -x "$LOG_SCRIPT" ]; then
     "$LOG_SCRIPT" "hk.post-merge" "none" "post-merge hook triggered"
 fi
 
-echo "═══════════════════════════════════════════════════════════════"
-echo "HOOK TRIGGERED: post-merge"
-echo "STATUS: Logging only - no processing implemented"
-echo "EVENT: hk.post-merge logged to .beads/events.log"
-echo "═══════════════════════════════════════════════════════════════"
+echo "post-merge: Auto-importing beads state..."
 
-# FUTURE PROCESSING (not active):
-# - Auto-sync beads after merge
-# - Rebuild SQLite cache
-# - Check for beads merge conflicts
+# AUTO-IMPORT: Sync beads after merge (imports remote changes)
+if command -v bd &> /dev/null; then
+    if bd sync --quiet 2>/dev/null; then
+        if [ -x "$LOG_SCRIPT" ]; then
+            "$LOG_SCRIPT" "bd.sync.complete" "none" "auto-import after merge"
+        fi
+        echo "post-merge: Beads state updated"
+    fi
+fi
 
-# Example future processing:
-# bd sync --quiet
-# "$LOG_SCRIPT" "bd.sync.complete" "none" "post-merge auto-sync"
+# CONFLICT DETECTION: Check for beads merge conflicts
+if [ -f ".beads/issues.jsonl.orig" ] || [ -f ".beads/issues.jsonl.rej" ]; then
+    echo ""
+    echo "WARNING: Beads merge conflict detected!"
+    echo ""
+    echo "Conflict markers found in beads files."
+    echo "Manual resolution required:"
+    echo "  1. Resolve conflicts in .beads/issues.jsonl"
+    echo "  2. Run: bd import -i .beads/issues.jsonl"
+    echo "  3. Run: bd sync"
+    echo ""
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "bd.sync.conflict" "none" "merge conflict in beads"
+    fi
+fi
 
 exit 0
