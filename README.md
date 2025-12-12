@@ -322,8 +322,8 @@ git push
 git pull
 # bd automatically detects JSONL is newer and imports on next command
 
-bd ready  # Fresh data from git!
-bd list   # Shows issues from other machines
+bd ready  # Shows issues ready to work on (with fresh data from git)
+bd list   # Lists all issues, including those from other machines
 ```
 
 **Manual sync (optional):**
@@ -333,7 +333,7 @@ bd sync  # Immediately flush pending changes and import latest JSONL
 
 **For zero-lag sync**, install the git hooks:
 ```bash
-cd examples/git-hooks && ./install.sh
+bd hooks install
 ```
 
 This adds:
