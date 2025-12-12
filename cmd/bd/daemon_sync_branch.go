@@ -35,14 +35,20 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 	
 	log.log("Using sync branch: %s", syncBranch)
 	
-	// Get repo root
-	repoRoot, err := getGitRoot(ctx)
+	// Get main repo root (for worktrees, this is the main repo, not worktree)
+	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
-		return false, fmt.Errorf("failed to get git root: %w", err)
+		return false, fmt.Errorf("failed to get main repo root: %w", err)
+	}
+	
+	// Use worktree-aware git directory detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false, fmt.Errorf("not a git repository: %w", err)
 	}
 	
 	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -202,14 +208,20 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, nil
 	}
 	
-	// Get repo root
-	repoRoot, err := getGitRoot(ctx)
+	// Get main repo root (for worktrees, this is the main repo, not worktree)
+	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
-		return false, fmt.Errorf("failed to get git root: %w", err)
+		return false, fmt.Errorf("failed to get main repo root: %w", err)
+	}
+	
+	// Use worktree-aware git directory detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false, fmt.Errorf("not a git repository: %w", err)
 	}
 	
 	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)

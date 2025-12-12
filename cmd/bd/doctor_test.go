@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/git"
 )
 
 func TestDoctorNoBeadsDir(t *testing.T) {
@@ -684,8 +686,30 @@ func TestCheckGitHooks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 
+			// Always change to tmpDir to ensure GetGitDir detects the correct context
+			oldDir, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("Failed to get current directory: %v", err)
+			}
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatalf("Failed to change to test directory: %v", err)
+			}
+			defer func() {
+				_ = os.Chdir(oldDir)
+			}()
+
 			if tc.hasGitDir {
-				gitDir := filepath.Join(tmpDir, ".git")
+				// Initialize a real git repository in the test directory
+				cmd := exec.Command("git", "init")
+				cmd.Dir = tmpDir
+				if err := cmd.Run(); err != nil {
+					t.Skipf("Skipping test: git init failed: %v", err)
+				}
+
+				gitDir, err := git.GetGitDir()
+				if err != nil {
+					t.Fatalf("git.GetGitDir() failed: %v", err)
+				}
 				hooksDir := filepath.Join(gitDir, "hooks")
 				if err := os.MkdirAll(hooksDir, 0750); err != nil {
 					t.Fatal(err)
@@ -700,7 +724,7 @@ func TestCheckGitHooks(t *testing.T) {
 				}
 			}
 
-			check := checkGitHooks(tmpDir)
+			check := checkGitHooks()
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
