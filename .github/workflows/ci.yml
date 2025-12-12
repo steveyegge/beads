@@ -136,3 +136,13 @@ jobs:
             exit 1
           fi
           echo "✅ Help text first line is correct"
+      - name: Verify default.nix package version matches bd program version
+        run: |
+          BD_VERSION=$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')
+          NIX_BD_VERSION=$(grep 'version = ' default.nix | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$BD_VERSION" != "$NIX_BD_VERSION" ]; then
+            echo "❌ default.nix version ($NIX_BD_VERSION) != version.go ($BD_VERSION)"
+            echo "Run: scripts/bump-version.sh to sync default.nix"
+            exit 1
+          fi
+          echo "✅ default.nix version matches: $BD_VERSION"
