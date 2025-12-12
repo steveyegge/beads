@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -197,6 +198,22 @@ func findBeadsDir() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
+	}
+
+	// Check if we're in a git worktree with sparse checkout
+	// In worktrees, .beads might not exist locally, so we need to resolve to the main repo
+	if git.IsWorktree() {
+		mainRepoRoot, err := git.GetMainRepoRoot()
+		if err == nil && mainRepoRoot != "" {
+			mainBeadsDir := filepath.Join(mainRepoRoot, ".beads")
+			if info, err := os.Stat(mainBeadsDir); err == nil && info.IsDir() {
+				resolved, err := filepath.EvalSymlinks(mainBeadsDir)
+				if err != nil {
+					return mainBeadsDir
+				}
+				return resolved
+			}
+		}
 	}
 
 	for {

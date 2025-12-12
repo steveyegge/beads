@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/steveyegge/beads/internal/git"
 )
 
 // FileWatcher monitors JSONL and git ref changes using filesystem events or polling.
@@ -53,10 +54,16 @@ func NewFileWatcher(jsonlPath string, onChanged func()) (*FileWatcher, error) {
 	fallbackEnv := os.Getenv("BEADS_WATCHER_FALLBACK")
 	fallbackDisabled := fallbackEnv == "false" || fallbackEnv == "0"
 
-	// Store git paths for filtering
-	gitDir := filepath.Join(fw.parentDir, "..", ".git")
-	fw.gitRefsPath = filepath.Join(gitDir, "refs", "heads")
-	fw.gitHeadPath = filepath.Join(gitDir, "HEAD")
+	// Store git paths for filtering using worktree-aware detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		// Not a git repo, skip git path setup
+		fw.gitRefsPath = ""
+		fw.gitHeadPath = ""
+	} else {
+		fw.gitRefsPath = filepath.Join(gitDir, "refs", "heads")
+		fw.gitHeadPath = filepath.Join(gitDir, "HEAD")
+	}
 
 	// Get initial git HEAD state for polling
 	if stat, err := os.Stat(fw.gitHeadPath); err == nil {
@@ -103,8 +110,12 @@ func NewFileWatcher(jsonlPath string, onChanged func()) (*FileWatcher, error) {
 	}
 
 	// Also watch .git/refs/heads and .git/HEAD for branch changes (best effort)
-	_ = watcher.Add(fw.gitRefsPath) // Ignore error - not all setups have this
-	_ = watcher.Add(fw.gitHeadPath)  // Ignore error - not all setups have this
+	if fw.gitRefsPath != "" {
+		_ = watcher.Add(fw.gitRefsPath) // Ignore error - not all setups have this
+	}
+	if fw.gitHeadPath != "" {
+		_ = watcher.Add(fw.gitHeadPath)  // Ignore error - not all setups have this
+	}
 
 	return fw, nil
 }
@@ -258,31 +269,33 @@ func (fw *FileWatcher) startPolling(ctx context.Context, log daemonLogger) {
 					}
 				}
 
-				// Check .git/HEAD for branch changes
-				headStat, err := os.Stat(fw.gitHeadPath)
-				if err != nil {
-					if os.IsNotExist(err) {
-						if fw.lastHeadExists {
-							fw.lastHeadExists = false
-							fw.lastHeadModTime = time.Time{}
-							log.log("Git HEAD missing (polling): %s", fw.gitHeadPath)
+				// Check .git/HEAD for branch changes (only if git paths are available)
+				if fw.gitHeadPath != "" {
+					headStat, err := os.Stat(fw.gitHeadPath)
+					if err != nil {
+						if os.IsNotExist(err) {
+							if fw.lastHeadExists {
+								fw.lastHeadExists = false
+								fw.lastHeadModTime = time.Time{}
+								log.log("Git HEAD missing (polling): %s", fw.gitHeadPath)
+								changed = true
+							}
+						}
+						// Ignore other errors for HEAD - it's optional
+					} else {
+						// HEAD exists
+						if !fw.lastHeadExists {
+							// HEAD appeared
+							fw.lastHeadExists = true
+							fw.lastHeadModTime = headStat.ModTime()
+							log.log("Git HEAD appeared (polling): %s", fw.gitHeadPath)
+							changed = true
+						} else if !headStat.ModTime().Equal(fw.lastHeadModTime) {
+							// HEAD changed (branch switch)
+							fw.lastHeadModTime = headStat.ModTime()
+							log.log("Git HEAD change detected (polling): %s", fw.gitHeadPath)
 							changed = true
 						}
-					}
-					// Ignore other errors for HEAD - it's optional
-				} else {
-					// HEAD exists
-					if !fw.lastHeadExists {
-						// HEAD appeared
-						fw.lastHeadExists = true
-						fw.lastHeadModTime = headStat.ModTime()
-						log.log("Git HEAD appeared (polling): %s", fw.gitHeadPath)
-						changed = true
-					} else if !headStat.ModTime().Equal(fw.lastHeadModTime) {
-						// HEAD changed (branch switch)
-						fw.lastHeadModTime = headStat.ModTime()
-						log.log("Git HEAD change detected (polling): %s", fw.gitHeadPath)
-						changed = true
 					}
 				}
 

@@ -11,19 +11,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/git"
 )
-
-// getGitDir returns the actual .git directory path.
-// In a normal repo, this is ".git". In a worktree, .git is a file
-// containing "gitdir: /path/to/actual/git/dir", so we use git rev-parse.
-func getGitDir() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("not a git repository: %w", err)
-	}
-	return strings.TrimSpace(string(output)), nil
-}
 
 //go:embed templates/hooks/*
 var hooksFS embed.FS
@@ -59,7 +48,7 @@ func CheckGitHooks() []HookStatus {
 	statuses := make([]HookStatus, 0, len(hooks))
 
 	// Get actual git directory (handles worktrees)
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		// Not a git repo - return all hooks as not installed
 		for _, hookName := range hooks {
@@ -299,7 +288,7 @@ var hooksListCmd = &cobra.Command{
 
 func installHooks(embeddedHooks map[string]string, force bool, shared bool) error {
 	// Get actual git directory (handles worktrees where .git is a file)
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return err
 	}
@@ -361,7 +350,7 @@ func configureSharedHooksPath() error {
 
 func uninstallHooks() error {
 	// Get actual git directory (handles worktrees)
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return err
 	}

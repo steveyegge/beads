@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Enhanced Git Worktree Support** (bd-737): Comprehensive compatibility improvements for git worktrees using shared database architecture
+  - Shared `.beads` database across all worktrees in a repository
+  - Worktree-aware database discovery prioritizes main repository
+  - Git hooks automatically adapt to worktree context
+  - Daemon mode warnings for worktree usage with `--no-daemon` guidance
+  - Comprehensive documentation in `docs/WORKTREES.md`
+  - Worktree lifecycle management with sparse checkout for sync branches
+  - Automatic detection and user-friendly warnings for worktree conflicts
+
 ## [0.29.0] - 2025-12-03
 
 ## [0.29.0] - 2025-12-03

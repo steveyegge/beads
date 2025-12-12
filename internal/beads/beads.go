@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -342,6 +343,7 @@ func hasBeadsProjectFiles(beadsDir string) bool {
 // Validates that the directory contains actual project files (bd-420).
 // Redirect files are supported: if a .beads/redirect file exists, its contents
 // are used as the actual .beads directory path.
+// For worktrees, prioritizes the main repository's .beads directory (bd-de6).
 // This is useful for commands that need to detect beads projects without requiring a database.
 func FindBeadsDir() string {
 	// 1. Check BEADS_DIR environment variable (preferred)
@@ -359,7 +361,26 @@ func FindBeadsDir() string {
 		}
 	}
 
-	// 2. Search for .beads/ in current directory and ancestors
+	// 2. For worktrees, check main repository root first (bd-de6)
+	var mainRepoRoot string
+	if git.IsWorktree() {
+		var err error
+		mainRepoRoot, err = git.GetMainRepoRoot()
+		if err == nil && mainRepoRoot != "" {
+			beadsDir := filepath.Join(mainRepoRoot, ".beads")
+			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+				// Follow redirect if present
+				beadsDir = followRedirect(beadsDir)
+
+				// Validate directory contains actual project files (bd-420)
+				if hasBeadsProjectFiles(beadsDir) {
+					return beadsDir
+				}
+			}
+		}
+	}
+
+	// 3. Search for .beads/ in current directory and ancestors
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -367,6 +388,10 @@ func FindBeadsDir() string {
 
 	// Find git root to limit the search (bd-c8x)
 	gitRoot := findGitRoot()
+	if git.IsWorktree() && mainRepoRoot != "" {
+		// For worktrees, extend search boundary to include main repo
+		gitRoot = mainRepoRoot
+	}
 
 	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
 		beadsDir := filepath.Join(dir, ".beads")
@@ -414,6 +439,9 @@ type DatabaseInfo struct {
 // findGitRoot returns the root directory of the current git repository,
 // or empty string if not in a git repository. Used to limit directory
 // tree walking to within the current git repo (bd-c8x).
+//
+// This function is worktree-aware and will correctly identify the repository
+// root in both regular repositories and git worktrees.
 func findGitRoot() string {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	output, err := cmd.Output()
@@ -425,6 +453,7 @@ func findGitRoot() string {
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
 // Stops at the git repository root to avoid finding unrelated databases (bd-c8x).
+// For worktrees, searches the main repository root first, then falls back to worktree.
 // Prefers config.json, falls back to beads.db, and warns if multiple .db files exist.
 // Redirect files are supported: if a .beads/redirect file exists, its contents
 // are used as the actual .beads directory path.
@@ -440,10 +469,35 @@ func findDatabaseInTree() string {
 		dir = resolvedDir
 	}
 
+	// Check if we're in a git worktree
+	var mainRepoRoot string
+	if git.IsWorktree() {
+		// For worktrees, search main repository root first
+		var err error
+		mainRepoRoot, err = git.GetMainRepoRoot()
+		if err == nil && mainRepoRoot != "" {
+			beadsDir := filepath.Join(mainRepoRoot, ".beads")
+			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+				// Follow redirect if present
+				beadsDir = followRedirect(beadsDir)
+
+				// Use helper to find database (with warnings for auto-discovery)
+				if dbPath := findDatabaseInBeadsDir(beadsDir, true); dbPath != "" {
+					return dbPath
+				}
+			}
+		}
+		// If not found in main repo, fall back to worktree search below
+	}
+
 	// Find git root to limit the search (bd-c8x)
 	gitRoot := findGitRoot()
+	if git.IsWorktree() && mainRepoRoot != "" {
+		// For worktrees, extend search boundary to include main repo
+		gitRoot = mainRepoRoot
+	}
 
-	// Walk up directory tree
+	// Walk up directory tree (regular repository or worktree fallback)
 	for {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {

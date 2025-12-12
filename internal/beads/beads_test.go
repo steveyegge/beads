@@ -2,6 +2,7 @@ package beads
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -780,5 +781,475 @@ func TestFindBeadsDirWithRedirect(t *testing.T) {
 
 	if resultResolved != targetDirResolved {
 		t.Errorf("FindBeadsDir() = %q, want %q (via redirect)", result, targetDir)
+	}
+}
+
+// TestFindGitRoot_RegularRepo tests that findGitRoot returns the correct path
+// in a regular git repository (not a worktree).
+func TestFindGitRoot_RegularRepo(t *testing.T) {
+	// Create temporary directory for our test repo
+	tmpDir, err := os.MkdirTemp("", "beads-gitroot-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize a git repository
+	repoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user for the test repo (required for commits)
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = repoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = repoDir
+	_ = cmd.Run()
+
+	// Create a subdirectory and change to it
+	subDir := filepath.Join(repoDir, "sub", "nested")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(subDir)
+
+	// findGitRoot should return the repo root
+	result := findGitRoot()
+
+	// Resolve symlinks for comparison (macOS /var -> /private/var)
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	repoDirResolved, _ := filepath.EvalSymlinks(repoDir)
+
+	if resultResolved != repoDirResolved {
+		t.Errorf("findGitRoot() = %q, want %q", result, repoDir)
+	}
+}
+
+// TestFindGitRoot_Worktree tests that findGitRoot returns the worktree root
+// (not the main repository root) when inside a git worktree. This is critical
+// for bd-745 - ensuring database discovery works correctly in worktrees.
+func TestFindGitRoot_Worktree(t *testing.T) {
+	// Create temporary directory for our test
+	tmpDir, err := os.MkdirTemp("", "beads-worktree-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize a git repository
+	mainRepoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(mainRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user for the test repo (required for commits)
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+
+	// Create an initial commit (required for worktree)
+	dummyFile := filepath.Join(mainRepoDir, "README.md")
+	if err := os.WriteFile(dummyFile, []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "README.md")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	// Create a worktree
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	cmd = exec.Command("git", "worktree", "add", worktreeDir, "HEAD")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add failed: %v", err)
+	}
+	defer func() {
+		// Clean up worktree
+		cmd := exec.Command("git", "worktree", "remove", worktreeDir)
+		cmd.Dir = mainRepoDir
+		_ = cmd.Run()
+	}()
+
+	// Change to the worktree directory
+	t.Chdir(worktreeDir)
+
+	// findGitRoot should return the WORKTREE root, not the main repo root
+	result := findGitRoot()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	worktreeDirResolved, _ := filepath.EvalSymlinks(worktreeDir)
+	mainRepoDirResolved, _ := filepath.EvalSymlinks(mainRepoDir)
+
+	if resultResolved != worktreeDirResolved {
+		t.Errorf("findGitRoot() = %q, want worktree %q (not main repo %q)", result, worktreeDir, mainRepoDir)
+	}
+
+	// Additional verification: ensure we're NOT returning the main repo
+	if resultResolved == mainRepoDirResolved {
+		t.Errorf("findGitRoot() returned main repo %q instead of worktree %q - worktree detection is broken!", mainRepoDir, worktreeDir)
+	}
+}
+
+// TestFindGitRoot_NotGitRepo tests that findGitRoot returns an empty string
+// when not inside a git repository.
+func TestFindGitRoot_NotGitRepo(t *testing.T) {
+	// Create temporary directory that is NOT a git repo
+	tmpDir, err := os.MkdirTemp("", "beads-nogit-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	t.Chdir(tmpDir)
+
+	// findGitRoot should return empty string
+	result := findGitRoot()
+
+	if result != "" {
+		t.Errorf("findGitRoot() = %q, want empty string (not in git repo)", result)
+	}
+}
+
+// TestFindBeadsDir_Worktree tests that FindBeadsDir correctly finds the .beads
+// directory within a git worktree, respecting the worktree boundary and not
+// searching into the main repository. This is critical for bd-745.
+func TestFindBeadsDir_Worktree(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+	os.Unsetenv("BEADS_DIR")
+
+	// Create temporary directory for our test
+	tmpDir, err := os.MkdirTemp("", "beads-worktree-finddir-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize main git repository
+	mainRepoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(mainRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+
+	// Create .beads directory in main repo with a database
+	mainBeadsDir := filepath.Join(mainRepoDir, ".beads")
+	if err := os.MkdirAll(mainBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mainBeadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(mainRepoDir, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	// Create a worktree
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	cmd = exec.Command("git", "worktree", "add", worktreeDir, "HEAD")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add failed: %v", err)
+	}
+	defer func() {
+		cmd := exec.Command("git", "worktree", "remove", worktreeDir)
+		cmd.Dir = mainRepoDir
+		_ = cmd.Run()
+	}()
+
+	// Create .beads directory in worktree with its own database
+	worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+	if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeBeadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to worktree
+	t.Chdir(worktreeDir)
+
+	// FindBeadsDir should prioritize the main repo's .beads for worktrees (bd-de6)
+	result := FindBeadsDir()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	worktreeBeadsDirResolved, _ := filepath.EvalSymlinks(worktreeBeadsDir)
+	mainBeadsDirResolved, _ := filepath.EvalSymlinks(mainBeadsDir)
+
+	if resultResolved != mainBeadsDirResolved {
+		t.Errorf("FindBeadsDir() = %q, want main repo .beads %q (prioritized for worktrees)", result, mainBeadsDir)
+	}
+
+	// Verify we're NOT finding the worktree's .beads (should fall back only if main repo has no .beads)
+	if resultResolved == worktreeBeadsDirResolved {
+		t.Errorf("FindBeadsDir() returned worktree .beads %q instead of main repo .beads %q - prioritization not working!", worktreeBeadsDir, mainBeadsDir)
+	}
+}
+
+// TestFindDatabasePath_Worktree tests that FindDatabasePath correctly finds the
+// shared database in the main repository when accessed from a git worktree. This is the
+// key test for bd-745 - worktrees should share the same .beads database.
+func TestFindDatabasePath_Worktree(t *testing.T) {
+	// Save original state
+	originalEnvDir := os.Getenv("BEADS_DIR")
+	originalEnvDB := os.Getenv("BEADS_DB")
+	defer func() {
+		if originalEnvDir != "" {
+			os.Setenv("BEADS_DIR", originalEnvDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalEnvDB != "" {
+			os.Setenv("BEADS_DB", originalEnvDB)
+		} else {
+			os.Unsetenv("BEADS_DB")
+		}
+	}()
+	os.Unsetenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DB")
+
+	// Create temporary directory for our test
+	tmpDir, err := os.MkdirTemp("", "beads-worktree-finddb-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize main git repository
+	mainRepoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(mainRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+
+	// Create .beads directory in main repo with database
+	mainBeadsDir := filepath.Join(mainRepoDir, ".beads")
+	if err := os.MkdirAll(mainBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mainDBPath := filepath.Join(mainBeadsDir, "beads.db")
+	if err := os.WriteFile(mainDBPath, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(mainRepoDir, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	// Create a worktree
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	cmd = exec.Command("git", "worktree", "add", worktreeDir, "HEAD")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add failed: %v", err)
+	}
+	defer func() {
+		cmd := exec.Command("git", "worktree", "remove", worktreeDir)
+		cmd.Dir = mainRepoDir
+		_ = cmd.Run()
+	}()
+
+	// Change to worktree subdirectory
+	worktreeSubDir := filepath.Join(worktreeDir, "sub", "nested")
+	if err := os.MkdirAll(worktreeSubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(worktreeSubDir)
+
+	// FindDatabasePath should find the main repo's shared database
+	result := FindDatabasePath()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	mainDBPathResolved, _ := filepath.EvalSymlinks(mainDBPath)
+
+	if resultResolved != mainDBPathResolved {
+		t.Errorf("FindDatabasePath() = %q, want main repo shared db %q", result, mainDBPath)
+	}
+}
+
+// TestFindDatabasePath_WorktreeNoLocalDB tests that when a worktree does NOT have
+// its own .beads directory, FindDatabasePath finds the shared database in the main
+// repository. This tests the "shared database" behavior for worktrees.
+func TestFindDatabasePath_WorktreeNoLocalDB(t *testing.T) {
+	// Save original state
+	originalEnvDir := os.Getenv("BEADS_DIR")
+	originalEnvDB := os.Getenv("BEADS_DB")
+	defer func() {
+		if originalEnvDir != "" {
+			os.Setenv("BEADS_DIR", originalEnvDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		if originalEnvDB != "" {
+			os.Setenv("BEADS_DB", originalEnvDB)
+		} else {
+			os.Unsetenv("BEADS_DB")
+		}
+	}()
+	os.Unsetenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DB")
+
+	// Create temporary directory for our test
+	tmpDir, err := os.MkdirTemp("", "beads-worktree-nodb-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize main git repository
+	mainRepoDir := filepath.Join(tmpDir, "main-repo")
+	if err := os.MkdirAll(mainRepoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+
+	// Create .beads directory in main repo with database
+	mainBeadsDir := filepath.Join(mainRepoDir, ".beads")
+	if err := os.MkdirAll(mainBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mainDBPath := filepath.Join(mainBeadsDir, "beads.db")
+	if err := os.WriteFile(mainDBPath, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial commit
+	if err := os.WriteFile(filepath.Join(mainRepoDir, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = mainRepoDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git commit failed: %v", err)
+	}
+
+	// Create a worktree WITHOUT a .beads directory
+	worktreeDir := filepath.Join(tmpDir, "worktree")
+	cmd = exec.Command("git", "worktree", "add", worktreeDir, "HEAD")
+	cmd.Dir = mainRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add failed: %v", err)
+	}
+	defer func() {
+		cmd := exec.Command("git", "worktree", "remove", worktreeDir)
+		cmd.Dir = mainRepoDir
+		_ = cmd.Run()
+	}()
+
+	// Note: We do NOT create .beads in the worktree
+	// The worktree got .beads from the commit, so we need to remove it
+	worktreeBeadsDir := filepath.Join(worktreeDir, ".beads")
+	if err := os.RemoveAll(worktreeBeadsDir); err != nil {
+		// May not exist, that's fine
+	}
+
+	// Change to worktree
+	t.Chdir(worktreeDir)
+
+	// FindDatabasePath should find the main repo's shared database
+	result := FindDatabasePath()
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	mainDBPathResolved, _ := filepath.EvalSymlinks(mainDBPath)
+
+	if resultResolved != mainDBPathResolved {
+		t.Errorf("FindDatabasePath() = %q, want main repo shared db %q", result, mainDBPath)
 	}
 }
