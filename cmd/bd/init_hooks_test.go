@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/git"
 )
 
 func TestDetectExistingHooks(t *testing.T) {
@@ -18,9 +20,15 @@ func TestDetectExistingHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	hooksDir := filepath.Join(gitDirPath, "hooks")
 
@@ -112,9 +120,15 @@ func TestInstallGitHooks_NoExistingHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	hooksDir := filepath.Join(gitDirPath, "hooks")
 
@@ -154,9 +168,15 @@ func TestInstallGitHooks_ExistingHookBackup(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	hooksDir := filepath.Join(gitDirPath, "hooks")
 

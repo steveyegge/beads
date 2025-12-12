@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/git"
 )
 
 func TestGetEmbeddedHooks(t *testing.T) {
@@ -43,9 +45,15 @@ func TestInstallHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -94,9 +102,15 @@ func TestInstallHooksBackup(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -151,9 +165,15 @@ func TestInstallHooksForce(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -198,9 +218,15 @@ func TestUninstallHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -320,9 +346,15 @@ func TestInstallHooksShared(t *testing.T) {
 	}
 
 	// Verify hooks were NOT installed to .git/hooks/
+<<<<<<< HEAD
 	gitDirPath, err := getGitDir()
 	if err != nil {
 		t.Fatalf("getGitDir() failed: %v", err)
+=======
+	gitDirPath, err := git.GetGitDir()
+	if err != nil {
+		t.Fatalf("git.GetGitDir() failed: %v", err)
+>>>>>>> dc761622 (Update git hooks for worktree support)
 	}
 	standardHooksDir := filepath.Join(gitDirPath, "hooks")
 	for hookName := range hooks {
