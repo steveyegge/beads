@@ -738,11 +738,41 @@ func getRemoteForBranch(ctx context.Context, worktreePath, branch string) string
 }
 
 // GetRepoRoot returns the git repository root directory
+// For worktrees, this returns the main repository root (not the worktree root)
 func GetRepoRoot(ctx context.Context) (string, error) {
+	// Check if .git is a file (worktree) or directory (regular repo)
+	gitPath := ".git"
+	if info, err := os.Stat(gitPath); err == nil {
+		if info.Mode().IsRegular() {
+			// Worktree: read .git file
+			content, err := os.ReadFile(gitPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to read .git file: %w", err)
+			}
+			line := strings.TrimSpace(string(content))
+			if strings.HasPrefix(line, "gitdir: ") {
+				gitDir := strings.TrimPrefix(line, "gitdir: ")
+				// Remove /worktrees/* part
+				if idx := strings.Index(gitDir, "/worktrees/"); idx > 0 {
+					gitDir = gitDir[:idx]
+				}
+				return filepath.Dir(gitDir), nil
+			}
+		} else if info.IsDir() {
+			// Regular repo: .git is a directory
+			absGitPath, err := filepath.Abs(gitPath)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Dir(absGitPath), nil
+		}
+	}
+
+	// Fallback to git command
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to get git root: %w", err)
+		return "", fmt.Errorf("not a git repository: %w", err)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
