@@ -65,6 +65,11 @@ func InstallClaude(project bool, stealth bool) {
 		fmt.Println("✓ Registered PreCompact hook")
 	}
 
+	// Add bd to allowedTools so commands don't require per-command approval
+	if addAllowedTool(settings, "Bash(bd:*)") {
+		fmt.Println("✓ Added bd to allowedTools (no per-command approval needed)")
+	}
+
 	// Write back to file
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -149,6 +154,9 @@ func RemoveClaude(project bool) {
 	removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
 	removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
 
+	// Remove bd from allowedTools
+	removeAllowedTool(settings, "Bash(bd:*)")
+
 	// Write back
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -162,6 +170,49 @@ func RemoveClaude(project bool) {
 	}
 
 	fmt.Println("✓ Claude hooks removed")
+}
+
+// addAllowedTool adds a tool pattern to allowedTools if not already present
+// Returns true if tool was added, false if already exists
+func addAllowedTool(settings map[string]interface{}, tool string) bool {
+	// Get or create allowedTools array
+	allowedTools, ok := settings["allowedTools"].([]interface{})
+	if !ok {
+		allowedTools = []interface{}{}
+	}
+
+	// Check if tool already in list
+	for _, t := range allowedTools {
+		if t == tool {
+			fmt.Printf("✓ Tool already in allowedTools: %s\n", tool)
+			return false
+		}
+	}
+
+	// Add tool to array
+	allowedTools = append(allowedTools, tool)
+	settings["allowedTools"] = allowedTools
+	return true
+}
+
+// removeAllowedTool removes a tool pattern from allowedTools
+func removeAllowedTool(settings map[string]interface{}, tool string) {
+	allowedTools, ok := settings["allowedTools"].([]interface{})
+	if !ok {
+		return
+	}
+
+	// Filter out the tool
+	var filtered []interface{}
+	for _, t := range allowedTools {
+		if t != tool {
+			filtered = append(filtered, t)
+		} else {
+			fmt.Printf("✓ Removed %s from allowedTools\n", tool)
+		}
+	}
+
+	settings["allowedTools"] = filtered
 }
 
 // addHookCommand adds a hook command to an event if not already present
