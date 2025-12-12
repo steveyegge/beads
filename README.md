@@ -5,6 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@beads/bd)](https://www.npmjs.com/package/@beads/bd)
 [![CI](https://img.shields.io/github/actions/workflow/status/steveyegge/beads/ci.yml?branch=main&label=tests)](https://github.com/steveyegge/beads/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/steveyegge/beads)](https://goreportcard.com/report/github.com/steveyegge/beads)
+[![Git Worktrees](https://img.shields.io/badge/git-worktrees-🚧-orange)](docs/WORKTREES.md)
 [![License](https://img.shields.io/github/license/steveyegge/beads)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/beads-mcp)](https://pypi.org/project/beads-mcp/)
 
@@ -60,6 +61,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
 - 🚀 **Optional Agent Mail** - Real-time multi-agent coordination (<100ms vs 2-5s git sync, 98.5% reduction in git traffic)
 - 🔐 **Protected branch support** - Works with GitHub/GitLab protected branches via separate sync branch
+- 🌳 **Git worktree compatible** - Enhanced support for git worktrees with shared database architecture
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
 - 🔍 **Multi-project isolation** - Each project gets its own database, auto-discovered by directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
