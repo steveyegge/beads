@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestMergeStatus tests the status merging logic with special rules
@@ -1204,6 +1205,1000 @@ func TestMerge3Way_Integration(t *testing.T) {
 		}
 		if !found2 {
 			t.Error("bd-2 not found in results")
+		}
+	})
+}
+
+// TestIsTombstone tests the tombstone detection helper
+func TestIsTombstone(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		expected bool
+	}{
+		{
+			name:     "tombstone status",
+			status:   "tombstone",
+			expected: true,
+		},
+		{
+			name:     "open status",
+			status:   "open",
+			expected: false,
+		},
+		{
+			name:     "closed status",
+			status:   "closed",
+			expected: false,
+		},
+		{
+			name:     "in_progress status",
+			status:   "in_progress",
+			expected: false,
+		},
+		{
+			name:     "empty status",
+			status:   "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := Issue{Status: tt.status}
+			result := IsTombstone(issue)
+			if result != tt.expected {
+				t.Errorf("IsTombstone() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestMergeTombstones tests merging two tombstones
+func TestMergeTombstones(t *testing.T) {
+	tests := []struct {
+		name            string
+		leftDeletedAt   string
+		rightDeletedAt  string
+		expectedSide    string // "left" or "right"
+	}{
+		{
+			name:           "left deleted later",
+			leftDeletedAt:  "2024-01-02T00:00:00Z",
+			rightDeletedAt: "2024-01-01T00:00:00Z",
+			expectedSide:   "left",
+		},
+		{
+			name:           "right deleted later",
+			leftDeletedAt:  "2024-01-01T00:00:00Z",
+			rightDeletedAt: "2024-01-02T00:00:00Z",
+			expectedSide:   "right",
+		},
+		{
+			name:           "same timestamp - left wins (tie breaker)",
+			leftDeletedAt:  "2024-01-01T00:00:00Z",
+			rightDeletedAt: "2024-01-01T00:00:00Z",
+			expectedSide:   "left",
+		},
+		{
+			name:           "with fractional seconds",
+			leftDeletedAt:  "2024-01-01T00:00:00.123456Z",
+			rightDeletedAt: "2024-01-01T00:00:00.123455Z",
+			expectedSide:   "left",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.leftDeletedAt,
+				DeletedBy: "user-left",
+			}
+			right := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.rightDeletedAt,
+				DeletedBy: "user-right",
+			}
+			result := mergeTombstones(left, right)
+			if tt.expectedSide == "left" && result.DeletedBy != "user-left" {
+				t.Errorf("expected left tombstone to win, got right")
+			}
+			if tt.expectedSide == "right" && result.DeletedBy != "user-right" {
+				t.Errorf("expected right tombstone to win, got left")
+			}
+		})
+	}
+}
+
+// TestMerge3Way_TombstoneVsLive tests tombstone vs live issue scenarios
+func TestMerge3Way_TombstoneVsLive(t *testing.T) {
+	// Base issue (live)
+	baseIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original title",
+		Status:    "open",
+		Priority:  2,
+		CreatedAt: "2024-01-01T00:00:00Z",
+		UpdatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	// Recent tombstone (not expired)
+	recentTombstone := Issue{
+		ID:           "bd-abc123",
+		Title:        "Original title",
+		Status:       StatusTombstone,
+		Priority:     2,
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		UpdatedAt:    "2024-01-02T00:00:00Z",
+		CreatedBy:    "user1",
+		DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339), // 1 day ago
+		DeletedBy:    "user2",
+		DeleteReason: "Duplicate issue",
+		OriginalType: "task",
+	}
+
+	// Expired tombstone (older than TTL)
+	expiredTombstone := Issue{
+		ID:           "bd-abc123",
+		Title:        "Original title",
+		Status:       StatusTombstone,
+		Priority:     2,
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		UpdatedAt:    "2024-01-02T00:00:00Z",
+		CreatedBy:    "user1",
+		DeletedAt:    time.Now().Add(-60 * 24 * time.Hour).Format(time.RFC3339), // 60 days ago
+		DeletedBy:    "user2",
+		DeleteReason: "Duplicate issue",
+		OriginalType: "task",
+	}
+
+	// Modified live issue
+	modifiedLive := Issue{
+		ID:        "bd-abc123",
+		Title:     "Updated title",
+		Status:    "in_progress",
+		Priority:  1,
+		CreatedAt: "2024-01-01T00:00:00Z",
+		UpdatedAt: "2024-01-03T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	t.Run("recent tombstone in left wins over live in right", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{recentTombstone}
+		right := []Issue{modifiedLive}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("recent tombstone in right wins over live in left", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{modifiedLive}
+		right := []Issue{recentTombstone}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("expired tombstone in left loses to live in right (resurrection)", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{expiredTombstone}
+		right := []Issue{modifiedLive}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != "in_progress" {
+			t.Errorf("expected live issue to win over expired tombstone, got status %q", result[0].Status)
+		}
+		if result[0].Title != "Updated title" {
+			t.Errorf("expected live issue's title, got %q", result[0].Title)
+		}
+	})
+
+	t.Run("expired tombstone in right loses to live in left (resurrection)", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{modifiedLive}
+		right := []Issue{expiredTombstone}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != "in_progress" {
+			t.Errorf("expected live issue to win over expired tombstone, got status %q", result[0].Status)
+		}
+	})
+}
+
+// TestMerge3Way_TombstoneVsTombstone tests merging two tombstones
+func TestMerge3Way_TombstoneVsTombstone(t *testing.T) {
+	baseIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original title",
+		Status:    "open",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	t.Run("later tombstone wins", func(t *testing.T) {
+		leftTombstone := Issue{
+			ID:           "bd-abc123",
+			Title:        "Original title",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-02T00:00:00Z",
+			DeletedBy:    "user-left",
+			DeleteReason: "Left reason",
+		}
+		rightTombstone := Issue{
+			ID:           "bd-abc123",
+			Title:        "Original title",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-03T00:00:00Z", // Later
+			DeletedBy:    "user-right",
+			DeleteReason: "Right reason",
+		}
+
+		base := []Issue{baseIssue}
+		left := []Issue{leftTombstone}
+		right := []Issue{rightTombstone}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].DeletedBy != "user-right" {
+			t.Errorf("expected right tombstone to win (later deleted_at), got DeletedBy %q", result[0].DeletedBy)
+		}
+		if result[0].DeleteReason != "Right reason" {
+			t.Errorf("expected right tombstone's reason, got %q", result[0].DeleteReason)
+		}
+	})
+}
+
+// TestMerge3Way_TombstoneNoBase tests tombstone scenarios without a base
+func TestMerge3Way_TombstoneNoBase(t *testing.T) {
+	t.Run("tombstone added only in left", func(t *testing.T) {
+		tombstone := Issue{
+			ID:        "bd-abc123",
+			Title:     "New tombstone",
+			Status:    StatusTombstone,
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+			DeletedAt: "2024-01-02T00:00:00Z",
+			DeletedBy: "user1",
+		}
+
+		result, conflicts := merge3Way([]Issue{}, []Issue{tombstone}, []Issue{})
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("tombstone added only in right", func(t *testing.T) {
+		tombstone := Issue{
+			ID:        "bd-abc123",
+			Title:     "New tombstone",
+			Status:    StatusTombstone,
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+			DeletedAt: "2024-01-02T00:00:00Z",
+			DeletedBy: "user1",
+		}
+
+		result, conflicts := merge3Way([]Issue{}, []Issue{}, []Issue{tombstone})
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("tombstone in left vs live in right (no base)", func(t *testing.T) {
+		recentTombstone := Issue{
+			ID:        "bd-abc123",
+			Title:     "Issue",
+			Status:    StatusTombstone,
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+			DeletedAt: time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedBy: "user1",
+		}
+		live := Issue{
+			ID:        "bd-abc123",
+			Title:     "Issue",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+
+		result, conflicts := merge3Way([]Issue{}, []Issue{recentTombstone}, []Issue{live})
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		// Recent tombstone should win
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win, got status %q", result[0].Status)
+		}
+	})
+}
+
+// TestMerge3WayWithTTL tests the TTL-configurable merge function
+func TestMerge3WayWithTTL(t *testing.T) {
+	baseIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original",
+		Status:    "open",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	// Tombstone deleted 10 days ago
+	tombstone := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original",
+		Status:    StatusTombstone,
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+		DeletedAt: time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339),
+		DeletedBy: "user2",
+	}
+
+	liveIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Updated",
+		Status:    "open",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	t.Run("with short TTL tombstone is expired", func(t *testing.T) {
+		// 7 day TTL + 1 hour grace = tombstone (10 days old) is expired
+		shortTTL := 7 * 24 * time.Hour
+		base := []Issue{baseIssue}
+		left := []Issue{tombstone}
+		right := []Issue{liveIssue}
+
+		result, _ := merge3WayWithTTL(base, left, right, shortTTL)
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		// With short TTL, tombstone is expired, live issue wins
+		if result[0].Status != "open" {
+			t.Errorf("expected live issue to win with short TTL, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("with long TTL tombstone is not expired", func(t *testing.T) {
+		// 30 day TTL = tombstone (10 days old) is NOT expired
+		longTTL := 30 * 24 * time.Hour
+		base := []Issue{baseIssue}
+		left := []Issue{tombstone}
+		right := []Issue{liveIssue}
+
+		result, _ := merge3WayWithTTL(base, left, right, longTTL)
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		// With long TTL, tombstone is NOT expired, tombstone wins
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win with long TTL, got status %q", result[0].Status)
+		}
+	})
+}
+
+// TestMergeStatus_Tombstone tests status merging with tombstone
+func TestMergeStatus_Tombstone(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     string
+		left     string
+		right    string
+		expected string
+	}{
+		{
+			name:     "tombstone in left wins over open in right",
+			base:     "open",
+			left:     StatusTombstone,
+			right:    "open",
+			expected: StatusTombstone,
+		},
+		{
+			name:     "tombstone in right wins over open in left",
+			base:     "open",
+			left:     "open",
+			right:    StatusTombstone,
+			expected: StatusTombstone,
+		},
+		{
+			name:     "tombstone in left wins over closed in right",
+			base:     "open",
+			left:     StatusTombstone,
+			right:    "closed",
+			expected: StatusTombstone,
+		},
+		{
+			name:     "both tombstone",
+			base:     "open",
+			left:     StatusTombstone,
+			right:    StatusTombstone,
+			expected: StatusTombstone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mergeStatus(tt.base, tt.left, tt.right)
+			if result != tt.expected {
+				t.Errorf("mergeStatus(%q, %q, %q) = %q, want %q",
+					tt.base, tt.left, tt.right, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestMerge3Way_TombstoneWithImplicitDeletion tests bd-ki14 fix:
+// tombstones should be preserved even when the other side implicitly deleted
+func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
+	baseIssue := Issue{
+		ID:        "bd-abc123",
+		Title:     "Original",
+		Status:    "open",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		CreatedBy: "user1",
+	}
+
+	tombstone := Issue{
+		ID:           "bd-abc123",
+		Title:        "Original",
+		Status:       StatusTombstone,
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		CreatedBy:    "user1",
+		DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+		DeletedBy:    "user2",
+		DeleteReason: "Duplicate",
+	}
+
+	t.Run("bd-ki14: tombstone in left preserved when right implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{tombstone}
+		right := []Issue{} // Implicitly deleted in right
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (tombstone preserved), got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to be preserved, got status %q", result[0].Status)
+		}
+		if result[0].DeletedBy != "user2" {
+			t.Errorf("expected tombstone fields preserved, got DeletedBy %q", result[0].DeletedBy)
+		}
+	})
+
+	t.Run("bd-ki14: tombstone in right preserved when left implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		left := []Issue{} // Implicitly deleted in left
+		right := []Issue{tombstone}
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (tombstone preserved), got %d", len(result))
+		}
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to be preserved, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("bd-ki14: live issue in left still deleted when right implicitly deleted", func(t *testing.T) {
+		base := []Issue{baseIssue}
+		modifiedLive := Issue{
+			ID:        "bd-abc123",
+			Title:     "Modified",
+			Status:    "in_progress",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := []Issue{modifiedLive}
+		right := []Issue{} // Implicitly deleted in right
+
+		result, conflicts := merge3Way(base, left, right)
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		// Live issue should be deleted (implicit deletion wins for non-tombstones)
+		if len(result) != 0 {
+			t.Errorf("expected implicit deletion to win for live issue, got %d results", len(result))
+		}
+	})
+}
+
+// TestMergeTombstones_EmptyDeletedAt tests bd-6x5 fix:
+// handling empty DeletedAt timestamps in tombstone merging
+func TestMergeTombstones_EmptyDeletedAt(t *testing.T) {
+	tests := []struct {
+		name           string
+		leftDeletedAt  string
+		rightDeletedAt string
+		expectedSide   string // "left" or "right"
+	}{
+		{
+			name:           "bd-6x5: both empty - left wins as tie-breaker",
+			leftDeletedAt:  "",
+			rightDeletedAt: "",
+			expectedSide:   "left",
+		},
+		{
+			name:           "bd-6x5: left empty, right valid - right wins",
+			leftDeletedAt:  "",
+			rightDeletedAt: "2024-01-01T00:00:00Z",
+			expectedSide:   "right",
+		},
+		{
+			name:           "bd-6x5: left valid, right empty - left wins",
+			leftDeletedAt:  "2024-01-01T00:00:00Z",
+			rightDeletedAt: "",
+			expectedSide:   "left",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.leftDeletedAt,
+				DeletedBy: "user-left",
+			}
+			right := Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: tt.rightDeletedAt,
+				DeletedBy: "user-right",
+			}
+			result := mergeTombstones(left, right)
+			if tt.expectedSide == "left" && result.DeletedBy != "user-left" {
+				t.Errorf("expected left tombstone to win, got DeletedBy %q", result.DeletedBy)
+			}
+			if tt.expectedSide == "right" && result.DeletedBy != "user-right" {
+				t.Errorf("expected right tombstone to win, got DeletedBy %q", result.DeletedBy)
+			}
+		})
+	}
+}
+
+// TestMergeIssue_TombstoneFields tests bd-1sn fix:
+// tombstone fields should be copied when status becomes tombstone via safety fallback
+func TestMergeIssue_TombstoneFields(t *testing.T) {
+	t.Run("bd-1sn: tombstone fields copied from left when tombstone via mergeStatus", func(t *testing.T) {
+		base := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-02T00:00:00Z",
+			DeletedBy:    "user2",
+			DeleteReason: "Duplicate",
+			OriginalType: "task",
+		}
+		right := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+
+		result, _ := mergeIssue(base, left, right)
+		if result.Status != StatusTombstone {
+			t.Errorf("expected tombstone status, got %q", result.Status)
+		}
+		if result.DeletedAt != "2024-01-02T00:00:00Z" {
+			t.Errorf("expected DeletedAt to be copied, got %q", result.DeletedAt)
+		}
+		if result.DeletedBy != "user2" {
+			t.Errorf("expected DeletedBy to be copied, got %q", result.DeletedBy)
+		}
+		if result.DeleteReason != "Duplicate" {
+			t.Errorf("expected DeleteReason to be copied, got %q", result.DeleteReason)
+		}
+		if result.OriginalType != "task" {
+			t.Errorf("expected OriginalType to be copied, got %q", result.OriginalType)
+		}
+	})
+
+	t.Run("bd-1sn: tombstone fields copied from right when it has later deleted_at", func(t *testing.T) {
+		base := Issue{
+			ID:        "bd-test",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1",
+		}
+		left := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-02T00:00:00Z",
+			DeletedBy:    "user-left",
+			DeleteReason: "Left reason",
+		}
+		right := Issue{
+			ID:           "bd-test",
+			Status:       StatusTombstone,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    "2024-01-03T00:00:00Z", // Later
+			DeletedBy:    "user-right",
+			DeleteReason: "Right reason",
+		}
+
+		result, _ := mergeIssue(base, left, right)
+		if result.Status != StatusTombstone {
+			t.Errorf("expected tombstone status, got %q", result.Status)
+		}
+		// Right has later deleted_at, so right's fields should be used
+		if result.DeletedBy != "user-right" {
+			t.Errorf("expected DeletedBy from right (later), got %q", result.DeletedBy)
+		}
+		if result.DeleteReason != "Right reason" {
+			t.Errorf("expected DeleteReason from right, got %q", result.DeleteReason)
+		}
+	})
+}
+
+// TestIsExpiredTombstone tests edge cases for the IsExpiredTombstone function (bd-fmo)
+func TestIsExpiredTombstone(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		issue    Issue
+		ttl      time.Duration
+		expected bool
+	}{
+		{
+			name: "non-tombstone returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    "open",
+				DeletedAt: now.Add(-100 * 24 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "closed status returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    "closed",
+				DeletedAt: now.Add(-100 * 24 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "tombstone with empty deleted_at returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: "",
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "tombstone with invalid timestamp returns false (safety)",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: "not-a-valid-date",
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "tombstone with malformed RFC3339 returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: "2024-13-45T99:99:99Z",
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "recent tombstone (within TTL) returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "old tombstone (beyond TTL) returns true",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-48 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: true,
+		},
+		{
+			name: "tombstone just inside TTL boundary (with clock skew grace) returns false",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-24 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: false,
+		},
+		{
+			name: "tombstone just past TTL boundary (with clock skew grace) returns true",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-26 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      24 * time.Hour,
+			expected: true,
+		},
+		{
+			name: "ttl=0 falls back to DefaultTombstoneTTL (30 days)",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-20 * 24 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      0,
+			expected: false,
+		},
+		{
+			name: "ttl=0 with old tombstone (beyond default TTL) returns true",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      0,
+			expected: true,
+		},
+		{
+			name: "RFC3339Nano format is supported",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-48 * time.Hour).Format(time.RFC3339Nano),
+			},
+			ttl:      24 * time.Hour,
+			expected: true,
+		},
+		{
+			name: "very short TTL (1 minute) works correctly",
+			issue: Issue{
+				ID:        "bd-test",
+				Status:    StatusTombstone,
+				DeletedAt: now.Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+			ttl:      1 * time.Minute,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsExpiredTombstone(tt.issue, tt.ttl)
+			if result != tt.expected {
+				t.Errorf("IsExpiredTombstone() = %v, want %v (deleted_at=%q, ttl=%v)",
+					result, tt.expected, tt.issue.DeletedAt, tt.ttl)
+			}
+		})
+	}
+}
+
+// TestMerge3Way_TombstoneBaseBothLiveResurrection tests the scenario where
+// the base version is a tombstone but both left and right have live versions.
+// This can happen if Clone A deletes an issue, Clones B and C sync (getting tombstone),
+// then both B and C independently recreate an issue with same ID. (bd-bob)
+func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
+	// Base is a tombstone (issue was deleted)
+	baseTombstone := Issue{
+		ID:           "bd-abc123",
+		Title:        "Original title",
+		Status:       StatusTombstone,
+		Priority:     2,
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		UpdatedAt:    "2024-01-05T00:00:00Z",
+		CreatedBy:    "user1",
+		DeletedAt:    time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339), // 10 days ago
+		DeletedBy:    "user2",
+		DeleteReason: "Obsolete",
+		OriginalType: "task",
+	}
+
+	// Left resurrects the issue with new content
+	leftLive := Issue{
+		ID:        "bd-abc123",
+		Title:     "Resurrected by left",
+		Status:    "open",
+		Priority:  2,
+		IssueType: "task",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		UpdatedAt: "2024-01-10T00:00:00Z", // Left is older
+		CreatedBy: "user1",
+	}
+
+	// Right also resurrects with different content
+	rightLive := Issue{
+		ID:        "bd-abc123",
+		Title:     "Resurrected by right",
+		Status:    "in_progress",
+		Priority:  1, // Higher priority (lower number)
+		IssueType: "bug",
+		CreatedAt: "2024-01-01T00:00:00Z",
+		UpdatedAt: "2024-01-15T00:00:00Z", // Right is newer
+		CreatedBy: "user1",
+	}
+
+	t.Run("both sides resurrect with different content - standard merge applies", func(t *testing.T) {
+		base := []Issue{baseTombstone}
+		left := []Issue{leftLive}
+		right := []Issue{rightLive}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		// Should not have conflicts - merge rules apply
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+
+		merged := result[0]
+
+		// Issue should be live (not tombstone)
+		if merged.Status == StatusTombstone {
+			t.Error("expected live issue after both sides resurrected, got tombstone")
+		}
+
+		// Title: right wins because it has later UpdatedAt
+		if merged.Title != "Resurrected by right" {
+			t.Errorf("expected title from right (later UpdatedAt), got %q", merged.Title)
+		}
+
+		// Priority: higher priority wins (lower number = more urgent)
+		if merged.Priority != 1 {
+			t.Errorf("expected priority 1 (higher), got %d", merged.Priority)
+		}
+
+		// Status: standard 3-way merge applies. When both sides changed from base,
+		// left wins (standard merge conflict resolution). Note: status does NOT use
+		// UpdatedAt tiebreaker like title does - it uses mergeField which picks left.
+		if merged.Status != "open" {
+			t.Errorf("expected status 'open' from left (both changed from base), got %q", merged.Status)
+		}
+
+		// Tombstone fields should NOT be present on merged result
+		if merged.DeletedAt != "" {
+			t.Errorf("expected empty DeletedAt on resurrected issue, got %q", merged.DeletedAt)
+		}
+		if merged.DeletedBy != "" {
+			t.Errorf("expected empty DeletedBy on resurrected issue, got %q", merged.DeletedBy)
+		}
+	})
+
+	t.Run("both resurrect with same status - no conflict", func(t *testing.T) {
+		leftOpen := leftLive
+		leftOpen.Status = "open"
+		rightOpen := rightLive
+		rightOpen.Status = "open"
+
+		base := []Issue{baseTombstone}
+		left := []Issue{leftOpen}
+		right := []Issue{rightOpen}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		if result[0].Status != "open" {
+			t.Errorf("expected status 'open', got %q", result[0].Status)
+		}
+	})
+
+	t.Run("one side closes after resurrection", func(t *testing.T) {
+		// Left resurrects and keeps open
+		leftOpen := leftLive
+		leftOpen.Status = "open"
+
+		// Right resurrects and then closes
+		rightClosed := rightLive
+		rightClosed.Status = "closed"
+		rightClosed.ClosedAt = "2024-01-16T00:00:00Z"
+
+		base := []Issue{baseTombstone}
+		left := []Issue{leftOpen}
+		right := []Issue{rightClosed}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(result))
+		}
+		// Closed should win over open
+		if result[0].Status != "closed" {
+			t.Errorf("expected closed to win over open, got %q", result[0].Status)
 		}
 	})
 }

@@ -71,7 +71,8 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 	jsonlPath := filepath.Join(absRepoPath, ".beads", "issues.jsonl")
 
 	// Check if file exists
-	fileInfo, err := os.Stat(jsonlPath)
+	// Use Lstat to get the symlink's own mtime, not the target's (NixOS fix).
+	fileInfo, err := os.Lstat(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No JSONL file - skip this repo
@@ -241,14 +242,16 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 			INSERT INTO issues (
 				id, content_hash, title, description, design, acceptance_criteria, notes,
 				status, priority, issue_type, assignee, estimated_minutes,
-				created_at, updated_at, closed_at, external_ref, source_repo, close_reason
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
+				deleted_at, deleted_by, delete_reason, original_type
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
 			issue.Priority, issue.IssueType, issue.Assignee,
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, issue.SourceRepo, issue.CloseReason,
+			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue: %w", err)
@@ -270,13 +273,15 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 					content_hash = ?, title = ?, description = ?, design = ?,
 					acceptance_criteria = ?, notes = ?, status = ?, priority = ?,
 					issue_type = ?, assignee = ?, estimated_minutes = ?,
-					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?
+					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?,
+					deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?
 				WHERE id = ?
 			`,
 				issue.ContentHash, issue.Title, issue.Description, issue.Design,
 				issue.AcceptanceCriteria, issue.Notes, issue.Status, issue.Priority,
 				issue.IssueType, issue.Assignee, issue.EstimatedMinutes,
 				issue.UpdatedAt, issue.ClosedAt, issue.ExternalRef, issue.SourceRepo,
+				issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 				issue.ID,
 			)
 			if err != nil {

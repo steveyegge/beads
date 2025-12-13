@@ -153,9 +153,9 @@ func TestGenerateBDGuide(t *testing.T) {
 		// Verify key sections from copilotInstructionsContent are present
 		expectedSections := []string{
 			"GitHub Copilot Instructions",
-			"Project Structure",
-			"Tech Stack",
-			"Coding Guidelines",
+			"Issue Tracking with bd",
+			"Essential Commands",
+			"Important Rules",
 		}
 
 		for _, section := range expectedSections {

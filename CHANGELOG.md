@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`bd sync` race condition with daemon (bd-lw0x, bd-hxou)**
+  - Fixed race condition where daemon or next CLI command would see hash mismatch after sync
+  - Previously, `bd sync` with sync.branch would restore .beads/ from HEAD but leave stale hash in DB
+  - This caused auto-import to trigger, which then scheduled re-export, dirtying the working directory
+  - Now updates `jsonl_content_hash` after restore to match the restored file
+  - Also fixed daemon's `performAutoImport` to update hash after successful import
+
 ## [0.29.0] - 2025-12-03
 
 ## [0.29.0] - 2025-12-03

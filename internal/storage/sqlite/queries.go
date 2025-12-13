@@ -11,6 +11,23 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// parseNullableTimeString parses a nullable time string from database TEXT columns.
+// The ncruces/go-sqlite3 driver only auto-converts TEXT→time.Time for columns declared
+// as DATETIME/DATE/TIME/TIMESTAMP. For TEXT columns (like deleted_at), we must parse manually.
+// Supports RFC3339, RFC3339Nano, and SQLite's native format.
+func parseNullableTimeString(ns sql.NullString) *time.Time {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	// Try RFC3339Nano first (more precise), then RFC3339, then SQLite format
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, ns.String); err == nil {
+			return &t
+		}
+	}
+	return nil // Unparseable - shouldn't happen with valid data
+}
+
 // REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
 // no longer needed with hash-based IDs
 // Migration functions moved to migrations.go (bd-fc2d, bd-b245)
@@ -158,6 +175,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
 	var closeReason sql.NullString
+	var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
+	var deletedBy sql.NullString
+	var deleteReason sql.NullString
+	var originalType sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -165,7 +186,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -174,6 +196,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -213,6 +236,16 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if closeReason.Valid {
 		issue.CloseReason = closeReason.String
+	}
+	issue.DeletedAt = parseNullableTimeString(deletedAt)
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
 	}
 
 	// Fetch labels for this issue
@@ -311,12 +344,19 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var originalSize sql.NullInt64
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
+	var sourceRepo sql.NullString
+	var closeReason sql.NullString
+	var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
+	var deletedBy sql.NullString
+	var deleteReason sql.NullString
+	var originalType sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size
+		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -324,7 +364,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize,
+		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&deletedAt, &deletedBy, &deleteReason, &originalType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -358,6 +399,22 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if originalSize.Valid {
 		issue.OriginalSize = int(originalSize.Int64)
+	}
+	if sourceRepo.Valid {
+		issue.SourceRepo = sourceRepo.String
+	}
+	if closeReason.Valid {
+		issue.CloseReason = closeReason.String
+	}
+	issue.DeletedAt = parseNullableTimeString(deletedAt)
+	if deletedBy.Valid {
+		issue.DeletedBy = deletedBy.String
+	}
+	if deleteReason.Valid {
+		issue.DeleteReason = deleteReason.String
+	}
+	if originalType.Valid {
+		issue.OriginalType = originalType.String
 	}
 
 	// Fetch labels for this issue
@@ -792,6 +849,76 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	return tx.Commit()
 }
 
+// CreateTombstone converts an existing issue to a tombstone record.
+// This is a soft-delete that preserves the issue in the database with status="tombstone".
+// The issue will still appear in exports but be excluded from normal queries.
+// Dependencies must be removed separately before calling this method.
+func (s *SQLiteStorage) CreateTombstone(ctx context.Context, id string, actor string, reason string) error {
+	// Get the issue to preserve its original type
+	issue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get issue: %w", err)
+	}
+	if issue == nil {
+		return fmt.Errorf("issue not found: %s", id)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	originalType := string(issue.IssueType)
+
+	// Convert issue to tombstone
+	_, err = tx.ExecContext(ctx, `
+		UPDATE issues
+		SET status = ?,
+		    deleted_at = ?,
+		    deleted_by = ?,
+		    delete_reason = ?,
+		    original_type = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, types.StatusTombstone, now, actor, reason, originalType, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to create tombstone: %w", err)
+	}
+
+	// Record tombstone creation event
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, id, "deleted", actor, reason)
+	if err != nil {
+		return fmt.Errorf("failed to record tombstone event: %w", err)
+	}
+
+	// Mark issue as dirty for incremental export
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+	`, id, now)
+	if err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	// Invalidate blocked issues cache since status changed (bd-5qim)
+	// Tombstone issues don't block others, so this affects blocking calculations
+	if err := s.invalidateBlockedCache(ctx, tx); err != nil {
+		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return wrapDBError("commit tombstone transaction", err)
+	}
+
+	return nil
+}
+
 // DeleteIssue permanently removes an issue from the database
 func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1042,30 +1169,85 @@ func (s *SQLiteStorage) populateDeleteStats(ctx context.Context, tx *sql.Tx, inC
 }
 
 func (s *SQLiteStorage) executeDelete(ctx context.Context, tx *sql.Tx, inClause string, args []interface{}, result *DeleteIssuesResult) error {
-	deletes := []struct {
-		query string
-		args  []interface{}
-	}{
-		{fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause), append(args, args...)},
-		{fmt.Sprintf(`DELETE FROM labels WHERE issue_id IN (%s)`, inClause), args},
-		{fmt.Sprintf(`DELETE FROM events WHERE issue_id IN (%s)`, inClause), args},
-		{fmt.Sprintf(`DELETE FROM dirty_issues WHERE issue_id IN (%s)`, inClause), args},
-		{fmt.Sprintf(`DELETE FROM issues WHERE id IN (%s)`, inClause), args},
+	// Note: This method now creates tombstones instead of hard-deleting (bd-3b4)
+	// Only dependencies are deleted - issues are converted to tombstones
+
+	// 1. Delete dependencies - tombstones don't block other issues
+	_, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM dependencies WHERE issue_id IN (%s) OR depends_on_id IN (%s)`, inClause, inClause),
+		append(args, args...)...)
+	if err != nil {
+		return fmt.Errorf("failed to delete dependencies: %w", err)
 	}
 
-	for i, d := range deletes {
-		execResult, err := tx.ExecContext(ctx, d.query, d.args...)
-		if err != nil {
-			return fmt.Errorf("failed to delete: %w", err)
+	// 2. Get issue types before converting to tombstones (need for original_type)
+	issueTypes := make(map[string]string)
+	rows, err := tx.QueryContext(ctx,
+		fmt.Sprintf(`SELECT id, issue_type FROM issues WHERE id IN (%s)`, inClause),
+		args...)
+	if err != nil {
+		return fmt.Errorf("failed to get issue types: %w", err)
+	}
+	for rows.Next() {
+		var id, issueType string
+		if err := rows.Scan(&id, &issueType); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("failed to scan issue type: %w", err)
 		}
-		if i == len(deletes)-1 {
-			rowsAffected, err := execResult.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("failed to check rows affected: %w", err)
-			}
-			result.DeletedCount = int(rowsAffected)
+		issueTypes[id] = issueType
+	}
+	_ = rows.Close()
+
+	// 3. Convert issues to tombstones (only for issues that exist)
+	now := time.Now()
+	deletedCount := 0
+	for id, originalType := range issueTypes {
+		execResult, err := tx.ExecContext(ctx, `
+			UPDATE issues
+			SET status = ?,
+			    deleted_at = ?,
+			    deleted_by = ?,
+			    delete_reason = ?,
+			    original_type = ?,
+			    updated_at = ?
+			WHERE id = ?
+		`, types.StatusTombstone, now, "batch delete", "batch delete", originalType, now, id)
+		if err != nil {
+			return fmt.Errorf("failed to create tombstone for %s: %w", id, err)
+		}
+
+		rowsAffected, _ := execResult.RowsAffected()
+		if rowsAffected == 0 {
+			continue // Issue doesn't exist, skip
+		}
+		deletedCount++
+
+		// Record tombstone creation event
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO events (issue_id, event_type, actor, comment)
+			VALUES (?, ?, ?, ?)
+		`, id, "deleted", "batch delete", "batch delete")
+		if err != nil {
+			return fmt.Errorf("failed to record tombstone event for %s: %w", id, err)
+		}
+
+		// Mark issue as dirty for incremental export
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO dirty_issues (issue_id, marked_at)
+			VALUES (?, ?)
+			ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+		`, id, now)
+		if err != nil {
+			return fmt.Errorf("failed to mark issue dirty for %s: %w", id, err)
 		}
 	}
+
+	// 4. Invalidate blocked issues cache since statuses changed (bd-5qim)
+	if err := s.invalidateBlockedCache(ctx, tx); err != nil {
+		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+	}
+
+	result.DeletedCount = deletedCount
 	return nil
 }
 
@@ -1142,6 +1324,10 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
+	} else if !filter.IncludeTombstones {
+		// Exclude tombstones by default unless explicitly filtering for them (bd-1bu)
+		whereClauses = append(whereClauses, "status != ?")
+		args = append(args, types.StatusTombstone)
 	}
 
 	if filter.Priority != nil {
@@ -1249,7 +1435,8 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason
+		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

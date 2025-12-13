@@ -12,7 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// TestPurgeDeletedIssues tests that issues in the deletions manifest are purged during import
+// TestPurgeDeletedIssues tests that issues in the deletions manifest are converted to tombstones during import
 func TestPurgeDeletedIssues(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -84,7 +84,7 @@ func TestPurgeDeletedIssues(t *testing.T) {
 		t.Fatalf("purgeDeletedIssues failed: %v", err)
 	}
 
-	// Verify issue2 was purged
+	// Verify issue2 was tombstoned (bd-dve: now converts to tombstone instead of hard-delete)
 	if result.Purged != 1 {
 		t.Errorf("expected 1 purged issue, got %d", result.Purged)
 	}
@@ -92,13 +92,23 @@ func TestPurgeDeletedIssues(t *testing.T) {
 		t.Errorf("expected PurgedIDs to contain 'test-def', got %v", result.PurgedIDs)
 	}
 
-	// Verify issue2 is gone from database
-	iss2, err := store.GetIssue(ctx, "test-def")
+	// Verify issue2 is now a tombstone (not hard-deleted)
+	// GetIssue returns nil for tombstones by default, so use IncludeTombstones filter
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+		t.Fatalf("SearchIssues failed: %v", err)
 	}
-	if iss2 != nil {
-		t.Errorf("expected issue2 to be deleted, but it still exists")
+	var iss2 *types.Issue
+	for _, iss := range issues {
+		if iss.ID == "test-def" {
+			iss2 = iss
+			break
+		}
+	}
+	if iss2 == nil {
+		t.Errorf("expected issue2 to exist as tombstone, but it was hard-deleted")
+	} else if iss2.Status != types.StatusTombstone {
+		t.Errorf("expected issue2 to be a tombstone, got status %q", iss2.Status)
 	}
 
 	// Verify issue1 still exists (in JSONL)
@@ -175,6 +185,114 @@ func TestPurgeDeletedIssues_NoDeletionsManifest(t *testing.T) {
 	}
 	if iss == nil {
 		t.Errorf("expected issue to still exist")
+	}
+}
+
+// TestPurgeDeletedIssues_ProtectLocalExportIDs tests that issues in ProtectLocalExportIDs
+// are not tombstoned even if they're not in the JSONL (bd-sync-deletion fix)
+func TestPurgeDeletedIssues_ProtectLocalExportIDs(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create database
+	dbPath := filepath.Join(tmpDir, "beads.db")
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer store.Close()
+
+	// Initialize prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("failed to set prefix: %v", err)
+	}
+
+	// Create issues in the database:
+	// - issue1: in JSONL (should survive)
+	// - issue2: NOT in JSONL, but in ProtectLocalExportIDs (should survive - this is the fix)
+	// - issue3: NOT in JSONL, NOT protected (would be checked by git-history, but we skip that)
+	issue1 := &types.Issue{
+		ID:        "test-abc",
+		Title:     "Issue 1 (in JSONL)",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	issue2 := &types.Issue{
+		ID:        "test-def",
+		Title:     "Issue 2 (protected local export)",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	issue3 := &types.Issue{
+		ID:        "test-ghi",
+		Title:     "Issue 3 (unprotected)",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	for _, iss := range []*types.Issue{issue1, issue2, issue3} {
+		if err := store.CreateIssue(ctx, iss, "test"); err != nil {
+			t.Fatalf("failed to create issue %s: %v", iss.ID, err)
+		}
+	}
+
+	// Simulate import where JSONL only has issue1 (issue2 was in our local export but lost during merge)
+	jsonlIssues := []*types.Issue{issue1}
+
+	result := &Result{
+		IDMapping:        make(map[string]string),
+		MismatchPrefixes: make(map[string]int),
+	}
+
+	// Set ProtectLocalExportIDs to protect issue2 (simulates left snapshot protection)
+	opts := Options{
+		ProtectLocalExportIDs: map[string]bool{
+			"test-def": true, // Protect issue2
+		},
+		NoGitHistory: true, // Skip git history check for this test
+	}
+
+	// Call purgeDeletedIssues
+	if err := purgeDeletedIssues(ctx, store, dbPath, jsonlIssues, opts, result); err != nil {
+		t.Fatalf("purgeDeletedIssues failed: %v", err)
+	}
+
+	// Verify issue2 was preserved (the fix!)
+	if result.PreservedLocalExport != 1 {
+		t.Errorf("expected 1 preserved issue, got %d", result.PreservedLocalExport)
+	}
+	if len(result.PreservedLocalIDs) != 1 || result.PreservedLocalIDs[0] != "test-def" {
+		t.Errorf("expected PreservedLocalIDs to contain 'test-def', got %v", result.PreservedLocalIDs)
+	}
+
+	// Verify issue1 still exists (was in JSONL)
+	iss1, err := store.GetIssue(ctx, "test-abc")
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if iss1 == nil {
+		t.Errorf("expected issue1 to still exist")
+	}
+
+	// Verify issue2 still exists (was protected)
+	iss2, err := store.GetIssue(ctx, "test-def")
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if iss2 == nil {
+		t.Errorf("expected issue2 (protected local export) to still exist - THIS IS THE FIX")
+	}
+
+	// Verify issue3 still exists (not in deletions, git history check skipped)
+	iss3, err := store.GetIssue(ctx, "test-ghi")
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if iss3 == nil {
+		t.Errorf("expected issue3 to still exist (git history check skipped)")
 	}
 }
 

@@ -589,3 +589,159 @@ func TestConfigureSparseCheckoutErrors(t *testing.T) {
 		}
 	})
 }
+
+// TestSyncJSONLToWorktreeMerge tests the merge behavior when worktree has more issues
+// than the local repo (bd-52q fix for GitHub #464)
+func TestSyncJSONLToWorktreeMerge(t *testing.T) {
+	repoPath, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	wm := NewWorktreeManager(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "beads-worktree")
+
+	// Create worktree
+	if err := wm.CreateBeadsWorktree("beads-metadata", worktreePath); err != nil {
+		t.Fatalf("CreateBeadsWorktree failed: %v", err)
+	}
+
+	t.Run("merges when worktree has more issues than local", func(t *testing.T) {
+		// Set up: worktree has 3 issues (simulating remote state)
+		worktreeJSONL := filepath.Join(worktreePath, ".beads", "issues.jsonl")
+		worktreeData := `{"id":"bd-001","title":"Issue 1","status":"open","created_at":"2025-01-01T00:00:00Z","created_by":"user1"}
+{"id":"bd-002","title":"Issue 2","status":"open","created_at":"2025-01-01T00:00:01Z","created_by":"user1"}
+{"id":"bd-003","title":"Issue 3","status":"open","created_at":"2025-01-01T00:00:02Z","created_by":"user1"}
+`
+		if err := os.WriteFile(worktreeJSONL, []byte(worktreeData), 0644); err != nil {
+			t.Fatalf("Failed to write worktree JSONL: %v", err)
+		}
+
+		// Local has only 1 issue (simulating fresh clone that hasn't synced)
+		mainJSONL := filepath.Join(repoPath, ".beads", "issues.jsonl")
+		mainData := `{"id":"bd-004","title":"New Issue","status":"open","created_at":"2025-01-02T00:00:00Z","created_by":"user2"}
+`
+		if err := os.WriteFile(mainJSONL, []byte(mainData), 0644); err != nil {
+			t.Fatalf("Failed to write main JSONL: %v", err)
+		}
+
+		// Sync should MERGE, not overwrite
+		if err := wm.SyncJSONLToWorktree(worktreePath, ".beads/issues.jsonl"); err != nil {
+			t.Fatalf("SyncJSONLToWorktree failed: %v", err)
+		}
+
+		// Read the result
+		resultData, err := os.ReadFile(worktreeJSONL)
+		if err != nil {
+			t.Fatalf("Failed to read result JSONL: %v", err)
+		}
+
+		// Should have all 4 issues (3 from worktree + 1 from local)
+		resultCount := countJSONLIssues(resultData)
+		if resultCount != 4 {
+			t.Errorf("Expected 4 issues after merge, got %d\nContent:\n%s", resultCount, string(resultData))
+		}
+
+		// Verify specific issues are present
+		resultStr := string(resultData)
+		for _, id := range []string{"bd-001", "bd-002", "bd-003", "bd-004"} {
+			if !strings.Contains(resultStr, id) {
+				t.Errorf("Expected issue %s to be in merged result", id)
+			}
+		}
+	})
+
+	t.Run("overwrites when local has same or more issues", func(t *testing.T) {
+		// Set up: worktree has 2 issues
+		worktreeJSONL := filepath.Join(worktreePath, ".beads", "issues.jsonl")
+		worktreeData := `{"id":"bd-010","title":"Old 1","status":"open","created_at":"2025-01-01T00:00:00Z","created_by":"user1"}
+{"id":"bd-011","title":"Old 2","status":"open","created_at":"2025-01-01T00:00:01Z","created_by":"user1"}
+`
+		if err := os.WriteFile(worktreeJSONL, []byte(worktreeData), 0644); err != nil {
+			t.Fatalf("Failed to write worktree JSONL: %v", err)
+		}
+
+		// Local has 3 issues (more than worktree)
+		mainJSONL := filepath.Join(repoPath, ".beads", "issues.jsonl")
+		mainData := `{"id":"bd-020","title":"New 1","status":"open","created_at":"2025-01-02T00:00:00Z","created_by":"user2"}
+{"id":"bd-021","title":"New 2","status":"open","created_at":"2025-01-02T00:00:01Z","created_by":"user2"}
+{"id":"bd-022","title":"New 3","status":"open","created_at":"2025-01-02T00:00:02Z","created_by":"user2"}
+`
+		if err := os.WriteFile(mainJSONL, []byte(mainData), 0644); err != nil {
+			t.Fatalf("Failed to write main JSONL: %v", err)
+		}
+
+		// Sync should OVERWRITE (local is authoritative when it has more)
+		if err := wm.SyncJSONLToWorktree(worktreePath, ".beads/issues.jsonl"); err != nil {
+			t.Fatalf("SyncJSONLToWorktree failed: %v", err)
+		}
+
+		// Read the result
+		resultData, err := os.ReadFile(worktreeJSONL)
+		if err != nil {
+			t.Fatalf("Failed to read result JSONL: %v", err)
+		}
+
+		// Should have exactly 3 issues (from local)
+		resultCount := countJSONLIssues(resultData)
+		if resultCount != 3 {
+			t.Errorf("Expected 3 issues after overwrite, got %d", resultCount)
+		}
+
+		// Should have local issues, not worktree issues
+		resultStr := string(resultData)
+		if strings.Contains(resultStr, "bd-010") || strings.Contains(resultStr, "bd-011") {
+			t.Error("Old worktree issues should have been overwritten")
+		}
+		if !strings.Contains(resultStr, "bd-020") || !strings.Contains(resultStr, "bd-021") || !strings.Contains(resultStr, "bd-022") {
+			t.Error("New local issues should be present")
+		}
+	})
+}
+
+func TestCountJSONLIssues(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     string
+		expected int
+	}{
+		{
+			name:     "empty file",
+			data:     "",
+			expected: 0,
+		},
+		{
+			name:     "single issue",
+			data:     `{"id":"bd-001","title":"Test"}`,
+			expected: 1,
+		},
+		{
+			name: "multiple issues",
+			data: `{"id":"bd-001","title":"Test 1"}
+{"id":"bd-002","title":"Test 2"}
+{"id":"bd-003","title":"Test 3"}`,
+			expected: 3,
+		},
+		{
+			name: "with blank lines",
+			data: `{"id":"bd-001","title":"Test 1"}
+
+{"id":"bd-002","title":"Test 2"}
+
+`,
+			expected: 2,
+		},
+		{
+			name:     "non-JSON lines ignored",
+			data:     "# comment\n{\"id\":\"bd-001\"}\nnot json",
+			expected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := countJSONLIssues([]byte(tt.data))
+			if count != tt.expected {
+				t.Errorf("countJSONLIssues() = %d, want %d", count, tt.expected)
+			}
+		})
+	}
+}

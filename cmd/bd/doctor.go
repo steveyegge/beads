@@ -462,12 +462,7 @@ func runCheckHealth(path string) {
 		issues = append(issues, issue)
 	}
 
-	// Check 2: Sync branch not configured (now reads from config.yaml, not DB)
-	if issue := checkSyncBranchQuick(); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 3: Outdated git hooks
+	// Check 2: Outdated git hooks
 	if issue := checkHooksQuick(path); issue != "" {
 		issues = append(issues, issue)
 	}
@@ -524,15 +519,6 @@ func checkVersionMismatchDB(db *sql.DB) string {
 	}
 
 	return ""
-}
-
-// checkSyncBranchQuick checks if sync-branch is configured in config.yaml.
-// Fast check that doesn't require database access.
-func checkSyncBranchQuick() string {
-	if syncbranch.IsConfigured() {
-		return ""
-	}
-	return "sync-branch not configured in config.yaml"
 }
 
 // checkHooksQuick does a fast check for outdated git hooks.
@@ -854,16 +840,8 @@ func checkDatabaseVersion(path string) doctorCheck {
 
 		if jsonlPath != "" {
 			// JSONL exists but no database - check if this is no-db mode or fresh clone
-			// Check config.yaml for no-db: true
-			configPath := filepath.Join(beadsDir, "config.yaml")
-			isNoDbMode := false
-			// #nosec G304 -- configPath is constructed from beadsDir which is in .beads/
-			if configData, err := os.ReadFile(configPath); err == nil {
-				// Simple check for no-db: true in config.yaml
-				isNoDbMode = strings.Contains(string(configData), "no-db: true")
-			}
-
-			if isNoDbMode {
+			// Use proper YAML parsing to detect no-db mode (bd-r6k2)
+			if isNoDbModeConfigured(beadsDir) {
 				return doctorCheck{
 					Name:    "Database",
 					Status:  statusOK,
@@ -1340,6 +1318,7 @@ func printDiagnostics(result doctorResult) {
 
 	// Print warnings/errors with fixes
 	hasIssues := false
+	unfixableErrors := 0
 	for _, check := range result.Checks {
 		if check.Status != statusOK && check.Fix != "" {
 			if !hasIssues {
@@ -1354,11 +1333,26 @@ func printDiagnostics(result doctorResult) {
 			}
 
 			fmt.Printf("  Fix: %s\n\n", check.Fix)
+		} else if check.Status == statusError && check.Fix == "" {
+			// Count unfixable errors
+			unfixableErrors++
 		}
 	}
 
 	if !hasIssues {
 		color.Green("✓ All checks passed\n")
+	}
+
+	// Suggest reset if there are multiple unfixable errors
+	if unfixableErrors >= 3 {
+		fmt.Println()
+		color.Yellow("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		color.Yellow("⚠ Found %d unfixable errors\n", unfixableErrors)
+		fmt.Println()
+		fmt.Println("  Your beads state may be too corrupted to repair automatically.")
+		fmt.Println("  Consider running 'bd reset' to start fresh.")
+		fmt.Println("  (Use 'bd reset --backup' to save current state first)")
+		color.Yellow("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	}
 }
 
@@ -2351,26 +2345,20 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		}
 	}
 
-	// Not configured - this is optional but recommended for multi-clone setups
-	// Check if this looks like a multi-clone setup (has remote)
-	hasRemote := false
+	// Not configured - check if repo has a remote to provide appropriate message
+	// sync-branch is optional, only needed for protected branches or multi-clone workflows
+	// See GitHub issue #498
 	cmd = exec.Command("git", "remote")
 	cmd.Dir = path
 	if output, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(output))) > 0 {
-		hasRemote = true
-	}
-
-	if hasRemote {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
-			Status:  statusWarning,
-			Message: "sync-branch not configured",
-			Detail:  "Multi-clone setups should configure sync-branch in config.yaml",
-			Fix:     "Add 'sync-branch: beads-sync' to .beads/config.yaml",
+			Status:  statusOK,
+			Message: "Not configured (optional)",
+			Detail:  "Only needed for protected branches or multi-clone workflows",
 		}
 	}
 
-	// No remote - probably a local-only repo, sync-branch not needed
 	return doctorCheck{
 		Name:    "Sync Branch Config",
 		Status:  statusOK,

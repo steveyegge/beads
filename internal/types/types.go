@@ -34,6 +34,11 @@ type Issue struct {
 	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
 	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
+	// Tombstone fields (bd-vw8): inline soft-delete support
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`     // When the issue was deleted
+	DeletedBy     string     `json:"deleted_by,omitempty"`     // Who deleted the issue
+	DeleteReason  string     `json:"delete_reason,omitempty"`  // Why the issue was deleted
+	OriginalType  string     `json:"original_type,omitempty"`  // Issue type before deletion (for tombstones)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -69,6 +74,47 @@ func (i *Issue) ComputeContentHash() string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// DefaultTombstoneTTL is the default time-to-live for tombstones (30 days)
+const DefaultTombstoneTTL = 30 * 24 * time.Hour
+
+// MinTombstoneTTL is the minimum allowed TTL (7 days) to prevent data loss
+const MinTombstoneTTL = 7 * 24 * time.Hour
+
+// ClockSkewGrace is added to TTL to handle clock drift between machines
+const ClockSkewGrace = 1 * time.Hour
+
+// IsTombstone returns true if the issue has been soft-deleted (bd-vw8)
+func (i *Issue) IsTombstone() bool {
+	return i.Status == StatusTombstone
+}
+
+// IsExpired returns true if the tombstone has exceeded its TTL.
+// Non-tombstone issues always return false.
+// ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
+func (i *Issue) IsExpired(ttl time.Duration) bool {
+	// Non-tombstones never expire
+	if !i.IsTombstone() {
+		return false
+	}
+
+	// Tombstones without DeletedAt are not expired (safety: shouldn't happen in valid data)
+	if i.DeletedAt == nil {
+		return false
+	}
+
+	// Use default TTL if not specified
+	if ttl == 0 {
+		ttl = DefaultTombstoneTTL
+	}
+
+	// Add clock skew grace period to the TTL
+	effectiveTTL := ttl + ClockSkewGrace
+
+	// Check if the tombstone has exceeded its TTL
+	expirationTime := i.DeletedAt.Add(effectiveTTL)
+	return time.Now().After(expirationTime)
+}
+
 // Validate checks if the issue has valid field values (built-in statuses only)
 func (i *Issue) Validate() error {
 	return i.ValidateWithCustomStatuses(nil)
@@ -102,6 +148,13 @@ func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 	if i.Status != StatusClosed && i.ClosedAt != nil {
 		return fmt.Errorf("non-closed issues cannot have closed_at timestamp")
 	}
+	// Enforce tombstone invariants (bd-md2): deleted_at must be set for tombstones, and only for tombstones
+	if i.Status == StatusTombstone && i.DeletedAt == nil {
+		return fmt.Errorf("tombstone issues must have deleted_at timestamp")
+	}
+	if i.Status != StatusTombstone && i.DeletedAt != nil {
+		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
+	}
 	return nil
 }
 
@@ -114,12 +167,13 @@ const (
 	StatusInProgress Status = "in_progress"
 	StatusBlocked    Status = "blocked"
 	StatusClosed     Status = "closed"
+	StatusTombstone  Status = "tombstone" // Soft-deleted issue (bd-vw8)
 )
 
 // IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed:
+	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed, StatusTombstone:
 		return true
 	}
 	return false
@@ -279,6 +333,7 @@ type Statistics struct {
 	ClosedIssues             int     `json:"closed_issues"`
 	BlockedIssues            int     `json:"blocked_issues"`
 	ReadyIssues              int     `json:"ready_issues"`
+	TombstoneIssues          int     `json:"tombstone_issues"` // Soft-deleted issues (bd-nyt)
 	EpicsEligibleForClosure  int     `json:"epics_eligible_for_closure"`
 	AverageLeadTime          float64 `json:"average_lead_time_hours"`
 }
@@ -316,6 +371,9 @@ type IssueFilter struct {
 	// Numeric ranges
 	PriorityMin *int
 	PriorityMax *int
+
+	// Tombstone filtering (bd-1bu)
+	IncludeTombstones bool // If false (default), exclude tombstones from results
 }
 
 // SortPolicy determines how ready work is ordered

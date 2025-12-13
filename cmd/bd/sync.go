@@ -520,8 +520,10 @@ Use --merge to merge the sync branch back to main branch.`,
 				}
 
 				// Step 4: Import updated JSONL after pull
+				// Enable --protect-left-snapshot to prevent git-history-backfill from
+				// tombstoning issues that were in our local export but got lost during merge (bd-sync-deletion fix)
 				fmt.Println("→ Importing updated JSONL...")
-				if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+				if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory, true); err != nil {
 					fmt.Fprintf(os.Stderr, "Error importing: %v\n", err)
 					os.Exit(1)
 				}
@@ -664,6 +666,20 @@ Use --merge to merge the sync branch back to main branch.`,
 				if err := restoreBeadsDirFromBranch(ctx); err != nil {
 					// Non-fatal - just means git status will show modified files
 					debug.Logf("sync: failed to restore .beads/ from branch: %v", err)
+				} else {
+					// Update jsonl_content_hash to match the restored file
+					// This prevents daemon/CLI from seeing a hash mismatch and re-importing
+					// which would trigger re-export and dirty the working directory (bd-lw0x race fix)
+					// Uses repoKey for multi-repo support (bd-ar2.10, bd-ar2.11)
+					hashKey := "jsonl_content_hash"
+					if rk := getRepoKeyForPath(jsonlPath); rk != "" {
+						hashKey += ":" + rk
+					}
+					if restoredHash, err := computeJSONLHash(jsonlPath); err == nil {
+						if err := store.SetMetadata(ctx, hashKey, restoredHash); err != nil {
+							debug.Logf("sync: failed to update hash after restore: %v", err)
+						}
+					}
 				}
 				// Skip final flush in PersistentPostRun - we've already exported to sync branch
 				// and restored the working directory to match the current branch
@@ -1455,11 +1471,22 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 }
 
 // importFromJSONL imports the JSONL file by running the import command
-func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool, noGitHistory ...bool) error {
+// Optional parameters: noGitHistory, protectLeftSnapshot (bd-sync-deletion fix)
+func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool, opts ...bool) error {
 	// Get current executable path to avoid "./bd" path issues
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot resolve current executable: %w", err)
+	}
+
+	// Parse optional parameters
+	noGitHistory := false
+	protectLeftSnapshot := false
+	if len(opts) > 0 {
+		noGitHistory = opts[0]
+	}
+	if len(opts) > 1 {
+		protectLeftSnapshot = opts[1]
 	}
 
 	// Build args for import command
@@ -1468,9 +1495,12 @@ func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool,
 	if renameOnImport {
 		args = append(args, "--rename-on-import")
 	}
-	// Handle optional noGitHistory parameter
-	if len(noGitHistory) > 0 && noGitHistory[0] {
+	if noGitHistory {
 		args = append(args, "--no-git-history")
+	}
+	// Add --protect-left-snapshot flag for post-pull imports (bd-sync-deletion fix)
+	if protectLeftSnapshot {
+		args = append(args, "--protect-left-snapshot")
 	}
 
 	// Run import command

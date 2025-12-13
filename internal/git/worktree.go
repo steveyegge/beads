@@ -1,11 +1,14 @@
 package git
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/merge"
 )
 
 // WorktreeManager handles git worktree lifecycle for separate beads branches
@@ -140,11 +143,14 @@ func (wm *WorktreeManager) CheckWorktreeHealth(worktreePath string) error {
 	return nil
 }
 
-// SyncJSONLToWorktree copies the JSONL file from main repo to worktree
+// SyncJSONLToWorktree syncs the JSONL file from main repo to worktree.
+// If the worktree has issues that the local repo doesn't have, it merges them
+// instead of overwriting. This prevents data loss when a fresh clone syncs
+// with fewer issues than the remote. (bd-52q fix for GitHub #464)
 func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string) error {
 	// Source: main repo JSONL
 	srcPath := filepath.Join(wm.repoPath, jsonlRelPath)
-	
+
 	// Destination: worktree JSONL
 	dstPath := filepath.Join(worktreePath, jsonlRelPath)
 
@@ -155,18 +161,117 @@ func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string
 	}
 
 	// Read source file
-	data, err := os.ReadFile(srcPath) // #nosec G304 - controlled path from config
+	srcData, err := os.ReadFile(srcPath) // #nosec G304 - controlled path from config
 	if err != nil {
 		return fmt.Errorf("failed to read source JSONL: %w", err)
 	}
 
-	// Write to destination
-	if err := os.WriteFile(dstPath, data, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
-		return fmt.Errorf("failed to write destination JSONL: %w", err)
+	// Check if destination exists and has content
+	dstData, dstErr := os.ReadFile(dstPath) // #nosec G304 - controlled path
+	if dstErr != nil || len(dstData) == 0 {
+		// Destination doesn't exist or is empty - just copy
+		if err := os.WriteFile(dstPath, srcData, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
+			return fmt.Errorf("failed to write destination JSONL: %w", err)
+		}
+		return nil
+	}
+
+	// Count issues in both files
+	srcCount := countJSONLIssues(srcData)
+	dstCount := countJSONLIssues(dstData)
+
+	// If source has same or more issues, just copy (source is authoritative)
+	if srcCount >= dstCount {
+		if err := os.WriteFile(dstPath, srcData, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
+			return fmt.Errorf("failed to write destination JSONL: %w", err)
+		}
+		return nil
+	}
+
+	// Source has fewer issues than destination - this indicates the local repo
+	// doesn't have all the issues from the sync branch. Merge instead of overwrite.
+	// (bd-52q: This prevents fresh clones from accidentally deleting remote issues)
+	mergedData, err := wm.mergeJSONLFiles(srcData, dstData)
+	if err != nil {
+		// If merge fails, fall back to copy behavior but log warning
+		// This shouldn't happen but ensures we don't break existing behavior
+		fmt.Fprintf(os.Stderr, "Warning: JSONL merge failed (%v), falling back to overwrite\n", err)
+		if writeErr := os.WriteFile(dstPath, srcData, 0644); writeErr != nil { // #nosec G306
+			return fmt.Errorf("failed to write destination JSONL: %w", writeErr)
+		}
+		return nil
+	}
+
+	if err := os.WriteFile(dstPath, mergedData, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
+		return fmt.Errorf("failed to write merged JSONL: %w", err)
 	}
 
 	return nil
 }
+
+// countJSONLIssues counts the number of valid JSON lines in JSONL data
+func countJSONLIssues(data []byte) int {
+	count := 0
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && strings.HasPrefix(line, "{") {
+			count++
+		}
+	}
+	return count
+}
+
+// mergeJSONLFiles merges two JSONL files using 3-way merge with empty base.
+// This combines issues from both files, with the source (local) taking precedence
+// for issues that exist in both.
+func (wm *WorktreeManager) mergeJSONLFiles(srcData, dstData []byte) ([]byte, error) {
+	// Create temp files for merge
+	tmpDir, err := os.MkdirTemp("", "bd-worktree-merge-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	baseFile := filepath.Join(tmpDir, "base.jsonl")
+	leftFile := filepath.Join(tmpDir, "left.jsonl")   // source (local)
+	rightFile := filepath.Join(tmpDir, "right.jsonl") // destination (worktree)
+	outputFile := filepath.Join(tmpDir, "merged.jsonl")
+
+	// Empty base - treat this as both sides adding issues
+	if err := os.WriteFile(baseFile, []byte{}, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write base file: %w", err)
+	}
+
+	// Source (local) is "left" - takes precedence for conflicts
+	if err := os.WriteFile(leftFile, srcData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write left file: %w", err)
+	}
+
+	// Destination (worktree) is "right"
+	if err := os.WriteFile(rightFile, dstData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write right file: %w", err)
+	}
+
+	// Perform 3-way merge
+	err = merge.Merge3Way(outputFile, baseFile, leftFile, rightFile, false)
+	if err != nil {
+		// Check if it's just a conflict warning (merge still produced output)
+		if !strings.Contains(err.Error(), "merge completed with") {
+			return nil, fmt.Errorf("3-way merge failed: %w", err)
+		}
+		// Conflicts are auto-resolved, continue
+	}
+
+	// Read merged result
+	mergedData, err := os.ReadFile(outputFile) // #nosec G304 - temp file we created
+	if err != nil {
+		return nil, fmt.Errorf("failed to read merged file: %w", err)
+	}
+
+	return mergedData, nil
+}
+
 
 // isValidWorktree checks if the path is a valid git worktree
 func (wm *WorktreeManager) isValidWorktree(worktreePath string) (bool, error) {
