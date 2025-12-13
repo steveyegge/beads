@@ -1,5 +1,8 @@
 # bd - Beads Issue Tracker 🔗
 
+[![Run in Smithery](https://smithery.ai/badge/skills/steveyegge)](https://smithery.ai/skills?ns=steveyegge&utm_source=github&utm_medium=badge)
+
+
 [![Go Version](https://img.shields.io/github/go-mod/go-version/steveyegge/beads)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/steveyegge/beads)](https://github.com/steveyegge/beads/releases)
 [![npm version](https://img.shields.io/npm/v/@beads/bd)](https://www.npmjs.com/package/@beads/bd)
@@ -111,6 +114,11 @@ irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 ```bash
 brew tap steveyegge/beads
 brew install bd
+```
+
+**mise (polyglot runtime manager):**
+```bash
+mise use -g ubi:steveyegge/beads[exe=bd]
 ```
 
 For full, platform-specific instructions (Windows, Arch Linux, manual builds, IDE integrations, etc.) see the canonical guide in [docs/INSTALLING.md](docs/INSTALLING.md).
@@ -317,8 +325,8 @@ git push
 git pull
 # bd automatically detects JSONL is newer and imports on next command
 
-bd ready  # Fresh data from git!
-bd list   # Shows issues from other machines
+bd ready  # Shows issues ready to work on (with fresh data from git)
+bd list   # Lists all issues, including those from other machines
 ```
 
 **Manual sync (optional):**
@@ -328,7 +336,7 @@ bd sync  # Immediately flush pending changes and import latest JSONL
 
 **For zero-lag sync**, install the git hooks:
 ```bash
-cd examples/git-hooks && ./install.sh
+bd hooks install
 ```
 
 This adds:
@@ -835,6 +843,7 @@ For advanced usage, see:
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with kanban board, tree view, dependency graph, and statistics dashboard. Vim-style navigation, search/filter, themes, and native notifications. Built by [@assimelha](https://github.com/assimelha).
 - **[perles](https://github.com/zjrosen/perles)** - Terminal UI with BQL (Beads Query Language) for local search and multi-view kanban boards with custom colors. Built by [@zjrosen](https://github.com/zjrosen).
 - **[vscode-beads](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads)** - VS Code extension with issues panel, details view, and daemon management. Built by [@jdillon](https://github.com/jdillon).
+- **[beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)** - keyboard-driven terminal UI with kanban board, insights panel, and graph view
 
 Have you built something cool with bd? [Open an issue](https://github.com/steveyegge/beads/issues) to get it featured here!
 

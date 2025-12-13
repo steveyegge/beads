@@ -34,6 +34,7 @@ Tool-level settings you can configure:
 | `no-daemon` | `--no-daemon` | `BD_NO_DAEMON` | `false` | Force direct mode, bypass daemon |
 | `no-auto-flush` | `--no-auto-flush` | `BD_NO_AUTO_FLUSH` | `false` | Disable auto JSONL export |
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
+| `no-install-hooks` | `--skip-hooks` | `BD_NO_INSTALL_HOOKS` | `false` | Skip git hook installation during `bd init` |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
@@ -58,6 +59,10 @@ flush-debounce: 10s
 
 # Auto-start daemon (default true)
 auto-start-daemon: true
+
+# Disable git hook installation during bd init
+# (useful if you manage hooks with pre-commit, husky, etc.)
+no-install-hooks: true
 
 # Daemon log rotation settings
 daemon-log-max-size: 50      # MB per file (default 50)

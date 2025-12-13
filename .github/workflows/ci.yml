@@ -55,8 +55,29 @@ jobs:
     name: Test (Windows - cmd)
     runs-on: windows-latest
     continue-on-error: true  # Windows filesystem is slow; don't block PRs
+    env:
+      # Use RAM disk for all I/O - provides ~1750x faster IOPS than C: drive
+      TEMP: R:\tmp
+      TMP: R:\tmp
+      GOCACHE: R:\go-cache
+      GOMODCACHE: R:\go-mod
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup RAM Disk and copy workspace
+        uses: chad-golden/setup-ramdisk@v1.0.1
+        with:
+          size-in-mb: 4096
+          drive-letter: 'R'
+          copy-workspace: true
+
+      - name: Prepare RAM disk directories
+        run: |
+          New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
+          Write-Host "Files on R: drive:"
+          Get-ChildItem R:\ -ErrorAction SilentlyContinue | Select-Object Name
+          Write-Host "Looking for go.mod:"
+          Get-ChildItem R:\ -Filter "go.mod" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -68,18 +89,37 @@ jobs:
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
-      - name: Build
-        run: go build -v ./cmd/bd
-
-      - name: Test cmd package
-        run: go test -v -short -timeout=30m -parallel=4 ./cmd/...
+      - name: Build and Test cmd package
+        run: |
+          cd R:\
+          go build -v ./cmd/bd
+          go test -v -short -timeout=30m -parallel=4 ./cmd/...
 
   test-windows-internal:
     name: Test (Windows - internal)
     runs-on: windows-latest
     continue-on-error: true  # Windows filesystem is slow; don't block PRs
+    env:
+      # Use RAM disk for all I/O - provides ~1750x faster IOPS than C: drive
+      TEMP: R:\tmp
+      TMP: R:\tmp
+      GOCACHE: R:\go-cache
+      GOMODCACHE: R:\go-mod
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup RAM Disk and copy workspace
+        uses: chad-golden/setup-ramdisk@v1.0.1
+        with:
+          size-in-mb: 4096
+          drive-letter: 'R'
+          copy-workspace: true
+
+      - name: Prepare RAM disk directories
+        run: |
+          New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
+          Write-Host "Files on R: drive:"
+          Get-ChildItem R:\ -ErrorAction SilentlyContinue | Select-Object Name
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -92,7 +132,9 @@ jobs:
           git config --global user.email "ci@beads.test"
 
       - name: Test internal packages
-        run: go test -v -short -timeout=30m -parallel=4 ./internal/...
+        run: |
+          cd R:\
+          go test -v -short -timeout=30m -parallel=4 ./internal/...
 
   lint:
     name: Lint
@@ -136,3 +178,13 @@ jobs:
             exit 1
           fi
           echo "✅ Help text first line is correct"
+      - name: Verify default.nix package version matches bd program version
+        run: |
+          BD_VERSION=$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')
+          NIX_BD_VERSION=$(grep 'version = ' default.nix | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$BD_VERSION" != "$NIX_BD_VERSION" ]; then
+            echo "❌ default.nix version ($NIX_BD_VERSION) != version.go ($BD_VERSION)"
+            echo "Run: scripts/bump-version.sh to sync default.nix"
+            exit 1
+          fi
+          echo "✅ default.nix version matches: $BD_VERSION"
