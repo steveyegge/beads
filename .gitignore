@@ -113,3 +113,4 @@ bd-trace-*.out
 .beads/events.log
 .beads/.session-active
 .beads/.landing-complete
+beads_viewer
