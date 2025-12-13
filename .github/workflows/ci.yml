@@ -51,22 +51,14 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
+  # TODO: Replace with smoke tests (see bd-bmev)
+  # Full test suite times out; RAM disk experiments didn't help enough
   test-windows-cmd:
     name: Test (Windows - cmd)
     runs-on: windows-latest
-    continue-on-error: true  # Windows filesystem is slow; don't block PRs
+    continue-on-error: true  # Windows tests timeout; don't block PRs
     steps:
       - uses: actions/checkout@v6
-
-      # RAM disk for temp/cache only (not workspace - t.Chdir breaks on ImDisk)
-      - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1.0.1
-        with:
-          size-in-mb: 4096
-          drive-letter: 'R'
-
-      - name: Prepare RAM disk directories
-        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -82,29 +74,14 @@ jobs:
         run: go build -v ./cmd/bd
 
       - name: Test cmd package
-        env:
-          TEMP: R:\tmp
-          TMP: R:\tmp
-          GOCACHE: R:\go-cache
-          GOMODCACHE: R:\go-mod
         run: go test -v -short -timeout=30m -parallel=4 ./cmd/...
 
   test-windows-internal:
     name: Test (Windows - internal)
     runs-on: windows-latest
-    continue-on-error: true  # Windows filesystem is slow; don't block PRs
+    continue-on-error: true  # Windows tests timeout; don't block PRs
     steps:
       - uses: actions/checkout@v6
-
-      # RAM disk for temp/cache only (not workspace - t.Chdir breaks on ImDisk)
-      - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1.0.1
-        with:
-          size-in-mb: 4096
-          drive-letter: 'R'
-
-      - name: Prepare RAM disk directories
-        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -117,11 +94,6 @@ jobs:
           git config --global user.email "ci@beads.test"
 
       - name: Test internal packages
-        env:
-          TEMP: R:\tmp
-          TMP: R:\tmp
-          GOCACHE: R:\go-cache
-          GOMODCACHE: R:\go-mod
         run: go test -v -short -timeout=30m -parallel=4 ./internal/...
 
   lint:
