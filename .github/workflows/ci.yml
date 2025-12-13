@@ -62,18 +62,17 @@ jobs:
       GOCACHE: R:\go-cache
       GOMODCACHE: R:\go-mod
     steps:
-      - name: Setup RAM Disk
+      - uses: actions/checkout@v6
+
+      - name: Setup RAM Disk and copy workspace
         uses: chad-golden/setup-ramdisk@v1.0.1
         with:
           size-in-mb: 4096
           drive-letter: 'R'
+          copy-workspace: true
 
       - name: Prepare RAM disk directories
-        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod, R:\work
-
-      - uses: actions/checkout@v6
-        with:
-          path: R:\work
+        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -86,7 +85,7 @@ jobs:
           git config --global user.email "ci@beads.test"
 
       - name: Build and Test cmd package
-        working-directory: R:\work
+        working-directory: R:\
         run: |
           go build -v ./cmd/bd
           go test -v -short -timeout=30m -parallel=4 ./cmd/...
@@ -102,18 +101,17 @@ jobs:
       GOCACHE: R:\go-cache
       GOMODCACHE: R:\go-mod
     steps:
-      - name: Setup RAM Disk
+      - uses: actions/checkout@v6
+
+      - name: Setup RAM Disk and copy workspace
         uses: chad-golden/setup-ramdisk@v1.0.1
         with:
           size-in-mb: 4096
           drive-letter: 'R'
+          copy-workspace: true
 
       - name: Prepare RAM disk directories
-        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod, R:\work
-
-      - uses: actions/checkout@v6
-        with:
-          path: R:\work
+        run: New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -126,7 +124,7 @@ jobs:
           git config --global user.email "ci@beads.test"
 
       - name: Test internal packages
-        working-directory: R:\work
+        working-directory: R:\
         run: go test -v -short -timeout=30m -parallel=4 ./internal/...
 
   lint:
