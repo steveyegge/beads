@@ -1,0 +1,17 @@
+{
+  "chat.agent.enabled": true,
+  "chat.commandCenter.enabled": true,
+  "chat.experimental.claudeSkills.enabled": true,
+
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+
+  "git.autofetch": true,
+  "git.confirmSync": false,
+
+  "files.associations": {
+    "*.beads": "json",
+    "beads.jsonl": "json"
+  },
+
+  "task.allowAutomaticTasks": "on"
+}

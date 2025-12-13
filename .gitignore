@@ -18,7 +18,6 @@ go.work
 pkg/
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
