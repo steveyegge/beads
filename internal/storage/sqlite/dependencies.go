@@ -691,7 +691,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
 		var closeReason sql.NullString
-		var deletedAt sql.NullTime
+		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
@@ -729,9 +729,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if closeReason.Valid {
 			issue.CloseReason = closeReason.String
 		}
-		if deletedAt.Valid {
-			issue.DeletedAt = &deletedAt.Time
-		}
+		issue.DeletedAt = parseNullableTimeString(deletedAt)
 		if deletedBy.Valid {
 			issue.DeletedBy = deletedBy.String
 		}
@@ -773,7 +771,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var assignee sql.NullString
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
-		var deletedAt sql.NullTime
+		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
@@ -810,9 +808,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		if sourceRepo.Valid {
 			issue.SourceRepo = sourceRepo.String
 		}
-		if deletedAt.Valid {
-			issue.DeletedAt = &deletedAt.Time
-		}
+		issue.DeletedAt = parseNullableTimeString(deletedAt)
 		if deletedBy.Valid {
 			issue.DeletedBy = deletedBy.String
 		}

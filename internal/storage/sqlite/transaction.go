@@ -1068,7 +1068,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var sourceRepo sql.NullString
 	var compactedAtCommit sql.NullString
 	var closeReason sql.NullString
-	var deletedAt sql.NullTime
+	var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
@@ -1116,9 +1116,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	if closeReason.Valid {
 		issue.CloseReason = closeReason.String
 	}
-	if deletedAt.Valid {
-		issue.DeletedAt = &deletedAt.Time
-	}
+	issue.DeletedAt = parseNullableTimeString(deletedAt)
 	if deletedBy.Valid {
 		issue.DeletedBy = deletedBy.String
 	}
