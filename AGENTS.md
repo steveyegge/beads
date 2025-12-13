@@ -749,6 +749,6 @@ history/
 - ❌ Do NOT duplicate tracking systems
 - ❌ Do NOT clutter repo root with planning documents
 
-For more details, see README.md and QUICKSTART.md.
+For more details, see README.md and docs/QUICKSTART.md.
 
 <!-- /bd onboard section -->
