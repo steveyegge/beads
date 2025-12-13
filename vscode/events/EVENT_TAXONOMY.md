@@ -62,6 +62,9 @@ Individual agent session lifecycle.
 | `ss.work.start` | Implementation work begins | Work start |
 | `ss.work.progress` | Periodic progress checkpoint | During work |
 | `ss.discovered` | New issue filed during work | Discovery |
+| `ss.circuitbreaker.triggered` | Circuit breaker activated | After 3rd failed attempt |
+| `ss.circuitbreaker.deferred` | Issue documented and filed | BLOCKED_N.md created |
+| `ss.circuitbreaker.resume` | Resuming primary work | Circuit breaker complete |
 | `ss.landing.start` | Landing ritual begins | Landing start |
 | `ss.landing.test` | Quality gates executed | Landing step 2 |
 | `ss.landing.update` | Beads state updated | Landing step 3 |

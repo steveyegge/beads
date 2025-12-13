@@ -2,7 +2,7 @@
 
 This package provides VS Code integration for Beads-First applications, including:
 
-- **Claude Skills** for session rituals (bootup, landing, scope)
+- **Claude Skills** for session rituals (bootup, landing, scope, circuit-breaker)
 - **Event logging** infrastructure for complete observability
 - **Git hooks** with logging
 - **Templates** for CLAUDE.md, settings, and keybindings
@@ -79,7 +79,8 @@ your-project/
 │       ├── beads-bootup/
 │       ├── beads-landing/
 │       ├── beads-scope/
-│       └── beads-init-app/
+│       ├── beads-init-app/
+│       └── beads-circuit-breaker/
 ├── .git/
 │   └── hooks/
 │       ├── pre-commit
