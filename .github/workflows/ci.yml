@@ -61,7 +61,7 @@ jobs:
       # RAM disk provides ~1750x faster IOPS than Windows C: drive
       # This dramatically speeds up SQLite tests and temp file operations
       - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1
+        uses: chad-golden/setup-ramdisk@v1.0.1
         with:
           size-in-mb: 4096
           drive-letter: 'R'
@@ -100,7 +100,7 @@ jobs:
       # RAM disk provides ~1750x faster IOPS than Windows C: drive
       # This dramatically speeds up SQLite tests and temp file operations
       - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1
+        uses: chad-golden/setup-ramdisk@v1.0.1
         with:
           size-in-mb: 4096
           drive-letter: 'R'
