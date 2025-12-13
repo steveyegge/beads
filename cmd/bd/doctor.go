@@ -22,7 +22,9 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/syncbranch"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Status constants for doctor checks
@@ -775,6 +777,11 @@ func runDiagnostics(path string) doctorResult {
 	untrackedCheck := checkUntrackedBeadsFiles(path)
 	result.Checks = append(result.Checks, untrackedCheck)
 	// Don't fail overall check for untracked files, just warn
+
+	// Check 20: Tombstone health (bd-s3v)
+	tombstoneCheck := checkTombstoneHealth(path)
+	result.Checks = append(result.Checks, tombstoneCheck)
+	// Don't fail overall check for tombstone warnings, just warn
 
 	return result
 }
@@ -2706,6 +2713,116 @@ func detectPrefixFromJSONL(jsonlPath string) string {
 		}
 	}
 	return mostCommonPrefix
+}
+
+// checkTombstoneHealth checks for tombstone-related issues (bd-s3v):
+// 1. Unmigrated deletions.jsonl entries (entries without corresponding tombstones)
+// 2. Tombstones expiring soon (within 7 days of TTL expiration)
+func checkTombstoneHealth(path string) doctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Skip if .beads doesn't exist
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return doctorCheck{
+			Name:    "Tombstone Health",
+			Status:  statusOK,
+			Message: "N/A (no .beads directory)",
+		}
+	}
+
+	// Find issues.jsonl
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
+		issuesPath = filepath.Join(beadsDir, "beads.jsonl")
+		if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
+			return doctorCheck{
+				Name:    "Tombstone Health",
+				Status:  statusOK,
+				Message: "N/A (no JSONL file)",
+			}
+		}
+	}
+
+	// Load existing tombstones from issues.jsonl
+	tombstoneIDs := make(map[string]bool)
+	var tombstones []*types.Issue
+	file, err := os.Open(issuesPath) // #nosec G304 - controlled path
+	if err == nil {
+		decoder := json.NewDecoder(file)
+		for {
+			var issue types.Issue
+			if err := decoder.Decode(&issue); err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				continue // Skip corrupt lines
+			}
+			if issue.IsTombstone() {
+				tombstoneIDs[issue.ID] = true
+				tombstones = append(tombstones, &issue)
+			}
+		}
+		file.Close()
+	}
+
+	var warnings []string
+
+	// Check 1: Unmigrated deletions.jsonl entries
+	deletionsPath := deletions.DefaultPath(beadsDir)
+	if loadResult, err := deletions.LoadDeletions(deletionsPath); err == nil && len(loadResult.Records) > 0 {
+		var unmigrated []string
+		for id := range loadResult.Records {
+			if !tombstoneIDs[id] {
+				unmigrated = append(unmigrated, id)
+			}
+		}
+		if len(unmigrated) > 0 {
+			if len(unmigrated) <= 3 {
+				warnings = append(warnings, fmt.Sprintf("%d unmigrated deletion(s): %s", len(unmigrated), strings.Join(unmigrated, ", ")))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("%d unmigrated deletion(s) in deletions.jsonl", len(unmigrated)))
+			}
+		}
+	}
+
+	// Check 2: Tombstones expiring soon (within 7 days)
+	// Use a shorter TTL to find tombstones that will expire soon
+	warningThreshold := types.DefaultTombstoneTTL - (7 * 24 * time.Hour) // 23 days = expires in 7 days
+	var expiringSoon []string
+	for _, ts := range tombstones {
+		if ts.IsExpired(warningThreshold) && !ts.IsExpired(0) {
+			// Expired at 23-day threshold but not at 30-day = expiring within 7 days
+			expiringSoon = append(expiringSoon, ts.ID)
+		}
+	}
+	if len(expiringSoon) > 0 {
+		if len(expiringSoon) <= 3 {
+			warnings = append(warnings, fmt.Sprintf("%d tombstone(s) expiring soon: %s", len(expiringSoon), strings.Join(expiringSoon, ", ")))
+		} else {
+			warnings = append(warnings, fmt.Sprintf("%d tombstone(s) expiring within 7 days", len(expiringSoon)))
+		}
+	}
+
+	// Return result
+	if len(warnings) == 0 {
+		msg := "OK"
+		if len(tombstones) > 0 {
+			msg = fmt.Sprintf("OK (%d tombstone(s) tracked)", len(tombstones))
+		}
+		return doctorCheck{
+			Name:    "Tombstone Health",
+			Status:  statusOK,
+			Message: msg,
+		}
+	}
+
+	return doctorCheck{
+		Name:    "Tombstone Health",
+		Status:  statusWarning,
+		Message: strings.Join(warnings, "; "),
+		Detail:  "Unmigrated deletions may cause resurrection on sync.\nExpiring tombstones will be pruned by 'bd compact'.",
+		Fix:     "Run 'bd migrate-tombstones' to convert deletions to tombstones.\nRun 'bd compact' to prune expired tombstones.",
+	}
 }
 
 func init() {
