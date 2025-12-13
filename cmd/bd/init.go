@@ -388,8 +388,8 @@ With --stealth: configures global git settings for invisible beads usage:
 		}
 
 		// Check if we're in a git repo and hooks aren't installed
-		// Install by default unless --skip-hooks is passed
-		if !skipHooks && isGitRepo() && !hooksInstalled() {
+		// Install by default unless --skip-hooks is passed or no-install-hooks config is set
+		if !skipHooks && !config.GetBool("no-install-hooks") && isGitRepo() && !hooksInstalled() {
 			if err := installGitHooks(); err != nil && !quiet {
 				yellow := color.New(color.FgYellow).SprintFunc()
 				fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", yellow("⚠"), err)

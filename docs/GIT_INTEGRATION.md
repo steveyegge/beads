@@ -251,10 +251,32 @@ See [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) for complete setup guide, tro
 
 ### Installation
 
+Git hooks are installed automatically during `bd init`. To install manually:
+
 ```bash
 # One-time setup in each beads workspace
 ./examples/git-hooks/install.sh
 ```
+
+### Disabling Hook Installation
+
+If you prefer to manage git hooks separately (e.g., using pre-commit, husky, or your own hook manager), you can disable automatic hook installation:
+
+```bash
+# Via command-line flag
+bd init --skip-hooks
+
+# Via environment variable (useful for CI/scripts)
+BD_NO_INSTALL_HOOKS=1 bd init
+
+# Via global config (~/.config/bd/config.yaml)
+no-install-hooks: true
+
+# Via project config (.beads/config.yaml)
+no-install-hooks: true
+```
+
+**Precedence:** `--skip-hooks` flag > `BD_NO_INSTALL_HOOKS` env var > config file > default (install hooks)
 
 ### What Gets Installed
 
