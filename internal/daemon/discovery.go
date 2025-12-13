@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -208,8 +209,12 @@ func discoverDaemon(socketPath string) DaemonInfo {
 
 // FindDaemonByWorkspace finds a daemon serving a specific workspace
 func FindDaemonByWorkspace(workspacePath string) (*DaemonInfo, error) {
-	// First try the socket in the workspace itself
-	socketPath := filepath.Join(workspacePath, ".beads", "bd.sock")
+	// Determine the correct .beads directory location
+	// For worktrees, .beads is in the main repository root, not the worktree
+	beadsDir := findBeadsDirForWorkspace(workspacePath)
+
+	// First try the socket in the determined .beads directory
+	socketPath := filepath.Join(beadsDir, "bd.sock")
 	if _, err := os.Stat(socketPath); err == nil {
 		daemon := discoverDaemon(socketPath)
 		if daemon.Alive {
@@ -230,6 +235,46 @@ func FindDaemonByWorkspace(workspacePath string) (*DaemonInfo, error) {
 	}
 
 	return nil, fmt.Errorf("no daemon found for workspace: %s", workspacePath)
+}
+
+// findBeadsDirForWorkspace determines the correct .beads directory for a workspace
+// For worktrees, this is the main repository root; for regular repos, it's the workspace itself
+func findBeadsDirForWorkspace(workspacePath string) string {
+	// Change to the workspace directory to check if it's a worktree
+	originalDir, err := os.Getwd()
+	if err != nil {
+		return filepath.Join(workspacePath, ".beads") // fallback
+	}
+	defer func() {
+		_ = os.Chdir(originalDir) // restore original directory
+	}()
+
+	if err := os.Chdir(workspacePath); err != nil {
+		return filepath.Join(workspacePath, ".beads") // fallback
+	}
+
+	// Check if we're in a git worktree
+	cmd := exec.Command("git", "rev-parse", "--git-dir", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return filepath.Join(workspacePath, ".beads") // fallback
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) >= 2 {
+		gitDir := strings.TrimSpace(lines[0])
+		commonDir := strings.TrimSpace(lines[1])
+
+		// If git-dir != git-common-dir, we're in a worktree
+		if gitDir != commonDir {
+			// Worktree: .beads is in main repo root (parent of git-common-dir)
+			mainRepoRoot := filepath.Dir(commonDir)
+			return filepath.Join(mainRepoRoot, ".beads")
+		}
+	}
+
+	// Regular repository: .beads is in the workspace
+	return filepath.Join(workspacePath, ".beads")
 }
 
 // checkDaemonErrorFile checks for a daemon-error file in the .beads directory

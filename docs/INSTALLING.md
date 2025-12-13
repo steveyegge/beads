@@ -17,18 +17,6 @@ brew install bd
 - ✅ No need to install Go
 - ✅ Handles PATH setup automatically
 
-### mise (polyglot runtime manager)
-
-```bash
-mise use -g ubi:steveyegge/beads[exe=bd]
-```
-
-**Why mise?**
-- ✅ Single tool for managing many development tools
-- ✅ Version pinning per project via `mise.toml`
-- ✅ No need to install Go
-- ✅ Works across macOS, Linux, and Windows
-
 ### Quick Install Script (All Platforms)
 
 ```bash
@@ -173,7 +161,7 @@ For enhanced UX with slash commands:
 ```
 
 The plugin adds:
-- Slash commands: `/beads:ready`, `/beads:create`, `/beads:show`, `/beads:update`, `/beads:close`, etc.
+- Slash commands: `/bd-ready`, `/bd-create`, `/bd-show`, `/bd-update`, `/bd-close`, etc.
 - Task agent for autonomous execution
 
 See [PLUGIN.md](PLUGIN.md) for complete plugin documentation.

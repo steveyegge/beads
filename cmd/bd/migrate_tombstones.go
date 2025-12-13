@@ -128,7 +128,7 @@ Examples:
 					existingTombstones[issue.ID] = true
 				}
 			}
-			_ = file.Close()
+			file.Close()
 		}
 
 		// Determine which deletions need migration

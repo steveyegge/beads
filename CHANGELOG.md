@@ -21,14 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Archives old file as `deletions.jsonl.migrated`
   - Use `--dry-run` to preview changes
 
-### Fixed
-
-- **`bd sync` race condition with daemon (bd-lw0x, bd-hxou)**
-  - Fixed race condition where daemon or next CLI command would see hash mismatch after sync
-  - Previously, `bd sync` with sync.branch would restore .beads/ from HEAD but leave stale hash in DB
-  - This caused auto-import to trigger, which then scheduled re-export, dirtying the working directory
-  - Now updates `jsonl_content_hash` after restore to match the restored file
-  - Also fixed daemon's `performAutoImport` to update hash after successful import
+- **Enhanced Git Worktree Support** (bd-737): Comprehensive compatibility improvements for git worktrees using shared database architecture
+  - Shared `.beads` database across all worktrees in a repository
+  - Worktree-aware database discovery prioritizes main repository
+  - Git hooks automatically adapt to worktree context
+  - Daemon mode warnings for worktree usage with `--no-daemon` guidance
+  - Comprehensive documentation in `docs/WORKTREES.md`
+  - Worktree lifecycle management with sparse checkout for sync branches
+  - Automatic detection and user-friendly warnings for worktree conflicts
 
 ## [0.29.0] - 2025-12-03
 

@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -432,7 +433,7 @@ func runCheckHealth(path string) {
 	// Check if database exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// No database - only check hooks
-		if issue := checkHooksQuick(path); issue != "" {
+		if issue := checkHooksQuick(); issue != "" {
 			printCheckHealthHint([]string{issue})
 		}
 		return
@@ -442,7 +443,7 @@ func runCheckHealth(path string) {
 	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		// Can't open DB - only check hooks
-		if issue := checkHooksQuick(path); issue != "" {
+		if issue := checkHooksQuick(); issue != "" {
 			printCheckHealthHint([]string{issue})
 		}
 		return
@@ -462,8 +463,13 @@ func runCheckHealth(path string) {
 		issues = append(issues, issue)
 	}
 
-	// Check 2: Outdated git hooks
-	if issue := checkHooksQuick(path); issue != "" {
+	// Check 2: Sync branch not configured (now reads from config.yaml, not DB)
+	if issue := checkSyncBranchQuick(); issue != "" {
+		issues = append(issues, issue)
+	}
+
+	// Check 3: Outdated git hooks
+	if issue := checkHooksQuick(); issue != "" {
 		issues = append(issues, issue)
 	}
 
@@ -521,20 +527,22 @@ func checkVersionMismatchDB(db *sql.DB) string {
 	return ""
 }
 
+// checkSyncBranchQuick checks if sync-branch is configured in config.yaml.
+// Fast check that doesn't require database access.
+func checkSyncBranchQuick() string {
+	if syncbranch.IsConfigured() {
+		return ""
+	}
+	return "sync-branch not configured in config.yaml"
+}
+
 // checkHooksQuick does a fast check for outdated git hooks.
 // Checks all beads hooks: pre-commit, post-merge, pre-push, post-checkout (bd-2em).
-func checkHooksQuick(path string) string {
+func checkHooksQuick() string {
 	// Get actual git directory (handles worktrees where .git is a file)
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = path
-	output, err := cmd.Output()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return "" // Not a git repo, skip
-	}
-	gitDir := strings.TrimSpace(string(output))
-	// Make absolute if relative
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
 	}
 	hooksDir := filepath.Join(gitDir, "hooks")
 
@@ -607,7 +615,7 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	// Check Git Hooks early (even if .beads/ doesn't exist yet)
-	hooksCheck := checkGitHooks(path)
+	hooksCheck := checkGitHooks()
 	result.Checks = append(result.Checks, hooksCheck)
 	// Don't fail overall check for missing hooks, just warn
 
@@ -1323,7 +1331,6 @@ func printDiagnostics(result doctorResult) {
 
 	// Print warnings/errors with fixes
 	hasIssues := false
-	unfixableErrors := 0
 	for _, check := range result.Checks {
 		if check.Status != statusOK && check.Fix != "" {
 			if !hasIssues {
@@ -1338,26 +1345,11 @@ func printDiagnostics(result doctorResult) {
 			}
 
 			fmt.Printf("  Fix: %s\n\n", check.Fix)
-		} else if check.Status == statusError && check.Fix == "" {
-			// Count unfixable errors
-			unfixableErrors++
 		}
 	}
 
 	if !hasIssues {
 		color.Green("✓ All checks passed\n")
-	}
-
-	// Suggest reset if there are multiple unfixable errors
-	if unfixableErrors >= 3 {
-		fmt.Println()
-		color.Yellow("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		color.Yellow("⚠ Found %d unfixable errors\n", unfixableErrors)
-		fmt.Println()
-		fmt.Println("  Your beads state may be too corrupted to repair automatically.")
-		fmt.Println("  Consider running 'bd reset' to start fresh.")
-		fmt.Println("  (Use 'bd reset --backup' to save current state first)")
-		color.Yellow("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	}
 }
 
@@ -1881,10 +1873,10 @@ func checkDependencyCycles(path string) doctorCheck {
 	}
 }
 
-func checkGitHooks(path string) doctorCheck {
-	// Check if we're in a git repository
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+func checkGitHooks() doctorCheck {
+	// Check if we're in a git repository using worktree-aware detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Git Hooks",
 			Status:  statusOK,
@@ -2105,9 +2097,9 @@ func checkDatabaseIntegrity(path string) doctorCheck {
 }
 
 func checkMergeDriver(path string) doctorCheck {
-	// Check if we're in a git repository
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Check if we're in a git repository using worktree-aware detection
+	_, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Git Merge Driver",
 			Status:  statusOK,
@@ -2306,9 +2298,9 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		}
 	}
 
-	// Check if we're in a git repository
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Check if we're in a git repository using worktree-aware detection
+	_, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
 			Status:  statusOK,
@@ -2350,20 +2342,26 @@ func checkSyncBranchConfig(path string) doctorCheck {
 		}
 	}
 
-	// Not configured - check if repo has a remote to provide appropriate message
-	// sync-branch is optional, only needed for protected branches or multi-clone workflows
-	// See GitHub issue #498
+	// Not configured - this is optional but recommended for multi-clone setups
+	// Check if this looks like a multi-clone setup (has remote)
+	hasRemote := false
 	cmd = exec.Command("git", "remote")
 	cmd.Dir = path
 	if output, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		hasRemote = true
+	}
+
+	if hasRemote {
 		return doctorCheck{
 			Name:    "Sync Branch Config",
-			Status:  statusOK,
-			Message: "Not configured (optional)",
-			Detail:  "Only needed for protected branches or multi-clone workflows",
+			Status:  statusWarning,
+			Message: "sync-branch not configured",
+			Detail:  "Multi-clone setups should configure sync-branch in config.yaml",
+			Fix:     "Add 'sync-branch: beads-sync' to .beads/config.yaml",
 		}
 	}
 
+	// No remote - probably a local-only repo, sync-branch not needed
 	return doctorCheck{
 		Name:    "Sync Branch Config",
 		Status:  statusOK,
@@ -2375,9 +2373,9 @@ func checkSyncBranchConfig(path string) doctorCheck {
 // or from the remote sync branch (after a force-push reset).
 // bd-6rf: Detect and fix stale beads-sync branch
 func checkSyncBranchHealth(path string) doctorCheck {
-	// Skip if not in a git repo
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Skip if not in a git repo using worktree-aware detection
+	_, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Sync Branch Health",
 			Status:  statusOK,
@@ -2542,9 +2540,9 @@ func checkDeletionsManifest(path string) doctorCheck {
 		}
 	}
 
-	// Check if we're in a git repository
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Check if we're in a git repository using worktree-aware detection
+	_, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Deletions Manifest",
 			Status:  statusOK,
@@ -2738,9 +2736,9 @@ func checkUntrackedBeadsFiles(path string) doctorCheck {
 		}
 	}
 
-	// Check if we're in a git repository
-	gitDir := filepath.Join(path, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Check if we're in a git repository using worktree-aware detection
+	_, err := git.GetGitDir()
+	if err != nil {
 		return doctorCheck{
 			Name:    "Untracked Files",
 			Status:  statusOK,

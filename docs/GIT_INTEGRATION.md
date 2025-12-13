@@ -9,21 +9,21 @@ bd integrates deeply with git for issue tracking synchronization. This guide cov
 
 ## Git Worktrees
 
-**⚠️ Important Limitation:** Daemon mode does NOT work correctly with `git worktree`.
+**🚧 Enhanced Support:** Beads now has comprehensive Git worktree compatibility with shared database architecture. While thoroughly tested internally, real-world usage may reveal additional edge cases.
 
-### The Problem
+### How It Works
 
 Git worktrees share the same `.git` directory and `.beads` database:
-- All worktrees use the same `.beads/beads.db` file
-- Daemon doesn't know which branch each worktree has checked out
-- Can commit/push changes to the wrong branch
-- Leads to confusion and incorrect git history
+- All worktrees use the same `.beads/beads.db` file in the main repository
+- Database discovery prioritizes main repository location
+- Worktree-aware git operations prevent conflicts
+- Git hooks automatically adapt to worktree context
 
-### What You Lose Without Daemon Mode
+### Daemon Mode Limitations
 
-- **Auto-sync** - No automatic commit/push of changes (use `bd sync` manually)
-- **MCP server** - beads-mcp requires daemon for multi-repo support
-- **Background watching** - No automatic detection of remote changes
+**⚠️ Important:** Daemon mode does NOT work correctly with `git worktree` due to shared database state.
+
+The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch.
 
 ### Solutions for Worktree Users
 
@@ -48,13 +48,51 @@ bd ready  # All commands use direct mode
 export BEADS_AUTO_START_DAEMON=false
 ```
 
-### Automatic Detection
+### Automatic Detection & Warnings
 
-bd automatically detects worktrees and shows prominent warning if daemon mode is active. The `--no-daemon` mode works correctly since it operates directly on the database without shared state.
+bd automatically detects worktrees and shows prominent warnings if daemon mode is active:
 
-### Why It Matters
+```
+╔══════════════════════════════════════════════════════════════════════════╗
+║ WARNING: Git worktree detected with daemon mode                         ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║ Git worktrees share the same .beads directory, which can cause the      ║
+║ daemon to commit/push to the wrong branch.                               ║
+║                                                                          ║
+║ Shared database: /path/to/main/.beads                                    ║
+║ Worktree git dir: /path/to/shared/.git                                   ║
+║                                                                          ║
+║ RECOMMENDED SOLUTIONS:                                                   ║
+║   1. Use --no-daemon flag:    bd --no-daemon <command>                   ║
+║   2. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║
+╚══════════════════════════════════════════════════════════════════════════╝
+```
 
-The daemon maintains its own view of the current working directory and git state. When multiple worktrees share the same `.beads` database, the daemon may commit changes intended for one branch to a different branch.
+### Worktree-Aware Features
+
+**Database Discovery:**
+- Searches main repository first for `.beads` directory
+- Falls back to worktree-local search if needed
+- Prevents database duplication across worktrees
+
+**Git Hooks:**
+- Pre-commit hook adapts to worktree context
+- Automatically stages JSONL in regular repos
+- Safely skips staging in worktrees (files outside working tree)
+- Post-merge hook works correctly in both contexts
+
+**Sync Operations:**
+- Worktree-aware repository root detection
+- Proper handling of git directory vs git common directory
+- Safe concurrent access to shared database
+
+### Why This Architecture Works
+
+- **Shared Database:** Eliminates data duplication and sync conflicts
+- **Priority Search:** Main repository database takes precedence
+- **SQLite Locking:** Prevents corruption during concurrent access
+- **Git Integration:** Hooks and sync operations adapt to context
+- **Clear Warnings:** Users are guided to safe usage patterns
 
 ## Handling Merge Conflicts
 
@@ -251,32 +289,10 @@ See [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md) for complete setup guide, tro
 
 ### Installation
 
-Git hooks are installed automatically during `bd init`. To install manually:
-
 ```bash
 # One-time setup in each beads workspace
 ./examples/git-hooks/install.sh
 ```
-
-### Disabling Hook Installation
-
-If you prefer to manage git hooks separately (e.g., using pre-commit, husky, or your own hook manager), you can disable automatic hook installation:
-
-```bash
-# Via command-line flag
-bd init --skip-hooks
-
-# Via environment variable (useful for CI/scripts)
-BD_NO_INSTALL_HOOKS=1 bd init
-
-# Via global config (~/.config/bd/config.yaml)
-no-install-hooks: true
-
-# Via project config (.beads/config.yaml)
-no-install-hooks: true
-```
-
-**Precedence:** `--skip-hooks` flag > `BD_NO_INSTALL_HOOKS` env var > config file > default (install hooks)
 
 ### What Gets Installed
 
@@ -294,6 +310,10 @@ no-install-hooks: true
 - Prevents stale JSONL from reaching remote
 - **Critical for multi-workspace consistency**
 
+**post-checkout hook:**
+- Imports updated JSONL after branch switches
+- Ensures database reflects checked-out branch state
+
 ### Why Hooks Matter
 
 **Without pre-push hook:**
@@ -307,6 +327,58 @@ no-install-hooks: true
 - No manual `bd sync` needed
 
 See [examples/git-hooks/README.md](../examples/git-hooks/README.md) for details.
+
+### Implementation Details
+
+#### Hook Installation (`cmd/bd/hooks.go`)
+
+The `installHooks()` function:
+- Writes embedded hook scripts to the `.git/hooks/` directory
+- Creates the hooks directory with `os.MkdirAll()` if needed
+- Backs up existing hooks with `.backup` extension (unless `--force` flag used)
+- Sets execute permissions (0755) on installed hooks
+- Supports shared mode via `--shared` flag (installs to `.beads-hooks/` instead)
+
+#### Git Directory Resolution
+
+**Critical for worktree support:** The `getGitDir()` helper uses `git rev-parse --git-dir` to resolve the actual git directory:
+
+```go
+// Returns ".git" in normal repos
+// Returns "/path/to/shared/.git" in git worktrees
+// (where .git is a file containing "gitdir: /path/to/actual/git/dir")
+gitDir, err := getGitDir()
+```
+
+In **normal repositories**, `.git` is a directory containing the git internals.
+In **git worktrees**, `.git` is a file containing `gitdir: /path/to/actual/git/dir`, pointing to the shared git directory.
+
+This difference breaks code that assumes `.git` is always a directory. Using `getGitDir()` ensures hooks work correctly in both cases.
+
+#### Hook Detection (`cmd/bd/init.go`)
+
+The `detectExistingHooks()` function scans for existing hooks and classifies them:
+
+- **bd hooks**: Identified by "bd (beads) pre-commit hook" comment in content
+- **pre-commit framework hooks**: Detected by "pre-commit framework" or "pre-commit.com" in content
+- **Custom hooks**: Any other existing hook
+
+This classification allows bd to:
+- Avoid re-installing already-installed bd hooks
+- Support chaining with pre-commit framework hooks
+- Warn when overwriting custom hooks
+
+#### Hook Testing
+
+Tests in `hooks_test.go` and `init_hooks_test.go`:
+
+1. Initialize real git repositories via `exec.Command("git", "init")`
+2. Call `getGitDir()` to get the actual git directory path
+3. Construct hooks path with `filepath.Join(gitDirPath, "hooks")`
+4. Create hooks directory if needed with `os.MkdirAll()`
+5. Execute hook operations and verify results
+
+This approach ensures tests work correctly in both normal repos and git worktrees, preventing failures when running in worktree environments where `.git` is a file.
 
 ## Multi-Workspace Sync Strategies
 

@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/deletions"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -733,20 +734,6 @@ Use --merge to merge the sync branch back to main branch.`,
 				if err := restoreBeadsDirFromBranch(ctx); err != nil {
 					// Non-fatal - just means git status will show modified files
 					debug.Logf("sync: failed to restore .beads/ from branch: %v", err)
-				} else {
-					// Update jsonl_content_hash to match the restored file
-					// This prevents daemon/CLI from seeing a hash mismatch and re-importing
-					// which would trigger re-export and dirty the working directory (bd-lw0x race fix)
-					// Uses repoKey for multi-repo support (bd-ar2.10, bd-ar2.11)
-					hashKey := "jsonl_content_hash"
-					if rk := getRepoKeyForPath(jsonlPath); rk != "" {
-						hashKey += ":" + rk
-					}
-					if restoredHash, err := computeJSONLHash(jsonlPath); err == nil {
-						if err := store.SetMetadata(ctx, hashKey, restoredHash); err != nil {
-							debug.Logf("sync: failed to update hash after restore: %v", err)
-						}
-					}
 				}
 				// Skip final flush in PersistentPostRun - we've already exported to sync branch
 				// and restored the working directory to match the current branch
@@ -838,24 +825,68 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
+// getRepoRootForWorktree returns the main repository root for running git commands
+// This is always the main repository root, never the worktree root
+func getRepoRootForWorktree(ctx context.Context) string {
+	repoRoot, err := git.GetMainRepoRoot()
+	if err != nil {
+		// Fallback to current directory if GetMainRepoRoot fails
+		return "."
+	}
+	return repoRoot
+}
+
 // gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes
 func gitHasBeadsChanges(ctx context.Context) (bool, error) {
+	// Get the absolute path to .beads directory
 	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return false, fmt.Errorf("no .beads directory found")
 	}
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir)
-	output, err := cmd.Output()
+
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return false, fmt.Errorf("cannot determine repository root")
+	}
+
+	// Compute relative path from repo root to .beads
+	relPath, err := filepath.Rel(repoRoot, beadsDir)
+	if err != nil {
+		// Fall back to absolute path if relative path fails
+		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir)
+		statusOutput, err := statusCmd.Output()
+		if err != nil {
+			return false, fmt.Errorf("git status failed: %w", err)
+		}
+		return len(strings.TrimSpace(string(statusOutput))) > 0, nil
+	}
+
+	// Run git status with relative path from repo root
+	statusCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", relPath)
+	statusOutput, err := statusCmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
 	}
-	return len(strings.TrimSpace(string(output))) > 0, nil
+	return len(strings.TrimSpace(string(statusOutput))) > 0, nil
 }
 
-// gitCommit commits the specified file
+// gitCommit commits the specified file (worktree-aware)
 func gitCommit(ctx context.Context, filePath string, message string) error {
-	// Stage the file
-	addCmd := exec.CommandContext(ctx, "git", "add", filePath)
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return fmt.Errorf("cannot determine repository root")
+	}
+
+	// Make file path relative to repo root for git operations
+	relPath, err := filepath.Rel(repoRoot, filePath)
+	if err != nil {
+		relPath = filePath // Fall back to absolute path
+	}
+
+	// Stage the file from repo root context
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relPath)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
 	}
@@ -865,8 +896,8 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
-	// Commit
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	// Commit from repo root context
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -879,10 +910,17 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 // This ensures bd sync doesn't accidentally commit other staged files.
 // Only stages specific sync files (issues.jsonl, deletions.jsonl, metadata.json)
 // to avoid staging gitignored snapshot files that may be tracked. (bd-guc fix)
+// Worktree-aware: handles cases where .beads is in the main repo but we're running from a worktree.
 func gitCommitBeadsDir(ctx context.Context, message string) error {
 	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return fmt.Errorf("no .beads directory found")
+	}
+
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return fmt.Errorf("cannot determine repository root")
 	}
 
 	// Stage only the specific sync-related files (bd-guc)
@@ -898,7 +936,12 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	var filesToAdd []string
 	for _, f := range syncFiles {
 		if _, err := os.Stat(f); err == nil {
-			filesToAdd = append(filesToAdd, f)
+			// Convert to relative path from repo root for git operations
+			relPath, err := filepath.Rel(repoRoot, f)
+			if err != nil {
+				relPath = f // Fall back to absolute path if relative fails
+			}
+			filesToAdd = append(filesToAdd, relPath)
 		}
 	}
 
@@ -906,8 +949,8 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 		return fmt.Errorf("no sync files found to commit")
 	}
 
-	// Stage only the sync files
-	args := append([]string{"add"}, filesToAdd...)
+	// Stage only the sync files from repo root context (worktree-aware)
+	args := append([]string{"-C", repoRoot, "add"}, filesToAdd...)
 	addCmd := exec.CommandContext(ctx, "git", args...)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
@@ -921,7 +964,13 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	// Commit only .beads/ files using -- pathspec (bd-red)
 	// This prevents accidentally committing other staged files that the user
 	// may have staged but wasn't ready to commit yet.
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message, "--", beadsDir)
+	// Convert beadsDir to relative path for git commit (worktree-aware)
+	relBeadsDir, err := filepath.Rel(repoRoot, beadsDir)
+	if err != nil {
+		relBeadsDir = beadsDir // Fall back to absolute path if relative fails
+	}
+
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message, "--", relBeadsDir)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -942,12 +991,20 @@ func hasGitRemote(ctx context.Context) bool {
 
 // isInRebase checks if we're currently in a git rebase state
 func isInRebase() bool {
+	// Get actual git directory (handles worktrees)
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false
+	}
+
 	// Check for rebase-merge directory (interactive rebase)
-	if _, err := os.Stat(".git/rebase-merge"); err == nil {
+	rebaseMergePath := filepath.Join(gitDir, "rebase-merge")
+	if _, err := os.Stat(rebaseMergePath); err == nil {
 		return true
 	}
 	// Check for rebase-apply directory (non-interactive rebase)
-	if _, err := os.Stat(".git/rebase-apply"); err == nil {
+	rebaseApplyPath := filepath.Join(gitDir, "rebase-apply")
+	if _, err := os.Stat(rebaseApplyPath); err == nil {
 		return true
 	}
 	return false
