@@ -152,11 +152,10 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 				}
 
 				if del, found := loadResult.Records[issue.ID]; found {
-					// Non-tombstone issue is in deletions manifest - skip it
-					// (this maintains backward compatibility during transition)
-					result.SkippedDeleted++
-					result.SkippedDeletedIDs = append(result.SkippedDeletedIDs, issue.ID)
-					fmt.Fprintf(os.Stderr, "Skipping %s (in deletions manifest: deleted %s by %s)\n",
+					// Non-tombstone issue is in deletions manifest - skip the JSONL version
+					// A tombstone will be created from deletions.jsonl below (bd-k5kz)
+					// Don't count as SkippedDeleted since we're replacing with a tombstone
+					fmt.Fprintf(os.Stderr, "Replacing %s with tombstone (deleted %s by %s)\n",
 						issue.ID, del.Timestamp.Format("2006-01-02"), del.Actor)
 				} else {
 					filteredIssues = append(filteredIssues, issue)

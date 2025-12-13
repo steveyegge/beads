@@ -1340,8 +1340,11 @@ func TestImportIssues_LegacyDeletionsConvertedToTombstones(t *testing.T) {
 	if result.Created != 2 {
 		t.Errorf("Expected 2 created (1 regular + 1 tombstone from deletions.jsonl), got %d", result.Created)
 	}
-	if result.SkippedDeleted != 1 {
-		t.Errorf("Expected 1 skipped deleted (issue in deletions.jsonl), got %d", result.SkippedDeleted)
+	// bd-k5kz: When an issue is in both JSONL (non-tombstone) and deletions.jsonl,
+	// we replace it with a tombstone. This should NOT count as SkippedDeleted
+	// since a tombstone is being created (counted in ConvertedToTombstone instead).
+	if result.SkippedDeleted != 0 {
+		t.Errorf("Expected 0 skipped deleted (replaced with tombstone, not skipped), got %d", result.SkippedDeleted)
 	}
 	// Verify ConvertedToTombstone counter (bd-wucl)
 	if result.ConvertedToTombstone != 1 {
