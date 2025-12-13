@@ -1128,3 +1128,86 @@ func TestSortPolicyDefault(t *testing.T) {
 		t.Errorf("Expected P2 second, got P%d", ready[1].Priority)
 	}
 }
+
+// TestGetReadyWorkExcludesTombstones verifies that tombstone issues are never included in ready work
+// This tests the implementation of bd-yuv item 2.
+func TestGetReadyWorkExcludesTombstones(t *testing.T) {
+	store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+	ctx := context.Background()
+
+	// Create issues: one active, one that will become a tombstone
+	activeIssue := &types.Issue{
+		ID:        "bd-active",
+		Title:     "Active Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	toDeleteIssue := &types.Issue{
+		ID:        "bd-deleted",
+		Title:     "Issue To Delete",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, activeIssue, "test"); err != nil {
+		t.Fatalf("Failed to create active issue: %v", err)
+	}
+	if err := store.CreateIssue(ctx, toDeleteIssue, "test"); err != nil {
+		t.Fatalf("Failed to create issue to delete: %v", err)
+	}
+
+	// Verify both are ready before deletion
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+	if len(ready) != 2 {
+		t.Fatalf("Expected 2 ready issues before deletion, got %d", len(ready))
+	}
+
+	// Delete one issue (creates tombstone)
+	if err := store.CreateTombstone(ctx, "bd-deleted", "tester", "testing tombstone exclusion"); err != nil {
+		t.Fatalf("CreateTombstone failed: %v", err)
+	}
+
+	// Verify tombstone still exists in database
+	tombstone, err := store.GetIssue(ctx, "bd-deleted")
+	if err != nil {
+		t.Fatalf("Failed to get tombstone: %v", err)
+	}
+	if tombstone == nil || tombstone.Status != types.StatusTombstone {
+		t.Fatal("Issue should exist as tombstone")
+	}
+
+	// Get ready work - tombstone should be excluded
+	ready, err = store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	// Should only have the active issue
+	if len(ready) != 1 {
+		t.Errorf("Expected 1 ready issue after tombstone, got %d", len(ready))
+	}
+
+	// Verify it's the active issue, not the tombstone
+	foundActive := false
+	foundTombstone := false
+	for _, issue := range ready {
+		if issue.ID == "bd-active" {
+			foundActive = true
+		}
+		if issue.ID == "bd-deleted" {
+			foundTombstone = true
+		}
+	}
+
+	if !foundActive {
+		t.Error("Active issue should be in ready work")
+	}
+	if foundTombstone {
+		t.Error("Tombstone should NOT be in ready work")
+	}
+}

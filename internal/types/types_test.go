@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -386,6 +387,93 @@ func TestValidateWithCustomStatuses(t *testing.T) {
 			err := tt.issue.ValidateWithCustomStatuses(tt.customStatuses)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateWithCustomStatuses() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestTombstoneValidation tests the tombstone invariants (bd-md2):
+// - Tombstone issues must have deleted_at timestamp
+// - Non-tombstone issues cannot have deleted_at timestamp
+func TestTombstoneValidation(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name    string
+		issue   Issue
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid tombstone with deleted_at",
+			issue: Issue{
+				Title:     "(deleted)",
+				Status:    StatusTombstone,
+				Priority:  0,
+				IssueType: TypeTask,
+				DeletedAt: &now,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid tombstone without deleted_at",
+			issue: Issue{
+				Title:     "(deleted)",
+				Status:    StatusTombstone,
+				Priority:  0,
+				IssueType: TypeTask,
+				DeletedAt: nil,
+			},
+			wantErr: true,
+			errMsg:  "tombstone issues must have deleted_at timestamp",
+		},
+		{
+			name: "invalid non-tombstone with deleted_at",
+			issue: Issue{
+				Title:     "Open Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeTask,
+				DeletedAt: &now,
+			},
+			wantErr: true,
+			errMsg:  "non-tombstone issues cannot have deleted_at timestamp",
+		},
+		{
+			name: "valid open issue without deleted_at",
+			issue: Issue{
+				Title:     "Open Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeTask,
+				DeletedAt: nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid closed issue without deleted_at",
+			issue: Issue{
+				Title:     "Closed Issue",
+				Status:    StatusClosed,
+				Priority:  1,
+				IssueType: TypeTask,
+				ClosedAt:  &now,
+				DeletedAt: nil,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.issue.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errMsg != "" && err != nil {
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %v, expected to contain %q", err, tt.errMsg)
+				}
 			}
 		})
 	}

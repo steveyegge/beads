@@ -42,6 +42,7 @@ func TestValidateStatus(t *testing.T) {
 		{"valid in_progress", string(types.StatusInProgress), false},
 		{"valid blocked", string(types.StatusBlocked), false},
 		{"valid closed", string(types.StatusClosed), false},
+		{"tombstone rejected", string(types.StatusTombstone), true}, // bd-y68: tombstone status blocked via UpdateIssue
 		{"invalid status", "invalid", true},
 		{"non-string ignored", 123, false},
 	}
@@ -164,6 +165,10 @@ func TestValidateFieldUpdateWithCustomStatuses(t *testing.T) {
 		{"built-in status no custom", "status", string(types.StatusOpen), nil, false},
 		{"built-in status with custom", "status", string(types.StatusOpen), customStatuses, false},
 		{"built-in closed with custom", "status", string(types.StatusClosed), customStatuses, false},
+
+		// Tombstone status is always blocked (bd-y68)
+		{"tombstone rejected no custom", "status", string(types.StatusTombstone), nil, true},
+		{"tombstone rejected with custom", "status", string(types.StatusTombstone), customStatuses, true},
 
 		// Custom statuses work when configured
 		{"custom status configured", "status", "awaiting_review", customStatuses, false},
