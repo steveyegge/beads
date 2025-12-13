@@ -34,6 +34,31 @@ log_error() {
     echo -e "${RED}Error:${NC} $1" >&2
 }
 
+# Re-sign binary for macOS to avoid slow Gatekeeper checks
+# See: https://github.com/steveyegge/beads/issues/466
+resign_for_macos() {
+    local binary_path=$1
+
+    # Only run on macOS
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        return 0
+    fi
+
+    # Check if codesign is available
+    if ! command -v codesign &> /dev/null; then
+        log_warning "codesign not found, skipping re-signing"
+        return 0
+    fi
+
+    log_info "Re-signing binary for macOS..."
+    codesign --remove-signature "$binary_path" 2>/dev/null || true
+    if codesign --force --sign - "$binary_path"; then
+        log_success "Binary re-signed for this machine"
+    else
+        log_warning "Failed to re-sign binary (non-fatal)"
+    fi
+}
+
 # Detect OS and architecture
 detect_platform() {
     local os arch
@@ -144,6 +169,9 @@ install_from_release() {
         sudo mv bd "$install_dir/"
     fi
 
+    # Re-sign for macOS to avoid Gatekeeper delays
+    resign_for_macos "$install_dir/bd"
+
     log_success "bd installed to $install_dir/bd"
 
     # Check if install_dir is in PATH
@@ -205,6 +233,9 @@ install_with_go() {
         fi
         LAST_INSTALL_PATH="$bin_dir/bd"
 
+        # Re-sign for macOS to avoid Gatekeeper delays
+        resign_for_macos "$bin_dir/bd"
+
         # Check if GOPATH/bin (or GOBIN) is in PATH
         if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
             log_warning "$bin_dir is not in your PATH"
@@ -251,6 +282,9 @@ build_from_source() {
             else
                 sudo mv bd "$install_dir/"
             fi
+
+            # Re-sign for macOS to avoid Gatekeeper delays
+            resign_for_macos "$install_dir/bd"
 
             log_success "bd installed to $install_dir/bd"
 

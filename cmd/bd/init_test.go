@@ -115,21 +115,15 @@ func TestInitCommand(t *testing.T) {
 			if err != nil {
 				t.Errorf(".gitignore file was not created: %v", err)
 			} else {
-				// Check for essential patterns
+				// Check for essential patterns (whitelist approach - GitHub #473)
 				gitignoreStr := string(gitignoreContent)
 				expectedPatterns := []string{
-					"*.db",
-					"*.db?*",
-					"*.db-journal",
-					"*.db-wal",
-					"*.db-shm",
-					"daemon.log",
-					"daemon.pid",
-					"bd.sock",
-					"beads.base.jsonl",
-					"beads.left.jsonl",
-					"beads.right.jsonl",
-					"!issues.jsonl",
+					"*",             // Blanket ignore
+					"!.gitignore",   // Whitelist gitignore itself
+					"!issues.jsonl", // Whitelist JSONL
+					"!metadata.json",
+					"!config.yaml",
+					"!README.md",
 				}
 				for _, pattern := range expectedPatterns {
 					if !strings.Contains(gitignoreStr, pattern) {
@@ -1045,5 +1039,190 @@ func TestSetupClaudeSettings_NoExistingFile(t *testing.T) {
 
 	if !strings.Contains(string(content), "bd onboard") {
 		t.Error("File should contain bd onboard prompt")
+	}
+}
+
+// TestInitSkipHooksWithEnvVar verifies BD_NO_INSTALL_HOOKS=1 prevents hook installation
+func TestInitSkipHooksWithEnvVar(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first (hooks only install in git repos)
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Set environment variable to skip hooks
+	os.Setenv("BD_NO_INSTALL_HOOKS", "1")
+	defer os.Unsetenv("BD_NO_INSTALL_HOOKS")
+
+	// Run bd init
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Verify .beads directory was created
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		t.Error(".beads directory was not created")
+	}
+
+	// Verify git hooks were NOT installed
+	preCommitHook := filepath.Join(tmpDir, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(preCommitHook); err == nil {
+		t.Error("pre-commit hook should NOT be installed when BD_NO_INSTALL_HOOKS=1")
+	}
+
+	postMergeHook := filepath.Join(tmpDir, ".git", "hooks", "post-merge")
+	if _, err := os.Stat(postMergeHook); err == nil {
+		t.Error("post-merge hook should NOT be installed when BD_NO_INSTALL_HOOKS=1")
+	}
+}
+
+// TestInitSkipHooksWithConfigFile verifies no-install-hooks: true in config prevents hook installation
+func TestInitSkipHooksWithConfigFile(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Create global config directory with no-install-hooks: true
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("Failed to get user config dir: %v", err)
+	}
+	bdConfigDir := filepath.Join(configDir, "bd")
+	if err := os.MkdirAll(bdConfigDir, 0755); err != nil {
+		t.Fatalf("Failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(bdConfigDir, "config.yaml")
+
+	// Backup existing config if present
+	existingConfig, existingErr := os.ReadFile(configPath)
+	defer func() {
+		if existingErr == nil {
+			os.WriteFile(configPath, existingConfig, 0644)
+		} else {
+			os.Remove(configPath)
+		}
+	}()
+
+	// Write test config
+	if err := os.WriteFile(configPath, []byte("no-install-hooks: true\n"), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Run bd init
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Verify .beads directory was created
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		t.Error(".beads directory was not created")
+	}
+
+	// Verify git hooks were NOT installed
+	preCommitHook := filepath.Join(tmpDir, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(preCommitHook); err == nil {
+		t.Error("pre-commit hook should NOT be installed when no-install-hooks: true in config")
+	}
+}
+
+// TestInitSkipHooksFlag verifies --skip-hooks flag still works (backward compat)
+func TestInitSkipHooksFlag(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("skip-hooks", "false")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Run bd init with --skip-hooks
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--skip-hooks"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Verify .beads directory was created
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		t.Error(".beads directory was not created")
+	}
+
+	// Verify git hooks were NOT installed
+	preCommitHook := filepath.Join(tmpDir, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(preCommitHook); err == nil {
+		t.Error("pre-commit hook should NOT be installed when --skip-hooks is passed")
+	}
+}
+
+// TestInitDefaultInstallsHooks verifies default behavior installs hooks
+func TestInitDefaultInstallsHooks(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("skip-hooks", "false")
+
+	// Clear any env var that might affect hooks
+	os.Unsetenv("BD_NO_INSTALL_HOOKS")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first
+	if err := runCommandInDir(tmpDir, "git", "init"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Run bd init without any hook-skipping options
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Verify .beads directory was created
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		t.Error(".beads directory was not created")
+	}
+
+	// Verify git hooks WERE installed (default behavior)
+	preCommitHook := filepath.Join(tmpDir, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(preCommitHook); os.IsNotExist(err) {
+		t.Error("pre-commit hook SHOULD be installed by default")
+	}
+
+	postMergeHook := filepath.Join(tmpDir, ".git", "hooks", "post-merge")
+	if _, err := os.Stat(postMergeHook); os.IsNotExist(err) {
+		t.Error("post-merge hook SHOULD be installed by default")
 	}
 }
