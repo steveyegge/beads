@@ -14,9 +14,18 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// syncBranchCommitAndPush commits JSONL to the sync branch using a worktree
-// Returns true if changes were committed, false if no changes or sync.branch not configured
+// syncBranchCommitAndPush commits JSONL to the sync branch using a worktree.
+// Returns true if changes were committed, false if no changes or sync.branch not configured.
+// This is a convenience wrapper that calls syncBranchCommitAndPushWithOptions with default options.
 func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPush bool, log daemonLogger) (bool, error) {
+	return syncBranchCommitAndPushWithOptions(ctx, store, autoPush, false, log)
+}
+
+// syncBranchCommitAndPushWithOptions commits JSONL to the sync branch using a worktree.
+// Returns true if changes were committed, false if no changes or sync.branch not configured.
+// If forceOverwrite is true, the local JSONL is copied to the worktree without merging,
+// which is necessary for delete mutations to be properly reflected in the sync branch.
+func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Storage, autoPush, forceOverwrite bool, log daemonLogger) (bool, error) {
 	// Check if any remote exists (bd-biwp: support local-only repos)
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch commit/push in local-only mode
@@ -77,7 +86,12 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 		return false, fmt.Errorf("failed to get relative JSONL path: %w", err)
 	}
 	
-	if err := wtMgr.SyncJSONLToWorktree(worktreePath, jsonlRelPath); err != nil {
+	// Use SyncJSONLToWorktreeWithOptions to pass forceOverwrite flag.
+	// When forceOverwrite is true (mutation-triggered sync, especially delete),
+	// the local JSONL is copied directly without merging, ensuring deletions
+	// are properly reflected in the sync branch.
+	syncOpts := git.SyncOptions{ForceOverwrite: forceOverwrite}
+	if err := wtMgr.SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath, syncOpts); err != nil {
 		return false, fmt.Errorf("failed to sync JSONL to worktree: %w", err)
 	}
 	
