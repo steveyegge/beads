@@ -669,9 +669,14 @@ Use --merge to merge the sync branch back to main branch.`,
 				} else {
 					// Update jsonl_content_hash to match the restored file
 					// This prevents daemon/CLI from seeing a hash mismatch and re-importing
-					// which would trigger re-export and dirty the working directory (bd-c83r race fix)
+					// which would trigger re-export and dirty the working directory (bd-lw0x race fix)
+					// Uses repoKey for multi-repo support (bd-ar2.10, bd-ar2.11)
+					hashKey := "jsonl_content_hash"
+					if rk := getRepoKeyForPath(jsonlPath); rk != "" {
+						hashKey += ":" + rk
+					}
 					if restoredHash, err := computeJSONLHash(jsonlPath); err == nil {
-						if err := store.SetMetadata(ctx, "jsonl_content_hash", restoredHash); err != nil {
+						if err := store.SetMetadata(ctx, hashKey, restoredHash); err != nil {
 							debug.Logf("sync: failed to update hash after restore: %v", err)
 						}
 					}
