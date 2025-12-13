@@ -526,7 +526,7 @@ bd show bd-41 --json  # Verify merged content
 
 **Quick reference:**
 
-- **Go version**: 1.21+
+- **Go version**: 1.24+
 - **Testing**: Use `BEADS_DB=/tmp/test.db` to avoid polluting production database
 - **Before committing**: Run tests (`go test -short ./...`) and linter (`golangci-lint run ./...`)
 - **End of session**: Always run `bd sync` to flush/commit/push changes
