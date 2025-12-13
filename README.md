@@ -1,5 +1,8 @@
 # bd - Beads Issue Tracker 🔗
 
+[![Run in Smithery](https://smithery.ai/badge/skills/steveyegge)](https://smithery.ai/skills?ns=steveyegge&utm_source=github&utm_medium=badge)
+
+
 [![Go Version](https://img.shields.io/github/go-mod/go-version/steveyegge/beads)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/steveyegge/beads)](https://github.com/steveyegge/beads/releases)
 [![npm version](https://img.shields.io/npm/v/@beads/bd)](https://www.npmjs.com/package/@beads/bd)
@@ -111,6 +114,11 @@ irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
 ```bash
 brew tap steveyegge/beads
 brew install bd
+```
+
+**mise (polyglot runtime manager):**
+```bash
+mise use -g ubi:steveyegge/beads[exe=bd]
 ```
 
 For full, platform-specific instructions (Windows, Arch Linux, manual builds, IDE integrations, etc.) see the canonical guide in [docs/INSTALLING.md](docs/INSTALLING.md).
@@ -317,8 +325,8 @@ git push
 git pull
 # bd automatically detects JSONL is newer and imports on next command
 
-bd ready  # Fresh data from git!
-bd list   # Shows issues from other machines
+bd ready  # Shows issues ready to work on (with fresh data from git)
+bd list   # Lists all issues, including those from other machines
 ```
 
 **Manual sync (optional):**
@@ -328,7 +336,7 @@ bd sync  # Immediately flush pending changes and import latest JSONL
 
 **For zero-lag sync**, install the git hooks:
 ```bash
-cd examples/git-hooks && ./install.sh
+bd hooks install
 ```
 
 This adds:

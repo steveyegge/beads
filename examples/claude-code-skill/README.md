@@ -119,7 +119,7 @@ Show me what's ready to work on in bd
 
 This skill complements the [beads plugin](../../.claude-plugin/):
 
-- **Plugin** (`.claude-plugin/`): Provides slash commands (`/bd-create`, `/bd-ready`) and MCP tools for basic operations
+- **Plugin** (`.claude-plugin/`): Provides slash commands (`/beads:create`, `/beads:ready`) and MCP tools for basic operations
 - **Skill** (this directory): Teaches Claude the patterns, philosophy, and decision-making for effective beads usage
 
 You can use both together for the best experience:
