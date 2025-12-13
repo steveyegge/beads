@@ -1211,12 +1211,9 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 
 // readFirstIssueFromGit reads the first issue from a git ref (bd-0is: supports sync-branch)
 func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
-	// Get content from git (use ToSlash for Windows compatibility)
-	gitPath := filepath.ToSlash(jsonlPath)
-	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204
-	output, err := cmd.Output()
+	output, err := readFromGit(gitRef, jsonlPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read from git: %w", err)
+		return nil, err
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(output))

@@ -251,14 +251,23 @@ func findGitRoot() string {
 	return resolved
 }
 
+// readFromGit reads file content from a specific git ref (bd-y2v: shared helper)
+func readFromGit(gitRef, filePath string) ([]byte, error) {
+	// Normalize path for git (use forward slashes for Windows compatibility)
+	gitPath := filepath.ToSlash(filePath)
+	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from git: %w", err)
+	}
+	return output, nil
+}
+
 // importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
 func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath, gitRef string) error {
-	// Get content from git (use ToSlash for Windows compatibility)
-	gitPath := filepath.ToSlash(jsonlPath)
-	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
-	jsonlData, err := cmd.Output()
+	jsonlData, err := readFromGit(gitRef, jsonlPath)
 	if err != nil {
-		return fmt.Errorf("failed to read from git: %w", err)
+		return err
 	}
 
 	// Parse JSONL data
