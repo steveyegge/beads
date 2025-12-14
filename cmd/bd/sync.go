@@ -580,10 +580,19 @@ Use --merge to merge the sync branch back to main branch.`,
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to sanitize JSONL: %v\n", err)
 					// Non-fatal - continue with import
-				} else if sanitizeResult.RemovedCount > 0 {
-					fmt.Printf("→ Sanitized JSONL: removed %d deleted issue(s) that were resurrected by git merge\n", sanitizeResult.RemovedCount)
-					for _, id := range sanitizeResult.RemovedIDs {
-						fmt.Printf("  - %s\n", id)
+				} else {
+					// bd-3ee1 fix: Log protected issues (local work that would have been incorrectly removed)
+					if sanitizeResult.ProtectedCount > 0 {
+						fmt.Printf("→ Protected %d locally exported issue(s) from incorrect sanitization (bd-3ee1)\n", sanitizeResult.ProtectedCount)
+						for _, id := range sanitizeResult.ProtectedIDs {
+							fmt.Printf("  - %s (in left snapshot)\n", id)
+						}
+					}
+					if sanitizeResult.RemovedCount > 0 {
+						fmt.Printf("→ Sanitized JSONL: removed %d deleted issue(s) that were resurrected by git merge\n", sanitizeResult.RemovedCount)
+						for _, id := range sanitizeResult.RemovedIDs {
+							fmt.Printf("  - %s\n", id)
+						}
 					}
 				}
 
@@ -1717,8 +1726,10 @@ func maybeAutoCompactDeletions(ctx context.Context, jsonlPath string) error {
 
 // SanitizeResult contains statistics about the JSONL sanitization operation.
 type SanitizeResult struct {
-	RemovedCount int      // Number of issues removed from JSONL
-	RemovedIDs   []string // IDs that were removed
+	RemovedCount    int      // Number of issues removed from JSONL
+	RemovedIDs      []string // IDs that were removed
+	ProtectedCount  int      // Number of issues protected from removal (bd-3ee1)
+	ProtectedIDs    []string // IDs that were protected
 }
 
 // sanitizeJSONLWithDeletions removes non-tombstone issues from the JSONL file
@@ -1730,10 +1741,17 @@ type SanitizeResult struct {
 // the importer to re-create tombstones from deletions.jsonl, leading to
 // UNIQUE constraint errors when the tombstone already exists in the database.
 //
+// IMPORTANT (bd-3ee1 fix): Issues that were in the left snapshot (local export
+// before pull) are protected from removal. This prevents newly created issues
+// from being incorrectly removed when they happen to have an ID that matches
+// an entry in the deletions manifest (possible with hash-based IDs if content
+// is similar to a previously deleted issue).
+//
 // This should be called after git pull but before import.
 func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 	result := &SanitizeResult{
-		RemovedIDs: []string{},
+		RemovedIDs:   []string{},
+		ProtectedIDs: []string{},
 	}
 
 	// Get deletions manifest path
@@ -1749,6 +1767,16 @@ func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 	// If no deletions, nothing to sanitize
 	if len(loadResult.Records) == 0 {
 		return result, nil
+	}
+
+	// bd-3ee1 fix: Load left snapshot to protect locally exported issues
+	// Issues in the left snapshot were exported before pull and represent
+	// local work that should not be removed by sanitize
+	sm := NewSnapshotManager(jsonlPath)
+	_, leftPath := sm.getSnapshotPaths()
+	protectedIDs := make(map[string]bool)
+	if leftIDs, err := sm.buildIDSet(leftPath); err == nil && len(leftIDs) > 0 {
+		protectedIDs = leftIDs
 	}
 
 	// Read current JSONL
@@ -1790,6 +1818,12 @@ func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 			if issue.Status == string(types.StatusTombstone) {
 				// Keep the tombstone - it's the authoritative deletion record
 				keptLines = append(keptLines, append([]byte{}, line...))
+			} else if protectedIDs[issue.ID] {
+				// bd-3ee1 fix: Issue was in left snapshot (local export before pull)
+				// This is local work, not a resurrected zombie - protect it!
+				keptLines = append(keptLines, append([]byte{}, line...))
+				result.ProtectedCount++
+				result.ProtectedIDs = append(result.ProtectedIDs, issue.ID)
 			} else {
 				// Remove non-tombstone issue that was resurrected
 				result.RemovedCount++

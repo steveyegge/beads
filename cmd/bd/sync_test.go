@@ -1088,6 +1088,146 @@ func TestSanitizeJSONLWithDeletions_PreservesTombstones(t *testing.T) {
 	}
 }
 
+// TestSanitizeJSONLWithDeletions_ProtectsLeftSnapshot tests the bd-3ee1 fix:
+// Issues that are in the left snapshot (local export before pull) should NOT be
+// removed by sanitize, even if they have an ID that matches an entry in the
+// deletions manifest. This prevents newly created issues from being incorrectly
+// removed when they happen to have an ID that matches a previously deleted issue
+// (possible with hash-based IDs if content is similar).
+func TestSanitizeJSONLWithDeletions_ProtectsLeftSnapshot(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+	leftSnapshotPath := filepath.Join(beadsDir, "beads.left.jsonl")
+
+	now := time.Now().Format(time.RFC3339)
+
+	// JSONL with:
+	// - bd-1: regular issue (should be kept - not in deletions)
+	// - bd-2: regular issue in deletions AND in left snapshot (should be PROTECTED)
+	// - bd-3: regular issue in deletions but NOT in left snapshot (should be removed)
+	jsonlContent := `{"id":"bd-1","title":"Issue 1","status":"open"}
+{"id":"bd-2","title":"Issue 2","status":"open"}
+{"id":"bd-3","title":"Issue 3","status":"open"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// Left snapshot contains bd-1 and bd-2 (local work before pull)
+	// bd-2 is the issue we're testing protection for
+	leftSnapshotContent := `{"id":"bd-1","title":"Issue 1","status":"open"}
+{"id":"bd-2","title":"Issue 2","status":"open"}
+`
+	os.WriteFile(leftSnapshotPath, []byte(leftSnapshotContent), 0644)
+
+	// Deletions manifest marks bd-2 and bd-3 as deleted
+	// bd-2 is in deletions but should be protected (it's in left snapshot)
+	// bd-3 is in deletions and should be removed (it's NOT in left snapshot)
+	deletionsContent := fmt.Sprintf(`{"id":"bd-2","ts":"%s","by":"user","reason":"old deletion with same ID as new issue"}
+{"id":"bd-3","ts":"%s","by":"user","reason":"legitimate deletion"}
+`, now, now)
+	os.WriteFile(deletionsPath, []byte(deletionsContent), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// bd-3 should be removed (in deletions, not in left snapshot)
+	if result.RemovedCount != 1 {
+		t.Errorf("expected 1 removed, got %d", result.RemovedCount)
+	}
+	if len(result.RemovedIDs) != 1 || result.RemovedIDs[0] != "bd-3" {
+		t.Errorf("expected only bd-3 to be removed, got %v", result.RemovedIDs)
+	}
+
+	// bd-2 should be protected (in left snapshot)
+	if result.ProtectedCount != 1 {
+		t.Errorf("expected 1 protected, got %d", result.ProtectedCount)
+	}
+	if len(result.ProtectedIDs) != 1 || result.ProtectedIDs[0] != "bd-2" {
+		t.Errorf("expected bd-2 to be protected, got %v", result.ProtectedIDs)
+	}
+
+	// Verify JSONL content
+	afterContent, _ := os.ReadFile(jsonlPath)
+	afterStr := string(afterContent)
+
+	// bd-1 should still be present (not in deletions)
+	if !strings.Contains(afterStr, `"id":"bd-1"`) {
+		t.Error("JSONL should still contain bd-1")
+	}
+
+	// bd-2 should still be present (protected by left snapshot - bd-3ee1 fix!)
+	if !strings.Contains(afterStr, `"id":"bd-2"`) {
+		t.Error("JSONL should still contain bd-2 (protected by left snapshot)")
+	}
+
+	// bd-3 should be removed (in deletions, not protected)
+	if strings.Contains(afterStr, `"id":"bd-3"`) {
+		t.Error("JSONL should NOT contain bd-3 (in deletions and not in left snapshot)")
+	}
+
+	// Verify we have exactly 2 issues left (bd-1 and bd-2)
+	afterCount, _ := countIssuesInJSONL(jsonlPath)
+	if afterCount != 2 {
+		t.Errorf("expected 2 issues in JSONL after sanitize, got %d", afterCount)
+	}
+}
+
+// TestSanitizeJSONLWithDeletions_NoLeftSnapshot tests that sanitize still works
+// correctly when there's no left snapshot (e.g., first sync or snapshot cleanup).
+func TestSanitizeJSONLWithDeletions_NoLeftSnapshot(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	os.MkdirAll(beadsDir, 0755)
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
+	// NOTE: No left snapshot file created
+
+	now := time.Now().Format(time.RFC3339)
+
+	// JSONL with issues
+	jsonlContent := `{"id":"bd-1","title":"Issue 1","status":"open"}
+{"id":"bd-2","title":"Issue 2","status":"open"}
+`
+	os.WriteFile(jsonlPath, []byte(jsonlContent), 0644)
+
+	// Deletions manifest marks bd-2 as deleted
+	deletionsContent := fmt.Sprintf(`{"id":"bd-2","ts":"%s","by":"user","reason":"deleted"}
+`, now)
+	os.WriteFile(deletionsPath, []byte(deletionsContent), 0644)
+
+	result, err := sanitizeJSONLWithDeletions(jsonlPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Without left snapshot, bd-2 should be removed (no protection available)
+	if result.RemovedCount != 1 {
+		t.Errorf("expected 1 removed, got %d", result.RemovedCount)
+	}
+	if result.ProtectedCount != 0 {
+		t.Errorf("expected 0 protected (no left snapshot), got %d", result.ProtectedCount)
+	}
+
+	// Verify JSONL content
+	afterContent, _ := os.ReadFile(jsonlPath)
+	afterStr := string(afterContent)
+
+	if !strings.Contains(afterStr, `"id":"bd-1"`) {
+		t.Error("JSONL should still contain bd-1")
+	}
+	if strings.Contains(afterStr, `"id":"bd-2"`) {
+		t.Error("JSONL should NOT contain bd-2 (no left snapshot protection)")
+	}
+}
+
 // TestHashBasedStalenessDetection_bd_f2f tests the bd-f2f fix:
 // When JSONL content differs from stored hash (e.g., remote changed status),
 // hasJSONLChanged should detect the mismatch even if counts are equal.
