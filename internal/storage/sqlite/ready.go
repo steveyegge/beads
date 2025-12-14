@@ -246,15 +246,14 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 		    i.id, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		    i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		    i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
-		    COUNT(d.depends_on_id) as blocked_by_count,
-		    GROUP_CONCAT(d.depends_on_id, ',') as blocker_ids
+		    COUNT(blocker.id) as blocked_by_count,
+		    COALESCE(GROUP_CONCAT(blocker.id, ','), '') as blocker_ids
 		FROM issues i
-		JOIN dependencies d ON i.id = d.issue_id
-		JOIN issues blocker ON d.depends_on_id = blocker.id
+		LEFT JOIN dependencies d ON i.id = d.issue_id AND d.type = 'blocks'
+		LEFT JOIN issues blocker ON d.depends_on_id = blocker.id AND blocker.status IN ('open', 'in_progress', 'blocked')
 		WHERE i.status IN ('open', 'in_progress', 'blocked')
-		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked')
 		GROUP BY i.id
+		HAVING i.status = 'blocked' OR blocked_by_count > 0
 		ORDER BY i.priority ASC
 	`)
 	if err != nil {

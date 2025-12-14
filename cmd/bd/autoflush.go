@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // outputJSON outputs data as pretty-printed JSON
@@ -42,12 +43,26 @@ func outputJSON(v interface{}) {
 //
 // Thread-safe: No shared state access.
 func findJSONLPath() string {
+	// Allow explicit override (useful in no-db mode or non-standard layouts)
+	if jsonlEnv := os.Getenv("BEADS_JSONL"); jsonlEnv != "" {
+		return utils.CanonicalizePath(jsonlEnv)
+	}
+
 	// Use public API for path discovery
 	jsonlPath := beads.FindJSONLPath(dbPath)
 
+	// In --no-db mode, dbPath may be empty. Fall back to locating the .beads directory.
+	if jsonlPath == "" {
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			return ""
+		}
+		jsonlPath = utils.FindJSONLInDir(beadsDir)
+	}
+
 	// Ensure the directory exists (important for new databases)
 	// This is the only difference from the public API - we create the directory
-	dbDir := filepath.Dir(dbPath)
+	dbDir := filepath.Dir(jsonlPath)
 	if err := os.MkdirAll(dbDir, 0750); err != nil {
 		// If we can't create the directory, return discovered path anyway
 		// (the subsequent write will fail with a clearer error)
@@ -170,7 +185,7 @@ func autoImportIfNewer() {
 	if err := store.ClearAllExportHashes(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
 	}
-	
+
 	// Use shared import logic (bd-157)
 	opts := ImportOptions{
 		DryRun:               false,
@@ -250,8 +265,6 @@ func autoImportIfNewer() {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_time after import: %v\n", err)
 	}
 }
-
-
 
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a debounced
@@ -359,11 +372,11 @@ func clearAutoFlushState() {
 //
 // Atomic write pattern:
 //
-//	1. Create temp file with PID suffix: issues.jsonl.tmp.12345
-//	2. Write all issues as JSONL to temp file
-//	3. Close temp file
-//	4. Atomic rename: temp → target
-//	5. Set file permissions to 0644
+//  1. Create temp file with PID suffix: issues.jsonl.tmp.12345
+//  2. Write all issues as JSONL to temp file
+//  3. Close temp file
+//  4. Atomic rename: temp → target
+//  5. Set file permissions to 0644
 //
 // Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
 // Thread-safe: No shared state access. Safe to call from multiple goroutines.
@@ -376,12 +389,12 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("failed to get stored JSONL hash: %w", err)
 	}
-	
+
 	// If no hash stored, this is first export - skip validation
 	if storedHash == "" {
 		return false, nil
 	}
-	
+
 	// Read current JSONL file
 	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
@@ -395,25 +408,25 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		}
 		return false, fmt.Errorf("failed to read JSONL file: %w", err)
 	}
-	
+
 	// Compute current JSONL hash
 	hasher := sha256.New()
 	hasher.Write(jsonlData)
 	currentHash := hex.EncodeToString(hasher.Sum(nil))
-	
+
 	// Compare hashes
 	if currentHash != storedHash {
 		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected (bd-160)\n")
 		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
 		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
-		
+
 		// Clear export_hashes to force full re-export
 		if err := store.ClearAllExportHashes(ctx); err != nil {
 			return false, fmt.Errorf("failed to clear export_hashes: %w", err)
 		}
 		return true, nil // Signal full export needed
 	}
-	
+
 	return false, nil
 }
 
@@ -442,15 +455,15 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	encoder := json.NewEncoder(f)
 	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
-	
+
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-		 return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
-		
+
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
-	
+
 	// Report skipped issues if any (helps debugging bd-159)
 	if skippedCount > 0 {
 		debug.Logf("auto-flush skipped %d issue(s) with timestamp-only changes", skippedCount)
@@ -523,7 +536,7 @@ func flushToJSONLWithState(state flushState) {
 	storeMutex.Unlock()
 
 	ctx := rootCtx
-	
+
 	// Validate JSONL integrity BEFORE checking isDirty (bd-c6cf)
 	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)
 	// If export_hashes was cleared, we need to do a full export even if nothing is dirty
