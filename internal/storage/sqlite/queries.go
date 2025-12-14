@@ -1202,12 +1202,15 @@ func (s *SQLiteStorage) executeDelete(ctx context.Context, tx *sql.Tx, inClause 
 	_ = rows.Close()
 
 	// 3. Convert issues to tombstones (only for issues that exist)
+	// Note: closed_at must be set to NULL because of CHECK constraint:
+	// (status = 'closed') = (closed_at IS NOT NULL)
 	now := time.Now()
 	deletedCount := 0
 	for id, originalType := range issueTypes {
 		execResult, err := tx.ExecContext(ctx, `
 			UPDATE issues
 			SET status = ?,
+			    closed_at = NULL,
 			    deleted_at = ?,
 			    deleted_by = ?,
 			    delete_reason = ?,

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -296,6 +297,67 @@ func TestDeleteIssuesCreatesTombstones(t *testing.T) {
 		}
 		if tombstone2.OriginalType != string(types.TypeTask) {
 			t.Errorf("bd-11: Expected OriginalType=task, got %s", tombstone2.OriginalType)
+		}
+	})
+
+	t.Run("batch deletion of closed issues creates tombstones (bd-tnsq)", func(t *testing.T) {
+		// Regression test: batch deletion of closed issues was failing with
+		// CHECK constraint: (status = 'closed') = (closed_at IS NOT NULL)
+		// because closed_at wasn't being set to NULL when creating tombstones
+		store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+
+		now := time.Now()
+		closedAt := now.Add(-24 * time.Hour)
+
+		// Create closed issues (with closed_at set)
+		issue1 := &types.Issue{
+			ID:        "bd-closed-10",
+			Title:     "Closed Issue 1",
+			Status:    types.StatusClosed,
+			Priority:  1,
+			IssueType: types.TypeBug,
+			ClosedAt:  &closedAt,
+		}
+		issue2 := &types.Issue{
+			ID:        "bd-closed-11",
+			Title:     "Closed Issue 2",
+			Status:    types.StatusClosed,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			ClosedAt:  &closedAt,
+		}
+
+		if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
+			t.Fatalf("Failed to create closed issue1: %v", err)
+		}
+		if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
+			t.Fatalf("Failed to create closed issue2: %v", err)
+		}
+
+		// Batch delete closed issues - this was failing before the fix
+		result, err := store.DeleteIssues(ctx, []string{"bd-closed-10", "bd-closed-11"}, false, true, false)
+		if err != nil {
+			t.Fatalf("DeleteIssues on closed issues failed: %v", err)
+		}
+		if result.DeletedCount != 2 {
+			t.Errorf("Expected 2 deletions, got %d", result.DeletedCount)
+		}
+
+		// Verify tombstones have closed_at = NULL (required by CHECK constraint)
+		tombstone1, _ := store.GetIssue(ctx, "bd-closed-10")
+		if tombstone1 == nil || tombstone1.Status != types.StatusTombstone {
+			t.Error("bd-closed-10 should be tombstone")
+		}
+		if tombstone1.ClosedAt != nil {
+			t.Error("bd-closed-10 tombstone should have closed_at = NULL")
+		}
+
+		tombstone2, _ := store.GetIssue(ctx, "bd-closed-11")
+		if tombstone2 == nil || tombstone2.Status != types.StatusTombstone {
+			t.Error("bd-closed-11 should be tombstone")
+		}
+		if tombstone2.ClosedAt != nil {
+			t.Error("bd-closed-11 tombstone should have closed_at = NULL")
 		}
 	})
 
