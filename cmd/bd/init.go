@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -127,12 +128,28 @@ With --stealth: configures global git settings for invisible beads usage:
 			os.Exit(1)
 		}
 
-		// Determine if we should create .beads/ directory in CWD
-		// Only create it if the database will be stored there
+		// Determine if we should create .beads/ directory in CWD or main repo root
+		// For worktrees, .beads should always be in the main repository root
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Check if we're in a git worktree
+		isWorktree := git.IsWorktree()
+		var beadsDir string
+		if isWorktree {
+			// For worktrees, .beads should be in the main repository root
+			mainRepoRoot, err := git.GetMainRepoRoot()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to get main repository root: %v\n", err)
+				os.Exit(1)
+			}
+			beadsDir = filepath.Join(mainRepoRoot, ".beads")
+		} else {
+			// For regular repos, use current directory
+			beadsDir = filepath.Join(cwd, ".beads")
 		}
 
 		// Prevent nested .beads directories
@@ -145,24 +162,23 @@ With --stealth: configures global git settings for invisible beads usage:
 			os.Exit(1)
 		}
 
-		localBeadsDir := filepath.Join(cwd, ".beads")
 		initDBDir := filepath.Dir(initDBPath)
 
 		// Convert both to absolute paths for comparison
-		localBeadsDirAbs, err := filepath.Abs(localBeadsDir)
+		beadsDirAbs, err := filepath.Abs(beadsDir)
 		if err != nil {
-			localBeadsDirAbs = filepath.Clean(localBeadsDir)
+			beadsDirAbs = filepath.Clean(beadsDir)
 		}
 		initDBDirAbs, err := filepath.Abs(initDBDir)
 		if err != nil {
 			initDBDirAbs = filepath.Clean(initDBDir)
 		}
 
-		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(localBeadsDirAbs)
+		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs)
 
 		if useLocalBeads {
 			// Create .beads directory
-			if err := os.MkdirAll(localBeadsDir, 0750); err != nil {
+			if err := os.MkdirAll(beadsDir, 0750); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to create .beads directory: %v\n", err)
 				os.Exit(1)
 			}
@@ -170,7 +186,7 @@ With --stealth: configures global git settings for invisible beads usage:
 			// Handle --no-db mode: create issues.jsonl file instead of database
 			if noDb {
 				// Create empty issues.jsonl file
-				jsonlPath := filepath.Join(localBeadsDir, "issues.jsonl")
+				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 				if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 					// nolint:gosec // G306: JSONL file needs to be readable by other tools
 					if err := os.WriteFile(jsonlPath, []byte{}, 0644); err != nil {
@@ -181,19 +197,19 @@ With --stealth: configures global git settings for invisible beads usage:
 
 				// Create metadata.json for --no-db mode
 				cfg := configfile.DefaultConfig()
-				if err := cfg.Save(localBeadsDir); err != nil {
+				if err := cfg.Save(beadsDir); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 					// Non-fatal - continue anyway
 				}
 
 				// Create config.yaml with no-db: true
-				if err := createConfigYaml(localBeadsDir, true); err != nil {
+				if err := createConfigYaml(beadsDir, true); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 					// Non-fatal - continue anyway
 				}
 
 				// Create README.md
-				if err := createReadme(localBeadsDir); err != nil {
+				if err := createReadme(beadsDir); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", err)
 					// Non-fatal - continue anyway
 				}
@@ -213,7 +229,7 @@ With --stealth: configures global git settings for invisible beads usage:
 			}
 
 			// Create/update .gitignore in .beads directory (idempotent - always update to latest)
-			gitignorePath := filepath.Join(localBeadsDir, ".gitignore")
+			gitignorePath := filepath.Join(beadsDir, ".gitignore")
 			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
 				// Non-fatal - continue anyway
@@ -308,7 +324,7 @@ With --stealth: configures global git settings for invisible beads usage:
 		// Create or preserve metadata.json for database metadata (bd-zai fix)
 		if useLocalBeads {
 			// First, check if metadata.json already exists
-			existingCfg, err := configfile.Load(localBeadsDir)
+			existingCfg, err := configfile.Load(beadsDir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to load existing metadata.json: %v\n", err)
 			}
@@ -321,27 +337,27 @@ With --stealth: configures global git settings for invisible beads usage:
 				// Create new config, detecting JSONL filename from existing files
 				cfg = configfile.DefaultConfig()
 				// Check if beads.jsonl exists but issues.jsonl doesn't (legacy)
-				issuesPath := filepath.Join(localBeadsDir, "issues.jsonl")
-				beadsPath := filepath.Join(localBeadsDir, "beads.jsonl")
+				issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+				beadsPath := filepath.Join(beadsDir, "beads.jsonl")
 				if _, err := os.Stat(beadsPath); err == nil {
 					if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
 						cfg.JSONLExport = "beads.jsonl" // Legacy filename
 					}
 				}
 			}
-			if err := cfg.Save(localBeadsDir); err != nil {
+			if err := cfg.Save(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway
 			}
 
 			// Create config.yaml template
-			if err := createConfigYaml(localBeadsDir, false); err != nil {
+			if err := createConfigYaml(beadsDir, false); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 				// Non-fatal - continue anyway
 			}
 
 			// Create README.md
-			if err := createReadme(localBeadsDir); err != nil {
+			if err := createReadme(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create README.md: %v\n", err)
 				// Non-fatal - continue anyway
 			}
@@ -388,8 +404,8 @@ With --stealth: configures global git settings for invisible beads usage:
 		}
 
 		// Check if we're in a git repo and hooks aren't installed
-		// Install by default unless --skip-hooks is passed or no-install-hooks config is set
-		if !skipHooks && !config.GetBool("no-install-hooks") && isGitRepo() && !hooksInstalled() {
+		// Install by default unless --skip-hooks is passed
+		if !skipHooks && isGitRepo() && !hooksInstalled() {
 			if err := installGitHooks(); err != nil && !quiet {
 				yellow := color.New(color.FgYellow).SprintFunc()
 				fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", yellow("⚠"), err)
@@ -460,7 +476,7 @@ func init() {
 
 // hooksInstalled checks if bd git hooks are installed
 func hooksInstalled() bool {
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return false
 	}
@@ -520,7 +536,7 @@ type hookInfo struct {
 
 // detectExistingHooks scans for existing git hooks
 func detectExistingHooks() []hookInfo {
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return nil
 	}
@@ -578,7 +594,7 @@ func promptHookAction(existingHooks []hookInfo) string {
 
 // installGitHooks installs git hooks inline (no external dependencies)
 func installGitHooks() error {
-	gitDir, err := getGitDir()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return err
 	}
@@ -657,34 +673,61 @@ func installGitHooks() error {
 
 # Run existing hook first
 if [ -x "` + existingPreCommit + `" ]; then
-    "` + existingPreCommit + `" "$@"
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -ne 0 ]; then
-        exit $EXIT_CODE
-    fi
+		  "` + existingPreCommit + `" "$@"
+		  EXIT_CODE=$?
+		  if [ $EXIT_CODE -ne 0 ]; then
+		      exit $EXIT_CODE
+		  fi
 fi
 
 # Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
-    echo "Warning: bd command not found, skipping pre-commit flush" >&2
-    exit 0
+		  echo "Warning: bd command not found, skipping pre-commit flush" >&2
+		  exit 0
 fi
 
 # Check if we're in a bd workspace
-if [ ! -d .beads ]; then
-    exit 0
+# For worktrees, .beads is in the main repository root, not the worktree
+BEADS_DIR=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+		  # Check if we're in a worktree
+		  if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+		      # Worktree: .beads is in main repo root
+		      MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
+		      MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
+		      if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
+		          BEADS_DIR="$MAIN_REPO_ROOT/.beads"
+		      fi
+		  else
+		      # Regular repo: check current directory
+		      if [ -d .beads ]; then
+		          BEADS_DIR=".beads"
+		      fi
+		  fi
+fi
+
+if [ -z "$BEADS_DIR" ]; then
+		  exit 0
 fi
 
 # Flush pending changes to JSONL
 if ! bd sync --flush-only >/dev/null 2>&1; then
-    echo "Error: Failed to flush bd changes to JSONL" >&2
-    echo "Run 'bd sync --flush-only' manually to diagnose" >&2
-    exit 1
+		  echo "Error: Failed to flush bd changes to JSONL" >&2
+		  echo "Run 'bd sync --flush-only' manually to diagnose" >&2
+		  exit 1
 fi
 
 # If the JSONL file was modified, stage it
-if [ -f .beads/issues.jsonl ]; then
-    git add .beads/issues.jsonl 2>/dev/null || true
+# For worktrees, the JSONL is in the main repo's working tree, not the worktree,
+# so we can't use git add. Skip this step for worktrees.
+if [ -f "$BEADS_DIR/issues.jsonl" ]; then
+		  if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]; then
+		      # Regular repo: file is in the working tree, safe to add
+		      git add "$BEADS_DIR/issues.jsonl" 2>/dev/null || true
+		  fi
+		  # For worktrees: .beads is in the main repo's working tree, not this worktree
+		  # Git rejects adding files outside the worktree, so we skip it.
+		  # The main repo will see the changes on the next pull/sync.
 fi
 
 exit 0
@@ -700,28 +743,55 @@ exit 0
 
 # Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
-    echo "Warning: bd command not found, skipping pre-commit flush" >&2
-    exit 0
+		  echo "Warning: bd command not found, skipping pre-commit flush" >&2
+		  exit 0
 fi
 
 # Check if we're in a bd workspace
-if [ ! -d .beads ]; then
-    # Not a bd workspace, nothing to do
-    exit 0
+# For worktrees, .beads is in the main repository root, not the worktree
+BEADS_DIR=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+		  # Check if we're in a worktree
+		  if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+		      # Worktree: .beads is in main repo root
+		      MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
+		      MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
+		      if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
+		          BEADS_DIR="$MAIN_REPO_ROOT/.beads"
+		      fi
+		  else
+		      # Regular repo: check current directory
+		      if [ -d .beads ]; then
+		          BEADS_DIR=".beads"
+		      fi
+		  fi
+fi
+
+if [ -z "$BEADS_DIR" ]; then
+		  # Not a bd workspace, nothing to do
+		  exit 0
 fi
 
 # Flush pending changes to JSONL
 # Use --flush-only to skip git operations (we're already in a git hook)
 # Suppress output unless there's an error
 if ! bd sync --flush-only >/dev/null 2>&1; then
-    echo "Error: Failed to flush bd changes to JSONL" >&2
-    echo "Run 'bd sync --flush-only' manually to diagnose" >&2
-    exit 1
+		  echo "Error: Failed to flush bd changes to JSONL" >&2
+		  echo "Run 'bd sync --flush-only' manually to diagnose" >&2
+		  exit 1
 fi
 
 # If the JSONL file was modified, stage it
-if [ -f .beads/issues.jsonl ]; then
-    git add .beads/issues.jsonl 2>/dev/null || true
+# For worktrees, the JSONL is in the main repo's working tree, not the worktree,
+# so we can't use git add. Skip this step for worktrees.
+if [ -f "$BEADS_DIR/issues.jsonl" ]; then
+		  if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ]; then
+		      # Regular repo: file is in the working tree, safe to add
+		      git add "$BEADS_DIR/issues.jsonl" 2>/dev/null || true
+		  fi
+		  # For worktrees: .beads is in the main repo's working tree, not this worktree
+		  # Git rejects adding files outside the worktree, so we skip it.
+		  # The main repo will see the changes on the next pull/sync.
 fi
 
 exit 0
@@ -755,33 +825,52 @@ exit 0
 
 # Run existing hook first
 if [ -x "` + existingPostMerge + `" ]; then
-    "` + existingPostMerge + `" "$@"
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -ne 0 ]; then
-        exit $EXIT_CODE
-    fi
+		  "` + existingPostMerge + `" "$@"
+		  EXIT_CODE=$?
+		  if [ $EXIT_CODE -ne 0 ]; then
+		      exit $EXIT_CODE
+		  fi
 fi
 
 # Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
-    echo "Warning: bd command not found, skipping post-merge import" >&2
-    exit 0
+		  echo "Warning: bd command not found, skipping post-merge import" >&2
+		  exit 0
 fi
 
 # Check if we're in a bd workspace
-if [ ! -d .beads ]; then
-    exit 0
+# For worktrees, .beads is in the main repository root, not the worktree
+BEADS_DIR=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+		  # Check if we're in a worktree
+		  if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+		      # Worktree: .beads is in main repo root
+		      MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
+		      MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
+		      if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
+		          BEADS_DIR="$MAIN_REPO_ROOT/.beads"
+		      fi
+		  else
+		      # Regular repo: check current directory
+		      if [ -d .beads ]; then
+		          BEADS_DIR=".beads"
+		      fi
+		  fi
+fi
+
+if [ -z "$BEADS_DIR" ]; then
+		  exit 0
 fi
 
 # Check if issues.jsonl exists and was updated
-if [ ! -f .beads/issues.jsonl ]; then
-    exit 0
+if [ ! -f "$BEADS_DIR/issues.jsonl" ]; then
+		  exit 0
 fi
 
 # Import the updated JSONL
-if ! bd import -i .beads/issues.jsonl >/dev/null 2>&1; then
-    echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i .beads/issues.jsonl' manually to see the error" >&2
+if ! bd import -i "$BEADS_DIR/issues.jsonl" >/dev/null 2>&1; then
+		  echo "Warning: Failed to import bd changes after merge" >&2
+		  echo "Run 'bd import -i $BEADS_DIR/issues.jsonl' manually to see the error" >&2
 fi
 
 exit 0
@@ -796,28 +885,47 @@ exit 0
 
 # Check if bd is available
 if ! command -v bd >/dev/null 2>&1; then
-    echo "Warning: bd command not found, skipping post-merge import" >&2
-    exit 0
+		  echo "Warning: bd command not found, skipping post-merge import" >&2
+		  exit 0
 fi
 
 # Check if we're in a bd workspace
-if [ ! -d .beads ]; then
-    # Not a bd workspace, nothing to do
-    exit 0
+# For worktrees, .beads is in the main repository root, not the worktree
+BEADS_DIR=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+		  # Check if we're in a worktree
+		  if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+		      # Worktree: .beads is in main repo root
+		      MAIN_REPO_ROOT="$(git rev-parse --git-common-dir)"
+		      MAIN_REPO_ROOT="$(dirname "$MAIN_REPO_ROOT")"
+		      if [ -d "$MAIN_REPO_ROOT/.beads" ]; then
+		          BEADS_DIR="$MAIN_REPO_ROOT/.beads"
+		      fi
+		  else
+		      # Regular repo: check current directory
+		      if [ -d .beads ]; then
+		          BEADS_DIR=".beads"
+		      fi
+		  fi
+fi
+
+if [ -z "$BEADS_DIR" ]; then
+		  # Not a bd workspace, nothing to do
+		  exit 0
 fi
 
 # Check if issues.jsonl exists and was updated
-if [ ! -f .beads/issues.jsonl ]; then
-    exit 0
+if [ ! -f "$BEADS_DIR/issues.jsonl" ]; then
+		  exit 0
 fi
 
 # Import the updated JSONL
 # The auto-import feature should handle this, but we force it here
 # to ensure immediate sync after merge
-if ! bd import -i .beads/issues.jsonl >/dev/null 2>&1; then
-    echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i .beads/issues.jsonl' manually to see the error" >&2
-    # Don't fail the merge, just warn
+if ! bd import -i "$BEADS_DIR/issues.jsonl" >/dev/null 2>&1; then
+		  echo "Warning: Failed to import bd changes after merge" >&2
+		  echo "Run 'bd import -i $BEADS_DIR/issues.jsonl' manually to see the error" >&2
+		  # Don't fail the merge, just warn
 fi
 
 exit 0
@@ -1249,8 +1357,14 @@ func setupStealthMode(verbose bool) error {
 		return fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	// Setup global gitignore
-	if err := setupGlobalGitIgnore(homeDir, verbose); err != nil {
+	// Get the absolute path of the current project
+	projectPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	// Setup global gitignore with project-specific paths
+	if err := setupGlobalGitIgnore(homeDir, projectPath, verbose); err != nil {
 		return fmt.Errorf("failed to setup global gitignore: %w", err)
 	}
 
@@ -1263,7 +1377,7 @@ func setupStealthMode(verbose bool) error {
 		green := color.New(color.FgGreen).SprintFunc()
 		cyan := color.New(color.FgCyan).SprintFunc()
 		fmt.Printf("\n%s Stealth mode configured successfully!\n\n", green("✓"))
-		fmt.Printf("  Global gitignore: %s\n", cyan(".beads/ and .claude/settings.local.json ignored"))
+		fmt.Printf("  Global gitignore: %s\n", cyan(projectPath+"/.beads/ ignored"))
 		fmt.Printf("  Claude settings: %s\n\n", cyan("configured with bd onboard instruction"))
 		fmt.Printf("Your beads setup is now %s - other repo collaborators won't see any beads-related files.\n\n", cyan("invisible"))
 	}
@@ -1271,8 +1385,8 @@ func setupStealthMode(verbose bool) error {
 	return nil
 }
 
-// setupGlobalGitIgnore configures global gitignore to ignore beads and claude files
-func setupGlobalGitIgnore(homeDir string, verbose bool) error {
+// setupGlobalGitIgnore configures global gitignore to ignore beads and claude files for a specific project
+func setupGlobalGitIgnore(homeDir string, projectPath string, verbose bool) error {
 	// Check if user already has a global gitignore file configured
 	cmd := exec.Command("git", "config", "--global", "core.excludesfile")
 	output, err := cmd.Output()
@@ -1328,16 +1442,17 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 		existingContent = string(content)
 	}
 
-	// Check if beads patterns already exist
-	beadsPattern := "**/.beads/"
-	claudePattern := "**/.claude/settings.local.json"
+	// Use absolute paths for this specific project (fixes GitHub #538)
+	// This allows other projects to use beads openly while this one stays stealth
+	beadsPattern := projectPath + "/.beads/"
+	claudePattern := projectPath + "/.claude/settings.local.json"
 
 	hasBeads := strings.Contains(existingContent, beadsPattern)
 	hasClaude := strings.Contains(existingContent, claudePattern)
 
 	if hasBeads && hasClaude {
 		if verbose {
-			fmt.Printf("Global gitignore already configured for stealth mode\n")
+			fmt.Printf("Global gitignore already configured for stealth mode in %s\n", projectPath)
 		}
 		return nil
 	}
@@ -1349,7 +1464,7 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 	}
 
 	if !hasBeads || !hasClaude {
-		newContent += "\n# Beads stealth mode configuration (added by bd init --stealth)\n"
+		newContent += fmt.Sprintf("\n# Beads stealth mode: %s (added by bd init --stealth)\n", projectPath)
 	}
 
 	if !hasBeads {
@@ -1366,7 +1481,7 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 	}
 
 	if verbose {
-		fmt.Printf("Configured global gitignore for stealth mode\n")
+		fmt.Printf("Configured global gitignore for stealth mode in %s\n", projectPath)
 	}
 
 	return nil
@@ -1378,13 +1493,28 @@ func setupGlobalGitIgnore(homeDir string, verbose bool) error {
 // Note: This only blocks when a database already exists (workspace is initialized).
 // Fresh clones with JSONL but no database are allowed - init will create the database
 // and import from JSONL automatically (bd-4h9: fixes circular dependency with doctor --fix).
+//
+// For worktrees, checks the main repository root instead of current directory
+// since worktrees should share the database with the main repository.
 func checkExistingBeadsData(prefix string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil // Can't determine CWD, allow init to proceed
 	}
 
-	beadsDir := filepath.Join(cwd, ".beads")
+	// Determine where to check for .beads directory
+	var beadsDir string
+	if git.IsWorktree() {
+		// For worktrees, .beads should be in the main repository root
+		mainRepoRoot, err := git.GetMainRepoRoot()
+		if err != nil {
+			return nil // Can't determine main repo root, allow init to proceed
+		}
+		beadsDir = filepath.Join(mainRepoRoot, ".beads")
+	} else {
+		// For regular repos, check current directory
+		beadsDir = filepath.Join(cwd, ".beads")
+	}
 
 	// Check if .beads directory exists
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -1418,7 +1548,6 @@ Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 
 	return nil // No database found, safe to init
 }
-
 
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction

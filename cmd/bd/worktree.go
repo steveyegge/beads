@@ -8,31 +8,17 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/git"
 )
 
-// isGitWorktree detects if the current directory is in a git worktree
-// by comparing --git-dir and --git-common-dir (canonical detection method)
+// isGitWorktree detects if the current directory is in a git worktree.
+// This is a wrapper around git.IsWorktree() for CLI-layer compatibility.
 func isGitWorktree() bool {
-	gitDir := gitRevParse("--git-dir")
-	if gitDir == "" {
-		return false
-	}
-	
-	commonDir := gitRevParse("--git-common-dir")
-	if commonDir == "" {
-		return false
-	}
-	
-	absGit, err1 := filepath.Abs(gitDir)
-	absCommon, err2 := filepath.Abs(commonDir)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	
-	return absGit != absCommon
+	return git.IsWorktree()
 }
 
-// gitRevParse runs git rev-parse with the given flag and returns the trimmed output
+// gitRevParse runs git rev-parse with the given flag and returns the trimmed output.
+// This is a helper for CLI utilities that need git command execution.
 func gitRevParse(flag string) string {
 	out, err := exec.Command("git", "rev-parse", flag).Output()
 	if err != nil {
@@ -44,12 +30,11 @@ func gitRevParse(flag string) string {
 // getWorktreeGitDir returns the .git directory path for a worktree
 // Returns empty string if not in a git repo or not a worktree
 func getWorktreeGitDir() string {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	out, err := cmd.Output()
+	gitDir, err := git.GetGitDir()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return gitDir
 }
 
 // warnWorktreeDaemon prints a warning if using daemon with worktrees

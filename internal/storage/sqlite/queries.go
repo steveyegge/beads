@@ -1194,7 +1194,7 @@ func (s *SQLiteStorage) executeDelete(ctx context.Context, tx *sql.Tx, inClause 
 	for rows.Next() {
 		var id, issueType string
 		if err := rows.Scan(&id, &issueType); err != nil {
-			_ = rows.Close()
+			_ = rows.Close() // #nosec G104 - error handling not critical in error path
 			return fmt.Errorf("failed to scan issue type: %w", err)
 		}
 		issueTypes[id] = issueType
