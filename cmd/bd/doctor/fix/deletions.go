@@ -118,12 +118,15 @@ func getCurrentJSONLIDs(jsonlPath string) (map[string]bool, error) {
 		}
 
 		var issue struct {
-			ID string `json:"id"`
+			ID     string `json:"id"`
+			Status string `json:"status"`
 		}
 		if err := json.Unmarshal(line, &issue); err != nil {
 			continue
 		}
-		if issue.ID != "" {
+		// Skip tombstones - they represent migrated deletions and shouldn't
+		// be re-added to the deletions manifest (bd-in7q fix)
+		if issue.ID != "" && issue.Status != "tombstone" {
 			ids[issue.ID] = true
 		}
 	}
