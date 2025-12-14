@@ -690,18 +690,72 @@ func commitInWorktree(ctx context.Context, worktreePath, jsonlRelPath, message s
 	return nil
 }
 
-// pushFromWorktree pushes the sync branch from the worktree
-func pushFromWorktree(ctx context.Context, worktreePath, branch string) error {
-	remote := getRemoteForBranch(ctx, worktreePath, branch)
+// isNonFastForwardError checks if git push output indicates a non-fast-forward rejection
+func isNonFastForwardError(output string) bool {
+	// Git outputs these messages for non-fast-forward rejections
+	return strings.Contains(output, "non-fast-forward") ||
+		strings.Contains(output, "fetch first") ||
+		strings.Contains(output, "rejected") && strings.Contains(output, "behind")
+}
 
-	// Push with explicit remote and branch, set upstream if not set
-	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git push failed from worktree: %w\n%s", err, output)
+// fetchAndRebaseInWorktree fetches remote and rebases local commits on top
+func fetchAndRebaseInWorktree(ctx context.Context, worktreePath, branch, remote string) error {
+	// Fetch latest from remote
+	fetchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "fetch", remote, branch)
+	if output, err := fetchCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("fetch failed: %w\n%s", err, output)
+	}
+
+	// Rebase local commits on top of remote
+	rebaseCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", fmt.Sprintf("%s/%s", remote, branch))
+	if output, err := rebaseCmd.CombinedOutput(); err != nil {
+		// Abort the failed rebase to leave worktree in clean state
+		abortCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", "--abort")
+		_ = abortCmd.Run() // Best effort
+		return fmt.Errorf("rebase failed: %w\n%s", err, output)
 	}
 
 	return nil
+}
+
+// pushFromWorktree pushes the sync branch from the worktree with retry logic
+// for handling concurrent push conflicts (non-fast-forward errors).
+func pushFromWorktree(ctx context.Context, worktreePath, branch string) error {
+	remote := getRemoteForBranch(ctx, worktreePath, branch)
+	maxRetries := 5
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Push with explicit remote and branch, set upstream if not set
+		cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch)
+		output, err := cmd.CombinedOutput()
+
+		if err == nil {
+			return nil // Success
+		}
+
+		outputStr := string(output)
+		lastErr = fmt.Errorf("git push failed from worktree: %w\n%s", err, outputStr)
+
+		// Check if this is a non-fast-forward error (concurrent push conflict)
+		if isNonFastForwardError(outputStr) {
+			// Attempt fetch + rebase to get ahead of remote
+			if rebaseErr := fetchAndRebaseInWorktree(ctx, worktreePath, branch, remote); rebaseErr != nil {
+				// Rebase failed - return original push error with context
+				return fmt.Errorf("push failed and recovery rebase also failed: push: %w; rebase: %v", lastErr, rebaseErr)
+			}
+			// Rebase succeeded - retry push immediately (no backoff needed)
+			continue
+		}
+
+		// For other errors, use exponential backoff before retry
+		if attempt < maxRetries-1 {
+			waitTime := time.Duration(100<<uint(attempt)) * time.Millisecond // 100ms, 200ms, 400ms, 800ms
+			time.Sleep(waitTime)
+		}
+	}
+
+	return fmt.Errorf("push failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // PushSyncBranch pushes the sync branch to remote. (bd-4u8)
