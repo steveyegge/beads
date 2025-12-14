@@ -3,6 +3,43 @@
 > **STATUS: GREEN FIELD - LOGGING ONLY**
 > This skill announces its activation but performs no processing yet.
 
+<!--
+## IMPLEMENTATION PLAN
+
+### Phase 1: Session State Management
+- [ ] Create `.beads/current-issue` file on issue selection (from bootup)
+- [ ] Add `bd select <id>` command to set current issue
+- [ ] Expose $BEADS_CURRENT_ISSUE via environment or file read
+
+### Phase 2: Discovery Filing Workflow
+- [ ] Implement `bd create --discovered-from=<id>` flag
+- [ ] Auto-set `discovered-from` dependency when flag is used
+- [ ] Add `sk.scope.discovery` event emission
+
+### Phase 3: Scope Violation Detection (Advisory)
+- [ ] Add pre-commit hook check that reads `.beads/current-issue`
+- [ ] Compare changed files against issue scope (if defined in issue metadata)
+- [ ] Log `sk.scope.violation` when scope mismatch detected (advisory only, non-blocking)
+- [ ] Output warning to agent/user about potential scope violation
+
+### Phase 4: Integration
+- [ ] Verify bootup sets current-issue properly
+- [ ] Verify landing clears/archives current-issue
+- [ ] Add scope status to `bd status` output
+
+### Dependencies
+- Requires: Event logging infrastructure (beads-log-event scripts)
+- Requires: beads-bootup to set current issue
+- Blocks: beads-landing (scope verification at session end)
+
+### Verification Criteria
+- [ ] `bd select <id>` creates `.beads/current-issue`
+- [ ] `bd create --discovered-from=<id>` adds dependency
+- [ ] Events logged to `.beads/events.log`
+- [ ] Pre-commit hook produces advisory warnings
+-->
+
+
 ## Purpose
 
 The scope skill enforces the ONE ISSUE AT A TIME discipline.

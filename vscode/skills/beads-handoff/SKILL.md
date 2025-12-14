@@ -3,6 +3,97 @@
 > **STATUS: GREEN FIELD - LOGGING ONLY**
 > This skill announces its activation but performs no processing yet.
 
+<!--
+## IMPLEMENTATION PLAN
+
+### Phase 1: Issue Context Loading
+- [ ] Read `.beads/current-issue` to get current issue ID
+- [ ] Fallback: Query `bd list --status=in_progress` for first match
+- [ ] If no issue found, log error and exit gracefully
+- [ ] Run `bd show <id> --json` to get full issue details
+- [ ] Extract: title, description, status, notes
+- [ ] Log `sk.handoff.issue` event
+
+### Phase 2: Git History Gathering
+- [ ] Run `git log -1 --oneline` for last commit
+- [ ] Run `git log --oneline -5` for recent context
+- [ ] Run `git status --short` for uncommitted changes (first 10 lines)
+- [ ] Log `sk.handoff.git` event
+
+### Phase 3: Dependency Analysis
+- [ ] Extract `blocked_by` from issue JSON
+- [ ] Extract `blocking` from issue JSON
+- [ ] Format as bullet lists or "None"
+- [ ] Log `sk.handoff.deps` event
+
+### Phase 4: Prompt Generation
+- [ ] Assemble handoff template with gathered data
+- [ ] Include: Issue ID, Title, Context, Status, Notes, Blockers, Last Commit, Next Step
+- [ ] Output to console
+- [ ] Write to `.beads/last-handoff.txt`
+- [ ] Log `sk.handoff.generate` event
+
+### Phase 5: Clipboard Integration (Platform-Aware)
+- [ ] Windows: Use `Set-Clipboard` (PowerShell) or `clip` (cmd)
+- [ ] macOS: Use `pbcopy`
+- [ ] Linux: Try `xclip -selection clipboard` or `xsel --clipboard`
+- [ ] Log success/failure, don't fail skill if clipboard unavailable
+- [ ] Log `sk.handoff.complete` event
+
+### Output Format
+```
+═══════════════════════════════════════════════════════════════
+HANDOFF GENERATED
+═══════════════════════════════════════════════════════════════
+
+Continue work on bd-XXXX: <title>
+
+Context: <issue description>
+
+Status: <current status>
+Notes: <progress notes>
+
+Blockers: <blocking issues or "None">
+
+Last commit: <git log -1 --oneline>
+
+Next step: Review the issue and continue implementation.
+
+═══════════════════════════════════════════════════════════════
+Saved to: .beads/last-handoff.txt
+Clipboard: Copied (or "Not available")
+═══════════════════════════════════════════════════════════════
+```
+
+### Error Handling
+- [ ] No current issue: Output error message, suggest `bd ready`
+- [ ] Issue not found: Output error message, suggest `bd list`
+- [ ] Git errors: Include "Git info unavailable" in handoff
+- [ ] Clipboard failure: Log warning, continue with file output
+
+### Dependencies
+- Requires: Event logging infrastructure
+- Requires: `.beads/current-issue` (from bootup/scope)
+- Requires: `bd` CLI with show command and JSON output
+- Called by: beads-landing (Step 5)
+
+### Verification Criteria
+- [ ] Issue context loaded correctly
+- [ ] Git history included in handoff
+- [ ] Dependencies formatted correctly
+- [ ] Handoff written to `.beads/last-handoff.txt`
+- [ ] Clipboard copy attempted on supported platforms
+- [ ] All events logged to `.beads/events.log`
+
+### Standalone vs. Integrated Usage
+This skill can be invoked:
+1. **Standalone**: Agent/user loads skill directly for ad-hoc handoff
+2. **Integrated**: Called by beads-landing as part of session close ritual
+
+Both modes use the same logic; the difference is triggering context.
+-->
+
+
 ## Purpose
 
 The handoff skill generates a structured handoff prompt at session end.

@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -47,8 +48,8 @@ type doctorResult struct {
 	Checks     []doctorCheck     `json:"checks"`
 	OverallOK  bool              `json:"overall_ok"`
 	CLIVersion string            `json:"cli_version"`
-	Timestamp  string            `json:"timestamp,omitempty"`  // bd-9cc: ISO8601 timestamp for historical tracking
-	Platform   map[string]string `json:"platform,omitempty"`   // bd-9cc: platform info for debugging
+	Timestamp  string            `json:"timestamp,omitempty"` // bd-9cc: ISO8601 timestamp for historical tracking
+	Platform   map[string]string `json:"platform,omitempty"`  // bd-9cc: platform info for debugging
 }
 
 var (
@@ -1221,7 +1222,7 @@ func detectHashBasedIDs(db *sql.DB, sampleIDs []string) bool {
 			for _, s := range suffixes {
 				lengths[len(s)]++
 			}
-			
+
 			// If we have 3+ different lengths, likely hash IDs (adaptive length)
 			// Sequential IDs typically have 1-2 lengths (e.g., 1-9, 10-99, 100-999)
 			if len(lengths) >= 3 {

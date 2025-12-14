@@ -3,6 +3,100 @@
 > **STATUS: GREEN FIELD - LOGGING ONLY**
 > This skill announces its activation but performs no processing yet.
 
+<!--
+## IMPLEMENTATION PLAN
+
+### Phase 1: Session Validation
+- [ ] Verify `.beads/.session-active` exists (warn if missing)
+- [ ] Read `.beads/current-issue` to get selected issue
+- [ ] Log `ss.landing.start` event
+
+### Phase 2: File Discovered Work
+- [ ] Prompt agent/user: "Any discovered work to file?"
+- [ ] For each discovered item, run `bd create --discovered-from=<current-issue>`
+- [ ] Log `ss.discovered` event for each filed issue
+- [ ] Skip if no discoveries reported
+
+### Phase 3: Quality Gates
+- [ ] Detect test command from CLAUDE.md or common patterns
+- [ ] Run test suite (`go test`, `npm test`, `pytest`, etc.)
+- [ ] Run linter if configured
+- [ ] Log `ss.landing.test` with PASSED/FAILED result
+- [ ] If FAILED: Block issue closure, update issue with failure notes
+
+### Phase 4: Update Beads State
+- [ ] If tests passed and work complete: `bd close <issue> --reason="<summary>"`
+- [ ] If work incomplete: `bd update <issue> --notes="<progress>"`
+- [ ] Log `bd.issue.close` or `bd.issue.update` events
+- [ ] Log `ss.landing.update` event
+
+### Phase 5: Sync and Push (MANDATORY - MUST SUCCEED)
+- [ ] Execute `bd sync` - handle conflicts by preferring remote
+- [ ] Log `bd.sync.complete` or `bd.sync.conflict` events
+- [ ] Execute `git push` - if rejected, `git pull --rebase && git push`
+- [ ] Log `gt.push.complete` or `gt.push.reject` events
+- [ ] Verify with `git status` shows "up to date"
+- [ ] Log `ss.landing.sync` event
+- [ ] FAIL LOUDLY if push does not succeed after retry
+
+### Phase 6: Generate Handoff
+- [ ] Invoke beads-handoff skill to generate handoff prompt
+- [ ] Write to `.beads/last-handoff.md`
+- [ ] Log `ss.landing.handoff` event
+- [ ] Clean up `.beads/.session-active` marker
+- [ ] Log `ss.landing.complete` and `ss.end` events
+
+### Conflict Resolution Strategy
+```bash
+# If bd sync fails with conflict:
+git checkout --theirs .beads/beads.jsonl
+bd import -i .beads/beads.jsonl
+bd sync
+```
+
+### Output Format
+```
+═══════════════════════════════════════════════════════════════
+LANDING COMPLETE
+═══════════════════════════════════════════════════════════════
+Issue: bd-XXXX - <status>
+Tests: PASSED/FAILED
+Discovered: N new issues filed
+Sync: Complete
+Push: Complete
+Handoff: Generated at .beads/last-handoff.md
+═══════════════════════════════════════════════════════════════
+```
+
+### Dependencies
+- Requires: Event logging infrastructure
+- Requires: beads-bootup to have set `.beads/current-issue`
+- Requires: beads-handoff skill for Step 6
+- Requires: beads-scope for discovered work tracking
+
+### Verification Criteria
+- [ ] Tests run and result logged
+- [ ] Issue state updated correctly
+- [ ] `bd sync` completes successfully
+- [ ] `git push` completes successfully
+- [ ] Handoff prompt generated
+- [ ] Session marker cleaned up
+- [ ] All events logged to `.beads/events.log`
+
+### Non-Negotiable Enforcement
+The landing ritual MUST complete successfully. If push fails after retries,
+the skill should output:
+
+```
+🚨 LANDING FAILED - WORK NOT PUSHED 🚨
+Manual intervention required. Run:
+  git status
+  git push origin <branch>
+Do NOT end session until work is pushed.
+```
+-->
+
+
 ## Purpose
 
 The landing skill executes at the END of every coding session.

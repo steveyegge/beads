@@ -3,6 +3,68 @@
 > **STATUS: GREEN FIELD - LOGGING ONLY**
 > This skill announces its activation but performs no processing yet.
 
+<!--
+## IMPLEMENTATION PLAN
+
+### Phase 1: Ground and Sync
+- [ ] Verify working directory contains `.beads/` (exit with guidance if not)
+- [ ] Execute `git pull --rebase` (handle conflicts gracefully)
+- [ ] Execute `bd sync` to pull remote beads state
+- [ ] Log `ss.bootup.ground` and `ss.bootup.sync` events
+
+### Phase 2: Orient - State Assessment
+- [ ] Run `bd ready --json` to get available work
+- [ ] Run `bd list --status=in_progress --json` to check existing WIP
+- [ ] If WIP exists, prompt: "Resume in-progress issue or pick new?"
+- [ ] Display last 5 commits with `git log --oneline -5`
+- [ ] Log `ss.bootup.orient` event
+
+### Phase 3: InitApp Guard
+- [ ] Check if `bd-0001` (InitApp) exists and is open
+- [ ] If InitApp is open, filter `bd ready` to show ONLY InitApp children
+- [ ] Display clear message: "InitApp not complete. Only InitApp work available."
+- [ ] Log `gd.initapp.check` and `gd.initapp.blocked` or `gd.initapp.passed`
+
+### Phase 4: Select - Issue Selection
+- [ ] Present filtered `bd ready` list (InitApp children or all ready issues)
+- [ ] Accept user selection (issue ID)
+- [ ] Validate issue exists and is not blocked
+- [ ] Write selected issue to `.beads/current-issue`
+- [ ] Log `ss.bootup.select` event with issue ID
+
+### Phase 5: Verify - Health Check
+- [ ] Run project health check (detect from CLAUDE.md or config)
+- [ ] Common checks: `go test ./...`, `npm test`, `pytest`, etc.
+- [ ] Log `ss.bootup.verify` with pass/fail status
+- [ ] If failed, warn but allow continuation
+- [ ] Log `ss.bootup.complete` event
+
+### Output Format
+```
+═══════════════════════════════════════════════════════════════
+BOOTUP COMPLETE
+═══════════════════════════════════════════════════════════════
+Selected Issue: bd-XXXX - <title>
+Status: <status>
+Health Check: PASSED/FAILED
+═══════════════════════════════════════════════════════════════
+```
+
+### Dependencies
+- Requires: Event logging infrastructure (beads-log-event scripts)
+- Requires: `bd` CLI with ready, list, show, sync commands
+- Provides: `.beads/current-issue` for scope skill
+- Provides: `.beads/.session-active` marker
+
+### Verification Criteria
+- [ ] Session marker `.beads/.session-active` created
+- [ ] Git pull and bd sync execute successfully
+- [ ] InitApp guard filters work correctly
+- [ ] Selected issue written to `.beads/current-issue`
+- [ ] All events logged to `.beads/events.log`
+-->
+
+
 ## Purpose
 
 The bootup skill executes at the START of every coding session.
