@@ -115,15 +115,21 @@ func TestInitCommand(t *testing.T) {
 			if err != nil {
 				t.Errorf(".gitignore file was not created: %v", err)
 			} else {
-				// Check for essential patterns (whitelist approach - GitHub #473)
+				// Check for essential patterns
 				gitignoreStr := string(gitignoreContent)
 				expectedPatterns := []string{
-					"*",             // Blanket ignore
-					"!.gitignore",   // Whitelist gitignore itself
-					"!issues.jsonl", // Whitelist JSONL
-					"!metadata.json",
-					"!config.yaml",
-					"!README.md",
+					"*.db",
+					"*.db?*",
+					"*.db-journal",
+					"*.db-wal",
+					"*.db-shm",
+					"daemon.log",
+					"daemon.pid",
+					"bd.sock",
+					"beads.base.jsonl",
+					"beads.left.jsonl",
+					"beads.right.jsonl",
+					"!issues.jsonl",
 				}
 				for _, pattern := range expectedPatterns {
 					if !strings.Contains(gitignoreStr, pattern) {

@@ -10,7 +10,6 @@ This directory contains examples of how to integrate bd with AI agents and workf
 - **[bash-agent/](bash-agent/)** - Bash script showing the full agent workflow
 - **[startup-hooks/](startup-hooks/)** - Session startup scripts for automatic bd upgrade detection
 - **[claude-desktop-mcp/](claude-desktop-mcp/)** - MCP server for Claude Desktop integration
-- **[claude-code-skill/](claude-code-skill/)** - Claude Code skill for effective beads usage patterns
 
 ### Tools & Utilities
 - **[monitor-webui/](monitor-webui/)** - Standalone web interface for real-time issue monitoring and visualization

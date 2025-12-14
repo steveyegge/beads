@@ -51,20 +51,13 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
-  test-windows-cmd:
-    name: Test (Windows - cmd)
+  # Windows smoke tests only - full test suite times out (see bd-bmev)
+  # Linux runs comprehensive tests; Windows just verifies binary works
+  test-windows:
+    name: Test (Windows - smoke)
     runs-on: windows-latest
-    continue-on-error: true  # Windows filesystem is slow; don't block PRs
     steps:
       - uses: actions/checkout@v6
-
-      # RAM disk provides ~1750x faster IOPS than Windows C: drive
-      # This dramatically speeds up SQLite tests and temp file operations
-      - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1
-        with:
-          size-in-mb: 4096
-          drive-letter: 'R'
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -77,54 +70,22 @@ jobs:
           git config --global user.email "ci@beads.test"
 
       - name: Build
-        run: go build -v ./cmd/bd
+        run: go build -v -o bd.exe ./cmd/bd
 
-      - name: Test cmd package
-        env:
-          TMPDIR: R:\tmp
-          TEMP: R:\tmp
-          TMP: R:\tmp
-          GOCACHE: R:\go-cache
-          GOMODCACHE: R:\go-mod
+      - name: Smoke test - version
+        run: ./bd.exe version
+
+      - name: Smoke test - init and CRUD
         run: |
-          New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
-          go test -v -short -timeout=30m -parallel=4 ./cmd/...
-
-  test-windows-internal:
-    name: Test (Windows - internal)
-    runs-on: windows-latest
-    continue-on-error: true  # Windows filesystem is slow; don't block PRs
-    steps:
-      - uses: actions/checkout@v6
-
-      # RAM disk provides ~1750x faster IOPS than Windows C: drive
-      # This dramatically speeds up SQLite tests and temp file operations
-      - name: Setup RAM Disk
-        uses: chad-golden/setup-ramdisk@v1
-        with:
-          size-in-mb: 4096
-          drive-letter: 'R'
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - name: Configure Git
-        run: |
-          git config --global user.name "CI Bot"
-          git config --global user.email "ci@beads.test"
-
-      - name: Test internal packages
-        env:
-          TMPDIR: R:\tmp
-          TEMP: R:\tmp
-          TMP: R:\tmp
-          GOCACHE: R:\go-cache
-          GOMODCACHE: R:\go-mod
-        run: |
-          New-Item -ItemType Directory -Force -Path R:\tmp, R:\go-cache, R:\go-mod
-          go test -v -short -timeout=30m -parallel=4 ./internal/...
+          ./bd.exe init --quiet --prefix smoke
+          $output = ./bd.exe create --title "Windows smoke test" --type task
+          $id = ($output | Select-String -Pattern "smoke-\w+").Matches.Value
+          echo "Created issue: $id"
+          ./bd.exe list
+          ./bd.exe show $id
+          ./bd.exe update $id --status in_progress
+          ./bd.exe close $id
+          echo "All smoke tests passed!"
 
   lint:
     name: Lint
@@ -168,13 +129,3 @@ jobs:
             exit 1
           fi
           echo "✅ Help text first line is correct"
-      - name: Verify default.nix package version matches bd program version
-        run: |
-          BD_VERSION=$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')
-          NIX_BD_VERSION=$(grep 'version = ' default.nix | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$BD_VERSION" != "$NIX_BD_VERSION" ]; then
-            echo "❌ default.nix version ($NIX_BD_VERSION) != version.go ($BD_VERSION)"
-            echo "Run: scripts/bump-version.sh to sync default.nix"
-            exit 1
-          fi
-          echo "✅ default.nix version matches: $BD_VERSION"

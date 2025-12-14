@@ -13,23 +13,26 @@ import (
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
-	Short: "Delete closed issues from database to free up space",
-	Long: `Delete closed issues from the database to reduce database size.
+	Short: "Delete closed issues and prune expired tombstones",
+	Long: `Delete closed issues and prune expired tombstones to reduce database size.
 
-This command permanently removes closed issues from beads.db and issues.jsonl.
+This command:
+1. Converts closed issues to tombstones (soft delete)
+2. Prunes expired tombstones (older than 30 days) from issues.jsonl
+
 It does NOT remove temporary files - use 'bd clean' for that.
 
 By default, deletes ALL closed issues. Use --older-than to only delete
 issues closed before a certain date.
 
 EXAMPLES:
-Delete all closed issues:
+Delete all closed issues and prune tombstones:
   bd cleanup --force
 
 Delete issues closed more than 30 days ago:
   bd cleanup --older-than 30 --force
 
-Preview what would be deleted:
+Preview what would be deleted/pruned:
   bd cleanup --dry-run
   bd cleanup --older-than 90 --dry-run
 
@@ -40,7 +43,8 @@ SAFETY:
 - Use --json for programmatic output
 
 SEE ALSO:
-  bd clean      Remove temporary git merge artifacts`,
+  bd clean      Remove temporary git merge artifacts
+  bd compact    Run compaction on issues`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -128,6 +132,37 @@ SEE ALSO:
 
 		// Use the existing batch deletion logic
 		deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, "cleanup")
+
+		// Also prune expired tombstones (bd-08ea)
+		// This runs after closed issues are converted to tombstones, cleaning up old ones
+		if dryRun {
+			// Preview what tombstones would be pruned
+			tombstoneResult, err := previewPruneTombstones()
+			if err != nil {
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Warning: failed to check tombstones: %v\n", err)
+				}
+			} else if tombstoneResult != nil && tombstoneResult.PrunedCount > 0 {
+				if !jsonOutput {
+					fmt.Printf("\nExpired tombstones that would be pruned: %d (older than %d days)\n",
+						tombstoneResult.PrunedCount, tombstoneResult.TTLDays)
+				}
+			}
+		} else if force {
+			// Actually prune expired tombstones
+			tombstoneResult, err := pruneExpiredTombstones()
+			if err != nil {
+				if !jsonOutput {
+					fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
+				}
+			} else if tombstoneResult != nil && tombstoneResult.PrunedCount > 0 {
+				if !jsonOutput {
+					green := color.New(color.FgGreen).SprintFunc()
+					fmt.Printf("\n%s Pruned %d expired tombstone(s) (older than %d days)\n",
+						green("✓"), tombstoneResult.PrunedCount, tombstoneResult.TTLDays)
+				}
+			}
+		}
 	},
 }
 

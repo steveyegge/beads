@@ -1,13 +1,11 @@
 # bd - Beads Issue Tracker 🔗
 
-[![Run in Smithery](https://smithery.ai/badge/skills/steveyegge)](https://smithery.ai/skills?ns=steveyegge&utm_source=github&utm_medium=badge)
-
-
 [![Go Version](https://img.shields.io/github/go-mod/go-version/steveyegge/beads)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/steveyegge/beads)](https://github.com/steveyegge/beads/releases)
 [![npm version](https://img.shields.io/npm/v/@beads/bd)](https://www.npmjs.com/package/@beads/bd)
 [![CI](https://img.shields.io/github/actions/workflow/status/steveyegge/beads/ci.yml?branch=main&label=tests)](https://github.com/steveyegge/beads/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/steveyegge/beads)](https://goreportcard.com/report/github.com/steveyegge/beads)
+[![Git Worktrees](https://img.shields.io/badge/git-worktrees-🚧-orange)](docs/WORKTREES.md)
 [![License](https://img.shields.io/github/license/steveyegge/beads)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/beads-mcp)](https://pypi.org/project/beads-mcp/)
 
@@ -63,6 +61,7 @@ Agents report that they enjoy working with Beads, and they will use it spontaneo
 - 🌍 **Distributed by design** - Agents on multiple machines share one logical database via git
 - 🚀 **Optional Agent Mail** - Real-time multi-agent coordination (<100ms vs 2-5s git sync, 98.5% reduction in git traffic)
 - 🔐 **Protected branch support** - Works with GitHub/GitLab protected branches via separate sync branch
+- 🌳 **Git worktree compatible** - Enhanced support for git worktrees with shared database architecture
 - 🏗️ **Extensible** - Add your own tables to the SQLite database
 - 🔍 **Multi-project isolation** - Each project gets its own database, auto-discovered by directory
 - 🌲 **Dependency trees** - Visualize full dependency graphs
@@ -116,11 +115,6 @@ brew tap steveyegge/beads
 brew install bd
 ```
 
-**mise (polyglot runtime manager):**
-```bash
-mise use -g ubi:steveyegge/beads[exe=bd]
-```
-
 For full, platform-specific instructions (Windows, Arch Linux, manual builds, IDE integrations, etc.) see the canonical guide in [docs/INSTALLING.md](docs/INSTALLING.md).
 
 **Claude Code for Web:** See [npm-package/CLAUDE_CODE_WEB.md](npm-package/CLAUDE_CODE_WEB.md) for SessionStart hook setup.
@@ -172,7 +166,7 @@ echo -e "\nBEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions" >
 ```bash
 git config merge.beads.driver "bd merge %A %O %A %B"
 git config merge.beads.name "bd JSONL merge driver"
-echo ".beads/beads.jsonl merge=beads" >> .gitattributes
+echo ".beads/issues.jsonl merge=beads" >> .gitattributes
 ```
 
 ### Files Created by `bd init`
@@ -181,7 +175,7 @@ echo ".beads/beads.jsonl merge=beads" >> .gitattributes
 
 **Should be committed to git:**
 - `.gitattributes` - Configures git merge driver for intelligent JSONL merging (critical for team collaboration)
-- `.beads/beads.jsonl` - Issue data in JSONL format (source of truth, synced via git)
+- `.beads/issues.jsonl` - Issue data in JSONL format (source of truth, synced via git)
 - `.beads/deletions.jsonl` - Deletion manifest for cross-clone propagation (tracks deleted issues)
 - `.beads/config.yaml` - Repository configuration template
 - `.beads/README.md` - Documentation about beads for repository visitors
@@ -325,8 +319,8 @@ git push
 git pull
 # bd automatically detects JSONL is newer and imports on next command
 
-bd ready  # Shows issues ready to work on (with fresh data from git)
-bd list   # Lists all issues, including those from other machines
+bd ready  # Fresh data from git!
+bd list   # Shows issues from other machines
 ```
 
 **Manual sync (optional):**
@@ -336,7 +330,7 @@ bd sync  # Immediately flush pending changes and import latest JSONL
 
 **For zero-lag sync**, install the git hooks:
 ```bash
-bd hooks install
+cd examples/git-hooks && ./install.sh
 ```
 
 This adds:

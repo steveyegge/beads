@@ -115,3 +115,5 @@ bd-trace-*.out
 .beads/.landing-complete
 beads_viewer/
 
+# AI planning documents (ephemeral)
+history/

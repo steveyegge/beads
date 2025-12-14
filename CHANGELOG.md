@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.29.0] - 2025-12-03
+### Added
+
+- **Inline tombstones for soft-delete (bd-vw8)**
+  - Deleted issues now become tombstones with `status: "tombstone"` in `issues.jsonl`
+  - Full audit trail: `deleted_at`, `deleted_by`, `delete_reason`, `original_type`
+  - TTL-based expiration (default 30 days) with automatic pruning via `bd compact`
+  - Proper 3-way merge support: fresh tombstones win, expired tombstones allow resurrection
+  - Replaces the legacy `deletions.jsonl` manifest approach
+
+- **`bd migrate-tombstones` command (bd-8f9)**
+  - Converts legacy `deletions.jsonl` entries to inline tombstones
+  - Archives old file as `deletions.jsonl.migrated`
+  - Use `--dry-run` to preview changes
+
+- **Enhanced Git Worktree Support** (bd-737): Comprehensive compatibility improvements for git worktrees using shared database architecture
+  - Shared `.beads` database across all worktrees in a repository
+  - Worktree-aware database discovery prioritizes main repository
+  - Git hooks automatically adapt to worktree context
+  - Daemon mode warnings for worktree usage with `--no-daemon` guidance
+  - Comprehensive documentation in `docs/WORKTREES.md`
+  - Worktree lifecycle management with sparse checkout for sync branches
+  - Automatic detection and user-friendly warnings for worktree conflicts
 
 ## [0.29.0] - 2025-12-03
 

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/git"
 )
 
 func TestGetEmbeddedHooks(t *testing.T) {
@@ -43,9 +45,9 @@ func TestInstallHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	gitDirPath, err := getGitDir()
+	gitDirPath, err := git.GetGitDir()
 	if err != nil {
-		t.Fatalf("getGitDir() failed: %v", err)
+		t.Fatalf("git.GetGitDir() failed: %v", err)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -94,9 +96,9 @@ func TestInstallHooksBackup(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	gitDirPath, err := getGitDir()
+	gitDirPath, err := git.GetGitDir()
 	if err != nil {
-		t.Fatalf("getGitDir() failed: %v", err)
+		t.Fatalf("git.GetGitDir() failed: %v", err)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -151,9 +153,9 @@ func TestInstallHooksForce(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	gitDirPath, err := getGitDir()
+	gitDirPath, err := git.GetGitDir()
 	if err != nil {
-		t.Fatalf("getGitDir() failed: %v", err)
+		t.Fatalf("git.GetGitDir() failed: %v", err)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -198,9 +200,9 @@ func TestUninstallHooks(t *testing.T) {
 		t.Skipf("Skipping test: git init failed: %v", err)
 	}
 
-	gitDirPath, err := getGitDir()
+	gitDirPath, err := git.GetGitDir()
 	if err != nil {
-		t.Fatalf("getGitDir() failed: %v", err)
+		t.Fatalf("git.GetGitDir() failed: %v", err)
 	}
 	gitDir := filepath.Join(gitDirPath, "hooks")
 
@@ -320,9 +322,9 @@ func TestInstallHooksShared(t *testing.T) {
 	}
 
 	// Verify hooks were NOT installed to .git/hooks/
-	gitDirPath, err := getGitDir()
+	gitDirPath, err := git.GetGitDir()
 	if err != nil {
-		t.Fatalf("getGitDir() failed: %v", err)
+		t.Fatalf("git.GetGitDir() failed: %v", err)
 	}
 	standardHooksDir := filepath.Join(gitDirPath, "hooks")
 	for hookName := range hooks {

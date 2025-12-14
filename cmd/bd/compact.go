@@ -1019,7 +1019,7 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 		}
 		allIssues = append(allIssues, &issue)
 	}
-	_ = file.Close() // Best effort close, already read all data
+	file.Close()
 
 	// Determine TTL
 	ttl := types.DefaultTombstoneTTL
@@ -1052,21 +1052,73 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			_ = tempFile.Close()
-			_ = os.Remove(tempPath) // Best effort cleanup
+			tempFile.Close()
+			os.Remove(tempPath)
 			return nil, fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
 
 	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempPath) // Best effort cleanup
+		os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomically replace
 	if err := os.Rename(tempPath, issuesPath); err != nil {
-		_ = os.Remove(tempPath) // Best effort cleanup
+		os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to replace issues.jsonl: %w", err)
+	}
+
+	return &TombstonePruneResult{
+		PrunedCount: len(prunedIDs),
+		PrunedIDs:   prunedIDs,
+		TTLDays:     ttlDays,
+	}, nil
+}
+
+// previewPruneTombstones checks what tombstones would be pruned without modifying files.
+// Used for dry-run mode in cleanup command (bd-08ea).
+func previewPruneTombstones() (*TombstonePruneResult, error) {
+	beadsDir := filepath.Dir(dbPath)
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	// Check if issues.jsonl exists
+	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
+		return &TombstonePruneResult{}, nil
+	}
+
+	// Read all issues
+	// nolint:gosec // G304: issuesPath is controlled from beadsDir
+	file, err := os.Open(issuesPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open issues.jsonl: %w", err)
+	}
+	defer file.Close()
+
+	var allIssues []*types.Issue
+	decoder := json.NewDecoder(file)
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			// Skip corrupt lines
+			continue
+		}
+		allIssues = append(allIssues, &issue)
+	}
+
+	// Determine TTL
+	ttl := types.DefaultTombstoneTTL
+	ttlDays := int(ttl.Hours() / 24)
+
+	// Count expired tombstones
+	var prunedIDs []string
+	for _, issue := range allIssues {
+		if issue.IsExpired(ttl) {
+			prunedIDs = append(prunedIDs, issue.ID)
+		}
 	}
 
 	return &TombstonePruneResult{

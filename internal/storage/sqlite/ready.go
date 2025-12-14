@@ -170,7 +170,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		var compactedAtCommit sql.NullString
 		var originalSize sql.NullInt64
 		var closeReason sql.NullString
-		var deletedAt sql.NullTime
+		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
@@ -221,9 +221,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		if closeReason.Valid {
 			issue.CloseReason = closeReason.String
 		}
-		if deletedAt.Valid {
-			issue.DeletedAt = &deletedAt.Time
-		}
+		issue.DeletedAt = parseNullableTimeString(deletedAt)
 		if deletedBy.Valid {
 			issue.DeletedBy = deletedBy.String
 		}

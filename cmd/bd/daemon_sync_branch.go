@@ -14,9 +14,18 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// syncBranchCommitAndPush commits JSONL to the sync branch using a worktree
-// Returns true if changes were committed, false if no changes or sync.branch not configured
+// syncBranchCommitAndPush commits JSONL to the sync branch using a worktree.
+// Returns true if changes were committed, false if no changes or sync.branch not configured.
+// This is a convenience wrapper that calls syncBranchCommitAndPushWithOptions with default options.
 func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPush bool, log daemonLogger) (bool, error) {
+	return syncBranchCommitAndPushWithOptions(ctx, store, autoPush, false, log)
+}
+
+// syncBranchCommitAndPushWithOptions commits JSONL to the sync branch using a worktree.
+// Returns true if changes were committed, false if no changes or sync.branch not configured.
+// If forceOverwrite is true, the local JSONL is copied to the worktree without merging,
+// which is necessary for delete mutations to be properly reflected in the sync branch.
+func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Storage, autoPush, forceOverwrite bool, log daemonLogger) (bool, error) {
 	// Check if any remote exists (bd-biwp: support local-only repos)
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch commit/push in local-only mode
@@ -35,14 +44,20 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 	
 	log.log("Using sync branch: %s", syncBranch)
 	
-	// Get repo root
-	repoRoot, err := getGitRoot(ctx)
+	// Get main repo root (for worktrees, this is the main repo, not worktree)
+	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
-		return false, fmt.Errorf("failed to get git root: %w", err)
+		return false, fmt.Errorf("failed to get main repo root: %w", err)
+	}
+	
+	// Use worktree-aware git directory detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false, fmt.Errorf("not a git repository: %w", err)
 	}
 	
 	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -77,7 +92,12 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 		return false, fmt.Errorf("failed to get relative JSONL path: %w", err)
 	}
 	
-	if err := wtMgr.SyncJSONLToWorktree(worktreePath, jsonlRelPath); err != nil {
+	// Use SyncJSONLToWorktreeWithOptions to pass forceOverwrite flag.
+	// When forceOverwrite is true (mutation-triggered sync, especially delete),
+	// the local JSONL is copied directly without merging, ensuring deletions
+	// are properly reflected in the sync branch.
+	syncOpts := git.SyncOptions{ForceOverwrite: forceOverwrite}
+	if err := wtMgr.SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath, syncOpts); err != nil {
 		return false, fmt.Errorf("failed to sync JSONL to worktree: %w", err)
 	}
 	
@@ -202,14 +222,20 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, nil
 	}
 	
-	// Get repo root
-	repoRoot, err := getGitRoot(ctx)
+	// Get main repo root (for worktrees, this is the main repo, not worktree)
+	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
-		return false, fmt.Errorf("failed to get git root: %w", err)
+		return false, fmt.Errorf("failed to get main repo root: %w", err)
+	}
+	
+	// Use worktree-aware git directory detection
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false, fmt.Errorf("not a git repository: %w", err)
 	}
 	
 	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	worktreePath := filepath.Join(gitDir, "beads-worktrees", syncBranch)
 	
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)

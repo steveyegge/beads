@@ -116,30 +116,6 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
   }
 }
 
-// Re-sign binary for macOS to avoid slow Gatekeeper checks
-// See: https://github.com/steveyegge/beads/issues/466
-function resignForMacOS(binaryPath) {
-  if (os.platform() !== 'darwin') {
-    return;
-  }
-
-  console.log('Re-signing binary for macOS...');
-  try {
-    // Remove existing signature
-    try {
-      execSync(`codesign --remove-signature "${binaryPath}"`, { stdio: 'pipe' });
-    } catch (e) {
-      // Ignore errors - binary may not have a signature
-    }
-
-    // Add ad-hoc signature for this machine
-    execSync(`codesign --force --sign - "${binaryPath}"`, { stdio: 'pipe' });
-    console.log('✓ Binary re-signed for this machine');
-  } catch (err) {
-    console.warn('Warning: Failed to re-sign binary (non-fatal):', err.message);
-  }
-}
-
 // Extract zip file (for Windows)
 function extractZip(zipPath, destDir, binaryName) {
   console.log(`Extracting ${zipPath}...`);
@@ -199,9 +175,6 @@ async function install() {
     } else {
       extractTarGz(archivePath, binDir, binaryName);
     }
-
-    // Re-sign for macOS to avoid Gatekeeper delays
-    resignForMacOS(binaryPath);
 
     // Clean up archive
     fs.unlinkSync(archivePath);

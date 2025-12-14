@@ -143,11 +143,33 @@ func (wm *WorktreeManager) CheckWorktreeHealth(worktreePath string) error {
 	return nil
 }
 
+// SyncOptions configures the behavior of SyncJSONLToWorktree
+type SyncOptions struct {
+	// ForceOverwrite bypasses the merge logic and always overwrites the worktree
+	// JSONL with the local JSONL. This should be set to true when the daemon
+	// knows that a mutation (especially delete) occurred, so the local state
+	// is authoritative and should not be merged with potentially stale worktree data.
+	ForceOverwrite bool
+}
+
 // SyncJSONLToWorktree syncs the JSONL file from main repo to worktree.
 // If the worktree has issues that the local repo doesn't have, it merges them
 // instead of overwriting. This prevents data loss when a fresh clone syncs
 // with fewer issues than the remote. (bd-52q fix for GitHub #464)
+// Note: This is a convenience wrapper that calls SyncJSONLToWorktreeWithOptions
+// with default options (ForceOverwrite=false).
 func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string) error {
+	return wm.SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath, SyncOptions{})
+}
+
+// SyncJSONLToWorktreeWithOptions syncs the JSONL file from main repo to worktree
+// with configurable options.
+// If ForceOverwrite is true, the local JSONL is always copied to the worktree,
+// bypassing the merge logic. This is used when the daemon knows a mutation
+// (especially delete) occurred and the local state is authoritative.
+// If ForceOverwrite is false (default), the function uses merge logic to prevent
+// data loss when a fresh clone syncs with fewer issues than the remote.
+func (wm *WorktreeManager) SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath string, opts SyncOptions) error {
 	// Source: main repo JSONL
 	srcPath := filepath.Join(wm.repoPath, jsonlRelPath)
 
@@ -170,6 +192,17 @@ func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string
 	dstData, dstErr := os.ReadFile(dstPath) // #nosec G304 - controlled path
 	if dstErr != nil || len(dstData) == 0 {
 		// Destination doesn't exist or is empty - just copy
+		if err := os.WriteFile(dstPath, srcData, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
+			return fmt.Errorf("failed to write destination JSONL: %w", err)
+		}
+		return nil
+	}
+
+	// ForceOverwrite: When the daemon knows a mutation occurred (especially delete),
+	// the local state is authoritative and should overwrite the worktree without merging.
+	// This fixes the bug where `bd delete` mutations were not reflected in the sync branch
+	// because the merge logic would re-add the deleted issue.
+	if opts.ForceOverwrite {
 		if err := os.WriteFile(dstPath, srcData, 0644); err != nil { // #nosec G306 - JSONL needs to be readable
 			return fmt.Errorf("failed to write destination JSONL: %w", err)
 		}

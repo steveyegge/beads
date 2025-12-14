@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/deletions"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -304,6 +305,73 @@ Use --merge to merge the sync branch back to main branch.`,
 			}
 		}
 
+		// Check if BEADS_DIR points to an external repository (dand-oss fix)
+		// If so, use direct git operations instead of worktree-based sync
+		beadsDir := filepath.Dir(jsonlPath)
+		isExternal := isExternalBeadsDir(ctx, beadsDir)
+
+		if isExternal {
+			// External BEADS_DIR: commit/pull directly to the beads repo
+			fmt.Println("→ External BEADS_DIR detected, using direct commit...")
+
+			// Check for changes in the external beads repo
+			externalRepoRoot, err := getRepoRootFromPath(ctx, beadsDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Check if there are changes to commit
+			relBeadsDir, _ := filepath.Rel(externalRepoRoot, beadsDir)
+			statusCmd := exec.CommandContext(ctx, "git", "-C", externalRepoRoot, "status", "--porcelain", relBeadsDir)
+			statusOutput, _ := statusCmd.Output()
+			externalHasChanges := len(strings.TrimSpace(string(statusOutput))) > 0
+
+			if externalHasChanges {
+				if dryRun {
+					fmt.Printf("→ [DRY RUN] Would commit changes to external beads repo at %s\n", externalRepoRoot)
+				} else {
+					committed, err := commitToExternalBeadsRepo(ctx, beadsDir, message, !noPush)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+						os.Exit(1)
+					}
+					if committed {
+						if !noPush {
+							fmt.Println("✓ Committed and pushed to external beads repo")
+						} else {
+							fmt.Println("✓ Committed to external beads repo")
+						}
+					}
+				}
+			} else {
+				fmt.Println("→ No changes to commit in external beads repo")
+			}
+
+			if !noPull {
+				if dryRun {
+					fmt.Printf("→ [DRY RUN] Would pull from external beads repo at %s\n", externalRepoRoot)
+				} else {
+					fmt.Println("→ Pulling from external beads repo...")
+					if err := pullFromExternalBeadsRepo(ctx, beadsDir); err != nil {
+						fmt.Fprintf(os.Stderr, "Error pulling: %v\n", err)
+						os.Exit(1)
+					}
+					fmt.Println("✓ Pulled from external beads repo")
+
+					// Re-import after pull to update local database
+					fmt.Println("→ Importing JSONL...")
+					if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+						fmt.Fprintf(os.Stderr, "Error importing: %v\n", err)
+						os.Exit(1)
+					}
+				}
+			}
+
+			fmt.Println("\n✓ Sync complete")
+			return
+		}
+
 		// Check if sync.branch is configured for worktree-based sync (bd-e3w)
 		// This allows committing to a separate branch without changing the user's working directory
 		var syncBranchName string
@@ -512,10 +580,19 @@ Use --merge to merge the sync branch back to main branch.`,
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to sanitize JSONL: %v\n", err)
 					// Non-fatal - continue with import
-				} else if sanitizeResult.RemovedCount > 0 {
-					fmt.Printf("→ Sanitized JSONL: removed %d deleted issue(s) that were resurrected by git merge\n", sanitizeResult.RemovedCount)
-					for _, id := range sanitizeResult.RemovedIDs {
-						fmt.Printf("  - %s\n", id)
+				} else {
+					// bd-3ee1 fix: Log protected issues (local work that would have been incorrectly removed)
+					if sanitizeResult.ProtectedCount > 0 {
+						fmt.Printf("→ Protected %d locally exported issue(s) from incorrect sanitization (bd-3ee1)\n", sanitizeResult.ProtectedCount)
+						for _, id := range sanitizeResult.ProtectedIDs {
+							fmt.Printf("  - %s (in left snapshot)\n", id)
+						}
+					}
+					if sanitizeResult.RemovedCount > 0 {
+						fmt.Printf("→ Sanitized JSONL: removed %d deleted issue(s) that were resurrected by git merge\n", sanitizeResult.RemovedCount)
+						for _, id := range sanitizeResult.RemovedIDs {
+							fmt.Printf("  - %s\n", id)
+						}
 					}
 				}
 
@@ -757,24 +834,68 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
+// getRepoRootForWorktree returns the main repository root for running git commands
+// This is always the main repository root, never the worktree root
+func getRepoRootForWorktree(ctx context.Context) string {
+	repoRoot, err := git.GetMainRepoRoot()
+	if err != nil {
+		// Fallback to current directory if GetMainRepoRoot fails
+		return "."
+	}
+	return repoRoot
+}
+
 // gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes
 func gitHasBeadsChanges(ctx context.Context) (bool, error) {
+	// Get the absolute path to .beads directory
 	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return false, fmt.Errorf("no .beads directory found")
 	}
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir)
-	output, err := cmd.Output()
+
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return false, fmt.Errorf("cannot determine repository root")
+	}
+
+	// Compute relative path from repo root to .beads
+	relPath, err := filepath.Rel(repoRoot, beadsDir)
+	if err != nil {
+		// Fall back to absolute path if relative path fails
+		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir)
+		statusOutput, err := statusCmd.Output()
+		if err != nil {
+			return false, fmt.Errorf("git status failed: %w", err)
+		}
+		return len(strings.TrimSpace(string(statusOutput))) > 0, nil
+	}
+
+	// Run git status with relative path from repo root
+	statusCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", relPath)
+	statusOutput, err := statusCmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
 	}
-	return len(strings.TrimSpace(string(output))) > 0, nil
+	return len(strings.TrimSpace(string(statusOutput))) > 0, nil
 }
 
-// gitCommit commits the specified file
+// gitCommit commits the specified file (worktree-aware)
 func gitCommit(ctx context.Context, filePath string, message string) error {
-	// Stage the file
-	addCmd := exec.CommandContext(ctx, "git", "add", filePath)
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return fmt.Errorf("cannot determine repository root")
+	}
+
+	// Make file path relative to repo root for git operations
+	relPath, err := filepath.Rel(repoRoot, filePath)
+	if err != nil {
+		relPath = filePath // Fall back to absolute path
+	}
+
+	// Stage the file from repo root context
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relPath)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
 	}
@@ -784,8 +905,8 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
-	// Commit
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	// Commit from repo root context
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -798,10 +919,17 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 // This ensures bd sync doesn't accidentally commit other staged files.
 // Only stages specific sync files (issues.jsonl, deletions.jsonl, metadata.json)
 // to avoid staging gitignored snapshot files that may be tracked. (bd-guc fix)
+// Worktree-aware: handles cases where .beads is in the main repo but we're running from a worktree.
 func gitCommitBeadsDir(ctx context.Context, message string) error {
 	beadsDir := findBeadsDir()
 	if beadsDir == "" {
 		return fmt.Errorf("no .beads directory found")
+	}
+
+	// Get the repository root (handles worktrees properly)
+	repoRoot := getRepoRootForWorktree(ctx)
+	if repoRoot == "" {
+		return fmt.Errorf("cannot determine repository root")
 	}
 
 	// Stage only the specific sync-related files (bd-guc)
@@ -817,7 +945,12 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	var filesToAdd []string
 	for _, f := range syncFiles {
 		if _, err := os.Stat(f); err == nil {
-			filesToAdd = append(filesToAdd, f)
+			// Convert to relative path from repo root for git operations
+			relPath, err := filepath.Rel(repoRoot, f)
+			if err != nil {
+				relPath = f // Fall back to absolute path if relative fails
+			}
+			filesToAdd = append(filesToAdd, relPath)
 		}
 	}
 
@@ -825,8 +958,8 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 		return fmt.Errorf("no sync files found to commit")
 	}
 
-	// Stage only the sync files
-	args := append([]string{"add"}, filesToAdd...)
+	// Stage only the sync files from repo root context (worktree-aware)
+	args := append([]string{"-C", repoRoot, "add"}, filesToAdd...)
 	addCmd := exec.CommandContext(ctx, "git", args...)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
@@ -840,7 +973,13 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	// Commit only .beads/ files using -- pathspec (bd-red)
 	// This prevents accidentally committing other staged files that the user
 	// may have staged but wasn't ready to commit yet.
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message, "--", beadsDir)
+	// Convert beadsDir to relative path for git commit (worktree-aware)
+	relBeadsDir, err := filepath.Rel(repoRoot, beadsDir)
+	if err != nil {
+		relBeadsDir = beadsDir // Fall back to absolute path if relative fails
+	}
+
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message, "--", relBeadsDir)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -861,12 +1000,20 @@ func hasGitRemote(ctx context.Context) bool {
 
 // isInRebase checks if we're currently in a git rebase state
 func isInRebase() bool {
+	// Get actual git directory (handles worktrees)
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return false
+	}
+
 	// Check for rebase-merge directory (interactive rebase)
-	if _, err := os.Stat(".git/rebase-merge"); err == nil {
+	rebaseMergePath := filepath.Join(gitDir, "rebase-merge")
+	if _, err := os.Stat(rebaseMergePath); err == nil {
 		return true
 	}
 	// Check for rebase-apply directory (non-interactive rebase)
-	if _, err := os.Stat(".git/rebase-apply"); err == nil {
+	rebaseApplyPath := filepath.Join(gitDir, "rebase-apply")
+	if _, err := os.Stat(rebaseApplyPath); err == nil {
 		return true
 	}
 	return false
@@ -1579,18 +1726,32 @@ func maybeAutoCompactDeletions(ctx context.Context, jsonlPath string) error {
 
 // SanitizeResult contains statistics about the JSONL sanitization operation.
 type SanitizeResult struct {
-	RemovedCount int      // Number of issues removed from JSONL
-	RemovedIDs   []string // IDs that were removed
+	RemovedCount    int      // Number of issues removed from JSONL
+	RemovedIDs      []string // IDs that were removed
+	ProtectedCount  int      // Number of issues protected from removal (bd-3ee1)
+	ProtectedIDs    []string // IDs that were protected
 }
 
-// sanitizeJSONLWithDeletions removes any issues from the JSONL file that are
-// in the deletions manifest. This prevents zombie resurrection when git's
-// 3-way merge re-adds deleted issues to the JSONL during pull.
+// sanitizeJSONLWithDeletions removes non-tombstone issues from the JSONL file
+// if they are in the deletions manifest. This prevents zombie resurrection when
+// git's 3-way merge re-adds deleted issues to the JSONL during pull.
+//
+// IMPORTANT (bd-kzxd fix): Tombstones are NOT removed. Tombstones are the proper
+// representation of deletions in the JSONL format. Removing them would cause
+// the importer to re-create tombstones from deletions.jsonl, leading to
+// UNIQUE constraint errors when the tombstone already exists in the database.
+//
+// IMPORTANT (bd-3ee1 fix): Issues that were in the left snapshot (local export
+// before pull) are protected from removal. This prevents newly created issues
+// from being incorrectly removed when they happen to have an ID that matches
+// an entry in the deletions manifest (possible with hash-based IDs if content
+// is similar to a previously deleted issue).
 //
 // This should be called after git pull but before import.
 func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 	result := &SanitizeResult{
-		RemovedIDs: []string{},
+		RemovedIDs:   []string{},
+		ProtectedIDs: []string{},
 	}
 
 	// Get deletions manifest path
@@ -1606,6 +1767,16 @@ func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 	// If no deletions, nothing to sanitize
 	if len(loadResult.Records) == 0 {
 		return result, nil
+	}
+
+	// bd-3ee1 fix: Load left snapshot to protect locally exported issues
+	// Issues in the left snapshot were exported before pull and represent
+	// local work that should not be removed by sanitize
+	sm := NewSnapshotManager(jsonlPath)
+	_, leftPath := sm.getSnapshotPaths()
+	protectedIDs := make(map[string]bool)
+	if leftIDs, err := sm.buildIDSet(leftPath); err == nil && len(leftIDs) > 0 {
+		protectedIDs = leftIDs
 	}
 
 	// Read current JSONL
@@ -1629,10 +1800,10 @@ func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 			continue
 		}
 
-		// Quick extraction of ID without full unmarshal
-		// Look for "id":"..." pattern
+		// Extract ID and status to check for tombstones
 		var issue struct {
-			ID string `json:"id"`
+			ID     string `json:"id"`
+			Status string `json:"status"`
 		}
 		if err := json.Unmarshal(line, &issue); err != nil {
 			// Keep malformed lines (let import handle them)
@@ -1642,8 +1813,22 @@ func sanitizeJSONLWithDeletions(jsonlPath string) (*SanitizeResult, error) {
 
 		// Check if this ID is in deletions manifest
 		if _, deleted := loadResult.Records[issue.ID]; deleted {
-			result.RemovedCount++
-			result.RemovedIDs = append(result.RemovedIDs, issue.ID)
+			// bd-kzxd fix: Keep tombstones! They are the proper representation of deletions.
+			// Only remove non-tombstone issues that were resurrected by git merge.
+			if issue.Status == string(types.StatusTombstone) {
+				// Keep the tombstone - it's the authoritative deletion record
+				keptLines = append(keptLines, append([]byte{}, line...))
+			} else if protectedIDs[issue.ID] {
+				// bd-3ee1 fix: Issue was in left snapshot (local export before pull)
+				// This is local work, not a resurrected zombie - protect it!
+				keptLines = append(keptLines, append([]byte{}, line...))
+				result.ProtectedCount++
+				result.ProtectedIDs = append(result.ProtectedIDs, issue.ID)
+			} else {
+				// Remove non-tombstone issue that was resurrected
+				result.RemovedCount++
+				result.RemovedIDs = append(result.RemovedIDs, issue.ID)
+			}
 		} else {
 			keptLines = append(keptLines, append([]byte{}, line...))
 		}
@@ -1703,4 +1888,107 @@ func resolveNoGitHistoryForFromMain(fromMain, noGitHistory bool) bool {
 		return true
 	}
 	return noGitHistory
+}
+
+// isExternalBeadsDir checks if the beads directory is in a different git repo than cwd.
+// This is used to detect when BEADS_DIR points to a separate repository.
+// Contributed by dand-oss (https://github.com/steveyegge/beads/pull/533)
+func isExternalBeadsDir(ctx context.Context, beadsDir string) bool {
+	// Get repo root of cwd
+	cwdRepoRoot, err := syncbranch.GetRepoRoot(ctx)
+	if err != nil {
+		return false // Can't determine, assume local
+	}
+
+	// Get repo root of beads dir
+	beadsRepoRoot, err := getRepoRootFromPath(ctx, beadsDir)
+	if err != nil {
+		return false // Can't determine, assume local
+	}
+
+	return cwdRepoRoot != beadsRepoRoot
+}
+
+// getRepoRootFromPath returns the git repository root for a given path.
+// Unlike syncbranch.GetRepoRoot which uses cwd, this allows getting the repo root
+// for any path.
+// Contributed by dand-oss (https://github.com/steveyegge/beads/pull/533)
+func getRepoRootFromPath(ctx context.Context, path string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get git root for %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// commitToExternalBeadsRepo commits changes directly to an external beads repo.
+// Used when BEADS_DIR points to a different git repository than cwd.
+// This bypasses the worktree-based sync which fails when beads dir is external.
+// Contributed by dand-oss (https://github.com/steveyegge/beads/pull/533)
+func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, push bool) (bool, error) {
+	repoRoot, err := getRepoRootFromPath(ctx, beadsDir)
+	if err != nil {
+		return false, fmt.Errorf("failed to get repo root: %w", err)
+	}
+
+	// Stage beads files (use relative path from repo root)
+	relBeadsDir, err := filepath.Rel(repoRoot, beadsDir)
+	if err != nil {
+		relBeadsDir = beadsDir // Fallback to absolute path
+	}
+
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relBeadsDir)
+	if output, err := addCmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("git add failed: %w\n%s", err, output)
+	}
+
+	// Check if there are staged changes
+	diffCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--cached", "--quiet")
+	if diffCmd.Run() == nil {
+		return false, nil // No changes to commit
+	}
+
+	// Commit
+	if message == "" {
+		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
+	}
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message)
+	if output, err := commitCmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("git commit failed: %w\n%s", err, output)
+	}
+
+	// Push if requested
+	if push {
+		pushCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "push")
+		if output, err := pushCmd.CombinedOutput(); err != nil {
+			return true, fmt.Errorf("git push failed: %w\n%s", err, output)
+		}
+	}
+
+	return true, nil
+}
+
+// pullFromExternalBeadsRepo pulls changes in an external beads repo.
+// Used when BEADS_DIR points to a different git repository than cwd.
+// Contributed by dand-oss (https://github.com/steveyegge/beads/pull/533)
+func pullFromExternalBeadsRepo(ctx context.Context, beadsDir string) error {
+	repoRoot, err := getRepoRootFromPath(ctx, beadsDir)
+	if err != nil {
+		return fmt.Errorf("failed to get repo root: %w", err)
+	}
+
+	// Check if remote exists
+	remoteCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "remote")
+	remoteOutput, err := remoteCmd.Output()
+	if err != nil || len(strings.TrimSpace(string(remoteOutput))) == 0 {
+		return nil // No remote, skip pull
+	}
+
+	pullCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "pull")
+	if output, err := pullCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git pull failed: %w\n%s", err, output)
+	}
+
+	return nil
 }
