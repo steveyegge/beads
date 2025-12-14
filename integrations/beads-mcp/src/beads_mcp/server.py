@@ -74,10 +74,41 @@ _cleanup_done = False
 _workspace_context: dict[str, str] = {}
 
 # =============================================================================
-# CONTEXT ENGINEERING: Compaction Settings
+# CONTEXT ENGINEERING: Compaction Settings (Configurable via Environment)
 # =============================================================================
-COMPACTION_THRESHOLD = 20  # Compact results with more than 20 issues
-PREVIEW_COUNT = 5  # Show first 5 issues in preview
+# These settings control how large result sets are compacted to prevent context overflow.
+# Override via environment variables:
+#   BEADS_MCP_COMPACTION_THRESHOLD - Compact results with >N issues (default: 20)
+#   BEADS_MCP_PREVIEW_COUNT - Show first N issues in preview (default: 5)
+
+def _get_compaction_settings() -> tuple[int, int]:
+    """Load compaction settings from environment or use defaults.
+    
+    Returns:
+        (threshold, preview_count) tuple
+    """
+    import os
+    
+    threshold = int(os.environ.get("BEADS_MCP_COMPACTION_THRESHOLD", "20"))
+    preview_count = int(os.environ.get("BEADS_MCP_PREVIEW_COUNT", "5"))
+    
+    # Validate settings
+    if threshold < 1:
+        raise ValueError("BEADS_MCP_COMPACTION_THRESHOLD must be >= 1")
+    if preview_count < 1:
+        raise ValueError("BEADS_MCP_PREVIEW_COUNT must be >= 1")
+    if preview_count > threshold:
+        raise ValueError("BEADS_MCP_PREVIEW_COUNT must be <= BEADS_MCP_COMPACTION_THRESHOLD")
+    
+    return threshold, preview_count
+
+
+COMPACTION_THRESHOLD, PREVIEW_COUNT = _get_compaction_settings()
+
+if os.environ.get("BEADS_MCP_COMPACTION_THRESHOLD"):
+    logger.info(f"Using BEADS_MCP_COMPACTION_THRESHOLD={COMPACTION_THRESHOLD}")
+if os.environ.get("BEADS_MCP_PREVIEW_COUNT"):
+    logger.info(f"Using BEADS_MCP_PREVIEW_COUNT={PREVIEW_COUNT}")
 
 # Create FastMCP server
 mcp = FastMCP(
