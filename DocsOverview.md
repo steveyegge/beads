@@ -20,10 +20,22 @@ Documentation organized by scope and objective.
 |------|---------|
 | [AGENTS.md](AGENTS.md) | **Master guide** for AI agents using beads |
 | [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) | Detailed dev procedures for agents |
-| [CLAUDE.md](CLAUDE.md) | Claude-specific instructions |
-| [docs/CLAUDE_INTEGRATION.md](docs/CLAUDE_INTEGRATION.md) | Claude Code/Desktop setup |
-| [docs/AIDER_INTEGRATION.md](docs/AIDER_INTEGRATION.md) | Aider integration |
 | [docs/BEADS_HARNESS_PATTERN.md](docs/BEADS_HARNESS_PATTERN.md) | Pattern for agent harnesses |
+
+### Claude-Specific
+| File | Purpose |
+|------|---------|
+| [CLAUDE.md](CLAUDE.md) | Claude auto-loaded instructions |
+| [docs/CLAUDE.md](docs/CLAUDE.md) | Claude architecture guide |
+| [docs/CLAUDE_INTEGRATION.md](docs/CLAUDE_INTEGRATION.md) | Claude integration design |
+| [docs/AIDER_INTEGRATION.md](docs/AIDER_INTEGRATION.md) | Aider integration |
+
+### Copilot-Specific
+| File | Purpose |
+|------|---------|
+| [.github/copilot-instructions.md](.github/copilot-instructions.md) | Copilot auto-loaded instructions |
+| [docs/COPILOT.md](docs/COPILOT.md) | Copilot architecture guide |
+| [docs/COPILOT_INTEGRATION.md](docs/COPILOT_INTEGRATION.md) | Copilot integration design |
 
 ---
 
@@ -149,7 +161,8 @@ Documentation organized by scope and objective.
 | You Are... | Start With |
 |------------|-----------|
 | **New user** | README → QUICKSTART → CLI_REFERENCE |
-| **AI agent developer** | AGENTS.md → CLAUDE_INTEGRATION → examples/ |
+| **AI agent developer (Claude)** | AGENTS.md → CLAUDE_INTEGRATION → examples/ |
+| **AI agent developer (Copilot)** | AGENTS.md → COPILOT_INTEGRATION → examples/ |
 | **Contributor** | CONTRIBUTING → AGENT_INSTRUCTIONS → TESTING |
 | **Multi-agent coordinator** | AGENT_MAIL_QUICKSTART → MULTI_REPO_AGENTS |
 | **Troubleshooting** | TROUBLESHOOTING → FAQ → DAEMON |

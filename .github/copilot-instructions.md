@@ -129,6 +129,31 @@ Use the beads MCP server for native function calls instead of shell commands:
 - ❌ Do NOT create test issues in production DB
 - ❌ Do NOT commit `.beads/beads.db` (JSONL only)
 
+## Session Workflow
+
+**Starting a session:**
+1. Run `bd ready --json` to see available work
+2. Run `bd info --whats-new` if bd was recently upgraded
+3. Claim work with `bd update <id> --status in_progress`
+
+**Ending a session:**
+1. Run `bd sync` to flush all changes to git
+2. Ensure work is committed with meaningful messages
+
+## When to Use bd
+
+**Use bd when:**
+- Work spans multiple sessions
+- Tasks have dependencies or blockers
+- Need to resume work after days/weeks away
+
+**Skip bd for:**
+- Single-session, linear tasks
+- Simple checklists that complete immediately
+
+**When in doubt**: Use bd. Better to have persistent context than lose it.
+
 ---
 
 **For detailed workflows and advanced features, see [AGENTS.md](../AGENTS.md)**
+**For architecture details, see [docs/COPILOT.md](../docs/COPILOT.md)**
