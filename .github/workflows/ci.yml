@@ -51,13 +51,23 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
-  # Windows smoke tests only - full test suite times out (see bd-bmev)
-  # Linux runs comprehensive tests; Windows just verifies binary works
+  # Windows tests with Dev Drive for fast I/O (see bd-5we)
+  # Dev Drive provides ~30x faster IOPS than C: drive
   test-windows:
-    name: Test (Windows - smoke)
+    name: Test (Windows)
     runs-on: windows-latest
     steps:
+      - name: Set up Dev Drive
+        uses: samypr100/setup-dev-drive@v3
+        with:
+          drive-size: 4GB
+          drive-type: Dynamic
+          drive-format: ReFS
+          drive-path: E:\
+
       - uses: actions/checkout@v6
+        with:
+          path: E:\beads
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -69,23 +79,24 @@ jobs:
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
+      - name: Configure environment for Dev Drive
+        run: |
+          # Point temp directories to Dev Drive for fast I/O
+          echo "TEMP=E:\temp" >> $env:GITHUB_ENV
+          echo "TMP=E:\temp" >> $env:GITHUB_ENV
+          echo "GOTMPDIR=E:\temp" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path E:\temp | Out-Null
+
       - name: Build
+        working-directory: E:\beads
         run: go build -v -o bd.exe ./cmd/bd
 
-      - name: Smoke test - version
-        run: ./bd.exe version
-
-      - name: Smoke test - init and CRUD
+      - name: Test
+        working-directory: E:\beads
+        timeout-minutes: 30
         run: |
-          ./bd.exe init --quiet --prefix smoke
-          $output = ./bd.exe create --title "Windows smoke test" --type task
-          $id = ($output | Select-String -Pattern "smoke-\w+").Matches.Value
-          echo "Created issue: $id"
-          ./bd.exe list
-          ./bd.exe show $id
-          ./bd.exe update $id --status in_progress
-          ./bd.exe close $id
-          echo "All smoke tests passed!"
+          # Skip tests with known Windows issues (bd-g9z1, bd-1bac)
+          go test -v -race -short -skip "TestTrackBdVersion_NoBeadsDir|TestFindBeadsDirSkipsDaemonRegistry|TestValidateState_NoBeadsDir|TestRegistryMultipleDaemons|TestCreateBackup_PreservesPermissions" ./...
 
   lint:
     name: Lint
