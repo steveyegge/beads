@@ -47,11 +47,11 @@ func TestGetCurrentJSONLIDs_SkipsTombstones(t *testing.T) {
 	encoder := json.NewEncoder(file)
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-			file.Close()
+			_ = file.Close()
 			t.Fatalf("Failed to write issue to JSONL: %v", err)
 		}
 	}
-	file.Close()
+	_ = file.Close()
 
 	// Call getCurrentJSONLIDs
 	ids, err := getCurrentJSONLIDs(jsonlPath)
