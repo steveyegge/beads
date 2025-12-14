@@ -13,5 +13,6 @@
     "beads.jsonl": "json"
   },
 
-  "task.allowAutomaticTasks": "on"
+  "task.allowAutomaticTasks": "on",
+  "makefile.configureOnOpen": false
 }
