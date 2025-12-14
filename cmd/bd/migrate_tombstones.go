@@ -79,10 +79,10 @@ Examples:
 		if len(loadResult.Records) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"status":  "noop",
-					"message": "No deletions to migrate",
+					"status":   "noop",
+					"message":  "No deletions to migrate",
 					"migrated": 0,
-					"skipped": 0,
+					"skipped":  0,
 				})
 			} else {
 				fmt.Println("No deletions.jsonl entries to migrate")
@@ -113,6 +113,7 @@ Examples:
 				}
 				os.Exit(1)
 			}
+			defer func() { _ = file.Close() }()
 
 			decoder := json.NewDecoder(file)
 			for {
@@ -128,7 +129,6 @@ Examples:
 					existingTombstones[issue.ID] = true
 				}
 			}
-			file.Close()
 		}
 
 		// Determine which deletions need migration
@@ -148,10 +148,10 @@ Examples:
 		if len(toMigrate) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"status":  "noop",
-					"message": "All deletions already migrated to tombstones",
+					"status":   "noop",
+					"message":  "All deletions already migrated to tombstones",
 					"migrated": 0,
-					"skipped": len(skippedIDs),
+					"skipped":  len(skippedIDs),
 				})
 			} else {
 				fmt.Printf("All %d deletion(s) already have tombstones in issues.jsonl\n", len(skippedIDs))
@@ -163,10 +163,10 @@ Examples:
 		if dryRun {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"dry_run":      true,
+					"dry_run":       true,
 					"would_migrate": len(toMigrate),
-					"skipped":      len(skippedIDs),
-					"total":        len(loadResult.Records),
+					"skipped":       len(skippedIDs),
+					"total":         len(loadResult.Records),
 				})
 			} else {
 				fmt.Println("Dry run mode - no changes will be made")
@@ -212,8 +212,8 @@ Examples:
 			if err := encoder.Encode(tombstone); err != nil {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{
-						"error":   "write_tombstone_failed",
-						"message": err.Error(),
+						"error":    "write_tombstone_failed",
+						"message":  err.Error(),
 						"issue_id": record.ID,
 					})
 				} else {
@@ -241,11 +241,11 @@ Examples:
 		// Success output
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"status":      "success",
-				"migrated":    len(migratedIDs),
-				"skipped":     len(skippedIDs),
-				"total":       len(loadResult.Records),
-				"archive":     archivePath,
+				"status":       "success",
+				"migrated":     len(migratedIDs),
+				"skipped":      len(skippedIDs),
+				"total":        len(loadResult.Records),
+				"archive":      archivePath,
 				"migrated_ids": migratedIDs,
 			})
 		} else {

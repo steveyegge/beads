@@ -18,20 +18,20 @@ import (
 )
 
 var (
-	compactDryRun   bool
-	compactTier     int
-	compactAll      bool
-	compactID       string
-	compactForce    bool
-	compactBatch    int
-	compactWorkers  int
-	compactStats    bool
-	compactAnalyze  bool
-	compactApply    bool
-	compactAuto     bool
-	compactSummary  string
-	compactActor    string
-	compactLimit    int
+	compactDryRun    bool
+	compactTier      int
+	compactAll       bool
+	compactID        string
+	compactForce     bool
+	compactBatch     int
+	compactWorkers   int
+	compactStats     bool
+	compactAnalyze   bool
+	compactApply     bool
+	compactAuto      bool
+	compactSummary   string
+	compactActor     string
+	compactLimit     int
 	compactRetention int
 )
 
@@ -1005,6 +1005,7 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open issues.jsonl: %w", err)
 	}
+	defer func() { _ = file.Close() }()
 
 	var allIssues []*types.Issue
 	decoder := json.NewDecoder(file)
@@ -1019,8 +1020,6 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 		}
 		allIssues = append(allIssues, &issue)
 	}
-	file.Close()
-
 	// Determine TTL
 	ttl := types.DefaultTombstoneTTL
 	ttlDays := int(ttl.Hours() / 24)
@@ -1052,20 +1051,20 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			tempFile.Close()
-			os.Remove(tempPath)
+			_ = tempFile.Close()
+			_ = os.Remove(tempPath)
 			return nil, fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
 
 	if err := tempFile.Close(); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomically replace
 	if err := os.Rename(tempPath, issuesPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to replace issues.jsonl: %w", err)
 	}
 

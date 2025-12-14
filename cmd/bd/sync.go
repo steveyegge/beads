@@ -543,8 +543,8 @@ Use --merge to merge the sync branch back to main branch.`,
 							// Check if this looks like a merge driver failure
 							errStr := err.Error()
 							if strings.Contains(errStr, "merge driver") ||
-							   strings.Contains(errStr, "no such file or directory") ||
-							   strings.Contains(errStr, "MERGE DRIVER INVOKED") {
+								strings.Contains(errStr, "no such file or directory") ||
+								strings.Contains(errStr, "MERGE DRIVER INVOKED") {
 								fmt.Fprintf(os.Stderr, "\nThis may be caused by an incorrect merge driver configuration.\n")
 								fmt.Fprintf(os.Stderr, "Fix: bd doctor --fix\n\n")
 							}
@@ -804,14 +804,14 @@ func gitHasUpstream() bool {
 		return false
 	}
 	branch := strings.TrimSpace(string(branchOutput))
-	
+
 	// Check if remote and merge refs are configured
 	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
 	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))
-	
+
 	remoteErr := remoteCmd.Run()
 	mergeErr := mergeCmd.Run()
-	
+
 	return remoteErr == nil && mergeErr == nil
 }
 
@@ -827,7 +827,7 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 
 // getRepoRootForWorktree returns the main repository root for running git commands
 // This is always the main repository root, never the worktree root
-func getRepoRootForWorktree(ctx context.Context) string {
+func getRepoRootForWorktree() string {
 	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
 		// Fallback to current directory if GetMainRepoRoot fails
@@ -845,7 +845,7 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 	}
 
 	// Get the repository root (handles worktrees properly)
-	repoRoot := getRepoRootForWorktree(ctx)
+	repoRoot := getRepoRootForWorktree()
 	if repoRoot == "" {
 		return false, fmt.Errorf("cannot determine repository root")
 	}
@@ -874,7 +874,7 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 // gitCommit commits the specified file (worktree-aware)
 func gitCommit(ctx context.Context, filePath string, message string) error {
 	// Get the repository root (handles worktrees properly)
-	repoRoot := getRepoRootForWorktree(ctx)
+	repoRoot := getRepoRootForWorktree()
 	if repoRoot == "" {
 		return fmt.Errorf("cannot determine repository root")
 	}
@@ -918,7 +918,7 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	}
 
 	// Get the repository root (handles worktrees properly)
-	repoRoot := getRepoRootForWorktree(ctx)
+	repoRoot := getRepoRootForWorktree()
 	if repoRoot == "" {
 		return fmt.Errorf("cannot determine repository root")
 	}
@@ -1085,7 +1085,7 @@ func gitPull(ctx context.Context) error {
 	if !hasGitRemote(ctx) {
 		return nil // Gracefully skip - local-only mode
 	}
-	
+
 	// Get current branch name
 	// Use symbolic-ref to work in fresh repos without commits (bd-flil)
 	branchCmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--short", "HEAD")
@@ -1094,7 +1094,7 @@ func gitPull(ctx context.Context) error {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
 	branch := strings.TrimSpace(string(branchOutput))
-	
+
 	// Get remote name for current branch (usually "origin")
 	remoteCmd := exec.CommandContext(ctx, "git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
 	remoteOutput, err := remoteCmd.Output()
@@ -1103,7 +1103,7 @@ func gitPull(ctx context.Context) error {
 		remoteOutput = []byte("origin\n")
 	}
 	remote := strings.TrimSpace(string(remoteOutput))
-	
+
 	// Pull with explicit remote and branch
 	cmd := exec.CommandContext(ctx, "git", "pull", remote, branch)
 	output, err := cmd.CombinedOutput()

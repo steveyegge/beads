@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -59,18 +60,18 @@ func IsWorktree() bool {
 	if gitDir == "" {
 		return false
 	}
-	
+
 	commonDir := getGitDirNoError("--git-common-dir")
 	if commonDir == "" {
 		return false
 	}
-	
+
 	absGit, err1 := filepath.Abs(gitDir)
 	absCommon, err2 := filepath.Abs(commonDir)
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	
+
 	return absGit != absCommon
 }
 
@@ -106,7 +107,7 @@ func GetMainRepoRoot() (string, error) {
 		commonDir := getGitDirNoError("--git-common-dir")
 		if commonDir != "" {
 			// Validate that commonDir exists
-			if _, err := exec.Command("test", "-d", commonDir).Output(); err == nil {
+			if info, err := os.Stat(commonDir); err == nil && info.IsDir() {
 				return filepath.Dir(commonDir), nil
 			}
 		}
