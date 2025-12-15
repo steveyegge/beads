@@ -342,7 +342,52 @@ chmod +x .git/hooks/post-merge
 chmod +x .git/hooks/post-checkout
 ```
 
-Or use the installer: `cd examples/git-hooks && ./install.sh`
+### "Branch already checked out" when switching branches
+
+**Symptom:**
+```bash
+$ git checkout main
+fatal: 'main' is already checked out at '/path/to/.git/beads-worktrees/beads-sync'
+```
+
+**Cause:** Beads creates git worktrees internally when using the sync-branch feature (configured via `bd init --branch` or `bd config set sync.branch`). These worktrees lock the branches they're checked out to.
+
+**Solution:**
+```bash
+# Remove beads-created worktrees
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+
+# Now you can checkout the branch
+git checkout main
+```
+
+**Permanent fix (disable sync-branch):**
+```bash
+bd config set sync.branch ""
+```
+
+See [WORKTREES.md#beads-created-worktrees-sync-branch](WORKTREES.md#beads-created-worktrees-sync-branch) for details.
+
+### Unexpected worktree directories in .git/
+
+**Symptom:** You notice `.git/beads-worktrees/` or `.git/worktrees/beads-*` directories you didn't create.
+
+**Explanation:** Beads automatically creates these worktrees when using the sync-branch feature to commit issue updates to a separate branch without switching your working directory.
+
+**If you don't want these:**
+```bash
+# Disable sync-branch feature
+bd config set sync.branch ""
+
+# Clean up existing worktrees
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+```
+
+See [WORKTREES.md](WORKTREES.md) for details on how beads uses worktrees.
 
 ### Auto-sync not working
 
