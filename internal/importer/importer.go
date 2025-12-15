@@ -671,18 +671,43 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		}
 	}
 
-// Filter out orphaned issues that were marked with empty IDs (bd-ckej)
-// These occur when orphan_handling=skip and a child's parent doesn't exist
-var filteredNewIssues []*types.Issue
-for _, issue := range newIssues {
-	if issue.ID == "" {
-		// Skip orphaned issue (was marked by EnsureIDs with OrphanSkip mode)
-		result.Skipped++
-		continue
+// Filter out orphaned issues if orphan_handling is set to skip (bd-ckej)
+// Pre-filter before batch creation to prevent orphans from being created then ID-cleared
+if opts.OrphanHandling == sqlite.OrphanSkip {
+	var filteredNewIssues []*types.Issue
+	for _, issue := range newIssues {
+		// Check if this is a hierarchical child whose parent doesn't exist
+		if strings.Contains(issue.ID, ".") {
+			lastDot := strings.LastIndex(issue.ID, ".")
+			parentID := issue.ID[:lastDot]
+			
+			// Check if parent exists in either existing DB issues or in newIssues batch
+			var parentExists bool
+			for _, dbIssue := range dbIssues {
+				if dbIssue.ID == parentID {
+					parentExists = true
+					break
+				}
+			}
+			if !parentExists {
+				for _, newIssue := range newIssues {
+					if newIssue.ID == parentID {
+						parentExists = true
+						break
+					}
+				}
+			}
+			
+			if !parentExists {
+				// Skip this orphaned issue
+				result.Skipped++
+				continue
+			}
+		}
+		filteredNewIssues = append(filteredNewIssues, issue)
 	}
-	filteredNewIssues = append(filteredNewIssues, issue)
+	newIssues = filteredNewIssues
 }
-newIssues = filteredNewIssues
 
 // Batch create all new issues
 // Sort by hierarchy depth to ensure parents are created before children
