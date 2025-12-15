@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.30.0] - 2025-12-15
 
+## [0.30.0] - 2025-12-15
+
 **Tombstone Architecture** - This release completes the migration to inline tombstones
 for soft-delete, replacing the legacy `deletions.jsonl` manifest. This is intended to
 be the last significant architectural change to Beads' storage format.
