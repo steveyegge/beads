@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Worktree lifecycle management with sparse checkout for sync branches
   - Automatic detection and user-friendly warnings for worktree conflicts
 
+### Fixed
+
+- **`bd` now finds `.beads` from nested worktrees** (GH#509)
+  - When worktrees are nested under the main repo (e.g., `/project/.worktrees/feature/`),
+    `bd` now correctly finds `.beads/` in the parent repo
+  - Uses `git rev-parse --git-common-dir` to reliably locate the main repository root
+  - Works from any subdirectory within the nested worktree
+
 ## [0.29.0] - 2025-12-03
 
 ### Added

@@ -860,3 +860,199 @@ func TestCountJSONLIssues(t *testing.T) {
 		})
 	}
 }
+
+// TestGetMainRepoRoot tests the GetMainRepoRoot function for various scenarios
+func TestGetMainRepoRoot(t *testing.T) {
+	t.Run("returns correct root for regular repo", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Save current dir and change to repo
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(repoPath); err != nil {
+			t.Fatalf("Failed to chdir to repo: %v", err)
+		}
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison (e.g., /tmp -> /private/tmp on macOS)
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from worktree", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		wm := NewWorktreeManager(repoPath)
+		worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+
+		if err := wm.CreateBeadsWorktree("test-branch", worktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Save current dir and change to worktree
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(worktreePath); err != nil {
+			t.Fatalf("Failed to chdir to worktree: %v", err)
+		}
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo)", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from nested worktree (GH#509)", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Create a nested worktree directory structure: repo/.worktrees/feature/
+		nestedWorktreePath := filepath.Join(repoPath, ".worktrees", "feature-branch")
+
+		wm := NewWorktreeManager(repoPath)
+		if err := wm.CreateBeadsWorktree("feature-branch", nestedWorktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Save current dir and change to nested worktree
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(nestedWorktreePath); err != nil {
+			t.Fatalf("Failed to chdir to nested worktree: %v", err)
+		}
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo, not worktree)", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from subdirectory of nested worktree", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Create a nested worktree
+		nestedWorktreePath := filepath.Join(repoPath, ".worktrees", "feature-branch")
+
+		wm := NewWorktreeManager(repoPath)
+		if err := wm.CreateBeadsWorktree("feature-branch", nestedWorktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Create a subdirectory in the worktree
+		subDir := filepath.Join(nestedWorktreePath, "some", "nested", "dir")
+		if err := os.MkdirAll(subDir, 0750); err != nil {
+			t.Fatalf("Failed to create subdir: %v", err)
+		}
+
+		// Save current dir and change to subdirectory
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(subDir); err != nil {
+			t.Fatalf("Failed to chdir to subdir: %v", err)
+		}
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo)", actualRoot, expectedRoot)
+		}
+	})
+}
+
+// TestIsWorktree tests the IsWorktree function
+func TestIsWorktree(t *testing.T) {
+	t.Run("returns false for regular repo", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(repoPath); err != nil {
+			t.Fatalf("Failed to chdir to repo: %v", err)
+		}
+
+		if IsWorktree() {
+			t.Error("IsWorktree() should return false for regular repo")
+		}
+	})
+
+	t.Run("returns true for worktree", func(t *testing.T) {
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		wm := NewWorktreeManager(repoPath)
+		worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+
+		if err := wm.CreateBeadsWorktree("test-branch", worktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(worktreePath); err != nil {
+			t.Fatalf("Failed to chdir to worktree: %v", err)
+		}
+
+		if !IsWorktree() {
+			t.Error("IsWorktree() should return true for worktree")
+		}
+	})
+}
