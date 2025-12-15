@@ -9,7 +9,7 @@ pkgs.buildGoModule {
   subPackages = [ "cmd/bd" ];
   doCheck = false;
   # Go module dependencies hash (computed via nix build)
-  vendorHash = "sha256-KRR6dXzsSw8OmEHGBEVDBOoIgfoZ2p0541T9ayjGHlI=";
+  vendorHash = "sha256-RJ8LMS2kdKvvkpsL7RcDnSyMfwsGKiMb/qpeLUvXZfA=";
 
   # Git is required for tests
   nativeBuildInputs = [ pkgs.git ];
