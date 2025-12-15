@@ -836,7 +836,7 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 
 // getRepoRootForWorktree returns the main repository root for running git commands
 // This is always the main repository root, never the worktree root
-func getRepoRootForWorktree(ctx context.Context) string {
+func getRepoRootForWorktree(_ context.Context) string {
 	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
 		// Fallback to current directory if GetMainRepoRoot fails

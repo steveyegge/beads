@@ -1019,7 +1019,9 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 		}
 		allIssues = append(allIssues, &issue)
 	}
-	file.Close()
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close issues file: %w", err)
+	}
 
 	// Determine TTL
 	ttl := types.DefaultTombstoneTTL
@@ -1052,20 +1054,20 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			tempFile.Close()
-			os.Remove(tempPath)
+			_ = tempFile.Close()
+			_ = os.Remove(tempPath)
 			return nil, fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
 
 	if err := tempFile.Close(); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomically replace
 	if err := os.Rename(tempPath, issuesPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("failed to replace issues.jsonl: %w", err)
 	}
 
