@@ -54,6 +54,12 @@ type Server struct {
 	recentMutations   []MutationEvent
 	recentMutationsMu sync.RWMutex
 	maxMutationBuffer int
+	// Daemon configuration (set via SetConfig after creation)
+	autoCommit   bool
+	autoPush     bool
+	localMode    bool
+	syncInterval string
+	daemonMode   string
 }
 
 // Mutation event types
@@ -150,6 +156,17 @@ func (s *Server) emitMutation(eventType, issueID string) {
 // MutationChan returns the mutation event channel for the daemon to consume
 func (s *Server) MutationChan() <-chan MutationEvent {
 	return s.mutationChan
+}
+
+// SetConfig sets the daemon configuration for status reporting
+func (s *Server) SetConfig(autoCommit, autoPush, localMode bool, syncInterval, daemonMode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.autoCommit = autoCommit
+	s.autoPush = autoPush
+	s.localMode = localMode
+	s.syncInterval = syncInterval
+	s.daemonMode = daemonMode
 }
 
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value
