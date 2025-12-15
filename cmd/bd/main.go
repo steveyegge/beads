@@ -45,6 +45,7 @@ const (
 	FallbackFlagNoDaemon      = "flag_no_daemon"
 	FallbackConnectFailed     = "connect_failed"
 	FallbackHealthFailed      = "health_failed"
+	FallbackWorktreeSafety    = "worktree_safety"
 	cmdDaemon                 = "daemon"
 	cmdImport                 = "import"
 	statusHealthy             = "healthy"
@@ -397,10 +398,16 @@ var rootCmd = &cobra.Command{
 			FallbackReason:   FallbackNone,
 		}
 
-		// Try to connect to daemon first (unless --no-daemon flag is set)
+		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
 		if noDaemon {
 			daemonStatus.FallbackReason = FallbackFlagNoDaemon
 			debug.Logf("--no-daemon flag set, using direct mode")
+		} else if shouldDisableDaemonForWorktree() {
+			// In a git worktree without sync-branch configured - daemon is unsafe
+			// because all worktrees share the same .beads directory and the daemon
+			// would commit to whatever branch its working directory has checked out.
+			daemonStatus.FallbackReason = FallbackWorktreeSafety
+			debug.Logf("git worktree detected without sync-branch, using direct mode for safety")
 		} else {
 			// Attempt daemon connection
 			client, err := rpc.TryConnect(socketPath)
