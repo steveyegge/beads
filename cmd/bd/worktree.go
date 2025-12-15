@@ -39,8 +39,8 @@ func shouldDisableDaemonForWorktree() bool {
 	}
 
 	// In a worktree - check if sync-branch is configured
-	// syncbranch.IsConfigured() checks env var and config.yaml without DB access
-	if syncbranch.IsConfigured() {
+	// IsConfiguredWithDB checks env var, config.yaml, AND database config
+	if syncbranch.IsConfiguredWithDB("") {
 		// Sync-branch is configured, daemon is safe (commits go to dedicated branch)
 		return false
 	}
@@ -84,7 +84,7 @@ func warnWorktreeDaemon(dbPathForWarning string) {
 	}
 
 	// If sync-branch is configured, daemon is safe in worktrees - no warning needed
-	if syncbranch.IsConfigured() {
+	if syncbranch.IsConfiguredWithDB("") {
 		return
 	}
 	

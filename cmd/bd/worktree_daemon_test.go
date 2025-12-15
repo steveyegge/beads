@@ -1,11 +1,17 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"os/exec"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/syncbranch"
+
+	// Import SQLite driver for test database creation
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // TestShouldDisableDaemonForWorktree tests the worktree daemon disable logic.
@@ -120,6 +126,50 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		result := shouldDisableDaemonForWorktree()
 		if result {
 			t.Error("Expected shouldDisableDaemonForWorktree() to return false in worktree with sync-branch")
+		}
+
+		// Cleanup
+		cleanupTestWorktree(t, mainDir, worktreeDir)
+	})
+
+	t.Run("returns false in worktree with sync-branch in database config", func(t *testing.T) {
+		// Create a git repo with a worktree AND a database with sync.branch config
+		mainDir, worktreeDir := setupWorktreeTestRepoWithDB(t, "beads-metadata")
+
+		// Change to the worktree directory
+		origDir, _ := os.Getwd()
+		defer func() { 
+			_ = os.Chdir(origDir)
+			_ = config.Initialize()
+		}()
+		if err := os.Chdir(worktreeDir); err != nil {
+			t.Fatalf("Failed to change to worktree dir: %v", err)
+		}
+
+		// Reinitialize config to pick up the new directory's config.yaml
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("Failed to reinitialize config: %v", err)
+		}
+
+		// NO env var or config.yaml sync-branch - only database config
+		os.Unsetenv("BEADS_SYNC_BRANCH")
+
+		// Debug: check if database exists and has the config
+		dbPath := mainDir + "/.beads/beads.db"
+		t.Logf("mainDir=%s, worktreeDir=%s, dbPath=%s", mainDir, worktreeDir, dbPath)
+		if _, err := os.Stat(dbPath); err != nil {
+			t.Logf("Database does not exist: %v", err)
+		} else {
+			t.Logf("Database exists at %s", dbPath)
+		}
+
+		// Debug: check IsConfiguredWithDB directly
+		isConfigured := syncbranch.IsConfiguredWithDB("")
+		t.Logf("syncbranch.IsConfiguredWithDB(\"\") = %v", isConfigured)
+
+		result := shouldDisableDaemonForWorktree()
+		if result {
+			t.Errorf("Expected shouldDisableDaemonForWorktree() to return false in worktree with sync-branch in database (isConfigured=%v)", isConfigured)
 		}
 
 		// Cleanup
@@ -336,4 +386,38 @@ func cleanupTestWorktree(t *testing.T, mainDir, worktreeDir string) {
 	cmd := exec.Command("git", "worktree", "remove", worktreeDir, "--force")
 	cmd.Dir = mainDir
 	_ = cmd.Run() // Best effort cleanup
+}
+
+// setupWorktreeTestRepoWithDB creates a git repo with a worktree AND a database
+// that has sync.branch configured. This tests the database config path.
+func setupWorktreeTestRepoWithDB(t *testing.T, syncBranch string) (mainDir, worktreeDir string) {
+	t.Helper()
+
+	// First create the basic worktree repo
+	mainDir, worktreeDir = setupWorktreeTestRepo(t)
+
+	// Now create a database with sync.branch config
+	beadsDir := mainDir + "/.beads"
+	dbPath := beadsDir + "/beads.db"
+
+	// Create a minimal SQLite database with the config table and sync.branch value
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create config table
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create config table: %v", err)
+	}
+
+	// Insert sync.branch config
+	_, err = db.Exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, "sync.branch", syncBranch)
+	if err != nil {
+		t.Fatalf("Failed to insert sync.branch config: %v", err)
+	}
+
+	return mainDir, worktreeDir
 }
