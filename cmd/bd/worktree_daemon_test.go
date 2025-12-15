@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/syncbranch"
 
 	// Import SQLite driver for test database creation
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -154,22 +153,9 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		// NO env var or config.yaml sync-branch - only database config
 		os.Unsetenv("BEADS_SYNC_BRANCH")
 
-		// Debug: check if database exists and has the config
-		dbPath := mainDir + "/.beads/beads.db"
-		t.Logf("mainDir=%s, worktreeDir=%s, dbPath=%s", mainDir, worktreeDir, dbPath)
-		if _, err := os.Stat(dbPath); err != nil {
-			t.Logf("Database does not exist: %v", err)
-		} else {
-			t.Logf("Database exists at %s", dbPath)
-		}
-
-		// Debug: check IsConfiguredWithDB directly
-		isConfigured := syncbranch.IsConfiguredWithDB("")
-		t.Logf("syncbranch.IsConfiguredWithDB(\"\") = %v", isConfigured)
-
 		result := shouldDisableDaemonForWorktree()
 		if result {
-			t.Errorf("Expected shouldDisableDaemonForWorktree() to return false in worktree with sync-branch in database (isConfigured=%v)", isConfigured)
+			t.Error("Expected shouldDisableDaemonForWorktree() to return false in worktree with sync-branch in database")
 		}
 
 		// Cleanup

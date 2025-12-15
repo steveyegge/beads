@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 
@@ -128,7 +126,7 @@ func IsConfigured() bool {
 // 3. sync.branch in database config
 //
 // The dbPath parameter should be the path to the beads.db file.
-// If dbPath is empty, it will attempt to find the database in the current directory's .beads folder.
+// If dbPath is empty, it will use beads.FindDatabasePath() to locate the database.
 // This function is safe to call even if the database doesn't exist (returns false in that case).
 func IsConfiguredWithDB(dbPath string) bool {
 	// First check env var and config.yaml (fast path)
@@ -138,8 +136,8 @@ func IsConfiguredWithDB(dbPath string) bool {
 
 	// Try to read from database
 	if dbPath == "" {
-		// Try to find database in .beads directory
-		dbPath = findBeadsDB()
+		// Use existing beads.FindDatabasePath() which is worktree-aware
+		dbPath = beads.FindDatabasePath()
 		if dbPath == "" {
 			return false
 		}
@@ -148,86 +146,6 @@ func IsConfiguredWithDB(dbPath string) bool {
 	// Read sync.branch from database config table
 	branch := getConfigFromDB(dbPath, ConfigKey)
 	return branch != ""
-}
-
-// findBeadsDB attempts to find the beads.db file.
-// It first checks if we're in a git worktree and looks in the main repo root.
-// Otherwise, it searches up the directory tree from the current directory.
-// Returns empty string if not found.
-func findBeadsDB() string {
-	// First, check if we're in a git worktree and find the main repo root
-	mainRepoRoot := getMainRepoRoot()
-	if mainRepoRoot != "" {
-		dbPath := filepath.Join(mainRepoRoot, ".beads", "beads.db")
-		if _, err := os.Stat(dbPath); err == nil {
-			return dbPath
-		}
-	}
-
-	// Fall back to searching up the directory tree from current directory
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	// Search up the directory tree
-	for {
-		beadsDir := filepath.Join(dir, ".beads")
-		dbPath := filepath.Join(beadsDir, "beads.db")
-		if _, err := os.Stat(dbPath); err == nil {
-			return dbPath
-		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached root
-			return ""
-		}
-		dir = parent
-	}
-}
-
-// getMainRepoRoot returns the main repository root directory.
-// For worktrees, this is the parent of git-common-dir.
-// For regular repos, this is the parent of git-dir.
-// Returns empty string if not in a git repo.
-func getMainRepoRoot() string {
-	// Get git-dir and git-common-dir
-	gitDirOut, err := exec.Command("git", "rev-parse", "--git-dir").Output()
-	if err != nil {
-		return ""
-	}
-	gitDir := strings.TrimSpace(string(gitDirOut))
-
-	commonDirOut, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
-	if err != nil {
-		return ""
-	}
-	commonDir := strings.TrimSpace(string(commonDirOut))
-
-	// Make paths absolute
-	if !filepath.IsAbs(gitDir) {
-		cwd, _ := os.Getwd()
-		gitDir = filepath.Join(cwd, gitDir)
-	}
-	if !filepath.IsAbs(commonDir) {
-		cwd, _ := os.Getwd()
-		commonDir = filepath.Join(cwd, commonDir)
-	}
-
-	// Clean paths for comparison
-	gitDir = filepath.Clean(gitDir)
-	commonDir = filepath.Clean(commonDir)
-
-	// If git-dir != git-common-dir, we're in a worktree
-	// The main repo root is the parent of git-common-dir
-	if gitDir != commonDir {
-		return filepath.Dir(commonDir)
-	}
-
-	// Regular repo - main repo root is parent of git-dir
-	return filepath.Dir(gitDir)
 }
 
 // getConfigFromDB reads a config value directly from the database file.
