@@ -423,6 +423,15 @@ With --stealth: configures global git settings for invisible beads usage:
 			}
 		}
 
+		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
+		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
+		if !stealth {
+			if err := addLandingThePlaneInstructions(!quiet); err != nil && !quiet {
+				yellow := color.New(color.FgYellow).SprintFunc()
+				fmt.Fprintf(os.Stderr, "%s Failed to add landing-the-plane instructions: %v\n", yellow("⚠"), err)
+			}
+		}
+
 		// Skip output if quiet mode
 		if quiet {
 			return
@@ -1549,6 +1558,114 @@ Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 	return nil // No database found, safe to init
 }
 
+
+// landingThePlaneSection is the "landing the plane" instructions for AI agents
+// This gets appended to AGENTS.md and @AGENTS.md during bd init
+const landingThePlaneSection = `
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until ` + "`git push`" + ` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ` + "```bash" + `
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ` + "```" + `
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until ` + "`git push`" + ` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+`
+
+// addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md and @AGENTS.md
+func addLandingThePlaneInstructions(verbose bool) error {
+	// Files to update (AGENTS.md and @AGENTS.md for web Claude)
+	agentFiles := []string{"AGENTS.md", "@AGENTS.md"}
+
+	for _, filename := range agentFiles {
+		if err := updateAgentFile(filename, verbose); err != nil {
+			// Non-fatal - continue with other files
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update %s: %v\n", filename, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// updateAgentFile creates or updates an agent instructions file with landing the plane section
+func updateAgentFile(filename string, verbose bool) error {
+	// Check if file exists
+	content, err := os.ReadFile(filename)
+	if os.IsNotExist(err) {
+		// File doesn't exist - create it with basic structure
+		newContent := fmt.Sprintf(`# Agent Instructions
+
+This project uses **bd** (beads) for issue tracking. Run ` + "`bd onboard`" + ` to get started.
+
+## Quick Reference
+
+` + "```bash" + `
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --status in_progress  # Claim work
+bd close <id>         # Complete work
+bd sync               # Sync with git
+` + "```" + `
+%s
+`, landingThePlaneSection)
+
+		// #nosec G306 - markdown needs to be readable
+		if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+			return fmt.Errorf("failed to create %s: %w", filename, err)
+		}
+		if verbose {
+			green := color.New(color.FgGreen).SprintFunc()
+			fmt.Printf("  %s Created %s with landing-the-plane instructions\n", green("✓"), filename)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to read %s: %w", filename, err)
+	}
+
+	// File exists - check if it already has landing the plane section
+	if strings.Contains(string(content), "Landing the Plane") {
+		if verbose {
+			fmt.Printf("  %s already has landing-the-plane instructions\n", filename)
+		}
+		return nil
+	}
+
+	// Append the landing the plane section
+	newContent := string(content)
+	if !strings.HasSuffix(newContent, "\n") {
+		newContent += "\n"
+	}
+	newContent += landingThePlaneSection
+
+	// #nosec G306 - markdown needs to be readable
+	if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to update %s: %w", filename, err)
+	}
+	if verbose {
+		green := color.New(color.FgGreen).SprintFunc()
+		fmt.Printf("  %s Added landing-the-plane instructions to %s\n", green("✓"), filename)
+	}
+	return nil
+}
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
 func setupClaudeSettings(verbose bool) error {
