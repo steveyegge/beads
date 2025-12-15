@@ -385,7 +385,15 @@ Use --merge to merge the sync branch back to main branch.`,
 					fmt.Fprintf(os.Stderr, "Warning: sync.branch configured but failed to get repo root: %v\n", err)
 					fmt.Fprintf(os.Stderr, "Falling back to current branch commits\n")
 				} else {
-					useSyncBranch = true
+					// GitHub #519: Check if sync.branch is the currently checked-out branch
+					// If so, we can't use worktree (git won't allow it), so fall back to direct commits
+					currentBranch, branchErr := getCurrentBranch(ctx)
+					if branchErr == nil && currentBranch == syncBranchName {
+						fmt.Printf("→ sync.branch '%s' is currently checked out, using direct commits\n", syncBranchName)
+						useSyncBranch = false
+					} else {
+						useSyncBranch = true
+					}
 				}
 			}
 		}
