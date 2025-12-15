@@ -434,7 +434,6 @@ except Exception:
 1. **Read the full guide**: [AGENT_MAIL.md](AGENT_MAIL.md)
 2. **Try the Python example**: [examples/python-agent/AGENT_MAIL_EXAMPLE.md](../examples/python-agent/AGENT_MAIL_EXAMPLE.md)
 3. **Review the ADR**: [adr/002-agent-mail-integration.md](adr/002-agent-mail-integration.md)
-4. **Check out benchmarks**: [../latency_results.md](../latency_results.md)
 
 ## Getting Help
 

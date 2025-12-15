@@ -623,7 +623,7 @@ After successful deployment:
 - **Main Guide**: [AGENT_MAIL_MULTI_WORKSPACE_SETUP.md](AGENT_MAIL_MULTI_WORKSPACE_SETUP.md)
 - **Quick Start**: [AGENT_MAIL_QUICKSTART.md](AGENT_MAIL_QUICKSTART.md)
 - **Architecture**: [AGENT_MAIL.md](AGENT_MAIL.md)
-- **ADR**: [adr/002-agent-mail-integration.md](../adr/002-agent-mail-integration.md)
+- **ADR**: [adr/002-agent-mail-integration.md](adr/002-agent-mail-integration.md)
 
 ## Timeline Estimate
 

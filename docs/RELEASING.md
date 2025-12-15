@@ -12,7 +12,7 @@ Use the fully automated release script:
 
 This does **everything**: version bump, tests, git tag, Homebrew update, and local installation.
 
-See [scripts/README.md](scripts/README.md#releasesh--the-easy-button) for details.
+See [scripts/README.md](../scripts/README.md#releasesh--the-easy-button) for details.
 
 ---
 
@@ -129,7 +129,7 @@ uv build
 TWINE_USERNAME=__token__ TWINE_PASSWORD=pypi-... uv tool run twine upload dist/*
 ```
 
-See [integrations/beads-mcp/PYPI.md](integrations/beads-mcp/PYPI.md) for detailed PyPI instructions.
+See [integrations/beads-mcp/PYPI.md](../integrations/beads-mcp/PYPI.md) for detailed PyPI instructions.
 
 ### 3. Update Homebrew Formula
 
@@ -292,6 +292,6 @@ Set up API token at https://pypi.org/manage/account/token/ and use `__token__` a
 
 ## Related Documentation
 
-- [CHANGELOG.md](CHANGELOG.md) - Release history
-- [scripts/README.md](scripts/README.md) - Version bump script details
-- [integrations/beads-mcp/PYPI.md](integrations/beads-mcp/PYPI.md) - Detailed PyPI guide
+- [CHANGELOG.md](../CHANGELOG.md) - Release history
+- [scripts/README.md](../scripts/README.md) - Version bump script details
+- [integrations/beads-mcp/PYPI.md](../integrations/beads-mcp/PYPI.md) - Detailed PyPI guide

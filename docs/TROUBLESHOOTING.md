@@ -209,7 +209,7 @@ bd config set import.orphan_handling "strict"
 - Check for orphans before cleanup: `bd list --id bd-abc.*`
 - Review impact before deleting epic/parent issues
 
-See [docs/CONFIG.md](docs/CONFIG.md#example-import-orphan-handling) for complete configuration documentation.
+See [CONFIG.md](CONFIG.md#example-import-orphan-handling) for complete configuration documentation.
 
 ### Database corruption
 
@@ -524,7 +524,7 @@ bd ready
 ps aux | grep "bd daemon"
 ```
 
-See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for MCP-specific troubleshooting.
+See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for MCP-specific troubleshooting.
 
 ### Sandboxed environments (Codex, Claude Code, etc.)
 
@@ -718,8 +718,7 @@ If none of these solutions work:
 
 ## Related Documentation
 
-- **[README.md](README.md)** - Core features and quick start
+- **[README.md](../README.md)** - Core features and quick start
 - **[ADVANCED.md](ADVANCED.md)** - Advanced features
 - **[FAQ.md](FAQ.md)** - Frequently asked questions
 - **[INSTALLING.md](INSTALLING.md)** - Installation guide
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies
