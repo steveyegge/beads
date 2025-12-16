@@ -10,7 +10,7 @@ This guide helps you adopt beads' multi-repo workflow for OSS contributions, tea
 - [Multi-Phase Development](#multi-phase-development) - Separate repos per phase
 - [Multiple Personas](#multiple-personas) - Architect vs. implementer separation
 
-**New to beads?** See [QUICKSTART.md](../QUICKSTART.md) first.
+**New to beads?** See [QUICKSTART.md](QUICKSTART.md) first.
 
 ## What is Multi-Repo Mode?
 
@@ -398,7 +398,7 @@ bd list --json
 
 **Problem:** Multiple repos modifying same JSONL file.
 
-**Solution:** See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#git-merge-conflicts) and consider [beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge) tool.
+**Solution:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#git-merge-conflicts) and consider [beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge) tool.
 
 ### Discovered issues in wrong repository
 
@@ -475,13 +475,13 @@ bd create "Issue" -p 1
 ## Next Steps
 
 - **CLI Reference:** See [README.md](../README.md) for command details
-- **Configuration Guide:** See [CONFIG.md](../CONFIG.md) for all config options
-- **Troubleshooting:** See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
+- **Configuration Guide:** See [CONFIG.md](CONFIG.md) for all config options
+- **Troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Multi-Repo Internals:** See [MULTI_REPO_HYDRATION.md](MULTI_REPO_HYDRATION.md) and [ROUTING.md](ROUTING.md)
 
 ## Related Issues
 
-- [bd-8rd](/.beads/beads.jsonl#bd-8rd) - Migration and onboarding epic
-- [bd-mlcz](/.beads/beads.jsonl#bd-mlcz) - `bd migrate` command (planned)
-- [bd-kla1](/.beads/beads.jsonl#bd-kla1) - `bd init --contributor` wizard ✅ implemented
-- [bd-twlr](/.beads/beads.jsonl#bd-twlr) - `bd init --team` wizard ✅ implemented
+- `bd-8rd` - Migration and onboarding epic
+- `bd-mlcz` - `bd migrate` command (planned)
+- `bd-kla1` - `bd init --contributor` wizard ✅ implemented
+- `bd-twlr` - `bd init --team` wizard ✅ implemented

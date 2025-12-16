@@ -143,5 +143,4 @@ This generates the tables above and shows adaptive scaling strategy for any thre
 ## Related Documentation
 
 - [ADAPTIVE_IDS.md](ADAPTIVE_IDS.md) - Configuration and usage guide
-- [HASH_ID_DESIGN.md](HASH_ID_DESIGN.md) - Overall hash ID design rationale
-- [CONFIG.md](../CONFIG.md) - All configuration options
+- [CONFIG.md](CONFIG.md) - All configuration options

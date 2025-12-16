@@ -24,11 +24,22 @@ bd runs a background daemon per workspace for auto-sync, RPC operations, and rea
 
 | Scenario | How to Disable |
 |----------|----------------|
-| **Git worktrees** | `bd --no-daemon <command>` (required!) |
+| **Git worktrees (no sync-branch)** | Auto-disabled for safety |
 | **CI/CD pipelines** | `BEADS_NO_DAEMON=true` |
 | **Offline work** | `--no-daemon` (no git push available) |
 | **Resource-constrained** | `BEADS_NO_DAEMON=true` |
 | **Deterministic testing** | Use exclusive lock (see below) |
+
+### Git Worktrees and Daemon
+
+**Automatic safety:** Daemon is automatically disabled in git worktrees unless sync-branch is configured. This prevents commits going to the wrong branch.
+
+**Enable daemon in worktrees:** Configure sync-branch to safely use daemon across all worktrees:
+```bash
+bd config set sync-branch beads-metadata
+```
+
+With sync-branch configured, daemon commits to a dedicated branch using an internal worktree, so your current branch is never affected. See [WORKTREES.md](WORKTREES.md) for details.
 
 ### Local-Only Users
 
@@ -425,7 +436,7 @@ rm .beads/.exclusive-lock
 - CI/CD pipelines (controlled sync timing)
 - Testing frameworks (isolated test runs)
 
-See [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) for complete documentation.
+See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for complete documentation.
 
 ## Common Daemon Issues
 
@@ -531,6 +542,6 @@ bd daemons killall
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
-- [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) - External tool integration
+- [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) - External tool integration
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflow and merge strategies
 - [commands/daemons.md](../commands/daemons.md) - Daemon command reference

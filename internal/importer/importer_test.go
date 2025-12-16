@@ -524,7 +524,7 @@ func TestIsBoundary(t *testing.T) {
 	}
 }
 
-func TestIsNumeric(t *testing.T) {
+func TestIsValidIDSuffix(t *testing.T) {
 	tests := []struct {
 		s    string
 		want bool
@@ -538,18 +538,24 @@ func TestIsNumeric(t *testing.T) {
 		{"09ea", true},
 		{"abc123", true},
 		{"zzz", true},
+		// Hierarchical suffixes (hash.number format)
+		{"6we.2", true},
+		{"abc.1", true},
+		{"abc.1.2", true},
+		{"abc.1.2.3", true},
+		{"1.5", true},
 		// Invalid suffixes
-		{"", false},      // Empty string now returns false
-		{"1.5", false},   // Non-base36 characters
-		{"A3F8", false},  // Uppercase not allowed
-		{"@#$!", false},  // Special characters not allowed
+		{"", false},       // Empty string
+		{"A3F8", false},   // Uppercase not allowed
+		{"@#$!", false},   // Special characters not allowed
+		{"abc-def", false}, // Hyphens not allowed in suffix
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.s, func(t *testing.T) {
-			got := isNumeric(tt.s)
+			got := isValidIDSuffix(tt.s)
 			if got != tt.want {
-				t.Errorf("isNumeric(%q) = %v, want %v", tt.s, got, tt.want)
+				t.Errorf("isValidIDSuffix(%q) = %v, want %v", tt.s, got, tt.want)
 			}
 		})
 	}
@@ -1496,5 +1502,237 @@ func TestImportOrphanSkip_CountMismatch(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("Expected 2 normal issues in database, found %d", count)
+	}
+}
+
+// TestImportCrossPrefixContentMatch tests that importing an issue with a different prefix
+// but same content hash does NOT trigger a rename operation.
+//
+// Bug scenario:
+// 1. DB has issue "alpha-abc123" with prefix "alpha" configured
+// 2. Incoming JSONL has "beta-xyz789" with same content (same hash)
+// 3. Content hash match triggers rename detection (same content, different ID)
+// 4. handleRename tries to create "beta-xyz789" which fails prefix validation
+//
+// Expected behavior: Skip the cross-prefix "rename" and keep the existing issue unchanged.
+func TestImportCrossPrefixContentMatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Configure database with "alpha" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "alpha"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create an issue with the configured prefix
+	existingIssue := &types.Issue{
+		ID:          "alpha-abc123",
+		Title:       "Shared Content Issue",
+		Description: "This issue has content that will match a cross-prefix import",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, existingIssue, "test-setup"); err != nil {
+		t.Fatalf("Failed to create existing issue: %v", err)
+	}
+
+	// Compute the content hash of the existing issue
+	existingHash := existingIssue.ComputeContentHash()
+
+	// Create an incoming issue with DIFFERENT prefix but SAME content
+	// This simulates importing from another project with same issue content
+	incomingIssue := &types.Issue{
+		ID:          "beta-xyz789", // Different prefix!
+		Title:       "Shared Content Issue",
+		Description: "This issue has content that will match a cross-prefix import",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+
+	// Verify they have the same content hash (this is what triggers the bug)
+	incomingHash := incomingIssue.ComputeContentHash()
+	if existingHash != incomingHash {
+		t.Fatalf("Test setup error: content hashes should match. existing=%s incoming=%s", existingHash, incomingHash)
+	}
+
+	// Import the cross-prefix issue with SkipPrefixValidation (simulates auto-import behavior)
+	// This should NOT fail - cross-prefix content matches should be skipped, not renamed
+	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{incomingIssue}, Options{
+		SkipPrefixValidation: true, // Auto-import typically sets this
+	})
+	if err != nil {
+		t.Fatalf("Import should not fail for cross-prefix content match: %v", err)
+	}
+
+	// The incoming issue should be skipped (not created, not updated)
+	// because it has a different prefix than configured
+	if result.Created != 0 {
+		t.Errorf("Expected 0 created (cross-prefix should be skipped), got %d", result.Created)
+	}
+
+	// The existing issue should remain unchanged
+	retrieved, err := store.GetIssue(ctx, "alpha-abc123")
+	if err != nil {
+		t.Fatalf("Failed to retrieve existing issue: %v", err)
+	}
+	if retrieved == nil {
+		t.Fatal("Existing issue alpha-abc123 should still exist after import")
+	}
+	if retrieved.Title != "Shared Content Issue" {
+		t.Errorf("Existing issue should be unchanged, got title: %s", retrieved.Title)
+	}
+
+	// The cross-prefix issue should NOT exist in the database
+	crossPrefix, err := store.GetIssue(ctx, "beta-xyz789")
+	if err == nil && crossPrefix != nil {
+		t.Error("Cross-prefix issue beta-xyz789 should NOT be created in the database")
+	}
+}
+
+// TestImportTombstonePrefixMismatch tests that tombstoned issues with different prefixes
+// don't block import (bd-6pni). This handles pollution from contributor PRs that used
+// different test prefixes - these tombstones are safe to ignore.
+func TestImportTombstonePrefixMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Configure database with "bd" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create tombstoned issues with WRONG prefixes (simulating pollution)
+	deletedAt := time.Now().Add(-time.Hour)
+	issues := []*types.Issue{
+		// Normal issue with correct prefix
+		{
+			ID:        "bd-good1",
+			Title:     "Good issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		// Tombstone with wrong prefix "beads"
+		{
+			ID:           "beads-old1",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+		// Tombstone with wrong prefix "test"
+		{
+			ID:           "test-old2",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+	}
+
+	// Import should succeed - tombstones with wrong prefixes should be ignored
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import should succeed when all mismatched prefixes are tombstones: %v", err)
+	}
+
+	// Should have created the good issue
+	// Tombstones with wrong prefixes are skipped (cross-prefix content match logic)
+	if result.Created < 1 {
+		t.Errorf("Expected at least 1 created issue, got %d", result.Created)
+	}
+
+	// PrefixMismatch should be false because all mismatches were tombstones
+	if result.PrefixMismatch {
+		t.Error("PrefixMismatch should be false when all mismatched prefixes are tombstones")
+	}
+
+	// Verify the good issue was imported
+	goodIssue, err := store.GetIssue(ctx, "bd-good1")
+	if err != nil {
+		t.Fatalf("Failed to get good issue: %v", err)
+	}
+	if goodIssue.Title != "Good issue" {
+		t.Errorf("Expected title 'Good issue', got %q", goodIssue.Title)
+	}
+}
+
+// TestImportMixedPrefixMismatch tests that import fails when there are non-tombstone
+// issues with wrong prefixes, even if some tombstones also have wrong prefixes.
+func TestImportMixedPrefixMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Configure database with "bd" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	deletedAt := time.Now().Add(-time.Hour)
+	issues := []*types.Issue{
+		// Normal issue with correct prefix
+		{
+			ID:        "bd-good1",
+			Title:     "Good issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		// Tombstone with wrong prefix (should be ignored)
+		{
+			ID:           "beads-old1",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+		// NON-tombstone with wrong prefix (should cause error)
+		{
+			ID:        "other-bad1",
+			Title:     "Bad issue with wrong prefix",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+	}
+
+	// Import should fail due to the non-tombstone with wrong prefix
+	_, err = ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err == nil {
+		t.Fatal("Import should fail when there are non-tombstone issues with wrong prefixes")
+	}
+
+	// Error message should mention prefix mismatch
+	if !strings.Contains(err.Error(), "prefix mismatch") {
+		t.Errorf("Error should mention prefix mismatch, got: %v", err)
 	}
 }

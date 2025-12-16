@@ -401,10 +401,14 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// JSONL doesn't exist but we have a stored hash - clear export_hashes
+			// JSONL doesn't exist but we have a stored hash - clear export_hashes and jsonl_file_hash
 			fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file missing but export_hashes exist. Clearing export_hashes.\n")
 			if err := store.ClearAllExportHashes(ctx); err != nil {
 				return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+			}
+			// Also clear jsonl_file_hash to prevent perpetual mismatch warnings (bd-admx)
+			if err := store.SetJSONLFileHash(ctx, ""); err != nil {
+				return false, fmt.Errorf("failed to clear jsonl_file_hash: %w", err)
 			}
 			return true, nil // Signal full export needed
 		}
@@ -421,10 +425,14 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected (bd-160)\n")
 		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
 		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
-		
+
 		// Clear export_hashes to force full re-export
 		if err := store.ClearAllExportHashes(ctx); err != nil {
 			return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+		}
+		// Also clear jsonl_file_hash to prevent perpetual mismatch warnings (bd-admx)
+		if err := store.SetJSONLFileHash(ctx, ""); err != nil {
+			return false, fmt.Errorf("failed to clear jsonl_file_hash: %w", err)
 		}
 		return true, nil // Signal full export needed
 	}

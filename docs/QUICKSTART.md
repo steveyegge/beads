@@ -260,4 +260,4 @@ See [DAEMON.md](DAEMON.md) for complete daemon management guide.
 - Search issues: `./bd list --status open`
 - Detect cycles: `./bd dep cycles`
 
-See [README.md](README.md) for full documentation.
+See [README.md](../README.md) for full documentation.

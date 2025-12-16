@@ -555,5 +555,5 @@ bd sync  # Force immediate sync, bypass debounce
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
 - [DAEMON.md](DAEMON.md) - Daemon management and event-driven mode
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflows and merge strategies
-- [LABELS.md](../LABELS.md) - Label system guide
+- [LABELS.md](LABELS.md) - Label system guide
 - [README.md](../README.md) - User documentation

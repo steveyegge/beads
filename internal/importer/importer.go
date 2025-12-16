@@ -151,13 +151,12 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 					continue
 				}
 
-				if del, found := loadResult.Records[issue.ID]; found {
+				if _, found := loadResult.Records[issue.ID]; found {
 					// Non-tombstone issue is in deletions manifest - skip it
 					// (this maintains backward compatibility during transition)
+					// Note: Individual skip messages removed (bd-wsqt) - caller shows summary
 					result.SkippedDeleted++
 					result.SkippedDeletedIDs = append(result.SkippedDeletedIDs, issue.ID)
-					fmt.Fprintf(os.Stderr, "Skipping %s (in deletions manifest: deleted %s by %s)\n",
-						issue.ID, del.Timestamp.Format("2006-01-02"), del.Actor)
 				} else {
 					filteredIssues = append(filteredIssues, issue)
 				}
@@ -181,7 +180,8 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	}
 
 	// Check and handle prefix mismatches
-	if err := handlePrefixMismatch(ctx, sqliteStore, issues, opts, result); err != nil {
+	issues, err = handlePrefixMismatch(ctx, sqliteStore, issues, opts, result)
+	if err != nil {
 		return result, err
 	}
 
@@ -259,48 +259,90 @@ func getOrCreateStore(ctx context.Context, dbPath string, store storage.Storage)
 	return sqliteStore, true, nil
 }
 
-// handlePrefixMismatch checks and handles prefix mismatches
-func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) error {
+// handlePrefixMismatch checks and handles prefix mismatches.
+// Returns a filtered issues slice with tombstoned issues having wrong prefixes removed (bd-6pni).
+func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options, result *Result) ([]*types.Issue, error) {
 	configuredPrefix, err := sqliteStore.GetConfig(ctx, "issue_prefix")
 	if err != nil {
-		return fmt.Errorf("failed to get configured prefix: %w", err)
+		return nil, fmt.Errorf("failed to get configured prefix: %w", err)
 	}
 
 	// Only validate prefixes if a prefix is configured
 	if strings.TrimSpace(configuredPrefix) == "" {
 		if opts.RenameOnImport {
-			return fmt.Errorf("cannot rename: issue_prefix not configured in database")
+			return nil, fmt.Errorf("cannot rename: issue_prefix not configured in database")
 		}
-		return nil
+		return issues, nil
 	}
 
 	result.ExpectedPrefix = configuredPrefix
 
 	// Analyze prefixes in imported issues
+	// Track tombstones separately - they don't count as "real" mismatches (bd-6pni)
+	tombstoneMismatchPrefixes := make(map[string]int)
+	nonTombstoneMismatchCount := 0
+
+	// Also track which tombstones have wrong prefixes for filtering
+	var filteredIssues []*types.Issue
+	var tombstonesToRemove []string
+
 	for _, issue := range issues {
 		prefix := utils.ExtractIssuePrefix(issue.ID)
 		if prefix != configuredPrefix {
-			result.PrefixMismatch = true
-			result.MismatchPrefixes[prefix]++
+			if issue.IsTombstone() {
+				tombstoneMismatchPrefixes[prefix]++
+				tombstonesToRemove = append(tombstonesToRemove, issue.ID)
+				// Don't add to filtered list - we'll remove these
+			} else {
+				result.PrefixMismatch = true
+				result.MismatchPrefixes[prefix]++
+				nonTombstoneMismatchCount++
+				filteredIssues = append(filteredIssues, issue)
+			}
+		} else {
+			// Correct prefix - keep the issue
+			filteredIssues = append(filteredIssues, issue)
 		}
 	}
 
-	// If prefix mismatch detected and not handling it, return error or warning
-	if result.PrefixMismatch && !opts.RenameOnImport && !opts.DryRun && !opts.SkipPrefixValidation {
-		return fmt.Errorf("prefix mismatch detected: database uses '%s-' but found issues with prefixes: %v (use --rename-on-import to automatically fix)", configuredPrefix, GetPrefixList(result.MismatchPrefixes))
+	// bd-6pni: If ALL mismatched prefix issues are tombstones, they're just pollution
+	// from contributor PRs that used different test prefixes. These are safe to remove.
+	if nonTombstoneMismatchCount == 0 && len(tombstoneMismatchPrefixes) > 0 {
+		// Log that we're ignoring tombstoned mismatches
+		var tombstonePrefixList []string
+		for prefix, count := range tombstoneMismatchPrefixes {
+			tombstonePrefixList = append(tombstonePrefixList, fmt.Sprintf("%s- (%d tombstones)", prefix, count))
+		}
+		fmt.Fprintf(os.Stderr, "Ignoring prefix mismatches (all are tombstones): %v\n", tombstonePrefixList)
+		// Clear mismatch flags - no real issues to worry about
+		result.PrefixMismatch = false
+		result.MismatchPrefixes = make(map[string]int)
+		// Return filtered list without the tombstones
+		return filteredIssues, nil
+	}
+
+	// If there are non-tombstone mismatches, we need to include all issues (tombstones too)
+	// but still report the error for non-tombstones
+	if result.PrefixMismatch {
+		// If not handling the mismatch, return error
+		if !opts.RenameOnImport && !opts.DryRun && !opts.SkipPrefixValidation {
+			return nil, fmt.Errorf("prefix mismatch detected: database uses '%s-' but found issues with prefixes: %v (use --rename-on-import to automatically fix)", configuredPrefix, GetPrefixList(result.MismatchPrefixes))
+		}
 	}
 
 	// Handle rename-on-import if requested
 	if result.PrefixMismatch && opts.RenameOnImport && !opts.DryRun {
 		if err := RenameImportedIssuePrefixes(issues, configuredPrefix); err != nil {
-			return fmt.Errorf("failed to rename prefixes: %w", err)
+			return nil, fmt.Errorf("failed to rename prefixes: %w", err)
 		}
 		// After renaming, clear the mismatch flags since we fixed them
 		result.PrefixMismatch = false
 		result.MismatchPrefixes = make(map[string]int)
+		return issues, nil
 	}
 
-	return nil
+	// Return original issues if no filtering needed
+	return issues, nil
 }
 
 // detectUpdates detects same-ID scenarios (which are updates with hash IDs, not collisions)
@@ -593,8 +635,18 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 				// Exact match (same content, same ID) - idempotent case
 				result.Unchanged++
 			} else {
-				// Same content, different ID - rename detected
-				if !opts.SkipUpdate {
+				// Same content, different ID - check if this is a rename or cross-prefix duplicate
+				existingPrefix := utils.ExtractIssuePrefix(existing.ID)
+				incomingPrefix := utils.ExtractIssuePrefix(incoming.ID)
+
+				if existingPrefix != incomingPrefix {
+					// Cross-prefix content match: same content but different projects/prefixes.
+					// This is NOT a rename - it's a duplicate from another project.
+					// Skip the incoming issue and keep the existing one unchanged.
+					// Calling handleRename would fail because CreateIssue validates prefix.
+					result.Skipped++
+				} else if !opts.SkipUpdate {
+					// Same prefix, different ID suffix - this is a true rename
 					deletedID, err := handleRename(ctx, sqliteStore, existing, incoming)
 					if err != nil {
 						return fmt.Errorf("failed to handle rename %s -> %s: %w", existing.ID, incoming.ID, err)
@@ -1025,14 +1077,17 @@ func purgeDeletedIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, 
 			}
 
 			// Backfill the deletions manifest (self-healing)
-			backfillRecord := deletions.DeletionRecord{
-				ID:        id,
-				Timestamp: time.Now().UTC(),
-				Actor:     "git-history-backfill",
-				Reason:    "recovered from git history (pruned from manifest)",
-			}
-			if err := deletions.AppendDeletion(deletionsPath, backfillRecord); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to backfill deletion record for %s: %v\n", id, err)
+			// bd-ffr9: Skip writing to deletions.jsonl if tombstone migration is complete
+			if !deletions.IsTombstoneMigrationComplete(beadsDir) {
+				backfillRecord := deletions.DeletionRecord{
+					ID:        id,
+					Timestamp: time.Now().UTC(),
+					Actor:     "git-history-backfill",
+					Reason:    "recovered from git history (pruned from manifest)",
+				}
+				if err := deletions.AppendDeletion(deletionsPath, backfillRecord); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to backfill deletion record for %s: %v\n", id, err)
+				}
 			}
 
 			// Convert to tombstone (bd-dve)

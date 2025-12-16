@@ -290,6 +290,38 @@ func TestDefaultPath(t *testing.T) {
 	}
 }
 
+func TestIsTombstoneMigrationComplete(t *testing.T) {
+	t.Run("no migrated file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected false when no .migrated file exists")
+		}
+	})
+
+	t.Run("migrated file exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		migratedPath := filepath.Join(tmpDir, "deletions.jsonl.migrated")
+		if err := os.WriteFile(migratedPath, []byte("{}"), 0644); err != nil {
+			t.Fatalf("failed to create migrated file: %v", err)
+		}
+		if !IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected true when .migrated file exists")
+		}
+	})
+
+	t.Run("deletions.jsonl exists without migrated", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+		if err := os.WriteFile(deletionsPath, []byte("{}"), 0644); err != nil {
+			t.Fatalf("failed to create deletions file: %v", err)
+		}
+		// Should return false because the .migrated marker doesn't exist
+		if IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected false when only deletions.jsonl exists (not migrated)")
+		}
+	})
+}
+
 func TestLoadDeletions_EmptyLines(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "deletions.jsonl")
@@ -606,5 +638,224 @@ func TestCount_WithEmptyLines(t *testing.T) {
 	// Should count only non-empty lines
 	if count != 2 {
 		t.Errorf("expected 2 (excluding empty lines), got %d", count)
+	}
+}
+
+// Tests for RemoveDeletions (bd-8v5o)
+
+func TestRemoveDeletions_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	// Remove from non-existent file should succeed
+	result, err := RemoveDeletions(path, []string{"bd-001"})
+	if err != nil {
+		t.Fatalf("RemoveDeletions should not fail on non-existent file: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed, got %d", result.RemovedCount)
+	}
+	if result.KeptCount != 0 {
+		t.Errorf("expected 0 kept, got %d", result.KeptCount)
+	}
+}
+
+func TestRemoveDeletions_EmptyIDList(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+	}
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Remove with empty ID list should be a no-op
+	result, err := RemoveDeletions(path, []string{})
+	if err != nil {
+		t.Fatalf("RemoveDeletions failed: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed with empty list, got %d", result.RemovedCount)
+	}
+
+	// Verify file unchanged
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 2 {
+		t.Errorf("expected 2 records unchanged, got %d", len(loaded.Records))
+	}
+}
+
+func TestRemoveDeletions_SomeMatches(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+		{ID: "bd-003", Timestamp: now, Actor: "user3"},
+	}
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Remove bd-001 and bd-003
+	result, err := RemoveDeletions(path, []string{"bd-001", "bd-003"})
+	if err != nil {
+		t.Fatalf("RemoveDeletions failed: %v", err)
+	}
+	if result.RemovedCount != 2 {
+		t.Errorf("expected 2 removed, got %d", result.RemovedCount)
+	}
+	if result.KeptCount != 1 {
+		t.Errorf("expected 1 kept, got %d", result.KeptCount)
+	}
+
+	// Verify removed IDs
+	removedMap := make(map[string]bool)
+	for _, id := range result.RemovedIDs {
+		removedMap[id] = true
+	}
+	if !removedMap["bd-001"] || !removedMap["bd-003"] {
+		t.Errorf("expected bd-001 and bd-003 to be removed, got %v", result.RemovedIDs)
+	}
+
+	// Verify file was updated
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 1 {
+		t.Errorf("expected 1 record after removal, got %d", len(loaded.Records))
+	}
+	if _, ok := loaded.Records["bd-002"]; !ok {
+		t.Error("expected bd-002 to remain")
+	}
+}
+
+func TestRemoveDeletions_AllMatches(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+	}
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Remove all records
+	result, err := RemoveDeletions(path, []string{"bd-001", "bd-002"})
+	if err != nil {
+		t.Fatalf("RemoveDeletions failed: %v", err)
+	}
+	if result.RemovedCount != 2 {
+		t.Errorf("expected 2 removed, got %d", result.RemovedCount)
+	}
+	if result.KeptCount != 0 {
+		t.Errorf("expected 0 kept, got %d", result.KeptCount)
+	}
+
+	// Verify file is empty
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 0 {
+		t.Errorf("expected 0 records after removal, got %d", len(loaded.Records))
+	}
+}
+
+func TestRemoveDeletions_NoMatches(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+	}
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Try to remove IDs that don't exist
+	result, err := RemoveDeletions(path, []string{"bd-999", "bd-888"})
+	if err != nil {
+		t.Fatalf("RemoveDeletions failed: %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Errorf("expected 0 removed (no matches), got %d", result.RemovedCount)
+	}
+	if result.KeptCount != 2 {
+		t.Errorf("expected 2 kept, got %d", result.KeptCount)
+	}
+
+	// Verify file unchanged
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 2 {
+		t.Errorf("expected 2 records unchanged, got %d", len(loaded.Records))
+	}
+}
+
+func TestRemoveDeletions_MixedExistingAndNonExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	now := time.Now()
+	records := []DeletionRecord{
+		{ID: "bd-001", Timestamp: now, Actor: "user1"},
+		{ID: "bd-002", Timestamp: now, Actor: "user2"},
+		{ID: "bd-003", Timestamp: now, Actor: "user3"},
+	}
+	for _, r := range records {
+		if err := AppendDeletion(path, r); err != nil {
+			t.Fatalf("AppendDeletion failed: %v", err)
+		}
+	}
+
+	// Try to remove mix of existing and non-existing IDs
+	result, err := RemoveDeletions(path, []string{"bd-001", "bd-999", "bd-003"})
+	if err != nil {
+		t.Fatalf("RemoveDeletions failed: %v", err)
+	}
+	// Only bd-001 and bd-003 should be removed
+	if result.RemovedCount != 2 {
+		t.Errorf("expected 2 removed, got %d", result.RemovedCount)
+	}
+	if result.KeptCount != 1 {
+		t.Errorf("expected 1 kept, got %d", result.KeptCount)
+	}
+
+	// Verify only bd-002 remains
+	loaded, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+	if len(loaded.Records) != 1 {
+		t.Errorf("expected 1 record, got %d", len(loaded.Records))
+	}
+	if _, ok := loaded.Records["bd-002"]; !ok {
+		t.Error("expected bd-002 to remain")
 	}
 }

@@ -181,6 +181,17 @@ func DefaultPath(beadsDir string) string {
 	return filepath.Join(beadsDir, "deletions.jsonl")
 }
 
+// IsTombstoneMigrationComplete checks if the tombstone migration has been completed.
+// After running `bd migrate-tombstones`, the deletions.jsonl file is archived to
+// deletions.jsonl.migrated. This function checks for that marker file.
+// When migration is complete, new deletion records should NOT be written to
+// deletions.jsonl (bd-ffr9).
+func IsTombstoneMigrationComplete(beadsDir string) bool {
+	migratedPath := filepath.Join(beadsDir, "deletions.jsonl.migrated")
+	_, err := os.Stat(migratedPath)
+	return err == nil
+}
+
 // Count returns the number of lines in the deletions manifest.
 // This is a fast operation that doesn't parse JSON, just counts lines.
 // Returns 0 if the file doesn't exist or is empty.
@@ -261,6 +272,68 @@ func PruneDeletions(path string, retentionDays int) (*PruneResult, error) {
 	if result.PrunedCount > 0 {
 		if err := WriteDeletions(path, kept); err != nil {
 			return nil, fmt.Errorf("failed to write pruned deletions: %w", err)
+		}
+	}
+
+	return result, nil
+}
+
+// RemoveResult contains the result of a remove operation.
+type RemoveResult struct {
+	RemovedCount int
+	RemovedIDs   []string
+	KeptCount    int
+}
+
+// RemoveDeletions removes specific IDs from the deletions manifest.
+// This is used when issues are hydrated from git history to prevent
+// perpetual skip warnings during sync.
+// If the file doesn't exist or is empty, returns zero counts with no error.
+func RemoveDeletions(path string, idsToRemove []string) (*RemoveResult, error) {
+	result := &RemoveResult{
+		RemovedIDs: []string{},
+	}
+
+	if len(idsToRemove) == 0 {
+		return result, nil
+	}
+
+	loadResult, err := LoadDeletions(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load deletions: %w", err)
+	}
+
+	if len(loadResult.Records) == 0 {
+		return result, nil
+	}
+
+	// Build a set of IDs to remove for O(1) lookup
+	removeSet := make(map[string]bool)
+	for _, id := range idsToRemove {
+		removeSet[id] = true
+	}
+
+	// Filter out the IDs to remove
+	var kept []DeletionRecord
+	for id, record := range loadResult.Records {
+		if removeSet[id] {
+			result.RemovedCount++
+			result.RemovedIDs = append(result.RemovedIDs, id)
+		} else {
+			kept = append(kept, record)
+		}
+	}
+
+	result.KeptCount = len(kept)
+
+	// Only rewrite if we actually removed something
+	if result.RemovedCount > 0 {
+		// Sort for deterministic output
+		sort.Slice(kept, func(i, j int) bool {
+			return kept[i].ID < kept[j].ID
+		})
+		if err := WriteDeletions(path, kept); err != nil {
+			return nil, fmt.Errorf("failed to write updated deletions: %w", err)
 		}
 	}
 

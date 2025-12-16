@@ -216,7 +216,7 @@ bd config set max_collision_prob "0.01"
 bd config set min_hash_length "5"
 ```
 
-See [docs/ADAPTIVE_IDS.md](docs/ADAPTIVE_IDS.md) for detailed documentation.
+See [ADAPTIVE_IDS.md](ADAPTIVE_IDS.md) for detailed documentation.
 
 ### Example: Export Error Handling
 
@@ -460,6 +460,5 @@ External integration scripts can read configuration to sync with Jira, Linear, G
 
 ## See Also
 
-- [README.md](README.md) - Main documentation
+- [README.md](../README.md) - Main documentation
 - [EXTENDING.md](EXTENDING.md) - Database schema and compaction config
-- [examples/integrations/](examples/integrations/) - Integration examples

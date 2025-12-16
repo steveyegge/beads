@@ -365,7 +365,7 @@ Understanding the role of each component:
 
 ## Next Steps
 
-- **[README.md](README.md)** - Core features and quick start
+- **[README.md](../README.md)** - Core features and quick start
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[FAQ.md](FAQ.md)** - Frequently asked questions
 - **[CONFIG.md](CONFIG.md)** - Configuration system guide
