@@ -404,12 +404,18 @@ func TestCreateIssues(t *testing.T) {
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-			name: "closed_at invariant - closed status without closed_at",
+			name: "closed_at invariant - closed status without closed_at auto-sets it (GH#523)",
 			issues: []*types.Issue{
 				h.newIssue("", "Missing closed_at", types.StatusClosed, 1, types.TypeTask, nil),
 			},
-			wantErr: true,
-			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
+			wantErr: false, // Defensive fix auto-sets closed_at instead of rejecting
+			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
+				h.assertCount(issues, 1)
+				h.assertEqual(types.StatusClosed, issues[0].Status, "status")
+				if issues[0].ClosedAt == nil {
+					t.Error("ClosedAt should be auto-set for closed issues (GH#523 defensive fix)")
+				}
+			},
 		},
 		{
 			name: "nil item in batch",
@@ -807,17 +813,20 @@ func TestClosedAtInvariant(t *testing.T) {
 		}
 	})
 
-	t.Run("CreateIssue rejects closed issue without closed_at", func(t *testing.T) {
+	t.Run("CreateIssue auto-sets closed_at for closed issue (GH#523)", func(t *testing.T) {
 		issue := &types.Issue{
 			Title:     "Test",
 			Status:    types.StatusClosed,
 			Priority:  2,
 			IssueType: types.TypeTask,
-			ClosedAt:  nil, // Invalid: closed without closed_at
+			ClosedAt:  nil, // Defensive fix should auto-set this
 		}
 		err := store.CreateIssue(ctx, issue, "test-user")
-		if err == nil {
-			t.Error("CreateIssue should reject closed issue without closed_at")
+		if err != nil {
+			t.Errorf("CreateIssue should auto-set closed_at (GH#523 defensive fix), got error: %v", err)
+		}
+		if issue.ClosedAt == nil {
+			t.Error("ClosedAt should be auto-set for closed issues (GH#523 defensive fix)")
 		}
 	})
 
