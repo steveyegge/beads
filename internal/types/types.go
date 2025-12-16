@@ -35,10 +35,18 @@ type Issue struct {
 	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
 	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
 	// Tombstone fields (bd-vw8): inline soft-delete support
-	DeletedAt     *time.Time `json:"deleted_at,omitempty"`     // When the issue was deleted
-	DeletedBy     string     `json:"deleted_by,omitempty"`     // Who deleted the issue
-	DeleteReason  string     `json:"delete_reason,omitempty"`  // Why the issue was deleted
-	OriginalType  string     `json:"original_type,omitempty"`  // Issue type before deletion (for tombstones)
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When the issue was deleted
+	DeletedBy    string     `json:"deleted_by,omitempty"`    // Who deleted the issue
+	DeleteReason string     `json:"delete_reason,omitempty"` // Why the issue was deleted
+	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion (for tombstones)
+
+	// Messaging fields (bd-kwro): inter-agent communication support
+	Sender       string   `json:"sender,omitempty"`        // Who sent this (for messages)
+	Ephemeral    bool     `json:"ephemeral,omitempty"`     // Can be bulk-deleted when closed
+	RepliesTo    string   `json:"replies_to,omitempty"`    // Issue ID for conversation threading
+	RelatesTo    []string `json:"relates_to,omitempty"`    // Issue IDs for knowledge graph edges
+	DuplicateOf  string   `json:"duplicate_of,omitempty"`  // Canonical issue ID (this is a duplicate)
+	SupersededBy string   `json:"superseded_by,omitempty"` // Replacement issue ID (this is obsolete)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -205,12 +213,13 @@ const (
 	TypeTask    IssueType = "task"
 	TypeEpic    IssueType = "epic"
 	TypeChore   IssueType = "chore"
+	TypeMessage IssueType = "message" // Ephemeral communication between workers
 )
 
 // IsValid checks if the issue type value is valid
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage:
 		return true
 	}
 	return false
@@ -254,12 +263,18 @@ const (
 	DepRelated        DependencyType = "related"
 	DepParentChild    DependencyType = "parent-child"
 	DepDiscoveredFrom DependencyType = "discovered-from"
+	// Graph link types (bd-kwro)
+	DepRepliesTo   DependencyType = "replies-to"   // Conversation threading
+	DepRelatesTo   DependencyType = "relates-to"   // Loose knowledge graph edges
+	DepDuplicates  DependencyType = "duplicates"   // Deduplication link
+	DepSupersedes  DependencyType = "supersedes"   // Version chain link
 )
 
 // IsValid checks if the dependency type value is valid
 func (d DependencyType) IsValid() bool {
 	switch d {
-	case DepBlocks, DepRelated, DepParentChild, DepDiscoveredFrom:
+	case DepBlocks, DepRelated, DepParentChild, DepDiscoveredFrom,
+		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes:
 		return true
 	}
 	return false

@@ -28,6 +28,32 @@ func parseNullableTimeString(ns sql.NullString) *time.Time {
 	return nil // Unparseable - shouldn't happen with valid data
 }
 
+// parseJSONStringArray parses a JSON string array from database TEXT column.
+// Returns empty slice if the string is empty or invalid JSON.
+func parseJSONStringArray(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		return nil // Invalid JSON - shouldn't happen with valid data
+	}
+	return result
+}
+
+// formatJSONStringArray formats a string slice as JSON for database storage.
+// Returns empty string if the slice is nil or empty.
+func formatJSONStringArray(arr []string) string {
+	if len(arr) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(arr)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
 // no longer needed with hash-based IDs
 // Migration functions moved to migrations.go (bd-fc2d, bd-b245)
@@ -206,6 +232,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
+	// Messaging fields (bd-kwro)
+	var sender sql.NullString
+	var ephemeral sql.NullInt64
+	var repliesTo sql.NullString
+	var relatesTo sql.NullString
+	var duplicateOf sql.NullString
+	var supersededBy sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -214,7 +247,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -224,6 +258,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
+		&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
 	)
 
 	if err == sql.ErrNoRows {
@@ -273,6 +308,25 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
+	}
+	// Messaging fields (bd-kwro)
+	if sender.Valid {
+		issue.Sender = sender.String
+	}
+	if ephemeral.Valid && ephemeral.Int64 != 0 {
+		issue.Ephemeral = true
+	}
+	if repliesTo.Valid {
+		issue.RepliesTo = repliesTo.String
+	}
+	if relatesTo.Valid && relatesTo.String != "" {
+		issue.RelatesTo = parseJSONStringArray(relatesTo.String)
+	}
+	if duplicateOf.Valid {
+		issue.DuplicateOf = duplicateOf.String
+	}
+	if supersededBy.Valid {
+		issue.SupersededBy = supersededBy.String
 	}
 
 	// Fetch labels for this issue
@@ -377,13 +431,21 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
+	// Messaging fields (bd-kwro)
+	var sender sql.NullString
+	var ephemeral sql.NullInt64
+	var repliesTo sql.NullString
+	var relatesTo sql.NullString
+	var duplicateOf sql.NullString
+	var supersededBy sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -393,6 +455,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
+		&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
 	)
 
 	if err == sql.ErrNoRows {
@@ -443,6 +506,25 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
 	}
+	// Messaging fields (bd-kwro)
+	if sender.Valid {
+		issue.Sender = sender.String
+	}
+	if ephemeral.Valid && ephemeral.Int64 != 0 {
+		issue.Ephemeral = true
+	}
+	if repliesTo.Valid {
+		issue.RepliesTo = repliesTo.String
+	}
+	if relatesTo.Valid && relatesTo.String != "" {
+		issue.RelatesTo = parseJSONStringArray(relatesTo.String)
+	}
+	if duplicateOf.Valid {
+		issue.DuplicateOf = duplicateOf.String
+	}
+	if supersededBy.Valid {
+		issue.SupersededBy = supersededBy.String
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -468,6 +550,13 @@ var allowedUpdateFields = map[string]bool{
 	"estimated_minutes":   true,
 	"external_ref":        true,
 	"closed_at":           true,
+	// Messaging fields (bd-kwro)
+	"sender":        true,
+	"ephemeral":     true,
+	"replies_to":    true,
+	"relates_to":    true,
+	"duplicate_of":  true,
+	"superseded_by": true,
 }
 
 // validatePriority validates a priority value
@@ -1479,7 +1568,8 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

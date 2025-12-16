@@ -100,7 +100,8 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
-		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type
+		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
+		i.sender, i.ephemeral, i.replies_to, i.relates_to, i.duplicate_of, i.superseded_by
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (
@@ -128,7 +129,8 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, updated_at, closed_at, external_ref, source_repo,
 			compaction_level, compacted_at, compacted_at_commit, original_size, close_reason,
-			deleted_at, deleted_by, delete_reason, original_type
+			deleted_at, deleted_by, delete_reason, original_type,
+			sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
 		FROM issues
 		WHERE status != 'closed'
 		  AND datetime(updated_at) < datetime('now', '-' || ? || ' days')
@@ -174,6 +176,13 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
+		// Messaging fields (bd-kwro)
+		var sender sql.NullString
+		var ephemeral sql.NullInt64
+		var repliesTo sql.NullString
+		var relatesTo sql.NullString
+		var duplicateOf sql.NullString
+		var supersededBy sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -182,6 +191,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&compactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
+			&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan stale issue: %w", err)
@@ -230,6 +240,25 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		}
 		if originalType.Valid {
 			issue.OriginalType = originalType.String
+		}
+		// Messaging fields (bd-kwro)
+		if sender.Valid {
+			issue.Sender = sender.String
+		}
+		if ephemeral.Valid && ephemeral.Int64 != 0 {
+			issue.Ephemeral = true
+		}
+		if repliesTo.Valid {
+			issue.RepliesTo = repliesTo.String
+		}
+		if relatesTo.Valid && relatesTo.String != "" {
+			issue.RelatesTo = parseJSONStringArray(relatesTo.String)
+		}
+		if duplicateOf.Valid {
+			issue.DuplicateOf = duplicateOf.String
+		}
+		if supersededBy.Valid {
+			issue.SupersededBy = supersededBy.String
 		}
 
 		issues = append(issues, &issue)

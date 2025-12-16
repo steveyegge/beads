@@ -35,6 +35,7 @@ var migrationsList = []Migration{
 	{"orphan_detection", migrations.MigrateOrphanDetection},
 	{"close_reason_column", migrations.MigrateCloseReasonColumn},
 	{"tombstone_columns", migrations.MigrateTombstoneColumns},
+	{"messaging_fields", migrations.MigrateMessagingFields},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -77,6 +78,7 @@ func getMigrationDescription(name string) string {
 		"orphan_detection":             "Detects orphaned child issues and logs them for user action (bd-3852)",
 		"close_reason_column":          "Adds close_reason column to issues table for storing closure explanations (bd-uyu)",
 		"tombstone_columns":            "Adds tombstone columns (deleted_at, deleted_by, delete_reason, original_type) for inline soft-delete (bd-vw8)",
+		"messaging_fields":             "Adds messaging fields (sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by) for inter-agent communication (bd-kwro)",
 	}
 	
 	if desc, ok := descriptions[name]; ok {

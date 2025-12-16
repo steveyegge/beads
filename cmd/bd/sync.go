@@ -2064,7 +2064,7 @@ type OrphanedChildren struct {
 // bd-hlsw.1: Detects forced pushes, prefix mismatches, and orphaned children.
 func showSyncIntegrityCheck(ctx context.Context, jsonlPath string) error {
 	fmt.Println("Sync Integrity Check")
-	fmt.Println("====================\n")
+	fmt.Println("====================")
 
 	result := &SyncIntegrityResult{}
 
