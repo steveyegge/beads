@@ -2,7 +2,6 @@ package git
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -78,48 +77,30 @@ func IsWorktree() bool {
 // GetMainRepoRoot returns the main repository root directory.
 // When in a worktree, this returns the main repository root.
 // Otherwise, it returns the regular repository root.
+//
+// For nested worktrees (worktrees located under the main repo, e.g.,
+// /project/.worktrees/feature/), this correctly returns the main repo
+// root (/project/) by using git rev-parse --git-common-dir which always
+// points to the main repo's .git directory. (GH#509)
 func GetMainRepoRoot() (string, error) {
-	if IsWorktree() {
-		// In worktree: read .git file to find main repo
-		gitFileContent := getGitDirNoError("--git-dir")
-		if gitFileContent == "" {
-			return "", fmt.Errorf("not a git repository")
-		}
-
-		// If gitFileContent contains "worktrees", it's a worktree path
-		// Read the .git file to get the main git dir
-		if strings.Contains(gitFileContent, "worktrees") {
-			content, err := exec.Command("cat", ".git").Output()
-			if err == nil {
-				line := strings.TrimSpace(string(content))
-				if strings.HasPrefix(line, "gitdir: ") {
-					gitDir := strings.TrimPrefix(line, "gitdir: ")
-					// Remove /worktrees/* part
-					if idx := strings.Index(gitDir, "/worktrees/"); idx > 0 {
-						gitDir = gitDir[:idx]
-					}
-					return filepath.Dir(gitDir), nil
-				}
-			}
-		}
-
-		// Fallback: use --git-common-dir with validation
-		commonDir := getGitDirNoError("--git-common-dir")
-		if commonDir != "" {
-			// Validate that commonDir exists
-			if info, err := os.Stat(commonDir); err == nil && info.IsDir() {
-				return filepath.Dir(commonDir), nil
-			}
-		}
-
-		return "", fmt.Errorf("unable to determine main repository root")
-	} else {
-		gitDir, err := GetGitDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Dir(gitDir), nil
+	// Use --git-common-dir which always returns the main repo's .git directory,
+	// even when running from within a worktree or its subdirectories.
+	// This is the most reliable method for finding the main repo root.
+	commonDir := getGitDirNoError("--git-common-dir")
+	if commonDir == "" {
+		return "", fmt.Errorf("not a git repository")
 	}
+
+	// Convert to absolute path to handle relative paths correctly
+	absCommonDir, err := filepath.Abs(commonDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve common dir path: %w", err)
+	}
+
+	// The main repo root is the parent of the .git directory
+	mainRepoRoot := filepath.Dir(absCommonDir)
+
+	return mainRepoRoot, nil
 }
 
 // getGitDirNoError is a helper that returns empty string on error

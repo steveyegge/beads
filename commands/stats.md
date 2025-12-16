@@ -13,5 +13,5 @@ Use the beads MCP `stats` tool to retrieve project metrics and present them clea
 
 Optionally suggest actions based on the stats:
 - High number of blocked issues? Run `/bd-blocked` to investigate
-- No in-progress work? Run `/bd-ready` to find tasks
+- No in_progress work? Run `/bd-ready` to find tasks
 - Many open issues? Consider prioritizing with `/bd-update`

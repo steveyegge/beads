@@ -262,7 +262,7 @@ This pattern has proven invaluable for maintaining database hygiene and preventi
 
 **1. File/update issues for remaining work**
 - Agents should proactively create issues for discovered bugs, TODOs, and follow-up tasks
-- Close completed issues and update status for in-progress work
+- Close completed issues and update status for in_progress work
 
 **2. Run quality gates (if applicable)**
 - Tests, linters, builds - only if code changes were made

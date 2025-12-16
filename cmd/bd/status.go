@@ -45,7 +45,7 @@ var statusCmd = &cobra.Command{
 	Short: "Show issue database overview",
 	Long: `Show a quick snapshot of the issue database state.
 
-This command provides a summary of issue counts by state (open, in-progress,
+This command provides a summary of issue counts by state (open, in_progress,
 blocked, closed), ready work, and recent activity over the last 24 hours from git history.
 
 Similar to how 'git status' shows working tree state, 'bd status' gives you
