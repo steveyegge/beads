@@ -457,8 +457,8 @@ func TestPruneExpiredTombstones(t *testing.T) {
 	defer func() { dbPath = originalDBPath }()
 	dbPath = filepath.Join(beadsDir, "beads.db")
 
-	// Run pruning
-	result, err := pruneExpiredTombstones()
+	// Run pruning (0 = use default TTL)
+	result, err := pruneExpiredTombstones(0)
 	if err != nil {
 		t.Fatalf("pruneExpiredTombstones failed: %v", err)
 	}
@@ -551,8 +551,8 @@ func TestPruneExpiredTombstones_NoTombstones(t *testing.T) {
 	defer func() { dbPath = originalDBPath }()
 	dbPath = filepath.Join(beadsDir, "beads.db")
 
-	// Run pruning - should return zero pruned
-	result, err := pruneExpiredTombstones()
+	// Run pruning - should return zero pruned (0 = use default TTL)
+	result, err := pruneExpiredTombstones(0)
 	if err != nil {
 		t.Fatalf("pruneExpiredTombstones failed: %v", err)
 	}

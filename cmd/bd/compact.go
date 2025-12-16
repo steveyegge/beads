@@ -313,7 +313,7 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 	pruneDeletionsManifest()
 
 	// Prune expired tombstones (bd-okh)
-	if tombstonePruneResult, err := pruneExpiredTombstones(); err != nil {
+	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
 	} else if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
 		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
@@ -448,7 +448,7 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	pruneDeletionsManifest()
 
 	// Prune expired tombstones (bd-okh)
-	if tombstonePruneResult, err := pruneExpiredTombstones(); err != nil {
+	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
 	} else if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
 		fmt.Printf("\nTombstones pruned: %d expired (older than %d days)\n",
@@ -894,7 +894,7 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	pruneResult, retentionDays := pruneDeletionsManifest()
 
 	// Prune expired tombstones from issues.jsonl (bd-okh)
-	tombstonePruneResult, tombstoneErr := pruneExpiredTombstones()
+	tombstonePruneResult, tombstoneErr := pruneExpiredTombstones(0)
 	if tombstoneErr != nil && !jsonOutput {
 		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", tombstoneErr)
 	}
@@ -990,7 +990,9 @@ type TombstonePruneResult struct {
 
 // pruneExpiredTombstones reads issues.jsonl, removes expired tombstones,
 // and writes back the pruned file. Returns the prune result.
-func pruneExpiredTombstones() (*TombstonePruneResult, error) {
+// If customTTL is > 0, it overrides the default TTL (bypasses MinTombstoneTTL safety).
+// If customTTL is 0, uses DefaultTombstoneTTL.
+func pruneExpiredTombstones(customTTL time.Duration) (*TombstonePruneResult, error) {
 	beadsDir := filepath.Dir(dbPath)
 	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 
@@ -1023,8 +1025,11 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 		return nil, fmt.Errorf("failed to close issues file: %w", err)
 	}
 
-	// Determine TTL
+	// Determine TTL - customTTL > 0 overrides default (for --hard mode)
 	ttl := types.DefaultTombstoneTTL
+	if customTTL > 0 {
+		ttl = customTTL
+	}
 	ttlDays := int(ttl.Hours() / 24)
 
 	// Filter out expired tombstones
@@ -1080,7 +1085,9 @@ func pruneExpiredTombstones() (*TombstonePruneResult, error) {
 
 // previewPruneTombstones checks what tombstones would be pruned without modifying files.
 // Used for dry-run mode in cleanup command (bd-08ea).
-func previewPruneTombstones() (*TombstonePruneResult, error) {
+// If customTTL is > 0, it overrides the default TTL (bypasses MinTombstoneTTL safety).
+// If customTTL is 0, uses DefaultTombstoneTTL.
+func previewPruneTombstones(customTTL time.Duration) (*TombstonePruneResult, error) {
 	beadsDir := filepath.Dir(dbPath)
 	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 
@@ -1111,8 +1118,11 @@ func previewPruneTombstones() (*TombstonePruneResult, error) {
 		allIssues = append(allIssues, &issue)
 	}
 
-	// Determine TTL
+	// Determine TTL - customTTL > 0 overrides default (for --hard mode)
 	ttl := types.DefaultTombstoneTTL
+	if customTTL > 0 {
+		ttl = customTTL
+	}
 	ttlDays := int(ttl.Hours() / 24)
 
 	// Count expired tombstones

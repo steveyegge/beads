@@ -11,6 +11,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// Hard delete mode: bypass tombstone TTL safety, use --older-than days directly
+
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
 	Short: "Delete closed issues and prune expired tombstones",
@@ -25,6 +27,14 @@ It does NOT remove temporary files - use 'bd clean' for that.
 By default, deletes ALL closed issues. Use --older-than to only delete
 issues closed before a certain date.
 
+HARD DELETE MODE:
+Use --hard to bypass the 30-day tombstone safety period. When combined with
+--older-than, tombstones older than N days are permanently removed from JSONL.
+This is useful for cleaning house when you know old clones won't resurrect issues.
+
+WARNING: --hard bypasses sync safety. Deleted issues may resurrect if an old
+clone syncs before you've cleaned up all clones.
+
 EXAMPLES:
 Delete all closed issues and prune tombstones:
   bd cleanup --force
@@ -35,6 +45,9 @@ Delete issues closed more than 30 days ago:
 Preview what would be deleted/pruned:
   bd cleanup --dry-run
   bd cleanup --older-than 90 --dry-run
+
+Hard delete: permanently remove issues/tombstones older than 3 days:
+  bd cleanup --older-than 3 --hard --force
 
 SAFETY:
 - Requires --force flag to actually delete (unless --dry-run)
@@ -50,6 +63,23 @@ SEE ALSO:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		cascade, _ := cmd.Flags().GetBool("cascade")
 		olderThanDays, _ := cmd.Flags().GetInt("older-than")
+		hardDelete, _ := cmd.Flags().GetBool("hard")
+
+		// Calculate custom TTL for --hard mode
+		// When --hard is set, use --older-than days as the tombstone TTL cutoff
+		// This bypasses the default 30-day tombstone safety period
+		var customTTL time.Duration
+		if hardDelete {
+			if olderThanDays > 0 {
+				customTTL = time.Duration(olderThanDays) * 24 * time.Hour
+			} else {
+				// --hard without --older-than: prune ALL tombstones (use 1 second TTL)
+				customTTL = time.Second
+			}
+			if !jsonOutput && !dryRun {
+				fmt.Println(color.YellowString("⚠️  HARD DELETE MODE: Bypassing tombstone TTL safety"))
+			}
+		}
 
 		// Ensure we have storage
 		if daemonClient != nil {
@@ -135,22 +165,27 @@ SEE ALSO:
 
 		// Also prune expired tombstones (bd-08ea)
 		// This runs after closed issues are converted to tombstones, cleaning up old ones
+		// In --hard mode, customTTL overrides the default 30-day TTL
 		if dryRun {
 			// Preview what tombstones would be pruned
-			tombstoneResult, err := previewPruneTombstones()
+			tombstoneResult, err := previewPruneTombstones(customTTL)
 			if err != nil {
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Warning: failed to check tombstones: %v\n", err)
 				}
 			} else if tombstoneResult != nil && tombstoneResult.PrunedCount > 0 {
 				if !jsonOutput {
-					fmt.Printf("\nExpired tombstones that would be pruned: %d (older than %d days)\n",
-						tombstoneResult.PrunedCount, tombstoneResult.TTLDays)
+					ttlMsg := fmt.Sprintf("older than %d days", tombstoneResult.TTLDays)
+					if hardDelete && olderThanDays == 0 {
+						ttlMsg = "all tombstones (--hard mode)"
+					}
+					fmt.Printf("\nExpired tombstones that would be pruned: %d (%s)\n",
+						tombstoneResult.PrunedCount, ttlMsg)
 				}
 			}
 		} else if force {
 			// Actually prune expired tombstones
-			tombstoneResult, err := pruneExpiredTombstones()
+			tombstoneResult, err := pruneExpiredTombstones(customTTL)
 			if err != nil {
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
@@ -158,8 +193,12 @@ SEE ALSO:
 			} else if tombstoneResult != nil && tombstoneResult.PrunedCount > 0 {
 				if !jsonOutput {
 					green := color.New(color.FgGreen).SprintFunc()
-					fmt.Printf("\n%s Pruned %d expired tombstone(s) (older than %d days)\n",
-						green("✓"), tombstoneResult.PrunedCount, tombstoneResult.TTLDays)
+					ttlMsg := fmt.Sprintf("older than %d days", tombstoneResult.TTLDays)
+					if hardDelete && olderThanDays == 0 {
+						ttlMsg = "all tombstones (--hard mode)"
+					}
+					fmt.Printf("\n%s Pruned %d expired tombstone(s) (%s)\n",
+						green("✓"), tombstoneResult.PrunedCount, ttlMsg)
 				}
 			}
 		}
@@ -171,5 +210,6 @@ func init() {
 	cleanupCmd.Flags().Bool("dry-run", false, "Preview what would be deleted without making changes")
 	cleanupCmd.Flags().Bool("cascade", false, "Recursively delete all dependent issues")
 	cleanupCmd.Flags().Int("older-than", 0, "Only delete issues closed more than N days ago (0 = all closed issues)")
+	cleanupCmd.Flags().Bool("hard", false, "Bypass tombstone TTL safety; use --older-than days as cutoff")
 	rootCmd.AddCommand(cleanupCmd)
 }
