@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/jsonl"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -279,27 +277,32 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 	}
 
 	// Parse JSONL data
-	scanner := bufio.NewScanner(bytes.NewReader(jsonlData))
-	// Increase buffer size to handle large JSONL lines (e.g., big descriptions)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024) // allow up to 64MB per line
-	var issues []*types.Issue
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var issue types.Issue
-		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			return fmt.Errorf("failed to parse issue: %w", err)
-		}
-		issues = append(issues, &issue)
+	issues, err := jsonl.ReadIssuesFromData(jsonlData)
+	if err != nil {
+		return fmt.Errorf("failed to parse JSONL: %w", err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to scan JSONL: %w", err)
+	// Clean the JSONL data before importing (bd-590)
+	// This removes duplicates, broken references, and test pollution
+	cleanOpts := jsonl.DefaultCleanerOptions()
+	cleanOpts.Verbose = false // Auto-import is quiet
+	cleanResult, cleanedIssues, err := jsonl.CleanIssues(issues, cleanOpts)
+	if err != nil {
+		return fmt.Errorf("failed to clean JSONL: %w", err)
 	}
+
+	// Report what was cleaned if there were issues
+	if cleanResult.DuplicateIDCount > 0 || cleanResult.TestPollutionCount > 0 || cleanResult.BrokenReferencesRemoved > 0 {
+		// Always report when significant issues are found (>10 problems)
+		totalProblems := cleanResult.DuplicateIDCount + cleanResult.TestPollutionCount + cleanResult.BrokenReferencesRemoved
+		if totalProblems > 10 {
+			fmt.Fprintf(os.Stderr, "JSONL cleaning: %d issues → %d (removed %d duplicates, %d test issues, repaired %d broken refs)\n",
+				cleanResult.OriginalCount, cleanResult.FinalCount,
+				cleanResult.DuplicateIDCount, cleanResult.TestPollutionCount, cleanResult.BrokenReferencesRemoved)
+		}
+	}
+
+	issues = cleanedIssues
 
 	// CRITICAL (bd-166): Set issue_prefix from first imported issue if missing
 	// This prevents derivePrefixFromPath fallback which caused duplicate issues
