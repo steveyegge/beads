@@ -202,8 +202,13 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 				}
 			}
 			
-			// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-			if strings.Contains(issues[i].ID, ".") {
+			// For hierarchical IDs (prefix-hash.child), ensure parent exists
+			// Only consider dots that appear AFTER the first hyphen (the prefix-hash separator)
+			// This avoids false positives when the prefix itself contains dots (e.g., "my.project-abc")
+			// See GH#508
+			hyphenIdx := strings.Index(issues[i].ID, "-")
+			hasHierarchicalDot := hyphenIdx >= 0 && strings.Contains(issues[i].ID[hyphenIdx+1:], ".")
+			if hasHierarchicalDot {
 				// Extract parent ID (everything before the last dot)
 				lastDot := strings.LastIndex(issues[i].ID, ".")
 				parentID := issues[i].ID[:lastDot]

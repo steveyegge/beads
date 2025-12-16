@@ -16,13 +16,17 @@ import (
 // - Convert them to top-level issues by renaming them
 // - Restore the missing parent issues
 func MigrateOrphanDetection(db *sql.DB) error {
-	// Query for orphaned children using the pattern from the issue description:
-	// SELECT id FROM issues WHERE id LIKE '%.%'
-	// AND substr(id, 1, instr(id || '.', '.') - 1) NOT IN (SELECT id FROM issues)
+	// Query for orphaned children:
+	// - ID contains a dot (potential hierarchical structure)
+	// - The part before the first dot must contain a hyphen (GH#508)
+	//   This ensures the dot is in the hash portion (e.g., "bd-abc.1"), not in the prefix
+	//   (e.g., "my.project-abc123" where "my.project" is the prefix from directory name)
+	// - Parent (part before first dot) doesn't exist in database
 	rows, err := db.Query(`
 		SELECT id
 		FROM issues
 		WHERE id LIKE '%.%'
+		  AND instr(substr(id, 1, instr(id, '.') - 1), '-') > 0
 		  AND substr(id, 1, instr(id || '.', '.') - 1) NOT IN (SELECT id FROM issues)
 		ORDER BY id
 	`)
