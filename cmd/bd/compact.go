@@ -11,8 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/compact"
-	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -31,8 +29,7 @@ var (
 	compactAuto     bool
 	compactSummary  string
 	compactActor    string
-	compactLimit    int
-	compactRetention int
+	compactLimit int
 )
 
 var compactCmd = &cobra.Command{
@@ -52,11 +49,6 @@ Tiers:
   - Tier 1: Semantic compression (30 days closed, 70% reduction)
   - Tier 2: Ultra compression (90 days closed, 95% reduction)
 
-Deletions Pruning:
-  All modes also prune old deletion records from deletions.jsonl to prevent
-  unbounded growth. Default retention is 3 days (configurable via --retention
-  or deletions_retention_days in metadata.json).
-
 Tombstone Pruning:
   All modes also prune expired tombstones from issues.jsonl. Tombstones are
   soft-delete markers that prevent resurrection of deleted issues. After the
@@ -75,9 +67,6 @@ Examples:
 
   # Statistics
   bd compact --stats                       # Show statistics
-
-  # Override retention period
-  bd compact --auto --all --retention=14   # Keep 14 days of deletions
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		// Compact modifies data unless --stats or --analyze or --dry-run
@@ -309,9 +298,6 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 		float64(savingBytes)/float64(originalSize)*100)
 	fmt.Printf("  Time: %v\n", elapsed)
 
-	// Prune old deletion records
-	pruneDeletionsManifest()
-
 	// Prune expired tombstones (bd-okh)
 	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to prune expired tombstones: %v\n", err)
@@ -443,9 +429,6 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	if totalOriginal > 0 {
 		fmt.Printf("  Saved: %d bytes (%.1f%%)\n", totalSaved, float64(totalSaved)/float64(totalOriginal)*100)
 	}
-
-	// Prune old deletion records
-	pruneDeletionsManifest()
 
 	// Prune expired tombstones (bd-okh)
 	if tombstonePruneResult, err := pruneExpiredTombstones(0); err != nil {
@@ -890,9 +873,6 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 
 	elapsed := time.Since(start)
 
-	// Prune old deletion records (do this before JSON output so we can include results)
-	pruneResult, retentionDays := pruneDeletionsManifest()
-
 	// Prune expired tombstones from issues.jsonl (bd-okh)
 	tombstonePruneResult, tombstoneErr := pruneExpiredTombstones(0)
 	if tombstoneErr != nil && !jsonOutput {
@@ -910,13 +890,6 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 			"reduction_pct":  reductionPct,
 			"elapsed_ms":     elapsed.Milliseconds(),
 		}
-		// Include pruning results if any deletions were pruned (bd-v29)
-		if pruneResult != nil && pruneResult.PrunedCount > 0 {
-			output["deletions_pruned"] = map[string]interface{}{
-				"count":          pruneResult.PrunedCount,
-				"retention_days": retentionDays,
-			}
-		}
 		// Include tombstone pruning results (bd-okh)
 		if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
 			output["tombstones_pruned"] = map[string]interface{}{
@@ -932,11 +905,6 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	fmt.Printf("  %d → %d bytes (saved %d, %.1f%%)\n", originalSize, compactedSize, savingBytes, reductionPct)
 	fmt.Printf("  Time: %v\n", elapsed)
 
-	// Report pruning results for human-readable output
-	if pruneResult != nil && pruneResult.PrunedCount > 0 {
-		fmt.Printf("\nDeletions pruned: %d records older than %d days removed\n", pruneResult.PrunedCount, retentionDays)
-	}
-
 	// Report tombstone pruning results (bd-okh)
 	if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
 		fmt.Printf("\nTombstones pruned: %d expired tombstones (older than %d days) removed\n",
@@ -945,40 +913,6 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 
 	// Schedule auto-flush to export changes
 	markDirtyAndScheduleFlush()
-}
-
-// pruneDeletionsManifest prunes old deletion records based on retention settings.
-// Returns the prune result and retention days used, so callers can include in output.
-// Uses the global dbPath to determine the .beads directory.
-func pruneDeletionsManifest() (*deletions.PruneResult, int) {
-	beadsDir := filepath.Dir(dbPath)
-	// Determine retention days
-	retentionDays := compactRetention
-	if retentionDays <= 0 {
-		// Load config for default
-		cfg, err := configfile.Load(beadsDir)
-		if err != nil {
-			if !jsonOutput {
-				fmt.Fprintf(os.Stderr, "Warning: could not load config for retention settings: %v\n", err)
-			}
-			retentionDays = configfile.DefaultDeletionsRetentionDays
-		} else if cfg != nil {
-			retentionDays = cfg.GetDeletionsRetentionDays()
-		} else {
-			retentionDays = configfile.DefaultDeletionsRetentionDays
-		}
-	}
-
-	deletionsPath := deletions.DefaultPath(beadsDir)
-	result, err := deletions.PruneDeletions(deletionsPath, retentionDays)
-	if err != nil {
-		if !jsonOutput {
-			fmt.Fprintf(os.Stderr, "Warning: failed to prune deletions: %v\n", err)
-		}
-		return nil, retentionDays
-	}
-
-	return result, retentionDays
 }
 
 // TombstonePruneResult contains the results of tombstone pruning
@@ -1158,9 +1092,6 @@ func init() {
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
-
-	// Deletions pruning flag
-	compactCmd.Flags().IntVar(&compactRetention, "retention", 0, "Deletion retention days (0 = use config default)")
 
 	rootCmd.AddCommand(compactCmd)
 }

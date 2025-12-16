@@ -122,9 +122,9 @@ func CommitToSyncBranch(ctx context.Context, repoRoot, syncBranch, jsonlPath str
 		return nil, fmt.Errorf("failed to sync JSONL to worktree: %w", err)
 	}
 
-	// Also sync other beads files (deletions.jsonl, metadata.json)
+	// Also sync other beads files (metadata.json)
 	beadsDir := filepath.Dir(jsonlPath)
-	for _, filename := range []string{"deletions.jsonl", "metadata.json"} {
+	for _, filename := range []string{"metadata.json"} {
 		srcPath := filepath.Join(beadsDir, filename)
 		if _, err := os.Stat(srcPath); err == nil {
 			relPath, err := filepath.Rel(repoRoot, srcPath)
@@ -326,12 +326,6 @@ func PullFromSyncBranch(ctx context.Context, repoRoot, syncBranch, jsonlPath str
 		return nil, fmt.Errorf("content merge failed: %w", err)
 	}
 
-	// Also merge deletions.jsonl if it exists
-	beadsRelDir := filepath.Dir(jsonlRelPath)
-	deletionsRelPath := filepath.Join(beadsRelDir, "deletions.jsonl")
-	mergedDeletions, deletionsErr := performDeletionsMerge(ctx, worktreePath, syncBranch, remote, deletionsRelPath)
-	// deletionsErr is non-fatal - file might not exist
-
 	// Reset worktree to remote's history (adopt their commit graph)
 	resetCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "reset", "--hard",
 		fmt.Sprintf("%s/%s", remote, syncBranch))
@@ -346,15 +340,6 @@ func PullFromSyncBranch(ctx context.Context, repoRoot, syncBranch, jsonlPath str
 	}
 	if err := os.WriteFile(worktreeJSONLPath, mergedContent, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write merged JSONL: %w", err)
-	}
-
-	// Write merged deletions if we have them
-	if deletionsErr == nil && len(mergedDeletions) > 0 {
-		deletionsPath := filepath.Join(worktreePath, deletionsRelPath)
-		if err := os.WriteFile(deletionsPath, mergedDeletions, 0600); err != nil {
-			// Non-fatal - deletions are supplementary
-			_ = err
-		}
 	}
 
 	// Check if merge produced any changes from remote
@@ -679,62 +664,6 @@ func extractJSONLFromCommit(ctx context.Context, worktreePath, commit, filePath 
 	return output, nil
 }
 
-// performDeletionsMerge merges deletions.jsonl from local and remote.
-// Deletions are merged by union - we keep all deletion records from both sides.
-// This ensures that if either side deleted an issue, it stays deleted.
-func performDeletionsMerge(ctx context.Context, worktreePath, branch, remote, deletionsRelPath string) ([]byte, error) {
-	// Extract local deletions
-	localDeletions, localErr := extractJSONLFromCommit(ctx, worktreePath, "HEAD", deletionsRelPath)
-
-	// Extract remote deletions
-	remoteRef := fmt.Sprintf("%s/%s", remote, branch)
-	remoteDeletions, remoteErr := extractJSONLFromCommit(ctx, worktreePath, remoteRef, deletionsRelPath)
-
-	// If neither exists, nothing to merge
-	if localErr != nil && remoteErr != nil {
-		return nil, fmt.Errorf("no deletions files to merge")
-	}
-
-	// If only one exists, use that
-	if localErr != nil {
-		return remoteDeletions, nil
-	}
-	if remoteErr != nil {
-		return localDeletions, nil
-	}
-
-	// Both exist - merge by taking union of lines (deduplicated)
-	// Each line in deletions.jsonl is a JSON object with an "id" field
-	seen := make(map[string]bool)
-	var merged []byte
-
-	// Process local deletions
-	for _, line := range strings.Split(string(localDeletions), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !seen[line] {
-			seen[line] = true
-			merged = append(merged, []byte(line+"\n")...)
-		}
-	}
-
-	// Process remote deletions
-	for _, line := range strings.Split(string(remoteDeletions), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !seen[line] {
-			seen[line] = true
-			merged = append(merged, []byte(line+"\n")...)
-		}
-	}
-
-	return merged, nil
-}
-
 // copyJSONLToMainRepo copies JSONL and related files from worktree to main repo.
 func copyJSONLToMainRepo(worktreePath, jsonlRelPath, jsonlPath string) error {
 	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
@@ -755,10 +684,10 @@ func copyJSONLToMainRepo(worktreePath, jsonlRelPath, jsonlPath string) error {
 		return fmt.Errorf("failed to write main JSONL: %w", err)
 	}
 
-	// Also sync other beads files back (deletions.jsonl, metadata.json)
+	// Also sync other beads files back (metadata.json)
 	beadsDir := filepath.Dir(jsonlPath)
 	worktreeBeadsDir := filepath.Dir(worktreeJSONLPath)
-	for _, filename := range []string{"deletions.jsonl", "metadata.json"} {
+	for _, filename := range []string{"metadata.json"} {
 		worktreeSrcPath := filepath.Join(worktreeBeadsDir, filename)
 		if fileData, err := os.ReadFile(worktreeSrcPath); err == nil {
 			dstPath := filepath.Join(beadsDir, filename)

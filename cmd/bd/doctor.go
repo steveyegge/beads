@@ -383,8 +383,6 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
 			err = fix.LegacyJSONLConfig(path)
-		case "Deletions Manifest":
-			err = fix.MigrateTombstones(path)
 		case "Untracked Files":
 			err = fix.UntrackedJSONL(path)
 		case "Sync Branch Health":
@@ -924,12 +922,7 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, syncBranchHealthCheck)
 	// Don't fail overall check for sync branch health, just warn
 
-	// Check 18: Deletions manifest (legacy, now replaced by tombstones)
-	deletionsCheck := checkDeletionsManifest(path)
-	result.Checks = append(result.Checks, deletionsCheck)
-	// Don't fail overall check for missing deletions manifest, just warn
-
-	// Check 19: Tombstones health (bd-s3v)
+	// Check 18: Tombstones health (bd-s3v)
 	tombstonesCheck := checkTombstones(path)
 	result.Checks = append(result.Checks, tombstonesCheck)
 	// Don't fail overall check for tombstone issues, just warn
@@ -2753,101 +2746,6 @@ func checkSyncBranchHealth(path string) doctorCheck {
 		Name:    "Sync Branch Health",
 		Status:  statusOK,
 		Message: "OK",
-	}
-}
-
-func checkDeletionsManifest(path string) doctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
-
-	// Skip if .beads doesn't exist
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return doctorCheck{
-			Name:    "Deletions Manifest",
-			Status:  statusOK,
-			Message: "N/A (no .beads directory)",
-		}
-	}
-
-	// Check if we're in a git repository using worktree-aware detection
-	_, err := git.GetGitDir()
-	if err != nil {
-		return doctorCheck{
-			Name:    "Deletions Manifest",
-			Status:  statusOK,
-			Message: "N/A (not a git repository)",
-		}
-	}
-
-	deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
-
-	// Check if deletions.jsonl exists
-	info, err := os.Stat(deletionsPath)
-	if err == nil {
-		// File exists - count entries (empty file is valid, means no deletions)
-		if info.Size() == 0 {
-			return doctorCheck{
-				Name:    "Deletions Manifest",
-				Status:  statusOK,
-				Message: "Empty (no legacy deletions)",
-			}
-		}
-		file, err := os.Open(deletionsPath) // #nosec G304 - controlled path
-		if err == nil {
-			defer file.Close()
-			count := 0
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				if len(scanner.Bytes()) > 0 {
-					count++
-				}
-			}
-			// bd-s3v: Suggest migration to inline tombstones
-			if count > 0 {
-				return doctorCheck{
-					Name:    "Deletions Manifest",
-					Status:  statusWarning,
-					Message: fmt.Sprintf("Legacy format (%d entries)", count),
-					Detail:  "deletions.jsonl is deprecated in favor of inline tombstones",
-					Fix:     "Run 'bd migrate-tombstones' to convert to inline tombstones",
-				}
-			}
-			return doctorCheck{
-				Name:    "Deletions Manifest",
-				Status:  statusOK,
-				Message: "Empty (no legacy deletions)",
-			}
-		}
-	}
-
-	// bd-s3v: deletions.jsonl doesn't exist - this is the expected state with tombstones
-	// Check for .migrated file to confirm migration happened
-	migratedPath := filepath.Join(beadsDir, "deletions.jsonl.migrated")
-	if _, err := os.Stat(migratedPath); err == nil {
-		return doctorCheck{
-			Name:    "Deletions Manifest",
-			Status:  statusOK,
-			Message: "Migrated to tombstones",
-		}
-	}
-
-	// No deletions.jsonl and no .migrated file - check if JSONL exists
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-		jsonlPath = filepath.Join(beadsDir, "beads.jsonl")
-		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
-			return doctorCheck{
-				Name:    "Deletions Manifest",
-				Status:  statusOK,
-				Message: "N/A (no JSONL file)",
-			}
-		}
-	}
-
-	// JSONL exists but no deletions tracking - this is fine for new repos using tombstones
-	return doctorCheck{
-		Name:    "Deletions Manifest",
-		Status:  statusOK,
-		Message: "Using inline tombstones",
 	}
 }
 

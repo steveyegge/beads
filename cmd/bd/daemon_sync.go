@@ -197,7 +197,6 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		SkipUpdate:           false,
 		Strict:               false,
 		SkipPrefixValidation: true, // Skip prefix validation for auto-import
-		NoGitHistory:         true, // Skip git history backfill during auto-import (bd-4pv)
 	}
 
 	_, err = importIssuesCore(ctx, "", store, issues, opts)

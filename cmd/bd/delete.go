@@ -7,14 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -241,13 +238,7 @@ Force: Delete and orphan dependents
 			return
 		}
 		// Actually delete
-		// 0. Record deletion in manifest FIRST (before any DB changes)
-		// This ensures deletion propagates via git sync even if DB operations fail
 		deleteActor := getActorWithGit()
-		if err := recordDeletion(issueID, deleteActor, "manual delete"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to record deletion: %v\n", err)
-			os.Exit(1)
-		}
 		// 1. Update text references in connected issues (all text fields)
 		updatedIssueCount := 0
 		for id, connIssue := range connectedIssues {
@@ -508,13 +499,6 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 			}
 		}
 	}
-	// Record deletions in manifest FIRST (before any DB changes)
-	// This ensures deletion propagates via git sync even if DB operations fail
-	deleteActor := getActorWithGit()
-	if err := recordDeletions(issueIDs, deleteActor, reason); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to record deletions: %v\n", err)
-		os.Exit(1)
-	}
 	// Actually delete
 	result, err := d.DeleteIssues(ctx, issueIDs, cascade, force, false)
 	if err != nil {
@@ -672,60 +656,6 @@ func getActorWithGit() string {
 	}
 
 	return "unknown"
-}
-
-// getDeletionsPath returns the path to the deletions manifest file.
-// Uses the same directory as the database.
-func getDeletionsPath() string {
-	// Get the .beads directory from dbPath
-	beadsDir := filepath.Dir(dbPath)
-	return deletions.DefaultPath(beadsDir)
-}
-
-// recordDeletion appends a deletion record to the deletions manifest.
-// This MUST be called BEFORE deleting from the database to ensure
-// deletion records are never lost.
-// After tombstone migration (bd-ffr9), this is a no-op since inline tombstones
-// are used instead of deletions.jsonl.
-func recordDeletion(id, deleteActor, reason string) error {
-	// bd-ffr9: Skip writing to deletions.jsonl if tombstone migration is complete
-	beadsDir := filepath.Dir(dbPath)
-	if deletions.IsTombstoneMigrationComplete(beadsDir) {
-		return nil
-	}
-	record := deletions.DeletionRecord{
-		ID:        id,
-		Timestamp: time.Now().UTC(),
-		Actor:     deleteActor,
-		Reason:    reason,
-	}
-	return deletions.AppendDeletion(getDeletionsPath(), record)
-}
-
-// recordDeletions appends multiple deletion records to the deletions manifest.
-// This MUST be called BEFORE deleting from the database to ensure
-// deletion records are never lost.
-// After tombstone migration (bd-ffr9), this is a no-op since inline tombstones
-// are used instead of deletions.jsonl.
-func recordDeletions(ids []string, deleteActor, reason string) error {
-	// bd-ffr9: Skip writing to deletions.jsonl if tombstone migration is complete
-	beadsDir := filepath.Dir(dbPath)
-	if deletions.IsTombstoneMigrationComplete(beadsDir) {
-		return nil
-	}
-	path := getDeletionsPath()
-	for _, id := range ids {
-		record := deletions.DeletionRecord{
-			ID:        id,
-			Timestamp: time.Now().UTC(),
-			Actor:     deleteActor,
-			Reason:    reason,
-		}
-		if err := deletions.AppendDeletion(path, record); err != nil {
-			return fmt.Errorf("failed to record deletion for %s: %w", id, err)
-		}
-	}
-	return nil
 }
 
 func init() {

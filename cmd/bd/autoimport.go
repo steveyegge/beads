@@ -323,7 +323,6 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 		DryRun:               false,
 		SkipUpdate:           false,
 		SkipPrefixValidation: true,  // Auto-import is lenient about prefixes
-		NoGitHistory:         true,  // Skip git history backfill during auto-import (bd-4pv)
 	}
 
 	_, err = importIssuesCore(ctx, dbFilePath, store, issues, opts)

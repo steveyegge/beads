@@ -37,17 +37,6 @@ func DatabaseVersion(path string) error {
 			return fmt.Errorf("failed to initialize database: %w", err)
 		}
 
-		// bd-8v5o: Clean up deletions manifest for hydrated issues
-		// After init, remove any issues from deletions.jsonl that exist in JSONL
-		// This prevents perpetual "Skipping bd-xxx (in deletions manifest)" warnings
-		jsonlPath := findJSONLPath(beadsDir)
-		if jsonlPath != "" {
-			if err := cleanupDeletionsManifest(beadsDir, jsonlPath); err != nil {
-				// Non-fatal - just log warning
-				fmt.Printf("  Warning: failed to clean up deletions manifest: %v\n", err)
-			}
-		}
-
 		return nil
 	}
 

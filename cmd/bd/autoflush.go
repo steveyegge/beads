@@ -192,7 +192,6 @@ func autoImportIfNewer() {
 		SkipUpdate:           false,
 		Strict:               false,
 		SkipPrefixValidation: true, // Auto-import is lenient about prefixes
-		NoGitHistory:         true, // Skip git history backfill during auto-import (bd-4pv)
 	}
 
 	result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)

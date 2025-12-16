@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/steveyegge/beads/internal/deletions"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -298,74 +297,41 @@ func checkOrphanedDeps(ctx context.Context, store storage.Storage) ([]string, er
 
 // validatePostImport checks that import didn't cause data loss.
 // Returns error if issue count decreased unexpectedly (data loss) or nil if OK.
-// A decrease is legitimate if it matches deletions recorded in deletions.jsonl.
 //
 // Parameters:
 //   - before: issue count in DB before import
 //   - after: issue count in DB after import
-//   - jsonlPath: path to issues.jsonl (used to locate deletions.jsonl)
-func validatePostImport(before, after int, jsonlPath string) error {
-	return validatePostImportWithExpectedDeletions(before, after, 0, jsonlPath)
+//   - jsonlPath: path to issues.jsonl (unused, kept for API compatibility)
+func validatePostImport(before, after int, _ string) error {
+	return validatePostImportWithExpectedDeletions(before, after, 0, "")
 }
 
 // validatePostImportWithExpectedDeletions checks that import didn't cause data loss,
-// accounting for expected deletions that were already sanitized from the JSONL.
+// accounting for expected deletions (e.g., tombstones).
 // Returns error if issue count decreased unexpectedly (data loss) or nil if OK.
 //
 // Parameters:
 //   - before: issue count in DB before import
 //   - after: issue count in DB after import
-//   - expectedDeletions: number of issues known to have been deleted (from sanitize step)
-//   - jsonlPath: path to issues.jsonl (used to locate deletions.jsonl)
-func validatePostImportWithExpectedDeletions(before, after, expectedDeletions int, jsonlPath string) error {
+//   - expectedDeletions: number of issues known to have been deleted
+//   - jsonlPath: unused, kept for API compatibility
+func validatePostImportWithExpectedDeletions(before, after, expectedDeletions int, _ string) error {
 	if after < before {
-		// Count decrease - check if this matches legitimate deletions
 		decrease := before - after
 
-		// First, account for expected deletions from the sanitize step (bd-tt0 fix)
-		// These were already removed from JSONL and will be purged from DB by import
+		// Account for expected deletions (tombstones converted to actual deletions)
 		if expectedDeletions > 0 && decrease <= expectedDeletions {
-			// Decrease is fully accounted for by expected deletions
-			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, expected from sanitize)\n",
+			fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, expected deletions)\n",
 				before, after, decrease)
 			return nil
 		}
 
-		// If decrease exceeds expected deletions, check deletions manifest for additional legitimacy
-		unexplainedDecrease := decrease - expectedDeletions
-
-		// Load deletions manifest to check for legitimate deletions
-		beadsDir := filepath.Dir(jsonlPath)
-		deletionsPath := deletions.DefaultPath(beadsDir)
-		loadResult, err := deletions.LoadDeletions(deletionsPath)
-		if err != nil {
-			// If we can't load deletions, assume the worst
-			return fmt.Errorf("import reduced issue count: %d → %d (data loss detected! failed to verify deletions: %v)", before, after, err)
-		}
-
-		// If there are deletions recorded, the decrease is likely legitimate
-		// We can't perfectly match because we don't know exactly which issues
-		// were deleted in this sync cycle vs previously. But if there are ANY
-		// deletions recorded and the decrease is reasonable, allow it.
-		numDeletions := len(loadResult.Records)
-		if numDeletions > 0 && unexplainedDecrease <= numDeletions {
-			// Legitimate deletion - decrease is accounted for by deletions manifest
-			if expectedDeletions > 0 {
-				fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, %d from sanitize + %d from deletions manifest)\n",
-					before, after, decrease, expectedDeletions, unexplainedDecrease)
-			} else {
-				fmt.Fprintf(os.Stderr, "Import complete: %d → %d issues (-%d, accounted for by %d deletion(s))\n",
-					before, after, decrease, numDeletions)
-			}
-			return nil
-		}
-
-		// Decrease exceeds recorded deletions - potential data loss
-		if numDeletions > 0 || expectedDeletions > 0 {
-			return fmt.Errorf("import reduced issue count: %d → %d (-%d exceeds %d expected + %d recorded deletion(s) - potential data loss!)",
-				before, after, decrease, expectedDeletions, numDeletions)
-		}
-		return fmt.Errorf("import reduced issue count: %d → %d (data loss detected! no deletions recorded)", before, after)
+		// Unexpected decrease - warn but don't fail
+		// With tombstones as the deletion mechanism, decreases are unusual
+		// but can happen during cleanup or migration
+		fmt.Fprintf(os.Stderr, "Warning: import reduced issue count: %d → %d (-%d)\n",
+			before, after, decrease)
+		return nil
 	}
 	if after == before {
 		fmt.Fprintf(os.Stderr, "Import complete: no changes\n")
