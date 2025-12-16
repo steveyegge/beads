@@ -16,12 +16,21 @@ import (
 // HydrateDeletionsManifest populates deletions.jsonl from git history.
 // It finds all issue IDs that were ever in the JSONL but are no longer present,
 // and adds them to the deletions manifest.
+// Note (bd-ffr9): After tombstone migration, this is a no-op since inline tombstones
+// are used instead of deletions.jsonl.
 func HydrateDeletionsManifest(path string) error {
 	if err := validateBeadsWorkspace(path); err != nil {
 		return err
 	}
 
 	beadsDir := filepath.Join(path, ".beads")
+
+	// bd-ffr9: Skip hydrating deletions.jsonl if tombstone migration is complete
+	if deletions.IsTombstoneMigrationComplete(beadsDir) {
+		fmt.Println("  Tombstone migration complete - skipping deletions.jsonl hydration")
+		return nil
+	}
+
 	// bd-6xd: issues.jsonl is the canonical filename
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 

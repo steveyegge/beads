@@ -685,7 +685,14 @@ func getDeletionsPath() string {
 // recordDeletion appends a deletion record to the deletions manifest.
 // This MUST be called BEFORE deleting from the database to ensure
 // deletion records are never lost.
+// After tombstone migration (bd-ffr9), this is a no-op since inline tombstones
+// are used instead of deletions.jsonl.
 func recordDeletion(id, deleteActor, reason string) error {
+	// bd-ffr9: Skip writing to deletions.jsonl if tombstone migration is complete
+	beadsDir := filepath.Dir(dbPath)
+	if deletions.IsTombstoneMigrationComplete(beadsDir) {
+		return nil
+	}
 	record := deletions.DeletionRecord{
 		ID:        id,
 		Timestamp: time.Now().UTC(),
@@ -698,7 +705,14 @@ func recordDeletion(id, deleteActor, reason string) error {
 // recordDeletions appends multiple deletion records to the deletions manifest.
 // This MUST be called BEFORE deleting from the database to ensure
 // deletion records are never lost.
+// After tombstone migration (bd-ffr9), this is a no-op since inline tombstones
+// are used instead of deletions.jsonl.
 func recordDeletions(ids []string, deleteActor, reason string) error {
+	// bd-ffr9: Skip writing to deletions.jsonl if tombstone migration is complete
+	beadsDir := filepath.Dir(dbPath)
+	if deletions.IsTombstoneMigrationComplete(beadsDir) {
+		return nil
+	}
 	path := getDeletionsPath()
 	for _, id := range ids {
 		record := deletions.DeletionRecord{

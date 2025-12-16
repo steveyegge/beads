@@ -100,12 +100,12 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		if err := os.WriteFile(jsonlPath, []byte(`{"id":"bd-1","title":"Modified"}`+"\n"), 0644); err != nil {
 			t.Fatalf("failed to modify JSONL: %v", err)
 		}
-		
+
 		// Add an export hash to verify it gets cleared
 		if err := testStore.SetExportHash(ctx, "bd-1", "dummy-hash"); err != nil {
 			t.Fatalf("failed to set export hash: %v", err)
 		}
-		
+
 		// Validate should detect mismatch and clear export_hashes
 		needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
 		if err != nil {
@@ -114,7 +114,7 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		if !needsFullExport {
 			t.Fatalf("expected needsFullExport=true after clearing export_hashes")
 		}
-		
+
 		// Verify export_hashes were cleared
 		hash, err := testStore.GetExportHash(ctx, "bd-1")
 		if err != nil {
@@ -122,6 +122,15 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		}
 		if hash != "" {
 			t.Fatalf("expected export hash to be cleared, got %q", hash)
+		}
+
+		// Verify jsonl_file_hash was also cleared (bd-admx fix)
+		fileHash, err := testStore.GetJSONLFileHash(ctx)
+		if err != nil {
+			t.Fatalf("failed to get JSONL file hash: %v", err)
+		}
+		if fileHash != "" {
+			t.Fatalf("expected jsonl_file_hash to be cleared to prevent perpetual warnings, got %q", fileHash)
 		}
 	})
 	
@@ -131,17 +140,17 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		if err := testStore.SetJSONLFileHash(ctx, "some-hash"); err != nil {
 			t.Fatalf("failed to set JSONL file hash: %v", err)
 		}
-		
+
 		// Add an export hash
 		if err := testStore.SetExportHash(ctx, "bd-1", "dummy-hash"); err != nil {
 			t.Fatalf("failed to set export hash: %v", err)
 		}
-		
+
 		// Remove JSONL file
 		if err := os.Remove(jsonlPath); err != nil {
 			t.Fatalf("failed to remove JSONL: %v", err)
 		}
-		
+
 		// Validate should detect missing file and clear export_hashes
 		needsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
 		if err != nil {
@@ -150,7 +159,7 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		if !needsFullExport {
 			t.Fatalf("expected needsFullExport=true after clearing export_hashes")
 		}
-		
+
 		// Verify export_hashes were cleared
 		hash, err := testStore.GetExportHash(ctx, "bd-1")
 		if err != nil {
@@ -158,6 +167,15 @@ func TestJSONLIntegrityValidation(t *testing.T) {
 		}
 		if hash != "" {
 			t.Fatalf("expected export hash to be cleared, got %q", hash)
+		}
+
+		// Verify jsonl_file_hash was also cleared (bd-admx fix)
+		fileHash, err := testStore.GetJSONLFileHash(ctx)
+		if err != nil {
+			t.Fatalf("failed to get JSONL file hash: %v", err)
+		}
+		if fileHash != "" {
+			t.Fatalf("expected jsonl_file_hash to be cleared to prevent perpetual warnings, got %q", fileHash)
 		}
 	})
 }

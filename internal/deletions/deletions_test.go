@@ -290,6 +290,38 @@ func TestDefaultPath(t *testing.T) {
 	}
 }
 
+func TestIsTombstoneMigrationComplete(t *testing.T) {
+	t.Run("no migrated file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected false when no .migrated file exists")
+		}
+	})
+
+	t.Run("migrated file exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		migratedPath := filepath.Join(tmpDir, "deletions.jsonl.migrated")
+		if err := os.WriteFile(migratedPath, []byte("{}"), 0644); err != nil {
+			t.Fatalf("failed to create migrated file: %v", err)
+		}
+		if !IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected true when .migrated file exists")
+		}
+	})
+
+	t.Run("deletions.jsonl exists without migrated", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		deletionsPath := filepath.Join(tmpDir, "deletions.jsonl")
+		if err := os.WriteFile(deletionsPath, []byte("{}"), 0644); err != nil {
+			t.Fatalf("failed to create deletions file: %v", err)
+		}
+		// Should return false because the .migrated marker doesn't exist
+		if IsTombstoneMigrationComplete(tmpDir) {
+			t.Error("expected false when only deletions.jsonl exists (not migrated)")
+		}
+	})
+}
+
 func TestLoadDeletions_EmptyLines(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "deletions.jsonl")

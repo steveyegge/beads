@@ -181,6 +181,17 @@ func DefaultPath(beadsDir string) string {
 	return filepath.Join(beadsDir, "deletions.jsonl")
 }
 
+// IsTombstoneMigrationComplete checks if the tombstone migration has been completed.
+// After running `bd migrate-tombstones`, the deletions.jsonl file is archived to
+// deletions.jsonl.migrated. This function checks for that marker file.
+// When migration is complete, new deletion records should NOT be written to
+// deletions.jsonl (bd-ffr9).
+func IsTombstoneMigrationComplete(beadsDir string) bool {
+	migratedPath := filepath.Join(beadsDir, "deletions.jsonl.migrated")
+	_, err := os.Stat(migratedPath)
+	return err == nil
+}
+
 // Count returns the number of lines in the deletions manifest.
 // This is a fast operation that doesn't parse JSON, just counts lines.
 // Returns 0 if the file doesn't exist or is empty.

@@ -62,6 +62,39 @@ func TestRecordDeletion(t *testing.T) {
 	}
 }
 
+// TestRecordDeletion_SkipsAfterMigration tests that recordDeletion is a no-op after tombstone migration (bd-ffr9)
+func TestRecordDeletion_SkipsAfterMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Set up dbPath so getDeletionsPath() works
+	oldDbPath := dbPath
+	dbPath = filepath.Join(tmpDir, "beads.db")
+	defer func() { dbPath = oldDbPath }()
+
+	// Create the .beads directory
+	if err := os.MkdirAll(tmpDir, 0750); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	// Create the .migrated marker file to indicate tombstone migration is complete
+	migratedPath := filepath.Join(tmpDir, "deletions.jsonl.migrated")
+	if err := os.WriteFile(migratedPath, []byte("{}"), 0644); err != nil {
+		t.Fatalf("failed to create migrated marker: %v", err)
+	}
+
+	// Test recordDeletion - should be a no-op
+	err := recordDeletion("test-abc", "test-user", "test reason")
+	if err != nil {
+		t.Fatalf("recordDeletion failed: %v", err)
+	}
+
+	// Verify deletions.jsonl was NOT created
+	deletionsPath := getDeletionsPath()
+	if _, err := os.Stat(deletionsPath); !os.IsNotExist(err) {
+		t.Error("deletions.jsonl should not be created after tombstone migration")
+	}
+}
+
 // TestRecordDeletions tests that recordDeletions creates multiple deletion manifest entries
 func TestRecordDeletions(t *testing.T) {
 	tmpDir := t.TempDir()
