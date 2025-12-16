@@ -1192,8 +1192,9 @@ func checkCLIVersion() doctorCheck {
 	// Compare versions using simple semver-aware comparison
 	if compareVersions(latestVersion, Version) > 0 {
 		upgradeCmds := `  • Homebrew: brew upgrade bd
-  • Script: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash`
-
+  • Script: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+  • Windows (PowerShell): irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex`
+		
 		return doctorCheck{
 			Name:    "CLI Version",
 			Status:  statusWarning,
