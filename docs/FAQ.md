@@ -302,7 +302,7 @@ We don't have automated migration tools yet, but you can:
 2. Write a simple script to convert to bd's JSONL format
 3. Import with `bd import -i issues.jsonl`
 
-See [examples/](examples/) for scripting patterns. Contributions welcome!
+See [examples/](../examples/) for scripting patterns. Contributions welcome!
 
 ### Can I export back to GitHub Issues / Jira?
 
@@ -463,15 +463,15 @@ bd import -i .beads/issues.jsonl
 
 ### Where can I get more help?
 
-- **Documentation**: [README.md](README.md), [QUICKSTART.md](QUICKSTART.md), [ADVANCED.md](ADVANCED.md)
+- **Documentation**: [README.md](../README.md), [QUICKSTART.md](QUICKSTART.md), [ADVANCED.md](ADVANCED.md)
 - **Troubleshooting**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- **Examples**: [examples/](examples/)
+- **Examples**: [examples/](../examples/)
 - **GitHub Issues**: [Report bugs or request features](https://github.com/steveyegge/beads/issues)
 - **GitHub Discussions**: [Ask questions](https://github.com/steveyegge/beads/discussions)
 
 ### How can I contribute?
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+Contributions are welcome! See [CONTRIBUTING.md](../CONTRIBUTING.md) for:
 
 - Code contribution guidelines
 - How to run tests

@@ -511,8 +511,6 @@ jobs:
 
 - [ADR 002: Agent Mail Integration](adr/002-agent-mail-integration.md)
 - [Agent Mail Repository](https://github.com/Dicklesworthstone/mcp_agent_mail)
-- [Integration Status](../AGENT_MAIL_INTEGRATION_STATUS.md)
-- [Latency Benchmark Results](../latency_results.md)
 - [Python Agent Example](../examples/python-agent/)
 
 ## Contributing

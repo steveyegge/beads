@@ -220,10 +220,6 @@ Total latency: <100ms (vs 2000-5000ms with git-only)
 ## References
 
 - [MCP Agent Mail Repository](https://github.com/Dicklesworthstone/mcp_agent_mail)
-- [bd-spmx Epic](../../.beads/beads.db) - Investigation & Proof of Concept
-- [bd-6hji](../../.beads/beads.db) - File Reservation Testing
-- [bd-htfk](../../.beads/beads.db) - Latency Benchmarking
-- [Latency Results](../../latency_results.md)
 
 ## Decision Outcome
 

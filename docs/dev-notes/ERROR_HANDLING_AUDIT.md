@@ -3,7 +3,7 @@
 **Issue:** bd-1qwo
 **Scope:** cmd/bd/*.go
 
-This document audits error handling patterns across the beads CLI codebase to ensure consistency with the guidelines established in [ERROR_HANDLING.md](ERROR_HANDLING.md).
+This document audits error handling patterns across the beads CLI codebase to ensure consistency with the guidelines established in [ERROR_HANDLING.md](../ERROR_HANDLING.md).
 
 ## Executive Summary
 

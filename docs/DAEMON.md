@@ -436,7 +436,7 @@ rm .beads/.exclusive-lock
 - CI/CD pipelines (controlled sync timing)
 - Testing frameworks (isolated test runs)
 
-See [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) for complete documentation.
+See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for complete documentation.
 
 ## Common Daemon Issues
 
@@ -542,6 +542,6 @@ bd daemons killall
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
-- [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) - External tool integration
+- [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) - External tool integration
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflow and merge strategies
 - [commands/daemons.md](../commands/daemons.md) - Daemon command reference

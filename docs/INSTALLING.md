@@ -210,7 +210,7 @@ Add to your MCP settings:
 - ❌ Higher context overhead (MCP schemas add 10-50k tokens)
 - ❌ Additional latency from MCP protocol
 
-See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for detailed MCP server documentation.
+See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for detailed MCP server documentation.
 
 ## Verifying Installation
 
@@ -286,9 +286,9 @@ See the "Claude Code Plugin" section above for alternative installation methods 
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Configure your agent**: Add bd instructions to `AGENTS.md` (see [README.md](README.md#quick-start))
+2. **Configure your agent**: Add bd instructions to `AGENTS.md` (see [README.md](../README.md#quick-start))
 3. **Learn the basics**: Run `bd quickstart` for an interactive tutorial
-4. **Explore examples**: Check out the [examples/](examples/) directory
+4. **Explore examples**: Check out the [examples/](../examples/) directory
 
 ## Updating bd
 
