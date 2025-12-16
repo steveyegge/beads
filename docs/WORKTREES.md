@@ -31,53 +31,51 @@ Main Repository
 - ✅ **Concurrent access** - SQLite locking prevents corruption
 - ✅ **Git integration** - Issues sync via JSONL in main repo
 
-### Worktree Detection & Warnings
+### Worktree Detection & Daemon Safety
 
-bd automatically detects when you're in a git worktree and provides appropriate guidance:
+bd automatically detects when you're in a git worktree and handles daemon mode safely:
 
-```bash
-# In a worktree with daemon active
-$ bd ready
-╔══════════════════════════════════════════════════════════════════════════╗
-║ WARNING: Git worktree detected with daemon mode                         ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║ Git worktrees share the same .beads directory, which can cause the      ║
-║ daemon to commit/push to the wrong branch.                               ║
-║                                                                          ║
-║ Shared database: /path/to/main/.beads                                    ║
-║ Worktree git dir: /path/to/shared/.git                                   ║
-║                                                                          ║
-║ RECOMMENDED SOLUTIONS:                                                   ║
-║   1. Use --no-daemon flag:    bd --no-daemon <command>                   ║
-║   2. Disable daemon mode:     export BEADS_NO_DAEMON=1                   ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
+**Default behavior (no sync-branch configured):**
+- Daemon is **automatically disabled** in worktrees
+- Uses direct mode for safety (no warning needed)
+- All commands work correctly without configuration
+
+**With sync-branch configured:**
+- Daemon is **enabled** in worktrees
+- Commits go to dedicated sync branch (e.g., `beads-metadata`)
+- Full daemon functionality available across all worktrees
 
 ## Usage Patterns
 
-### Recommended: Direct Mode in Worktrees
+### Recommended: Configure Sync-Branch for Full Daemon Support
 
 ```bash
-# Disable daemon for worktree usage
-export BEADS_NO_DAEMON=1
+# Configure sync-branch once (in main repo or any worktree)
+bd config set sync-branch beads-metadata
 
-# Work normally - all commands work correctly
+# Now daemon works safely in all worktrees
 cd feature-worktree
 bd create "Implement feature X" -t feature -p 1
 bd update bd-a1b2 --status in_progress
-bd ready
-bd sync  # Manual sync when needed
+bd ready  # Daemon auto-syncs to beads-metadata branch
 ```
 
-### Alternative: Daemon in Main Repo Only
+### Alternative: Direct Mode (No Configuration Needed)
 
 ```bash
-# Use daemon only in main repository
-cd main-repo
-bd ready  # Daemon works here
+# Without sync-branch, daemon is auto-disabled in worktrees
+cd feature-worktree
+bd create "Implement feature X" -t feature -p 1
+bd ready  # Uses direct mode automatically
+bd sync   # Manual sync when needed
+```
 
-# Use direct mode in worktrees
-cd ../feature-worktree
+### Legacy: Explicit Daemon Disable
+
+```bash
+# Still works if you prefer explicit control
+export BEADS_NO_DAEMON=1
+# or
 bd --no-daemon ready
 ```
 
@@ -160,9 +158,14 @@ bd create "Fix password validation" -t bug -p 0
 
 **Symptoms:** Changes appear on unexpected branch in git history
 
-**Solution:**
+**Note:** This issue should no longer occur with the new worktree safety feature. Daemon is automatically disabled in worktrees unless sync-branch is configured.
+
+**Solution (if still occurring):**
 ```bash
-# Disable daemon in worktrees
+# Option 1: Configure sync-branch (recommended)
+bd config set sync-branch beads-metadata
+
+# Option 2: Explicitly disable daemon
 export BEADS_NO_DAEMON=1
 # Or use --no-daemon flag for individual commands
 bd --no-daemon sync
