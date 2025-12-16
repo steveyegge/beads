@@ -54,6 +54,17 @@ func showDaemonStatus(pidFile string) {
 			}
 		}
 
+		// Try to get detailed status from daemon via RPC
+		var rpcStatus *rpc.StatusResponse
+		beadsDir := filepath.Dir(pidFile)
+		socketPath := filepath.Join(beadsDir, "bd.sock")
+		if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
+			if status, err := client.Status(); err == nil {
+				rpcStatus = status
+			}
+			_ = client.Close()
+		}
+
 		if jsonOutput {
 			status := map[string]interface{}{
 				"running": true,
@@ -65,6 +76,14 @@ func showDaemonStatus(pidFile string) {
 			if logPath != "" {
 				status["log_path"] = logPath
 			}
+			// Add config from RPC status if available
+			if rpcStatus != nil {
+				status["auto_commit"] = rpcStatus.AutoCommit
+				status["auto_push"] = rpcStatus.AutoPush
+				status["local_mode"] = rpcStatus.LocalMode
+				status["sync_interval"] = rpcStatus.SyncInterval
+				status["daemon_mode"] = rpcStatus.DaemonMode
+			}
 			outputJSON(status)
 			return
 		}
@@ -75,6 +94,16 @@ func showDaemonStatus(pidFile string) {
 		}
 		if logPath != "" {
 			fmt.Printf("  Log: %s\n", logPath)
+		}
+		// Display config from RPC status if available
+		if rpcStatus != nil {
+			fmt.Printf("  Mode: %s\n", rpcStatus.DaemonMode)
+			fmt.Printf("  Sync Interval: %s\n", rpcStatus.SyncInterval)
+			fmt.Printf("  Auto-Commit: %v\n", rpcStatus.AutoCommit)
+			fmt.Printf("  Auto-Push: %v\n", rpcStatus.AutoPush)
+			if rpcStatus.LocalMode {
+				fmt.Printf("  Local Mode: %v (no git sync)\n", rpcStatus.LocalMode)
+			}
 		}
 	} else {
 		if jsonOutput {

@@ -458,6 +458,15 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool,
 		return
 	}
 
+	// Choose event loop based on BEADS_DAEMON_MODE (need to determine early for SetConfig)
+	daemonMode := os.Getenv("BEADS_DAEMON_MODE")
+	if daemonMode == "" {
+		daemonMode = "events" // Default to event-driven mode (production-ready as of v0.21.0)
+	}
+
+	// Set daemon configuration for status reporting
+	server.SetConfig(autoCommit, autoPush, localMode, interval.String(), daemonMode)
+
 	// Register daemon in global registry
 	registry, err := daemon.NewRegistry()
 	if err != nil {
@@ -500,12 +509,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool,
 	parentPID := computeDaemonParentPID()
 	log.log("Monitoring parent process (PID %d)", parentPID)
 
-	// Choose event loop based on BEADS_DAEMON_MODE
-	daemonMode := os.Getenv("BEADS_DAEMON_MODE")
-	if daemonMode == "" {
-		daemonMode = "events" // Default to event-driven mode (production-ready as of v0.21.0)
-	}
-
+	// daemonMode already determined above for SetConfig
 	switch daemonMode {
 	case "events":
 		log.log("Using event-driven mode")

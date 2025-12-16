@@ -275,6 +275,12 @@ type StatusResponse struct {
 	LastActivityTime     string  `json:"last_activity_time"`       // ISO 8601 timestamp of last request
 	ExclusiveLockActive  bool    `json:"exclusive_lock_active"`    // Whether an exclusive lock is held
 	ExclusiveLockHolder  string  `json:"exclusive_lock_holder,omitempty"` // Lock holder name if active
+	// Daemon configuration
+	AutoCommit   bool   `json:"auto_commit"`            // Whether auto-commit is enabled
+	AutoPush     bool   `json:"auto_push"`              // Whether auto-push is enabled
+	LocalMode    bool   `json:"local_mode"`             // Whether running in local-only mode (no git)
+	SyncInterval string `json:"sync_interval"`          // Sync interval (e.g., "5s")
+	DaemonMode   string `json:"daemon_mode"`            // Sync mode: "poll" or "events"
 }
 
 // HealthResponse is the response for a health check operation

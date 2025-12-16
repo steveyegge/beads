@@ -276,6 +276,15 @@ func (s *Server) handleStatus(_ *Request) Response {
 		}
 	}
 	
+	// Read config under lock
+	s.mu.RLock()
+	autoCommit := s.autoCommit
+	autoPush := s.autoPush
+	localMode := s.localMode
+	syncInterval := s.syncInterval
+	daemonMode := s.daemonMode
+	s.mu.RUnlock()
+	
 	statusResp := StatusResponse{
 		Version:             ServerVersion,
 		WorkspacePath:       s.workspacePath,
@@ -286,6 +295,11 @@ func (s *Server) handleStatus(_ *Request) Response {
 		LastActivityTime:    lastActivity.Format(time.RFC3339),
 		ExclusiveLockActive: lockActive,
 		ExclusiveLockHolder: lockHolder,
+		AutoCommit:          autoCommit,
+		AutoPush:            autoPush,
+		LocalMode:           localMode,
+		SyncInterval:        syncInterval,
+		DaemonMode:          daemonMode,
 	}
 	
 	data, _ := json.Marshal(statusResp)
