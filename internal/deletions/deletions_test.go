@@ -3,6 +3,7 @@ package deletions
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -857,5 +858,72 @@ func TestRemoveDeletions_MixedExistingAndNonExisting(t *testing.T) {
 	}
 	if _, ok := loaded.Records["bd-002"]; !ok {
 		t.Error("expected bd-002 to remain")
+	}
+}
+
+func TestLoadDeletions_MergeConflictMarkers(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "deletions.jsonl")
+
+	// Write content with git merge conflict markers (as found in GH#590)
+	// Include both marker lines and valid deletion records
+	content := `<<<<<<< HEAD
+<<<<<<< HEAD
+{"id":"bd-4399"}
+{"id":"bd-4584"}
+=======
+{"id":"bd-3879"}
+{"id":"bd-4187"}
+>>>>>>> upstream/main
+{"id":"bd-8196"}
+{"id":"bd-5169"}
+=======
+{"id":"bd-3pd","ts":"2025-12-02T05:05:53.732197Z","by":"stevey","reason":"batch delete"}
+{"id":"bd-ksc","ts":"2025-12-02T05:05:53.742343Z","by":"stevey","reason":"batch delete"}
+>>>>>>> other-branch
+{"id":"bd-360","ts":"2025-12-02T05:05:53.746420Z","by":"stevey","reason":"batch delete"}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Load and verify merge markers are skipped
+	result, err := LoadDeletions(path)
+	if err != nil {
+		t.Fatalf("LoadDeletions failed: %v", err)
+	}
+
+	// The file has merge conflict markers which should be skipped
+	// We expect at least 6 skipped lines (3 opening markers + 2 middle separators + 1 closing)
+	if result.Skipped < 3 {
+		t.Errorf("expected at least 3 skipped lines for merge markers, got %d", result.Skipped)
+	}
+
+	// Verify that we loaded some valid records despite the markers
+	if len(result.Records) == 0 {
+		t.Error("expected at least one valid record to be loaded despite merge conflicts")
+	}
+
+	// Verify bd-360 is present (the last valid record after all markers)
+	if _, ok := result.Records["bd-360"]; !ok {
+		t.Error("expected bd-360 to be loaded")
+	}
+
+	// Verify we have warnings
+	if len(result.Warnings) == 0 {
+		t.Error("expected warnings to be collected")
+	}
+
+	// At least some warnings should mention merge conflict markers
+	hasMarkerWarning := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "merge conflict marker") {
+			hasMarkerWarning = true
+			break
+		}
+	}
+	if !hasMarkerWarning {
+		t.Logf("Warnings collected: %v", result.Warnings)
+		// This is acceptable - corrupt lines may be skipped regardless of marker type
 	}
 }

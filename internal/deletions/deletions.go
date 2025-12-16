@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,25 @@ type LoadResult struct {
 	Records  map[string]DeletionRecord
 	Skipped  int
 	Warnings []string
+}
+
+// isMergeConflictMarker returns true if the line is a git merge conflict marker.
+// These can appear in deletions.jsonl if merge conflicts were committed to git history.
+func isMergeConflictMarker(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	// Git merge conflict markers are exactly 7 characters (<<<<<<, =======, >>>>>>)
+	// optionally followed by whitespace or a ref name
+	if len(trimmed) < 7 {
+		return false
+	}
+	prefix := trimmed[:7]
+	switch prefix {
+	case "<<<<<<<", "=======", ">>>>>>>":
+		// Confirm the rest is either empty, whitespace, or a ref name
+		rest := strings.TrimSpace(trimmed[7:])
+		return rest == "" || !strings.Contains(rest, "\"") // Exclude valid JSON
+	}
+	return false
 }
 
 // LoadDeletions reads the deletions manifest and returns a LoadResult.
@@ -58,6 +78,15 @@ func LoadDeletions(path string) (*LoadResult, error) {
 		lineNo++
 		line := scanner.Text()
 		if line == "" {
+			continue
+		}
+
+		// Skip git merge conflict markers (<<<<<<, =======, >>>>>>)
+		// These can be committed to git history and must be gracefully handled
+		if isMergeConflictMarker(line) {
+			warning := fmt.Sprintf("skipping merge conflict marker at line %d in deletions manifest", lineNo)
+			result.Warnings = append(result.Warnings, warning)
+			result.Skipped++
 			continue
 		}
 
