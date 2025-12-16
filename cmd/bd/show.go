@@ -526,6 +526,15 @@ var updateCmd = &cobra.Command{
 			setLabels, _ := cmd.Flags().GetStringSlice("set-labels")
 			updates["set_labels"] = setLabels
 		}
+		if cmd.Flags().Changed("type") {
+			issueType, _ := cmd.Flags().GetString("type")
+			// Validate issue type
+			if _, err := validation.ParseIssueType(issueType); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			updates["issue_type"] = issueType
+		}
 
 		if len(updates) == 0 {
 			fmt.Println("No updates specified")
@@ -605,6 +614,9 @@ var updateCmd = &cobra.Command{
 				}
 				if setLabels, ok := updates["set_labels"].([]string); ok {
 					updateArgs.SetLabels = setLabels
+				}
+				if issueType, ok := updates["issue_type"].(string); ok {
+					updateArgs.IssueType = &issueType
 				}
 
 				resp, err := daemonClient.Update(updateArgs)
@@ -1019,6 +1031,7 @@ func init() {
 	updateCmd.Flags().StringP("status", "s", "", "New status")
 	registerPriorityFlag(updateCmd, "")
 	updateCmd.Flags().String("title", "", "New title")
+	updateCmd.Flags().StringP("type", "t", "", "New type (bug|feature|task|epic|chore)")
 	registerCommonIssueFlags(updateCmd)
 	updateCmd.Flags().String("notes", "", "Additional notes")
 	updateCmd.Flags().String("acceptance-criteria", "", "DEPRECATED: use --acceptance")
