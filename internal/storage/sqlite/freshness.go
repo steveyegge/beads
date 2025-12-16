@@ -4,7 +4,6 @@ package sqlite
 import (
 	"os"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -49,11 +48,9 @@ func (fc *FreshnessChecker) captureFileState() {
 	fc.lastMtime = info.ModTime()
 	fc.lastSize = info.Size()
 
-	// Get inode on Unix systems
+	// Get inode (Unix only, returns 0 on Windows)
 	if sys := info.Sys(); sys != nil {
-		if stat, ok := sys.(*syscall.Stat_t); ok {
-			fc.lastInode = stat.Ino
-		}
+		fc.lastInode = getInode(sys)
 	}
 }
 
@@ -77,9 +74,7 @@ func (fc *FreshnessChecker) Check() bool {
 	// Check if file was replaced by comparing inode
 	var currentInode uint64
 	if sys := info.Sys(); sys != nil {
-		if stat, ok := sys.(*syscall.Stat_t); ok {
-			currentInode = stat.Ino
-		}
+		currentInode = getInode(sys)
 	}
 
 	// Detect file replacement:
