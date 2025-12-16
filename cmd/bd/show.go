@@ -75,7 +75,7 @@ var showCmd = &cobra.Command{
 				if jsonOutput {
 					type IssueDetails struct {
 						types.Issue
-						Labels       []string       `json:"labels,omitempty"`
+						Labels       []string                             `json:"labels,omitempty"`
 						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
@@ -96,7 +96,7 @@ var showCmd = &cobra.Command{
 					// Parse response and use existing formatting code
 					type IssueDetails struct {
 						types.Issue
-						Labels       []string       `json:"labels,omitempty"`
+						Labels       []string                             `json:"labels,omitempty"`
 						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 					}
@@ -205,25 +205,25 @@ var showCmd = &cobra.Command{
 						if len(children) > 0 {
 							fmt.Printf("\nChildren (%d):\n", len(children))
 							for _, dep := range children {
-								fmt.Printf("  ↳ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+								fmt.Printf("  ↳ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 							}
 						}
 						if len(blocks) > 0 {
 							fmt.Printf("\nBlocks (%d):\n", len(blocks))
 							for _, dep := range blocks {
-								fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+								fmt.Printf("  ← %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 							}
 						}
 						if len(related) > 0 {
 							fmt.Printf("\nRelated (%d):\n", len(related))
 							for _, dep := range related {
-								fmt.Printf("  ↔ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+								fmt.Printf("  ↔ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 							}
 						}
 						if len(discovered) > 0 {
 							fmt.Printf("\nDiscovered (%d):\n", len(discovered))
 							for _, dep := range discovered {
-								fmt.Printf("  ◊ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+								fmt.Printf("  ◊ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 							}
 						}
 					}
@@ -397,25 +397,25 @@ var showCmd = &cobra.Command{
 					if len(children) > 0 {
 						fmt.Printf("\nChildren (%d):\n", len(children))
 						for _, dep := range children {
-							fmt.Printf("  ↳ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  ↳ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 						}
 					}
 					if len(blocks) > 0 {
 						fmt.Printf("\nBlocks (%d):\n", len(blocks))
 						for _, dep := range blocks {
-							fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  ← %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 						}
 					}
 					if len(related) > 0 {
 						fmt.Printf("\nRelated (%d):\n", len(related))
 						for _, dep := range related {
-							fmt.Printf("  ↔ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  ↔ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 						}
 					}
 					if len(discovered) > 0 {
 						fmt.Printf("\nDiscovered (%d):\n", len(discovered))
 						for _, dep := range discovered {
-							fmt.Printf("  ◊ %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+							fmt.Printf("  ◊ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 						}
 					}
 				}
@@ -425,7 +425,7 @@ var showCmd = &cobra.Command{
 				if len(dependents) > 0 {
 					fmt.Printf("\nBlocks (%d):\n", len(dependents))
 					for _, dep := range dependents {
-						fmt.Printf("  ← %s: %s [P%d]\n", dep.ID, dep.Title, dep.Priority)
+						fmt.Printf("  ← %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
 					}
 				}
 			}
