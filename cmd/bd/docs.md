@@ -22,6 +22,30 @@ The CLI is built on the Cobra framework and consists of command implementations 
 
 ### Core Implementation
 
+**Auto-Import with Cleaning** (`autoimport.go`):
+
+The `checkAndAutoImport()` function (lines 24-63) implements automatic import during fresh initialization. When `bd init` detects an empty database but issues in git, it:
+
+1. Extracts JSONL from git at the configured sync-branch (or HEAD if not configured)
+2. Calls `jsonl.CleanIssues()` with default options to normalize the data:
+   - Removes duplicate IDs (keeps newest by UpdatedAt)
+   - Filters test pollution (issues matching known baseline patterns or `-test-`, `-baseline-`, etc.)
+   - Repairs broken references (removes dependencies to deleted or non-existent issues)
+3. Saves rejection manifest to `.beads/cleaning-rejects.jsonl` if >10 issues were cleaned
+4. Imports cleaned issues into the database via `importIssuesCore()`
+
+Key helper functions:
+- **findBeadsDir()** (lines 194-237): Locates .beads directory in current/parent folders, with support for git worktrees
+- **checkGitForIssues()** (lines 68-143): Determines which branch to read from (respects sync-branch configuration) and counts issues
+- **getLocalSyncBranch()** (lines 169-192): Reads sync-branch directly from local config.yaml file
+- **importFromGit()** (lines 269-342): Executes the import pipeline—reading, cleaning, and inserting issues
+
+**Rejection Manifest** (lines 304-311 in importFromGit):
+- Calls `jsonl.SaveRejectionManifest()` when significant cleaning occurs (>10 problems)
+- Writes `.beads/cleaning-rejects.jsonl` with complete rejected issue details and reasons
+- Provides audit trail for users to review and recover issues if needed
+- Only saves when >10 issues are cleaned to avoid noise for minor fixes
+
 **Version Information Pipeline** (GitHub issue #503):
 
 1. **Version Variables** (lines 15-23 in `@/cmd/bd/version.go`):
@@ -56,6 +80,24 @@ The CLI is built on the Cobra framework and consists of command implementations 
 - Responses flow back through storage → RPC (if daemon) or direct return → formatted output
 
 ### Things to Know
+
+**Auto-Import Data Cleaning** (GH#590):
+
+Auto-import automatically cleans corrupted JSONL found in git before importing, which prevents database UNIQUE constraint violations from duplicate issue IDs. This is essential because:
+- Merge conflicts in JSONL files can create duplicate issue IDs
+- Failed quality gate checks leave test pollution issues in git history
+- Soft-deleted issues can leave broken references
+
+The cleaning process is transparent to users—users only see a warning if >10 issues are cleaned, and detailed information is preserved in `.beads/cleaning-rejects.jsonl` for audit. This automatic cleaning only happens during fresh initialization (empty database with issues in git), not during manual `bd import`.
+
+**Integration with @/internal/jsonl Package**:
+
+The auto-import flow (@/cmd/bd/autoimport.go) calls cleaning functions from @/internal/jsonl:
+- `jsonl.CleanIssues()` applies the three cleaning phases
+- `jsonl.SaveRejectionManifest()` writes the audit trail
+- All rejected issue details are preserved for user review
+
+This separation of concerns keeps the CLI layer focused on orchestration while the jsonl package handles the actual data transformation.
 
 **Why Both Commit and Branch Are Needed**:
 - The `Commit` variable allows tracing the exact code version
