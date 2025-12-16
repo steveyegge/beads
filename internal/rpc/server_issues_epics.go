@@ -73,6 +73,9 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.EstimatedMinutes != nil {
 		u["estimated_minutes"] = *a.EstimatedMinutes
 	}
+	if a.IssueType != nil {
+		u["issue_type"] = *a.IssueType
+	}
 	return u
 }
 

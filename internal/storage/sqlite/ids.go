@@ -73,6 +73,38 @@ func isValidHex(s string) bool {
 	return true
 }
 
+// IsHierarchicalID checks if an issue ID is hierarchical (has a parent).
+// Hierarchical IDs have the format {parentID}.{N} where N is a numeric child suffix.
+// Returns true and the parent ID if hierarchical, false and empty string otherwise.
+//
+// This correctly handles prefixes that contain dots (e.g., "my.project-abc123"
+// is NOT hierarchical, but "my.project-abc123.1" IS hierarchical with parent
+// "my.project-abc123").
+//
+// The key insight is that hierarchical IDs always end with .{digits} where
+// the digits represent the child number (1, 2, 3, etc.).
+func IsHierarchicalID(id string) (isHierarchical bool, parentID string) {
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return false, ""
+	}
+
+	// Check if the suffix after the last dot is purely numeric
+	suffix := id[lastDot+1:]
+	if len(suffix) == 0 {
+		return false, ""
+	}
+
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return false, ""
+		}
+	}
+
+	// It's hierarchical - parent is everything before the last dot
+	return true, id[:lastDot]
+}
+
 // ValidateIssueIDPrefix validates that an issue ID matches the configured prefix
 // Supports both top-level (bd-a3f8e9) and hierarchical (bd-a3f8e9.1) IDs
 func ValidateIssueIDPrefix(id, prefix string) error {
@@ -202,17 +234,9 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 				}
 			}
 			
-			// For hierarchical IDs (prefix-hash.child), ensure parent exists
-			// Only consider dots that appear AFTER the first hyphen (the prefix-hash separator)
-			// This avoids false positives when the prefix itself contains dots (e.g., "my.project-abc")
-			// See GH#508
-			hyphenIdx := strings.Index(issues[i].ID, "-")
-			hasHierarchicalDot := hyphenIdx >= 0 && strings.Contains(issues[i].ID[hyphenIdx+1:], ".")
-			if hasHierarchicalDot {
-				// Extract parent ID (everything before the last dot)
-				lastDot := strings.LastIndex(issues[i].ID, ".")
-				parentID := issues[i].ID[:lastDot]
-				
+			// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
+			// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
+			if isHierarchical, parentID := IsHierarchicalID(issues[i].ID); isHierarchical {
 				var parentCount int
 				err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
 				if err != nil {

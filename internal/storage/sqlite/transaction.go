@@ -137,7 +137,8 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		if strings.Contains(issue.ID, ".") {
+		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			resurrected, err := t.parent.tryResurrectParentChainWithConn(ctx, t.conn, issue.ID)
 			if err != nil {
@@ -145,8 +146,6 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 			}
 			if !resurrected {
 				// Parent(s) not found in JSONL history - cannot proceed
-				lastDot := strings.LastIndex(issue.ID, ".")
-				parentID := issue.ID[:lastDot]
 				return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
 			}
 		}
