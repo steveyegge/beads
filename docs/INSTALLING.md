@@ -133,21 +133,30 @@ brew install bd
 cd your-project
 bd init --quiet
 
-# 3. Install hooks for automatic context injection
-bd hooks install
+# 3. Setup editor integration (choose one)
+bd setup claude   # Claude Code - installs SessionStart/PreCompact hooks
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
 ```
 
 **How it works:**
-- SessionStart hook runs `bd prime` automatically
-- `bd prime` injects ~1-2k tokens of workflow context
+- Editor hooks/rules inject `bd prime` automatically on session start
+- `bd prime` provides ~1-2k tokens of workflow context
 - You use `bd` CLI commands directly
-- Git hooks auto-sync the database
+- Git hooks (installed by `bd init`) auto-sync the database
 
 **Why this is recommended:**
 - **Context efficient** - ~1-2k tokens vs 10-50k for MCP tool schemas
 - **Lower latency** - Direct CLI calls, no MCP protocol overhead
 - **Universal** - Works with any editor that has shell access
 - **More sustainable** - Less compute per request
+
+**Verify installation:**
+```bash
+bd setup claude --check   # Check Claude Code integration
+bd setup cursor --check   # Check Cursor integration
+bd setup aider --check    # Check Aider integration
+```
 
 ### Claude Code Plugin (Optional)
 

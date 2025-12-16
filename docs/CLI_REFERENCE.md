@@ -11,7 +11,7 @@
 - [Filtering & Search](#filtering--search)
 - [Advanced Operations](#advanced-operations)
 - [Database Management](#database-management)
-- [Setup & Integration](#setup--integration)
+- [Editor Integration](#editor-integration)
 
 ## Basic Operations
 
@@ -551,23 +551,43 @@ bd sync  # Force immediate sync, bypass debounce
 
 **ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed immediately.
 
-## Setup & Integration
+## Editor Integration
 
-Configure beads integration with AI coding tools:
+### Setup Commands
 
 ```bash
-# Setup integration
-bd setup claude    # Claude Code hooks (SessionStart/PreCompact)
-bd setup cursor    # Cursor IDE rules file
-bd setup aider     # Aider configuration
+# Setup editor integration (choose based on your editor)
+bd setup claude   # Claude Code - installs SessionStart/PreCompact hooks
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
 
-# Check/remove integration
-bd setup claude --check      # Verify installation
-bd setup claude --remove     # Remove hooks
-bd setup claude --project    # Project-only (not global)
+# Check if integration is installed
+bd setup claude --check
+bd setup cursor --check
+bd setup aider --check
+
+# Remove integration
+bd setup claude --remove
+bd setup cursor --remove
+bd setup aider --remove
 ```
 
-See [SETUP.md](SETUP.md) for detailed documentation on each integration.
+**Claude Code options:**
+```bash
+bd setup claude              # Install globally (~/.claude/settings.json)
+bd setup claude --project    # Install for this project only
+bd setup claude --stealth    # Use stealth mode (flush only, no git operations)
+```
+
+**What each setup does:**
+- **Claude Code** (`bd setup claude`): Adds hooks to Claude Code's settings.json that run `bd prime` on SessionStart and PreCompact events
+- **Cursor** (`bd setup cursor`): Creates `.cursor/rules/beads.mdc` with workflow instructions
+- **Aider** (`bd setup aider`): Creates `.aider.conf.yml` with bd workflow instructions
+
+See also:
+- [INSTALLING.md](INSTALLING.md#ide-and-editor-integrations) - Installation guide
+- [AIDER_INTEGRATION.md](AIDER_INTEGRATION.md) - Detailed Aider guide
+- [CLAUDE_INTEGRATION.md](CLAUDE_INTEGRATION.md) - Claude integration design
 
 ## See Also
 
@@ -575,5 +595,4 @@ See [SETUP.md](SETUP.md) for detailed documentation on each integration.
 - [DAEMON.md](DAEMON.md) - Daemon management and event-driven mode
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflows and merge strategies
 - [LABELS.md](../LABELS.md) - Label system guide
-- [SETUP.md](SETUP.md) - AI tool integration setup
 - [README.md](../README.md) - User documentation

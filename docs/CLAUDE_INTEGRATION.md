@@ -81,6 +81,29 @@ They should be:
 
 Users who want custom Skills can create their own, but beads doesn't ship with or require them.
 
+## Installation
+
+```bash
+# Install Claude Code hooks globally
+bd setup claude
+
+# Install for this project only
+bd setup claude --project
+
+# Use stealth mode (flush only, no git operations)
+bd setup claude --stealth
+
+# Check installation status
+bd setup claude --check
+
+# Remove hooks
+bd setup claude --remove
+```
+
+**What it installs:**
+- SessionStart hook: Runs `bd prime` when Claude Code starts a session
+- PreCompact hook: Runs `bd prime` before context compaction to preserve workflow instructions
+
 ## Related Files
 
 - `cmd/bd/prime.go` - Context generation
