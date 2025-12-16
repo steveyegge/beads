@@ -36,6 +36,18 @@ func DatabaseVersion(path string) error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to initialize database: %w", err)
 		}
+
+		// bd-8v5o: Clean up deletions manifest for hydrated issues
+		// After init, remove any issues from deletions.jsonl that exist in JSONL
+		// This prevents perpetual "Skipping bd-xxx (in deletions manifest)" warnings
+		jsonlPath := findJSONLPath(beadsDir)
+		if jsonlPath != "" {
+			if err := cleanupDeletionsManifest(beadsDir, jsonlPath); err != nil {
+				// Non-fatal - just log warning
+				fmt.Printf("  Warning: failed to clean up deletions manifest: %v\n", err)
+			}
+		}
+
 		return nil
 	}
 
@@ -50,6 +62,22 @@ func DatabaseVersion(path string) error {
 	}
 
 	return nil
+}
+
+// findJSONLPath returns the path to the JSONL file in the beads directory.
+// Returns empty string if no JSONL file exists.
+func findJSONLPath(beadsDir string) string {
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	if _, err := os.Stat(jsonlPath); err == nil {
+		return jsonlPath
+	}
+
+	beadsJSONLPath := filepath.Join(beadsDir, "beads.jsonl")
+	if _, err := os.Stat(beadsJSONLPath); err == nil {
+		return beadsJSONLPath
+	}
+
+	return ""
 }
 
 // SchemaCompatibility fixes schema compatibility issues by running bd migrate

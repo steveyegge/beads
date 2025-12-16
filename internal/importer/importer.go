@@ -151,13 +151,12 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 					continue
 				}
 
-				if del, found := loadResult.Records[issue.ID]; found {
+				if _, found := loadResult.Records[issue.ID]; found {
 					// Non-tombstone issue is in deletions manifest - skip it
 					// (this maintains backward compatibility during transition)
+					// Note: Individual skip messages removed (bd-wsqt) - caller shows summary
 					result.SkippedDeleted++
 					result.SkippedDeletedIDs = append(result.SkippedDeletedIDs, issue.ID)
-					fmt.Fprintf(os.Stderr, "Skipping %s (in deletions manifest: deleted %s by %s)\n",
-						issue.ID, del.Timestamp.Format("2006-01-02"), del.Actor)
 				} else {
 					filteredIssues = append(filteredIssues, issue)
 				}
