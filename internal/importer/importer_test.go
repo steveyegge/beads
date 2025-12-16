@@ -1394,3 +1394,107 @@ func TestImportIssues_LegacyDeletionsConvertedToTombstones(t *testing.T) {
 		t.Errorf("Expected DeleteReason 'duplicate of test-xyz', got %q", tombstone.DeleteReason)
 	}
 }
+
+// TestImportOrphanSkip_CountMismatch verifies that orphaned issues are properly
+// skipped during import and tracked in the result count (bd-ckej).
+//
+// Discovery recipe: Fresh clone >> bd init >> bd doctor --fix >> bd sync --import-only
+// would show "Count mismatch: database has 823 issues, JSONL has 824" if orphaned
+// child issues weren't properly filtered out (before the fix).
+//
+// The test imports issues where a child's parent doesn't exist in the database.
+// With OrphanSkip mode, the child should be filtered out before creation.
+func TestImportOrphanSkip_CountMismatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.New(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Set prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	now := time.Now()
+
+	// Prepare to import: normal issues + orphaned child
+	// The orphaned child has a parent (test-orphan) that doesn't exist in the database
+	issues := []*types.Issue{
+		{
+			ID:        "test-new1",
+			Title:     "Normal Issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "test-orphan.1",                // Child of non-existent parent
+			Title:     "Orphaned Child",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "test-new2",
+			Title:     "Another Normal Issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+
+	// Import with OrphanSkip mode - parent doesn't exist
+	result, err := ImportIssues(ctx, "", store, issues, Options{
+		OrphanHandling:       sqlite.OrphanSkip,
+		SkipPrefixValidation: true, // Allow explicit IDs during import
+	})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	// Verify results:
+	// - 2 issues should be created (test-new1, test-new2)
+	// - 1 issue should be skipped (test-orphan.1 - no parent exists)
+	if result.Created != 2 {
+		t.Errorf("Expected 2 created issues, got %d", result.Created)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Expected 1 skipped issue (orphan), got %d", result.Skipped)
+	}
+
+	// Verify the orphan is NOT in the database
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+
+	var orphanFound bool
+	for _, issue := range allIssues {
+		if issue.ID == "test-orphan.1" {
+			orphanFound = true
+			break
+		}
+	}
+	if orphanFound {
+		t.Error("Orphaned issue test-orphan.1 should not be in database")
+	}
+
+	// Verify normal issues ARE in the database
+	var count int
+	for _, issue := range allIssues {
+		if issue.ID == "test-new1" || issue.ID == "test-new2" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 normal issues in database, found %d", count)
+	}
+}

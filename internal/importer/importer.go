@@ -671,24 +671,62 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 		}
 	}
 
+// Filter out orphaned issues if orphan_handling is set to skip (bd-ckej)
+// Pre-filter before batch creation to prevent orphans from being created then ID-cleared
+if opts.OrphanHandling == sqlite.OrphanSkip {
+	var filteredNewIssues []*types.Issue
+	for _, issue := range newIssues {
+		// Check if this is a hierarchical child whose parent doesn't exist
+		if strings.Contains(issue.ID, ".") {
+			lastDot := strings.LastIndex(issue.ID, ".")
+			parentID := issue.ID[:lastDot]
+			
+			// Check if parent exists in either existing DB issues or in newIssues batch
+			var parentExists bool
+			for _, dbIssue := range dbIssues {
+				if dbIssue.ID == parentID {
+					parentExists = true
+					break
+				}
+			}
+			if !parentExists {
+				for _, newIssue := range newIssues {
+					if newIssue.ID == parentID {
+						parentExists = true
+						break
+					}
+				}
+			}
+			
+			if !parentExists {
+				// Skip this orphaned issue
+				result.Skipped++
+				continue
+			}
+		}
+		filteredNewIssues = append(filteredNewIssues, issue)
+	}
+	newIssues = filteredNewIssues
+}
+
 // Batch create all new issues
 // Sort by hierarchy depth to ensure parents are created before children
 if len(newIssues) > 0 {
  sort.Slice(newIssues, func(i, j int) bool {
-  depthI := strings.Count(newIssues[i].ID, ".")
- depthJ := strings.Count(newIssues[j].ID, ".")
+   depthI := strings.Count(newIssues[i].ID, ".")
+  depthJ := strings.Count(newIssues[j].ID, ".")
 			if depthI != depthJ {
-  return depthI < depthJ // Shallower first
- }
- return newIssues[i].ID < newIssues[j].ID // Stable sort
+   return depthI < depthJ // Shallower first
+  }
+  return newIssues[i].ID < newIssues[j].ID // Stable sort
 })
 
 // Create in batches by depth level (max depth 3)
 		for depth := 0; depth <= 3; depth++ {
-   var batchForDepth []*types.Issue
-   for _, issue := range newIssues {
-    if strings.Count(issue.ID, ".") == depth {
-    batchForDepth = append(batchForDepth, issue)
+    var batchForDepth []*types.Issue
+    for _, issue := range newIssues {
+     if strings.Count(issue.ID, ".") == depth {
+     batchForDepth = append(batchForDepth, issue)
 				}
 			}
 			if len(batchForDepth) > 0 {
