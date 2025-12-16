@@ -1,6 +1,10 @@
 package jsonl
 
 import (
+	"encoding/json"
+	"io/ioutil"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,13 +60,16 @@ func TestFilterTestPollution(t *testing.T) {
 	}
 
 	count := 0
-	cleaned := filterTestPollution(issues, &count)
+	cleaned, rejected := filterTestPollution(issues, &count)
 
 	if count != 3 {
 		t.Errorf("Expected 3 test issues removed, got %d", count)
 	}
 	if len(cleaned) != 2 {
 		t.Errorf("Expected 2 real issues, got %d", len(cleaned))
+	}
+	if len(rejected) != 3 {
+		t.Errorf("Expected 3 rejected issues recorded, got %d", len(rejected))
 	}
 
 	// Check that real issues were preserved
@@ -192,6 +199,12 @@ func TestCleanIssuesEndToEnd(t *testing.T) {
 	if cleanResult.BrokenReferencesRemoved != 1 {
 		t.Errorf("Expected 1 broken reference removed, got %d", cleanResult.BrokenReferencesRemoved)
 	}
+	if len(cleanResult.RejectedDuplicates) != 1 {
+		t.Errorf("Expected 1 duplicate removal recorded, got %d", len(cleanResult.RejectedDuplicates))
+	}
+	if len(cleanResult.RejectedTestPollution) != 1 {
+		t.Errorf("Expected 1 test pollution rejection recorded, got %d", len(cleanResult.RejectedTestPollution))
+	}
 
 	// Verify the cleaned issues
 	ids := make(map[string]bool)
@@ -311,5 +324,82 @@ func TestValidateIssuesClean(t *testing.T) {
 
 	if report.HasIssues() {
 		t.Errorf("Clean report should have no issues. Summary:\n%s", report.Summary())
+	}
+}
+
+func TestSaveRejectionManifest(t *testing.T) {
+	now := time.Now()
+	older := now.Add(-1 * time.Hour)
+	
+	// Create a temporary directory for test output
+	tmpDir := t.TempDir()
+
+	// Create a CleanResult with some rejected issues
+	result := &CleanResult{
+		OriginalCount: 4,
+		FinalCount:    2,
+		RejectedDuplicates: []*DuplicateRemoval{
+			{
+				ID: "bd-123",
+				KeptVersion: &types.Issue{
+					ID:        "bd-123",
+					Title:     "Kept version",
+					UpdatedAt: now,
+				},
+				RemovedVersions: []*types.Issue{
+					{
+						ID:        "bd-123",
+						Title:     "Old version",
+						UpdatedAt: older,
+					},
+				},
+			},
+		},
+		RejectedTestPollution: []*RejectedIssue{
+			{
+				Issue: &types.Issue{
+					ID:    "bd-9f86-baseline-1",
+					Title: "Test pollution",
+				},
+				Reason: "matches known baseline prefix: bd-9f86-baseline-",
+			},
+		},
+	}
+
+	// Save the rejection manifest
+	err := SaveRejectionManifest(tmpDir, result)
+	if err != nil {
+		t.Fatalf("SaveRejectionManifest failed: %v", err)
+	}
+
+	// Verify the file was created
+	manifestPath := filepath.Join(tmpDir, "cleaning-rejects.jsonl")
+	data, err := ioutil.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("Could not read manifest file: %v", err)
+	}
+
+	// Verify content is valid JSON lines
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Errorf("Expected at least 2 rejection lines, got %d", len(lines))
+	}
+
+	// Each line should be valid JSON
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Errorf("Line %d is not valid JSON: %v", i, err)
+		}
+		// Should have the fields we set
+		if _, hasIssue := obj["issue"]; !hasIssue {
+			t.Errorf("Line %d missing 'issue' field", i)
+		}
+		if _, hasReason := obj["rejection_reason"]; !hasReason {
+			t.Errorf("Line %d missing 'rejection_reason' field", i)
+		}
 	}
 }

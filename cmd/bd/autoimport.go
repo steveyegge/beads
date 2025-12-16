@@ -300,6 +300,14 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 				cleanResult.OriginalCount, cleanResult.FinalCount,
 				cleanResult.DuplicateIDCount, cleanResult.TestPollutionCount, cleanResult.BrokenReferencesRemoved)
 		}
+
+		// Save rejection manifest for audit trail
+		beadsDir := findBeadsDir()
+		if beadsDir != "" {
+			if err := jsonl.SaveRejectionManifest(beadsDir, cleanResult); err != nil && !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: could not save cleaning manifest: %v\n", err)
+			}
+		}
 	}
 
 	issues = cleanedIssues

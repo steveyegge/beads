@@ -2,7 +2,10 @@
 package jsonl
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +28,19 @@ type CleanerOptions struct {
 	Verbose bool
 }
 
+// RejectedIssue tracks a single rejected issue with the reason for rejection
+type RejectedIssue struct {
+	Issue  *types.Issue
+	Reason string
+}
+
+// DuplicateRemoval tracks duplicate IDs with kept vs removed versions
+type DuplicateRemoval struct {
+	ID              string
+	KeptVersion     *types.Issue
+	RemovedVersions []*types.Issue
+}
+
 // CleanResult contains statistics about the cleaning operation
 type CleanResult struct {
 	// Original issue count
@@ -43,6 +59,11 @@ type CleanResult struct {
 
 	// Final count
 	FinalCount int
+
+	// Rejected issues for audit trail (newly added)
+	RejectedDuplicates   []*DuplicateRemoval // Duplicate issues removed
+	RejectedTestPollution []*RejectedIssue   // Test pollution issues removed
+	RejectedForBrokenRefs []*RejectedIssue   // Issues with broken references (the ones we had to remove refs from, not the targets)
 }
 
 // DefaultCleanerOptions returns a CleanerOptions with all cleaning enabled
@@ -58,8 +79,11 @@ func DefaultCleanerOptions() CleanerOptions {
 // CleanIssues applies all cleaning steps to a list of issues
 func CleanIssues(issues []*types.Issue, opts CleanerOptions) (*CleanResult, []*types.Issue, error) {
 	result := &CleanResult{
-		OriginalCount:       len(issues),
-		BrokenDependencies:  []string{},
+		OriginalCount:         len(issues),
+		BrokenDependencies:    []string{},
+		RejectedDuplicates:    []*DuplicateRemoval{},
+		RejectedTestPollution: []*RejectedIssue{},
+		RejectedForBrokenRefs: []*RejectedIssue{},
 	}
 
 	cleaned := issues
@@ -69,14 +93,17 @@ func CleanIssues(issues []*types.Issue, opts CleanerOptions) (*CleanResult, []*t
 		dedupResult, newIssues := deduplicateIssues(cleaned)
 		result.DeduplicateCount = dedupResult.Count
 		result.DuplicateIDCount = dedupResult.DuplicateIDCount
+		result.RejectedDuplicates = dedupResult.RejectedDuplicates
 		cleaned = newIssues
 	}
 
 	// Phase 2: Remove test pollution
 	if opts.RemoveTestPollution {
 		count := 0
-		cleaned = filterTestPollution(cleaned, &count)
+		var pollutionRejections []*RejectedIssue
+		cleaned, pollutionRejections = filterTestPollution(cleaned, &count)
 		result.TestPollutionCount = count
+		result.RejectedTestPollution = pollutionRejections
 	}
 
 	// Phase 3: Repair broken references
@@ -84,6 +111,7 @@ func CleanIssues(issues []*types.Issue, opts CleanerOptions) (*CleanResult, []*t
 		repairResult := repairBrokenReferences(cleaned)
 		result.BrokenReferencesRemoved = repairResult.Count
 		result.BrokenDependencies = repairResult.Dependencies
+		result.RejectedForBrokenRefs = repairResult.RejectedIssues
 	}
 
 	result.FinalCount = len(cleaned)
@@ -93,14 +121,15 @@ func CleanIssues(issues []*types.Issue, opts CleanerOptions) (*CleanResult, []*t
 
 // dedupResult holds statistics from deduplication
 type dedupResult struct {
-	Count            int
-	DuplicateIDCount int
+	Count              int
+	DuplicateIDCount   int
+	RejectedDuplicates []*DuplicateRemoval
 }
 
 // deduplicateIssues removes duplicate IDs, keeping the newest version (by UpdatedAt)
 func deduplicateIssues(issues []*types.Issue) (dedupResult, []*types.Issue) {
 	if len(issues) == 0 {
-		return dedupResult{Count: 0}, issues
+		return dedupResult{Count: 0, RejectedDuplicates: []*DuplicateRemoval{}}, issues
 	}
 
 	// Group issues by ID
@@ -112,6 +141,7 @@ func deduplicateIssues(issues []*types.Issue) (dedupResult, []*types.Issue) {
 	// Keep only the newest version of each ID
 	result := make([]*types.Issue, 0, len(byID))
 	duplicateCount := 0
+	rejectedDuplicates := []*DuplicateRemoval{}
 
 	for _, group := range byID {
 		if len(group) > 1 {
@@ -120,16 +150,23 @@ func deduplicateIssues(issues []*types.Issue) (dedupResult, []*types.Issue) {
 			sort.Slice(group, func(i, j int) bool {
 				return group[i].UpdatedAt.After(group[j].UpdatedAt)
 			})
+			// Record what we're removing
+			removal := &DuplicateRemoval{
+				ID:              group[0].ID,
+				KeptVersion:     group[0],
+				RemovedVersions: group[1:],
+			}
+			rejectedDuplicates = append(rejectedDuplicates, removal)
 		}
 		// Keep the newest (first after sort)
 		result = append(result, group[0])
 	}
 
-	return dedupResult{Count: len(result), DuplicateIDCount: duplicateCount}, result
+	return dedupResult{Count: len(result), DuplicateIDCount: duplicateCount, RejectedDuplicates: rejectedDuplicates}, result
 }
 
 // filterTestPollution removes issues with test/baseline prefixes that aren't tracked in git
-func filterTestPollution(issues []*types.Issue, count *int) []*types.Issue {
+func filterTestPollution(issues []*types.Issue, count *int) ([]*types.Issue, []*RejectedIssue) {
 	// Patterns that indicate test pollution
 	testPrefixes := []string{
 		"-baseline-",
@@ -148,14 +185,17 @@ func filterTestPollution(issues []*types.Issue, count *int) []*types.Issue {
 
 	*count = 0
 	filtered := make([]*types.Issue, 0, len(issues))
+	rejected := make([]*RejectedIssue, 0)
 
 	for _, issue := range issues {
 		isTestPollution := false
+		reason := ""
 
 		// Check against known pollution prefixes first
 		for _, prefix := range knownPollutionPrefixes {
 			if strings.HasPrefix(issue.ID, prefix) {
 				isTestPollution = true
+				reason = fmt.Sprintf("matches known baseline prefix: %s", prefix)
 				break
 			}
 		}
@@ -165,6 +205,7 @@ func filterTestPollution(issues []*types.Issue, count *int) []*types.Issue {
 			for _, prefix := range testPrefixes {
 				if strings.Contains(issue.ID, prefix) {
 					isTestPollution = true
+					reason = fmt.Sprintf("matches test pattern: %s", prefix)
 					break
 				}
 			}
@@ -174,16 +215,21 @@ func filterTestPollution(issues []*types.Issue, count *int) []*types.Issue {
 			filtered = append(filtered, issue)
 		} else {
 			*count++
+			rejected = append(rejected, &RejectedIssue{
+				Issue:  issue,
+				Reason: reason,
+			})
 		}
 	}
 
-	return filtered
+	return filtered, rejected
 }
 
 // repairResult holds statistics from reference repair
 type repairResult struct {
-	Count        int
-	Dependencies []string
+	Count         int
+	Dependencies  []string
+	RejectedIssues []*RejectedIssue // Issues that had broken references removed
 }
 
 // repairBrokenReferences removes dependencies to non-existent issues
@@ -195,8 +241,9 @@ func repairBrokenReferences(issues []*types.Issue) repairResult {
 	}
 
 	result := repairResult{
-		Count:        0,
-		Dependencies: []string{},
+		Count:          0,
+		Dependencies:   []string{},
+		RejectedIssues: []*RejectedIssue{},
 	}
 
 	// For each issue, check and repair its dependencies
@@ -205,31 +252,40 @@ func repairBrokenReferences(issues []*types.Issue) repairResult {
 			continue
 		}
 
+		// Track which deps are being removed
+		brokenDepInfo := []string{}
+		
 		// Filter out broken dependencies
 		validDeps := make([]*types.Dependency, 0, len(issue.Dependencies))
 		for _, dep := range issue.Dependencies {
 			// Skip dependencies to deleted issues (marked with "deleted:" prefix)
 			if strings.HasPrefix(dep.DependsOnID, "deleted:") {
 				result.Count++
-				result.Dependencies = append(result.Dependencies, fmt.Sprintf(
-					"%s -> %s (deleted parent)",
-					issue.ID, dep.DependsOnID,
-				))
+				depDesc := fmt.Sprintf("%s -> %s (deleted parent)", issue.ID, dep.DependsOnID)
+				result.Dependencies = append(result.Dependencies, depDesc)
+				brokenDepInfo = append(brokenDepInfo, depDesc)
 				continue
 			}
 
 			// Skip dependencies to non-existent issues
 			if !idSet[dep.DependsOnID] {
 				result.Count++
-				result.Dependencies = append(result.Dependencies, fmt.Sprintf(
-					"%s -> %s (non-existent)",
-					issue.ID, dep.DependsOnID,
-				))
+				depDesc := fmt.Sprintf("%s -> %s (non-existent)", issue.ID, dep.DependsOnID)
+				result.Dependencies = append(result.Dependencies, depDesc)
+				brokenDepInfo = append(brokenDepInfo, depDesc)
 				continue
 			}
 
 			// Keep valid dependency
 			validDeps = append(validDeps, dep)
+		}
+
+		// If we removed any dependencies, record the issue
+		if len(brokenDepInfo) > 0 {
+			result.RejectedIssues = append(result.RejectedIssues, &RejectedIssue{
+				Issue:  issue,
+				Reason: fmt.Sprintf("removed %d broken references: %s", len(brokenDepInfo), strings.Join(brokenDepInfo, "; ")),
+			})
 		}
 
 		// Update issue's dependencies
@@ -394,4 +450,70 @@ func (r *ValidationReport) Summary() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// SaveRejectionManifest writes all rejected issues to a JSONL file for audit trail
+func SaveRejectionManifest(beadsDir string, result *CleanResult) error {
+	if beadsDir == "" {
+		return fmt.Errorf("beads directory not specified")
+	}
+
+	manifestPath := filepath.Join(beadsDir, "cleaning-rejects.jsonl")
+	file, err := os.Create(manifestPath) // #nosec G304 - beadsDir from app context
+	if err != nil {
+		return fmt.Errorf("failed to create rejection manifest: %w", err)
+	}
+	defer file.Close()
+
+	// Write all rejected issues as JSONL
+	for _, dup := range result.RejectedDuplicates {
+		// Write the kept version with metadata
+		for _, removed := range dup.RemovedVersions {
+			line, err := marshalIssueWithReason(removed, fmt.Sprintf("duplicate of %s (kept version from %s)", dup.ID, dup.KeptVersion.UpdatedAt.Format(time.RFC3339)))
+			if err != nil {
+				continue
+			}
+			if _, err := file.WriteString(line + "\n"); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, rejected := range result.RejectedTestPollution {
+		line, err := marshalIssueWithReason(rejected.Issue, rejected.Reason)
+		if err != nil {
+			continue
+		}
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+
+	for _, rejected := range result.RejectedForBrokenRefs {
+		line, err := marshalIssueWithReason(rejected.Issue, rejected.Reason)
+		if err != nil {
+			continue
+		}
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// marshalIssueWithReason returns a JSON string with the issue and rejection reason
+func marshalIssueWithReason(issue *types.Issue, reason string) (string, error) {
+	// Create a wrapper with the issue and reason
+	wrapper := map[string]interface{}{
+		"issue":          issue,
+		"rejection_reason": reason,
+		"cleaned_at":     time.Now().Format(time.RFC3339),
+	}
+	
+	data, err := json.Marshal(wrapper)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
