@@ -426,7 +426,33 @@ bd ready
 bd create "Fix bug" -p 1
 ```
 
-See [ADVANCED.md#git-worktrees](ADVANCED.md#git-worktrees) for details.
+See [WORKTREES.md](WORKTREES.md) for details.
+
+### Why did beads create worktrees in my .git directory?
+
+Beads automatically creates git worktrees when using the **sync-branch** feature. This happens when you:
+- Run `bd init --branch <name>`
+- Set `bd config set sync.branch <name>`
+
+The worktrees allow beads to commit issue updates to a separate branch without switching your working directory.
+
+**Location:** `.git/beads-worktrees/<sync-branch>/`
+
+**Common issue:** If you see "branch already checked out" errors when switching branches, remove the beads worktrees:
+
+```bash
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+```
+
+**To disable sync-branch (stop worktree creation):**
+
+```bash
+bd config set sync.branch ""
+```
+
+See [WORKTREES.md#beads-created-worktrees-sync-branch](WORKTREES.md#beads-created-worktrees-sync-branch) for full details.
 
 ### What's the difference between SQLite corruption and ID collisions?
 

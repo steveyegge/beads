@@ -8,6 +8,102 @@ Beads now provides **enhanced Git worktree support** with a shared database arch
 
 **Note:** While comprehensively implemented and tested internally, this feature may benefit from real-world usage feedback to identify any remaining edge cases.
 
+---
+
+## Beads-Created Worktrees (Sync Branch)
+
+**Important:** Beads automatically creates git worktrees internally for its sync-branch feature. This is different from user-created worktrees for parallel development.
+
+### Why Beads Creates Worktrees
+
+When you configure a **sync branch** (via `bd init --branch <name>` or `bd config set sync.branch <name>`), beads needs to commit issue updates to that branch without switching your working directory away from your current branch.
+
+**Solution:** Beads creates a lightweight worktree that:
+- Contains only the `.beads/` directory (sparse checkout)
+- Lives in `.git/beads-worktrees/<sync-branch>/`
+- Commits issue changes to the sync branch automatically
+- Leaves your main working directory untouched
+
+### Where to Find These Worktrees
+
+```
+your-project/
+├── .git/
+│   ├── beads-worktrees/          # Beads-created worktrees live here
+│   │   └── beads-sync/           # Default sync branch worktree
+│   │       └── .beads/
+│   │           └── issues.jsonl  # Issue data committed here
+│   └── worktrees/                # Standard git worktrees directory
+├── .beads/                       # Your working copy
+│   ├── beads.db                  # Local SQLite database
+│   └── issues.jsonl              # Local JSONL (may differ from sync branch)
+└── src/                          # Your code (untouched by sync)
+```
+
+### Common Confusion: "Beads took over main!"
+
+If you see worktrees pointing to `main` and can't switch branches normally, this is likely because:
+
+1. Your sync branch was created from `main`
+2. Beads created a worktree for that branch
+3. Git worktrees lock branches they're checked out to
+
+**Symptoms:**
+```bash
+$ git checkout main
+fatal: 'main' is already checked out at '/path/to/.git/beads-worktrees/beads-sync'
+```
+
+**Quick Fix:**
+```bash
+# Remove the beads worktree
+rm -rf .git/beads-worktrees
+
+# Prune stale worktree references
+git worktree prune
+
+# Also remove any stray worktrees in .git/worktrees (older versions)
+rm -rf .git/worktrees/beads-*
+git worktree prune
+```
+
+### Disabling Sync Branch (Remove Worktrees)
+
+If you don't want beads to use a separate sync branch:
+
+```bash
+# Unset the sync branch configuration
+bd config set sync.branch ""
+
+# Stop and restart daemon
+bd daemon stop
+bd daemon start
+
+# Clean up existing worktrees
+rm -rf .git/beads-worktrees
+git worktree prune
+```
+
+### Checking Your Sync Branch Configuration
+
+```bash
+# See current sync branch setting
+bd config get sync.branch
+
+# Check if worktrees exist
+ls -la .git/beads-worktrees/ 2>/dev/null || echo "No beads worktrees"
+ls -la .git/worktrees/ 2>/dev/null || echo "No standard worktrees"
+
+# List all git worktrees
+git worktree list
+```
+
+### See Also
+
+For complete sync-branch documentation, see [PROTECTED_BRANCHES.md](PROTECTED_BRANCHES.md).
+
+---
+
 ## How It Works
 
 ### Shared Database Architecture
@@ -153,6 +249,42 @@ bd create "Fix password validation" -t bug -p 0
 ```
 
 ## Troubleshooting
+
+### Issue: "Branch already checked out" error
+
+**Symptoms:**
+```bash
+$ git checkout main
+fatal: 'main' is already checked out at '/path/to/.git/beads-worktrees/beads-sync'
+```
+
+**Cause:** Beads created a worktree for its sync branch feature, and that worktree has your target branch checked out. Git doesn't allow the same branch to be checked out in multiple worktrees.
+
+**Solution:**
+```bash
+# Remove beads worktrees
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+
+# Clean up git's worktree registry
+git worktree prune
+
+# Now you can checkout the branch
+git checkout main
+```
+
+**Prevention:** If you use trunk-based development and don't need a separate sync branch, disable it:
+```bash
+bd config set sync.branch ""
+```
+
+### Issue: Unexpected worktree directories appeared
+
+**Symptoms:** You notice `.git/beads-worktrees/` or entries in `.git/worktrees/` that you didn't create.
+
+**Cause:** Beads automatically creates worktrees when using the sync-branch feature (configured via `bd init --branch` or `bd config set sync.branch`).
+
+**Solution:** See [Beads-Created Worktrees](#beads-created-worktrees-sync-branch) section above for details on what these are and how to remove them if unwanted.
 
 ### Issue: Daemon commits to wrong branch
 
