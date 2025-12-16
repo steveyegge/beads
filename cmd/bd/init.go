@@ -423,7 +423,7 @@ With --stealth: configures global git settings for invisible beads usage:
 			}
 		}
 
-		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
+		// Add "landing the plane" instructions to AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
 			if err := addLandingThePlaneInstructions(!quiet); err != nil && !quiet {
@@ -1560,7 +1560,7 @@ Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 
 
 // landingThePlaneSection is the "landing the plane" instructions for AI agents
-// This gets appended to AGENTS.md and @AGENTS.md during bd init
+// This gets appended to AGENTS.md during bd init
 const landingThePlaneSection = `
 ## Landing the Plane (Session Completion)
 
@@ -1589,10 +1589,10 @@ const landingThePlaneSection = `
 - If push fails, resolve and retry until it succeeds
 `
 
-// addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md and @AGENTS.md
+// addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md
 func addLandingThePlaneInstructions(verbose bool) error {
-	// Files to update (AGENTS.md and @AGENTS.md for web Claude)
-	agentFiles := []string{"AGENTS.md", "@AGENTS.md"}
+	// Only update AGENTS.md - don't create @AGENTS.md (it's not tracked in git and pollutes the repo)
+	agentFiles := []string{"AGENTS.md"}
 
 	for _, filename := range agentFiles {
 		if err := updateAgentFile(filename, verbose); err != nil {
@@ -1606,35 +1606,15 @@ func addLandingThePlaneInstructions(verbose bool) error {
 	return nil
 }
 
-// updateAgentFile creates or updates an agent instructions file with landing the plane section
+// updateAgentFile updates an existing agent instructions file with landing the plane section.
+// Skips files that don't exist to avoid creating unwanted files in the repo.
 func updateAgentFile(filename string, verbose bool) error {
 	// Check if file exists
 	content, err := os.ReadFile(filename)
 	if os.IsNotExist(err) {
-		// File doesn't exist - create it with basic structure
-		newContent := fmt.Sprintf(`# Agent Instructions
-
-This project uses **bd** (beads) for issue tracking. Run ` + "`bd onboard`" + ` to get started.
-
-## Quick Reference
-
-` + "```bash" + `
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-` + "```" + `
-%s
-`, landingThePlaneSection)
-
-		// #nosec G306 - markdown needs to be readable
-		if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
-			return fmt.Errorf("failed to create %s: %w", filename, err)
-		}
+		// File doesn't exist - skip it (don't create untracked files)
 		if verbose {
-			green := color.New(color.FgGreen).SprintFunc()
-			fmt.Printf("  %s Created %s with landing-the-plane instructions\n", green("✓"), filename)
+			fmt.Printf("  %s skipping (not found)\n", filename)
 		}
 		return nil
 	} else if err != nil {
