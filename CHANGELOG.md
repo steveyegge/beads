@@ -7,36 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.1] - 2025-12-16
+
 ### Added
 
-- **Inline tombstones for soft-delete (bd-vw8)**
-  - Deleted issues now become tombstones with `status: "tombstone"` in `issues.jsonl`
+- **`bd reset` command** (GH#505) - Complete beads removal from a repository
+  - Removes `.beads/` directory and all associated data
+  - Cleans up git hooks installed by beads
+  - Use `--force` to skip confirmation prompt
+
+- **`bd cleanup --hard` flag** - Bypass tombstone TTL safety
+  - Immediately removes tombstones regardless of age
+  - Use when you need to force-clean deleted issues
+
+- **`bd update --type` flag** (GH#522) - Change issue type after creation
+  - Convert between task, bug, feature, epic types
+  - Example: `bd update bd-xyz --type epic`
+
+- **`bd q` silent quick-capture mode** (GH#540)
+  - Capture issues silently without output
+  - Ideal for scripting and automation
+
+- **`bd sync --check` flag** - Pre-sync integrity checks
+  - Validates database state before syncing
+  - Catches potential issues early
+
+- **`bd show` displays dependent issue status** (#583)
+  - Shows status for all blocked-by and blocking issues
+  - Better visibility into dependency chains
+
+- **`bd daemon --status` shows config** (#569)
+  - Displays daemon configuration in status output
+  - Contributed by @crcatala
+
+- **`bd daemon --stop-all`** - Kill all daemon processes
+  - Useful for cleanup when multiple daemons are running
+
+- **Auto-disable daemon in git worktrees** (#567)
+  - Daemon automatically disabled in worktrees for safety
+  - Prevents database conflicts between worktrees
+
+- **`claude.local.md` support** - Local-only documentation
+  - Add project notes that won't be committed
+  - Gitignored by default
+
+- **Auto-add "landing the plane" instructions to AGENTS.md**
+  - New projects get session-close protocol guidance
+
+- **Inline tombstones for soft-delete** (bd-vw8)
+  - Deleted issues become tombstones with `status: "tombstone"` in `issues.jsonl`
   - Full audit trail: `deleted_at`, `deleted_by`, `delete_reason`, `original_type`
   - TTL-based expiration (default 30 days) with automatic pruning via `bd compact`
   - Proper 3-way merge support: fresh tombstones win, expired tombstones allow resurrection
-  - Replaces the legacy `deletions.jsonl` manifest approach
 
-- **`bd migrate-tombstones` command (bd-8f9)**
+- **`bd migrate-tombstones` command** (bd-8f9)
   - Converts legacy `deletions.jsonl` entries to inline tombstones
   - Archives old file as `deletions.jsonl.migrated`
-  - Use `--dry-run` to preview changes
 
-- **Enhanced Git Worktree Support** (bd-737): Comprehensive compatibility improvements for git worktrees using shared database architecture
-  - Shared `.beads` database across all worktrees in a repository
-  - Worktree-aware database discovery prioritizes main repository
+- **Enhanced Git Worktree Support** (bd-737)
+  - Shared `.beads` database across all worktrees
+  - Worktree-aware database discovery
   - Git hooks automatically adapt to worktree context
-  - Daemon mode warnings for worktree usage with `--no-daemon` guidance
-  - Comprehensive documentation in `docs/WORKTREES.md`
-  - Worktree lifecycle management with sparse checkout for sync branches
-  - Automatic detection and user-friendly warnings for worktree conflicts
+  - Documentation in `docs/WORKTREES.md`
 
 ### Fixed
 
-- **`bd` now finds `.beads` from nested worktrees** (GH#509)
-  - When worktrees are nested under the main repo (e.g., `/project/.worktrees/feature/`),
-    `bd` now correctly finds `.beads/` in the parent repo
-  - Uses `git rev-parse --git-common-dir` to reliably locate the main repository root
-  - Works from any subdirectory within the nested worktree
+- **Multi-hyphen prefix parsing** (GH#405) - Prefixes like `my-cool-project` now work correctly
+- **`bd sync` on sync branch** (GH#519) - Fixed sync when already on the sync branch
+- **Pre-commit hook with removed `.beads`** (GH#483) - No longer blocks commits after beads removal
+- **Priority format error messages** (GH#517) - Clearer guidance on P0-P4 format
+- **Status naming consistency** (GH#444) - Uses `in_progress` everywhere
+- **Orphan detection with dots in directory names** (GH#508) - No more false positives
+- **Circular error in pre-push hook** (GH#532) - Fixed infinite loop scenario
+- **Doctor --fix auto-migrates tombstones** - Automatic migration during repair
+- **Daemon detects external DB replacement** (#564) - Contributed by @deblasis
+- **Import handles hierarchical hash IDs** (#584) - Contributed by @rsnodgrass
+- **Nested worktree detection** (GH#509) - Correctly finds `.beads/` in parent repo
+- **Import skips cross-prefix content matches** - Prevents incorrect renames
+- **3-way merge tolerates missing issues** - More robust conflict resolution
+- **Pre-commit warns instead of failing on flush error** - Graceful degradation
+
+### Security
+
+- **Go toolchain updated to 1.24.11** - Addresses CVEs in standard library
+
+### CI
+
+- **PR check for `.beads/issues.jsonl` changes** - Rejects accidental database commits
+
+### Dependencies
+
+- Bump `github.com/ncruces/go-sqlite3` to 0.30.3
+- Bump `github.com/spf13/cobra` to 1.10.2
+- Bump `golang.org/x/mod` to 0.31.0
+- Bump `golang.org/x/term` to 0.38.0
+- Bump `pydantic` to 2.12.5 (beads-mcp)
+- Bump `fastmcp` to 2.14.1 (beads-mcp)
 
 ## [0.29.0] - 2025-12-03
 
