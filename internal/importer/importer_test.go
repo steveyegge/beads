@@ -524,7 +524,7 @@ func TestIsBoundary(t *testing.T) {
 	}
 }
 
-func TestIsNumeric(t *testing.T) {
+func TestIsValidIDSuffix(t *testing.T) {
 	tests := []struct {
 		s    string
 		want bool
@@ -538,18 +538,24 @@ func TestIsNumeric(t *testing.T) {
 		{"09ea", true},
 		{"abc123", true},
 		{"zzz", true},
+		// Hierarchical suffixes (hash.number format)
+		{"6we.2", true},
+		{"abc.1", true},
+		{"abc.1.2", true},
+		{"abc.1.2.3", true},
+		{"1.5", true},
 		// Invalid suffixes
-		{"", false},      // Empty string now returns false
-		{"1.5", false},   // Non-base36 characters
-		{"A3F8", false},  // Uppercase not allowed
-		{"@#$!", false},  // Special characters not allowed
+		{"", false},       // Empty string
+		{"A3F8", false},   // Uppercase not allowed
+		{"@#$!", false},   // Special characters not allowed
+		{"abc-def", false}, // Hyphens not allowed in suffix
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.s, func(t *testing.T) {
-			got := isNumeric(tt.s)
+			got := isValidIDSuffix(tt.s)
 			if got != tt.want {
-				t.Errorf("isNumeric(%q) = %v, want %v", tt.s, got, tt.want)
+				t.Errorf("isValidIDSuffix(%q) = %v, want %v", tt.s, got, tt.want)
 			}
 		})
 	}

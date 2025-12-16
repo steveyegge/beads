@@ -151,15 +151,15 @@ func RenameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) err
 		}
 
 		if oldPrefix != targetPrefix {
-			// Extract the numeric part
-			numPart := strings.TrimPrefix(issue.ID, oldPrefix+"-")
+			// Extract the suffix part (supports both numeric "123" and hash "abc1" and hierarchical "abc.1.2")
+			suffix := strings.TrimPrefix(issue.ID, oldPrefix+"-")
 
-			// Validate that the numeric part is actually numeric
-			if numPart == "" || !isNumeric(numPart) {
-				return fmt.Errorf("cannot rename issue %s: non-numeric suffix '%s'", issue.ID, numPart)
+			// Validate that the suffix is valid (alphanumeric + dots for hierarchy)
+			if suffix == "" || !isValidIDSuffix(suffix) {
+				return fmt.Errorf("cannot rename issue %s: invalid suffix '%s'", issue.ID, suffix)
 			}
 
-			newID := fmt.Sprintf("%s-%s", targetPrefix, numPart)
+			newID := fmt.Sprintf("%s-%s", targetPrefix, suffix)
 			idMapping[issue.ID] = newID
 		}
 	}
@@ -270,13 +270,15 @@ func isBoundary(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == '.' || c == '!' || c == '?' || c == ':' || c == ';' || c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'
 }
 
-func isNumeric(s string) bool {
+// isValidIDSuffix checks if a string is a valid issue ID suffix
+// Accepts: digits (0-9), lowercase letters (a-z), and dots (.) for hierarchy
+// Examples: "123", "abc1", "6we", "6we.2", "abc.1.2"
+func isValidIDSuffix(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	// Accept base36 characters (0-9, a-z) for hash-based suffixes
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || c == '.') {
 			return false
 		}
 	}
