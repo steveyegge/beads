@@ -93,19 +93,28 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 		}
 	}
 
-	// Verify the others were renumbered
-	issue, err := store.GetIssue(ctx, "test-3")
-	if err != nil || issue == nil {
-		t.Fatalf("expected test-3 to exist (renamed from another-1)")
+	// Verify the others were renamed with hash IDs (not sequential)
+	// We have 5 total issues, 2 original (test-1, test-2), 3 renamed
+	if len(allIssues) != 5 {
+		t.Fatalf("expected 5 issues total, got %d", len(allIssues))
 	}
 
-	issue, err = store.GetIssue(ctx, "test-4")
-	if err != nil || issue == nil {
-		t.Fatalf("expected test-4 to exist (renamed from old-1)")
+	// Count issues with correct prefix and verify old IDs no longer exist
+	testPrefixCount := 0
+	for _, issue := range allIssues {
+		if len(issue.ID) > 5 && issue.ID[:5] == "test-" {
+			testPrefixCount++
+		}
+	}
+	if testPrefixCount != 5 {
+		t.Fatalf("expected all 5 issues to have 'test-' prefix, got %d", testPrefixCount)
 	}
 
-	issue, err = store.GetIssue(ctx, "test-5")
-	if err != nil || issue == nil {
-		t.Fatalf("expected test-5 to exist (renamed from old-2)")
+	// Verify old IDs no longer exist
+	for _, oldID := range []string{"old-1", "old-2", "another-1"} {
+		issue, err := store.GetIssue(ctx, oldID)
+		if err == nil && issue != nil {
+			t.Fatalf("expected old ID %s to no longer exist", oldID)
+		}
 	}
 }
