@@ -408,3 +408,92 @@ func TestNilViperBehavior(t *testing.T) {
 	// Set should not panic
 	Set("any-key", "any-value") // Should be a no-op
 }
+
+func TestGetIdentity(t *testing.T) {
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test 1: Flag value takes precedence over everything
+	got := GetIdentity("flag-identity")
+	if got != "flag-identity" {
+		t.Errorf("GetIdentity(flag-identity) = %q, want \"flag-identity\"", got)
+	}
+
+	// Test 2: Empty flag falls back to BEADS_IDENTITY env
+	oldEnv := os.Getenv("BEADS_IDENTITY")
+	_ = os.Setenv("BEADS_IDENTITY", "env-identity")
+	defer func() {
+		if oldEnv == "" {
+			_ = os.Unsetenv("BEADS_IDENTITY")
+		} else {
+			_ = os.Setenv("BEADS_IDENTITY", oldEnv)
+		}
+	}()
+
+	// Re-initialize to pick up env var
+	_ = Initialize()
+	got = GetIdentity("")
+	if got != "env-identity" {
+		t.Errorf("GetIdentity(\"\") with BEADS_IDENTITY = %q, want \"env-identity\"", got)
+	}
+
+	// Test 3: Without flag or env, should fall back to git user.name or hostname
+	_ = os.Unsetenv("BEADS_IDENTITY")
+	_ = Initialize()
+	got = GetIdentity("")
+	// We can't predict the exact value (depends on git config and hostname)
+	// but it should not be empty or "unknown" on most systems
+	if got == "" {
+		t.Error("GetIdentity(\"\") without flag or env returned empty string")
+	}
+}
+
+func TestGetIdentityFromConfig(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with identity
+	configContent := `identity: config-identity`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Clear BEADS_IDENTITY env var
+	oldEnv := os.Getenv("BEADS_IDENTITY")
+	_ = os.Unsetenv("BEADS_IDENTITY")
+	defer func() {
+		if oldEnv != "" {
+			_ = os.Setenv("BEADS_IDENTITY", oldEnv)
+		}
+	}()
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that identity from config file is used
+	got := GetIdentity("")
+	if got != "config-identity" {
+		t.Errorf("GetIdentity(\"\") with config file = %q, want \"config-identity\"", got)
+	}
+
+	// Test that flag still takes precedence
+	got = GetIdentity("flag-override")
+	if got != "flag-override" {
+		t.Errorf("GetIdentity(flag-override) = %q, want \"flag-override\"", got)
+	}
+}

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,10 +90,12 @@ func Initialize() error {
 	// These are bound explicitly for backward compatibility
 	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")
 	_ = v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")
+	_ = v.BindEnv("identity", "BEADS_IDENTITY")
 	
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
+	v.SetDefault("identity", "")
 	
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "auto")
@@ -195,15 +198,50 @@ func GetMultiRepoConfig() *MultiRepoConfig {
 	if v == nil {
 		return nil
 	}
-	
+
 	// Check if repos.primary is set (indicates multi-repo mode)
 	primary := v.GetString("repos.primary")
 	if primary == "" {
 		return nil // Single-repo mode
 	}
-	
+
 	return &MultiRepoConfig{
 		Primary:    primary,
 		Additional: v.GetStringSlice("repos.additional"),
 	}
+}
+
+// GetIdentity resolves the user's identity for messaging.
+// Priority chain:
+//  1. flagValue (if non-empty, from --identity flag)
+//  2. BEADS_IDENTITY env var / config.yaml identity field (via viper)
+//  3. git config user.name
+//  4. hostname
+//
+// This is used as the sender field in bd mail commands.
+func GetIdentity(flagValue string) string {
+	// 1. Command-line flag takes precedence
+	if flagValue != "" {
+		return flagValue
+	}
+
+	// 2. BEADS_IDENTITY env var or config.yaml identity (viper handles both)
+	if identity := GetString("identity"); identity != "" {
+		return identity
+	}
+
+	// 3. git config user.name
+	cmd := exec.Command("git", "config", "user.name")
+	if output, err := cmd.Output(); err == nil {
+		if gitUser := strings.TrimSpace(string(output)); gitUser != "" {
+			return gitUser
+		}
+	}
+
+	// 4. hostname
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+
+	return "unknown"
 }
