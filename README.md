@@ -875,6 +875,7 @@ For advanced usage, see:
 
 ### Third-Party Tools
 
+- **[beads.el](https://codeberg.org/ctietze/beads.el)** -- Emacs UI to browse, edit, manage per-project beads connections.
 - **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates, kanban board, and keyboard navigation. Zero-setup launch with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni).
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with kanban board, tree view, dependency graph, and statistics dashboard. Vim-style navigation, search/filter, themes, and native notifications. Built by [@assimelha](https://github.com/assimelha).
 - **[perles](https://github.com/zjrosen/perles)** - Terminal UI with BQL (Beads Query Language) for local search and multi-view kanban boards with custom colors. Built by [@zjrosen](https://github.com/zjrosen).
