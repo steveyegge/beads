@@ -288,6 +288,33 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.30.2",
+		Date:    "2025-12-16",
+		Changes: []string{
+			"bd setup droid (GH#598) - Factory.ai (Droid) IDE support",
+			"Messaging schema fields (bd-kwro.1) - New 'message' issue type, sender/ephemeral/replies_to/relates_to/duplicate_of/superseded_by fields",
+			"New dependency types: replies-to, relates-to, duplicates, supersedes",
+			"Windows build fixes (GH#585) - gosec lint errors resolved",
+			"Issue ID prefix extraction fix - Word-like suffixes now parse correctly",
+			"Legacy deletions.jsonl code removed (bd-fom) - Fully migrated to inline tombstones",
+		},
+	},
+	{
+		Version: "0.30.1",
+		Date:    "2025-12-16",
+		Changes: []string{
+			"bd reset command (GH#505) - Complete beads removal from a repository",
+			"bd update --type flag (GH#522) - Change issue type after creation",
+			"bd q silent mode (GH#540) - Quick-capture without output for scripting",
+			"bd show displays dependent issue status (GH#583) - Shows status for blocked-by/blocking issues",
+			"claude.local.md support - Local-only documentation, gitignored by default",
+			"Auto-disable daemon in git worktrees (GH#567) - Prevents database conflicts",
+			"Inline tombstones for soft-delete (bd-vw8) - Deleted issues become tombstones in issues.jsonl",
+			"bd migrate-tombstones command (bd-8f9) - Converts legacy deletions.jsonl to inline tombstones",
+			"Enhanced Git Worktree Support (bd-737) - Shared .beads database across worktrees",
+		},
+	},
+	{
 		Version: "0.30.0",
 		Date:    "2025-12-15",
 		Changes: []string{

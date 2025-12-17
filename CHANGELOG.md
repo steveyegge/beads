@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.2] - 2025-12-16
+
+### Added
+
+- **`bd setup droid`** (GH#598) - Factory.ai (Droid) IDE support
+  - Configure beads for use with Factory.ai's Droid
+  - Contributed by @jordanhubbard
+
+- **Messaging schema fields** (bd-kwro.1) - Foundation for inter-agent messaging
+  - New `message` issue type for agent-to-agent communication
+  - New fields: `sender`, `ephemeral`, `replies_to`, `relates_to`, `duplicate_of`, `superseded_by`
+  - New dependency types: `replies-to`, `relates-to`, `duplicates`, `supersedes`
+  - Schema migration 019 (automatic on first use)
+
+### Fixed
+
+- **Windows build errors** (GH#585) - Fixed gosec lint warnings
+  - Contributed by @deblasis
+
+- **Issue ID prefix extraction** - Word-like suffixes (e.g., `my-project-audit`) now parse correctly
+  - Previously could incorrectly split on word boundaries
+
+### Removed
+
+- **Legacy deletions.jsonl code** (bd-fom) - Fully migrated to inline tombstones
+  - Removed `deletions.jsonl` from git tracking
+  - All deletion tracking now via inline tombstones in `issues.jsonl`
+
+### Documentation
+
+- Windows installation command in upgrade instructions (GH#589)
+  - Contributed by @alexx-ftw
+
+- Aligned `bd prime` guidance with skill's hybrid TodoWrite approach
+
 ## [0.30.1] - 2025-12-16
 
 ### Added
