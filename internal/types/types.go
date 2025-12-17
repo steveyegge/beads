@@ -98,7 +98,10 @@ func (i *Issue) IsTombstone() bool {
 
 // IsExpired returns true if the tombstone has exceeded its TTL.
 // Non-tombstone issues always return false.
-// ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
+// ttl is the configured TTL duration:
+//   - If zero, DefaultTombstoneTTL (30 days) is used
+//   - If negative, the tombstone is immediately expired (for --hard mode)
+//   - If positive, ClockSkewGrace is added only for TTLs > 1 hour
 func (i *Issue) IsExpired(ttl time.Duration) bool {
 	// Non-tombstones never expire
 	if !i.IsTombstone() {
@@ -110,13 +113,22 @@ func (i *Issue) IsExpired(ttl time.Duration) bool {
 		return false
 	}
 
+	// Negative TTL means "immediately expired" - for --hard mode (bd-4q8 fix)
+	if ttl < 0 {
+		return true
+	}
+
 	// Use default TTL if not specified
 	if ttl == 0 {
 		ttl = DefaultTombstoneTTL
 	}
 
-	// Add clock skew grace period to the TTL
-	effectiveTTL := ttl + ClockSkewGrace
+	// Only add clock skew grace period for normal TTLs (> 1 hour).
+	// For short TTLs (testing/development), skip grace period.
+	effectiveTTL := ttl
+	if ttl > ClockSkewGrace {
+		effectiveTTL = ttl + ClockSkewGrace
+	}
 
 	// Check if the tombstone has exceeded its TTL
 	expirationTime := i.DeletedAt.Add(effectiveTTL)

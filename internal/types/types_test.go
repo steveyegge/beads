@@ -756,6 +756,31 @@ func TestIsExpired(t *testing.T) {
 			ttl:     7 * 24 * time.Hour,
 			expired: false,
 		},
+		{
+			name: "negative TTL means immediately expired (bd-4q8 --hard mode)",
+			issue: Issue{
+				ID:        "test-14",
+				Title:     "(deleted)",
+				Status:    StatusTombstone,
+				Priority:  0,
+				IssueType: TypeTask,
+				DeletedAt: timePtr(now), // Just deleted NOW
+			},
+			ttl:     -1, // Negative TTL = immediate expiration
+			expired: true,
+		},
+		{
+			name: "non-tombstone never expires even with negative TTL",
+			issue: Issue{
+				ID:        "test-15",
+				Title:     "Open issue",
+				Status:    StatusOpen,
+				Priority:  0,
+				IssueType: TypeTask,
+			},
+			ttl:     -1,
+			expired: false,
+		},
 	}
 
 	for _, tt := range tests {

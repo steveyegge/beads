@@ -492,7 +492,17 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			continue
 		}
 		seenHashes[hash] = true
-		
+
+		// CRITICAL: Check for tombstone FIRST, before any other matching (bd-4q8 fix)
+		// This prevents ghost resurrection regardless of which phase would normally match.
+		// If this ID has a tombstone in the DB, skip importing it entirely.
+		if existingByID, found := dbByID[incoming.ID]; found {
+			if existingByID.Status == types.StatusTombstone {
+				result.Skipped++
+				continue
+			}
+		}
+
 		// Phase 0: Match by external_ref first (if present)
 		// This enables re-syncing from external systems (Jira, GitHub, Linear)
 		if incoming.ExternalRef != nil && *incoming.ExternalRef != "" {

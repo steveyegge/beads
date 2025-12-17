@@ -77,8 +77,9 @@ SEE ALSO:
 			if olderThanDays > 0 {
 				customTTL = time.Duration(olderThanDays) * 24 * time.Hour
 			} else {
-				// --hard without --older-than: prune ALL tombstones (use 1 second TTL)
-				customTTL = time.Second
+				// --hard without --older-than: prune ALL tombstones immediately
+				// Negative TTL means "immediately expired" (bd-4q8 fix)
+				customTTL = -1
 			}
 			if !jsonOutput && !dryRun {
 				fmt.Println(color.YellowString("⚠️  HARD DELETE MODE: Bypassing tombstone TTL safety"))
@@ -186,7 +187,8 @@ SEE ALSO:
 		}
 
 		// Use the existing batch deletion logic
-		deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, "cleanup")
+		// Note: cleanup always creates tombstones first; --hard prunes them after
+		deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, false, "cleanup")
 
 		// Also prune expired tombstones (bd-08ea)
 		// This runs after closed issues are converted to tombstones, cleaning up old ones
