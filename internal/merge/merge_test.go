@@ -2202,3 +2202,151 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 		}
 	})
 }
+
+// TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch tests bd-ncwo:
+// When the same issue has different CreatedAt timestamp precision (e.g., with/without nanoseconds),
+// the tombstone should still win over the live version.
+func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
+	// This test simulates the ghost resurrection bug where timestamp precision
+	// differences caused the same issue to be treated as two different issues.
+	// The key fix (bd-ncwo) adds ID-based fallback matching when keys don't match.
+
+	t.Run("tombstone wins despite different CreatedAt precision", func(t *testing.T) {
+		// Base: issue with status=closed
+		baseIssue := Issue{
+			ID:        "bd-ghost1",
+			Title:     "Original title",
+			Status:    "closed",
+			Priority:  2,
+			CreatedAt: "2024-01-01T00:00:00Z", // No fractional seconds
+			UpdatedAt: "2024-01-10T00:00:00Z",
+			CreatedBy: "user1",
+		}
+
+		// Left: tombstone with DIFFERENT timestamp precision (has microseconds)
+		tombstone := Issue{
+			ID:           "bd-ghost1",
+			Title:        "(deleted)",
+			Status:       StatusTombstone,
+			Priority:     2,
+			CreatedAt:    "2024-01-01T00:00:00.000000Z", // WITH fractional seconds
+			UpdatedAt:    "2024-01-15T00:00:00Z",
+			CreatedBy:    "user1",
+			DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedBy:    "user2",
+			DeleteReason: "Duplicate issue",
+		}
+
+		// Right: same closed issue (same precision as base)
+		closedIssue := Issue{
+			ID:        "bd-ghost1",
+			Title:     "Original title",
+			Status:    "closed",
+			Priority:  2,
+			CreatedAt: "2024-01-01T00:00:00Z", // No fractional seconds
+			UpdatedAt: "2024-01-12T00:00:00Z",
+			CreatedBy: "user1",
+		}
+
+		base := []Issue{baseIssue}
+		left := []Issue{tombstone}
+		right := []Issue{closedIssue}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+
+		// CRITICAL: Should have exactly 1 issue, not 2 (no duplicates)
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (no duplicates), got %d - this suggests ID-based matching failed", len(result))
+		}
+
+		// Tombstone should win over closed
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win, got status %q", result[0].Status)
+		}
+		if result[0].DeletedBy != "user2" {
+			t.Errorf("expected tombstone fields preserved, got DeletedBy %q", result[0].DeletedBy)
+		}
+	})
+
+	t.Run("tombstone wins with CreatedBy mismatch", func(t *testing.T) {
+		// Test case where CreatedBy differs (e.g., empty vs populated)
+		tombstone := Issue{
+			ID:           "bd-ghost2",
+			Title:        "(deleted)",
+			Status:       StatusTombstone,
+			Priority:     2,
+			CreatedAt:    "2024-01-01T00:00:00Z",
+			CreatedBy:    "", // Empty CreatedBy
+			DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedBy:    "user2",
+			DeleteReason: "Cleanup",
+		}
+
+		closedIssue := Issue{
+			ID:        "bd-ghost2",
+			Title:     "Original title",
+			Status:    "closed",
+			Priority:  2,
+			CreatedAt: "2024-01-01T00:00:00Z",
+			CreatedBy: "user1", // Non-empty CreatedBy
+		}
+
+		base := []Issue{}
+		left := []Issue{tombstone}
+		right := []Issue{closedIssue}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+
+		// Should have exactly 1 issue
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (no duplicates), got %d", len(result))
+		}
+
+		// Tombstone should win
+		if result[0].Status != StatusTombstone {
+			t.Errorf("expected tombstone to win despite CreatedBy mismatch, got status %q", result[0].Status)
+		}
+	})
+
+	t.Run("no duplicates when both have same ID but different keys", func(t *testing.T) {
+		// Ensure we don't create duplicate entries
+		liveLeft := Issue{
+			ID:        "bd-ghost3",
+			Title:     "Left version",
+			Status:    "open",
+			CreatedAt: "2024-01-01T00:00:00.123456Z", // With nanoseconds
+			CreatedBy: "user1",
+		}
+
+		liveRight := Issue{
+			ID:        "bd-ghost3",
+			Title:     "Right version",
+			Status:    "in_progress",
+			CreatedAt: "2024-01-01T00:00:00Z", // Without nanoseconds
+			CreatedBy: "user1",
+		}
+
+		base := []Issue{}
+		left := []Issue{liveLeft}
+		right := []Issue{liveRight}
+
+		result, conflicts := merge3Way(base, left, right)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+
+		// CRITICAL: Should have exactly 1 issue, not 2
+		if len(result) != 1 {
+			t.Fatalf("expected 1 issue (no duplicates for same ID), got %d", len(result))
+		}
+	})
+}

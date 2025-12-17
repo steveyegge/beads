@@ -298,7 +298,7 @@ func merge3Way(base, left, right []Issue) ([]Issue, []string) {
 // merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
 // This is the core merge function that handles tombstone semantics.
 func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []string) {
-	// Build maps for quick lookup
+	// Build maps for quick lookup by IssueKey
 	baseMap := make(map[IssueKey]Issue)
 	for _, issue := range base {
 		baseMap[makeKey(issue)] = issue
@@ -314,8 +314,22 @@ func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 		rightMap[makeKey(issue)] = issue
 	}
 
-	// Track which issues we've processed
+	// bd-ncwo: Also build ID-based maps for fallback matching
+	// This handles cases where the same issue has slightly different CreatedAt/CreatedBy
+	// (e.g., due to timestamp precision differences between systems)
+	leftByID := make(map[string]Issue)
+	for _, issue := range left {
+		leftByID[issue.ID] = issue
+	}
+
+	rightByID := make(map[string]Issue)
+	for _, issue := range right {
+		rightByID[issue.ID] = issue
+	}
+
+	// Track which issues we've processed (by both key and ID)
 	processed := make(map[IssueKey]bool)
+	processedIDs := make(map[string]bool) // bd-ncwo: track processed IDs to avoid duplicates
 	var result []Issue
 	var conflicts []string
 
@@ -340,6 +354,43 @@ func merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 		baseIssue, inBase := baseMap[key]
 		leftIssue, inLeft := leftMap[key]
 		rightIssue, inRight := rightMap[key]
+
+		// bd-ncwo: ID-based fallback matching for tombstone preservation
+		// If key doesn't match but same ID exists in the other side, use that
+		if !inLeft && inRight {
+			if fallback, found := leftByID[rightIssue.ID]; found {
+				leftIssue = fallback
+				inLeft = true
+				// Mark the fallback's key as processed to avoid duplicate
+				processed[makeKey(fallback)] = true
+			}
+		}
+		if !inRight && inLeft {
+			if fallback, found := rightByID[leftIssue.ID]; found {
+				rightIssue = fallback
+				inRight = true
+				// Mark the fallback's key as processed to avoid duplicate
+				processed[makeKey(fallback)] = true
+			}
+		}
+
+		// bd-ncwo: Check if we've already processed this ID (via a different key)
+		currentID := key.ID
+		if currentID == "" {
+			if inLeft {
+				currentID = leftIssue.ID
+			} else if inRight {
+				currentID = rightIssue.ID
+			} else if inBase {
+				currentID = baseIssue.ID
+			}
+		}
+		if currentID != "" && processedIDs[currentID] {
+			continue
+		}
+		if currentID != "" {
+			processedIDs[currentID] = true
+		}
 
 		// Determine tombstone status
 		leftTombstone := inLeft && IsTombstone(leftIssue)
