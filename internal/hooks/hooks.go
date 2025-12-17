@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -118,15 +119,40 @@ func (r *Runner) runHook(hookPath, event string, issue *types.Issue) error {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Run the hook
-	err = cmd.Run()
-	if err != nil {
-		// Log error but don't fail - hooks shouldn't break beads
-		// In production, this could go to a log file
+	// Start the hook so we can manage its process group and kill children on timeout.
+	//
+	// Rationale: scripts may spawn child processes (backgrounded or otherwise).
+	// If we only kill the immediate process, descendants may survive and keep
+	// the test (or caller) blocked — see TestRunSync_Timeout which previously
+	// observed a `sleep 60` still running after the parent process was killed.
+	// Creating a process group (Setpgid) and sending a negative PID to
+	// `syscall.Kill` ensures the entire group (parent + children) are killed
+	// reliably on timeout.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	if err := cmd.Start(); err != nil {
 		return err
 	}
 
-	return nil
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Kill the whole process group to ensure any children (e.g., sleep)
+		// are also terminated.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Wait for process to exit
+		<-done
+		return ctx.Err()
+	case err := <-done:
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 }
 
 // HookExists checks if a hook exists for an event
