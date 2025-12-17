@@ -1537,15 +1537,27 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("cannot merge while on sync branch '%s' (checkout main branch first)", syncBranch)
 	}
 
-	// Check if main branch is clean
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	// Check if main branch is clean (excluding .beads/ which is expected to be dirty)
+	// bd-7b7h fix: The sync.branch workflow copies JSONL to main working dir without committing,
+	// so .beads/ changes are expected and should not block merge.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", ":!.beads/")
 	statusOutput, err := statusCmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to check git status: %w", err)
 	}
 
 	if len(strings.TrimSpace(string(statusOutput))) > 0 {
-		return fmt.Errorf("main branch has uncommitted changes, please commit or stash them first")
+		return fmt.Errorf("main branch has uncommitted changes outside .beads/, please commit or stash them first")
+	}
+
+	// bd-7b7h fix: Restore .beads/ to HEAD state before merge
+	// The uncommitted .beads/ changes came from copyJSONLToMainRepo during bd sync,
+	// which copied them FROM the sync branch. They're redundant with what we're merging.
+	// Discarding them prevents "Your local changes would be overwritten by merge" errors.
+	restoreCmd := exec.CommandContext(ctx, "git", "checkout", "HEAD", "--", ".beads/")
+	if output, err := restoreCmd.CombinedOutput(); err != nil {
+		// Not fatal - .beads/ might not exist in HEAD yet
+		debug.Logf("note: could not restore .beads/ to HEAD: %v (%s)", err, output)
 	}
 
 	if dryRun {
