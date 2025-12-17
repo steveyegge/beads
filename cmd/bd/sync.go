@@ -90,10 +90,7 @@ Use --merge to merge the sync branch back to main branch.`,
 
 		// If check mode, run pre-sync integrity checks (bd-hlsw.1)
 		if checkIntegrity {
-			if err := showSyncIntegrityCheck(ctx, jsonlPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
+			showSyncIntegrityCheck(ctx, jsonlPath)
 			return
 		}
 
@@ -836,7 +833,7 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 
 // getRepoRootForWorktree returns the main repository root for running git commands
 // This is always the main repository root, never the worktree root
-func getRepoRootForWorktree(ctx context.Context) string {
+func getRepoRootForWorktree(_ context.Context) string {
 	repoRoot, err := git.GetMainRepoRoot()
 	if err != nil {
 		// Fallback to current directory if GetMainRepoRoot fails
@@ -1797,7 +1794,8 @@ type OrphanedChildren struct {
 
 // showSyncIntegrityCheck performs pre-sync integrity checks without modifying state.
 // bd-hlsw.1: Detects forced pushes, prefix mismatches, and orphaned children.
-func showSyncIntegrityCheck(ctx context.Context, jsonlPath string) error {
+// Exits with code 1 if problems are detected.
+func showSyncIntegrityCheck(ctx context.Context, jsonlPath string) {
 	fmt.Println("Sync Integrity Check")
 	fmt.Println("====================")
 
@@ -1858,8 +1856,6 @@ func showSyncIntegrityCheck(ctx context.Context, jsonlPath string) error {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(data))
 	}
-
-	return nil
 }
 
 // checkForcedPush detects if the sync branch has diverged from remote.

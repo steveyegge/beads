@@ -227,7 +227,7 @@ func showResetPreview(items []resetItem) {
 	fmt.Printf("To proceed, run: %s\n", yellow("bd reset --force"))
 }
 
-func performReset(items []resetItem, gitDir, beadsDir string) {
+func performReset(items []resetItem, _, beadsDir string) {
 	green := color.New(color.FgGreen).SprintFunc()
 
 	var errors []string
@@ -257,8 +257,8 @@ func performReset(items []resetItem, gitDir, beadsDir string) {
 
 		case "config":
 			// Remove merge driver config (ignore errors - may not exist)
-			exec.Command("git", "config", "--unset", "merge.beads.driver").Run()
-			exec.Command("git", "config", "--unset", "merge.beads.name").Run()
+			_ = exec.Command("git", "config", "--unset", "merge.beads.driver").Run()
+			_ = exec.Command("git", "config", "--unset", "merge.beads.name").Run()
 			if !jsonOutput {
 				fmt.Printf("%s Removed merge driver config\n", green("✓"))
 			}
@@ -363,5 +363,6 @@ func removeGitattributesEntry() error {
 
 	// Add single trailing newline
 	newContent += "\n"
+	//nolint:gosec // G306: .gitattributes must be world-readable (0644)
 	return os.WriteFile(".gitattributes", []byte(newContent), 0644)
 }

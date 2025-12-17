@@ -426,10 +426,7 @@ With --stealth: configures global git settings for invisible beads usage:
 		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {
-			if err := addLandingThePlaneInstructions(!quiet); err != nil && !quiet {
-				yellow := color.New(color.FgYellow).SprintFunc()
-				fmt.Fprintf(os.Stderr, "%s Failed to add landing-the-plane instructions: %v\n", yellow("⚠"), err)
-			}
+			addLandingThePlaneInstructions(!quiet)
 		}
 
 		// Skip output if quiet mode
@@ -1590,7 +1587,7 @@ const landingThePlaneSection = `
 `
 
 // addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md and @AGENTS.md
-func addLandingThePlaneInstructions(verbose bool) error {
+func addLandingThePlaneInstructions(verbose bool) {
 	// Files to update (AGENTS.md and @AGENTS.md for web Claude)
 	agentFiles := []string{"AGENTS.md", "@AGENTS.md"}
 
@@ -1602,13 +1599,12 @@ func addLandingThePlaneInstructions(verbose bool) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 // updateAgentFile creates or updates an agent instructions file with landing the plane section
 func updateAgentFile(filename string, verbose bool) error {
 	// Check if file exists
+	//nolint:gosec // G304: filename comes from hardcoded list in addLandingThePlaneInstructions
 	content, err := os.ReadFile(filename)
 	if os.IsNotExist(err) {
 		// File doesn't exist - create it with basic structure
