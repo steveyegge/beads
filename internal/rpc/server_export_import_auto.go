@@ -49,8 +49,9 @@ func (s *Server) handleExport(req *Request) Response {
 		manifest = export.NewManifest(cfg.Policy)
 	}
 
-	// Get all issues (core operation, always fail-fast)
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Get all issues including tombstones for sync propagation (bd-rp4o fix)
+	// Tombstones must be exported so they propagate to other clones and prevent resurrection
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return Response{
 			Success: false,
@@ -464,8 +465,8 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 		}
 	}
 
-	// Export to JSONL (this will update the file with remapped IDs)
-	allIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{})
+	// Export to JSONL including tombstones for sync propagation (bd-rp4o fix)
+	allIssues, err := sqliteStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("failed to fetch issues for export: %w", err)
 	}

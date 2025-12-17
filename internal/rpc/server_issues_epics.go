@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -481,10 +482,26 @@ func (s *Server) handleDelete(req *Request) Response {
 			continue
 		}
 
-		// Delete the issue
-		if err := store.DeleteIssue(ctx, issueID); err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
-			continue
+		// Create tombstone instead of hard delete (bd-rp4o fix)
+		// This preserves deletion history and prevents resurrection during sync
+		type tombstoner interface {
+			CreateTombstone(ctx context.Context, id string, actor string, reason string) error
+		}
+		if t, ok := store.(tombstoner); ok {
+			reason := deleteArgs.Reason
+			if reason == "" {
+				reason = "deleted via daemon"
+			}
+			if err := t.CreateTombstone(ctx, issueID, "daemon", reason); err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+				continue
+			}
+		} else {
+			// Fallback to hard delete if CreateTombstone not available
+			if err := store.DeleteIssue(ctx, issueID); err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+				continue
+			}
 		}
 
 		// Emit mutation event for event-driven daemon

@@ -343,6 +343,48 @@ bd --no-auto-flush create "Issue"   # Skip auto-export
 bd --no-auto-import list            # Skip auto-import check
 ```
 
+### Sync Branch Mode (sync.branch)
+
+For protected branches or to reduce commit noise on main, configure a separate sync branch:
+
+```bash
+bd init --branch beads-sync    # During init
+# Or configure later:
+git config beads.sync.branch beads-sync
+```
+
+**How it works:**
+1. `bd sync` commits issue changes to the sync branch (e.g., `beads-sync`)
+2. Issue data is copied to your working tree so CLI commands work normally
+3. The sync branch accumulates commits; main stays clean
+4. Periodically merge with `bd sync --merge` (releases, milestones, etc.)
+
+**The "always dirty" working tree:**
+
+When sync.branch is configured, `.beads/issues.jsonl` in your working tree will **always appear modified**. This is by design:
+
+- bd copies the latest JSONL to your working tree so commands work
+- This copy is NOT committed to main (to reduce commit noise)
+- The file is "dirty" because it's newer than what's on main
+
+**Be Zen about it.** This is expected behavior, not a bug. Options:
+
+1. **Accept it** - Use a shell alias to hide beads from git status:
+   ```bash
+   alias gs='git status -- ":!.beads/"'
+   ```
+
+2. **Merge periodically** - Run `bd sync --merge` to snapshot issues to main:
+   ```bash
+   bd sync --merge              # Merge beads-sync → main
+   bd sync --merge --dry-run    # Preview what would be merged
+   ```
+
+3. **Disable sync.branch** - If clean working tree matters more:
+   ```bash
+   git config --unset beads.sync.branch
+   ```
+
 ## Hash-Based Issue IDs
 
 **Version 0.20.1 introduces collision-resistant hash-based IDs** to enable reliable multi-worker and multi-branch workflows.

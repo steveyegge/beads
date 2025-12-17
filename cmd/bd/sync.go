@@ -1277,8 +1277,9 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	// Get all issues
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Get all issues including tombstones for sync propagation (bd-rp4o fix)
+	// Tombstones must be exported so they propagate to other clones and prevent resurrection
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("failed to get issues: %w", err)
 	}
