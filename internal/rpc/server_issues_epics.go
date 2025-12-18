@@ -174,7 +174,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Messaging fields (bd-kwro)
 		Sender:    createArgs.Sender,
 		Ephemeral: createArgs.Ephemeral,
-		RepliesTo: createArgs.RepliesTo,
+		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -230,6 +230,22 @@ func (s *Server) handleCreate(req *Request) Response {
 			return Response{
 				Success: false,
 				Error:   fmt.Sprintf("failed to add parent-child dependency %s -> %s: %v", issue.ID, createArgs.Parent, err),
+			}
+		}
+	}
+
+	// If RepliesTo was specified, add replies-to dependency (Decision 004)
+	if createArgs.RepliesTo != "" {
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: createArgs.RepliesTo,
+			Type:        types.DepRepliesTo,
+			ThreadID:    createArgs.RepliesTo, // Use parent ID as thread root
+		}
+		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to add replies-to dependency %s -> %s: %v", issue.ID, createArgs.RepliesTo, err),
 			}
 		}
 	}

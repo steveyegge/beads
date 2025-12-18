@@ -15,8 +15,6 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		sourceRepo = "." // Default to primary repo
 	}
 
-	// Format relates_to as JSON for storage
-	relatesTo := formatJSONStringArray(issue.RelatesTo)
 	ephemeral := 0
 	if issue.Ephemeral {
 		ephemeral = 1
@@ -28,8 +26,8 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			sender, ephemeral
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -37,7 +35,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, ephemeral, issue.RepliesTo, relatesTo, issue.DuplicateOf, issue.SupersededBy,
+		issue.Sender, ephemeral,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert issue: %w", err)
@@ -53,8 +51,8 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			sender, ephemeral
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -67,8 +65,6 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			sourceRepo = "." // Default to primary repo
 		}
 
-		// Format relates_to as JSON for storage
-		relatesTo := formatJSONStringArray(issue.RelatesTo)
 		ephemeral := 0
 		if issue.Ephemeral {
 			ephemeral = 1
@@ -81,7 +77,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, ephemeral, issue.RepliesTo, relatesTo, issue.DuplicateOf, issue.SupersededBy,
+			issue.Sender, ephemeral,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)

@@ -70,60 +70,68 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		// Cycle Detection and Prevention
-	//
-	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
-	// to maintain a directed acyclic graph (DAG). This is critical for:
-	//
-	// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
-	//    appear blocked when they're actually part of a circular dependency.
-	//
-	// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
-	//    DAG structure. Cycles would require special handling and could cause confusion.
-	//
-	// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
-	//    on B and B depends on A (directly or through other issues), which should be done first?
-	//
-	// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
-	// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
-	// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
-	// are just as problematic as single-type cycles.
-	//
-	// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
-	// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
-	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
-		WITH RECURSIVE paths AS (
-			SELECT
-				issue_id,
-				depends_on_id,
-				1 as depth
-			FROM dependencies
-			WHERE issue_id = ?
+		//
+		// We prevent cycles across most dependency types to maintain a directed acyclic graph (DAG).
+		// This is critical for:
+		//
+		// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
+		//    appear blocked when they're actually part of a circular dependency.
+		//
+		// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
+		//    DAG structure. Cycles would require special handling and could cause confusion.
+		//
+		// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
+		//    on B and B depends on A (directly or through other issues), which should be done first?
+		//
+		// EXCEPTION: relates-to links are inherently bidirectional ("see also" relationships).
+		// When A relates-to B, we also create B relates-to A. This is not a cycle in the
+		// problematic sense - it's a symmetric relationship that doesn't affect work ordering.
+		//
+		// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
+		// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
+		// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
+		// are just as problematic as single-type cycles.
+		//
+		// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
+		// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
 
-			UNION ALL
+		// Skip cycle detection for relates-to (inherently bidirectional)
+		if dep.Type != types.DepRelatesTo {
+			var cycleExists bool
+			err = tx.QueryRowContext(ctx, `
+				WITH RECURSIVE paths AS (
+					SELECT
+						issue_id,
+						depends_on_id,
+						1 as depth
+					FROM dependencies
+					WHERE issue_id = ?
 
-			SELECT
-				d.issue_id,
-				d.depends_on_id,
-				p.depth + 1
-			FROM dependencies d
-			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
-		)
-		SELECT EXISTS(
-			SELECT 1 FROM paths
-			WHERE depends_on_id = ?
-		)
-	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
+					UNION ALL
 
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
-	}
+					SELECT
+						d.issue_id,
+						d.depends_on_id,
+						p.depth + 1
+					FROM dependencies d
+					JOIN paths p ON d.issue_id = p.depends_on_id
+					WHERE p.depth < ?
+				)
+				SELECT EXISTS(
+					SELECT 1 FROM paths
+					WHERE depends_on_id = ?
+				)
+			`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
 
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
-	}
+			if err != nil {
+				return fmt.Errorf("failed to check for cycles: %w", err)
+			}
+
+			if cycleExists {
+				return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
+					dep.IssueID, dep.DependsOnID, dep.IssueID)
+			}
+		}
 
 	// Insert dependency (including metadata and thread_id for edge consolidation - Decision 004)
 	_, err = tx.ExecContext(ctx, `
@@ -225,7 +233,7 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
-		       i.sender, i.ephemeral, i.replies_to, i.relates_to, i.duplicate_of, i.superseded_by,
+		       i.sender, i.ephemeral,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
@@ -247,7 +255,7 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
-		       i.sender, i.ephemeral, i.replies_to, i.relates_to, i.duplicate_of, i.superseded_by,
+		       i.sender, i.ephemeral,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
@@ -706,10 +714,6 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Messaging fields (bd-kwro)
 		var sender sql.NullString
 		var ephemeral sql.NullInt64
-		var repliesTo sql.NullString
-		var relatesTo sql.NullString
-		var duplicateOf sql.NullString
-		var supersededBy sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -717,7 +721,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
+			&sender, &ephemeral,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -762,18 +766,6 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if ephemeral.Valid && ephemeral.Int64 != 0 {
 			issue.Ephemeral = true
 		}
-		if repliesTo.Valid {
-			issue.RepliesTo = repliesTo.String
-		}
-		if relatesTo.Valid && relatesTo.String != "" {
-			issue.RelatesTo = parseJSONStringArray(relatesTo.String)
-		}
-		if duplicateOf.Valid {
-			issue.DuplicateOf = duplicateOf.String
-		}
-		if supersededBy.Valid {
-			issue.SupersededBy = supersededBy.String
-		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
@@ -813,10 +805,6 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		// Messaging fields (bd-kwro)
 		var sender sql.NullString
 		var ephemeral sql.NullInt64
-		var repliesTo sql.NullString
-		var relatesTo sql.NullString
-		var duplicateOf sql.NullString
-		var supersededBy sql.NullString
 		var depType types.DependencyType
 
 		err := rows.Scan(
@@ -825,7 +813,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
+			&sender, &ephemeral,
 			&depType,
 		)
 		if err != nil {
@@ -867,18 +855,6 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if ephemeral.Valid && ephemeral.Int64 != 0 {
 			issue.Ephemeral = true
-		}
-		if repliesTo.Valid {
-			issue.RepliesTo = repliesTo.String
-		}
-		if relatesTo.Valid && relatesTo.String != "" {
-			issue.RelatesTo = parseJSONStringArray(relatesTo.String)
-		}
-		if duplicateOf.Valid {
-			issue.DuplicateOf = duplicateOf.String
-		}
-		if supersededBy.Valid {
-			issue.SupersededBy = supersededBy.String
 		}
 
 		// Fetch labels for this issue

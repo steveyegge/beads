@@ -183,7 +183,7 @@ func TestMailReply(t *testing.T) {
 		t.Fatalf("Failed to create original message: %v", err)
 	}
 
-	// Create reply
+	// Create reply (thread link now done via dependencies per Decision 004)
 	reply := &types.Issue{
 		Title:       "Re: Original Subject",
 		Description: "Reply body",
@@ -193,7 +193,6 @@ func TestMailReply(t *testing.T) {
 		Assignee:    "manager", // Reply goes to original sender
 		Sender:      "worker",
 		Ephemeral:   true,
-		RepliesTo:   original.ID, // Thread link
 		CreatedAt:   now.Add(time.Minute),
 		UpdatedAt:   now.Add(time.Minute),
 	}
@@ -202,14 +201,31 @@ func TestMailReply(t *testing.T) {
 		t.Fatalf("Failed to create reply: %v", err)
 	}
 
-	// Verify reply has correct thread link
-	savedReply, err := testStore.GetIssue(ctx, reply.ID)
-	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+	// Add replies-to dependency (thread link per Decision 004)
+	dep := &types.Dependency{
+		IssueID:     reply.ID,
+		DependsOnID: original.ID,
+		Type:        types.DepRepliesTo,
+	}
+	if err := testStore.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("Failed to add replies-to dependency: %v", err)
 	}
 
-	if savedReply.RepliesTo != original.ID {
-		t.Errorf("RepliesTo = %q, want %q", savedReply.RepliesTo, original.ID)
+	// Verify reply has correct thread link via dependencies
+	deps, err := testStore.GetDependenciesWithMetadata(ctx, reply.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+
+	var foundReplyLink bool
+	for _, d := range deps {
+		if d.DependencyType == types.DepRepliesTo && d.ID == original.ID {
+			foundReplyLink = true
+			break
+		}
+	}
+	if !foundReplyLink {
+		t.Errorf("Reply missing replies-to link to original message")
 	}
 }
 

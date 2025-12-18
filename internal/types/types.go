@@ -41,12 +41,10 @@ type Issue struct {
 	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion (for tombstones)
 
 	// Messaging fields (bd-kwro): inter-agent communication support
-	Sender       string   `json:"sender,omitempty"`        // Who sent this (for messages)
-	Ephemeral    bool     `json:"ephemeral,omitempty"`     // Can be bulk-deleted when closed
-	RepliesTo    string   `json:"replies_to,omitempty"`    // Issue ID for conversation threading
-	RelatesTo    []string `json:"relates_to,omitempty"`    // Issue IDs for knowledge graph edges
-	DuplicateOf  string   `json:"duplicate_of,omitempty"`  // Canonical issue ID (this is a duplicate)
-	SupersededBy string   `json:"superseded_by,omitempty"` // Replacement issue ID (this is obsolete)
+	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
+	Ephemeral bool   `json:"ephemeral,omitempty"` // Can be bulk-deleted when closed
+	// NOTE: RepliesTo, RelatesTo, DuplicateOf, SupersededBy moved to dependencies table
+	// per Decision 004 (Edge Schema Consolidation). Use dependency API instead.
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.

@@ -30,10 +30,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Messaging fields (bd-kwro)
     sender TEXT DEFAULT '',
     ephemeral INTEGER DEFAULT 0,
-    replies_to TEXT DEFAULT '',
-    relates_to TEXT DEFAULT '',
-    duplicate_of TEXT DEFAULT '',
-    superseded_by TEXT DEFAULT '',
+    -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
+    -- These relationships are now stored in the dependencies table
     CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 );
 

@@ -2,13 +2,14 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// TestRelatesTo verifies relates-to dependencies work via the dependency API.
+// Per Decision 004, relates-to links are now stored in the dependencies table.
 func TestRelatesTo(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -39,36 +40,51 @@ func TestRelatesTo(t *testing.T) {
 		t.Fatalf("Failed to create issue2: %v", err)
 	}
 
-	// Add relates_to link (bidirectional)
-	relatesTo1, _ := json.Marshal([]string{issue2.ID})
-	if err := store.UpdateIssue(ctx, issue1.ID, map[string]interface{}{
-		"relates_to": string(relatesTo1),
-	}, "test"); err != nil {
-		t.Fatalf("Failed to update issue1 relates_to: %v", err)
+	// Add relates-to dependency (bidirectional)
+	dep1 := &types.Dependency{
+		IssueID:     issue1.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepRelatesTo,
+	}
+	if err := store.AddDependency(ctx, dep1, "test"); err != nil {
+		t.Fatalf("Failed to add relates-to dep1: %v", err)
+	}
+	dep2 := &types.Dependency{
+		IssueID:     issue2.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepRelatesTo,
+	}
+	if err := store.AddDependency(ctx, dep2, "test"); err != nil {
+		t.Fatalf("Failed to add relates-to dep2: %v", err)
 	}
 
-	relatesTo2, _ := json.Marshal([]string{issue1.ID})
-	if err := store.UpdateIssue(ctx, issue2.ID, map[string]interface{}{
-		"relates_to": string(relatesTo2),
-	}, "test"); err != nil {
-		t.Fatalf("Failed to update issue2 relates_to: %v", err)
-	}
-
-	// Verify links
-	updated1, err := store.GetIssue(ctx, issue1.ID)
+	// Verify links via GetDependenciesWithMetadata
+	deps1, err := store.GetDependenciesWithMetadata(ctx, issue1.ID)
 	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
 	}
-	if len(updated1.RelatesTo) != 1 || updated1.RelatesTo[0] != issue2.ID {
-		t.Errorf("issue1.RelatesTo = %v, want [%s]", updated1.RelatesTo, issue2.ID)
+	found1 := false
+	for _, d := range deps1 {
+		if d.ID == issue2.ID && d.DependencyType == types.DepRelatesTo {
+			found1 = true
+		}
+	}
+	if !found1 {
+		t.Errorf("issue1 should have relates-to link to issue2")
 	}
 
-	updated2, err := store.GetIssue(ctx, issue2.ID)
+	deps2, err := store.GetDependenciesWithMetadata(ctx, issue2.ID)
 	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
 	}
-	if len(updated2.RelatesTo) != 1 || updated2.RelatesTo[0] != issue1.ID {
-		t.Errorf("issue2.RelatesTo = %v, want [%s]", updated2.RelatesTo, issue1.ID)
+	found2 := false
+	for _, d := range deps2 {
+		if d.ID == issue1.ID && d.DependencyType == types.DepRelatesTo {
+			found2 = true
+		}
+	}
+	if !found2 {
+		t.Errorf("issue2 should have relates-to link to issue1")
 	}
 }
 
@@ -94,23 +110,34 @@ func TestRelatesTo_MultipleLinks(t *testing.T) {
 	}
 
 	// Link issue0 to both issue1 and issue2
-	relatesTo, _ := json.Marshal([]string{issues[1].ID, issues[2].ID})
-	if err := store.UpdateIssue(ctx, issues[0].ID, map[string]interface{}{
-		"relates_to": string(relatesTo),
-	}, "test"); err != nil {
-		t.Fatalf("Failed to update relates_to: %v", err)
+	for _, targetIssue := range []*types.Issue{issues[1], issues[2]} {
+		dep := &types.Dependency{
+			IssueID:     issues[0].ID,
+			DependsOnID: targetIssue.ID,
+			Type:        types.DepRelatesTo,
+		}
+		if err := store.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatalf("Failed to add relates-to: %v", err)
+		}
 	}
 
 	// Verify
-	updated, err := store.GetIssue(ctx, issues[0].ID)
+	deps, err := store.GetDependenciesWithMetadata(ctx, issues[0].ID)
 	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
 	}
-	if len(updated.RelatesTo) != 2 {
-		t.Errorf("RelatesTo has %d links, want 2", len(updated.RelatesTo))
+	relatesCount := 0
+	for _, d := range deps {
+		if d.DependencyType == types.DepRelatesTo {
+			relatesCount++
+		}
+	}
+	if relatesCount != 2 {
+		t.Errorf("RelatesTo has %d links, want 2", relatesCount)
 	}
 }
 
+// TestDuplicateOf verifies duplicates dependencies work via the dependency API.
 func TestDuplicateOf(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -141,27 +168,47 @@ func TestDuplicateOf(t *testing.T) {
 		t.Fatalf("Failed to create duplicate: %v", err)
 	}
 
-	// Mark as duplicate and close
-	if err := store.UpdateIssue(ctx, duplicate.ID, map[string]interface{}{
-		"duplicate_of": canonical.ID,
-		"status":       string(types.StatusClosed),
-	}, "test"); err != nil {
-		t.Fatalf("Failed to mark as duplicate: %v", err)
+	// Add duplicates dependency
+	dep := &types.Dependency{
+		IssueID:     duplicate.ID,
+		DependsOnID: canonical.ID,
+		Type:        types.DepDuplicates,
+	}
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("Failed to add duplicates dep: %v", err)
 	}
 
-	// Verify
+	// Close the duplicate
+	if err := store.CloseIssue(ctx, duplicate.ID, "Closed as duplicate", "test"); err != nil {
+		t.Fatalf("Failed to close duplicate: %v", err)
+	}
+
+	// Verify dependency
+	deps, err := store.GetDependenciesWithMetadata(ctx, duplicate.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found := false
+	for _, d := range deps {
+		if d.ID == canonical.ID && d.DependencyType == types.DepDuplicates {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("duplicate should have duplicates link to canonical")
+	}
+
+	// Verify closed status
 	updated, err := store.GetIssue(ctx, duplicate.ID)
 	if err != nil {
 		t.Fatalf("GetIssue failed: %v", err)
-	}
-	if updated.DuplicateOf != canonical.ID {
-		t.Errorf("DuplicateOf = %q, want %q", updated.DuplicateOf, canonical.ID)
 	}
 	if updated.Status != types.StatusClosed {
 		t.Errorf("Status = %q, want %q", updated.Status, types.StatusClosed)
 	}
 }
 
+// TestSupersededBy verifies supersedes dependencies work via the dependency API.
 func TestSupersededBy(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -192,27 +239,48 @@ func TestSupersededBy(t *testing.T) {
 		t.Fatalf("Failed to create new version: %v", err)
 	}
 
-	// Mark old as superseded
-	if err := store.UpdateIssue(ctx, oldVersion.ID, map[string]interface{}{
-		"superseded_by": newVersion.ID,
-		"status":        string(types.StatusClosed),
-	}, "test"); err != nil {
-		t.Fatalf("Failed to mark as superseded: %v", err)
+	// Add supersedes dependency (newVersion supersedes oldVersion)
+	// Stored as: oldVersion depends on newVersion with type supersedes
+	dep := &types.Dependency{
+		IssueID:     oldVersion.ID,
+		DependsOnID: newVersion.ID,
+		Type:        types.DepSupersedes,
+	}
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("Failed to add supersedes dep: %v", err)
 	}
 
-	// Verify
+	// Close old version
+	if err := store.CloseIssue(ctx, oldVersion.ID, "Superseded by v2", "test"); err != nil {
+		t.Fatalf("Failed to close old version: %v", err)
+	}
+
+	// Verify dependency
+	deps, err := store.GetDependenciesWithMetadata(ctx, oldVersion.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found := false
+	for _, d := range deps {
+		if d.ID == newVersion.ID && d.DependencyType == types.DepSupersedes {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("oldVersion should have supersedes link to newVersion")
+	}
+
+	// Verify closed status
 	updated, err := store.GetIssue(ctx, oldVersion.ID)
 	if err != nil {
 		t.Fatalf("GetIssue failed: %v", err)
-	}
-	if updated.SupersededBy != newVersion.ID {
-		t.Errorf("SupersededBy = %q, want %q", updated.SupersededBy, newVersion.ID)
 	}
 	if updated.Status != types.StatusClosed {
 		t.Errorf("Status = %q, want %q", updated.Status, types.StatusClosed)
 	}
 }
 
+// TestRepliesTo verifies replies-to dependencies work via the dependency API.
 func TestRepliesTo(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -247,20 +315,34 @@ func TestRepliesTo(t *testing.T) {
 	if err := store.CreateIssue(ctx, original, "test"); err != nil {
 		t.Fatalf("Failed to create original: %v", err)
 	}
-
-	// Set replies_to before creation
-	reply.RepliesTo = original.ID
 	if err := store.CreateIssue(ctx, reply, "test"); err != nil {
 		t.Fatalf("Failed to create reply: %v", err)
 	}
 
-	// Verify thread link
-	savedReply, err := store.GetIssue(ctx, reply.ID)
-	if err != nil {
-		t.Fatalf("GetIssue failed: %v", err)
+	// Add replies-to dependency
+	dep := &types.Dependency{
+		IssueID:     reply.ID,
+		DependsOnID: original.ID,
+		Type:        types.DepRepliesTo,
+		ThreadID:    original.ID, // Thread root is the original message
 	}
-	if savedReply.RepliesTo != original.ID {
-		t.Errorf("RepliesTo = %q, want %q", savedReply.RepliesTo, original.ID)
+	if err := store.AddDependency(ctx, dep, "test"); err != nil {
+		t.Fatalf("Failed to add replies-to dep: %v", err)
+	}
+
+	// Verify thread link
+	deps, err := store.GetDependenciesWithMetadata(ctx, reply.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found := false
+	for _, d := range deps {
+		if d.ID == original.ID && d.DependencyType == types.DepRepliesTo {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("reply should have replies-to link to original")
 	}
 }
 
@@ -282,24 +364,42 @@ func TestRepliesTo_Chain(t *testing.T) {
 			Sender:    "user",
 			Assignee:  "inbox",
 			Ephemeral: true,
-			RepliesTo: prevID,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
 		if err := store.CreateIssue(ctx, messages[i], "test"); err != nil {
 			t.Fatalf("Failed to create message %d: %v", i, err)
 		}
+
+		// Add replies-to dependency for subsequent messages
+		if prevID != "" {
+			dep := &types.Dependency{
+				IssueID:     messages[i].ID,
+				DependsOnID: prevID,
+				Type:        types.DepRepliesTo,
+				ThreadID:    messages[0].ID, // Thread root is the first message
+			}
+			if err := store.AddDependency(ctx, dep, "test"); err != nil {
+				t.Fatalf("Failed to add replies-to dep for message %d: %v", i, err)
+			}
+		}
 		prevID = messages[i].ID
 	}
 
-	// Verify chain
-	for i := 1; i < len(messages); i++ {
-		saved, err := store.GetIssue(ctx, messages[i].ID)
+	// Verify chain by checking dependents
+	for i := 0; i < len(messages)-1; i++ {
+		dependents, err := store.GetDependentsWithMetadata(ctx, messages[i].ID)
 		if err != nil {
-			t.Fatalf("GetIssue failed for message %d: %v", i, err)
+			t.Fatalf("GetDependentsWithMetadata failed for message %d: %v", i, err)
 		}
-		if saved.RepliesTo != messages[i-1].ID {
-			t.Errorf("Message %d: RepliesTo = %q, want %q", i, saved.RepliesTo, messages[i-1].ID)
+		found := false
+		for _, d := range dependents {
+			if d.ID == messages[i+1].ID && d.DependencyType == types.DepRepliesTo {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Message %d should have reply from message %d", i, i+1)
 		}
 	}
 }

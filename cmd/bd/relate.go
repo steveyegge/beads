@@ -119,47 +119,45 @@ func runRelate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("issue not found: %s", id2)
 	}
 
-	// Add id2 to issue1's relates_to if not already present
-	if !contains(issue1.RelatesTo, id2) {
-		newRelatesTo1 := append(issue1.RelatesTo, id2)
-		formattedRelatesTo1 := formatRelatesTo(newRelatesTo1)
-		if daemonClient != nil {
-			// Use RPC for daemon mode (bd-fu83)
-			_, err := daemonClient.Update(&rpc.UpdateArgs{
-				ID:        id1,
-				RelatesTo: &formattedRelatesTo1,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to update %s: %w", id1, err)
-			}
-		} else {
-			if err := store.UpdateIssue(ctx, id1, map[string]interface{}{
-				"relates_to": formattedRelatesTo1,
-			}, actor); err != nil {
-				return fmt.Errorf("failed to update %s: %w", id1, err)
-			}
+	// Add relates-to dependency: id1 -> id2 (bidirectional, so also id2 -> id1)
+	// Per Decision 004, relates-to links are now stored in dependencies table
+	if daemonClient != nil {
+		// Add id1 -> id2
+		_, err := daemonClient.AddDependency(&rpc.DepAddArgs{
+			FromID:  id1,
+			ToID:    id2,
+			DepType: string(types.DepRelatesTo),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
 		}
-	}
-
-	// Add id1 to issue2's relates_to if not already present
-	if !contains(issue2.RelatesTo, id1) {
-		newRelatesTo2 := append(issue2.RelatesTo, id1)
-		formattedRelatesTo2 := formatRelatesTo(newRelatesTo2)
-		if daemonClient != nil {
-			// Use RPC for daemon mode (bd-fu83)
-			_, err := daemonClient.Update(&rpc.UpdateArgs{
-				ID:        id2,
-				RelatesTo: &formattedRelatesTo2,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to update %s: %w", id2, err)
-			}
-		} else {
-			if err := store.UpdateIssue(ctx, id2, map[string]interface{}{
-				"relates_to": formattedRelatesTo2,
-			}, actor); err != nil {
-				return fmt.Errorf("failed to update %s: %w", id2, err)
-			}
+		// Add id2 -> id1 (bidirectional)
+		_, err = daemonClient.AddDependency(&rpc.DepAddArgs{
+			FromID:  id2,
+			ToID:    id1,
+			DepType: string(types.DepRelatesTo),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
+		}
+	} else {
+		// Add id1 -> id2
+		dep1 := &types.Dependency{
+			IssueID:     id1,
+			DependsOnID: id2,
+			Type:        types.DepRelatesTo,
+		}
+		if err := store.AddDependency(ctx, dep1, actor); err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id1, id2, err)
+		}
+		// Add id2 -> id1 (bidirectional)
+		dep2 := &types.Dependency{
+			IssueID:     id2,
+			DependsOnID: id1,
+			Type:        types.DepRelatesTo,
+		}
+		if err := store.AddDependency(ctx, dep2, actor); err != nil {
+			return fmt.Errorf("failed to add relates-to %s -> %s: %w", id2, id1, err)
 		}
 	}
 
@@ -254,43 +252,35 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("issue not found: %s", id2)
 	}
 
-	// Remove id2 from issue1's relates_to
-	newRelatesTo1 := remove(issue1.RelatesTo, id2)
-	formattedRelatesTo1 := formatRelatesTo(newRelatesTo1)
+	// Remove relates-to dependency in both directions
+	// Per Decision 004, relates-to links are now stored in dependencies table
 	if daemonClient != nil {
-		// Use RPC for daemon mode (bd-fu83)
-		_, err := daemonClient.Update(&rpc.UpdateArgs{
-			ID:        id1,
-			RelatesTo: &formattedRelatesTo1,
+		// Remove id1 -> id2
+		_, err := daemonClient.RemoveDependency(&rpc.DepRemoveArgs{
+			FromID:  id1,
+			ToID:    id2,
+			DepType: string(types.DepRelatesTo),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update %s: %w", id1, err)
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
 		}
-	} else {
-		if err := store.UpdateIssue(ctx, id1, map[string]interface{}{
-			"relates_to": formattedRelatesTo1,
-		}, actor); err != nil {
-			return fmt.Errorf("failed to update %s: %w", id1, err)
-		}
-	}
-
-	// Remove id1 from issue2's relates_to
-	newRelatesTo2 := remove(issue2.RelatesTo, id1)
-	formattedRelatesTo2 := formatRelatesTo(newRelatesTo2)
-	if daemonClient != nil {
-		// Use RPC for daemon mode (bd-fu83)
-		_, err := daemonClient.Update(&rpc.UpdateArgs{
-			ID:        id2,
-			RelatesTo: &formattedRelatesTo2,
+		// Remove id2 -> id1 (bidirectional)
+		_, err = daemonClient.RemoveDependency(&rpc.DepRemoveArgs{
+			FromID:  id2,
+			ToID:    id1,
+			DepType: string(types.DepRelatesTo),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update %s: %w", id2, err)
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
 		}
 	} else {
-		if err := store.UpdateIssue(ctx, id2, map[string]interface{}{
-			"relates_to": formattedRelatesTo2,
-		}, actor); err != nil {
-			return fmt.Errorf("failed to update %s: %w", id2, err)
+		// Remove id1 -> id2
+		if err := store.RemoveDependency(ctx, id1, id2, actor); err != nil {
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id1, id2, err)
+		}
+		// Remove id2 -> id1 (bidirectional)
+		if err := store.RemoveDependency(ctx, id2, id1, actor); err != nil {
+			return fmt.Errorf("failed to remove relates-to %s -> %s: %w", id2, id1, err)
 		}
 	}
 
@@ -315,29 +305,5 @@ func runUnrelate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
-func remove(slice []string, item string) []string {
-	result := make([]string, 0, len(slice))
-	for _, s := range slice {
-		if s != item {
-			result = append(result, s)
-		}
-	}
-	return result
-}
-
-func formatRelatesTo(ids []string) string {
-	if len(ids) == 0 {
-		return ""
-	}
-	data, _ := json.Marshal(ids)
-	return string(data)
-}
+// Note: contains, remove, formatRelatesTo functions removed per Decision 004
+// relates-to links now use dependencies API instead of Issue.RelatesTo field

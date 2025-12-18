@@ -11,149 +11,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
-// createGraphEdgesFromIssueFields creates dependency edges for issue messaging/graph fields.
-// This implements Phase 2 of Edge Schema Consolidation (Decision 004) - dual-write mode.
-// When issue fields like RepliesTo, RelatesTo, etc. are set, we also create corresponding
-// dependency edges. This ensures both the field and the dependency table stay in sync.
-//
-// For replies-to edges, we also compute and store the thread_id for efficient thread queries:
-// - If parent has a thread_id, inherit it
-// - If parent has no thread_id, use the parent's issue ID as the thread root
-func createGraphEdgesFromIssueFields(ctx context.Context, conn *sql.Conn, issue *types.Issue, actor string) error {
-	now := time.Now()
-
-	// Helper to insert a dependency edge (no cycle check needed for new issues)
-	insertEdge := func(toID string, edgeType types.DependencyType, metadata, threadID string) error {
-		_, err := conn.ExecContext(ctx, `
-			INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, issue.ID, toID, edgeType, now, actor, metadata, threadID)
-		return err
-	}
-
-	// RepliesTo -> replies-to dependency with thread_id
-	if issue.RepliesTo != "" {
-		// Compute thread_id: check if parent has a thread_id, otherwise use parent's ID
-		var parentThreadID string
-		err := conn.QueryRowContext(ctx, `
-			SELECT COALESCE(
-				(SELECT thread_id FROM dependencies WHERE issue_id = ? AND type = 'replies-to' AND thread_id != '' LIMIT 1),
-				?
-			)
-		`, issue.RepliesTo, issue.RepliesTo).Scan(&parentThreadID)
-		if err != nil && err != sql.ErrNoRows {
-			return fmt.Errorf("failed to get parent thread_id: %w", err)
-		}
-		if parentThreadID == "" {
-			parentThreadID = issue.RepliesTo // Use parent's ID as thread root
-		}
-
-		if err := insertEdge(issue.RepliesTo, types.DepRepliesTo, "{}", parentThreadID); err != nil {
-			return fmt.Errorf("failed to create replies-to edge: %w", err)
-		}
-	}
-
-	// RelatesTo -> relates-to dependencies
-	for _, relatedID := range issue.RelatesTo {
-		if relatedID != "" {
-			if err := insertEdge(relatedID, types.DepRelatesTo, "{}", ""); err != nil {
-				return fmt.Errorf("failed to create relates-to edge for %s: %w", relatedID, err)
-			}
-		}
-	}
-
-	// DuplicateOf -> duplicates dependency
-	if issue.DuplicateOf != "" {
-		if err := insertEdge(issue.DuplicateOf, types.DepDuplicates, "{}", ""); err != nil {
-			return fmt.Errorf("failed to create duplicates edge: %w", err)
-		}
-	}
-
-	// SupersededBy -> supersedes dependency (reversed: this issue is superseded BY another)
-	// So we create: this issue depends on the superseding issue
-	if issue.SupersededBy != "" {
-		if err := insertEdge(issue.SupersededBy, types.DepSupersedes, "{}", ""); err != nil {
-			return fmt.Errorf("failed to create supersedes edge: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// createGraphEdgesFromUpdates creates dependency edges when graph fields are updated.
-// This implements Phase 2 of Edge Schema Consolidation (Decision 004) for UpdateIssue.
-func createGraphEdgesFromUpdates(ctx context.Context, tx *sql.Tx, issueID string, updates map[string]interface{}, actor string) error {
-	now := time.Now()
-
-	// Helper to insert a dependency edge
-	insertEdge := func(toID string, edgeType types.DependencyType, metadata, threadID string) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, issueID, toID, edgeType, now, actor, metadata, threadID)
-		return err
-	}
-
-	// RepliesTo -> replies-to dependency with thread_id
-	if repliesTo, ok := updates["replies_to"]; ok {
-		if replyID, isString := repliesTo.(string); isString && replyID != "" {
-			// Compute thread_id
-			var parentThreadID string
-			err := tx.QueryRowContext(ctx, `
-				SELECT COALESCE(
-					(SELECT thread_id FROM dependencies WHERE issue_id = ? AND type = 'replies-to' AND thread_id != '' LIMIT 1),
-					?
-				)
-			`, replyID, replyID).Scan(&parentThreadID)
-			if err != nil && err != sql.ErrNoRows {
-				return fmt.Errorf("failed to get parent thread_id: %w", err)
-			}
-			if parentThreadID == "" {
-				parentThreadID = replyID
-			}
-
-			if err := insertEdge(replyID, types.DepRepliesTo, "{}", parentThreadID); err != nil {
-				return fmt.Errorf("failed to create replies-to edge: %w", err)
-			}
-		}
-	}
-
-	// RelatesTo -> relates-to dependencies (JSON string array)
-	if relatesTo, ok := updates["relates_to"]; ok {
-		if relatesStr, isString := relatesTo.(string); isString && relatesStr != "" && relatesStr != "[]" {
-			var relatedIDs []string
-			if err := json.Unmarshal([]byte(relatesStr), &relatedIDs); err == nil {
-				for _, relatedID := range relatedIDs {
-					if relatedID != "" {
-						if err := insertEdge(relatedID, types.DepRelatesTo, "{}", ""); err != nil {
-							return fmt.Errorf("failed to create relates-to edge for %s: %w", relatedID, err)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// DuplicateOf -> duplicates dependency
-	if duplicateOf, ok := updates["duplicate_of"]; ok {
-		if dupID, isString := duplicateOf.(string); isString && dupID != "" {
-			if err := insertEdge(dupID, types.DepDuplicates, "{}", ""); err != nil {
-				return fmt.Errorf("failed to create duplicates edge: %w", err)
-			}
-		}
-	}
-
-	// SupersededBy -> supersedes dependency
-	if supersededBy, ok := updates["superseded_by"]; ok {
-		if supID, isString := supersededBy.(string); isString && supID != "" {
-			if err := insertEdge(supID, types.DepSupersedes, "{}", ""); err != nil {
-				return fmt.Errorf("failed to create supersedes edge: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
+// NOTE: createGraphEdgesFromIssueFields and createGraphEdgesFromUpdates removed
+// per Decision 004 Phase 4 - Edge Schema Consolidation.
+// Graph edges (replies-to, relates-to, duplicates, supersedes) are now managed
+// exclusively through the dependency API. Use AddDependency() instead.
 
 // parseNullableTimeString parses a nullable time string from database TEXT columns.
 // The ncruces/go-sqlite3 driver only auto-converts TEXT→time.Time for columns declared
@@ -342,10 +203,8 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return wrapDBError("record creation event", err)
 	}
 
-	// Create graph edges for messaging/graph fields (Phase 2: dual-write - Decision 004)
-	if err := createGraphEdgesFromIssueFields(ctx, conn, issue, actor); err != nil {
-		return wrapDBError("create graph edges from issue fields", err)
-	}
+	// NOTE: Graph edges (replies-to, relates-to, duplicates, supersedes) are now
+	// managed via AddDependency() per Decision 004 Phase 4.
 
 	// Mark issue as dirty for incremental export
 	if err := markDirty(ctx, conn, issue.ID); err != nil {
@@ -384,10 +243,6 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Messaging fields (bd-kwro)
 	var sender sql.NullString
 	var ephemeral sql.NullInt64
-	var repliesTo sql.NullString
-	var relatesTo sql.NullString
-	var duplicateOf sql.NullString
-	var supersededBy sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -397,7 +252,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       created_at, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
+		       sender, ephemeral
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -407,7 +262,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
+		&sender, &ephemeral,
 	)
 
 	if err == sql.ErrNoRows {
@@ -464,18 +319,6 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
-	}
-	if repliesTo.Valid {
-		issue.RepliesTo = repliesTo.String
-	}
-	if relatesTo.Valid && relatesTo.String != "" {
-		issue.RelatesTo = parseJSONStringArray(relatesTo.String)
-	}
-	if duplicateOf.Valid {
-		issue.DuplicateOf = duplicateOf.String
-	}
-	if supersededBy.Valid {
-		issue.SupersededBy = supersededBy.String
 	}
 
 	// Fetch labels for this issue
@@ -583,10 +426,6 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	// Messaging fields (bd-kwro)
 	var sender sql.NullString
 	var ephemeral sql.NullInt64
-	var repliesTo sql.NullString
-	var relatesTo sql.NullString
-	var duplicateOf sql.NullString
-	var supersededBy sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -594,7 +433,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		       created_at, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
+		       sender, ephemeral
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -604,7 +443,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &repliesTo, &relatesTo, &duplicateOf, &supersededBy,
+		&sender, &ephemeral,
 	)
 
 	if err == sql.ErrNoRows {
@@ -662,18 +501,6 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
 	}
-	if repliesTo.Valid {
-		issue.RepliesTo = repliesTo.String
-	}
-	if relatesTo.Valid && relatesTo.String != "" {
-		issue.RelatesTo = parseJSONStringArray(relatesTo.String)
-	}
-	if duplicateOf.Valid {
-		issue.DuplicateOf = duplicateOf.String
-	}
-	if supersededBy.Valid {
-		issue.SupersededBy = supersededBy.String
-	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -700,12 +527,10 @@ var allowedUpdateFields = map[string]bool{
 	"external_ref":        true,
 	"closed_at":           true,
 	// Messaging fields (bd-kwro)
-	"sender":        true,
-	"ephemeral":     true,
-	"replies_to":    true,
-	"relates_to":    true,
-	"duplicate_of":  true,
-	"superseded_by": true,
+	"sender":    true,
+	"ephemeral": true,
+	// NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
+	// Use AddDependency() to create graph edges instead
 }
 
 // validatePriority validates a priority value
@@ -923,10 +748,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-	// Create graph edges for messaging/graph fields (Phase 2: dual-write - Decision 004)
-	if err := createGraphEdgesFromUpdates(ctx, tx, id, updates, actor); err != nil {
-		return fmt.Errorf("failed to create graph edges from updates: %w", err)
-	}
+	// NOTE: Graph edges now managed via AddDependency() per Decision 004 Phase 4.
 
 	// Mark issue as dirty for incremental export
 	_, err = tx.ExecContext(ctx, `
@@ -1732,7 +1554,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by
+		       sender, ephemeral
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
