@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -17,22 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
-	"gopkg.in/yaml.v3"
 )
-
-//go:embed templates/*.yaml
-var builtinTemplates embed.FS
-
-// Template represents a simple YAML issue template (for --from-template)
-type Template struct {
-	Name               string   `yaml:"name" json:"name"`
-	Description        string   `yaml:"description" json:"description"`
-	Type               string   `yaml:"type" json:"type"`
-	Priority           int      `yaml:"priority" json:"priority"`
-	Labels             []string `yaml:"labels" json:"labels"`
-	Design             string   `yaml:"design" json:"design"`
-	AcceptanceCriteria string   `yaml:"acceptance_criteria" json:"acceptance_criteria"`
-}
 
 // BeadsTemplateLabel is the label used to identify Beads-based templates
 const BeadsTemplateLabel = "template"
@@ -58,166 +41,100 @@ type InstantiateResult struct {
 var templateCmd = &cobra.Command{
 	Use:   "template",
 	Short: "Manage issue templates",
-	Long: `Manage issue templates for streamlined issue creation.
+	Long: `Manage Beads templates for creating issue hierarchies.
 
-There are two types of templates:
+Templates are epics with the "template" label. They can have child issues
+with {{variable}} placeholders that get substituted during instantiation.
 
-1. YAML Templates (for single issues):
-   - Built-in: epic, bug, feature
-   - Custom: stored in .beads/templates/
-   - Used with: bd create --from-template=<name>
+To create a template:
+  1. Create an epic with child issues
+  2. Add the 'template' label: bd label add <epic-id> template
+  3. Use {{variable}} placeholders in titles/descriptions
 
-2. Beads Templates (for issue hierarchies):
-   - Any epic with the "template" label
-   - Can have child issues with {{variable}} placeholders
-   - Used with: bd template instantiate <id> --var key=value`,
+To use a template:
+  bd template instantiate <id> --var key=value`,
 }
 
 var templateListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available templates",
 	Run: func(cmd *cobra.Command, args []string) {
-		yamlOnly, _ := cmd.Flags().GetBool("yaml-only")
-		beadsOnly, _ := cmd.Flags().GetBool("beads-only")
+		ctx := rootCtx
+		var beadsTemplates []*types.Issue
 
-		type combinedOutput struct {
-			YAMLTemplates  []Template      `json:"yaml_templates,omitempty"`
-			BeadsTemplates []*types.Issue  `json:"beads_templates,omitempty"`
-		}
-		output := combinedOutput{}
-
-		// Load YAML templates
-		if !beadsOnly {
-			templates, err := loadAllTemplates()
+		if daemonClient != nil {
+			resp, err := daemonClient.List(&rpc.ListArgs{})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: error loading YAML templates: %v\n", err)
-			} else {
-				output.YAMLTemplates = templates
+				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
+				os.Exit(1)
 			}
-		}
-
-		// Load Beads templates
-		if !yamlOnly {
-			ctx := rootCtx
-			var beadsTemplates []*types.Issue
-			var err error
-
-			if daemonClient != nil {
-				resp, err := daemonClient.List(&rpc.ListArgs{})
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: error loading Beads templates: %v\n", err)
-				} else {
-					var allIssues []*types.Issue
-					if err := json.Unmarshal(resp.Data, &allIssues); err == nil {
-						for _, issue := range allIssues {
-							for _, label := range issue.Labels {
-								if label == BeadsTemplateLabel {
-									beadsTemplates = append(beadsTemplates, issue)
-									break
-								}
-							}
+			var allIssues []*types.Issue
+			if err := json.Unmarshal(resp.Data, &allIssues); err == nil {
+				for _, issue := range allIssues {
+					for _, label := range issue.Labels {
+						if label == BeadsTemplateLabel {
+							beadsTemplates = append(beadsTemplates, issue)
+							break
 						}
 					}
 				}
-			} else if store != nil {
-				beadsTemplates, err = store.GetIssuesByLabel(ctx, BeadsTemplateLabel)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: error loading Beads templates: %v\n", err)
-				}
 			}
-			output.BeadsTemplates = beadsTemplates
+		} else if store != nil {
+			var err error
+			beadsTemplates, err = store.GetIssuesByLabel(ctx, BeadsTemplateLabel)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading templates: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+			os.Exit(1)
 		}
 
 		if jsonOutput {
-			outputJSON(output)
+			outputJSON(beadsTemplates)
 			return
 		}
 
 		// Human-readable output
-		green := color.New(color.FgGreen).SprintFunc()
-		blue := color.New(color.FgBlue).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
-
-		// Show YAML templates
-		if !beadsOnly && len(output.YAMLTemplates) > 0 {
-			// Group by source
-			builtins := []Template{}
-			customs := []Template{}
-			for _, tmpl := range output.YAMLTemplates {
-				if isBuiltinTemplate(tmpl.Name) {
-					builtins = append(builtins, tmpl)
-				} else {
-					customs = append(customs, tmpl)
-				}
-			}
-
-			if len(builtins) > 0 {
-				fmt.Printf("%s\n", green("Built-in Templates (for --from-template):"))
-				for _, tmpl := range builtins {
-					fmt.Printf("  %s\n", blue(tmpl.Name))
-					fmt.Printf("    Type: %s, Priority: P%d\n", tmpl.Type, tmpl.Priority)
-				}
-				fmt.Println()
-			}
-
-			if len(customs) > 0 {
-				fmt.Printf("%s\n", green("Custom Templates (for --from-template):"))
-				for _, tmpl := range customs {
-					fmt.Printf("  %s\n", blue(tmpl.Name))
-					fmt.Printf("    Type: %s, Priority: P%d\n", tmpl.Type, tmpl.Priority)
-				}
-				fmt.Println()
-			}
-		}
-
-		// Show Beads templates
-		if !yamlOnly && len(output.BeadsTemplates) > 0 {
-			fmt.Printf("%s\n", green("Beads Templates (for bd template instantiate):"))
-			for _, tmpl := range output.BeadsTemplates {
-				vars := extractVariables(tmpl.Title + " " + tmpl.Description)
-				varStr := ""
-				if len(vars) > 0 {
-					varStr = fmt.Sprintf(" (vars: %s)", strings.Join(vars, ", "))
-				}
-				fmt.Printf("  %s: %s%s\n", cyan(tmpl.ID), tmpl.Title, varStr)
-			}
-			fmt.Println()
-		}
-
-		if len(output.YAMLTemplates) == 0 && len(output.BeadsTemplates) == 0 {
+		if len(beadsTemplates) == 0 {
 			fmt.Println("No templates available.")
-			fmt.Println("\nTo create a Beads template:")
+			fmt.Println("\nTo create a template:")
 			fmt.Println("  1. Create an epic with child issues")
 			fmt.Println("  2. Add the 'template' label: bd label add <epic-id> template")
 			fmt.Println("  3. Use {{variable}} placeholders in titles/descriptions")
+			return
 		}
+
+		green := color.New(color.FgGreen).SprintFunc()
+		cyan := color.New(color.FgCyan).SprintFunc()
+
+		fmt.Printf("%s\n", green("Templates (for bd template instantiate):"))
+		for _, tmpl := range beadsTemplates {
+			vars := extractVariables(tmpl.Title + " " + tmpl.Description)
+			varStr := ""
+			if len(vars) > 0 {
+				varStr = fmt.Sprintf(" (vars: %s)", strings.Join(vars, ", "))
+			}
+			fmt.Printf("  %s: %s%s\n", cyan(tmpl.ID), tmpl.Title, varStr)
+		}
+		fmt.Println()
 	},
 }
 
 var templateShowCmd = &cobra.Command{
-	Use:   "show <template-name-or-id>",
+	Use:   "show <template-id>",
 	Short: "Show template details",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		arg := args[0]
-
-		// Try loading as YAML template first
-		yamlTmpl, yamlErr := loadTemplate(arg)
-		if yamlErr == nil {
-			showYAMLTemplate(yamlTmpl)
-			return
-		}
-
-		// Try loading as Beads template
 		ctx := rootCtx
 		var templateID string
 
 		if daemonClient != nil {
-			resolveArgs := &rpc.ResolveIDArgs{ID: arg}
+			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				// Neither YAML nor Beads template found
-				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", arg)
+				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", args[0])
 				os.Exit(1)
 			}
 			if err := json.Unmarshal(resp.Data, &templateID); err != nil {
@@ -226,9 +143,9 @@ var templateShowCmd = &cobra.Command{
 			}
 		} else if store != nil {
 			var err error
-			templateID, err = utils.ResolvePartialID(ctx, store, arg)
+			templateID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", arg)
+				fmt.Fprintf(os.Stderr, "Error: template '%s' not found\n", args[0])
 				os.Exit(1)
 			}
 		} else {
@@ -247,30 +164,6 @@ var templateShowCmd = &cobra.Command{
 	},
 }
 
-func showYAMLTemplate(tmpl *Template) {
-	if jsonOutput {
-		outputJSON(tmpl)
-		return
-	}
-
-	green := color.New(color.FgGreen).SprintFunc()
-	blue := color.New(color.FgBlue).SprintFunc()
-
-	fmt.Printf("%s %s (YAML template)\n", green("Template:"), blue(tmpl.Name))
-	fmt.Printf("Type: %s\n", tmpl.Type)
-	fmt.Printf("Priority: P%d\n", tmpl.Priority)
-	if len(tmpl.Labels) > 0 {
-		fmt.Printf("Labels: %s\n", strings.Join(tmpl.Labels, ", "))
-	}
-	fmt.Printf("\n%s\n%s\n", green("Description:"), tmpl.Description)
-	if tmpl.Design != "" {
-		fmt.Printf("\n%s\n%s\n", green("Design:"), tmpl.Design)
-	}
-	if tmpl.AcceptanceCriteria != "" {
-		fmt.Printf("\n%s\n%s\n", green("Acceptance Criteria:"), tmpl.AcceptanceCriteria)
-	}
-}
-
 func showBeadsTemplate(subgraph *TemplateSubgraph) {
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
@@ -286,7 +179,7 @@ func showBeadsTemplate(subgraph *TemplateSubgraph) {
 	yellow := color.New(color.FgYellow).SprintFunc()
 	green := color.New(color.FgGreen).SprintFunc()
 
-	fmt.Printf("\n%s Template: %s (Beads template)\n", cyan("📋"), subgraph.Root.Title)
+	fmt.Printf("\n%s Template: %s\n", cyan("📋"), subgraph.Root.Title)
 	fmt.Printf("   ID: %s\n", subgraph.Root.ID)
 	fmt.Printf("   Issues: %d\n", len(subgraph.Issues))
 
@@ -303,67 +196,6 @@ func showBeadsTemplate(subgraph *TemplateSubgraph) {
 	fmt.Printf("\n%s Structure:\n", green("🌲"))
 	printTemplateTree(subgraph, subgraph.Root.ID, 0, true)
 	fmt.Println()
-}
-
-var templateCreateCmd = &cobra.Command{
-	Use:   "create <template-name>",
-	Short: "Create a custom YAML template",
-	Long: `Create a custom YAML template in .beads/templates/ directory.
-
-This creates a simple template for pre-filling issue fields.
-For workflow templates with hierarchies, create an epic and add the 'template' label.`,
-	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		templateName := args[0]
-
-		// Sanitize template name
-		if err := sanitizeTemplateName(templateName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Ensure .beads/templates directory exists
-		templatesDir := filepath.Join(".beads", "templates")
-		if err := os.MkdirAll(templatesDir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating templates directory: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Create template file
-		templatePath := filepath.Join(templatesDir, templateName+".yaml")
-		if _, err := os.Stat(templatePath); err == nil {
-			fmt.Fprintf(os.Stderr, "Error: template '%s' already exists\n", templateName)
-			os.Exit(1)
-		}
-
-		// Default template structure
-		tmpl := Template{
-			Name:               templateName,
-			Description:        "[Describe the issue]\n\n## Additional Context\n\n[Add relevant details]",
-			Type:               "task",
-			Priority:           2,
-			Labels:             []string{},
-			Design:             "[Design notes]",
-			AcceptanceCriteria: "- [ ] Acceptance criterion 1\n- [ ] Acceptance criterion 2",
-		}
-
-		// Marshal to YAML
-		data, err := yaml.Marshal(tmpl)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating template: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Write template file
-		if err := os.WriteFile(templatePath, data, 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing template: %v\n", err)
-			os.Exit(1)
-		}
-
-		green := color.New(color.FgGreen).SprintFunc()
-		fmt.Printf("%s Created template: %s\n", green("✓"), templatePath)
-		fmt.Printf("Edit the file to customize your template.\n")
-	},
 }
 
 var templateInstantiateCmd = &cobra.Command{
@@ -484,135 +316,18 @@ Example:
 }
 
 func init() {
-	templateListCmd.Flags().Bool("yaml-only", false, "Show only YAML templates")
-	templateListCmd.Flags().Bool("beads-only", false, "Show only Beads templates")
-
 	templateInstantiateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
 	templateInstantiateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	templateInstantiateCmd.Flags().String("assignee", "", "Assign the root epic to this agent/user")
 
 	templateCmd.AddCommand(templateListCmd)
 	templateCmd.AddCommand(templateShowCmd)
-	templateCmd.AddCommand(templateCreateCmd)
 	templateCmd.AddCommand(templateInstantiateCmd)
 	rootCmd.AddCommand(templateCmd)
 }
 
 // =============================================================================
-// YAML Template Functions (for --from-template)
-// =============================================================================
-
-// loadAllTemplates loads both built-in and custom YAML templates
-func loadAllTemplates() ([]Template, error) {
-	templates := []Template{}
-
-	// Load built-in templates
-	builtins := []string{"epic", "bug", "feature"}
-	for _, name := range builtins {
-		tmpl, err := loadBuiltinTemplate(name)
-		if err != nil {
-			continue
-		}
-		templates = append(templates, *tmpl)
-	}
-
-	// Load custom templates from .beads/templates/
-	templatesDir := filepath.Join(".beads", "templates")
-	if _, err := os.Stat(templatesDir); err == nil {
-		entries, err := os.ReadDir(templatesDir)
-		if err != nil {
-			return nil, fmt.Errorf("reading templates directory: %w", err)
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-				continue
-			}
-
-			name := strings.TrimSuffix(entry.Name(), ".yaml")
-			tmpl, err := loadCustomTemplate(name)
-			if err != nil {
-				continue
-			}
-			templates = append(templates, *tmpl)
-		}
-	}
-
-	return templates, nil
-}
-
-// sanitizeTemplateName validates template name to prevent path traversal
-func sanitizeTemplateName(name string) error {
-	if name != filepath.Base(name) {
-		return fmt.Errorf("invalid template name '%s' (no path separators allowed)", name)
-	}
-	if strings.Contains(name, "..") {
-		return fmt.Errorf("invalid template name '%s' (no .. allowed)", name)
-	}
-	return nil
-}
-
-// loadTemplate loads a YAML template by name (checks custom first, then built-in)
-func loadTemplate(name string) (*Template, error) {
-	if err := sanitizeTemplateName(name); err != nil {
-		return nil, err
-	}
-
-	// Try custom templates first
-	tmpl, err := loadCustomTemplate(name)
-	if err == nil {
-		return tmpl, nil
-	}
-
-	// Fall back to built-in templates
-	return loadBuiltinTemplate(name)
-}
-
-// loadBuiltinTemplate loads a built-in YAML template
-func loadBuiltinTemplate(name string) (*Template, error) {
-	path := fmt.Sprintf("templates/%s.yaml", name)
-	data, err := builtinTemplates.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("template '%s' not found", name)
-	}
-
-	var tmpl Template
-	if err := yaml.Unmarshal(data, &tmpl); err != nil {
-		return nil, fmt.Errorf("parsing template: %w", err)
-	}
-
-	return &tmpl, nil
-}
-
-// loadCustomTemplate loads a custom YAML template from .beads/templates/
-func loadCustomTemplate(name string) (*Template, error) {
-	path := filepath.Join(".beads", "templates", name+".yaml")
-	// #nosec G304 - path is sanitized via sanitizeTemplateName before calling this function
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("template '%s' not found", name)
-	}
-
-	var tmpl Template
-	if err := yaml.Unmarshal(data, &tmpl); err != nil {
-		return nil, fmt.Errorf("parsing template: %w", err)
-	}
-
-	return &tmpl, nil
-}
-
-// isBuiltinTemplate checks if a template name is a built-in template
-func isBuiltinTemplate(name string) bool {
-	builtins := map[string]bool{
-		"epic":    true,
-		"bug":     true,
-		"feature": true,
-	}
-	return builtins[name]
-}
-
-// =============================================================================
-// Beads Template Functions (for bd template instantiate)
+// Beads Template Functions
 // =============================================================================
 
 // loadTemplateSubgraph loads a template epic and all its descendants

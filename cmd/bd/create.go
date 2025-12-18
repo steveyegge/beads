@@ -25,7 +25,6 @@ var createCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("create")
 		file, _ := cmd.Flags().GetString("file")
-		fromTemplate, _ := cmd.Flags().GetString("from-template")
 
 		// If file flag is provided, parse markdown and create multiple issues
 		if file != "" {
@@ -65,21 +64,8 @@ var createCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "  For testing, consider using: BEADS_DB=/tmp/test.db ./bd create \"Test issue\"\n")
 		}
 
-		// Load template if specified
-		var tmpl *Template
-		if fromTemplate != "" {
-			var err error
-			tmpl, err = loadTemplate(fromTemplate)
-			if err != nil {
-				FatalError("%v", err)
-			}
-		}
-
-		// Get field values, preferring explicit flags over template defaults
+		// Get field values
 		description, _ := getDescriptionFlag(cmd)
-		if description == "" && tmpl != nil {
-			description = tmpl.Description
-		}
 
 		// Warn if creating an issue without a description (unless it's a test issue or silent mode)
 		if description == "" && !strings.Contains(strings.ToLower(title), "test") && !silent && !debug.IsQuiet() {
@@ -90,40 +76,22 @@ var createCmd = &cobra.Command{
 		}
 
 		design, _ := cmd.Flags().GetString("design")
-		if design == "" && tmpl != nil {
-			design = tmpl.Design
-		}
-
 		acceptance, _ := cmd.Flags().GetString("acceptance")
-		if acceptance == "" && tmpl != nil {
-			acceptance = tmpl.AcceptanceCriteria
-		}
-		
+
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
 			FatalError("%v", err)
 		}
-		if cmd.Flags().Changed("priority") == false && tmpl != nil {
-			priority = tmpl.Priority
-		}
 
 		issueType, _ := cmd.Flags().GetString("type")
-		if !cmd.Flags().Changed("type") && tmpl != nil && tmpl.Type != "" {
-			// Flag not explicitly set and template has a type, use template
-			issueType = tmpl.Type
-		}
-
 		assignee, _ := cmd.Flags().GetString("assignee")
 
 		labels, _ := cmd.Flags().GetStringSlice("labels")
 		labelAlias, _ := cmd.Flags().GetStringSlice("label")
 		if len(labelAlias) > 0 {
 			labels = append(labels, labelAlias...)
-		}
-		if len(labels) == 0 && tmpl != nil && len(tmpl.Labels) > 0 {
-			labels = tmpl.Labels
 		}
 
 		explicitID, _ := cmd.Flags().GetString("id")
@@ -421,7 +389,6 @@ var createCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
-	createCmd.Flags().String("from-template", "", "Create issue from template (e.g., 'epic', 'bug', 'feature')")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	registerPriorityFlag(createCmd, "2")
