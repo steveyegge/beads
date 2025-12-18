@@ -1,0 +1,8 @@
+{
+  "_comment": "Add this to ~/.claude/settings.json under permissions.allow",
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)"
+    ]
+  }
+}
