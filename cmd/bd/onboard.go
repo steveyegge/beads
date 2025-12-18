@@ -182,6 +182,17 @@ Example: fetchUser(id) → fetchUser(id, { timeout: 3000 })
 Depends on: bd-abc123 (fetch wrapper refactor)
 ` + "```" + `
 
+### Dependencies: Think "Needs", Not "Before"
+
+` + "`bd dep add X Y`" + ` = "X needs Y" = Y blocks X
+
+**TRAP**: Temporal words ("Phase 1", "before", "first") invert your thinking!
+` + "```" + `
+WRONG: "Phase 1 before Phase 2" → bd dep add phase1 phase2
+RIGHT: "Phase 2 needs Phase 1" → bd dep add phase2 phase1
+` + "```" + `
+**Verify**: ` + "`bd blocked`" + ` - tasks blocked by prerequisites, not dependents.
+
 ### Auto-Sync
 
 bd automatically syncs with git:
