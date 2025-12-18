@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -429,6 +430,157 @@ func TestTransactionAddDependency(t *testing.T) {
 	}
 	if deps[0].ID != issue2.ID {
 		t.Errorf("expected dependency on %s, got %s", issue2.ID, deps[0].ID)
+	}
+}
+
+// TestTransactionAddDependency_RelatesTo tests that bidirectional relates-to
+// dependencies work in transaction context. This is a regression test for
+// Decision 004 Phase 4 - the cycle detection must exempt relates-to type
+// since bidirectional relationships are semantically valid.
+func TestTransactionAddDependency_RelatesTo(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create two issues
+	issue1 := &types.Issue{Title: "Issue 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Issue 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	if err := store.CreateIssue(ctx, issue1, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue2, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Add bidirectional relates-to in a single transaction
+	// This should NOT fail cycle detection since relates-to is exempt
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		// First direction: issue1 relates-to issue2
+		dep1 := &types.Dependency{
+			IssueID:     issue1.ID,
+			DependsOnID: issue2.ID,
+			Type:        types.DepRelatesTo,
+		}
+		if err := tx.AddDependency(ctx, dep1, "test-actor"); err != nil {
+			return fmt.Errorf("first relates-to failed: %w", err)
+		}
+
+		// Second direction: issue2 relates-to issue1 (would be a cycle for other types)
+		dep2 := &types.Dependency{
+			IssueID:     issue2.ID,
+			DependsOnID: issue1.ID,
+			Type:        types.DepRelatesTo,
+		}
+		if err := tx.AddDependency(ctx, dep2, "test-actor"); err != nil {
+			return fmt.Errorf("second relates-to failed: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify both directions exist
+	deps1, err := store.GetDependenciesWithMetadata(ctx, issue1.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found1 := false
+	for _, d := range deps1 {
+		if d.ID == issue2.ID && d.DependencyType == types.DepRelatesTo {
+			found1 = true
+		}
+	}
+	if !found1 {
+		t.Errorf("issue1 should have relates-to link to issue2")
+	}
+
+	deps2, err := store.GetDependenciesWithMetadata(ctx, issue2.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found2 := false
+	for _, d := range deps2 {
+		if d.ID == issue1.ID && d.DependencyType == types.DepRelatesTo {
+			found2 = true
+		}
+	}
+	if !found2 {
+		t.Errorf("issue2 should have relates-to link to issue1")
+	}
+}
+
+// TestTransactionAddDependency_RepliesTo tests that replies-to dependencies
+// preserve thread_id in transaction context (Decision 004 Phase 4).
+func TestTransactionAddDependency_RepliesTo(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create original message and reply
+	original := &types.Issue{
+		Title:     "Original Message",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeMessage,
+		Sender:    "alice",
+	}
+	reply := &types.Issue{
+		Title:     "Re: Original Message",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeMessage,
+		Sender:    "bob",
+	}
+	if err := store.CreateIssue(ctx, original, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+	if err := store.CreateIssue(ctx, reply, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Add replies-to with thread_id in transaction
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		dep := &types.Dependency{
+			IssueID:     reply.ID,
+			DependsOnID: original.ID,
+			Type:        types.DepRepliesTo,
+			ThreadID:    original.ID, // Thread root
+		}
+		return tx.AddDependency(ctx, dep, "test-actor")
+	})
+
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+
+	// Verify the dependency and thread_id were preserved
+	deps, err := store.GetDependenciesWithMetadata(ctx, reply.ID)
+	if err != nil {
+		t.Fatalf("GetDependenciesWithMetadata failed: %v", err)
+	}
+	found := false
+	for _, d := range deps {
+		if d.ID == original.ID && d.DependencyType == types.DepRepliesTo {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("reply should have replies-to link to original")
+	}
+
+	// Verify thread_id by querying dependencies table directly
+	var threadID string
+	err = store.UnderlyingDB().QueryRowContext(ctx,
+		`SELECT thread_id FROM dependencies WHERE issue_id = ? AND depends_on_id = ?`,
+		reply.ID, original.ID).Scan(&threadID)
+	if err != nil {
+		t.Fatalf("Failed to query thread_id: %v", err)
+	}
+	if threadID != original.ID {
+		t.Errorf("thread_id = %q, want %q", threadID, original.ID)
 	}
 }
 
