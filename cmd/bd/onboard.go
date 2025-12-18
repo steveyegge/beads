@@ -150,6 +150,38 @@ bd close bd-42 --reason "Completed" --json
 5. **Complete**: ` + "`bd close <id> --reason \"Done\"`" + `
 6. **Commit together**: Always commit the ` + "`.beads/issues.jsonl`" + ` file together with the code changes so issue state stays in sync with code state
 
+### Writing Self-Contained Issues
+
+Issues must be fully self-contained - readable without any external context (plans, chat history, etc.). A future session should understand the issue completely from its description alone.
+
+**Required elements:**
+- **Summary**: What and why in 1-2 sentences
+- **Files to modify**: Exact paths (with line numbers if relevant)
+- **Implementation steps**: Numbered, specific actions
+- **Example**: Show before → after transformation when applicable
+
+**Optional but helpful:**
+- Edge cases or gotchas to watch for
+- Test references (point to test files or test_data examples)
+- Dependencies on other issues
+
+**Bad example:**
+` + "```" + `
+Implement the refactoring from the plan
+` + "```" + `
+
+**Good example:**
+` + "```" + `
+Add timeout parameter to fetchUser() in src/api/users.ts
+
+1. Add optional timeout param (default 5000ms)
+2. Pass to underlying fetch() call
+3. Update tests in src/api/users.test.ts
+
+Example: fetchUser(id) → fetchUser(id, { timeout: 3000 })
+Depends on: bd-abc123 (fetch wrapper refactor)
+` + "```" + `
+
 ### Auto-Sync
 
 bd automatically syncs with git:
