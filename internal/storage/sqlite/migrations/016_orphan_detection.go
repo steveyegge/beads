@@ -37,6 +37,8 @@ func MigrateOrphanDetection(db *sql.DB) error {
 		  (id GLOB '*.[0-9]' OR id GLOB '*.[0-9][0-9]' OR id GLOB '*.[0-9][0-9][0-9]' OR id GLOB '*.[0-9][0-9][0-9][0-9]')
 		  -- Parent (remove trailing digits then dot) must not exist
 		  AND rtrim(rtrim(id, '0123456789'), '.') NOT IN (SELECT id FROM issues)
+		  -- Skip tombstones - they're already deleted
+		  AND status != 'tombstone'
 		ORDER BY id
 	`)
 	if err != nil {
