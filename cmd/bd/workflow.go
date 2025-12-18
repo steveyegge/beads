@@ -265,8 +265,9 @@ Use 'bd ready' to see which tasks are ready to work on.`,
 			return
 		}
 
-		// Run preflight checks
-		if len(wf.Preflight) > 0 {
+		// Run preflight checks (unless skipped)
+		skipPreflight, _ := cmd.Flags().GetBool("skip-preflight")
+		if len(wf.Preflight) > 0 && !skipPreflight {
 			green := color.New(color.FgGreen).SprintFunc()
 			fmt.Println("Running preflight checks...")
 			for _, check := range wf.Preflight {
@@ -278,6 +279,9 @@ Use 'bd ready' to see which tasks are ready to work on.`,
 				fmt.Printf("  %s %s\n", green("✓"), check.Message)
 			}
 			fmt.Println()
+		} else if skipPreflight && len(wf.Preflight) > 0 {
+			yellow := color.New(color.FgYellow).SprintFunc()
+			fmt.Printf("%s Skipping preflight checks\n\n", yellow("⚠"))
 		}
 
 		// Create the workflow instance
@@ -562,6 +566,7 @@ status is not automatically changed - use 'bd close' to mark complete.`,
 func init() {
 	workflowCreateCmd.Flags().StringSlice("var", []string{}, "Variable values (key=value, repeatable)")
 	workflowCreateCmd.Flags().Bool("dry-run", false, "Show what would be created without creating")
+	workflowCreateCmd.Flags().Bool("skip-preflight", false, "Skip preflight checks (use with caution)")
 
 	workflowCmd.AddCommand(workflowListCmd)
 	workflowCmd.AddCommand(workflowShowCmd)
