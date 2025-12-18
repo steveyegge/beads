@@ -698,8 +698,8 @@ func TestDirtyTracking(t *testing.T) {
 	}
 
 	// Clear dirty
-	if err := store.ClearDirtyIssues(ctx); err != nil {
-		t.Fatalf("ClearDirtyIssues failed: %v", err)
+	if err := store.ClearDirtyIssuesByID(ctx, dirty); err != nil {
+		t.Fatalf("ClearDirtyIssuesByID failed: %v", err)
 	}
 
 	dirty, err = store.GetDirtyIssues(ctx)

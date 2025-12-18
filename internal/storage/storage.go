@@ -126,7 +126,6 @@ type Storage interface {
 	// Dirty tracking (for incremental JSONL export)
 	GetDirtyIssues(ctx context.Context) ([]string, error)
 	GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) // For timestamp-only dedup (bd-164)
-	ClearDirtyIssues(ctx context.Context) error                            // WARNING: Race condition (bd-52), use ClearDirtyIssuesByID
 	ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error
 
 	// Export hash tracking (for timestamp-only dedup, bd-164)

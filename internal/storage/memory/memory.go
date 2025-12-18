@@ -1313,14 +1313,6 @@ func (m *MemoryStorage) GetDirtyIssues(ctx context.Context) ([]string, error) {
 	return dirtyIDs, nil
 }
 
-func (m *MemoryStorage) ClearDirtyIssues(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.dirty = make(map[string]bool)
-	return nil
-}
-
 func (m *MemoryStorage) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
