@@ -597,7 +597,7 @@ func (t *sqliteTxStorage) DeleteIssue(ctx context.Context, id string) error {
 func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	// Validate dependency type
 	if !dep.Type.IsValid() {
-		return fmt.Errorf("invalid dependency type: %s (must be blocks, related, parent-child, or discovered-from)", dep.Type)
+		return fmt.Errorf("invalid dependency type: %q (must be non-empty string, max 50 chars)", dep.Type)
 	}
 
 	// Validate that both issues exist
@@ -637,9 +637,11 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 		dep.CreatedBy = actor
 	}
 
-	// Cycle detection
-	var cycleExists bool
-	err = t.conn.QueryRowContext(ctx, `
+	// Cycle detection - skip for relates-to (inherently bidirectional)
+	// See dependencies.go for full rationale on cycle prevention
+	if dep.Type != types.DepRelatesTo {
+		var cycleExists bool
+		err = t.conn.QueryRowContext(ctx, `
 		WITH RECURSIVE paths AS (
 			SELECT
 				issue_id,
@@ -664,20 +666,21 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 		)
 	`, dep.DependsOnID, dep.IssueID).Scan(&cycleExists)
 
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to check for cycles: %w", err)
+		}
+
+		if cycleExists {
+			return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
+				dep.IssueID, dep.DependsOnID, dep.IssueID)
+		}
 	}
 
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
-	}
-
-	// Insert dependency
+	// Insert dependency (including metadata and thread_id for edge consolidation - Decision 004)
 	_, err = t.conn.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
-		VALUES (?, ?, ?, ?, ?)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy)
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, dep.Metadata, dep.ThreadID)
 	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
