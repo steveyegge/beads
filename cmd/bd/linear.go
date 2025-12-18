@@ -1,0 +1,501 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/types"
+)
+
+// LinearSyncStats tracks statistics for a Linear sync operation.
+type LinearSyncStats struct {
+	Pulled    int `json:"pulled"`
+	Pushed    int `json:"pushed"`
+	Created   int `json:"created"`
+	Updated   int `json:"updated"`
+	Skipped   int `json:"skipped"`
+	Errors    int `json:"errors"`
+	Conflicts int `json:"conflicts"`
+}
+
+// LinearSyncResult represents the result of a Linear sync operation.
+type LinearSyncResult struct {
+	Success  bool            `json:"success"`
+	Stats    LinearSyncStats `json:"stats"`
+	LastSync string          `json:"last_sync,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+var linearCmd = &cobra.Command{
+	Use:   "linear",
+	Short: "Linear integration commands",
+	Long: `Synchronize issues between beads and Linear.
+
+Configuration:
+  bd config set linear.api_key "YOUR_API_KEY"
+  bd config set linear.team_id "TEAM_ID"
+
+Environment variables (alternative to config):
+  LINEAR_API_KEY - Linear API key
+
+Examples:
+  bd linear sync --pull         # Import issues from Linear
+  bd linear sync --push         # Export issues to Linear
+  bd linear sync                # Bidirectional sync (pull then push)
+  bd linear sync --dry-run      # Preview sync without changes
+  bd linear status              # Show sync status`,
+}
+
+var linearSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Synchronize issues with Linear",
+	Long: `Synchronize issues between beads and Linear.
+
+Modes:
+  --pull         Import issues from Linear into beads
+  --push         Export issues from beads to Linear
+  (no flags)     Bidirectional sync: pull then push, with conflict resolution
+
+Conflict Resolution:
+  By default, newer timestamp wins. Override with:
+  --prefer-local    Always prefer local beads version
+  --prefer-linear   Always prefer Linear version
+
+Examples:
+  bd linear sync --pull                # Import from Linear
+  bd linear sync --push --create-only  # Push new issues only
+  bd linear sync --dry-run             # Preview without changes
+  bd linear sync --prefer-local        # Bidirectional, local wins`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Parse flags (errors are unlikely but check to ensure cobra is working)
+		pull, _ := cmd.Flags().GetBool("pull")
+		push, _ := cmd.Flags().GetBool("push")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		preferLocal, _ := cmd.Flags().GetBool("prefer-local")
+		preferLinear, _ := cmd.Flags().GetBool("prefer-linear")
+		createOnly, _ := cmd.Flags().GetBool("create-only")
+		updateRefs, _ := cmd.Flags().GetBool("update-refs")
+		state, _ := cmd.Flags().GetString("state")
+
+		// Block writes in readonly mode (sync modifies data)
+		if !dryRun {
+			CheckReadonly("linear sync")
+		}
+
+		// Validate conflicting flags
+		if preferLocal && preferLinear {
+			fmt.Fprintf(os.Stderr, "Error: cannot use both --prefer-local and --prefer-linear\n")
+			os.Exit(1)
+		}
+
+		// Ensure store is available
+		if err := ensureStoreActive(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: database not available: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Ensure we have Linear configuration
+		if err := validateLinearConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Default mode: bidirectional (pull then push)
+		if !pull && !push {
+			pull = true
+			push = true
+		}
+
+		ctx := rootCtx
+		result := &LinearSyncResult{Success: true}
+
+		// Step 1: Pull from Linear
+		if pull {
+			if dryRun {
+				fmt.Println("→ [DRY RUN] Would pull issues from Linear")
+			} else {
+				fmt.Println("→ Pulling issues from Linear...")
+			}
+
+			pullStats, err := doPullFromLinear(ctx, dryRun, state)
+			if err != nil {
+				result.Success = false
+				result.Error = err.Error()
+				if jsonOutput {
+					outputJSON(result)
+				} else {
+					fmt.Fprintf(os.Stderr, "Error pulling from Linear: %v\n", err)
+				}
+				os.Exit(1)
+			}
+
+			result.Stats.Pulled = pullStats.Created + pullStats.Updated
+			result.Stats.Created += pullStats.Created
+			result.Stats.Updated += pullStats.Updated
+			result.Stats.Skipped += pullStats.Skipped
+
+			if !dryRun {
+				fmt.Printf("✓ Pulled %d issues (%d created, %d updated)\n",
+					result.Stats.Pulled, pullStats.Created, pullStats.Updated)
+			}
+		}
+
+		// Step 2: Handle conflicts (if bidirectional)
+		if pull && push && !dryRun {
+			conflicts, err := detectLinearConflicts(ctx)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
+			} else if len(conflicts) > 0 {
+				result.Stats.Conflicts = len(conflicts)
+				if preferLocal {
+					fmt.Printf("→ Resolving %d conflicts (preferring local)\n", len(conflicts))
+					// Local wins - no action needed, push will overwrite
+				} else if preferLinear {
+					fmt.Printf("→ Resolving %d conflicts (preferring Linear)\n", len(conflicts))
+					// Linear wins - re-import conflicting issues
+					if err := reimportLinearConflicts(ctx, conflicts); err != nil {
+						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+					}
+				} else {
+					// Default: timestamp-based (newer wins)
+					fmt.Printf("→ Resolving %d conflicts (newer wins)\n", len(conflicts))
+					if err := resolveLinearConflictsByTimestamp(ctx, conflicts); err != nil {
+						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+					}
+				}
+			}
+		}
+
+		// Step 3: Push to Linear
+		if push {
+			if dryRun {
+				fmt.Println("→ [DRY RUN] Would push issues to Linear")
+			} else {
+				fmt.Println("→ Pushing issues to Linear...")
+			}
+
+			pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs)
+			if err != nil {
+				result.Success = false
+				result.Error = err.Error()
+				if jsonOutput {
+					outputJSON(result)
+				} else {
+					fmt.Fprintf(os.Stderr, "Error pushing to Linear: %v\n", err)
+				}
+				os.Exit(1)
+			}
+
+			result.Stats.Pushed = pushStats.Created + pushStats.Updated
+			result.Stats.Created += pushStats.Created
+			result.Stats.Updated += pushStats.Updated
+			result.Stats.Skipped += pushStats.Skipped
+			result.Stats.Errors += pushStats.Errors
+
+			if !dryRun {
+				fmt.Printf("✓ Pushed %d issues (%d created, %d updated)\n",
+					result.Stats.Pushed, pushStats.Created, pushStats.Updated)
+			}
+		}
+
+		// Update last sync timestamp
+		if !dryRun && result.Success {
+			result.LastSync = time.Now().Format(time.RFC3339)
+			if err := store.SetConfig(ctx, "linear.last_sync", result.LastSync); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("failed to update last_sync: %v", err))
+			}
+		}
+
+		// Output result
+		if jsonOutput {
+			outputJSON(result)
+		} else if dryRun {
+			fmt.Println("\n✓ Dry run complete (no changes made)")
+		} else {
+			fmt.Println("\n✓ Linear sync complete")
+			if len(result.Warnings) > 0 {
+				fmt.Println("\nWarnings:")
+				for _, w := range result.Warnings {
+					fmt.Printf("  - %s\n", w)
+				}
+			}
+		}
+	},
+}
+
+var linearStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show Linear sync status",
+	Long: `Show the current Linear sync status, including:
+  - Last sync timestamp
+  - Configuration status
+  - Number of issues with Linear links
+  - Issues pending push (no external_ref)`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := rootCtx
+
+		// Ensure store is available
+		if err := ensureStoreActive(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Get configuration
+		apiKey, _ := store.GetConfig(ctx, "linear.api_key")
+		teamID, _ := store.GetConfig(ctx, "linear.team_id")
+		lastSync, _ := store.GetConfig(ctx, "linear.last_sync")
+
+		// Check for API key from environment if not in config
+		if apiKey == "" {
+			apiKey = os.Getenv("LINEAR_API_KEY")
+		}
+
+		// Check if configured
+		configured := apiKey != "" && teamID != ""
+
+		// Count issues with Linear links
+		allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		withLinearRef := 0
+		pendingPush := 0
+		for _, issue := range allIssues {
+			if issue.ExternalRef != nil && isLinearExternalRef(*issue.ExternalRef) {
+				withLinearRef++
+			} else if issue.ExternalRef == nil {
+				pendingPush++
+			}
+		}
+
+		if jsonOutput {
+			// Mask API key for security - only show if present
+			hasAPIKey := apiKey != ""
+			outputJSON(map[string]interface{}{
+				"configured":      configured,
+				"has_api_key":     hasAPIKey,
+				"team_id":         teamID,
+				"last_sync":       lastSync,
+				"total_issues":    len(allIssues),
+				"with_linear_ref": withLinearRef,
+				"pending_push":    pendingPush,
+			})
+			return
+		}
+
+		fmt.Println("Linear Sync Status")
+		fmt.Println("==================")
+		fmt.Println()
+
+		if !configured {
+			fmt.Println("Status: Not configured")
+			fmt.Println()
+			fmt.Println("To configure Linear integration:")
+			fmt.Println("  bd config set linear.api_key \"YOUR_API_KEY\"")
+			fmt.Println("  bd config set linear.team_id \"TEAM_ID\"")
+			fmt.Println()
+			fmt.Println("Or use environment variables:")
+			fmt.Println("  export LINEAR_API_KEY=\"YOUR_API_KEY\"")
+			return
+		}
+
+		fmt.Printf("Team ID:      %s\n", teamID)
+		fmt.Printf("API Key:      %s\n", maskAPIKey(apiKey))
+		if lastSync != "" {
+			fmt.Printf("Last Sync:    %s\n", lastSync)
+		} else {
+			fmt.Println("Last Sync:    Never")
+		}
+		fmt.Println()
+		fmt.Printf("Total Issues: %d\n", len(allIssues))
+		fmt.Printf("With Linear:  %d\n", withLinearRef)
+		fmt.Printf("Local Only:   %d\n", pendingPush)
+
+		if pendingPush > 0 {
+			fmt.Println()
+			fmt.Printf("Run 'bd linear sync --push' to push %d local issue(s) to Linear\n", pendingPush)
+		}
+	},
+}
+
+func init() {
+	// Sync command flags
+	linearSyncCmd.Flags().Bool("pull", false, "Pull issues from Linear")
+	linearSyncCmd.Flags().Bool("push", false, "Push issues to Linear")
+	linearSyncCmd.Flags().Bool("dry-run", false, "Preview sync without making changes")
+	linearSyncCmd.Flags().Bool("prefer-local", false, "Prefer local version on conflicts")
+	linearSyncCmd.Flags().Bool("prefer-linear", false, "Prefer Linear version on conflicts")
+	linearSyncCmd.Flags().Bool("create-only", false, "Only create new issues, don't update existing")
+	linearSyncCmd.Flags().Bool("update-refs", true, "Update external_ref after creating Linear issues")
+	linearSyncCmd.Flags().String("state", "all", "Issue state to sync: open, closed, all")
+
+	linearCmd.AddCommand(linearSyncCmd)
+	linearCmd.AddCommand(linearStatusCmd)
+	rootCmd.AddCommand(linearCmd)
+}
+
+// validateLinearConfig checks that required Linear configuration is present.
+func validateLinearConfig() error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("database not available: %w", err)
+	}
+
+	ctx := rootCtx
+
+	// Check for API key (from config or env)
+	apiKey, _ := store.GetConfig(ctx, "linear.api_key")
+	if apiKey == "" && os.Getenv("LINEAR_API_KEY") == "" {
+		return fmt.Errorf("Linear API key not configured\nRun: bd config set linear.api_key \"YOUR_API_KEY\"\nOr: export LINEAR_API_KEY=YOUR_API_KEY")
+	}
+
+	// Check for team ID
+	teamID, _ := store.GetConfig(ctx, "linear.team_id")
+	if teamID == "" {
+		return fmt.Errorf("linear.team_id not configured\nRun: bd config set linear.team_id \"TEAM_ID\"")
+	}
+
+	return nil
+}
+
+// maskAPIKey returns a masked version of an API key for display.
+// Shows first 4 and last 4 characters, with dots in between.
+func maskAPIKey(key string) string {
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
+// isLinearExternalRef checks if an external_ref URL is a Linear issue URL.
+func isLinearExternalRef(externalRef string) bool {
+	return strings.Contains(externalRef, "linear.app/") && strings.Contains(externalRef, "/issue/")
+}
+
+// LinearConflict represents a conflict between local and Linear versions.
+type LinearConflict struct {
+	IssueID           string
+	LocalUpdated      time.Time
+	LinearUpdated     time.Time
+	LinearExternalRef string
+}
+
+// detectLinearConflicts finds issues that have been modified both locally and in Linear.
+func detectLinearConflicts(ctx context.Context) ([]LinearConflict, error) {
+	// Get last sync time
+	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
+	if lastSyncStr == "" {
+		// No previous sync - no conflicts possible
+		return nil, nil
+	}
+
+	lastSync, err := time.Parse(time.RFC3339, lastSyncStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid last_sync timestamp: %w", err)
+	}
+
+	// Get all issues with Linear refs that were updated since last sync
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return nil, err
+	}
+
+	var conflicts []LinearConflict
+	for _, issue := range allIssues {
+		if issue.ExternalRef == nil || !isLinearExternalRef(*issue.ExternalRef) {
+			continue
+		}
+
+		// Check if updated since last sync
+		if issue.UpdatedAt.After(lastSync) {
+			// This is a potential conflict - for now, mark as conflict
+			// TODO: In a full implementation, we'd fetch the Linear issue and compare timestamps
+			conflicts = append(conflicts, LinearConflict{
+				IssueID:           issue.ID,
+				LocalUpdated:      issue.UpdatedAt,
+				LinearExternalRef: *issue.ExternalRef,
+			})
+		}
+	}
+
+	return conflicts, nil
+}
+
+// reimportLinearConflicts re-imports conflicting issues from Linear (Linear wins).
+// NOTE: This is a placeholder - full implementation requires fetching individual
+// issues from Linear API and updating local copies.
+func reimportLinearConflicts(_ context.Context, conflicts []LinearConflict) error {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "Warning: conflict resolution (--prefer-linear) not fully implemented\n")
+	fmt.Fprintf(os.Stderr, "  %d issue(s) may have conflicts that need manual review:\n", len(conflicts))
+	for _, c := range conflicts {
+		fmt.Fprintf(os.Stderr, "    - %s (local updated: %s)\n", c.IssueID, c.LocalUpdated.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// resolveLinearConflictsByTimestamp resolves conflicts by keeping the newer version.
+// NOTE: This is a placeholder - full implementation requires fetching Linear
+// timestamps and comparing with local timestamps.
+func resolveLinearConflictsByTimestamp(_ context.Context, conflicts []LinearConflict) error {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "Warning: timestamp-based conflict resolution not fully implemented\n")
+	fmt.Fprintf(os.Stderr, "  %d issue(s) may have conflicts - local version will be pushed:\n", len(conflicts))
+	for _, c := range conflicts {
+		fmt.Fprintf(os.Stderr, "    - %s\n", c.IssueID)
+	}
+	return nil
+}
+
+// LinearPullStats tracks pull operation statistics.
+type LinearPullStats struct {
+	Created int
+	Updated int
+	Skipped int
+}
+
+// doPullFromLinear imports issues from Linear.
+// NOTE: This is a stub - the actual GraphQL client will be implemented in bd-b6b.2.
+func doPullFromLinear(_ context.Context, dryRun bool, _ string) (*LinearPullStats, error) {
+	stats := &LinearPullStats{}
+
+	if dryRun {
+		fmt.Println("  [STUB] Would query Linear API for issues")
+		return stats, nil
+	}
+
+	// TODO: Implement in bd-b6b.2 (Linear GraphQL Client)
+	return stats, fmt.Errorf("not implemented: Linear GraphQL client required (see bd-b6b.2)")
+}
+
+// LinearPushStats tracks push operation statistics.
+type LinearPushStats struct {
+	Created int
+	Updated int
+	Skipped int
+	Errors  int
+}
+
+// doPushToLinear exports issues to Linear.
+// NOTE: This is a stub - the actual GraphQL client will be implemented in bd-b6b.2.
+func doPushToLinear(_ context.Context, dryRun bool, _ bool, _ bool) (*LinearPushStats, error) {
+	stats := &LinearPushStats{}
+
+	if dryRun {
+		fmt.Println("  [STUB] Would push issues to Linear API")
+		return stats, nil
+	}
+
+	// TODO: Implement in bd-b6b.2 (Linear GraphQL Client)
+	return stats, fmt.Errorf("not implemented: Linear GraphQL client required (see bd-b6b.2)")
+}
