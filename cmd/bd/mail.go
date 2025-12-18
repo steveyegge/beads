@@ -482,11 +482,19 @@ func runMailAck(cmd *cobra.Command, args []string) error {
 				errors = append(errors, fmt.Sprintf("%s: %v", messageID, err))
 				continue
 			}
+			// Fire close hook for GGT notifications (daemon mode)
+			if hookRunner != nil {
+				hookRunner.Run(hooks.EventClose, issue)
+			}
 		} else {
 			// Direct mode - use CloseIssue for proper close handling
 			if err := store.CloseIssue(rootCtx, messageID, "acknowledged", actor); err != nil {
 				errors = append(errors, fmt.Sprintf("%s: %v", messageID, err))
 				continue
+			}
+			// Fire close hook for GGT notifications (direct mode)
+			if hookRunner != nil {
+				hookRunner.Run(hooks.EventClose, issue)
 			}
 		}
 
@@ -644,6 +652,11 @@ func runMailReply(cmd *cobra.Command, args []string) error {
 	// Trigger auto-flush
 	if flushManager != nil {
 		flushManager.MarkDirty(false)
+	}
+
+	// Fire message hook for GGT notifications
+	if hookRunner != nil {
+		hookRunner.Run(hooks.EventMessage, reply)
 	}
 
 	if jsonOutput {
