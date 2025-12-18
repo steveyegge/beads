@@ -4,10 +4,27 @@ Slash commands for using beads with [Claude Code](https://docs.anthropic.com/en/
 
 ## Features
 
+- **Context-efficient**: Commands delegate to Task agents, keeping main context clean
 - **Session continuity**: Start and end sessions with full context preservation
 - **Plan conversion**: Convert Claude Code plans to tracked beads tasks
 - **Verification discipline**: Enforce testing before marking tasks complete
-- **Project initialization**: First-session setup pattern for new projects
+
+## Architecture
+
+These commands use Claude Code's **Task tool** to spawn subagents for beads operations. This keeps the main conversation context clean - only summaries are returned, not raw command output.
+
+```
+/beads-start
+    │
+    ▼
+┌─────────────────────┐
+│  Task Agent         │  ← Runs bd commands, processes JSON
+│  (general-purpose)  │
+└─────────────────────┘
+    │
+    ▼
+Summary only returned to main context
+```
 
 ## Installation
 
@@ -83,48 +100,7 @@ Based on [Anthropic's engineering blog post](https://www.anthropic.com/engineeri
 | E2E testing before complete | `/beads-end` verification step |
 | Clean handoffs | `bd sync` + mandatory push |
 | Initializer agent | `/beads-init-project` |
-
-## Example Session
-
-```
-$ claude
-> /beads-start
-
-Session Start: my-project
-Directory: /Users/me/my-project
-Git: main - clean
-
-Recent commits:
-  abc1234 feat: added login form
-  def5678 fix: validation bug
-
-Beads status:
-  Open: 12 tasks (2 P1, 8 P2, 2 P3)
-  Blocked: 8 tasks
-  Ready: 4 tasks
-
-Recommended task:
-  [.proj-xxx] [P1] Add password reset
-  Description: Implement forgot password flow...
-  Blocked by: nothing (ready to start)
-
-> bd update .proj-xxx --status in_progress
-
-... work on task ...
-
-> /beads-end
-
-Session End: my-project
-
-Completed this session:
-  ✓ [.proj-xxx] Add password reset
-
-Sync status:
-  ✓ Pushed to origin
-
-Next session:
-  1. [.proj-yyy] Add email verification (ready, P1)
-```
+| Context efficiency | Task agent delegation |
 
 ## Requirements
 

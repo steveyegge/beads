@@ -1,173 +1,63 @@
-# Initialize Project for Long-Running Development
+# Initialize Project for Beads
 
 ## description:
-First-session setup: initialize beads, create feature backlog, set up verification, baseline commit.
+First-session setup: initialize beads, create feature backlog, baseline commit.
 
 ---
 
-## Initializer Protocol
+Use the **Task tool** with `subagent_type='general-purpose'` to perform project initialization.
 
-Based on [Anthropic's long-running agent patterns](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+## Agent Instructions
 
-> "The initializer establishes foundational infrastructure for multi-session development."
+The agent should:
 
-### Step 1: Verify Prerequisites
+1. **Verify prerequisites**
+   - Run `pwd`, `git status`, `bd --version`
+   - Confirm: correct directory, git repo exists, beads CLI installed
 
-```bash
-pwd
-git status
-bd --version
-```
+2. **Initialize beads**
+   - Run `bd init --quiet`
+   - This creates `.beads/` directory
 
-Check:
-- In correct project directory
-- Git repository exists
-- Beads CLI installed
+3. **Gather project context**
+   - Read README.md if it exists
+   - Read any PRD, requirements, or spec documents
+   - Understand what the project does and what needs building
 
-### Step 2: Initialize Beads
+4. **Create feature backlog**
+   - For each major feature area, create an epic:
+     ```bash
+     bd create "Feature Area" -t epic -p 1 -d "description" --json
+     ```
+   - Decompose each epic into 5-15 granular tasks
+   - Each task should be completable in one session
+   - Include acceptance criteria: "Description. Acceptance: how to verify"
 
-```bash
-bd init --quiet
-```
+5. **Set up dependencies**
+   - Link sequential tasks: `bd dep add <later> <earlier>`
+   - Link tasks to epics: `bd dep add <epic> <task>`
 
-This creates:
-- `.beads/` directory with JSONL storage
-- Git hooks for auto-sync
-- Merge driver configuration
+6. **Create baseline commit**
+   - Run `git add .beads/`
+   - Commit with descriptive message
 
-### Step 3: Gather Project Context
+7. **Return a concise summary** (not raw output):
+   ```
+   Project Initialized: [name]
 
-Read and understand:
-- README.md - project overview
-- Any PRD, requirements, or spec documents
-- Existing issues (GitHub, Linear, etc.)
-- Current codebase structure
+   Created:
+     - [N] epics
+     - [M] tasks
+     - [K] dependencies
 
-### Step 4: Create Feature Backlog
+   Ready to start:
+     [id] [priority] [title]
 
-**Anthropic insight:** 200+ granular features work better than 20 large ones.
+   Run /beads-start to begin.
+   ```
 
-For each major feature area:
+## Notes
 
-1. **Create an Epic:**
-```bash
-bd create "Feature Area Name" \
-  -t epic \
-  -p 1 \
-  -d "High-level description of this feature area" \
-  --json
-```
-
-2. **Decompose into Granular Tasks (10-20 per epic):**
-```bash
-bd create "Specific task name" \
-  -d "What needs to be done. Acceptance: how to verify it works." \
-  -t task \
-  -p 2 \
-  --json
-```
-
-**Task Guidelines:**
-- Each task should be completable in one session
-- Include acceptance criteria in description
-- Use format: "Description. Acceptance: [how to verify]"
-- Add dependencies between sequential tasks
-
-### Step 5: Set Up Verification
-
-Ensure test infrastructure exists:
-
-```bash
-# Check for test framework
-ls tests/ || ls test/ || ls __tests__/
-
-# If missing, note in a task
-bd create "Set up test framework" \
-  -d "Initialize pytest/vitest/playwright for E2E testing. Acceptance: can run test suite." \
-  -p 1 \
-  --json
-```
-
-### Step 6: Create Baseline Commit
-
-```bash
-git add .beads/
-git commit -m "feat: initialize beads task tracking
-
-- Created [N] epics for major feature areas
-- Decomposed into [M] granular tasks
-- Set up dependency graph for sequential work"
-```
-
-### Step 7: Push and Verify
-
-```bash
-git push
-bd ready
-```
-
----
-
-## Feature Decomposition Template
-
-For each feature, create tasks following this pattern:
-
-```
-Epic: User Authentication
-├── Set up auth database schema
-│   Acceptance: migrations run, tables exist
-├── Create user registration endpoint
-│   Acceptance: POST /register returns 201, user in DB
-├── Create login endpoint
-│   Acceptance: POST /login returns JWT token
-├── Add password hashing
-│   Acceptance: passwords not stored in plaintext
-├── Create auth middleware
-│   Acceptance: protected routes reject invalid tokens
-├── Add logout endpoint
-│   Acceptance: POST /logout invalidates session
-├── Write registration E2E test
-│   Acceptance: playwright test passes
-├── Write login E2E test
-│   Acceptance: playwright test passes
-└── Add rate limiting to auth endpoints
-    Acceptance: returns 429 after N attempts
-```
-
-**Note:** Each task has clear acceptance criteria for verification.
-
----
-
-## Output Format
-
-```
-Project Initialized: [project name]
-
-Created:
-  - [N] epics (major feature areas)
-  - [M] tasks (granular work items)
-  - [K] dependencies (sequential relationships)
-
-Ready to start:
-  [.proj-xxx] [P1] Set up test framework
-  [.proj-yyy] [P2] Create database schema
-  ...
-
-Baseline commit: abc1234
-
-Run `/beads-start` to begin first task.
-```
-
----
-
-## Quick Initialization (Minimal)
-
-For simple projects:
-
-```bash
-bd init --quiet
-bd create "Project MVP" -t epic -p 1 -d "Minimum viable product" --json
-# Add tasks as you discover them
-bd sync
-git add .beads/ && git commit -m "feat: initialize beads"
-```
+- **Anthropic insight:** 200+ granular features work better than 20 large ones
+- Each task should have clear acceptance criteria
+- Don't over-plan: create initial backlog, add tasks as you discover them
