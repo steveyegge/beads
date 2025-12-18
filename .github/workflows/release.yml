@@ -85,13 +85,15 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Update npm for OIDC support
-        run: npm install -g npm@latest
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest  # Requires npm >= 11.5.1 for trusted publishing
 
       - name: Publish to npm
         run: |
           cd npm-package
           npm publish --access public
+          # Uses OIDC trusted publishing - no token needed
+          # Provenance attestations are automatic with trusted publishing
 
   update-homebrew:
     runs-on: ubuntu-latest
