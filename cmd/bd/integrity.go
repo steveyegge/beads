@@ -367,7 +367,8 @@ func countDBIssuesFast(ctx context.Context, store storage.Storage) (int, error) 
 	}
 
 	// Fallback: load all issues and count them (slow but always works)
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Include tombstones to match JSONL count which includes tombstones
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count database issues: %w", err)
 	}
