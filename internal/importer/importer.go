@@ -710,20 +710,6 @@ if len(newIssues) > 0 {
   return newIssues[i].ID < newIssues[j].ID // Stable sort
 })
 
-// Deduplicate by ID to prevent UNIQUE constraint errors during batch insert
-// This handles cases where JSONL contains multiple versions of the same issue
-seenNewIDs := make(map[string]bool)
-var dedupedNewIssues []*types.Issue
-for _, issue := range newIssues {
-	if !seenNewIDs[issue.ID] {
-		seenNewIDs[issue.ID] = true
-		dedupedNewIssues = append(dedupedNewIssues, issue)
-	} else {
-		result.Skipped++ // Count duplicates that were skipped
-	}
-}
-newIssues = dedupedNewIssues
-
 // Create in batches by depth level (max depth 3)
 		for depth := 0; depth <= 3; depth++ {
     var batchForDepth []*types.Issue
