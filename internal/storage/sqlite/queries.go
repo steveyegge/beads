@@ -889,7 +889,28 @@ func (s *SQLiteStorage) UpdateIssueID(ctx context.Context, oldID, newID string, 
 }
 
 // RenameDependencyPrefix updates the prefix in all dependency records
+// GH#630: This was previously a no-op, causing dependencies to break after rename-prefix
 func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
+	// Update issue_id column
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE dependencies 
+		SET issue_id = ? || substr(issue_id, length(?) + 1)
+		WHERE issue_id LIKE ? || '%'
+	`, newPrefix, oldPrefix, oldPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_id in dependencies: %w", err)
+	}
+
+	// Update depends_on_id column
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE dependencies 
+		SET depends_on_id = ? || substr(depends_on_id, length(?) + 1)
+		WHERE depends_on_id LIKE ? || '%'
+	`, newPrefix, oldPrefix, oldPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to update depends_on_id in dependencies: %w", err)
+	}
+
 	return nil
 }
 
