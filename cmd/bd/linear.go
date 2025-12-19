@@ -321,7 +321,7 @@ func (c *LinearClient) execute(ctx context.Context, req *GraphQLRequest) (*Graph
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close() // Error intentionally ignored - we're done reading
+		_ = resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
 			continue
