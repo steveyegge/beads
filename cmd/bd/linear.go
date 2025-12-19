@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,23 +29,109 @@ const (
 
 	// linearRetryDelay is the base delay between retries (exponential backoff).
 	linearRetryDelay = time.Second
+
+	// linearMaxPageSize is the maximum number of issues to fetch per page.
+	linearMaxPageSize = 100
 )
+
+// linearIssuesQuery is the GraphQL query for fetching issues with all required fields.
+// Used by both FetchIssues and FetchIssuesSince for consistency.
+const linearIssuesQuery = `
+	query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
+		issues(
+			first: $first
+			after: $after
+			filter: $filter
+		) {
+			nodes {
+				id
+				identifier
+				title
+				description
+				url
+				priority
+				state {
+					id
+					name
+					type
+				}
+				assignee {
+					id
+					name
+					email
+					displayName
+				}
+				labels {
+					nodes {
+						id
+						name
+					}
+				}
+				parent {
+					id
+					identifier
+				}
+				relations {
+					nodes {
+						id
+						type
+						relatedIssue {
+							id
+							identifier
+						}
+					}
+				}
+				createdAt
+				updatedAt
+				completedAt
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+`
 
 // LinearClient provides methods to interact with the Linear GraphQL API.
 type LinearClient struct {
 	apiKey     string
 	teamID     string
+	endpoint   string // GraphQL endpoint URL (defaults to linearAPIEndpoint)
 	httpClient *http.Client
 }
 
 // NewLinearClient creates a new Linear client with the given API key and team ID.
 func NewLinearClient(apiKey, teamID string) *LinearClient {
 	return &LinearClient{
-		apiKey: apiKey,
-		teamID: teamID,
+		apiKey:   apiKey,
+		teamID:   teamID,
+		endpoint: linearAPIEndpoint,
 		httpClient: &http.Client{
 			Timeout: linearDefaultTimeout,
 		},
+	}
+}
+
+// WithEndpoint returns a new client configured to use the specified endpoint.
+// This is useful for testing with mock servers or connecting to self-hosted instances.
+func (c *LinearClient) WithEndpoint(endpoint string) *LinearClient {
+	return &LinearClient{
+		apiKey:     c.apiKey,
+		teamID:     c.teamID,
+		endpoint:   endpoint,
+		httpClient: c.httpClient,
+	}
+}
+
+// WithHTTPClient returns a new client configured to use the specified HTTP client.
+// This is useful for testing or customizing timeouts and transport settings.
+func (c *LinearClient) WithHTTPClient(httpClient *http.Client) *LinearClient {
+	return &LinearClient{
+		apiKey:     c.apiKey,
+		teamID:     c.teamID,
+		endpoint:   c.endpoint,
+		httpClient: httpClient,
 	}
 }
 
@@ -307,7 +394,7 @@ func (c *LinearClient) execute(ctx context.Context, req *GraphQLRequest) (*Graph
 
 	var lastErr error
 	for attempt := 0; attempt <= linearMaxRetries; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", linearAPIEndpoint, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -317,20 +404,20 @@ func (c *LinearClient) execute(ctx context.Context, req *GraphQLRequest) (*Graph
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			lastErr = fmt.Errorf("request failed: %w", err)
+			lastErr = fmt.Errorf("request failed (attempt %d/%d): %w", attempt+1, linearMaxRetries+1, err)
 			continue
 		}
 
 		respBody, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			lastErr = fmt.Errorf("failed to read response: %w", err)
+			lastErr = fmt.Errorf("failed to read response (attempt %d/%d): %w", attempt+1, linearMaxRetries+1, err)
 			continue
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			delay := linearRetryDelay * time.Duration(1<<attempt) // Exponential backoff
-			lastErr = fmt.Errorf("rate limited, retrying after %v", delay)
+			lastErr = fmt.Errorf("rate limited (attempt %d/%d), retrying after %v", attempt+1, linearMaxRetries+1, delay)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -359,7 +446,7 @@ func (c *LinearClient) execute(ctx context.Context, req *GraphQLRequest) (*Graph
 		return &gqlResp, nil
 	}
 
-	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
+	return nil, fmt.Errorf("max retries (%d) exceeded: %w", linearMaxRetries+1, lastErr)
 }
 
 // FetchIssues retrieves issues from Linear with optional filtering by state.
@@ -367,63 +454,6 @@ func (c *LinearClient) execute(ctx context.Context, req *GraphQLRequest) (*Graph
 func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearIssue, error) {
 	var allIssues []LinearIssue
 	var cursor string
-
-	query := `
-		query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
-			issues(
-				first: $first
-				after: $after
-				filter: $filter
-			) {
-				nodes {
-					id
-					identifier
-					title
-					description
-					url
-					priority
-					state {
-						id
-						name
-						type
-					}
-					assignee {
-						id
-						name
-						email
-						displayName
-					}
-					labels {
-						nodes {
-							id
-							name
-						}
-					}
-					parent {
-						id
-						identifier
-					}
-					relations {
-						nodes {
-							id
-							type
-							relatedIssue {
-								id
-								identifier
-							}
-						}
-					}
-					createdAt
-					updatedAt
-					completedAt
-				}
-				pageInfo {
-					hasNextPage
-					endCursor
-				}
-			}
-		}
-	`
 
 	filter := map[string]interface{}{
 		"team": map[string]interface{}{
@@ -450,14 +480,14 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 	for {
 		variables := map[string]interface{}{
 			"filter": filter,
-			"first":  100, // Fetch 100 issues per page (Linear's max)
+			"first":  linearMaxPageSize,
 		}
 		if cursor != "" {
 			variables["after"] = cursor
 		}
 
 		req := &GraphQLRequest{
-			Query:     query,
+			Query:     linearIssuesQuery,
 			Variables: variables,
 		}
 
@@ -488,63 +518,6 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since time.Time) ([]LinearIssue, error) {
 	var allIssues []LinearIssue
 	var cursor string
-
-	query := `
-		query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
-			issues(
-				first: $first
-				after: $after
-				filter: $filter
-			) {
-				nodes {
-					id
-					identifier
-					title
-					description
-					url
-					priority
-					state {
-						id
-						name
-						type
-					}
-					assignee {
-						id
-						name
-						email
-						displayName
-					}
-					labels {
-						nodes {
-							id
-							name
-						}
-					}
-					parent {
-						id
-						identifier
-					}
-					relations {
-						nodes {
-							id
-							type
-							relatedIssue {
-								id
-								identifier
-							}
-						}
-					}
-					createdAt
-					updatedAt
-					completedAt
-				}
-				pageInfo {
-					hasNextPage
-					endCursor
-				}
-			}
-		}
-	`
 
 	// Build the filter with team and updatedAt constraint.
 	// Linear uses ISO8601 format for date comparisons.
@@ -579,14 +552,14 @@ func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since
 	for {
 		variables := map[string]interface{}{
 			"filter": filter,
-			"first":  100, // Fetch 100 issues per page (Linear's max)
+			"first":  linearMaxPageSize,
 		}
 		if cursor != "" {
 			variables["after"] = cursor
 		}
 
 		req := &GraphQLRequest{
-			Query:     query,
+			Query:     linearIssuesQuery,
 			Variables: variables,
 		}
 
@@ -1060,19 +1033,7 @@ func buildStateCache(ctx context.Context, client *LinearClient) (*linearStateCac
 
 // findStateForBeadsStatus returns the best Linear state ID for a Beads status.
 func (sc *linearStateCache) findStateForBeadsStatus(status types.Status) string {
-	targetType := ""
-	switch status {
-	case types.StatusOpen:
-		targetType = "unstarted"
-	case types.StatusInProgress:
-		targetType = "started"
-	case types.StatusBlocked:
-		targetType = "started"
-	case types.StatusClosed:
-		targetType = "completed"
-	default:
-		targetType = "unstarted"
-	}
+	targetType := beadsStatusToLinearStateType(status)
 
 	for _, s := range sc.states {
 		if s.Type == targetType {
@@ -1102,7 +1063,14 @@ func getLinearClient(ctx context.Context) (*LinearClient, error) {
 		return nil, fmt.Errorf("Linear team ID not configured")
 	}
 
-	return NewLinearClient(apiKey, teamID), nil
+	client := NewLinearClient(apiKey, teamID)
+
+	// Allow custom endpoint for self-hosted instances or testing
+	if endpoint, _ := store.GetConfig(ctx, "linear.api_endpoint"); endpoint != "" {
+		client = client.WithEndpoint(endpoint)
+	}
+
+	return client, nil
 }
 
 // LinearSyncStats tracks statistics for a Linear sync operation.
@@ -1449,6 +1417,14 @@ func init() {
 	rootCmd.AddCommand(linearCmd)
 }
 
+// uuidRegex matches valid UUID format (with or without hyphens).
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
+
+// isValidUUID checks if a string is a valid UUID format.
+func isValidUUID(s string) bool {
+	return uuidRegex.MatchString(s)
+}
+
 // validateLinearConfig checks that required Linear configuration is present.
 func validateLinearConfig() error {
 	if err := ensureStoreActive(); err != nil {
@@ -1465,6 +1441,11 @@ func validateLinearConfig() error {
 	teamID, _ := store.GetConfig(ctx, "linear.team_id")
 	if teamID == "" {
 		return fmt.Errorf("linear.team_id not configured\nRun: bd config set linear.team_id \"TEAM_ID\"")
+	}
+
+	// Validate team ID format (should be UUID)
+	if !isValidUUID(teamID) {
+		return fmt.Errorf("linear.team_id appears invalid (expected UUID format like '12345678-1234-1234-1234-123456789abc')\nCurrent value: %s", teamID)
 	}
 
 	return nil

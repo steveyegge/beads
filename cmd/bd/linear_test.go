@@ -1859,3 +1859,71 @@ func TestBuildLinearToLocalUpdatesWithClosedAt(t *testing.T) {
 		t.Error("closed_at should not be zero")
 	}
 }
+
+func TestIsValidUUID(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{
+			name:  "valid UUID with hyphens",
+			input: "12345678-1234-1234-1234-123456789abc",
+			want:  true,
+		},
+		{
+			name:  "valid UUID without hyphens",
+			input: "12345678123412341234123456789abc",
+			want:  true,
+		},
+		{
+			name:  "valid UUID uppercase",
+			input: "12345678-1234-1234-1234-123456789ABC",
+			want:  true,
+		},
+		{
+			name:  "valid UUID mixed case",
+			input: "12345678-1234-1234-1234-123456789AbC",
+			want:  true,
+		},
+		{
+			name:  "invalid - too short",
+			input: "12345678-1234-1234-1234",
+			want:  false,
+		},
+		{
+			name:  "invalid - too long",
+			input: "12345678-1234-1234-1234-123456789abcdef",
+			want:  false,
+		},
+		{
+			name:  "invalid - contains non-hex",
+			input: "12345678-1234-1234-1234-123456789xyz",
+			want:  false,
+		},
+		{
+			name:  "invalid - empty string",
+			input: "",
+			want:  false,
+		},
+		{
+			name:  "invalid - team name instead of UUID",
+			input: "my-team-name",
+			want:  false,
+		},
+		{
+			name:  "invalid - just numbers",
+			input: "12345678",
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidUUID(tt.input)
+			if got != tt.want {
+				t.Errorf("isValidUUID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
