@@ -59,8 +59,9 @@ CREATE INDEX IF NOT EXISTS idx_dependencies_issue ON dependencies(issue_id);
 CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on ON dependencies(depends_on_id);
 CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type ON dependencies(depends_on_id, type);
 CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type_issue ON dependencies(depends_on_id, type, issue_id);
-CREATE INDEX IF NOT EXISTS idx_dependencies_thread ON dependencies(thread_id) WHERE thread_id != '';
-CREATE INDEX IF NOT EXISTS idx_dependencies_thread_type ON dependencies(thread_id, type) WHERE thread_id != '';
+-- NOTE: idx_dependencies_thread and idx_dependencies_thread_type are created by
+-- migration 020_edge_consolidation.go after adding the thread_id column.
+-- They cannot be in the schema because existing databases may not have thread_id yet.
 
 -- Labels table
 CREATE TABLE IF NOT EXISTS labels (
