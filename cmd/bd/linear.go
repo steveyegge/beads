@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/linear"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -97,6 +99,20 @@ var linearStatusCmd = &cobra.Command{
 	Run: runLinearStatus,
 }
 
+// linearTeamsCmd lists available teams.
+var linearTeamsCmd = &cobra.Command{
+	Use:   "teams",
+	Short: "List available Linear teams",
+	Long: `List all teams accessible with your Linear API key.
+
+Use this to find the team ID (UUID) needed for configuration.
+
+Example:
+  bd linear teams
+  bd config set linear.team_id "12345678-1234-1234-1234-123456789abc"`,
+	Run: runLinearTeams,
+}
+
 func init() {
 	linearSyncCmd.Flags().Bool("pull", false, "Pull issues from Linear")
 	linearSyncCmd.Flags().Bool("push", false, "Push issues to Linear")
@@ -109,6 +125,7 @@ func init() {
 
 	linearCmd.AddCommand(linearSyncCmd)
 	linearCmd.AddCommand(linearStatusCmd)
+	linearCmd.AddCommand(linearTeamsCmd)
 	rootCmd.AddCommand(linearCmd)
 }
 
@@ -344,6 +361,54 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 	}
 }
 
+func runLinearTeams(cmd *cobra.Command, args []string) {
+	ctx := rootCtx
+
+	// Get API key and team ID using the helper function.
+	// This handles both daemon mode (where store is nil) and direct mode.
+	apiKey, apiKeySource := getLinearConfig(ctx, "linear.api_key")
+	if apiKey == "" {
+		fmt.Fprintf(os.Stderr, "Error: Linear API key not configured\n")
+		fmt.Fprintf(os.Stderr, "Run: bd config set linear.api_key \"YOUR_API_KEY\"\n")
+		fmt.Fprintf(os.Stderr, "Or:  export LINEAR_API_KEY=YOUR_API_KEY\n")
+		os.Exit(1)
+	}
+
+	// Show source in verbose mode (helps troubleshoot multi-workspace setups)
+	debug.Logf("Using API key from %s", apiKeySource)
+
+	// Create client with empty team ID (not needed for listing teams)
+	client := linear.NewClient(apiKey, "")
+
+	teams, err := client.FetchTeams(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching teams: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(teams) == 0 {
+		fmt.Println("No teams found (check your API key permissions)")
+		return
+	}
+
+	if jsonOutput {
+		outputJSON(teams)
+		return
+	}
+
+	fmt.Println("Available Linear Teams")
+	fmt.Println("======================")
+	fmt.Println()
+	fmt.Printf("%-40s  %-6s  %s\n", "ID (use this for linear.team_id)", "Key", "Name")
+	fmt.Printf("%-40s  %-6s  %s\n", "----------------------------------------", "------", "----")
+	for _, team := range teams {
+		fmt.Printf("%-40s  %-6s  %s\n", team.ID, team.Key, team.Name)
+	}
+	fmt.Println()
+	fmt.Println("To configure:")
+	fmt.Println("  bd config set linear.team_id \"<ID>\"")
+}
+
 // uuidRegex matches valid UUID format (with or without hyphens).
 var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
 
@@ -386,17 +451,62 @@ func maskAPIKey(key string) string {
 	return key[:4] + "..." + key[len(key)-4:]
 }
 
+// getLinearConfig reads a Linear configuration value, handling both daemon mode
+// (where store is nil) and direct mode. Returns the value and its source.
+// Priority: project config > environment variable.
+func getLinearConfig(ctx context.Context, key string) (value string, source string) {
+	// Try to read from store (works in direct mode)
+	if store != nil {
+		value, _ = store.GetConfig(ctx, key)
+		if value != "" {
+			return value, "project config (bd config)"
+		}
+	} else if dbPath != "" {
+		// In daemon mode, store is nil. Open a temporary read-only connection
+		// to read the config. This is necessary because the RPC protocol
+		// doesn't expose GetConfig.
+		tempStore, err := sqlite.NewWithTimeout(ctx, dbPath, 5*time.Second)
+		if err == nil {
+			defer func() { _ = tempStore.Close() }()
+			value, _ = tempStore.GetConfig(ctx, key)
+			if value != "" {
+				return value, "project config (bd config)"
+			}
+		}
+	}
+
+	// Fall back to environment variable
+	envKey := linearConfigToEnvVar(key)
+	if envKey != "" {
+		value = os.Getenv(envKey)
+		if value != "" {
+			return value, fmt.Sprintf("environment variable (%s)", envKey)
+		}
+	}
+
+	return "", ""
+}
+
+// linearConfigToEnvVar maps Linear config keys to their environment variable names.
+func linearConfigToEnvVar(key string) string {
+	switch key {
+	case "linear.api_key":
+		return "LINEAR_API_KEY"
+	case "linear.team_id":
+		return "LINEAR_TEAM_ID"
+	default:
+		return ""
+	}
+}
+
 // getLinearClient creates a configured Linear client from beads config.
 func getLinearClient(ctx context.Context) (*linear.Client, error) {
-	apiKey, _ := store.GetConfig(ctx, "linear.api_key")
-	if apiKey == "" {
-		apiKey = os.Getenv("LINEAR_API_KEY")
-	}
+	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
 	if apiKey == "" {
 		return nil, fmt.Errorf("Linear API key not configured")
 	}
 
-	teamID, _ := store.GetConfig(ctx, "linear.team_id")
+	teamID, _ := getLinearConfig(ctx, "linear.team_id")
 	if teamID == "" {
 		return nil, fmt.Errorf("Linear team ID not configured")
 	}
@@ -404,8 +514,12 @@ func getLinearClient(ctx context.Context) (*linear.Client, error) {
 	client := linear.NewClient(apiKey, teamID)
 
 	// Allow custom endpoint for self-hosted instances or testing
-	if endpoint, _ := store.GetConfig(ctx, "linear.api_endpoint"); endpoint != "" {
-		client = client.WithEndpoint(endpoint)
+	// Note: This still requires store to be available; endpoint override
+	// is an advanced feature typically used in direct mode
+	if store != nil {
+		if endpoint, _ := store.GetConfig(ctx, "linear.api_endpoint"); endpoint != "" {
+			client = client.WithEndpoint(endpoint)
+		}
 	}
 
 	return client, nil

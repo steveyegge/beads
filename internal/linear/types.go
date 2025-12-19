@@ -235,3 +235,17 @@ type StateCache struct {
 	StatesByID  map[string]State
 	OpenStateID string // First "unstarted" or "backlog" state
 }
+
+// Team represents a team in Linear.
+type Team struct {
+	ID   string `json:"id"`   // UUID
+	Name string `json:"name"` // Display name
+	Key  string `json:"key"`  // Short key used in issue identifiers (e.g., "ENG")
+}
+
+// TeamsResponse represents the response from teams query.
+type TeamsResponse struct {
+	Teams struct {
+		Nodes []Team `json:"nodes"`
+	} `json:"teams"`
+}

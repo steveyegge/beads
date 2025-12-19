@@ -610,3 +610,35 @@ func ExtractLinearIdentifier(url string) string {
 func IsLinearExternalRef(externalRef string) bool {
 	return strings.Contains(externalRef, "linear.app/") && strings.Contains(externalRef, "/issue/")
 }
+
+// FetchTeams retrieves all teams accessible with the current API key.
+// This is useful for discovering the team ID needed for configuration.
+func (c *Client) FetchTeams(ctx context.Context) ([]Team, error) {
+	query := `
+		query {
+			teams {
+				nodes {
+					id
+					name
+					key
+				}
+			}
+		}
+	`
+
+	req := &GraphQLRequest{
+		Query: query,
+	}
+
+	data, err := c.Execute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch teams: %w", err)
+	}
+
+	var teamsResp TeamsResponse
+	if err := json.Unmarshal(data, &teamsResp); err != nil {
+		return nil, fmt.Errorf("failed to parse teams response: %w", err)
+	}
+
+	return teamsResp.Teams.Nodes, nil
+}

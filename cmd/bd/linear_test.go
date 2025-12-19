@@ -1763,6 +1763,72 @@ func TestBuildLinearToLocalUpdatesWithClosedAt(t *testing.T) {
 	}
 }
 
+func TestLinearClientFetchTeams(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Create a mock GraphQL server for teams query
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
+			Data: json.RawMessage(`{
+				"teams": {
+					"nodes": [
+						{
+							"id": "12345678-1234-1234-1234-123456789abc",
+							"name": "Engineering",
+							"key": "ENG"
+						},
+						{
+							"id": "87654321-4321-4321-4321-cba987654321",
+							"name": "Product",
+							"key": "PROD"
+						}
+					]
+				}
+			}`),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	// Create client with empty team ID (not needed for fetching teams)
+	client := linear.NewClient("test-api-key", "").WithEndpoint(server.URL)
+	ctx := context.Background()
+
+	teams, err := client.FetchTeams(ctx)
+	if err != nil {
+		t.Fatalf("FetchTeams failed: %v", err)
+	}
+
+	if len(teams) != 2 {
+		t.Errorf("expected 2 teams, got %d", len(teams))
+	}
+
+	// Check first team
+	if teams[0].ID != "12345678-1234-1234-1234-123456789abc" {
+		t.Errorf("expected team ID '12345678-1234-1234-1234-123456789abc', got %s", teams[0].ID)
+	}
+	if teams[0].Name != "Engineering" {
+		t.Errorf("expected team name 'Engineering', got %s", teams[0].Name)
+	}
+	if teams[0].Key != "ENG" {
+		t.Errorf("expected team key 'ENG', got %s", teams[0].Key)
+	}
+
+	// Check second team
+	if teams[1].Key != "PROD" {
+		t.Errorf("expected team key 'PROD', got %s", teams[1].Key)
+	}
+}
+
 func TestIsValidUUID(t *testing.T) {
 	tests := []struct {
 		name  string
