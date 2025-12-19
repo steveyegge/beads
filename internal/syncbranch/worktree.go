@@ -77,8 +77,8 @@ func CommitToSyncBranch(ctx context.Context, repoRoot, syncBranch, jsonlPath str
 		Branch: syncBranch,
 	}
 
-	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	// GH#639: Use git-common-dir for worktree path to support bare repos
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
 
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -240,8 +240,8 @@ func PullFromSyncBranch(ctx context.Context, repoRoot, syncBranch, jsonlPath str
 		JSONLPath: jsonlPath,
 	}
 
-	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	// GH#639: Use git-common-dir for worktree path to support bare repos
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
 
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -469,8 +469,8 @@ func CheckDivergence(ctx context.Context, repoRoot, syncBranch string) (*Diverge
 		Branch: syncBranch,
 	}
 
-	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	// GH#639: Use git-common-dir for worktree path to support bare repos
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
 
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -526,8 +526,8 @@ func CheckDivergence(ctx context.Context, repoRoot, syncBranch string) (*Diverge
 //
 // Returns error if reset fails.
 func ResetToRemote(ctx context.Context, repoRoot, syncBranch, jsonlPath string) error {
-	// Worktree path is under .git/beads-worktrees/<branch>
-	worktreePath := filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
+	// GH#639: Use git-common-dir for worktree path to support bare repos
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
 
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
@@ -856,6 +856,28 @@ func PushSyncBranch(ctx context.Context, repoRoot, syncBranch string) error {
 	}
 
 	return pushFromWorktree(ctx, worktreePath, syncBranch)
+}
+
+// getBeadsWorktreePath returns the path where beads worktrees should be stored.
+// GH#639: Uses git rev-parse --git-common-dir to correctly handle bare repos and worktrees.
+// For regular repos, this is typically .git/beads-worktrees/<branch>.
+// For bare repos or worktrees of bare repos, this uses the common git directory.
+func getBeadsWorktreePath(ctx context.Context, repoRoot, syncBranch string) string {
+	// Try to get the git common directory using git's native API
+	// This handles all cases: regular repos, worktrees, bare repos
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--git-common-dir")
+	output, err := cmd.Output()
+	if err == nil {
+		gitCommonDir := strings.TrimSpace(string(output))
+		// Make path absolute if it's relative
+		if !filepath.IsAbs(gitCommonDir) {
+			gitCommonDir = filepath.Join(repoRoot, gitCommonDir)
+		}
+		return filepath.Join(gitCommonDir, "beads-worktrees", syncBranch)
+	}
+
+	// Fallback to legacy behavior for compatibility
+	return filepath.Join(repoRoot, ".git", "beads-worktrees", syncBranch)
 }
 
 // getRemoteForBranch gets the remote name for a branch, defaulting to "origin"
