@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -368,14 +369,11 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 	var cursor string
 
 	query := `
-		query Issues($teamId: String!, $first: Int!, $after: String, $filter: IssueFilter) {
+		query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
 			issues(
 				first: $first
 				after: $after
-				filter: {
-					team: { id: { eq: $teamId } }
-					and: [$filter]
-				}
+				filter: $filter
 			) {
 				nodes {
 					id
@@ -427,38 +425,35 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 		}
 	`
 
-	var filter map[string]interface{}
+	filter := map[string]interface{}{
+		"team": map[string]interface{}{
+			"id": map[string]interface{}{
+				"eq": c.teamID,
+			},
+		},
+	}
 	switch state {
 	case "open":
-		filter = map[string]interface{}{
-			"state": map[string]interface{}{
-				"type": map[string]interface{}{
-					"in": []string{"backlog", "unstarted", "started"},
-				},
+		filter["state"] = map[string]interface{}{
+			"type": map[string]interface{}{
+				"in": []string{"backlog", "unstarted", "started"},
 			},
 		}
 	case "closed":
-		filter = map[string]interface{}{
-			"state": map[string]interface{}{
-				"type": map[string]interface{}{
-					"in": []string{"completed", "canceled"},
-				},
+		filter["state"] = map[string]interface{}{
+			"type": map[string]interface{}{
+				"in": []string{"completed", "canceled"},
 			},
 		}
-	default:
-		filter = nil
 	}
 
 	for {
 		variables := map[string]interface{}{
-			"teamId": c.teamID,
+			"filter": filter,
 			"first":  100, // Fetch 100 issues per page (Linear's max)
 		}
 		if cursor != "" {
 			variables["after"] = cursor
-		}
-		if filter != nil {
-			variables["filter"] = filter
 		}
 
 		req := &GraphQLRequest{
@@ -495,14 +490,11 @@ func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since
 	var cursor string
 
 	query := `
-		query Issues($teamId: String!, $first: Int!, $after: String, $filter: IssueFilter) {
+		query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
 			issues(
 				first: $first
 				after: $after
-				filter: {
-					team: { id: { eq: $teamId } }
-					and: [$filter]
-				}
+				filter: $filter
 			) {
 				nodes {
 					id
@@ -554,10 +546,15 @@ func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since
 		}
 	`
 
-	// Build the filter with updatedAt constraint
-	// Linear uses ISO8601 format for date comparisons
+	// Build the filter with team and updatedAt constraint.
+	// Linear uses ISO8601 format for date comparisons.
 	sinceStr := since.UTC().Format(time.RFC3339)
 	filter := map[string]interface{}{
+		"team": map[string]interface{}{
+			"id": map[string]interface{}{
+				"eq": c.teamID,
+			},
+		},
 		"updatedAt": map[string]interface{}{
 			"gte": sinceStr,
 		},
@@ -581,9 +578,8 @@ func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since
 
 	for {
 		variables := map[string]interface{}{
-			"teamId": c.teamID,
-			"first":  100, // Fetch 100 issues per page (Linear's max)
 			"filter": filter,
+			"first":  100, // Fetch 100 issues per page (Linear's max)
 		}
 		if cursor != "" {
 			variables["after"] = cursor
@@ -1005,14 +1001,25 @@ func linearIssueToBeads(ctx context.Context, li *LinearIssue) *LinearIssueConver
 					ToLinearID:   rel.RelatedIssue.Identifier,
 					Type:         depType,
 				})
-			} else {
-				// For blocks, duplicate, related - this issue is the source
+				continue
+			}
+
+			// For "blocks", the related issue is blocked by this one.
+			if rel.Type == "blocks" {
 				deps = append(deps, LinearDependencyInfo{
 					FromLinearID: rel.RelatedIssue.Identifier,
 					ToLinearID:   li.Identifier,
 					Type:         depType,
 				})
+				continue
 			}
+
+			// For "duplicate" and "related", treat this issue as the source.
+			deps = append(deps, LinearDependencyInfo{
+				FromLinearID: li.Identifier,
+				ToLinearID:   rel.RelatedIssue.Identifier,
+				Type:         depType,
+			})
 		}
 	}
 
@@ -1186,7 +1193,6 @@ Examples:
   bd linear sync --dry-run             # Preview without changes
   bd linear sync --prefer-local        # Bidirectional, local wins`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Parse flags (errors are unlikely but check to ensure cobra is working)
 		pull, _ := cmd.Flags().GetBool("pull")
 		push, _ := cmd.Flags().GetBool("push")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -1222,6 +1228,7 @@ Examples:
 
 		ctx := rootCtx
 		result := &LinearSyncResult{Success: true}
+		var forceUpdateIDs map[string]bool
 
 		if pull {
 			if dryRun {
@@ -1261,7 +1268,11 @@ Examples:
 				result.Stats.Conflicts = len(conflicts)
 				if preferLocal {
 					fmt.Printf("→ Resolving %d conflicts (preferring local)\n", len(conflicts))
-					// Local wins - no action needed, push will overwrite
+					// Local wins - track conflicts so push will overwrite regardless of timestamps
+					forceUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						forceUpdateIDs[conflict.IssueID] = true
+					}
 				} else if preferLinear {
 					fmt.Printf("→ Resolving %d conflicts (preferring Linear)\n", len(conflicts))
 					// Linear wins - re-import conflicting issues
@@ -1285,7 +1296,7 @@ Examples:
 				fmt.Println("→ Pushing issues to Linear...")
 			}
 
-			pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs)
+			pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs, forceUpdateIDs)
 			if err != nil {
 				result.Success = false
 				result.Error = err.Error()
@@ -1950,9 +1961,11 @@ func (c *LinearClient) FetchIssueByIdentifier(ctx context.Context, identifier st
 	// Extract the issue number from identifier (e.g., "123" from "TEAM-123")
 	parts := strings.Split(identifier, "-")
 	if len(parts) >= 2 {
-		// Add number filter for more precise matching
-		variables["filter"].(map[string]interface{})["number"] = map[string]interface{}{
-			"eq": parts[len(parts)-1],
+		if number, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+			// Add number filter for more precise matching
+			variables["filter"].(map[string]interface{})["number"] = map[string]interface{}{
+				"eq": number,
+			}
 		}
 	}
 
@@ -1990,7 +2003,7 @@ type LinearPushStats struct {
 }
 
 // doPushToLinear exports issues to Linear using the GraphQL API.
-func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool) (*LinearPushStats, error) {
+func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool, forceUpdateIDs map[string]bool) (*LinearPushStats, error) {
 	stats := &LinearPushStats{}
 
 	client, err := getLinearClient(ctx)
@@ -2108,8 +2121,9 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 				continue
 			}
 
-			// Compare timestamps: only update if local is newer
-			if !issue.UpdatedAt.After(linearUpdatedAt) {
+			// Compare timestamps: only update if local is newer,
+			// unless this issue is in the force-update set.
+			if !forceUpdateIDs[issue.ID] && !issue.UpdatedAt.After(linearUpdatedAt) {
 				// Linear is newer or same, skip update
 				stats.Skipped++
 				continue

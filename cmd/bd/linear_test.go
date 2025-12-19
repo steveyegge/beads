@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -675,6 +679,37 @@ func TestLinearIssueToBeads(t *testing.T) {
 			wantHasExtRef: true,
 		},
 		{
+			name: "issue with duplicate relation",
+			linearIssue: &LinearIssue{
+				ID:         "uuid-dup",
+				Identifier: "TEAM-350",
+				Title:      "Duplicate issue",
+				URL:        "https://linear.app/team/issue/TEAM-350/dup-issue",
+				Priority:   3,
+				State:      &LinearState{Type: "unstarted", Name: "Todo"},
+				Relations: &LinearRelations{
+					Nodes: []LinearRelation{
+						{
+							ID:   "rel-dup",
+							Type: "duplicate",
+							RelatedIssue: struct {
+								ID         string `json:"id"`
+								Identifier string `json:"identifier"`
+							}{ID: "uuid-canonical", Identifier: "TEAM-351"},
+						},
+					},
+				},
+				CreatedAt: "2025-01-15T10:00:00Z",
+				UpdatedAt: "2025-01-15T10:00:00Z",
+			},
+			wantTitle:     "Duplicate issue",
+			wantStatus:    types.StatusOpen,
+			wantPriority:  2,
+			wantType:      types.TypeTask,
+			wantDepsCount: 1,
+			wantHasExtRef: true,
+		},
+		{
 			name: "closed issue with completedAt",
 			linearIssue: &LinearIssue{
 				ID:          "uuid-closed",
@@ -718,6 +753,31 @@ func TestLinearIssueToBeads(t *testing.T) {
 			if len(conversion.Dependencies) != tt.wantDepsCount {
 				t.Errorf("Dependencies count = %d, want %d",
 					len(conversion.Dependencies), tt.wantDepsCount)
+			}
+			if tt.name == "issue with relations" {
+				gotDeps := make(map[string]bool, len(conversion.Dependencies))
+				for _, dep := range conversion.Dependencies {
+					key := dep.FromLinearID + "->" + dep.ToLinearID + ":" + dep.Type
+					gotDeps[key] = true
+				}
+				if !gotDeps["TEAM-301->TEAM-300:blocks"] {
+					t.Error("expected blocks dependency TEAM-301->TEAM-300")
+				}
+				if !gotDeps["TEAM-300->TEAM-302:related"] {
+					t.Error("expected related dependency TEAM-300->TEAM-302")
+				}
+			}
+			if tt.name == "issue with duplicate relation" {
+				if len(conversion.Dependencies) != 1 {
+					t.Fatalf("expected 1 dependency, got %d", len(conversion.Dependencies))
+				}
+				dep := conversion.Dependencies[0]
+				if dep.Type != "duplicates" {
+					t.Errorf("expected dep type duplicates, got %s", dep.Type)
+				}
+				if dep.FromLinearID != "TEAM-350" || dep.ToLinearID != "TEAM-351" {
+					t.Errorf("expected duplicate dependency TEAM-350->TEAM-351, got %s->%s", dep.FromLinearID, dep.ToLinearID)
+				}
 			}
 			if tt.wantHasExtRef && conversion.Issue.ExternalRef == nil {
 				t.Error("ExternalRef should be set")
@@ -969,131 +1029,213 @@ func TestDefaultLinearMappingConfig(t *testing.T) {
 	}
 }
 
-func TestLinearSyncStats(t *testing.T) {
-	// Test that stats struct initializes correctly
-	stats := LinearSyncStats{}
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-	if stats.Pulled != 0 {
-		t.Errorf("expected Pulled to be 0, got %d", stats.Pulled)
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestFetchIssueByIdentifierSendsNumericFilter(t *testing.T) {
+	client := &LinearClient{
+		apiKey: "test-api-key",
+		teamID: "team-123",
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
 	}
-	if stats.Pushed != 0 {
-		t.Errorf("expected Pushed to be 0, got %d", stats.Pushed)
+
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read request body: %w", err)
+		}
+		_ = r.Body.Close()
+
+		var gqlReq GraphQLRequest
+		if err := json.Unmarshal(body, &gqlReq); err != nil {
+			return nil, fmt.Errorf("decode request body: %w", err)
+		}
+
+		filter, ok := gqlReq.Variables["filter"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("missing filter in variables")
+		}
+		numberFilter, ok := filter["number"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("missing number filter in variables")
+		}
+		eq, ok := numberFilter["eq"].(float64)
+		if !ok {
+			return nil, fmt.Errorf("number.eq is not numeric (got %T)", numberFilter["eq"])
+		}
+		if eq != 123 {
+			return nil, fmt.Errorf("expected number.eq=123, got %v", eq)
+		}
+
+		resp := GraphQLResponse{
+			Data: json.RawMessage(`{"issues":{"nodes":[]}}`),
+		}
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			return nil, fmt.Errorf("encode response: %w", err)
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(respBytes)),
+			Request:    r,
+		}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	_, err := client.FetchIssueByIdentifier(context.Background(), "TEAM-123")
+	if err != nil {
+		t.Fatalf("FetchIssueByIdentifier failed: %v", err)
 	}
-	if stats.Created != 0 {
-		t.Errorf("expected Created to be 0, got %d", stats.Created)
+}
+
+func TestDoPushToLinearPreferLocalForcesUpdate(t *testing.T) {
+	testStore, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := testStore.SetConfig(ctx, "linear.api_key", "test-api-key"); err != nil {
+		t.Fatalf("SetConfig linear.api_key failed: %v", err)
 	}
-	if stats.Updated != 0 {
-		t.Errorf("expected Updated to be 0, got %d", stats.Updated)
+	if err := testStore.SetConfig(ctx, "linear.team_id", "team-123"); err != nil {
+		t.Fatalf("SetConfig linear.team_id failed: %v", err)
+	}
+
+	localUpdated := time.Now().Add(-2 * time.Hour)
+	issue := &types.Issue{
+		Title:       "Local Issue",
+		Description: "Local description",
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		Status:      types.StatusInProgress,
+		CreatedAt:   localUpdated,
+		UpdatedAt:   localUpdated,
+	}
+	externalRef := "https://linear.app/team/issue/TEAM-123/local-issue"
+	issue.ExternalRef = &externalRef
+	if err := testStore.CreateIssue(ctx, issue, "test-actor"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	remoteUpdated := time.Now().Add(-1 * time.Hour)
+	remoteUpdatedStr := remoteUpdated.UTC().Format(time.RFC3339)
+
+	updatedCalled := false
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read request body: %w", err)
+		}
+		_ = r.Body.Close()
+
+		var gqlReq GraphQLRequest
+		if err := json.Unmarshal(body, &gqlReq); err != nil {
+			return nil, fmt.Errorf("decode request body: %w", err)
+		}
+
+		var resp GraphQLResponse
+		switch {
+		case strings.Contains(gqlReq.Query, "TeamStates"):
+			resp = GraphQLResponse{
+				Data: json.RawMessage(`{
+					"team": {
+						"id": "team-123",
+						"states": {
+							"nodes": [
+								{"id": "state-started", "name": "In Progress", "type": "started"}
+							]
+						}
+					}
+				}`),
+			}
+		case strings.Contains(gqlReq.Query, "IssueByIdentifier"):
+			resp = GraphQLResponse{
+				Data: json.RawMessage(fmt.Sprintf(`{
+					"issues": {
+						"nodes": [
+							{
+								"id": "uuid-123",
+								"identifier": "TEAM-123",
+								"title": "Remote Issue",
+								"description": "Remote description",
+								"url": "https://linear.app/team/issue/TEAM-123/remote-issue",
+								"priority": 2,
+								"state": {"id": "state-started", "name": "In Progress", "type": "started"},
+								"labels": {"nodes": []},
+								"createdAt": "2025-01-01T00:00:00Z",
+								"updatedAt": "%s"
+							}
+						]
+					}
+				}`, remoteUpdatedStr)),
+			}
+		case strings.Contains(gqlReq.Query, "UpdateIssue"):
+			updatedCalled = true
+			resp = GraphQLResponse{
+				Data: json.RawMessage(`{
+					"issueUpdate": {
+						"success": true,
+						"issue": {
+							"id": "uuid-123",
+							"identifier": "TEAM-123",
+							"title": "Updated Title",
+							"description": "Updated description",
+							"url": "https://linear.app/team/issue/TEAM-123/remote-issue",
+							"priority": 2,
+							"state": {"id": "state-started", "name": "In Progress", "type": "started"},
+							"updatedAt": "2025-01-02T00:00:00Z"
+						}
+					}
+				}`),
+			}
+		default:
+			return nil, fmt.Errorf("unexpected query: %s", gqlReq.Query)
+		}
+
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			return nil, fmt.Errorf("encode response: %w", err)
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(respBytes)),
+			Request:    r,
+		}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+	origStore := store
+	origActor := actor
+	store = testStore
+	actor = "test-actor"
+	t.Cleanup(func() {
+		store = origStore
+		actor = origActor
+	})
+
+	forceUpdateIDs := map[string]bool{issue.ID: true}
+	stats, err := doPushToLinear(ctx, false, false, true, forceUpdateIDs)
+	if err != nil {
+		t.Fatalf("doPushToLinear failed: %v", err)
+	}
+	if !updatedCalled {
+		t.Fatal("expected UpdateIssue to be called when force-update is enabled")
+	}
+	if stats.Updated != 1 {
+		t.Fatalf("expected Updated=1, got %d", stats.Updated)
 	}
 	if stats.Skipped != 0 {
-		t.Errorf("expected Skipped to be 0, got %d", stats.Skipped)
-	}
-	if stats.Errors != 0 {
-		t.Errorf("expected Errors to be 0, got %d", stats.Errors)
-	}
-	if stats.Conflicts != 0 {
-		t.Errorf("expected Conflicts to be 0, got %d", stats.Conflicts)
-	}
-}
-
-func TestLinearSyncResult(t *testing.T) {
-	// Test result struct initialization
-	result := LinearSyncResult{
-		Success: true,
-		Stats: LinearSyncStats{
-			Created: 5,
-			Updated: 3,
-		},
-		LastSync: "2025-01-15T10:30:00Z",
-	}
-
-	if !result.Success {
-		t.Error("expected Success to be true")
-	}
-	if result.Stats.Created != 5 {
-		t.Errorf("expected Created to be 5, got %d", result.Stats.Created)
-	}
-	if result.Stats.Updated != 3 {
-		t.Errorf("expected Updated to be 3, got %d", result.Stats.Updated)
-	}
-	if result.LastSync != "2025-01-15T10:30:00Z" {
-		t.Errorf("unexpected LastSync value: %s", result.LastSync)
-	}
-	if result.Error != "" {
-		t.Errorf("expected Error to be empty, got %s", result.Error)
-	}
-	if len(result.Warnings) != 0 {
-		t.Errorf("expected Warnings to be empty, got %v", result.Warnings)
-	}
-}
-
-func TestLinearPullStats(t *testing.T) {
-	stats := LinearPullStats{
-		Created:     10,
-		Updated:     5,
-		Skipped:     2,
-		Incremental: true,
-		SyncedSince: "2025-01-10T00:00:00Z",
-	}
-
-	if stats.Created != 10 {
-		t.Errorf("expected Created to be 10, got %d", stats.Created)
-	}
-	if stats.Updated != 5 {
-		t.Errorf("expected Updated to be 5, got %d", stats.Updated)
-	}
-	if stats.Skipped != 2 {
-		t.Errorf("expected Skipped to be 2, got %d", stats.Skipped)
-	}
-	if !stats.Incremental {
-		t.Error("expected Incremental to be true")
-	}
-	if stats.SyncedSince != "2025-01-10T00:00:00Z" {
-		t.Errorf("unexpected SyncedSince: %s", stats.SyncedSince)
-	}
-}
-
-func TestLinearPushStats(t *testing.T) {
-	stats := LinearPushStats{
-		Created: 8,
-		Updated: 4,
-		Skipped: 1,
-		Errors:  2,
-	}
-
-	if stats.Created != 8 {
-		t.Errorf("expected Created to be 8, got %d", stats.Created)
-	}
-	if stats.Updated != 4 {
-		t.Errorf("expected Updated to be 4, got %d", stats.Updated)
-	}
-	if stats.Skipped != 1 {
-		t.Errorf("expected Skipped to be 1, got %d", stats.Skipped)
-	}
-	if stats.Errors != 2 {
-		t.Errorf("expected Errors to be 2, got %d", stats.Errors)
-	}
-}
-
-func TestLinearConflict(t *testing.T) {
-	now := time.Now()
-	conflict := LinearConflict{
-		IssueID:           "bd-123",
-		LocalUpdated:      now,
-		LinearUpdated:     now.Add(time.Hour),
-		LinearExternalRef: "https://linear.app/team/issue/TEAM-123",
-		LinearIdentifier:  "TEAM-123",
-		LinearInternalID:  "uuid-123",
-	}
-
-	if conflict.IssueID != "bd-123" {
-		t.Errorf("unexpected IssueID: %s", conflict.IssueID)
-	}
-	if conflict.LinearIdentifier != "TEAM-123" {
-		t.Errorf("unexpected LinearIdentifier: %s", conflict.LinearIdentifier)
-	}
-	if !conflict.LinearUpdated.After(conflict.LocalUpdated) {
-		t.Error("LinearUpdated should be after LocalUpdated")
+		t.Fatalf("expected Skipped=0, got %d", stats.Skipped)
 	}
 }
 
