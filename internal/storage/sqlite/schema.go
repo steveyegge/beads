@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Messaging fields (bd-kwro)
     sender TEXT DEFAULT '',
     ephemeral INTEGER DEFAULT 0,
+    -- Pinned field (bd-7h5)
+    pinned INTEGER DEFAULT 0,
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     CHECK ((status = 'closed') = (closed_at IS NOT NULL))
