@@ -487,6 +487,134 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 	return allIssues, nil
 }
 
+// FetchIssuesSince retrieves issues from Linear that have been updated since the given time.
+// This enables incremental sync by only fetching issues modified after the last sync.
+// The state parameter can be: "open", "closed", or "all".
+func (c *LinearClient) FetchIssuesSince(ctx context.Context, state string, since time.Time) ([]LinearIssue, error) {
+	var allIssues []LinearIssue
+	var cursor string
+
+	query := `
+		query Issues($teamId: String!, $first: Int!, $after: String, $filter: IssueFilter) {
+			issues(
+				first: $first
+				after: $after
+				filter: {
+					team: { id: { eq: $teamId } }
+					and: [$filter]
+				}
+			) {
+				nodes {
+					id
+					identifier
+					title
+					description
+					url
+					priority
+					state {
+						id
+						name
+						type
+					}
+					assignee {
+						id
+						name
+						email
+						displayName
+					}
+					labels {
+						nodes {
+							id
+							name
+						}
+					}
+					parent {
+						id
+						identifier
+					}
+					relations {
+						nodes {
+							id
+							type
+							relatedIssue {
+								id
+								identifier
+							}
+						}
+					}
+					createdAt
+					updatedAt
+					completedAt
+				}
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+			}
+		}
+	`
+
+	// Build the filter with updatedAt constraint
+	// Linear uses ISO8601 format for date comparisons
+	sinceStr := since.UTC().Format(time.RFC3339)
+	filter := map[string]interface{}{
+		"updatedAt": map[string]interface{}{
+			"gte": sinceStr,
+		},
+	}
+
+	// Add state filter if specified
+	switch state {
+	case "open":
+		filter["state"] = map[string]interface{}{
+			"type": map[string]interface{}{
+				"in": []string{"backlog", "unstarted", "started"},
+			},
+		}
+	case "closed":
+		filter["state"] = map[string]interface{}{
+			"type": map[string]interface{}{
+				"in": []string{"completed", "canceled"},
+			},
+		}
+	}
+
+	for {
+		variables := map[string]interface{}{
+			"teamId": c.teamID,
+			"first":  100, // Fetch 100 issues per page (Linear's max)
+			"filter": filter,
+		}
+		if cursor != "" {
+			variables["after"] = cursor
+		}
+
+		req := &GraphQLRequest{
+			Query:     query,
+			Variables: variables,
+		}
+
+		resp, err := c.execute(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch issues since %s: %w", sinceStr, err)
+		}
+
+		var issuesResp LinearIssuesResponse
+		if err := json.Unmarshal(resp.Data, &issuesResp); err != nil {
+			return nil, fmt.Errorf("failed to parse issues response: %w", err)
+		}
+
+		allIssues = append(allIssues, issuesResp.Issues.Nodes...)
+
+		if !issuesResp.Issues.PageInfo.HasNextPage {
+			break
+		}
+		cursor = issuesResp.Issues.PageInfo.EndCursor
+	}
+
+	return allIssues, nil
+}
+
 // GetTeamStates fetches the workflow states for the configured team.
 func (c *LinearClient) GetTeamStates(ctx context.Context) ([]LinearState, error) {
 	query := `
@@ -1420,12 +1548,16 @@ func resolveLinearConflictsByTimestamp(_ context.Context, conflicts []LinearConf
 
 // LinearPullStats tracks pull operation statistics.
 type LinearPullStats struct {
-	Created int
-	Updated int
-	Skipped int
+	Created     int
+	Updated     int
+	Skipped     int
+	Incremental bool   // Whether this was an incremental sync
+	SyncedSince string // Timestamp we synced since (if incremental)
 }
 
 // doPullFromLinear imports issues from Linear using the GraphQL API.
+// Supports incremental sync by checking linear.last_sync config and only fetching
+// issues updated since that timestamp.
 func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*LinearPullStats, error) {
 	stats := &LinearPullStats{}
 
@@ -1434,13 +1566,49 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*LinearPu
 		return stats, fmt.Errorf("failed to create Linear client: %w", err)
 	}
 
-	linearIssues, err := client.FetchIssues(ctx, state)
-	if err != nil {
-		return stats, fmt.Errorf("failed to fetch issues from Linear: %w", err)
+	// Check for last sync timestamp to enable incremental sync
+	var linearIssues []LinearIssue
+	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
+
+	if lastSyncStr != "" {
+		// Parse the last sync timestamp
+		lastSync, err := time.Parse(time.RFC3339, lastSyncStr)
+		if err != nil {
+			// Invalid timestamp - fall back to full sync
+			fmt.Fprintf(os.Stderr, "Warning: invalid linear.last_sync timestamp, doing full sync\n")
+			linearIssues, err = client.FetchIssues(ctx, state)
+			if err != nil {
+				return stats, fmt.Errorf("failed to fetch issues from Linear: %w", err)
+			}
+		} else {
+			// Incremental sync: fetch only issues updated since last sync
+			stats.Incremental = true
+			stats.SyncedSince = lastSyncStr
+			linearIssues, err = client.FetchIssuesSince(ctx, state, lastSync)
+			if err != nil {
+				return stats, fmt.Errorf("failed to fetch issues from Linear (incremental): %w", err)
+			}
+			if !dryRun {
+				fmt.Printf("  Incremental sync since %s\n", lastSync.Format("2006-01-02 15:04:05"))
+			}
+		}
+	} else {
+		// No last sync - do a full sync
+		linearIssues, err = client.FetchIssues(ctx, state)
+		if err != nil {
+			return stats, fmt.Errorf("failed to fetch issues from Linear: %w", err)
+		}
+		if !dryRun {
+			fmt.Println("  Full sync (no previous sync timestamp)")
+		}
 	}
 
 	if dryRun {
-		fmt.Printf("  Would import %d issues from Linear\n", len(linearIssues))
+		if stats.Incremental {
+			fmt.Printf("  Would import %d issues from Linear (incremental since %s)\n", len(linearIssues), stats.SyncedSince)
+		} else {
+			fmt.Printf("  Would import %d issues from Linear (full sync)\n", len(linearIssues))
+		}
 		return stats, nil
 	}
 
