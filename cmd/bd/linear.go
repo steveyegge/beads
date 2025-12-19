@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,10 @@ Data Mapping (optional, sensible defaults provided):
     bd config set linear.relation_map.blockedBy blocks
     bd config set linear.relation_map.duplicate duplicates
     bd config set linear.relation_map.related related
+
+  ID generation (optional, hash IDs to match bd/Jira hash mode):
+    bd config set linear.id_mode "hash"      # hash (default)
+    bd config set linear.hash_length "6"     # hash length 3-8 (default: 6)
 
 Examples:
   bd linear sync --pull         # Import issues from Linear
@@ -167,15 +172,40 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 	result := &linear.SyncResult{Success: true}
 	var forceUpdateIDs map[string]bool
+	var skipUpdateIDs map[string]bool
+	var prePullConflicts []linear.Conflict
+	var prePullSkipLinearIDs map[string]bool
 
 	if pull {
+		if preferLocal || preferLinear {
+			conflicts, err := detectLinearConflicts(ctx)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
+			} else if len(conflicts) > 0 {
+				prePullConflicts = conflicts
+				if preferLocal {
+					prePullSkipLinearIDs = make(map[string]bool, len(conflicts))
+					forceUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						prePullSkipLinearIDs[conflict.LinearIdentifier] = true
+						forceUpdateIDs[conflict.IssueID] = true
+					}
+				} else if preferLinear {
+					skipUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						skipUpdateIDs[conflict.IssueID] = true
+					}
+				}
+			}
+		}
+
 		if dryRun {
 			fmt.Println("→ [DRY RUN] Would pull issues from Linear")
 		} else {
 			fmt.Println("→ Pulling issues from Linear...")
 		}
 
-		pullStats, err := doPullFromLinear(ctx, dryRun, state)
+		pullStats, err := doPullFromLinear(ctx, dryRun, state, prePullSkipLinearIDs)
 		if err != nil {
 			result.Success = false
 			result.Error = err.Error()
@@ -198,27 +228,75 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	if pull && push && !dryRun {
-		conflicts, err := detectLinearConflicts(ctx)
+	if pull && push {
+		conflicts := prePullConflicts
+		var err error
+		if conflicts == nil {
+			conflicts, err = detectLinearConflicts(ctx)
+		}
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
 		} else if len(conflicts) > 0 {
 			result.Stats.Conflicts = len(conflicts)
-			if preferLocal {
+			if dryRun {
+				if preferLocal {
+					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (preferring local)\n", len(conflicts))
+					forceUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						forceUpdateIDs[conflict.IssueID] = true
+					}
+				} else if preferLinear {
+					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (preferring Linear)\n", len(conflicts))
+					skipUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						skipUpdateIDs[conflict.IssueID] = true
+					}
+				} else {
+					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (newer wins)\n", len(conflicts))
+					var linearWins []linear.Conflict
+					var localWins []linear.Conflict
+					for _, conflict := range conflicts {
+						if conflict.LinearUpdated.After(conflict.LocalUpdated) {
+							linearWins = append(linearWins, conflict)
+						} else {
+							localWins = append(localWins, conflict)
+						}
+					}
+					if len(localWins) > 0 {
+						forceUpdateIDs = make(map[string]bool, len(localWins))
+						for _, conflict := range localWins {
+							forceUpdateIDs[conflict.IssueID] = true
+						}
+					}
+					if len(linearWins) > 0 {
+						skipUpdateIDs = make(map[string]bool, len(linearWins))
+						for _, conflict := range linearWins {
+							skipUpdateIDs[conflict.IssueID] = true
+						}
+					}
+				}
+			} else if preferLocal {
 				fmt.Printf("→ Resolving %d conflicts (preferring local)\n", len(conflicts))
-				// Local wins - track conflicts so push will overwrite regardless of timestamps
-				forceUpdateIDs = make(map[string]bool, len(conflicts))
-				for _, conflict := range conflicts {
-					forceUpdateIDs[conflict.IssueID] = true
+				if forceUpdateIDs == nil {
+					forceUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						forceUpdateIDs[conflict.IssueID] = true
+					}
 				}
 			} else if preferLinear {
 				fmt.Printf("→ Resolving %d conflicts (preferring Linear)\n", len(conflicts))
-				// Linear wins - re-import conflicting issues
-				if err := reimportLinearConflicts(ctx, conflicts); err != nil {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+				if skipUpdateIDs == nil {
+					skipUpdateIDs = make(map[string]bool, len(conflicts))
+					for _, conflict := range conflicts {
+						skipUpdateIDs[conflict.IssueID] = true
+					}
+				}
+				if prePullConflicts == nil {
+					if err := reimportLinearConflicts(ctx, conflicts); err != nil {
+						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
+					}
 				}
 			} else {
-				// Default: timestamp-based (newer wins)
 				fmt.Printf("→ Resolving %d conflicts (newer wins)\n", len(conflicts))
 				if err := resolveLinearConflictsByTimestamp(ctx, conflicts); err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
@@ -234,7 +312,7 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 			fmt.Println("→ Pushing issues to Linear...")
 		}
 
-		pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs, forceUpdateIDs)
+		pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs, forceUpdateIDs, skipUpdateIDs)
 		if err != nil {
 			result.Success = false
 			result.Error = err.Error()
@@ -288,7 +366,6 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Use getLinearConfig to respect priority: config first, then environment variable
 	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
 	teamID, _ := getLinearConfig(ctx, "linear.team_id")
 	lastSync, _ := store.GetConfig(ctx, "linear.last_sync")
@@ -363,8 +440,6 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 func runLinearTeams(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	// Get API key and team ID using the helper function.
-	// This handles both daemon mode (where store is nil) and direct mode.
 	apiKey, apiKeySource := getLinearConfig(ctx, "linear.api_key")
 	if apiKey == "" {
 		fmt.Fprintf(os.Stderr, "Error: Linear API key not configured\n")
@@ -373,10 +448,8 @@ func runLinearTeams(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Show source in verbose mode (helps troubleshoot multi-workspace setups)
 	debug.Logf("Using API key from %s", apiKeySource)
 
-	// Create client with empty team ID (not needed for listing teams)
 	client := linear.NewClient(apiKey, "")
 
 	teams, err := client.FetchTeams(ctx)
@@ -423,7 +496,6 @@ func validateLinearConfig() error {
 
 	ctx := rootCtx
 
-	// Use getLinearConfig to respect priority: config first, then environment variable
 	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
 	if apiKey == "" {
 		return fmt.Errorf("Linear API key not configured\nRun: bd config set linear.api_key \"YOUR_API_KEY\"\nOr: export LINEAR_API_KEY=YOUR_API_KEY")
@@ -434,7 +506,6 @@ func validateLinearConfig() error {
 		return fmt.Errorf("linear.team_id not configured\nRun: bd config set linear.team_id \"TEAM_ID\"\nOr: export LINEAR_TEAM_ID=TEAM_ID")
 	}
 
-	// Validate team ID format (should be UUID)
 	if !isValidUUID(teamID) {
 		return fmt.Errorf("linear.team_id appears invalid (expected UUID format like '12345678-1234-1234-1234-123456789abc')\nCurrent value: %s", teamID)
 	}
@@ -462,9 +533,6 @@ func getLinearConfig(ctx context.Context, key string) (value string, source stri
 			return value, "project config (bd config)"
 		}
 	} else if dbPath != "" {
-		// In daemon mode, store is nil. Open a temporary read-only connection
-		// to read the config. This is necessary because the RPC protocol
-		// doesn't expose GetConfig.
 		tempStore, err := sqlite.NewWithTimeout(ctx, dbPath, 5*time.Second)
 		if err == nil {
 			defer func() { _ = tempStore.Close() }()
@@ -513,9 +581,6 @@ func getLinearClient(ctx context.Context) (*linear.Client, error) {
 
 	client := linear.NewClient(apiKey, teamID)
 
-	// Allow custom endpoint for self-hosted instances or testing
-	// Note: This still requires store to be available; endpoint override
-	// is an advanced feature typically used in direct mode
 	if store != nil {
 		if endpoint, _ := store.GetConfig(ctx, "linear.api_endpoint"); endpoint != "" {
 			client = client.WithEndpoint(endpoint)
@@ -542,13 +607,43 @@ func loadLinearMappingConfig(ctx context.Context) *linear.MappingConfig {
 	return linear.LoadMappingConfig(&storeConfigLoader{ctx: ctx})
 }
 
+// getLinearIDMode returns the configured ID mode for Linear imports.
+// Supported values: "hash" (default) or "db".
+func getLinearIDMode(ctx context.Context) string {
+	mode, _ := getLinearConfig(ctx, "linear.id_mode")
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "hash"
+	}
+	return mode
+}
+
+// getLinearHashLength returns the configured hash length for Linear imports.
+// Values are clamped to the supported range 3-8.
+func getLinearHashLength(ctx context.Context) int {
+	raw, _ := getLinearConfig(ctx, "linear.hash_length")
+	if raw == "" {
+		return 6
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 6
+	}
+	if value < 3 {
+		return 3
+	}
+	if value > 8 {
+		return 8
+	}
+	return value
+}
+
 // detectLinearConflicts finds issues that have been modified both locally and in Linear
 // since the last sync. This is a more expensive operation as it fetches individual
 // issue timestamps from Linear.
 func detectLinearConflicts(ctx context.Context) ([]linear.Conflict, error) {
 	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
 	if lastSyncStr == "" {
-		// No previous sync - no conflicts possible
 		return nil, nil
 	}
 
@@ -557,7 +652,8 @@ func detectLinearConflicts(ctx context.Context) ([]linear.Conflict, error) {
 		return nil, fmt.Errorf("invalid last_sync timestamp: %w", err)
 	}
 
-	// Get Linear client for fetching remote timestamps
+	config := loadLinearMappingConfig(ctx)
+
 	client, err := getLinearClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Linear client: %w", err)
@@ -576,31 +672,25 @@ func detectLinearConflicts(ctx context.Context) ([]linear.Conflict, error) {
 			continue
 		}
 
-		// Only check issues that have been modified locally since last sync
 		if !issue.UpdatedAt.After(lastSync) {
 			continue
 		}
 
-		// Extract Linear identifier from external_ref URL
 		linearIdentifier := linear.ExtractLinearIdentifier(*issue.ExternalRef)
 		if linearIdentifier == "" {
 			continue
 		}
 
-		// Fetch the Linear issue to get its current UpdatedAt timestamp
 		linearIssue, err := client.FetchIssueByIdentifier(ctx, linearIdentifier)
 		if err != nil {
-			// Log warning but continue checking other issues
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch Linear issue %s for conflict check: %v\n",
 				linearIdentifier, err)
 			continue
 		}
 		if linearIssue == nil {
-			// Issue doesn't exist in Linear anymore - not a conflict
 			continue
 		}
 
-		// Parse Linear's UpdatedAt timestamp
 		linearUpdatedAt, err := time.Parse(time.RFC3339, linearIssue.UpdatedAt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse Linear UpdatedAt for %s: %v\n",
@@ -608,17 +698,24 @@ func detectLinearConflicts(ctx context.Context) ([]linear.Conflict, error) {
 			continue
 		}
 
-		// Check if Linear was also modified since last sync (true conflict)
-		if linearUpdatedAt.After(lastSync) {
-			conflicts = append(conflicts, linear.Conflict{
-				IssueID:           issue.ID,
-				LocalUpdated:      issue.UpdatedAt,
-				LinearUpdated:     linearUpdatedAt,
-				LinearExternalRef: *issue.ExternalRef,
-				LinearIdentifier:  linearIdentifier,
-				LinearInternalID:  linearIssue.ID,
-			})
+		if !linearUpdatedAt.After(lastSync) {
+			continue
 		}
+
+		localComparable := linear.NormalizeIssueForLinearHash(issue)
+		linearComparable := linear.IssueToBeads(linearIssue, config).Issue.(*types.Issue)
+		if localComparable.ComputeContentHash() == linearComparable.ComputeContentHash() {
+			continue
+		}
+
+		conflicts = append(conflicts, linear.Conflict{
+			IssueID:           issue.ID,
+			LocalUpdated:      issue.UpdatedAt,
+			LinearUpdated:     linearUpdatedAt,
+			LinearExternalRef: *issue.ExternalRef,
+			LinearIdentifier:  linearIdentifier,
+			LinearInternalID:  linearIssue.ID,
+		})
 	}
 
 	return conflicts, nil
@@ -641,7 +738,6 @@ func reimportLinearConflicts(ctx context.Context, conflicts []linear.Conflict) e
 	failed := 0
 
 	for _, conflict := range conflicts {
-		// Fetch the current state of the Linear issue
 		linearIssue, err := client.FetchIssueByIdentifier(ctx, conflict.LinearIdentifier)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: failed to fetch %s for resolution: %v\n",
@@ -656,10 +752,8 @@ func reimportLinearConflicts(ctx context.Context, conflicts []linear.Conflict) e
 			continue
 		}
 
-		// Convert Linear issue to updates for the local issue
 		updates := linear.BuildLinearToLocalUpdates(linearIssue, config)
 
-		// Apply updates to the local issue
 		err = store.UpdateIssue(ctx, conflict.IssueID, updates, actor)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: failed to update local issue %s: %v\n",
@@ -688,12 +782,10 @@ func resolveLinearConflictsByTimestamp(ctx context.Context, conflicts []linear.C
 		return nil
 	}
 
-	// Separate conflicts into "Linear wins" vs "Local wins" based on timestamps
 	var linearWins []linear.Conflict
 	var localWins []linear.Conflict
 
 	for _, conflict := range conflicts {
-		// Compare timestamps: use the newer one
 		if conflict.LinearUpdated.After(conflict.LocalUpdated) {
 			linearWins = append(linearWins, conflict)
 		} else {
@@ -701,7 +793,6 @@ func resolveLinearConflictsByTimestamp(ctx context.Context, conflicts []linear.C
 		}
 	}
 
-	// Report what we're doing
 	if len(linearWins) > 0 {
 		fmt.Printf("  %d conflict(s): Linear is newer, will re-import\n", len(linearWins))
 	}
@@ -709,7 +800,6 @@ func resolveLinearConflictsByTimestamp(ctx context.Context, conflicts []linear.C
 		fmt.Printf("  %d conflict(s): Local is newer, will push to Linear\n", len(localWins))
 	}
 
-	// For conflicts where Linear wins, re-import from Linear
 	if len(linearWins) > 0 {
 		err := reimportLinearConflicts(ctx, linearWins)
 		if err != nil {
@@ -717,12 +807,7 @@ func resolveLinearConflictsByTimestamp(ctx context.Context, conflicts []linear.C
 		}
 	}
 
-	// For conflicts where local wins, we mark them to be skipped during push check
-	// The push phase will naturally handle these since local timestamps are newer
-	// We need to track these so push doesn't skip them due to conflict detection
 	if len(localWins) > 0 {
-		// Store the resolved conflict IDs so push knows to proceed
-		// We use a simple in-memory approach since conflicts are processed in same sync
 		for _, conflict := range localWins {
 			fmt.Printf("  Resolved: %s -> %s (local wins, will push)\n",
 				conflict.IssueID, conflict.LinearIdentifier)
@@ -735,7 +820,7 @@ func resolveLinearConflictsByTimestamp(ctx context.Context, conflicts []linear.C
 // doPullFromLinear imports issues from Linear using the GraphQL API.
 // Supports incremental sync by checking linear.last_sync config and only fetching
 // issues updated since that timestamp.
-func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.PullStats, error) {
+func doPullFromLinear(ctx context.Context, dryRun bool, state string, skipLinearIDs map[string]bool) (*linear.PullStats, error) {
 	stats := &linear.PullStats{}
 
 	client, err := getLinearClient(ctx)
@@ -743,22 +828,18 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 		return stats, fmt.Errorf("failed to create Linear client: %w", err)
 	}
 
-	// Check for last sync timestamp to enable incremental sync
 	var linearIssues []linear.Issue
 	lastSyncStr, _ := store.GetConfig(ctx, "linear.last_sync")
 
 	if lastSyncStr != "" {
-		// Parse the last sync timestamp
 		lastSync, err := time.Parse(time.RFC3339, lastSyncStr)
 		if err != nil {
-			// Invalid timestamp - fall back to full sync
 			fmt.Fprintf(os.Stderr, "Warning: invalid linear.last_sync timestamp, doing full sync\n")
 			linearIssues, err = client.FetchIssues(ctx, state)
 			if err != nil {
 				return stats, fmt.Errorf("failed to fetch issues from Linear: %w", err)
 			}
 		} else {
-			// Incremental sync: fetch only issues updated since last sync
 			stats.Incremental = true
 			stats.SyncedSince = lastSyncStr
 			linearIssues, err = client.FetchIssuesSince(ctx, state, lastSync)
@@ -770,7 +851,6 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 			}
 		}
 	} else {
-		// No last sync - do a full sync
 		linearIssues, err = client.FetchIssues(ctx, state)
 		if err != nil {
 			return stats, fmt.Errorf("failed to fetch issues from Linear: %w", err)
@@ -780,17 +860,10 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 		}
 	}
 
-	if dryRun {
-		if stats.Incremental {
-			fmt.Printf("  Would import %d issues from Linear (incremental since %s)\n", len(linearIssues), stats.SyncedSince)
-		} else {
-			fmt.Printf("  Would import %d issues from Linear (full sync)\n", len(linearIssues))
-		}
-		return stats, nil
-	}
-
-	// Load mapping configuration for converting Linear issues to Beads
 	mappingConfig := loadLinearMappingConfig(ctx)
+
+	idMode := getLinearIDMode(ctx)
+	hashLength := getLinearHashLength(ctx)
 
 	var beadsIssues []*types.Issue
 	var allDeps []linear.DependencyInfo
@@ -807,8 +880,69 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 		return stats, nil
 	}
 
+	if len(skipLinearIDs) > 0 {
+		var filteredIssues []*types.Issue
+		skipped := 0
+		for _, issue := range beadsIssues {
+			if issue.ExternalRef == nil {
+				filteredIssues = append(filteredIssues, issue)
+				continue
+			}
+			linearID := linear.ExtractLinearIdentifier(*issue.ExternalRef)
+			if linearID != "" && skipLinearIDs[linearID] {
+				skipped++
+				continue
+			}
+			filteredIssues = append(filteredIssues, issue)
+		}
+		if skipped > 0 {
+			stats.Skipped += skipped
+		}
+		beadsIssues = filteredIssues
+
+		if len(allDeps) > 0 {
+			var filteredDeps []linear.DependencyInfo
+			for _, dep := range allDeps {
+				if skipLinearIDs[dep.FromLinearID] || skipLinearIDs[dep.ToLinearID] {
+					continue
+				}
+				filteredDeps = append(filteredDeps, dep)
+			}
+			allDeps = filteredDeps
+		}
+	}
+
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil || prefix == "" {
+		prefix = "bd"
+	}
+
+	if idMode == "hash" {
+		existingIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+		if err != nil {
+			return stats, fmt.Errorf("failed to fetch existing issues for ID collision avoidance: %w", err)
+		}
+		usedIDs := make(map[string]bool, len(existingIssues))
+		for _, issue := range existingIssues {
+			if issue.ID != "" {
+				usedIDs[issue.ID] = true
+			}
+		}
+
+		idOpts := linear.IDGenerationOptions{
+			BaseLength: hashLength,
+			MaxLength:  8,
+			UsedIDs:    usedIDs,
+		}
+		if err := linear.GenerateIssueIDs(beadsIssues, prefix, "linear-import", idOpts); err != nil {
+			return stats, fmt.Errorf("failed to generate issue IDs: %w", err)
+		}
+	} else if idMode != "db" {
+		return stats, fmt.Errorf("unsupported linear.id_mode %q (expected \"hash\" or \"db\")", idMode)
+	}
+
 	opts := ImportOptions{
-		DryRun:     false,
+		DryRun:     dryRun,
 		SkipUpdate: false,
 	}
 
@@ -821,8 +955,16 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 	stats.Updated = result.Updated
 	stats.Skipped = result.Skipped
 
-	// Build mapping from Linear identifier to Beads ID using external_ref
-	// After import, re-fetch all issues to get the mapping
+	if dryRun {
+		if stats.Incremental {
+			fmt.Printf("  Would import %d issues from Linear (incremental since %s)\n",
+				len(linearIssues), stats.SyncedSince)
+		} else {
+			fmt.Printf("  Would import %d issues from Linear (full sync)\n", len(linearIssues))
+		}
+		return stats, nil
+	}
+
 	allBeadsIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to fetch issues for dependency mapping: %v\n", err)
@@ -831,7 +973,6 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 
 	for _, issue := range allBeadsIssues {
 		if issue.ExternalRef != nil && linear.IsLinearExternalRef(*issue.ExternalRef) {
-			// Extract Linear identifier from URL
 			linearID := linear.ExtractLinearIdentifier(*issue.ExternalRef)
 			if linearID != "" {
 				linearIDToBeadsID[linearID] = issue.ID
@@ -839,18 +980,15 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 		}
 	}
 
-	// Create dependencies between imported issues
 	depsCreated := 0
 	for _, dep := range allDeps {
 		fromID, fromOK := linearIDToBeadsID[dep.FromLinearID]
 		toID, toOK := linearIDToBeadsID[dep.ToLinearID]
 
 		if !fromOK || !toOK {
-			// One or both issues not found - skip silently (may be in different team/project)
 			continue
 		}
 
-		// Create the dependency using types.Dependency
 		dependency := &types.Dependency{
 			IssueID:     fromID,
 			DependsOnID: toID,
@@ -859,7 +997,6 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 		}
 		err := store.AddDependency(ctx, dependency, actor)
 		if err != nil {
-			// Dependency might already exist, that's OK
 			if !strings.Contains(err.Error(), "already exists") &&
 				!strings.Contains(err.Error(), "duplicate") {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create dependency %s -> %s (%s): %v\n",
@@ -878,7 +1015,7 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*linear.P
 }
 
 // doPushToLinear exports issues to Linear using the GraphQL API.
-func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool, forceUpdateIDs map[string]bool) (*linear.PushStats, error) {
+func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRefs bool, forceUpdateIDs map[string]bool, skipUpdateIDs map[string]bool) (*linear.PushStats, error) {
 	stats := &linear.PushStats{}
 
 	client, err := getLinearClient(ctx)
@@ -908,36 +1045,26 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 		}
 	}
 
-	if dryRun {
-		fmt.Printf("  Would create %d issues in Linear\n", len(toCreate))
-		if !createOnly {
-			fmt.Printf("  Would update %d issues in Linear\n", len(toUpdate))
+	var stateCache *linear.StateCache
+	if !dryRun && (len(toCreate) > 0 || (!createOnly && len(toUpdate) > 0)) {
+		stateCache, err = linear.BuildStateCache(ctx, client)
+		if err != nil {
+			return stats, fmt.Errorf("failed to fetch team states: %w", err)
 		}
-		return stats, nil
 	}
 
-	stateCache, err := linear.BuildStateCache(ctx, client)
-	if err != nil {
-		return stats, fmt.Errorf("failed to fetch team states: %w", err)
-	}
-
-	// Load mapping configuration for priority conversion
 	mappingConfig := loadLinearMappingConfig(ctx)
 
 	for _, issue := range toCreate {
+		if dryRun {
+			stats.Created++
+			continue
+		}
+
 		linearPriority := linear.PriorityToLinear(issue.Priority, mappingConfig)
 		stateID := stateCache.FindStateForBeadsStatus(issue.Status)
 
-		description := issue.Description
-		if issue.AcceptanceCriteria != "" {
-			description += "\n\n## Acceptance Criteria\n" + issue.AcceptanceCriteria
-		}
-		if issue.Design != "" {
-			description += "\n\n## Design\n" + issue.Design
-		}
-		if issue.Notes != "" {
-			description += "\n\n## Notes\n" + issue.Notes
-		}
+		description := linear.BuildLinearDescription(issue)
 
 		linearIssue, err := client.CreateIssue(ctx, issue.Title, description, linearPriority, stateID, nil)
 		if err != nil {
@@ -950,8 +1077,12 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 		fmt.Printf("  Created: %s -> %s\n", issue.ID, linearIssue.Identifier)
 
 		if updateRefs && linearIssue.URL != "" {
+			externalRef := linearIssue.URL
+			if canonical, ok := linear.CanonicalizeLinearExternalRef(externalRef); ok {
+				externalRef = canonical
+			}
 			updates := map[string]interface{}{
-				"external_ref": linearIssue.URL,
+				"external_ref": externalRef,
 			}
 			if err := store.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update external_ref for %s: %v\n", issue.ID, err)
@@ -960,10 +1091,13 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 		}
 	}
 
-	// Process updates for existing Linear issues
 	if len(toUpdate) > 0 && !createOnly {
 		for _, issue := range toUpdate {
-			// Extract Linear identifier from external_ref URL
+			if skipUpdateIDs != nil && skipUpdateIDs[issue.ID] {
+				stats.Skipped++
+				continue
+			}
+
 			linearIdentifier := linear.ExtractLinearIdentifier(*issue.ExternalRef)
 			if linearIdentifier == "" {
 				fmt.Fprintf(os.Stderr, "Warning: could not extract Linear identifier from %s: %s\n",
@@ -972,7 +1106,6 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 				continue
 			}
 
-			// Fetch the Linear issue to get its internal ID and UpdatedAt timestamp
 			linearIssue, err := client.FetchIssueByIdentifier(ctx, linearIdentifier)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to fetch Linear issue %s: %v\n",
@@ -987,7 +1120,6 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 				continue
 			}
 
-			// Parse Linear's UpdatedAt timestamp (RFC3339 format)
 			linearUpdatedAt, err := time.Parse(time.RFC3339, linearIssue.UpdatedAt)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to parse Linear UpdatedAt for %s: %v\n",
@@ -996,45 +1128,43 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 				continue
 			}
 
-			// Compare timestamps: only update if local is newer,
-			// unless this issue is in the force-update set.
-			if !forceUpdateIDs[issue.ID] && !issue.UpdatedAt.After(linearUpdatedAt) {
-				// Linear is newer or same, skip update
+			forcedUpdate := forceUpdateIDs != nil && forceUpdateIDs[issue.ID]
+			if !forcedUpdate && !issue.UpdatedAt.After(linearUpdatedAt) {
 				stats.Skipped++
 				continue
 			}
 
-			// Build description from all beads text fields
-			description := issue.Description
-			if issue.AcceptanceCriteria != "" {
-				description += "\n\n## Acceptance Criteria\n" + issue.AcceptanceCriteria
-			}
-			if issue.Design != "" {
-				description += "\n\n## Design\n" + issue.Design
-			}
-			if issue.Notes != "" {
-				description += "\n\n## Notes\n" + issue.Notes
+			if !forcedUpdate {
+				localComparable := linear.NormalizeIssueForLinearHash(issue)
+				linearComparable := linear.IssueToBeads(linearIssue, mappingConfig).Issue.(*types.Issue)
+				if localComparable.ComputeContentHash() == linearComparable.ComputeContentHash() {
+					stats.Skipped++
+					continue
+				}
 			}
 
-			// Build update payload
+			if dryRun {
+				stats.Updated++
+				continue
+			}
+
+			description := linear.BuildLinearDescription(issue)
+
 			updatePayload := map[string]interface{}{
 				"title":       issue.Title,
 				"description": description,
 			}
 
-			// Add priority if set
 			linearPriority := linear.PriorityToLinear(issue.Priority, mappingConfig)
 			if linearPriority > 0 {
 				updatePayload["priority"] = linearPriority
 			}
 
-			// Add state if we can map it
 			stateID := stateCache.FindStateForBeadsStatus(issue.Status)
 			if stateID != "" {
 				updatePayload["stateId"] = stateID
 			}
 
-			// Perform the update using Linear's internal issue ID
 			updatedLinearIssue, err := client.UpdateIssue(ctx, linearIssue.ID, updatePayload)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update Linear issue %s: %v\n",
@@ -1045,6 +1175,13 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 
 			stats.Updated++
 			fmt.Printf("  Updated: %s -> %s\n", issue.ID, updatedLinearIssue.Identifier)
+		}
+	}
+
+	if dryRun {
+		fmt.Printf("  Would create %d issues in Linear\n", stats.Created)
+		if !createOnly {
+			fmt.Printf("  Would update %d issues in Linear\n", stats.Updated)
 		}
 	}
 

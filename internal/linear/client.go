@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -604,6 +605,30 @@ func ExtractLinearIdentifier(url string) string {
 		}
 	}
 	return ""
+}
+
+// CanonicalizeLinearExternalRef returns a stable Linear issue URL without the slug.
+// Example: https://linear.app/team/issue/TEAM-123/title -> https://linear.app/team/issue/TEAM-123
+// Returns ok=false if the URL isn't a recognizable Linear issue URL.
+func CanonicalizeLinearExternalRef(externalRef string) (canonical string, ok bool) {
+	if externalRef == "" || !IsLinearExternalRef(externalRef) {
+		return "", false
+	}
+
+	parsed, err := url.Parse(externalRef)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+
+	segments := strings.Split(parsed.Path, "/")
+	for i, segment := range segments {
+		if segment == "issue" && i+1 < len(segments) && segments[i+1] != "" {
+			path := "/" + strings.Join(segments[1:i+2], "/")
+			return fmt.Sprintf("%s://%s%s", parsed.Scheme, parsed.Host, path), true
+		}
+	}
+
+	return "", false
 }
 
 // IsLinearExternalRef checks if an external_ref URL is a Linear issue URL.

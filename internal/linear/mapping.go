@@ -5,8 +5,119 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// IDGenerationOptions configures Linear hash ID generation.
+type IDGenerationOptions struct {
+	BaseLength int             // Starting hash length (3-8)
+	MaxLength  int             // Maximum hash length (3-8)
+	UsedIDs    map[string]bool // Pre-populated set to avoid collisions (e.g., DB IDs)
+}
+
+// BuildLinearDescription formats a Beads issue for Linear's description field.
+// This mirrors the payload used during push to keep hash comparisons consistent.
+func BuildLinearDescription(issue *types.Issue) string {
+	description := issue.Description
+	if issue.AcceptanceCriteria != "" {
+		description += "\n\n## Acceptance Criteria\n" + issue.AcceptanceCriteria
+	}
+	if issue.Design != "" {
+		description += "\n\n## Design\n" + issue.Design
+	}
+	if issue.Notes != "" {
+		description += "\n\n## Notes\n" + issue.Notes
+	}
+	return description
+}
+
+// NormalizeIssueForLinearHash returns a copy of the issue using Linear's description
+// formatting and clears fields not present in Linear's model to avoid false conflicts.
+func NormalizeIssueForLinearHash(issue *types.Issue) *types.Issue {
+	normalized := *issue
+	normalized.Description = BuildLinearDescription(issue)
+	normalized.AcceptanceCriteria = ""
+	normalized.Design = ""
+	normalized.Notes = ""
+	if normalized.ExternalRef != nil && IsLinearExternalRef(*normalized.ExternalRef) {
+		if canonical, ok := CanonicalizeLinearExternalRef(*normalized.ExternalRef); ok {
+			normalized.ExternalRef = &canonical
+		}
+	}
+	return &normalized
+}
+
+// GenerateIssueIDs generates unique hash-based IDs for issues that don't have one.
+// Tracks used IDs to prevent collisions within the batch (and optionally against existing IDs).
+// The creator parameter is used as part of the hash input (e.g., "linear-import").
+func GenerateIssueIDs(issues []*types.Issue, prefix, creator string, opts IDGenerationOptions) error {
+	usedIDs := opts.UsedIDs
+	if usedIDs == nil {
+		usedIDs = make(map[string]bool)
+	}
+
+	baseLength := opts.BaseLength
+	if baseLength == 0 {
+		baseLength = 6
+	}
+	maxLength := opts.MaxLength
+	if maxLength == 0 {
+		maxLength = 8
+	}
+	if baseLength < 3 {
+		baseLength = 3
+	}
+	if maxLength > 8 {
+		maxLength = 8
+	}
+	if baseLength > maxLength {
+		baseLength = maxLength
+	}
+
+	// First pass: record existing IDs
+	for _, issue := range issues {
+		if issue.ID != "" {
+			usedIDs[issue.ID] = true
+		}
+	}
+
+	// Second pass: generate IDs for issues without one
+	for _, issue := range issues {
+		if issue.ID != "" {
+			continue // Already has an ID
+		}
+
+		var generated bool
+		for length := baseLength; length <= maxLength && !generated; length++ {
+			for nonce := 0; nonce < 10; nonce++ {
+				candidate := idgen.GenerateHashID(
+					prefix,
+					issue.Title,
+					issue.Description,
+					creator,
+					issue.CreatedAt,
+					length,
+					nonce,
+				)
+
+				if !usedIDs[candidate] {
+					issue.ID = candidate
+					usedIDs[candidate] = true
+					generated = true
+					break
+				}
+			}
+		}
+
+		if !generated {
+			return fmt.Errorf("failed to generate unique ID for issue '%s' after trying lengths %d-%d with 10 nonces each",
+				issue.Title, baseLength, maxLength)
+		}
+	}
+
+	return nil
+}
 
 // MappingConfig holds configurable mappings between Linear and Beads.
 // All maps use lowercase keys for case-insensitive matching.
@@ -323,6 +434,9 @@ func IssueToBeads(li *Issue, config *MappingConfig) *IssueConversion {
 	}
 
 	externalRef := li.URL
+	if canonical, ok := CanonicalizeLinearExternalRef(externalRef); ok {
+		externalRef = canonical
+	}
 	issue.ExternalRef = &externalRef
 
 	// Collect dependencies to be created after all issues are imported

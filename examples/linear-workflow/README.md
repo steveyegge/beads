@@ -375,6 +375,10 @@ linear.team_id          # Linear team UUID
 # Automatic (set by bd)
 linear.last_sync        # ISO8601 timestamp of last sync
 
+# ID generation (optional)
+linear.id_mode          # hash (default) or db (let bd generate IDs)
+linear.hash_length      # Hash length 3-8 (default: 6)
+
 # Priority mapping (Linear 0-4 to Beads 0-4)
 linear.priority_map.0   # No priority -> ? (default: 4/backlog)
 linear.priority_map.1   # Urgent -> ? (default: 0/critical)
