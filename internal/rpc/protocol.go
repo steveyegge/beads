@@ -214,6 +214,7 @@ type ReadyArgs struct {
 	Assignee   string   `json:"assignee,omitempty"`
 	Unassigned bool     `json:"unassigned,omitempty"`
 	Priority   *int     `json:"priority,omitempty"`
+	Type       string   `json:"type,omitempty"`
 	Limit      int      `json:"limit,omitempty"`
 	SortPolicy string   `json:"sort_policy,omitempty"`
 	Labels     []string `json:"labels,omitempty"`

@@ -27,6 +27,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		args = append(args, filter.Status)
 	}
 
+	// Filter by issue type (gt-ktf3: MQ integration)
+	if filter.Type != "" {
+		whereClauses = append(whereClauses, "i.issue_type = ?")
+		args = append(args, filter.Type)
+	}
+
 	if filter.Priority != nil {
 		whereClauses = append(whereClauses, "i.priority = ?")
 		args = append(args, *filter.Priority)

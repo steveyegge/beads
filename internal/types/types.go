@@ -478,6 +478,7 @@ func (s SortPolicy) IsValid() bool {
 // WorkFilter is used to filter ready work queries
 type WorkFilter struct {
 	Status     Status
+	Type       string     // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
 	Priority   *int
 	Assignee   *string
 	Unassigned bool       // Filter for issues with no assignee
