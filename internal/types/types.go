@@ -186,12 +186,13 @@ const (
 	StatusBlocked    Status = "blocked"
 	StatusClosed     Status = "closed"
 	StatusTombstone  Status = "tombstone" // Soft-deleted issue (bd-vw8)
+	StatusPinned     Status = "pinned"    // Persistent bead that stays open indefinitely (bd-6v2)
 )
 
 // IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed, StatusTombstone:
+	case StatusOpen, StatusInProgress, StatusBlocked, StatusClosed, StatusTombstone, StatusPinned:
 		return true
 	}
 	return false
@@ -390,6 +391,7 @@ type Statistics struct {
 	BlockedIssues            int     `json:"blocked_issues"`
 	ReadyIssues              int     `json:"ready_issues"`
 	TombstoneIssues          int     `json:"tombstone_issues"` // Soft-deleted issues (bd-nyt)
+	PinnedIssues             int     `json:"pinned_issues"`    // Persistent issues (bd-6v2)
 	EpicsEligibleForClosure  int     `json:"epics_eligible_for_closure"`
 	AverageLeadTime          float64 `json:"average_lead_time_hours"`
 }

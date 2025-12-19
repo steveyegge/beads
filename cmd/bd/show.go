@@ -968,6 +968,7 @@ var closeCmd = &cobra.Command{
 			reason = "Closed"
 		}
 		jsonOutput, _ := cmd.Flags().GetBool("json")
+		force, _ := cmd.Flags().GetBool("force")
 
 		ctx := rootCtx
 
@@ -1001,6 +1002,21 @@ var closeCmd = &cobra.Command{
 		if daemonClient != nil {
 			closedIssues := []*types.Issue{}
 			for _, id := range resolvedIDs {
+				// Check if issue is pinned (bd-6v2)
+				if !force {
+					showArgs := &rpc.ShowArgs{ID: id}
+					showResp, showErr := daemonClient.Show(showArgs)
+					if showErr == nil {
+						var issue types.Issue
+						if json.Unmarshal(showResp.Data, &issue) == nil {
+							if issue.Status == types.StatusPinned {
+								fmt.Fprintf(os.Stderr, "Error: cannot close pinned issue %s (use --force to override)\n", id)
+								continue
+							}
+						}
+					}
+				}
+
 				closeArgs := &rpc.CloseArgs{
 					ID:     id,
 					Reason: reason,
@@ -1036,6 +1052,15 @@ var closeCmd = &cobra.Command{
 		// Direct mode
 		closedIssues := []*types.Issue{}
 		for _, id := range resolvedIDs {
+			// Check if issue is pinned (bd-6v2)
+			if !force {
+				issue, _ := store.GetIssue(ctx, id)
+				if issue != nil && issue.Status == types.StatusPinned {
+					fmt.Fprintf(os.Stderr, "Error: cannot close pinned issue %s (use --force to override)\n", id)
+					continue
+				}
+			}
+
 			if err := store.CloseIssue(ctx, id, reason, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
@@ -1335,5 +1360,6 @@ func init() {
 
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
 	closeCmd.Flags().Bool("json", false, "Output JSON format")
+	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	rootCmd.AddCommand(closeCmd)
 }

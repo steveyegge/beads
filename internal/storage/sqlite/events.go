@@ -111,15 +111,17 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 	var stats types.Statistics
 
 	// Get counts (bd-nyt: exclude tombstones from TotalIssues, report separately)
+	// (bd-6v2: also count pinned issues)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN status != 'tombstone' THEN 1 ELSE 0 END), 0) as total,
 			COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) as open,
 			COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
 			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) as closed,
-			COALESCE(SUM(CASE WHEN status = 'tombstone' THEN 1 ELSE 0 END), 0) as tombstone
+			COALESCE(SUM(CASE WHEN status = 'tombstone' THEN 1 ELSE 0 END), 0) as tombstone,
+			COALESCE(SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), 0) as pinned
 		FROM issues
-	`).Scan(&stats.TotalIssues, &stats.OpenIssues, &stats.InProgressIssues, &stats.ClosedIssues, &stats.TombstoneIssues)
+	`).Scan(&stats.TotalIssues, &stats.OpenIssues, &stats.InProgressIssues, &stats.ClosedIssues, &stats.TombstoneIssues, &stats.PinnedIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue counts: %w", err)
 	}
