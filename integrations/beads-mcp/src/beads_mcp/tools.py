@@ -305,6 +305,10 @@ async def beads_ready_work(
     limit: Annotated[int, "Maximum number of issues to return (1-100)"] = 10,
     priority: Annotated[int | None, "Filter by priority (0-4, 0=highest)"] = None,
     assignee: Annotated[str | None, "Filter by assignee"] = None,
+    labels: Annotated[list[str] | None, "Filter by labels (AND: must have ALL)"] = None,
+    labels_any: Annotated[list[str] | None, "Filter by labels (OR: must have at least one)"] = None,
+    unassigned: Annotated[bool, "Filter to only unassigned issues"] = False,
+    sort_policy: Annotated[str | None, "Sort policy: hybrid (default), priority, oldest"] = None,
 ) -> list[Issue]:
     """Find issues with no blocking dependencies that are ready to work on.
 
@@ -312,7 +316,15 @@ async def beads_ready_work(
     Perfect for agents to claim next work!
     """
     client = await _get_client()
-    params = ReadyWorkParams(limit=limit, priority=priority, assignee=assignee)
+    params = ReadyWorkParams(
+        limit=limit,
+        priority=priority,
+        assignee=assignee,
+        labels=labels,
+        labels_any=labels_any,
+        unassigned=unassigned,
+        sort_policy=sort_policy,
+    )
     return await client.ready(params)
 
 
@@ -321,7 +333,11 @@ async def beads_list_issues(
     priority: Annotated[int | None, "Filter by priority (0-4, 0=highest)"] = None,
     issue_type: Annotated[IssueType | None, "Filter by type (bug, feature, task, epic, chore)"] = None,
     assignee: Annotated[str | None, "Filter by assignee"] = None,
-    limit: Annotated[int, "Maximum number of issues to return (1-1000)"] = 50,
+    labels: Annotated[list[str] | None, "Filter by labels (AND: must have ALL)"] = None,
+    labels_any: Annotated[list[str] | None, "Filter by labels (OR: must have at least one)"] = None,
+    query: Annotated[str | None, "Search in title (case-insensitive substring)"] = None,
+    unassigned: Annotated[bool, "Filter to only unassigned issues"] = False,
+    limit: Annotated[int, "Maximum number of issues to return (1-100)"] = 20,
 ) -> list[Issue]:
     """List all issues with optional filters."""
     client = await _get_client()
@@ -331,6 +347,10 @@ async def beads_list_issues(
         priority=priority,
         issue_type=issue_type,
         assignee=assignee,
+        labels=labels,
+        labels_any=labels_any,
+        query=query,
+        unassigned=unassigned,
         limit=limit,
     )
     return await client.list_issues(params)

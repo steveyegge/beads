@@ -377,6 +377,14 @@ class BdDaemonClient(BdClientBase):
             args["issue_type"] = params.issue_type
         if params.assignee:
             args["assignee"] = params.assignee
+        if params.labels:
+            args["labels"] = params.labels
+        if params.labels_any:
+            args["labels_any"] = params.labels_any
+        if params.query:
+            args["query"] = params.query
+        if params.unassigned:
+            args["unassigned"] = params.unassigned
         if params.limit:
             args["limit"] = params.limit
 
@@ -414,6 +422,14 @@ class BdDaemonClient(BdClientBase):
             args["assignee"] = params.assignee
         if params.priority is not None:
             args["priority"] = params.priority
+        if params.labels:
+            args["labels"] = params.labels
+        if params.labels_any:
+            args["labels_any"] = params.labels_any
+        if params.unassigned:
+            args["unassigned"] = params.unassigned
+        if params.sort_policy:
+            args["sort_policy"] = params.sort_policy
         if params.limit:
             args["limit"] = params.limit
 

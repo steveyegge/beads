@@ -385,6 +385,16 @@ class BdCliClient(BdClientBase):
             args.extend(["--priority", str(params.priority)])
         if params.assignee:
             args.extend(["--assignee", params.assignee])
+        if params.labels:
+            for label in params.labels:
+                args.extend(["--label", label])
+        if params.labels_any:
+            for label in params.labels_any:
+                args.extend(["--label-any", label])
+        if params.unassigned:
+            args.append("--unassigned")
+        if params.sort_policy:
+            args.extend(["--sort", params.sort_policy])
 
         data = await self._run_command(*args)
         if not isinstance(data, list):
@@ -412,6 +422,16 @@ class BdCliClient(BdClientBase):
             args.extend(["--type", params.issue_type])
         if params.assignee:
             args.extend(["--assignee", params.assignee])
+        if params.labels:
+            for label in params.labels:
+                args.extend(["--label", label])
+        if params.labels_any:
+            for label in params.labels_any:
+                args.extend(["--label-any", label])
+        if params.query:
+            args.extend(["--title", params.query])
+        if params.unassigned:
+            args.append("--no-assignee")
         if params.limit:
             args.extend(["--limit", str(params.limit)])
 
