@@ -489,9 +489,10 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				relates_to TEXT DEFAULT '',
 				duplicate_of TEXT DEFAULT '',
 				superseded_by TEXT DEFAULT '',
+				pinned INTEGER DEFAULT 0,
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, '', '', '', '' FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, '', '', '', '', 0 FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

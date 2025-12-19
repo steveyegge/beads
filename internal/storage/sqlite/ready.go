@@ -12,8 +12,11 @@ import (
 // GetReadyWork returns issues with no open blockers
 // By default, shows both 'open' and 'in_progress' issues so epics/tasks
 // ready to close are visible (bd-165)
+// Excludes pinned issues which are persistent anchors, not actionable work (bd-92u)
 func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
-	whereClauses := []string{}
+	whereClauses := []string{
+		"i.pinned = 0", // Exclude pinned issues (bd-92u)
+	}
 	args := []interface{}{}
 
 	// Default to open OR in_progress if not specified (bd-165)
@@ -101,7 +104,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
 		i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
 		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
-		i.sender, i.ephemeral
+		i.sender, i.ephemeral, i.pinned
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (

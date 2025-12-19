@@ -45,6 +45,9 @@ type Issue struct {
 	Ephemeral bool   `json:"ephemeral,omitempty"` // Can be bulk-deleted when closed
 	// NOTE: RepliesTo, RelatesTo, DuplicateOf, SupersededBy moved to dependencies table
 	// per Decision 004 (Edge Schema Consolidation). Use dependency API instead.
+
+	// Pinned issues are persistent anchors, excluded from bd ready (bd-92u)
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
