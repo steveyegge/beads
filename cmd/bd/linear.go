@@ -70,18 +70,20 @@ type GraphQLError struct {
 
 // LinearIssue represents an issue from the Linear API.
 type LinearIssue struct {
-	ID          string        `json:"id"`
-	Identifier  string        `json:"identifier"` // e.g., "TEAM-123"
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	URL         string        `json:"url"`
-	Priority    int           `json:"priority"` // 0=no priority, 1=urgent, 2=high, 3=medium, 4=low
-	State       *LinearState  `json:"state"`
-	Assignee    *LinearUser   `json:"assignee"`
-	Labels      *LinearLabels `json:"labels"`
-	CreatedAt   string        `json:"createdAt"`
-	UpdatedAt   string        `json:"updatedAt"`
-	CompletedAt string        `json:"completedAt,omitempty"`
+	ID          string           `json:"id"`
+	Identifier  string           `json:"identifier"` // e.g., "TEAM-123"
+	Title       string           `json:"title"`
+	Description string           `json:"description"`
+	URL         string           `json:"url"`
+	Priority    int              `json:"priority"` // 0=no priority, 1=urgent, 2=high, 3=medium, 4=low
+	State       *LinearState     `json:"state"`
+	Assignee    *LinearUser      `json:"assignee"`
+	Labels      *LinearLabels    `json:"labels"`
+	Parent      *LinearParent    `json:"parent,omitempty"`
+	Relations   *LinearRelations `json:"relations,omitempty"`
+	CreatedAt   string           `json:"createdAt"`
+	UpdatedAt   string           `json:"updatedAt"`
+	CompletedAt string           `json:"completedAt,omitempty"`
 }
 
 // LinearState represents a workflow state in Linear.
@@ -108,6 +110,147 @@ type LinearLabels struct {
 type LinearLabel struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// LinearParent represents a parent issue reference.
+type LinearParent struct {
+	ID         string `json:"id"`
+	Identifier string `json:"identifier"`
+}
+
+// LinearRelation represents a relation between issues in Linear.
+type LinearRelation struct {
+	ID           string `json:"id"`
+	Type         string `json:"type"` // "blocks", "blockedBy", "duplicate", "related"
+	RelatedIssue struct {
+		ID         string `json:"id"`
+		Identifier string `json:"identifier"`
+	} `json:"relatedIssue"`
+}
+
+// LinearRelations wraps the nodes array for relations.
+type LinearRelations struct {
+	Nodes []LinearRelation `json:"nodes"`
+}
+
+// LinearMappingConfig holds configurable mappings between Linear and Beads.
+// All maps use lowercase keys for case-insensitive matching.
+type LinearMappingConfig struct {
+	// PriorityMap maps Linear priority (0-4) to Beads priority (0-4).
+	// Key is Linear priority as string, value is Beads priority.
+	PriorityMap map[string]int
+
+	// StateMap maps Linear state types/names to Beads statuses.
+	// Key is lowercase state type or name, value is Beads status string.
+	StateMap map[string]string
+
+	// LabelTypeMap maps Linear label names to Beads issue types.
+	// Key is lowercase label name, value is Beads issue type.
+	LabelTypeMap map[string]string
+
+	// RelationMap maps Linear relation types to Beads dependency types.
+	// Key is Linear relation type, value is Beads dependency type.
+	RelationMap map[string]string
+}
+
+// defaultLinearMappingConfig returns sensible default mappings.
+func defaultLinearMappingConfig() *LinearMappingConfig {
+	return &LinearMappingConfig{
+		// Linear priority: 0=none, 1=urgent, 2=high, 3=medium, 4=low
+		// Beads priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+		PriorityMap: map[string]int{
+			"0": 4, // No priority -> Backlog
+			"1": 0, // Urgent -> Critical
+			"2": 1, // High -> High
+			"3": 2, // Medium -> Medium
+			"4": 3, // Low -> Low
+		},
+		// Linear state types: backlog, unstarted, started, completed, canceled
+		StateMap: map[string]string{
+			"backlog":   "open",
+			"unstarted": "open",
+			"started":   "in_progress",
+			"completed": "closed",
+			"canceled":  "closed",
+		},
+		// Label patterns for issue type inference
+		LabelTypeMap: map[string]string{
+			"bug":         "bug",
+			"defect":      "bug",
+			"feature":     "feature",
+			"enhancement": "feature",
+			"epic":        "epic",
+			"chore":       "chore",
+			"maintenance": "chore",
+			"task":        "task",
+		},
+		// Linear relation types to Beads dependency types
+		RelationMap: map[string]string{
+			"blocks":    "blocks",
+			"blockedBy": "blocks", // Inverse: the related issue blocks this one
+			"duplicate": "duplicates",
+			"related":   "related",
+		},
+	}
+}
+
+// loadLinearMappingConfig loads mapping configuration from beads config.
+// Config keys follow the pattern: linear.<category>_map.<key> = <value>
+// Examples:
+//
+//	linear.priority_map.0 = 4       (Linear "no priority" -> Beads backlog)
+//	linear.state_map.started = in_progress
+//	linear.label_type_map.bug = bug
+//	linear.relation_map.blocks = blocks
+func loadLinearMappingConfig(ctx context.Context) *LinearMappingConfig {
+	config := defaultLinearMappingConfig()
+
+	if store == nil {
+		return config
+	}
+
+	// Load all config keys and filter for linear mappings
+	allConfig, err := store.GetAllConfig(ctx)
+	if err != nil {
+		return config
+	}
+
+	for key, value := range allConfig {
+		// Parse priority mappings: linear.priority_map.<linear_priority>
+		if strings.HasPrefix(key, "linear.priority_map.") {
+			linearPriority := strings.TrimPrefix(key, "linear.priority_map.")
+			if beadsPriority, err := parseIntValue(value); err == nil {
+				config.PriorityMap[linearPriority] = beadsPriority
+			}
+		}
+
+		// Parse state mappings: linear.state_map.<state_type_or_name>
+		if strings.HasPrefix(key, "linear.state_map.") {
+			stateKey := strings.ToLower(strings.TrimPrefix(key, "linear.state_map."))
+			config.StateMap[stateKey] = value
+		}
+
+		// Parse label-to-type mappings: linear.label_type_map.<label_name>
+		if strings.HasPrefix(key, "linear.label_type_map.") {
+			labelKey := strings.ToLower(strings.TrimPrefix(key, "linear.label_type_map."))
+			config.LabelTypeMap[labelKey] = value
+		}
+
+		// Parse relation mappings: linear.relation_map.<relation_type>
+		if strings.HasPrefix(key, "linear.relation_map.") {
+			relationType := strings.TrimPrefix(key, "linear.relation_map.")
+			config.RelationMap[relationType] = value
+		}
+	}
+
+	return config
+}
+
+// parseIntValue safely parses an integer from a string config value.
+func parseIntValue(s string) (int, error) {
+	var v int
+	_, err := fmt.Sscanf(s, "%d", &v)
+	return v, err
 }
 
 // LinearTeamStates represents workflow states for a team.
@@ -256,6 +399,20 @@ func (c *LinearClient) FetchIssues(ctx context.Context, state string) ([]LinearI
 						nodes {
 							id
 							name
+						}
+					}
+					parent {
+						id
+						identifier
+					}
+					relations {
+						nodes {
+							id
+							type
+							relatedIssue {
+								id
+								identifier
+							}
 						}
 					}
 					createdAt
@@ -490,59 +647,165 @@ func (c *LinearClient) UpdateIssue(ctx context.Context, issueID string, updates 
 // linearPriorityToBeads maps Linear priority (0-4) to Beads priority (0-4).
 // Linear: 0=no priority, 1=urgent, 2=high, 3=medium, 4=low
 // Beads:  0=critical, 1=high, 2=medium, 3=low, 4=backlog
-func linearPriorityToBeads(linearPriority int) int {
-	switch linearPriority {
-	case 0:
-		return 4 // No priority -> Backlog
-	case 1:
-		return 0 // Urgent -> Critical
-	case 2:
-		return 1 // High -> High
-	case 3:
-		return 2 // Medium -> Medium
-	case 4:
-		return 3 // Low -> Low
-	default:
-		return 2 // Default to Medium
+// Uses configurable mapping from linear.priority_map.* config.
+func linearPriorityToBeads(linearPriority int, config *LinearMappingConfig) int {
+	key := fmt.Sprintf("%d", linearPriority)
+	if beadsPriority, ok := config.PriorityMap[key]; ok {
+		return beadsPriority
 	}
+	// Fallback to default mapping if not configured
+	return 2 // Default to Medium
 }
 
 // beadsPriorityToLinear maps Beads priority (0-4) to Linear priority (0-4).
-func beadsPriorityToLinear(beadsPriority int) int {
-	switch beadsPriority {
-	case 0:
-		return 1 // Critical -> Urgent
-	case 1:
-		return 2 // High -> High
-	case 2:
-		return 3 // Medium -> Medium
-	case 3:
-		return 4 // Low -> Low
-	case 4:
-		return 0 // Backlog -> No priority
-	default:
-		return 3 // Default to Medium
+// Uses configurable mapping by inverting linear.priority_map.* config.
+func beadsPriorityToLinear(beadsPriority int, config *LinearMappingConfig) int {
+	// Build inverse map from config
+	inverseMap := make(map[int]int)
+	for linearKey, beadsVal := range config.PriorityMap {
+		var linearVal int
+		if _, err := fmt.Sscanf(linearKey, "%d", &linearVal); err == nil {
+			inverseMap[beadsVal] = linearVal
+		}
 	}
+
+	if linearPriority, ok := inverseMap[beadsPriority]; ok {
+		return linearPriority
+	}
+	// Fallback to default mapping if not found
+	return 3 // Default to Medium
 }
 
 // linearStateToBeadsStatus maps Linear state type to Beads status.
-func linearStateToBeadsStatus(stateType string) types.Status {
-	switch stateType {
-	case "backlog", "unstarted":
+// Checks both state type (backlog, unstarted, etc.) and state name for custom workflows.
+// Uses configurable mapping from linear.state_map.* config.
+func linearStateToBeadsStatus(state *LinearState, config *LinearMappingConfig) types.Status {
+	if state == nil {
 		return types.StatusOpen
-	case "started":
+	}
+
+	// First, try to match by state type (preferred)
+	stateType := strings.ToLower(state.Type)
+	if statusStr, ok := config.StateMap[stateType]; ok {
+		return parseBeadsStatus(statusStr)
+	}
+
+	// Then try to match by state name (for custom workflow states)
+	stateName := strings.ToLower(state.Name)
+	if statusStr, ok := config.StateMap[stateName]; ok {
+		return parseBeadsStatus(statusStr)
+	}
+
+	// Default fallback
+	return types.StatusOpen
+}
+
+// parseBeadsStatus converts a status string to types.Status.
+func parseBeadsStatus(s string) types.Status {
+	switch strings.ToLower(s) {
+	case "open":
+		return types.StatusOpen
+	case "in_progress", "in-progress", "inprogress":
 		return types.StatusInProgress
-	case "completed":
-		return types.StatusClosed
-	case "canceled":
+	case "blocked":
+		return types.StatusBlocked
+	case "closed":
 		return types.StatusClosed
 	default:
 		return types.StatusOpen
 	}
 }
 
+// beadsStatusToLinearStateType converts Beads status to Linear state type for filtering.
+// This is used when pushing issues to Linear to find the appropriate state.
+func beadsStatusToLinearStateType(status types.Status) string {
+	switch status {
+	case types.StatusOpen:
+		return "unstarted"
+	case types.StatusInProgress:
+		return "started"
+	case types.StatusBlocked:
+		return "started" // Linear doesn't have blocked state type
+	case types.StatusClosed:
+		return "completed"
+	default:
+		return "unstarted"
+	}
+}
+
+// linearLabelToIssueType infers issue type from label names.
+// Uses configurable mapping from linear.label_type_map.* config.
+func linearLabelToIssueType(labels *LinearLabels, config *LinearMappingConfig) types.IssueType {
+	if labels == nil {
+		return types.TypeTask
+	}
+
+	for _, label := range labels.Nodes {
+		labelName := strings.ToLower(label.Name)
+
+		// Check exact match first
+		if issueType, ok := config.LabelTypeMap[labelName]; ok {
+			return parseIssueType(issueType)
+		}
+
+		// Check if label contains any mapped keyword
+		for keyword, issueType := range config.LabelTypeMap {
+			if strings.Contains(labelName, keyword) {
+				return parseIssueType(issueType)
+			}
+		}
+	}
+
+	return types.TypeTask // Default
+}
+
+// parseIssueType converts an issue type string to types.IssueType.
+func parseIssueType(s string) types.IssueType {
+	switch strings.ToLower(s) {
+	case "bug":
+		return types.TypeBug
+	case "feature":
+		return types.TypeFeature
+	case "task":
+		return types.TypeTask
+	case "epic":
+		return types.TypeEpic
+	case "chore":
+		return types.TypeChore
+	default:
+		return types.TypeTask
+	}
+}
+
+// linearRelationToBeadsDep converts a Linear relation to a Beads dependency type.
+// Uses configurable mapping from linear.relation_map.* config.
+func linearRelationToBeadsDep(relationType string, config *LinearMappingConfig) string {
+	if depType, ok := config.RelationMap[relationType]; ok {
+		return depType
+	}
+	return "related" // Default fallback
+}
+
+// LinearIssueConversion holds the result of converting a Linear issue to Beads.
+// It includes the issue and any dependencies that should be created.
+type LinearIssueConversion struct {
+	Issue        *types.Issue
+	Dependencies []LinearDependencyInfo
+}
+
+// LinearDependencyInfo represents a dependency to be created after issue import.
+// Stored separately since we need all issues imported before linking dependencies.
+type LinearDependencyInfo struct {
+	FromLinearID string // Linear identifier of the dependent issue (e.g., "TEAM-123")
+	ToLinearID   string // Linear identifier of the dependency target
+	Type         string // Beads dependency type (blocks, related, duplicates, parent-child)
+}
+
 // linearIssueToBeads converts a Linear issue to a Beads issue.
-func linearIssueToBeads(li *LinearIssue) (*types.Issue, error) {
+// Uses configurable mappings loaded from beads config.
+func linearIssueToBeads(ctx context.Context, li *LinearIssue) (*LinearIssueConversion, error) {
+	config := loadLinearMappingConfig(ctx)
+
 	createdAt, err := time.Parse(time.RFC3339, li.CreatedAt)
 	if err != nil {
 		createdAt = time.Now()
@@ -556,17 +819,14 @@ func linearIssueToBeads(li *LinearIssue) (*types.Issue, error) {
 	issue := &types.Issue{
 		Title:       li.Title,
 		Description: li.Description,
-		Priority:    linearPriorityToBeads(li.Priority),
-		IssueType:   types.TypeTask,
+		Priority:    linearPriorityToBeads(li.Priority, config),
+		IssueType:   linearLabelToIssueType(li.Labels, config),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}
 
-	if li.State != nil {
-		issue.Status = linearStateToBeadsStatus(li.State.Type)
-	} else {
-		issue.Status = types.StatusOpen
-	}
+	// Map state using configurable mapping
+	issue.Status = linearStateToBeadsStatus(li.State, config)
 
 	if li.CompletedAt != "" {
 		completedAt, err := time.Parse(time.RFC3339, li.CompletedAt)
@@ -583,28 +843,55 @@ func linearIssueToBeads(li *LinearIssue) (*types.Issue, error) {
 		}
 	}
 
+	// Copy labels (bidirectional sync preserves all labels)
 	if li.Labels != nil {
 		for _, label := range li.Labels.Nodes {
 			issue.Labels = append(issue.Labels, label.Name)
-
-			// Infer issue type from label names
-			lowerName := strings.ToLower(label.Name)
-			if strings.Contains(lowerName, "bug") {
-				issue.IssueType = types.TypeBug
-			} else if strings.Contains(lowerName, "feature") {
-				issue.IssueType = types.TypeFeature
-			} else if strings.Contains(lowerName, "epic") {
-				issue.IssueType = types.TypeEpic
-			} else if strings.Contains(lowerName, "chore") || strings.Contains(lowerName, "maintenance") {
-				issue.IssueType = types.TypeChore
-			}
 		}
 	}
 
 	externalRef := li.URL
 	issue.ExternalRef = &externalRef
 
-	return issue, nil
+	// Collect dependencies to be created after all issues are imported
+	var deps []LinearDependencyInfo
+
+	// Map parent-child relationship
+	if li.Parent != nil {
+		deps = append(deps, LinearDependencyInfo{
+			FromLinearID: li.Identifier,
+			ToLinearID:   li.Parent.Identifier,
+			Type:         "parent-child",
+		})
+	}
+
+	// Map relations to dependencies
+	if li.Relations != nil {
+		for _, rel := range li.Relations.Nodes {
+			depType := linearRelationToBeadsDep(rel.Type, config)
+
+			// For "blockedBy", we invert the direction since the related issue blocks this one
+			if rel.Type == "blockedBy" {
+				deps = append(deps, LinearDependencyInfo{
+					FromLinearID: li.Identifier,
+					ToLinearID:   rel.RelatedIssue.Identifier,
+					Type:         depType,
+				})
+			} else {
+				// For blocks, duplicate, related - this issue is the source
+				deps = append(deps, LinearDependencyInfo{
+					FromLinearID: rel.RelatedIssue.Identifier,
+					ToLinearID:   li.Identifier,
+					Type:         depType,
+				})
+			}
+		}
+	}
+
+	return &LinearIssueConversion{
+		Issue:        issue,
+		Dependencies: deps,
+	}, nil
 }
 
 // linearStateCache caches workflow states for the team to avoid repeated API calls.
@@ -714,6 +1001,33 @@ Configuration:
 
 Environment variables (alternative to config):
   LINEAR_API_KEY - Linear API key
+
+Data Mapping (optional, sensible defaults provided):
+  Priority mapping (Linear 0-4 to Beads 0-4):
+    bd config set linear.priority_map.0 4    # No priority -> Backlog
+    bd config set linear.priority_map.1 0    # Urgent -> Critical
+    bd config set linear.priority_map.2 1    # High -> High
+    bd config set linear.priority_map.3 2    # Medium -> Medium
+    bd config set linear.priority_map.4 3    # Low -> Low
+
+  State mapping (Linear state type to Beads status):
+    bd config set linear.state_map.backlog open
+    bd config set linear.state_map.unstarted open
+    bd config set linear.state_map.started in_progress
+    bd config set linear.state_map.completed closed
+    bd config set linear.state_map.canceled closed
+    bd config set linear.state_map.my_custom_state in_progress  # Custom state names
+
+  Label to issue type mapping:
+    bd config set linear.label_type_map.bug bug
+    bd config set linear.label_type_map.feature feature
+    bd config set linear.label_type_map.epic epic
+
+  Relation type mapping (Linear relations to Beads dependencies):
+    bd config set linear.relation_map.blocks blocks
+    bd config set linear.relation_map.blockedBy blocks
+    bd config set linear.relation_map.duplicate duplicates
+    bd config set linear.relation_map.related related
 
 Examples:
   bd linear sync --pull         # Import issues from Linear
@@ -1130,15 +1444,22 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*LinearPu
 		return stats, nil
 	}
 
+	// Convert all Linear issues and collect dependency information
 	var beadsIssues []*types.Issue
+	var allDeps []LinearDependencyInfo
+	linearIDToBeadsID := make(map[string]string) // Maps Linear identifier to Beads ID
+
 	for _, li := range linearIssues {
-		issue, err := linearIssueToBeads(&li)
+		conversion, err := linearIssueToBeads(ctx, &li)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to convert issue %s: %v\n", li.Identifier, err)
 			stats.Skipped++
 			continue
 		}
-		beadsIssues = append(beadsIssues, issue)
+		beadsIssues = append(beadsIssues, conversion.Issue)
+		allDeps = append(allDeps, conversion.Dependencies...)
+
+		// We'll populate linearIDToBeadsID after import when we have the actual IDs
 	}
 
 	if len(beadsIssues) == 0 {
@@ -1160,7 +1481,73 @@ func doPullFromLinear(ctx context.Context, dryRun bool, state string) (*LinearPu
 	stats.Updated = result.Updated
 	stats.Skipped = result.Skipped
 
+	// Build mapping from Linear identifier to Beads ID using external_ref
+	// After import, re-fetch all issues to get the mapping
+	allBeadsIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to fetch issues for dependency mapping: %v\n", err)
+		return stats, nil
+	}
+
+	for _, issue := range allBeadsIssues {
+		if issue.ExternalRef != nil && isLinearExternalRef(*issue.ExternalRef) {
+			// Extract Linear identifier from URL
+			linearID := extractLinearIdentifier(*issue.ExternalRef)
+			if linearID != "" {
+				linearIDToBeadsID[linearID] = issue.ID
+			}
+		}
+	}
+
+	// Create dependencies between imported issues
+	depsCreated := 0
+	for _, dep := range allDeps {
+		fromID, fromOK := linearIDToBeadsID[dep.FromLinearID]
+		toID, toOK := linearIDToBeadsID[dep.ToLinearID]
+
+		if !fromOK || !toOK {
+			// One or both issues not found - skip silently (may be in different team/project)
+			continue
+		}
+
+		// Create the dependency using types.Dependency
+		dependency := &types.Dependency{
+			IssueID:     fromID,
+			DependsOnID: toID,
+			Type:        types.DependencyType(dep.Type),
+			CreatedAt:   time.Now(),
+		}
+		err := store.AddDependency(ctx, dependency, actor)
+		if err != nil {
+			// Dependency might already exist, that's OK
+			if !strings.Contains(err.Error(), "already exists") &&
+				!strings.Contains(err.Error(), "duplicate") {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create dependency %s -> %s (%s): %v\n",
+					fromID, toID, dep.Type, err)
+			}
+		} else {
+			depsCreated++
+		}
+	}
+
+	if depsCreated > 0 {
+		fmt.Printf("  Created %d dependencies from Linear relations\n", depsCreated)
+	}
+
 	return stats, nil
+}
+
+// extractLinearIdentifier extracts the Linear issue identifier (e.g., "TEAM-123") from a Linear URL.
+func extractLinearIdentifier(url string) string {
+	// Linear URLs look like: https://linear.app/team/issue/TEAM-123/title
+	// We want to extract "TEAM-123"
+	parts := strings.Split(url, "/")
+	for i, part := range parts {
+		if part == "issue" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 // LinearPushStats tracks push operation statistics.
@@ -1215,8 +1602,11 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 		return stats, fmt.Errorf("failed to fetch team states: %w", err)
 	}
 
+	// Load mapping configuration for priority conversion
+	mappingConfig := loadLinearMappingConfig(ctx)
+
 	for _, issue := range toCreate {
-		linearPriority := beadsPriorityToLinear(issue.Priority)
+		linearPriority := beadsPriorityToLinear(issue.Priority, mappingConfig)
 		stateID := stateCache.findStateForBeadsStatus(issue.Status)
 
 		description := issue.Description
