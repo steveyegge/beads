@@ -1056,3 +1056,65 @@ func TestIsWorktree(t *testing.T) {
 		}
 	})
 }
+
+// TestCreateBeadsWorktree_MissingButRegistered tests the issue #609 scenario where
+// the worktree directory is deleted but git still has it registered in .git/worktrees/.
+// The -f flag on git worktree add should handle this gracefully.
+func TestCreateBeadsWorktree_MissingButRegistered(t *testing.T) {
+	repoPath, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	wm := NewWorktreeManager(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "beads-worktree-gh609")
+	branch := "beads-metadata-gh609"
+
+	// Step 1: Create a worktree
+	if err := wm.CreateBeadsWorktree(branch, worktreePath); err != nil {
+		t.Fatalf("Initial CreateBeadsWorktree failed: %v", err)
+	}
+
+	// Verify it exists and is registered
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Fatal("Worktree was not created")
+	}
+
+	// Step 2: Manually delete the worktree directory (simulating the bug scenario)
+	// but leave the git registration in .git/worktrees/
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("Failed to remove worktree directory: %v", err)
+	}
+
+	// Verify the directory is gone
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatal("Worktree directory should not exist after removal")
+	}
+
+	// Verify git still has it registered (this is the "missing but registered" state)
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to list worktrees: %v", err)
+	}
+	if !strings.Contains(string(output), "worktree") {
+		t.Log("Note: git worktree list shows no worktrees - prune may have run")
+	}
+
+	// Step 3: Try to recreate the worktree - this should succeed with -f flag (issue #609 fix)
+	// Without the fix, this would fail with:
+	// "fatal: '.git/beads-worktrees/...' is a missing but already registered worktree"
+	if err := wm.CreateBeadsWorktree(branch, worktreePath); err != nil {
+		t.Errorf("CreateBeadsWorktree failed for missing-but-registered worktree (issue #609): %v", err)
+	}
+
+	// Verify the worktree was recreated successfully
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Error("Worktree was not recreated after issue #609 fix")
+	}
+
+	// Verify it's a valid worktree
+	valid, err := wm.isValidWorktree(worktreePath)
+	if err != nil || !valid {
+		t.Errorf("Recreated worktree should be valid: valid=%v, err=%v", valid, err)
+	}
+}

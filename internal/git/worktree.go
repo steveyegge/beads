@@ -52,13 +52,15 @@ func (wm *WorktreeManager) CreateBeadsWorktree(branch, worktreePath string) erro
 	branchExists := wm.branchExists(branch)
 
 	// Create worktree without checking out files initially
+	// Use -f (force) to handle "missing but already registered" state (issue #609)
+	// This occurs when the worktree directory was deleted but git registration persists
 	var cmd *exec.Cmd
 	if branchExists {
 		// Checkout existing branch
-		cmd = exec.Command("git", "worktree", "add", "--no-checkout", worktreePath, branch)
+		cmd = exec.Command("git", "worktree", "add", "-f", "--no-checkout", worktreePath, branch)
 	} else {
 		// Create new branch
-		cmd = exec.Command("git", "worktree", "add", "--no-checkout", "-b", branch, worktreePath)
+		cmd = exec.Command("git", "worktree", "add", "-f", "--no-checkout", "-b", branch, worktreePath)
 	}
 	cmd.Dir = wm.repoPath
 
