@@ -1718,6 +1718,91 @@ func extractLinearIdentifier(url string) string {
 	return ""
 }
 
+// FetchIssueByIdentifier retrieves a single issue from Linear by its identifier (e.g., "TEAM-123").
+// Returns nil if the issue is not found.
+func (c *LinearClient) FetchIssueByIdentifier(ctx context.Context, identifier string) (*LinearIssue, error) {
+	query := `
+		query IssueByIdentifier($filter: IssueFilter!) {
+			issues(filter: $filter, first: 1) {
+				nodes {
+					id
+					identifier
+					title
+					description
+					url
+					priority
+					state {
+						id
+						name
+						type
+					}
+					assignee {
+						id
+						name
+						email
+						displayName
+					}
+					labels {
+						nodes {
+							id
+							name
+						}
+					}
+					createdAt
+					updatedAt
+					completedAt
+				}
+			}
+		}
+	`
+
+	// Build filter to search by identifier number and team prefix
+	// Linear identifiers look like "TEAM-123", we filter by number
+	// and validate the full identifier in the results
+	variables := map[string]interface{}{
+		"filter": map[string]interface{}{
+			"team": map[string]interface{}{
+				"id": map[string]interface{}{
+					"eq": c.teamID,
+				},
+			},
+		},
+	}
+
+	// Extract the issue number from identifier (e.g., "123" from "TEAM-123")
+	parts := strings.Split(identifier, "-")
+	if len(parts) >= 2 {
+		// Add number filter for more precise matching
+		variables["filter"].(map[string]interface{})["number"] = map[string]interface{}{
+			"eq": parts[len(parts)-1],
+		}
+	}
+
+	req := &GraphQLRequest{
+		Query:     query,
+		Variables: variables,
+	}
+
+	resp, err := c.execute(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch issue by identifier: %w", err)
+	}
+
+	var issuesResp LinearIssuesResponse
+	if err := json.Unmarshal(resp.Data, &issuesResp); err != nil {
+		return nil, fmt.Errorf("failed to parse issues response: %w", err)
+	}
+
+	// Find the exact match by identifier (in case of partial matches)
+	for _, issue := range issuesResp.Issues.Nodes {
+		if issue.Identifier == identifier {
+			return &issue, nil
+		}
+	}
+
+	return nil, nil // Issue not found
+}
+
 // LinearPushStats tracks push operation statistics.
 type LinearPushStats struct {
 	Created int
@@ -1809,9 +1894,91 @@ func doPushToLinear(ctx context.Context, dryRun bool, createOnly bool, updateRef
 		}
 	}
 
+	// Process updates for existing Linear issues
 	if len(toUpdate) > 0 && !createOnly {
-		fmt.Fprintf(os.Stderr, "  Note: Updating existing Linear issues is not yet supported (%d skipped)\n", len(toUpdate))
-		stats.Skipped += len(toUpdate)
+		for _, issue := range toUpdate {
+			// Extract Linear identifier from external_ref URL
+			linearIdentifier := extractLinearIdentifier(*issue.ExternalRef)
+			if linearIdentifier == "" {
+				fmt.Fprintf(os.Stderr, "Warning: could not extract Linear identifier from %s: %s\n",
+					issue.ID, *issue.ExternalRef)
+				stats.Errors++
+				continue
+			}
+
+			// Fetch the Linear issue to get its internal ID and UpdatedAt timestamp
+			linearIssue, err := client.FetchIssueByIdentifier(ctx, linearIdentifier)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to fetch Linear issue %s: %v\n",
+					linearIdentifier, err)
+				stats.Errors++
+				continue
+			}
+			if linearIssue == nil {
+				fmt.Fprintf(os.Stderr, "Warning: Linear issue %s not found (may have been deleted)\n",
+					linearIdentifier)
+				stats.Skipped++
+				continue
+			}
+
+			// Parse Linear's UpdatedAt timestamp (RFC3339 format)
+			linearUpdatedAt, err := time.Parse(time.RFC3339, linearIssue.UpdatedAt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to parse Linear UpdatedAt for %s: %v\n",
+					linearIdentifier, err)
+				stats.Errors++
+				continue
+			}
+
+			// Compare timestamps: only update if local is newer
+			if !issue.UpdatedAt.After(linearUpdatedAt) {
+				// Linear is newer or same, skip update
+				stats.Skipped++
+				continue
+			}
+
+			// Build description from all beads text fields
+			description := issue.Description
+			if issue.AcceptanceCriteria != "" {
+				description += "\n\n## Acceptance Criteria\n" + issue.AcceptanceCriteria
+			}
+			if issue.Design != "" {
+				description += "\n\n## Design\n" + issue.Design
+			}
+			if issue.Notes != "" {
+				description += "\n\n## Notes\n" + issue.Notes
+			}
+
+			// Build update payload
+			updatePayload := map[string]interface{}{
+				"title":       issue.Title,
+				"description": description,
+			}
+
+			// Add priority if set
+			linearPriority := beadsPriorityToLinear(issue.Priority, mappingConfig)
+			if linearPriority > 0 {
+				updatePayload["priority"] = linearPriority
+			}
+
+			// Add state if we can map it
+			stateID := stateCache.findStateForBeadsStatus(issue.Status)
+			if stateID != "" {
+				updatePayload["stateId"] = stateID
+			}
+
+			// Perform the update using Linear's internal issue ID
+			updatedLinearIssue, err := client.UpdateIssue(ctx, linearIssue.ID, updatePayload)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update Linear issue %s: %v\n",
+					linearIdentifier, err)
+				stats.Errors++
+				continue
+			}
+
+			stats.Updated++
+			fmt.Printf("  Updated: %s -> %s\n", issue.ID, updatedLinearIssue.Identifier)
+		}
 	}
 
 	return stats, nil
