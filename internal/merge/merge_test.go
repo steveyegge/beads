@@ -181,6 +181,19 @@ func TestMergeDependencies(t *testing.T) {
 			},
 		},
 		{
+			name: "both add same dep (not in base) - no duplicates",
+			base: []Dependency{},
+			left: []Dependency{
+				{IssueID: "bd-1", DependsOnID: "bd-2", Type: "blocks", CreatedAt: "2024-01-01T00:00:00Z"},
+			},
+			right: []Dependency{
+				{IssueID: "bd-1", DependsOnID: "bd-2", Type: "blocks", CreatedAt: "2024-01-02T00:00:00Z"},
+			},
+			expected: []Dependency{
+				{IssueID: "bd-1", DependsOnID: "bd-2", Type: "blocks", CreatedAt: "2024-01-01T00:00:00Z"}, // Left preferred
+			},
+		},
+		{
 			name: "left removes dep from base - REMOVAL WINS",
 			base: []Dependency{
 				{IssueID: "bd-1", DependsOnID: "bd-2", Type: "blocks", CreatedAt: "2024-01-01T00:00:00Z"},
