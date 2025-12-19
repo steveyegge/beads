@@ -103,6 +103,8 @@ type UpdateArgs struct {
 	RelatesTo    *string `json:"relates_to,omitempty"`    // JSON array of related issue IDs
 	DuplicateOf  *string `json:"duplicate_of,omitempty"`  // Canonical issue ID if duplicate
 	SupersededBy *string `json:"superseded_by,omitempty"` // Replacement issue ID if obsolete
+	// Pinned field (bd-iea)
+	Pinned *bool `json:"pinned,omitempty"` // If true, issue is a persistent context marker
 }
 
 // CloseArgs represents arguments for the close operation
