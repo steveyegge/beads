@@ -97,6 +97,10 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.SupersededBy != nil {
 		u["superseded_by"] = *a.SupersededBy
 	}
+	// Pinned field (bd-iea)
+	if a.Pinned != nil {
+		u["pinned"] = *a.Pinned
+	}
 	return u
 }
 
