@@ -27,6 +27,7 @@ Configuration:
 
 Environment variables (alternative to config):
   LINEAR_API_KEY - Linear API key
+  LINEAR_TEAM_ID - Linear team ID (UUID)
 
 Data Mapping (optional, sensible defaults provided):
   Priority mapping (Linear 0-4 to Beads 0-4):
@@ -287,13 +288,10 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	apiKey, _ := store.GetConfig(ctx, "linear.api_key")
-	teamID, _ := store.GetConfig(ctx, "linear.team_id")
+	// Use getLinearConfig to respect priority: config first, then environment variable
+	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
+	teamID, _ := getLinearConfig(ctx, "linear.team_id")
 	lastSync, _ := store.GetConfig(ctx, "linear.last_sync")
-
-	if apiKey == "" {
-		apiKey = os.Getenv("LINEAR_API_KEY")
-	}
 
 	configured := apiKey != "" && teamID != ""
 
@@ -340,6 +338,7 @@ func runLinearStatus(cmd *cobra.Command, args []string) {
 		fmt.Println()
 		fmt.Println("Or use environment variables:")
 		fmt.Println("  export LINEAR_API_KEY=\"YOUR_API_KEY\"")
+		fmt.Println("  export LINEAR_TEAM_ID=\"TEAM_ID\"")
 		return
 	}
 
@@ -424,14 +423,15 @@ func validateLinearConfig() error {
 
 	ctx := rootCtx
 
-	apiKey, _ := store.GetConfig(ctx, "linear.api_key")
-	if apiKey == "" && os.Getenv("LINEAR_API_KEY") == "" {
+	// Use getLinearConfig to respect priority: config first, then environment variable
+	apiKey, _ := getLinearConfig(ctx, "linear.api_key")
+	if apiKey == "" {
 		return fmt.Errorf("Linear API key not configured\nRun: bd config set linear.api_key \"YOUR_API_KEY\"\nOr: export LINEAR_API_KEY=YOUR_API_KEY")
 	}
 
-	teamID, _ := store.GetConfig(ctx, "linear.team_id")
+	teamID, _ := getLinearConfig(ctx, "linear.team_id")
 	if teamID == "" {
-		return fmt.Errorf("linear.team_id not configured\nRun: bd config set linear.team_id \"TEAM_ID\"")
+		return fmt.Errorf("linear.team_id not configured\nRun: bd config set linear.team_id \"TEAM_ID\"\nOr: export LINEAR_TEAM_ID=TEAM_ID")
 	}
 
 	// Validate team ID format (should be UUID)
