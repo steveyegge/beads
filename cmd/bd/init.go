@@ -195,6 +195,16 @@ With --stealth: configures global git settings for invisible beads usage:
 					}
 				}
 
+				// Create empty interactions.jsonl file (append-only agent audit log)
+				interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
+				if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
+					// nolint:gosec // G306: JSONL file needs to be readable by other tools
+					if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to create interactions.jsonl: %v\n", err)
+						os.Exit(1)
+					}
+				}
+
 				// Create metadata.json for --no-db mode
 				cfg := configfile.DefaultConfig()
 				if err := cfg.Save(beadsDir); err != nil {
@@ -233,6 +243,16 @@ With --stealth: configures global git settings for invisible beads usage:
 			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
 				// Non-fatal - continue anyway
+			}
+
+			// Ensure interactions.jsonl exists (append-only agent audit log)
+			interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
+			if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
+				// nolint:gosec // G306: JSONL file needs to be readable by other tools
+				if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create interactions.jsonl: %v\n", err)
+					// Non-fatal - continue anyway
+				}
 			}
 		}
 
@@ -1555,7 +1575,6 @@ Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 	return nil // No database found, safe to init
 }
 
-
 // landingThePlaneSection is the "landing the plane" instructions for AI agents
 // This gets appended to AGENTS.md and @AGENTS.md during bd init
 const landingThePlaneSection = `
@@ -1610,17 +1629,17 @@ func updateAgentFile(filename string, verbose bool) error {
 		// File doesn't exist - create it with basic structure
 		newContent := fmt.Sprintf(`# Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run ` + "`bd onboard`" + ` to get started.
+This project uses **bd** (beads) for issue tracking. Run `+"`bd onboard`"+` to get started.
 
 ## Quick Reference
 
-` + "```bash" + `
+`+"```bash"+`
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
 bd sync               # Sync with git
-` + "```" + `
+`+"```"+`
 %s
 `, landingThePlaneSection)
 

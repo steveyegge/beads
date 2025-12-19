@@ -15,9 +15,11 @@ const (
 
 // Config holds configuration for the compaction process.
 type Config struct {
-	APIKey      string
-	Concurrency int
-	DryRun      bool
+	APIKey       string
+	Concurrency  int
+	DryRun       bool
+	AuditEnabled bool
+	Actor        string
 }
 
 // Compactor handles issue compaction using AI summarization.
@@ -52,6 +54,10 @@ func New(store *sqlite.SQLiteStorage, apiKey string, config *Config) (*Compactor
 				return nil, fmt.Errorf("failed to create Haiku client: %w", err)
 			}
 		}
+	}
+	if haikuClient != nil {
+		haikuClient.auditEnabled = config.AuditEnabled
+		haikuClient.auditActor = config.Actor
 	}
 
 	return &Compactor{

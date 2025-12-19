@@ -56,7 +56,7 @@ fi
 
 # Stage all tracked JSONL files (beads.jsonl, issues.jsonl for backward compat, deletions.jsonl for deletion propagation)
 # git add is harmless if file doesn't exist
-for f in .beads/beads.jsonl .beads/issues.jsonl .beads/deletions.jsonl; do
+for f in .beads/beads.jsonl .beads/issues.jsonl .beads/deletions.jsonl .beads/interactions.jsonl; do
     [ -f "$f" ] && git add "$f" 2>/dev/null || true
 done
 
