@@ -12,11 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestLinearPriorityToBeads(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name           string
@@ -57,9 +58,9 @@ func TestLinearPriorityToBeads(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearPriorityToBeads(tt.linearPriority, config)
+			got := linear.PriorityToBeads(tt.linearPriority, config)
 			if got != tt.wantBeads {
-				t.Errorf("linearPriorityToBeads(%d) = %d, want %d",
+				t.Errorf("PriorityToBeads(%d) = %d, want %d",
 					tt.linearPriority, got, tt.wantBeads)
 			}
 		})
@@ -68,7 +69,7 @@ func TestLinearPriorityToBeads(t *testing.T) {
 
 func TestLinearPriorityToBeadsCustomConfig(t *testing.T) {
 	// Test with custom priority mapping
-	config := &LinearMappingConfig{
+	config := &linear.MappingConfig{
 		PriorityMap: map[string]int{
 			"0": 2, // Custom: no priority -> medium
 			"1": 1, // Custom: urgent -> high (not critical)
@@ -90,16 +91,16 @@ func TestLinearPriorityToBeadsCustomConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := linearPriorityToBeads(tt.linearPriority, config)
+		got := linear.PriorityToBeads(tt.linearPriority, config)
 		if got != tt.wantBeads {
-			t.Errorf("linearPriorityToBeads(%d) with custom config = %d, want %d",
+			t.Errorf("PriorityToBeads(%d) with custom config = %d, want %d",
 				tt.linearPriority, got, tt.wantBeads)
 		}
 	}
 }
 
 func TestBeadsPriorityToLinear(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name          string
@@ -135,9 +136,9 @@ func TestBeadsPriorityToLinear(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := beadsPriorityToLinear(tt.beadsPriority, config)
+			got := linear.PriorityToLinear(tt.beadsPriority, config)
 			if got != tt.wantLinear {
-				t.Errorf("beadsPriorityToLinear(%d) = %d, want %d",
+				t.Errorf("PriorityToLinear(%d) = %d, want %d",
 					tt.beadsPriority, got, tt.wantLinear)
 			}
 		})
@@ -145,11 +146,11 @@ func TestBeadsPriorityToLinear(t *testing.T) {
 }
 
 func TestLinearStateToBeadsStatus(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name       string
-		state      *LinearState
+		state      *linear.State
 		wantStatus types.Status
 	}{
 		{
@@ -159,41 +160,41 @@ func TestLinearStateToBeadsStatus(t *testing.T) {
 		},
 		{
 			name:       "backlog state maps to open",
-			state:      &LinearState{Type: "backlog", Name: "Backlog"},
+			state:      &linear.State{Type: "backlog", Name: "Backlog"},
 			wantStatus: types.StatusOpen,
 		},
 		{
 			name:       "unstarted state maps to open",
-			state:      &LinearState{Type: "unstarted", Name: "Todo"},
+			state:      &linear.State{Type: "unstarted", Name: "Todo"},
 			wantStatus: types.StatusOpen,
 		},
 		{
 			name:       "started state maps to in_progress",
-			state:      &LinearState{Type: "started", Name: "In Progress"},
+			state:      &linear.State{Type: "started", Name: "In Progress"},
 			wantStatus: types.StatusInProgress,
 		},
 		{
 			name:       "completed state maps to closed",
-			state:      &LinearState{Type: "completed", Name: "Done"},
+			state:      &linear.State{Type: "completed", Name: "Done"},
 			wantStatus: types.StatusClosed,
 		},
 		{
 			name:       "canceled state maps to closed",
-			state:      &LinearState{Type: "canceled", Name: "Cancelled"},
+			state:      &linear.State{Type: "canceled", Name: "Cancelled"},
 			wantStatus: types.StatusClosed,
 		},
 		{
 			name:       "unknown state type defaults to open",
-			state:      &LinearState{Type: "unknown", Name: "Unknown State"},
+			state:      &linear.State{Type: "unknown", Name: "Unknown State"},
 			wantStatus: types.StatusOpen,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearStateToBeadsStatus(tt.state, config)
+			got := linear.StateToBeadsStatus(tt.state, config)
 			if got != tt.wantStatus {
-				t.Errorf("linearStateToBeadsStatus() = %s, want %s", got, tt.wantStatus)
+				t.Errorf("StateToBeadsStatus() = %s, want %s", got, tt.wantStatus)
 			}
 		})
 	}
@@ -203,7 +204,7 @@ func TestLinearStateToBeadsStatusCustomConfig(t *testing.T) {
 	// Test with custom state name mapping for custom workflow states
 	// Note: State names are converted to lowercase with spaces preserved
 	// So "In Review" -> "in review", "On Hold" -> "on hold"
-	config := &LinearMappingConfig{
+	config := &linear.MappingConfig{
 		StateMap: map[string]string{
 			"backlog":    "open",
 			"unstarted":  "open",
@@ -219,36 +220,36 @@ func TestLinearStateToBeadsStatusCustomConfig(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		state      *LinearState
+		state      *linear.State
 		wantStatus types.Status
 	}{
 		{
 			name:       "custom in_review state maps to in_progress",
-			state:      &LinearState{Type: "custom", Name: "In Review"},
+			state:      &linear.State{Type: "custom", Name: "In Review"},
 			wantStatus: types.StatusInProgress,
 		},
 		{
 			name:       "custom on_hold state maps to blocked",
-			state:      &LinearState{Type: "custom", Name: "On Hold"},
+			state:      &linear.State{Type: "custom", Name: "On Hold"},
 			wantStatus: types.StatusBlocked,
 		},
 		{
 			name:       "custom blocked state maps to blocked",
-			state:      &LinearState{Type: "custom", Name: "Blocked"},
+			state:      &linear.State{Type: "custom", Name: "Blocked"},
 			wantStatus: types.StatusBlocked,
 		},
 		{
 			name:       "custom validating state maps to in_progress",
-			state:      &LinearState{Type: "custom", Name: "Validating"},
+			state:      &linear.State{Type: "custom", Name: "Validating"},
 			wantStatus: types.StatusInProgress,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearStateToBeadsStatus(tt.state, config)
+			got := linear.StateToBeadsStatus(tt.state, config)
 			if got != tt.wantStatus {
-				t.Errorf("linearStateToBeadsStatus() with custom config = %s, want %s",
+				t.Errorf("StateToBeadsStatus() with custom config = %s, want %s",
 					got, tt.wantStatus)
 			}
 		})
@@ -285,9 +286,9 @@ func TestBeadsStatusToLinearStateType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := beadsStatusToLinearStateType(tt.status)
+			got := linear.StatusToLinearStateType(tt.status)
 			if got != tt.wantLinearState {
-				t.Errorf("beadsStatusToLinearStateType(%s) = %s, want %s",
+				t.Errorf("StatusToLinearStateType(%s) = %s, want %s",
 					tt.status, got, tt.wantLinearState)
 			}
 		})
@@ -295,11 +296,11 @@ func TestBeadsStatusToLinearStateType(t *testing.T) {
 }
 
 func TestLinearLabelToIssueType(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name     string
-		labels   *LinearLabels
+		labels   *linear.Labels
 		wantType types.IssueType
 	}{
 		{
@@ -309,76 +310,76 @@ func TestLinearLabelToIssueType(t *testing.T) {
 		},
 		{
 			name:     "empty labels defaults to task",
-			labels:   &LinearLabels{Nodes: []LinearLabel{}},
+			labels:   &linear.Labels{Nodes: []linear.Label{}},
 			wantType: types.TypeTask,
 		},
 		{
 			name: "bug label maps to bug type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "bug"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "bug"}},
 			},
 			wantType: types.TypeBug,
 		},
 		{
 			name: "Bug (capitalized) label maps to bug type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "Bug"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "Bug"}},
 			},
 			wantType: types.TypeBug,
 		},
 		{
 			name: "defect label maps to bug type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "defect"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "defect"}},
 			},
 			wantType: types.TypeBug,
 		},
 		{
 			name: "feature label maps to feature type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "feature"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "feature"}},
 			},
 			wantType: types.TypeFeature,
 		},
 		{
 			name: "enhancement label maps to feature type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "enhancement"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "enhancement"}},
 			},
 			wantType: types.TypeFeature,
 		},
 		{
 			name: "epic label maps to epic type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "epic"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "epic"}},
 			},
 			wantType: types.TypeEpic,
 		},
 		{
 			name: "chore label maps to chore type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "chore"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "chore"}},
 			},
 			wantType: types.TypeChore,
 		},
 		{
 			name: "maintenance label maps to chore type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "maintenance"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "maintenance"}},
 			},
 			wantType: types.TypeChore,
 		},
 		{
 			name: "task label maps to task type",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "task"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "task"}},
 			},
 			wantType: types.TypeTask,
 		},
 		{
 			name: "first matching label wins",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{
+			labels: &linear.Labels{
+				Nodes: []linear.Label{
 					{Name: "bug"},
 					{Name: "feature"},
 				},
@@ -387,15 +388,15 @@ func TestLinearLabelToIssueType(t *testing.T) {
 		},
 		{
 			name: "label containing keyword matches",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "critical-bug"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "critical-bug"}},
 			},
 			wantType: types.TypeBug, // Contains "bug"
 		},
 		{
 			name: "unrecognized label defaults to task",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "documentation"}, {Name: "urgent"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "documentation"}, {Name: "urgent"}},
 			},
 			wantType: types.TypeTask,
 		},
@@ -403,9 +404,9 @@ func TestLinearLabelToIssueType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearLabelToIssueType(tt.labels, config)
+			got := linear.LabelToIssueType(tt.labels, config)
 			if got != tt.wantType {
-				t.Errorf("linearLabelToIssueType() = %s, want %s", got, tt.wantType)
+				t.Errorf("LabelToIssueType() = %s, want %s", got, tt.wantType)
 			}
 		})
 	}
@@ -413,7 +414,7 @@ func TestLinearLabelToIssueType(t *testing.T) {
 
 func TestLinearLabelToIssueTypeCustomConfig(t *testing.T) {
 	// Test with custom label-to-type mapping
-	config := &LinearMappingConfig{
+	config := &linear.MappingConfig{
 		LabelTypeMap: map[string]string{
 			"incident":    "bug",
 			"improvement": "feature",
@@ -424,27 +425,27 @@ func TestLinearLabelToIssueTypeCustomConfig(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		labels   *LinearLabels
+		labels   *linear.Labels
 		wantType types.IssueType
 	}{
 		{
 			name: "custom incident label maps to bug",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "incident"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "incident"}},
 			},
 			wantType: types.TypeBug,
 		},
 		{
 			name: "custom improvement label maps to feature",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "improvement"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "improvement"}},
 			},
 			wantType: types.TypeFeature,
 		},
 		{
 			name: "custom tech-debt label maps to chore",
-			labels: &LinearLabels{
-				Nodes: []LinearLabel{{Name: "tech-debt"}},
+			labels: &linear.Labels{
+				Nodes: []linear.Label{{Name: "tech-debt"}},
 			},
 			wantType: types.TypeChore,
 		},
@@ -452,9 +453,9 @@ func TestLinearLabelToIssueTypeCustomConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearLabelToIssueType(tt.labels, config)
+			got := linear.LabelToIssueType(tt.labels, config)
 			if got != tt.wantType {
-				t.Errorf("linearLabelToIssueType() with custom config = %s, want %s",
+				t.Errorf("LabelToIssueType() with custom config = %s, want %s",
 					got, tt.wantType)
 			}
 		})
@@ -462,7 +463,7 @@ func TestLinearLabelToIssueTypeCustomConfig(t *testing.T) {
 }
 
 func TestLinearRelationToBeadsDep(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name         string
@@ -498,9 +499,9 @@ func TestLinearRelationToBeadsDep(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linearRelationToBeadsDep(tt.relationType, config)
+			got := linear.RelationToBeadsDep(tt.relationType, config)
 			if got != tt.wantDepType {
-				t.Errorf("linearRelationToBeadsDep(%s) = %s, want %s",
+				t.Errorf("RelationToBeadsDep(%s) = %s, want %s",
 					tt.relationType, got, tt.wantDepType)
 			}
 		})
@@ -509,7 +510,7 @@ func TestLinearRelationToBeadsDep(t *testing.T) {
 
 func TestLinearRelationToBeadsDepCustomConfig(t *testing.T) {
 	// Test with custom relation mapping
-	config := &LinearMappingConfig{
+	config := &linear.MappingConfig{
 		RelationMap: map[string]string{
 			"blocks":    "blocks",
 			"blockedBy": "blocks",
@@ -529,9 +530,9 @@ func TestLinearRelationToBeadsDepCustomConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.relationType, func(t *testing.T) {
-			got := linearRelationToBeadsDep(tt.relationType, config)
+			got := linear.RelationToBeadsDep(tt.relationType, config)
 			if got != tt.wantDepType {
-				t.Errorf("linearRelationToBeadsDep(%s) with custom config = %s, want %s",
+				t.Errorf("RelationToBeadsDep(%s) with custom config = %s, want %s",
 					tt.relationType, got, tt.wantDepType)
 			}
 		})
@@ -539,11 +540,11 @@ func TestLinearRelationToBeadsDepCustomConfig(t *testing.T) {
 }
 
 func TestLinearIssueToBeads(t *testing.T) {
-	ctx := context.Background()
+	config := linear.DefaultMappingConfig()
 
 	tests := []struct {
 		name          string
-		linearIssue   *LinearIssue
+		linearIssue   *linear.Issue
 		wantTitle     string
 		wantStatus    types.Status
 		wantPriority  int
@@ -554,14 +555,14 @@ func TestLinearIssueToBeads(t *testing.T) {
 	}{
 		{
 			name: "basic issue conversion",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:          "uuid-123",
 				Identifier:  "TEAM-123",
 				Title:       "Fix login bug",
 				Description: "Users cannot login",
 				URL:         "https://linear.app/team/issue/TEAM-123/fix-login-bug",
 				Priority:    1, // Urgent
-				State:       &LinearState{Type: "started", Name: "In Progress"},
+				State:       &linear.State{Type: "started", Name: "In Progress"},
 				CreatedAt:   "2025-01-15T10:00:00Z",
 				UpdatedAt:   "2025-01-16T14:30:00Z",
 			},
@@ -574,16 +575,16 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "issue with labels for type inference",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:          "uuid-456",
 				Identifier:  "TEAM-456",
 				Title:       "New feature",
 				Description: "Add new feature",
 				URL:         "https://linear.app/team/issue/TEAM-456/new-feature",
 				Priority:    2, // High
-				State:       &LinearState{Type: "unstarted", Name: "Todo"},
-				Labels: &LinearLabels{
-					Nodes: []LinearLabel{{Name: "feature"}, {Name: "priority"}},
+				State:       &linear.State{Type: "unstarted", Name: "Todo"},
+				Labels: &linear.Labels{
+					Nodes: []linear.Label{{Name: "feature"}, {Name: "priority"}},
 				},
 				CreatedAt: "2025-01-15T10:00:00Z",
 				UpdatedAt: "2025-01-15T10:00:00Z",
@@ -597,14 +598,14 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "issue with assignee",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:         "uuid-789",
 				Identifier: "TEAM-789",
 				Title:      "Assigned task",
 				URL:        "https://linear.app/team/issue/TEAM-789/assigned-task",
 				Priority:   3, // Medium
-				State:      &LinearState{Type: "started", Name: "In Progress"},
-				Assignee: &LinearUser{
+				State:      &linear.State{Type: "started", Name: "In Progress"},
+				Assignee: &linear.User{
 					Name:  "John Doe",
 					Email: "john@example.com",
 				},
@@ -621,14 +622,14 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "issue with parent creates parent-child dependency",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:         "uuid-child",
 				Identifier: "TEAM-200",
 				Title:      "Child task",
 				URL:        "https://linear.app/team/issue/TEAM-200/child-task",
 				Priority:   3,
-				State:      &LinearState{Type: "unstarted", Name: "Todo"},
-				Parent:     &LinearParent{ID: "uuid-parent", Identifier: "TEAM-100"},
+				State:      &linear.State{Type: "unstarted", Name: "Todo"},
+				Parent:     &linear.Parent{ID: "uuid-parent", Identifier: "TEAM-100"},
 				CreatedAt:  "2025-01-15T10:00:00Z",
 				UpdatedAt:  "2025-01-15T10:00:00Z",
 			},
@@ -641,15 +642,15 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "issue with relations",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:         "uuid-blocker",
 				Identifier: "TEAM-300",
 				Title:      "Blocking issue",
 				URL:        "https://linear.app/team/issue/TEAM-300/blocking-issue",
 				Priority:   2,
-				State:      &LinearState{Type: "started", Name: "In Progress"},
-				Relations: &LinearRelations{
-					Nodes: []LinearRelation{
+				State:      &linear.State{Type: "started", Name: "In Progress"},
+				Relations: &linear.Relations{
+					Nodes: []linear.Relation{
 						{
 							ID:   "rel-1",
 							Type: "blocks",
@@ -680,15 +681,15 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "issue with duplicate relation",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:         "uuid-dup",
 				Identifier: "TEAM-350",
 				Title:      "Duplicate issue",
 				URL:        "https://linear.app/team/issue/TEAM-350/dup-issue",
 				Priority:   3,
-				State:      &LinearState{Type: "unstarted", Name: "Todo"},
-				Relations: &LinearRelations{
-					Nodes: []LinearRelation{
+				State:      &linear.State{Type: "unstarted", Name: "Todo"},
+				Relations: &linear.Relations{
+					Nodes: []linear.Relation{
 						{
 							ID:   "rel-dup",
 							Type: "duplicate",
@@ -711,13 +712,13 @@ func TestLinearIssueToBeads(t *testing.T) {
 		},
 		{
 			name: "closed issue with completedAt",
-			linearIssue: &LinearIssue{
+			linearIssue: &linear.Issue{
 				ID:          "uuid-closed",
 				Identifier:  "TEAM-400",
 				Title:       "Completed task",
 				URL:         "https://linear.app/team/issue/TEAM-400/completed-task",
 				Priority:    3,
-				State:       &LinearState{Type: "completed", Name: "Done"},
+				State:       &linear.State{Type: "completed", Name: "Done"},
 				CreatedAt:   "2025-01-10T10:00:00Z",
 				UpdatedAt:   "2025-01-15T10:00:00Z",
 				CompletedAt: "2025-01-15T09:00:00Z",
@@ -733,22 +734,23 @@ func TestLinearIssueToBeads(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conversion := linearIssueToBeads(ctx, tt.linearIssue)
+			conversion := linear.IssueToBeads(tt.linearIssue, config)
+			issue := conversion.Issue.(*types.Issue)
 
-			if conversion.Issue.Title != tt.wantTitle {
-				t.Errorf("Title = %s, want %s", conversion.Issue.Title, tt.wantTitle)
+			if issue.Title != tt.wantTitle {
+				t.Errorf("Title = %s, want %s", issue.Title, tt.wantTitle)
 			}
-			if conversion.Issue.Status != tt.wantStatus {
-				t.Errorf("Status = %s, want %s", conversion.Issue.Status, tt.wantStatus)
+			if issue.Status != tt.wantStatus {
+				t.Errorf("Status = %s, want %s", issue.Status, tt.wantStatus)
 			}
-			if conversion.Issue.Priority != tt.wantPriority {
-				t.Errorf("Priority = %d, want %d", conversion.Issue.Priority, tt.wantPriority)
+			if issue.Priority != tt.wantPriority {
+				t.Errorf("Priority = %d, want %d", issue.Priority, tt.wantPriority)
 			}
-			if conversion.Issue.IssueType != tt.wantType {
-				t.Errorf("IssueType = %s, want %s", conversion.Issue.IssueType, tt.wantType)
+			if issue.IssueType != tt.wantType {
+				t.Errorf("IssueType = %s, want %s", issue.IssueType, tt.wantType)
 			}
-			if conversion.Issue.Assignee != tt.wantAssignee {
-				t.Errorf("Assignee = %s, want %s", conversion.Issue.Assignee, tt.wantAssignee)
+			if issue.Assignee != tt.wantAssignee {
+				t.Errorf("Assignee = %s, want %s", issue.Assignee, tt.wantAssignee)
 			}
 			if len(conversion.Dependencies) != tt.wantDepsCount {
 				t.Errorf("Dependencies count = %d, want %d",
@@ -779,7 +781,7 @@ func TestLinearIssueToBeads(t *testing.T) {
 					t.Errorf("expected duplicate dependency TEAM-350->TEAM-351, got %s->%s", dep.FromLinearID, dep.ToLinearID)
 				}
 			}
-			if tt.wantHasExtRef && conversion.Issue.ExternalRef == nil {
+			if tt.wantHasExtRef && issue.ExternalRef == nil {
 				t.Error("ExternalRef should be set")
 			}
 		})
@@ -831,9 +833,9 @@ func TestIsLinearExternalRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isLinearExternalRef(tt.externalRef)
+			got := linear.IsLinearExternalRef(tt.externalRef)
 			if got != tt.want {
-				t.Errorf("isLinearExternalRef(%q) = %v, want %v",
+				t.Errorf("IsLinearExternalRef(%q) = %v, want %v",
 					tt.externalRef, got, tt.want)
 			}
 		})
@@ -880,9 +882,9 @@ func TestExtractLinearIdentifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractLinearIdentifier(tt.url)
+			got := linear.ExtractLinearIdentifier(tt.url)
 			if got != tt.want {
-				t.Errorf("extractLinearIdentifier(%q) = %q, want %q",
+				t.Errorf("ExtractLinearIdentifier(%q) = %q, want %q",
 					tt.url, got, tt.want)
 			}
 		})
@@ -946,9 +948,9 @@ func TestParseBeadsStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := parseBeadsStatus(tt.input)
+			got := linear.ParseBeadsStatus(tt.input)
 			if got != tt.wantStatus {
-				t.Errorf("parseBeadsStatus(%q) = %s, want %s",
+				t.Errorf("ParseBeadsStatus(%q) = %s, want %s",
 					tt.input, got, tt.wantStatus)
 			}
 		})
@@ -972,9 +974,9 @@ func TestParseIssueType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := parseIssueType(tt.input)
+			got := linear.ParseIssueType(tt.input)
 			if got != tt.wantType {
-				t.Errorf("parseIssueType(%q) = %s, want %s",
+				t.Errorf("ParseIssueType(%q) = %s, want %s",
 					tt.input, got, tt.wantType)
 			}
 		})
@@ -982,7 +984,7 @@ func TestParseIssueType(t *testing.T) {
 }
 
 func TestDefaultLinearMappingConfig(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
 	// Test priority map has expected entries
 	expectedPriorityMap := map[string]int{
@@ -1036,13 +1038,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestFetchIssueByIdentifierSendsNumericFilter(t *testing.T) {
-	client := &LinearClient{
-		apiKey: "test-api-key",
-		teamID: "team-123",
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+	client := linear.NewClient("test-api-key", "team-123")
 
 	origTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -1052,7 +1048,7 @@ func TestFetchIssueByIdentifierSendsNumericFilter(t *testing.T) {
 		}
 		_ = r.Body.Close()
 
-		var gqlReq GraphQLRequest
+		var gqlReq linear.GraphQLRequest
 		if err := json.Unmarshal(body, &gqlReq); err != nil {
 			return nil, fmt.Errorf("decode request body: %w", err)
 		}
@@ -1073,7 +1069,10 @@ func TestFetchIssueByIdentifierSendsNumericFilter(t *testing.T) {
 			return nil, fmt.Errorf("expected number.eq=123, got %v", eq)
 		}
 
-		resp := GraphQLResponse{
+		resp := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{"issues":{"nodes":[]}}`),
 		}
 		respBytes, err := json.Marshal(resp)
@@ -1104,7 +1103,7 @@ func TestDoPushToLinearPreferLocalForcesUpdate(t *testing.T) {
 	if err := testStore.SetConfig(ctx, "linear.api_key", "test-api-key"); err != nil {
 		t.Fatalf("SetConfig linear.api_key failed: %v", err)
 	}
-	if err := testStore.SetConfig(ctx, "linear.team_id", "team-123"); err != nil {
+	if err := testStore.SetConfig(ctx, "linear.team_id", "12345678-1234-1234-1234-123456789abc"); err != nil {
 		t.Fatalf("SetConfig linear.team_id failed: %v", err)
 	}
 
@@ -1136,66 +1135,63 @@ func TestDoPushToLinearPreferLocalForcesUpdate(t *testing.T) {
 		}
 		_ = r.Body.Close()
 
-		var gqlReq GraphQLRequest
+		var gqlReq linear.GraphQLRequest
 		if err := json.Unmarshal(body, &gqlReq); err != nil {
 			return nil, fmt.Errorf("decode request body: %w", err)
 		}
 
-		var resp GraphQLResponse
+		var resp struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}
 		switch {
 		case strings.Contains(gqlReq.Query, "TeamStates"):
-			resp = GraphQLResponse{
-				Data: json.RawMessage(`{
-					"team": {
-						"id": "team-123",
-						"states": {
-							"nodes": [
-								{"id": "state-started", "name": "In Progress", "type": "started"}
-							]
-						}
-					}
-				}`),
-			}
-		case strings.Contains(gqlReq.Query, "IssueByIdentifier"):
-			resp = GraphQLResponse{
-				Data: json.RawMessage(fmt.Sprintf(`{
-					"issues": {
+			resp.Data = json.RawMessage(`{
+				"team": {
+					"id": "team-123",
+					"states": {
 						"nodes": [
-							{
-								"id": "uuid-123",
-								"identifier": "TEAM-123",
-								"title": "Remote Issue",
-								"description": "Remote description",
-								"url": "https://linear.app/team/issue/TEAM-123/remote-issue",
-								"priority": 2,
-								"state": {"id": "state-started", "name": "In Progress", "type": "started"},
-								"labels": {"nodes": []},
-								"createdAt": "2025-01-01T00:00:00Z",
-								"updatedAt": "%s"
-							}
+							{"id": "state-started", "name": "In Progress", "type": "started"}
 						]
 					}
-				}`, remoteUpdatedStr)),
-			}
-		case strings.Contains(gqlReq.Query, "UpdateIssue"):
-			updatedCalled = true
-			resp = GraphQLResponse{
-				Data: json.RawMessage(`{
-					"issueUpdate": {
-						"success": true,
-						"issue": {
+				}
+			}`)
+		case strings.Contains(gqlReq.Query, "IssueByIdentifier"):
+			resp.Data = json.RawMessage(fmt.Sprintf(`{
+				"issues": {
+					"nodes": [
+						{
 							"id": "uuid-123",
 							"identifier": "TEAM-123",
-							"title": "Updated Title",
-							"description": "Updated description",
+							"title": "Remote Issue",
+							"description": "Remote description",
 							"url": "https://linear.app/team/issue/TEAM-123/remote-issue",
 							"priority": 2,
 							"state": {"id": "state-started", "name": "In Progress", "type": "started"},
-							"updatedAt": "2025-01-02T00:00:00Z"
+							"labels": {"nodes": []},
+							"createdAt": "2025-01-01T00:00:00Z",
+							"updatedAt": "%s"
 						}
+					]
+				}
+			}`, remoteUpdatedStr))
+		case strings.Contains(gqlReq.Query, "UpdateIssue"):
+			updatedCalled = true
+			resp.Data = json.RawMessage(`{
+				"issueUpdate": {
+					"success": true,
+					"issue": {
+						"id": "uuid-123",
+						"identifier": "TEAM-123",
+						"title": "Updated Title",
+						"description": "Updated description",
+						"url": "https://linear.app/team/issue/TEAM-123/remote-issue",
+						"priority": 2,
+						"state": {"id": "state-started", "name": "In Progress", "type": "started"},
+						"updatedAt": "2025-01-02T00:00:00Z"
 					}
-				}`),
-			}
+				}
+			}`)
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", gqlReq.Query)
 		}
@@ -1255,7 +1251,10 @@ func TestLinearClientFetchIssues(t *testing.T) {
 		}
 
 		// Return mock response
-		response := GraphQLResponse{
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{
 				"issues": {
 					"nodes": [
@@ -1311,46 +1310,21 @@ func TestLinearClientFetchIssues(t *testing.T) {
 	defer server.Close()
 
 	// Create client with mock server
-	client := &LinearClient{
-		apiKey: "test-api-key",
-		teamID: "test-team-id",
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
+	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 
-	// Override the API endpoint for testing by using a custom execute function
-	// For this test, we'll use the mock server directly
 	ctx := context.Background()
-
-	// Create a request and manually call the mock server
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", client.apiKey)
-
-	resp, err := client.httpClient.Do(req)
+	issues, err := client.FetchIssues(ctx, "all")
 	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var gqlResp GraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	var issuesResp LinearIssuesResponse
-	if err := json.Unmarshal(gqlResp.Data, &issuesResp); err != nil {
-		t.Fatalf("failed to unmarshal issues: %v", err)
+		t.Fatalf("FetchIssues failed: %v", err)
 	}
 
 	// Verify response
-	if len(issuesResp.Issues.Nodes) != 2 {
-		t.Errorf("expected 2 issues, got %d", len(issuesResp.Issues.Nodes))
+	if len(issues) != 2 {
+		t.Errorf("expected 2 issues, got %d", len(issues))
 	}
 
 	// Check first issue
-	issue1 := issuesResp.Issues.Nodes[0]
+	issue1 := issues[0]
 	if issue1.Identifier != "TEAM-1" {
 		t.Errorf("expected identifier TEAM-1, got %s", issue1.Identifier)
 	}
@@ -1369,7 +1343,10 @@ func TestLinearClientCreateIssue(t *testing.T) {
 
 	// Create a mock GraphQL server for create mutation
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GraphQLResponse{
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{
 				"issueCreate": {
 					"success": true,
@@ -1399,43 +1376,16 @@ func TestLinearClientCreateIssue(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &LinearClient{
-		apiKey: "test-api-key",
-		teamID: "test-team-id",
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
-
+	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 	ctx := context.Background()
 
-	// Manually test the mock response
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", client.apiKey)
-
-	resp, err := client.httpClient.Do(req)
+	issue, err := client.CreateIssue(ctx, "New Test Issue", "Created via API", 2, "", nil)
 	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var gqlResp GraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
+		t.Fatalf("CreateIssue failed: %v", err)
 	}
 
-	var createResp LinearIssueCreateResponse
-	if err := json.Unmarshal(gqlResp.Data, &createResp); err != nil {
-		t.Fatalf("failed to unmarshal create response: %v", err)
-	}
-
-	// Verify response
-	if !createResp.IssueCreate.Success {
-		t.Error("expected create to succeed")
-	}
-	if createResp.IssueCreate.Issue.Identifier != "TEAM-999" {
-		t.Errorf("expected identifier TEAM-999, got %s", createResp.IssueCreate.Issue.Identifier)
+	if issue.Identifier != "TEAM-999" {
+		t.Errorf("expected identifier TEAM-999, got %s", issue.Identifier)
 	}
 }
 
@@ -1446,7 +1396,10 @@ func TestLinearClientUpdateIssue(t *testing.T) {
 
 	// Create a mock GraphQL server for update mutation
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GraphQLResponse{
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{
 				"issueUpdate": {
 					"success": true,
@@ -1475,45 +1428,23 @@ func TestLinearClientUpdateIssue(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &LinearClient{
-		apiKey: "test-api-key",
-		teamID: "test-team-id",
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
-
+	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 	ctx := context.Background()
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", client.apiKey)
-
-	resp, err := client.httpClient.Do(req)
+	updates := map[string]interface{}{
+		"title":       "Updated Title",
+		"description": "Updated description",
+	}
+	issue, err := client.UpdateIssue(ctx, "uuid-existing", updates)
 	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var gqlResp GraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
+		t.Fatalf("UpdateIssue failed: %v", err)
 	}
 
-	var updateResp LinearIssueUpdateResponse
-	if err := json.Unmarshal(gqlResp.Data, &updateResp); err != nil {
-		t.Fatalf("failed to unmarshal update response: %v", err)
+	if issue.Title != "Updated Title" {
+		t.Errorf("expected title 'Updated Title', got %s", issue.Title)
 	}
-
-	// Verify response
-	if !updateResp.IssueUpdate.Success {
-		t.Error("expected update to succeed")
-	}
-	if updateResp.IssueUpdate.Issue.Title != "Updated Title" {
-		t.Errorf("expected title 'Updated Title', got %s", updateResp.IssueUpdate.Issue.Title)
-	}
-	if updateResp.IssueUpdate.Issue.State.Type != "completed" {
-		t.Errorf("expected state type 'completed', got %s", updateResp.IssueUpdate.Issue.State.Type)
+	if issue.State.Type != "completed" {
+		t.Errorf("expected state type 'completed', got %s", issue.State.Type)
 	}
 }
 
@@ -1524,7 +1455,10 @@ func TestLinearClientGetTeamStates(t *testing.T) {
 
 	// Create a mock GraphQL server for team states query
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GraphQLResponse{
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{
 				"team": {
 					"id": "team-123",
@@ -1548,47 +1482,25 @@ func TestLinearClientGetTeamStates(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &LinearClient{
-		apiKey: "test-api-key",
-		teamID: "test-team-id",
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
-
+	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 	ctx := context.Background()
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", client.apiKey)
-
-	resp, err := client.httpClient.Do(req)
+	states, err := client.GetTeamStates(ctx)
 	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var gqlResp GraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	var teamResp LinearTeamResponse
-	if err := json.Unmarshal(gqlResp.Data, &teamResp); err != nil {
-		t.Fatalf("failed to unmarshal team response: %v", err)
+		t.Fatalf("GetTeamStates failed: %v", err)
 	}
 
 	// Verify response
-	if len(teamResp.Team.States.Nodes) != 5 {
-		t.Errorf("expected 5 states, got %d", len(teamResp.Team.States.Nodes))
+	if len(states) != 5 {
+		t.Errorf("expected 5 states, got %d", len(states))
 	}
 
 	// Verify state types
 	expectedTypes := []string{"backlog", "unstarted", "started", "completed", "canceled"}
 	for i, expected := range expectedTypes {
-		if teamResp.Team.States.Nodes[i].Type != expected {
+		if states[i].Type != expected {
 			t.Errorf("state %d: expected type %s, got %s",
-				i, expected, teamResp.Team.States.Nodes[i].Type)
+				i, expected, states[i].Type)
 		}
 	}
 }
@@ -1608,7 +1520,10 @@ func TestLinearClientRateLimitHandling(t *testing.T) {
 			return
 		}
 		// Subsequent attempts: success
-		response := GraphQLResponse{
+		response := struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []interface{}   `json:"errors,omitempty"`
+		}{
 			Data: json.RawMessage(`{"issues": {"nodes": [], "pageInfo": {"hasNextPage": false}}}`),
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1619,12 +1534,12 @@ func TestLinearClientRateLimitHandling(t *testing.T) {
 	defer server.Close()
 
 	// Verify that rate limiting was simulated
-	client := &http.Client{Timeout: 10 * time.Second}
+	httpClient := &http.Client{Timeout: 10 * time.Second}
 	ctx := context.Background()
 
 	// First request: expect 429
 	req1, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	resp1, err := client.Do(req1)
+	resp1, err := httpClient.Do(req1)
 	if err != nil {
 		t.Fatalf("first request failed: %v", err)
 	}
@@ -1635,7 +1550,7 @@ func TestLinearClientRateLimitHandling(t *testing.T) {
 
 	// Second request: expect success
 	req2, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	resp2, err := client.Do(req2)
+	resp2, err := httpClient.Do(req2)
 	if err != nil {
 		t.Fatalf("second request failed: %v", err)
 	}
@@ -1656,14 +1571,14 @@ func TestLinearClientGraphQLError(t *testing.T) {
 
 	// Create a mock server that returns a GraphQL error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GraphQLResponse{
-			Errors: []GraphQLError{
+		response := struct {
+			Data   json.RawMessage       `json:"data,omitempty"`
+			Errors []linear.GraphQLError `json:"errors,omitempty"`
+		}{
+			Errors: []linear.GraphQLError{
 				{
 					Message: "Issue not found",
 					Path:    []string{"issues"},
-					Extensions: struct {
-						Code string `json:"code,omitempty"`
-					}{Code: "NOT_FOUND"},
 				},
 			},
 		}
@@ -1674,41 +1589,29 @@ func TestLinearClientGraphQLError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := linear.NewClient("test-api-key", "test-team-id").WithEndpoint(server.URL)
 	ctx := context.Background()
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL, nil)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
+	_, err := client.FetchIssues(ctx, "all")
+	if err == nil {
+		t.Error("expected error for GraphQL error response")
 	}
-	defer resp.Body.Close()
-
-	var gqlResp GraphQLResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	// Verify GraphQL error was returned
-	if len(gqlResp.Errors) != 1 {
-		t.Errorf("expected 1 error, got %d", len(gqlResp.Errors))
-	}
-	if gqlResp.Errors[0].Message != "Issue not found" {
-		t.Errorf("unexpected error message: %s", gqlResp.Errors[0].Message)
+	if !strings.Contains(err.Error(), "Issue not found") {
+		t.Errorf("expected error to contain 'Issue not found', got: %v", err)
 	}
 }
 
 func TestLinearStateCacheFindStateForBeadsStatus(t *testing.T) {
-	cache := &linearStateCache{
-		states: []LinearState{
+	cache := &linear.StateCache{
+		States: []linear.State{
 			{ID: "state-1", Name: "Backlog", Type: "backlog"},
 			{ID: "state-2", Name: "Todo", Type: "unstarted"},
 			{ID: "state-3", Name: "In Progress", Type: "started"},
 			{ID: "state-4", Name: "Done", Type: "completed"},
 			{ID: "state-5", Name: "Cancelled", Type: "canceled"},
 		},
-		statesByID:  make(map[string]LinearState),
-		openStateID: "state-2",
+		StatesByID:  make(map[string]linear.State),
+		OpenStateID: "state-2",
 	}
 
 	tests := []struct {
@@ -1740,9 +1643,9 @@ func TestLinearStateCacheFindStateForBeadsStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cache.findStateForBeadsStatus(tt.status)
+			got := cache.FindStateForBeadsStatus(tt.status)
 			if got != tt.wantStateID {
-				t.Errorf("findStateForBeadsStatus(%s) = %s, want %s",
+				t.Errorf("FindStateForBeadsStatus(%s) = %s, want %s",
 					tt.status, got, tt.wantStateID)
 			}
 		})
@@ -1750,31 +1653,31 @@ func TestLinearStateCacheFindStateForBeadsStatus(t *testing.T) {
 }
 
 func TestLinearStateCacheEmpty(t *testing.T) {
-	cache := &linearStateCache{
-		states:     []LinearState{},
-		statesByID: make(map[string]LinearState),
+	cache := &linear.StateCache{
+		States:     []linear.State{},
+		StatesByID: make(map[string]linear.State),
 	}
 
 	// Should return empty string when no states available
-	got := cache.findStateForBeadsStatus(types.StatusOpen)
+	got := cache.FindStateForBeadsStatus(types.StatusOpen)
 	if got != "" {
 		t.Errorf("expected empty string for empty cache, got %s", got)
 	}
 }
 
 func TestBuildLinearToLocalUpdates(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
-	li := &LinearIssue{
+	li := &linear.Issue{
 		ID:          "uuid-123",
 		Identifier:  "TEAM-123",
 		Title:       "Updated Title",
 		Description: "Updated Description",
 		Priority:    2, // High
-		State:       &LinearState{Type: "started", Name: "In Progress"},
-		Assignee:    &LinearUser{Email: "test@example.com", Name: "Test User"},
-		Labels: &LinearLabels{
-			Nodes: []LinearLabel{
+		State:       &linear.State{Type: "started", Name: "In Progress"},
+		Assignee:    &linear.User{Email: "test@example.com", Name: "Test User"},
+		Labels: &linear.Labels{
+			Nodes: []linear.Label{
 				{Name: "bug"},
 				{Name: "priority"},
 			},
@@ -1783,7 +1686,7 @@ func TestBuildLinearToLocalUpdates(t *testing.T) {
 		CompletedAt: "",
 	}
 
-	updates := buildLinearToLocalUpdates(li, config)
+	updates := linear.BuildLinearToLocalUpdates(li, config)
 
 	// Verify all expected fields are present
 	if updates["title"] != "Updated Title" {
@@ -1813,20 +1716,20 @@ func TestBuildLinearToLocalUpdates(t *testing.T) {
 }
 
 func TestBuildLinearToLocalUpdatesNoAssignee(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
-	li := &LinearIssue{
+	li := &linear.Issue{
 		ID:          "uuid-123",
 		Identifier:  "TEAM-123",
 		Title:       "Unassigned Issue",
 		Description: "No assignee",
 		Priority:    3,
-		State:       &LinearState{Type: "unstarted", Name: "Todo"},
+		State:       &linear.State{Type: "unstarted", Name: "Todo"},
 		Assignee:    nil,
 		UpdatedAt:   "2025-01-17T10:00:00Z",
 	}
 
-	updates := buildLinearToLocalUpdates(li, config)
+	updates := linear.BuildLinearToLocalUpdates(li, config)
 
 	// Assignee should be empty string when nil
 	if updates["assignee"] != "" {
@@ -1835,20 +1738,20 @@ func TestBuildLinearToLocalUpdatesNoAssignee(t *testing.T) {
 }
 
 func TestBuildLinearToLocalUpdatesWithClosedAt(t *testing.T) {
-	config := defaultLinearMappingConfig()
+	config := linear.DefaultMappingConfig()
 
-	li := &LinearIssue{
+	li := &linear.Issue{
 		ID:          "uuid-123",
 		Identifier:  "TEAM-123",
 		Title:       "Completed Issue",
 		Description: "Done",
 		Priority:    3,
-		State:       &LinearState{Type: "completed", Name: "Done"},
+		State:       &linear.State{Type: "completed", Name: "Done"},
 		UpdatedAt:   "2025-01-17T10:00:00Z",
 		CompletedAt: "2025-01-17T09:00:00Z",
 	}
 
-	updates := buildLinearToLocalUpdates(li, config)
+	updates := linear.BuildLinearToLocalUpdates(li, config)
 
 	// Check closed_at is set
 	closedAt, ok := updates["closed_at"].(time.Time)
