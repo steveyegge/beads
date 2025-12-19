@@ -1063,6 +1063,7 @@ func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues
+// Note: Pinned issues are excluded from the output (beads-ei4)
 func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1072,6 +1073,11 @@ func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 	for _, issue := range m.issues {
 		// Only consider non-closed, non-tombstone issues
 		if issue.Status == types.StatusClosed || issue.Status == types.StatusTombstone {
+			continue
+		}
+
+		// Exclude pinned issues (beads-ei4)
+		if issue.Pinned {
 			continue
 		}
 
