@@ -36,6 +36,8 @@ Tool-level settings you can configure:
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
+| `git.author` | - | `BD_GIT_AUTHOR` | (none) | Override commit author for beads commits |
+| `git.no-gpg-sign` | - | `BD_GIT_NO_GPG_SIGN` | `false` | Disable GPG signing for beads commits |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
@@ -76,6 +78,12 @@ flush-debounce: 15s
 # Require descriptions on all issues (enforces context for future work)
 create:
   require-description: true
+
+# Git commit signing options (GH#600)
+# Useful when you have Touch ID commit signing that prompts for each commit
+git:
+  author: "beads-bot <beads@example.com>"  # Override commit author
+  no-gpg-sign: true                         # Disable GPG signing
 ```
 
 ### Why Two Systems?

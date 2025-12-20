@@ -112,6 +112,10 @@ func Initialize() error {
 	// Create command defaults
 	v.SetDefault("create.require-description", false)
 
+	// Git configuration defaults (GH#600)
+	v.SetDefault("git.author", "")        // Override commit author (e.g., "beads-bot <beads@example.com>")
+	v.SetDefault("git.no-gpg-sign", false) // Disable GPG signing for beads commits
+
 	// Read config file if it was found
 	if configFileSet {
 		if err := v.ReadInConfig(); err != nil {

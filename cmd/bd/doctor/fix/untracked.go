@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/config"
 )
 
 // UntrackedJSONL stages and commits untracked .beads/*.jsonl files.
@@ -69,8 +71,21 @@ func UntrackedJSONL(path string) error {
 	}
 
 	// Commit only the JSONL files we staged (using --only to preserve other staged changes)
+	// Use config-based author and signing options (GH#600)
 	commitMsg := "chore(beads): commit untracked JSONL files\n\nAuto-committed by bd doctor --fix (bd-pbj)"
-	commitArgs := []string{"commit", "--only", "-m", commitMsg}
+	commitArgs := []string{"commit", "--only"}
+
+	// Add --author if configured
+	if author := config.GetString("git.author"); author != "" {
+		commitArgs = append(commitArgs, "--author", author)
+	}
+
+	// Add --no-gpg-sign if configured
+	if config.GetBool("git.no-gpg-sign") {
+		commitArgs = append(commitArgs, "--no-gpg-sign")
+	}
+
+	commitArgs = append(commitArgs, "-m", commitMsg)
 	commitArgs = append(commitArgs, untrackedFiles...)
 	commitCmd := exec.Command("git", commitArgs...) // #nosec G204 -- untrackedFiles validated above
 	commitCmd.Dir = path

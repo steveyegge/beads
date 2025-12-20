@@ -893,6 +893,30 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 	return len(strings.TrimSpace(string(statusOutput))) > 0, nil
 }
 
+// buildGitCommitArgs returns git commit args with config-based author and signing options (GH#600)
+// This allows users to configure a separate author and disable GPG signing for beads commits.
+func buildGitCommitArgs(repoRoot, message string, extraArgs ...string) []string {
+	args := []string{"-C", repoRoot, "commit"}
+
+	// Add --author if configured
+	if author := config.GetString("git.author"); author != "" {
+		args = append(args, "--author", author)
+	}
+
+	// Add --no-gpg-sign if configured
+	if config.GetBool("git.no-gpg-sign") {
+		args = append(args, "--no-gpg-sign")
+	}
+
+	// Add message
+	args = append(args, "-m", message)
+
+	// Add any extra args (like -- pathspec)
+	args = append(args, extraArgs...)
+
+	return args
+}
+
 // gitCommit commits the specified file (worktree-aware)
 func gitCommit(ctx context.Context, filePath string, message string) error {
 	// Get the repository root (handles worktrees properly)
@@ -918,8 +942,9 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
-	// Commit from repo root context
-	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message)
+	// Commit from repo root context with config-based author and signing options
+	commitArgs := buildGitCommitArgs(repoRoot, message)
+	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -993,7 +1018,9 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 		relBeadsDir = beadsDir // Fall back to absolute path if relative fails
 	}
 
-	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message, "--", relBeadsDir)
+	// Use config-based author and signing options with pathspec
+	commitArgs := buildGitCommitArgs(repoRoot, message, "--", relBeadsDir)
+	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit failed: %w\n%s", err, output)
@@ -1748,11 +1775,12 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 		return false, nil // No changes to commit
 	}
 
-	// Commit
+	// Commit with config-based author and signing options
 	if message == "" {
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
-	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", message)
+	commitArgs := buildGitCommitArgs(repoRoot, message)
+	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
 	if output, err := commitCmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git commit failed: %w\n%s", err, output)
 	}
