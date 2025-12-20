@@ -13,21 +13,8 @@
     "issue-tracker",
     "task-management",
     "ai-workflow",
-    "agent-memory",
-    "mcp-server"
+    "agent-memory"
   ],
-  "mcpServers": {
-    "beads": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "${CLAUDE_PLUGIN_ROOT}/integrations/beads-mcp",
-        "run",
-        "beads-mcp"
-      ],
-      "env": {}
-    }
-  },
   "hooks": {
     "SessionStart": [
       {
