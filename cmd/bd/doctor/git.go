@@ -353,7 +353,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	}
 
 	// Check if local sync branch exists
-	cmd := exec.Command("git", "rev-parse", "--verify", syncBranch)
+	cmd := exec.Command("git", "rev-parse", "--verify", syncBranch) // #nosec G204 - syncBranch from config file
 	cmd.Dir = path
 	if err := cmd.Run(); err != nil {
 		// Local branch doesn't exist - that's fine, bd sync will create it
@@ -367,7 +367,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	// Check if remote sync branch exists
 	remote := "origin"
 	remoteBranch := fmt.Sprintf("%s/%s", remote, syncBranch)
-	cmd = exec.Command("git", "rev-parse", "--verify", remoteBranch)
+	cmd = exec.Command("git", "rev-parse", "--verify", remoteBranch) // #nosec G204 - remoteBranch from config
 	cmd.Dir = path
 	if err := cmd.Run(); err != nil {
 		// Remote branch doesn't exist - that's fine
@@ -380,7 +380,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 
 	// Check 1: Is local sync branch diverged from remote? (after force-push)
 	// If they have no common ancestor in recent history, the remote was likely force-pushed
-	cmd = exec.Command("git", "merge-base", syncBranch, remoteBranch)
+	cmd = exec.Command("git", "merge-base", syncBranch, remoteBranch) // #nosec G204 - branches from config
 	cmd.Dir = path
 	mergeBaseOutput, err := cmd.Output()
 	if err != nil {
@@ -396,12 +396,12 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 
 	// Check if local is behind remote (needs to fast-forward)
 	mergeBase := strings.TrimSpace(string(mergeBaseOutput))
-	cmd = exec.Command("git", "rev-parse", syncBranch)
+	cmd = exec.Command("git", "rev-parse", syncBranch) // #nosec G204 - syncBranch from config
 	cmd.Dir = path
 	localHead, _ := cmd.Output()
 	localHeadStr := strings.TrimSpace(string(localHead))
 
-	cmd = exec.Command("git", "rev-parse", remoteBranch)
+	cmd = exec.Command("git", "rev-parse", remoteBranch) // #nosec G204 - remoteBranch from config
 	cmd.Dir = path
 	remoteHead, _ := cmd.Output()
 	remoteHeadStr := strings.TrimSpace(string(remoteHead))
@@ -409,7 +409,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	// If merge base equals local but not remote, local is behind
 	if mergeBase == localHeadStr && mergeBase != remoteHeadStr {
 		// Count how far behind
-		cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, remoteBranch))
+		cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, remoteBranch)) // #nosec G204 - branches from config
 		cmd.Dir = path
 		countOutput, _ := cmd.Output()
 		behindCount := strings.TrimSpace(string(countOutput))
@@ -442,7 +442,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	}
 
 	// Count commits main is ahead of sync branch
-	cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, mainBranch))
+	cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, mainBranch)) // #nosec G204 - branches from config/hardcoded
 	cmd.Dir = path
 	aheadOutput, err := cmd.Output()
 	if err != nil {
@@ -455,7 +455,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 	aheadCount := strings.TrimSpace(string(aheadOutput))
 
 	// Check if there are non-.beads/ file differences (stale source code)
-	cmd = exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..%s", syncBranch, mainBranch), "--", ":(exclude).beads/")
+	cmd = exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..%s", syncBranch, mainBranch), "--", ":(exclude).beads/") // #nosec G204 - branches from config/hardcoded
 	cmd.Dir = path
 	diffOutput, _ := cmd.Output()
 	diffFiles := strings.TrimSpace(string(diffOutput))
