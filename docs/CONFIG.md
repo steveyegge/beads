@@ -38,6 +38,7 @@ Tool-level settings you can configure:
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
 | `git.author` | - | `BD_GIT_AUTHOR` | (none) | Override commit author for beads commits |
 | `git.no-gpg-sign` | - | `BD_GIT_NO_GPG_SIGN` | `false` | Disable GPG signing for beads commits |
+| `directory.labels` | - | - | (none) | Map directories to labels for automatic filtering |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
@@ -84,6 +85,15 @@ create:
 git:
   author: "beads-bot <beads@example.com>"  # Override commit author
   no-gpg-sign: true                         # Disable GPG signing
+
+# Directory-aware label scoping for monorepos (GH#541)
+# When running bd ready/list from a matching directory, issues with
+# that label are automatically shown (as if --label-any was passed)
+directory:
+  labels:
+    packages/maverick: maverick
+    packages/agency: agency
+    packages/io: io
 ```
 
 ### Why Two Systems?

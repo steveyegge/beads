@@ -1,10 +1,13 @@
 package main
+
 import (
 	"encoding/json"
 	"fmt"
 	"os"
+
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -26,6 +29,13 @@ var readyCmd = &cobra.Command{
 		// Normalize labels: trim, dedupe, remove empty
 		labels = util.NormalizeLabels(labels)
 		labelsAny = util.NormalizeLabels(labelsAny)
+
+		// Apply directory-aware label scoping if no labels explicitly provided (GH#541)
+		if len(labels) == 0 && len(labelsAny) == 0 {
+			if dirLabels := config.GetDirectoryLabels(); len(dirLabels) > 0 {
+				labelsAny = dirLabels
+			}
+		}
 
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)

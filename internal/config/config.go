@@ -116,6 +116,10 @@ func Initialize() error {
 	v.SetDefault("git.author", "")        // Override commit author (e.g., "beads-bot <beads@example.com>")
 	v.SetDefault("git.no-gpg-sign", false) // Disable GPG signing for beads commits
 
+	// Directory-aware label scoping (GH#541)
+	// Maps directory patterns to labels for automatic filtering in monorepos
+	v.SetDefault("directory.labels", map[string]string{})
+
 	// Read config file if it was found
 	if configFileSet {
 		if err := v.ReadInConfig(); err != nil {
@@ -194,6 +198,44 @@ func GetStringSlice(key string) []string {
 		return []string{}
 	}
 	return v.GetStringSlice(key)
+}
+
+// GetStringMapString retrieves a map[string]string configuration value
+func GetStringMapString(key string) map[string]string {
+	if v == nil {
+		return map[string]string{}
+	}
+	return v.GetStringMapString(key)
+}
+
+// GetDirectoryLabels returns labels for the current working directory based on config.
+// It checks directory.labels config for matching patterns.
+// Returns nil if no labels are configured for the current directory.
+func GetDirectoryLabels() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+
+	dirLabels := GetStringMapString("directory.labels")
+	if len(dirLabels) == 0 {
+		return nil
+	}
+
+	// Check each configured directory pattern
+	for pattern, label := range dirLabels {
+		// Support both exact match and suffix match
+		// e.g., "packages/maverick" matches "/path/to/repo/packages/maverick"
+		if strings.HasSuffix(cwd, pattern) || strings.HasSuffix(cwd, filepath.Clean(pattern)) {
+			return []string{label}
+		}
+		// Also try as a path prefix (user might be in a subdirectory)
+		if strings.Contains(cwd, "/"+pattern+"/") || strings.Contains(cwd, "/"+pattern) {
+			return []string{label}
+		}
+	}
+
+	return nil
 }
 
 // MultiRepoConfig contains configuration for multi-repo support
