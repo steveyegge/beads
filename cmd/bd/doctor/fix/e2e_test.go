@@ -1,12 +1,24 @@
 package fix
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// skipIfTestBinary skips the test if running as a test binary.
+// E2E tests that need to execute 'bd' subcommands cannot run in test mode.
+func skipIfTestBinary(t *testing.T) {
+	t.Helper()
+	_, err := getBdBinary()
+	if errors.Is(err, ErrTestBinary) {
+		t.Skip("skipping E2E test: running as test binary")
+	}
+}
 
 // =============================================================================
 // End-to-End Fix Tests
@@ -14,7 +26,8 @@ import (
 
 // TestGitHooks_E2E tests the full GitHooks fix flow
 func TestGitHooks_E2E(t *testing.T) {
-	// Skip if bd binary not available
+	// Skip if bd binary not available or running as test binary
+	skipIfTestBinary(t)
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd binary not in PATH, skipping e2e test")
 	}
@@ -583,7 +596,8 @@ func TestFixGitignore_PartialPatterns(t *testing.T) {
 
 // TestGitHooksWithExistingHooks_E2E tests preserving existing non-bd hooks
 func TestGitHooksWithExistingHooks_E2E(t *testing.T) {
-	// Skip if bd binary not available
+	// Skip if bd binary not available or running as test binary
+	skipIfTestBinary(t)
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd binary not in PATH, skipping e2e test")
 	}
@@ -735,6 +749,11 @@ func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
 	}
 
 	t.Run("handles read-only git config file", func(t *testing.T) {
+		// Skip on macOS - file owner can bypass read-only permissions
+		if runtime.GOOS == "darwin" {
+			t.Skip("skipping on macOS: file owner can write to read-only files")
+		}
+
 		dir := setupTestGitRepo(t)
 
 		gitConfigPath := filepath.Join(dir, ".git", "config")
@@ -751,7 +770,7 @@ func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
 		// Run fix - should fail gracefully
 		err := MergeDriver(dir)
 		if err == nil {
-			t.Error("expected error when git config is read-only")
+			t.Fatal("expected error when git config is read-only")
 		}
 
 		// Verify error message is meaningful

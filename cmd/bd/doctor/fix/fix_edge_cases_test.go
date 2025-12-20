@@ -297,6 +297,9 @@ func TestFindJSONLPath_EdgeCases(t *testing.T) {
 
 // TestGitHooks_EdgeCases tests GitHooks with edge cases
 func TestGitHooks_EdgeCases(t *testing.T) {
+	// Skip if running as test binary (can't execute bd subcommands)
+	skipIfTestBinary(t)
+
 	t.Run("hooks directory does not exist", func(t *testing.T) {
 		dir := setupTestGitRepo(t)
 
@@ -350,15 +353,21 @@ func TestGitHooks_EdgeCases(t *testing.T) {
 func TestMergeDriver_EdgeCases(t *testing.T) {
 	t.Run("read-only git config file", func(t *testing.T) {
 		dir := setupTestGitRepo(t)
+		gitDir := filepath.Join(dir, ".git")
+		gitConfigPath := filepath.Join(gitDir, "config")
 
-		// Make .git/config read-only
-		gitConfigPath := filepath.Join(dir, ".git", "config")
+		// Make both .git directory and config file read-only to truly prevent writes
+		// (git might otherwise create a new file and rename it)
 		if err := os.Chmod(gitConfigPath, 0400); err != nil {
 			t.Fatalf("failed to make config read-only: %v", err)
+		}
+		if err := os.Chmod(gitDir, 0500); err != nil {
+			t.Fatalf("failed to make .git read-only: %v", err)
 		}
 
 		// Restore write permissions at the end
 		defer func() {
+			_ = os.Chmod(gitDir, 0700)
 			_ = os.Chmod(gitConfigPath, 0600)
 		}()
 

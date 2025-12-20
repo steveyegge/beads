@@ -577,6 +577,9 @@ func TestDBJSONLSync_MissingDatabase(t *testing.T) {
 
 // TestSyncBranchConfig_BranchDoesNotExist tests fixing config when branch doesn't exist
 func TestSyncBranchConfig_BranchDoesNotExist(t *testing.T) {
+	// Skip if running as test binary (can't execute bd subcommands)
+	skipIfTestBinary(t)
+
 	dir := setupTestGitRepo(t)
 
 	// Try to run fix without any commits (no branch exists yet)
@@ -591,6 +594,9 @@ func TestSyncBranchConfig_BranchDoesNotExist(t *testing.T) {
 
 // TestSyncBranchConfig_InvalidRemoteURL tests fix behavior with invalid remote
 func TestSyncBranchConfig_InvalidRemoteURL(t *testing.T) {
+	// Skip if running as test binary (can't execute bd subcommands)
+	skipIfTestBinary(t)
+
 	dir := setupTestGitRepo(t)
 
 	// Create initial commit

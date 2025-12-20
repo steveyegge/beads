@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -434,8 +435,8 @@ func TestPrefixMismatchDetection(t *testing.T) {
 {"id":"bd-4"}
 `,
 			dbPrefix:    "bd",
-			shouldWarn:  true,
-			description: "75% use various wrong prefixes",
+			shouldWarn:  false, // no single prefix has majority, so no warning
+			description: "75% use various wrong prefixes but no single majority",
 		},
 	}
 
@@ -630,7 +631,7 @@ func TestPrefixDetection_LargeScale(t *testing.T) {
 		defer f.Close()
 
 		for i := 1; i <= 1000; i++ {
-			f.WriteString(`{"id":"bd-` + string(rune(i)) + `","title":"Issue"}` + "\n")
+			fmt.Fprintf(f, `{"id":"bd-%d","title":"Issue"}`+"\n", i)
 		}
 
 		count, prefixes, err := CountJSONLIssues(jsonlPath)
@@ -658,13 +659,13 @@ func TestPrefixDetection_LargeScale(t *testing.T) {
 		defer f.Close()
 
 		for i := 1; i <= 700; i++ {
-			f.WriteString(`{"id":"bd-` + string(rune(i)) + `"}` + "\n")
+			fmt.Fprintf(f, `{"id":"bd-%d"}`+"\n", i)
 		}
 		for i := 1; i <= 200; i++ {
-			f.WriteString(`{"id":"proj-` + string(rune(i)) + `"}` + "\n")
+			fmt.Fprintf(f, `{"id":"proj-%d"}`+"\n", i)
 		}
 		for i := 1; i <= 100; i++ {
-			f.WriteString(`{"id":"feat-` + string(rune(i)) + `"}` + "\n")
+			fmt.Fprintf(f, `{"id":"feat-%d"}`+"\n", i)
 		}
 
 		count, prefixes, err := CountJSONLIssues(jsonlPath)

@@ -20,9 +20,9 @@ const (
 // CategoryOrder defines the display order for categories
 var CategoryOrder = []string{
 	CategoryCore,
+	CategoryData,
 	CategoryGit,
 	CategoryRuntime,
-	CategoryData,
 	CategoryIntegration,
 	CategoryMetadata,
 }

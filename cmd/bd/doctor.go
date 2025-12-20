@@ -566,7 +566,7 @@ func runDiagnostics(path string) doctorResult {
 
 	// Check 1a: Fresh clone detection (bd-4ew)
 	// Must come early - if this is a fresh clone, other checks may be misleading
-	freshCloneCheck := convertWithCategory(doctor.CheckFreshClone(path), doctor.CategoryRuntime)
+	freshCloneCheck := convertWithCategory(doctor.CheckFreshClone(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, freshCloneCheck)
 	if freshCloneCheck.Status == statusWarning || freshCloneCheck.Status == statusError {
 		result.OverallOK = false
@@ -649,14 +649,14 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	// Check 9: Database-JSONL sync
-	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryRuntime)
+	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)
 	if syncCheck.Status == statusWarning || syncCheck.Status == statusError {
 		result.OverallOK = false
 	}
 
 	// Check 9: Permissions
-	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryRuntime)
+	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, permCheck)
 	if permCheck.Status == statusError {
 		result.OverallOK = false
