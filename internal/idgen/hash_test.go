@@ -13,12 +13,12 @@ func TestGenerateHashIDMatchesJiraVector(t *testing.T) {
 	creator := "jira-import"
 
 	tests := map[int]string{
-		3: "bd-ryl",
-		4: "bd-itxc",
-		5: "bd-9wt4w",
-		6: "bd-39wt4w",
-		7: "bd-rahb6w2",
-		8: "bd-7rahb6w2",
+		3: "bd-vju",
+		4: "bd-8d8e",
+		5: "bd-bi3tk",
+		6: "bd-8bi3tk",
+		7: "bd-r5sr6bm",
+		8: "bd-8r5sr6bm",
 	}
 
 	for length, expected := range tests {
