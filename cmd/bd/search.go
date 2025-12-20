@@ -370,7 +370,7 @@ func outputSearchResults(issues []*types.Issue, query string, longFormat bool) {
 
 func init() {
 	searchCmd.Flags().String("query", "", "Search query (alternative to positional argument)")
-	searchCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, closed)")
+	searchCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, deferred, closed)")
 	searchCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	searchCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
 	searchCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")

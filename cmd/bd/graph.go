@@ -382,6 +382,9 @@ func renderNodeBox(node *GraphNode, width int) string {
 	case types.StatusBlocked:
 		statusIcon = "●"
 		colorFn = color.New(color.FgRed).SprintFunc()
+	case types.StatusDeferred:
+		statusIcon = "❄"
+		colorFn = color.New(color.FgCyan).SprintFunc()
 	case types.StatusClosed:
 		statusIcon = "✓"
 		colorFn = color.New(color.FgGreen).SprintFunc()
@@ -458,6 +461,9 @@ func renderNodeBoxWithDeps(node *GraphNode, width int, blocksCount int, blockedB
 	case types.StatusBlocked:
 		statusIcon = "●"
 		colorFn = color.New(color.FgRed).SprintFunc()
+	case types.StatusDeferred:
+		statusIcon = "❄"
+		colorFn = color.New(color.FgCyan).SprintFunc()
 	case types.StatusClosed:
 		statusIcon = "✓"
 		colorFn = color.New(color.FgGreen).SprintFunc()

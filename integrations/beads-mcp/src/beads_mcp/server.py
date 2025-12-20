@@ -372,7 +372,7 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             "name": "list",
             "description": "List all issues with optional filters",
             "parameters": {
-                "status": "open|in_progress|blocked|closed (optional)",
+                "status": "open|in_progress|blocked|deferred|closed (optional)",
                 "priority": "int 0-4 (optional)",
                 "issue_type": "bug|feature|task|epic|chore (optional)",
                 "assignee": "str (optional)",
@@ -413,7 +413,7 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             "description": "Update an existing issue",
             "parameters": {
                 "issue_id": "str (required)",
-                "status": "open|in_progress|blocked|closed (optional)",
+                "status": "open|in_progress|blocked|deferred|closed (optional)",
                 "priority": "int 0-4 (optional)",
                 "assignee": "str (optional)",
                 "title": "str (optional)",

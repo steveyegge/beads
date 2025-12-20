@@ -32,7 +32,7 @@ Custom Status States:
     bd config set status.custom "awaiting_review,awaiting_testing,awaiting_docs"
 
   This enables issues to use statuses like 'awaiting_review' in addition to
-  the built-in statuses (open, in_progress, blocked, closed).
+  the built-in statuses (open, in_progress, blocked, deferred, closed).
 
 Examples:
   bd config set jira.url "https://company.atlassian.net"

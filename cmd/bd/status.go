@@ -312,6 +312,8 @@ func getAssignedStatistics(assignee string) *types.Statistics {
 			stats.InProgressIssues++
 		case types.StatusBlocked:
 			stats.BlockedIssues++
+		case types.StatusDeferred:
+			stats.DeferredIssues++
 		case types.StatusClosed:
 			stats.ClosedIssues++
 		}

@@ -293,18 +293,19 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 		    AND EXISTS (
 		        SELECT 1 FROM issues blocker
 		        WHERE blocker.id = d.depends_on_id
-		        AND blocker.status IN ('open', 'in_progress', 'blocked')
+		        AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
 		    )
-		WHERE i.status IN ('open', 'in_progress', 'blocked')
+		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
 		  AND i.pinned = 0
 		  AND (
 		      i.status = 'blocked'
+		      OR i.status = 'deferred'
 		      OR EXISTS (
 		          SELECT 1 FROM dependencies d2
 		          JOIN issues blocker ON d2.depends_on_id = blocker.id
 		          WHERE d2.issue_id = i.id
 		            AND d2.type = 'blocks'
-		            AND blocker.status IN ('open', 'in_progress', 'blocked')
+		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
 		      )
 		  )
 		GROUP BY i.id

@@ -317,7 +317,7 @@ async def beads_ready_work(
 
 
 async def beads_list_issues(
-    status: Annotated[IssueStatus | None, "Filter by status (open, in_progress, blocked, closed)"] = None,
+    status: Annotated[IssueStatus | None, "Filter by status (open, in_progress, blocked, deferred, closed)"] = None,
     priority: Annotated[int | None, "Filter by priority (0-4, 0=highest)"] = None,
     issue_type: Annotated[IssueType | None, "Filter by type (bug, feature, task, epic, chore)"] = None,
     assignee: Annotated[str | None, "Filter by assignee"] = None,
@@ -392,7 +392,7 @@ async def beads_create_issue(
 
 async def beads_update_issue(
     issue_id: Annotated[str, "Issue ID (e.g., bd-1)"],
-    status: Annotated[IssueStatus | None, "New status (open, in_progress, blocked, closed)"] = None,
+    status: Annotated[IssueStatus | None, "New status (open, in_progress, blocked, deferred, closed)"] = None,
     priority: Annotated[int | None, "New priority (0-4)"] = None,
     assignee: Annotated[str | None, "New assignee"] = None,
     title: Annotated[str | None, "New title"] = None,

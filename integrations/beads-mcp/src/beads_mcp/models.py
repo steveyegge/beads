@@ -6,7 +6,7 @@ from typing import Literal, Any
 from pydantic import BaseModel, Field, field_validator
 
 # Type aliases for issue statuses, types, and dependencies
-IssueStatus = Literal["open", "in_progress", "blocked", "closed"]
+IssueStatus = Literal["open", "in_progress", "blocked", "deferred", "closed"]
 IssueType = Literal["bug", "feature", "task", "epic", "chore"]
 DependencyType = Literal["blocks", "related", "parent-child", "discovered-from"]
 

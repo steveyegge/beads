@@ -23,8 +23,8 @@ This helps identify:
 		limit, _ := cmd.Flags().GetInt("limit")
 		// Use global jsonOutput set by PersistentPreRun
 		// Validate status if provided
-		if status != "" && status != "open" && status != "in_progress" && status != "blocked" {
-			fmt.Fprintf(os.Stderr, "Error: invalid status '%s'. Valid values: open, in_progress, blocked\n", status)
+		if status != "" && status != "open" && status != "in_progress" && status != "blocked" && status != "deferred" {
+			fmt.Fprintf(os.Stderr, "Error: invalid status '%s'. Valid values: open, in_progress, blocked, deferred\n", status)
 			os.Exit(1)
 		}
 		filter := types.StaleFilter{
@@ -107,7 +107,7 @@ func displayStaleIssues(issues []*types.Issue, days int) {
 }
 func init() {
 	staleCmd.Flags().IntP("days", "d", 30, "Issues not updated in this many days")
-	staleCmd.Flags().StringP("status", "s", "", "Filter by status (open|in_progress|blocked)")
+	staleCmd.Flags().StringP("status", "s", "", "Filter by status (open|in_progress|blocked|deferred)")
 	staleCmd.Flags().IntP("limit", "n", 50, "Maximum issues to show")
 	staleCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(staleCmd)
