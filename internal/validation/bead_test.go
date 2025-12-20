@@ -123,6 +123,8 @@ func TestParseIssueType(t *testing.T) {
 		{"task type", "task", types.TypeTask, false, ""},
 		{"epic type", "epic", types.TypeEpic, false, ""},
 		{"chore type", "chore", types.TypeChore, false, ""},
+		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
+		{"molecule type", "molecule", types.TypeMolecule, false, ""},
 		
 		// Case sensitivity (function is case-sensitive)
 		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},

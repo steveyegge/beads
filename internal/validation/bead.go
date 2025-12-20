@@ -32,11 +32,13 @@ func ParseIssueType(content string) (types.IssueType, error) {
 
 	// Validate issue type
 	validTypes := map[types.IssueType]bool{
-		types.TypeBug:     true,
-		types.TypeFeature: true,
-		types.TypeTask:    true,
-		types.TypeEpic:    true,
-		types.TypeChore:   true,
+		types.TypeBug:          true,
+		types.TypeFeature:      true,
+		types.TypeTask:         true,
+		types.TypeEpic:         true,
+		types.TypeChore:        true,
+		types.TypeMergeRequest: true,
+		types.TypeMolecule:     true,
 	}
 
 	if !validTypes[issueType] {
