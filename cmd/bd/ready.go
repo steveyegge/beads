@@ -251,96 +251,7 @@ var blockedCmd = &cobra.Command{
 		}
 	},
 }
-var statsCmd = &cobra.Command{
-	Use:   "stats",
-	Short: "Show statistics",
-	Run: func(cmd *cobra.Command, args []string) {
-		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		// If daemon is running, use RPC
-		if daemonClient != nil {
-			resp, err := daemonClient.Stats()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			var stats types.Statistics
-			if err := json.Unmarshal(resp.Data, &stats); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
-			}
-			if jsonOutput {
-				outputJSON(stats)
-				return
-			}
-			cyan := color.New(color.FgCyan).SprintFunc()
-			green := color.New(color.FgGreen).SprintFunc()
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("\n%s Beads Statistics:\n\n", cyan("📊"))
-			fmt.Printf("Total Issues:      %d\n", stats.TotalIssues)
-			fmt.Printf("Open:              %s\n", green(fmt.Sprintf("%d", stats.OpenIssues)))
-			fmt.Printf("In Progress:       %s\n", yellow(fmt.Sprintf("%d", stats.InProgressIssues)))
-			fmt.Printf("Closed:            %d\n", stats.ClosedIssues)
-			fmt.Printf("Blocked:           %d\n", stats.BlockedIssues)
-			fmt.Printf("Ready:             %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
-			if stats.TombstoneIssues > 0 {
-				fmt.Printf("Deleted:           %d (tombstones)\n", stats.TombstoneIssues)
-			}
-			if stats.PinnedIssues > 0 {
-				fmt.Printf("Pinned:            %d\n", stats.PinnedIssues)
-			}
-			if stats.AverageLeadTime > 0 {
-				fmt.Printf("Avg Lead Time:     %.1f hours\n", stats.AverageLeadTime)
-			}
-			fmt.Println()
-			return
-		}
-		// Direct mode
-		ctx := rootCtx
-		stats, err := store.GetStatistics(ctx)
-		if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-		}
-	// If no issues found, check if git has issues and auto-import
-	if stats.TotalIssues == 0 {
-		if checkAndAutoImport(ctx, store) {
-			// Re-run the stats after import
-			stats, err = store.GetStatistics(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-	}
-		if jsonOutput {
-			outputJSON(stats)
-			return
-		}
-		cyan := color.New(color.FgCyan).SprintFunc()
-		green := color.New(color.FgGreen).SprintFunc()
-		yellow := color.New(color.FgYellow).SprintFunc()
-		fmt.Printf("\n%s Beads Statistics:\n\n", cyan("📊"))
-		fmt.Printf("Total Issues:           %d\n", stats.TotalIssues)
-		fmt.Printf("Open:                   %s\n", green(fmt.Sprintf("%d", stats.OpenIssues)))
-		fmt.Printf("In Progress:            %s\n", yellow(fmt.Sprintf("%d", stats.InProgressIssues)))
-		fmt.Printf("Closed:                 %d\n", stats.ClosedIssues)
-		fmt.Printf("Blocked:                %d\n", stats.BlockedIssues)
-		fmt.Printf("Ready:                  %s\n", green(fmt.Sprintf("%d", stats.ReadyIssues)))
-		if stats.TombstoneIssues > 0 {
-			fmt.Printf("Deleted:                %d (tombstones)\n", stats.TombstoneIssues)
-		}
-		if stats.PinnedIssues > 0 {
-			fmt.Printf("Pinned:                 %d\n", stats.PinnedIssues)
-		}
-		if stats.EpicsEligibleForClosure > 0 {
-			fmt.Printf("Epics Ready to Close:   %s\n", green(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
-		}
-		if stats.AverageLeadTime > 0 {
-			fmt.Printf("Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
-		}
-		fmt.Println()
-	},
-}
+
 func init() {
 	readyCmd.Flags().IntP("limit", "n", 10, "Maximum issues to show")
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
@@ -352,5 +263,4 @@ func init() {
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, merge-request)")
 	rootCmd.AddCommand(readyCmd)
 	rootCmd.AddCommand(blockedCmd)
-	rootCmd.AddCommand(statsCmd)
 }

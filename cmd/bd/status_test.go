@@ -112,19 +112,9 @@ func TestStatusCommand(t *testing.T) {
 		t.Errorf("Expected 1 closed issue, got %d", stats.ClosedIssues)
 	}
 
-	// Test status output structures
-	summary := &StatusSummary{
-		TotalIssues:      stats.TotalIssues,
-		OpenIssues:       stats.OpenIssues,
-		InProgressIssues: stats.InProgressIssues,
-		BlockedIssues:    stats.BlockedIssues,
-		ClosedIssues:     stats.ClosedIssues,
-		ReadyIssues:      stats.ReadyIssues,
-	}
-
-	// Test JSON marshaling
+	// Test JSON marshaling with full Statistics
 	output := &StatusOutput{
-		Summary: summary,
+		Summary: stats,
 	}
 
 	jsonBytes, err := json.MarshalIndent(output, "", "  ")
@@ -178,7 +168,7 @@ func TestGetGitActivity(t *testing.T) {
 	}
 }
 
-func TestGetAssignedStatus(t *testing.T) {
+func TestGetAssignedStatistics(t *testing.T) {
 	// Create a temporary directory for the test database
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, ".beads", "test.db")
@@ -202,7 +192,7 @@ func TestGetAssignedStatus(t *testing.T) {
 		t.Fatalf("Failed to set issue prefix: %v", err)
 	}
 
-	// Set global store and rootCtx for getAssignedStatus
+	// Set global store and rootCtx for getAssignedStatistics
 	oldRootCtx := rootCtx
 	rootCtx = ctx
 	defer func() { rootCtx = oldRootCtx }()
@@ -239,29 +229,29 @@ func TestGetAssignedStatus(t *testing.T) {
 		}
 	}
 
-	// Test getAssignedStatus for Alice
-	summary := getAssignedStatus("alice")
-	if summary == nil {
-		t.Fatal("getAssignedStatus returned nil")
+	// Test getAssignedStatistics for Alice
+	stats := getAssignedStatistics("alice")
+	if stats == nil {
+		t.Fatal("getAssignedStatistics returned nil")
 	}
 
-	if summary.TotalIssues != 2 {
-		t.Errorf("Expected 2 issues for alice, got %d", summary.TotalIssues)
+	if stats.TotalIssues != 2 {
+		t.Errorf("Expected 2 issues for alice, got %d", stats.TotalIssues)
 	}
-	if summary.OpenIssues != 1 {
-		t.Errorf("Expected 1 open issue for alice, got %d", summary.OpenIssues)
+	if stats.OpenIssues != 1 {
+		t.Errorf("Expected 1 open issue for alice, got %d", stats.OpenIssues)
 	}
-	if summary.InProgressIssues != 1 {
-		t.Errorf("Expected 1 in-progress issue for alice, got %d", summary.InProgressIssues)
+	if stats.InProgressIssues != 1 {
+		t.Errorf("Expected 1 in-progress issue for alice, got %d", stats.InProgressIssues)
 	}
 
 	// Test for Bob
-	bobSummary := getAssignedStatus("bob")
-	if bobSummary == nil {
-		t.Fatal("getAssignedStatus returned nil for bob")
+	bobStats := getAssignedStatistics("bob")
+	if bobStats == nil {
+		t.Fatal("getAssignedStatistics returned nil for bob")
 	}
 
-	if bobSummary.TotalIssues != 1 {
-		t.Errorf("Expected 1 issue for bob, got %d", bobSummary.TotalIssues)
+	if bobStats.TotalIssues != 1 {
+		t.Errorf("Expected 1 issue for bob, got %d", bobStats.TotalIssues)
 	}
 }
