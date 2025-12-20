@@ -589,8 +589,8 @@ Use --merge to merge the sync branch back to main branch.`,
 							// Check if this looks like a merge driver failure
 							errStr := err.Error()
 							if strings.Contains(errStr, "merge driver") ||
-							   strings.Contains(errStr, "no such file or directory") ||
-							   strings.Contains(errStr, "MERGE DRIVER INVOKED") {
+								strings.Contains(errStr, "no such file or directory") ||
+								strings.Contains(errStr, "MERGE DRIVER INVOKED") {
 								fmt.Fprintf(os.Stderr, "\nThis may be caused by an incorrect merge driver configuration.\n")
 								fmt.Fprintf(os.Stderr, "Fix: bd doctor --fix\n\n")
 							}
@@ -826,14 +826,14 @@ func gitHasUpstream() bool {
 		return false
 	}
 	branch := strings.TrimSpace(string(branchOutput))
-	
+
 	// Check if remote and merge refs are configured
 	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
 	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))
-	
+
 	remoteErr := remoteCmd.Run()
 	mergeErr := mergeCmd.Run()
-	
+
 	return remoteErr == nil && mergeErr == nil
 }
 
@@ -951,6 +951,7 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	syncFiles := []string{
 		filepath.Join(beadsDir, "issues.jsonl"),
 		filepath.Join(beadsDir, "deletions.jsonl"),
+		filepath.Join(beadsDir, "interactions.jsonl"),
 		filepath.Join(beadsDir, "metadata.json"),
 	}
 
@@ -1107,7 +1108,7 @@ func gitPull(ctx context.Context) error {
 	if !hasGitRemote(ctx) {
 		return nil // Gracefully skip - local-only mode
 	}
-	
+
 	// Get current branch name
 	// Use symbolic-ref to work in fresh repos without commits (bd-flil)
 	branchCmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--short", "HEAD")
@@ -1116,7 +1117,7 @@ func gitPull(ctx context.Context) error {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
 	branch := strings.TrimSpace(string(branchOutput))
-	
+
 	// Get remote name for current branch (usually "origin")
 	remoteCmd := exec.CommandContext(ctx, "git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
 	remoteOutput, err := remoteCmd.Output()
@@ -1125,7 +1126,7 @@ func gitPull(ctx context.Context) error {
 		remoteOutput = []byte("origin\n")
 	}
 	remote := strings.TrimSpace(string(remoteOutput))
-	
+
 	// Pull with explicit remote and branch
 	cmd := exec.CommandContext(ctx, "git", "pull", remote, branch)
 	output, err := cmd.CombinedOutput()
@@ -1794,18 +1795,18 @@ func pullFromExternalBeadsRepo(ctx context.Context, beadsDir string) error {
 // SyncIntegrityResult contains the results of a pre-sync integrity check.
 // bd-hlsw.1: Pre-sync integrity check
 type SyncIntegrityResult struct {
-	ForcedPush       *ForcedPushCheck   `json:"forced_push,omitempty"`
-	PrefixMismatch   *PrefixMismatch    `json:"prefix_mismatch,omitempty"`
-	OrphanedChildren *OrphanedChildren  `json:"orphaned_children,omitempty"`
-	HasProblems      bool               `json:"has_problems"`
+	ForcedPush       *ForcedPushCheck  `json:"forced_push,omitempty"`
+	PrefixMismatch   *PrefixMismatch   `json:"prefix_mismatch,omitempty"`
+	OrphanedChildren *OrphanedChildren `json:"orphaned_children,omitempty"`
+	HasProblems      bool              `json:"has_problems"`
 }
 
 // ForcedPushCheck detects if sync branch has diverged from remote.
 type ForcedPushCheck struct {
-	Detected    bool   `json:"detected"`
-	LocalRef    string `json:"local_ref,omitempty"`
-	RemoteRef   string `json:"remote_ref,omitempty"`
-	Message     string `json:"message"`
+	Detected  bool   `json:"detected"`
+	LocalRef  string `json:"local_ref,omitempty"`
+	RemoteRef string `json:"remote_ref,omitempty"`
+	Message   string `json:"message"`
 }
 
 // PrefixMismatch detects issues with wrong prefix in JSONL.

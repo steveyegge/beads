@@ -11,25 +11,27 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/compact"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 var (
-	compactDryRun   bool
-	compactTier     int
-	compactAll      bool
-	compactID       string
-	compactForce    bool
-	compactBatch    int
-	compactWorkers  int
-	compactStats    bool
-	compactAnalyze  bool
-	compactApply    bool
-	compactAuto     bool
-	compactSummary  string
-	compactActor    string
-	compactLimit int
+	compactDryRun  bool
+	compactTier    int
+	compactAll     bool
+	compactID      string
+	compactForce   bool
+	compactBatch   int
+	compactWorkers int
+	compactStats   bool
+	compactAnalyze bool
+	compactApply   bool
+	compactAuto    bool
+	compactSummary string
+	compactActor   string
+	compactAudit   bool
+	compactLimit   int
 )
 
 var compactCmd = &cobra.Command{
@@ -68,7 +70,7 @@ Examples:
   # Statistics
   bd compact --stats                       # Show statistics
 `,
-	Run: func(_ *cobra.Command, _ []string) {
+	Run: func(cmd *cobra.Command, _ []string) {
 		// Compact modifies data unless --stats or --analyze or --dry-run
 		if !compactStats && !compactAnalyze && !compactDryRun {
 			CheckReadonly("compact")
@@ -156,6 +158,12 @@ Examples:
 
 		// Handle auto mode (legacy)
 		if compactAuto {
+			// If --audit not explicitly set, fall back to config audit.enabled
+			auditEnabled := compactAudit
+			if !cmd.Flags().Changed("audit") {
+				auditEnabled = config.GetBool("audit.enabled")
+			}
+
 			// Validation checks
 			if compactID != "" && compactAll {
 				fmt.Fprintf(os.Stderr, "Error: cannot use --id and --all together\n")
@@ -190,9 +198,11 @@ Examples:
 			}
 
 			config := &compact.Config{
-				APIKey:      apiKey,
-				Concurrency: compactWorkers,
-				DryRun:      compactDryRun,
+				APIKey:       apiKey,
+				Concurrency:  compactWorkers,
+				DryRun:       compactDryRun,
+				AuditEnabled: auditEnabled,
+				Actor:        compactActor,
 			}
 
 			compactor, err := compact.New(sqliteStore, apiKey, config)
@@ -1091,6 +1101,7 @@ func init() {
 	compactCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
 	compactCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
 	compactCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
+	compactCmd.Flags().BoolVar(&compactAudit, "audit", false, "Log LLM prompt/response to .beads/interactions.jsonl (or set config audit.enabled=true)")
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")

@@ -428,7 +428,7 @@ func runPreCommitHook() int {
 	}
 
 	// Stage all tracked JSONL files
-	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl"} {
+	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"} {
 		if _, err := os.Stat(f); err == nil {
 			gitAdd := exec.Command("git", "add", f)
 			_ = gitAdd.Run() // Ignore errors - file may not exist
@@ -498,7 +498,7 @@ func runPrePushHook() int {
 
 	// Check for uncommitted JSONL changes
 	files := []string{}
-	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl"} {
+	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"} {
 		// Check if file exists or is tracked
 		if _, err := os.Stat(f); err == nil {
 			files = append(files, f)
@@ -644,7 +644,7 @@ func isRebaseInProgress() bool {
 
 // hasBeadsJSONL checks if any JSONL file exists in .beads/.
 func hasBeadsJSONL() bool {
-	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl"} {
+	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"} {
 		if _, err := os.Stat(f); err == nil {
 			return true
 		}
