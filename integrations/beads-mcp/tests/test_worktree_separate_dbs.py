@@ -295,7 +295,7 @@ async def test_mcp_works_with_separate_databases(git_worktree_with_separate_dbs,
     # Create MCP client
     async with Client(mcp) as client:
         # Set context to worktree
-        await client.call_tool("set_context", {"workspace_root": str(worktree)})
+        await client.call_tool("context", {"workspace_root": str(worktree)})
         
         # Create issue via MCP
         result = await client.call_tool(

@@ -255,7 +255,7 @@ async def _get_client() -> BdClientBase:
     if not workspace:
         raise BdError(
             "No beads workspace found. Either:\n"
-            "  1. Call set_context(workspace_root=\"/path/to/project\"), OR\n"
+            "  1. Call context(workspace_root=\"/path/to/project\"), OR\n"
             "  2. Run from a directory containing .beads/, OR\n"
             "  3. Set BEADS_WORKING_DIR environment variable"
         )

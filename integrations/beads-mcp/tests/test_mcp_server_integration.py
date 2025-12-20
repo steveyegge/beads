@@ -85,7 +85,7 @@ async def mcp_client(bd_executable, temp_db, monkeypatch):
     # Create test client
     async with Client(mcp) as client:
         # Automatically set context for the tests
-        await client.call_tool("set_context", {"workspace_root": workspace_root})
+        await client.call_tool("context", {"workspace_root": workspace_root})
         yield client
 
     # Reset connection pool and context after test
@@ -598,21 +598,69 @@ async def test_blocked_tool(mcp_client):
 
 
 @pytest.mark.asyncio
-async def test_init_tool(mcp_client, bd_executable):
-    """Test init tool.
-    
-    Note: This test validates that init can be called successfully via MCP.
-    The actual database is created in the workspace from mcp_client fixture,
-    not in a separate temp directory, because the init tool uses the connection
-    pool which is keyed by workspace path.
+async def test_context_init_action(bd_executable):
+    """Test context tool with init action.
+
+    Note: This test validates that context(action='init') can be called successfully via MCP.
+    Uses a fresh temp directory without an existing database.
     """
     import os
     import tempfile
+    import shutil
+    from beads_mcp import tools
+    from beads_mcp.server import mcp
 
-    # Call init tool (will init in the current workspace from mcp_client fixture)
-    result = await mcp_client.call_tool("init", {"prefix": "test-init"})
+    # Reset connection pool and context
+    tools._connection_pool.clear()
+    os.environ.pop("BEADS_CONTEXT_SET", None)
+    os.environ.pop("BEADS_WORKING_DIR", None)
+    os.environ.pop("BEADS_DB", None)
+    os.environ.pop("BEADS_DIR", None)
+    os.environ["BEADS_NO_DAEMON"] = "1"
+
+    # Create a fresh temp directory without any beads database
+    temp_dir = tempfile.mkdtemp(prefix="beads_init_test_")
+    try:
+        async with Client(mcp) as client:
+            # First set context to the fresh directory
+            await client.call_tool("context", {"workspace_root": temp_dir})
+
+            # Call context tool with init action
+            result = await client.call_tool("context", {"action": "init", "prefix": "test-init"})
+            output = result.content[0].text
+
+            # Verify output contains success message
+            assert "bd initialized successfully!" in output
+            assert "test-init" in output
+    finally:
+        tools._connection_pool.clear()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        os.environ.pop("BEADS_CONTEXT_SET", None)
+        os.environ.pop("BEADS_WORKING_DIR", None)
+
+
+@pytest.mark.asyncio
+async def test_context_show_action(mcp_client, temp_db):
+    """Test context tool with show action.
+
+    Verifies that context(action='show') returns workspace information.
+    """
+    # Call context tool with show action (default when no args)
+    result = await mcp_client.call_tool("context", {"action": "show"})
     output = result.content[0].text
 
-    # Verify output contains success message
-    assert "bd initialized successfully!" in output
-    assert "test-init" in output
+    # Verify output contains workspace info
+    assert "Workspace root:" in output
+    assert "Database:" in output
+
+
+@pytest.mark.asyncio
+async def test_context_default_show(mcp_client, temp_db):
+    """Test context tool defaults to show when no args provided."""
+    # Call context tool with no args - should default to show
+    result = await mcp_client.call_tool("context", {})
+    output = result.content[0].text
+
+    # Verify output contains workspace info (same as show action)
+    assert "Workspace root:" in output
+    assert "Database:" in output

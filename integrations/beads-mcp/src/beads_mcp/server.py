@@ -120,7 +120,7 @@ Check the resource beads://quickstart to see how.
 CONTEXT OPTIMIZATION: Use discover_tools() to see available tools (names only),
 then get_tool_info(tool_name) for specific tool details. This saves context.
 
-IMPORTANT: Call set_context with your workspace root before any write operations.
+IMPORTANT: Call context(workspace_root='...') to set your workspace before any write operations.
 """,
 )
 
@@ -213,7 +213,7 @@ def require_context(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitabl
     
     Passes if either:
     - workspace_root was provided on tool call (via ContextVar), OR
-    - BEADS_WORKING_DIR is set (from set_context)
+    - BEADS_WORKING_DIR is set (from context tool)
     
     Only enforces if BEADS_REQUIRE_CONTEXT=1 is set in environment.
     This allows backward compatibility while adding safety for multi-repo setups.
@@ -226,7 +226,7 @@ def require_context(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitabl
             workspace = current_workspace.get() or os.environ.get("BEADS_WORKING_DIR")
             if not workspace:
                 raise ValueError(
-                    "Context not set. Either provide workspace_root parameter or call set_context() first."
+                    "Context not set. Either provide workspace_root parameter or call context(workspace_root='...') first."
                 )
         return await func(*args, **kwargs)
     return wrapper
@@ -316,9 +316,7 @@ _TOOL_CATALOG = {
     "dep": "Add dependency between issues",
     "stats": "Get issue statistics",
     "blocked": "Show blocked issues and what blocks them",
-    "init": "Initialize beads in a directory",
-    "set_context": "Set workspace root for operations",
-    "where_am_i": "Show current workspace context",
+    "context": "Manage workspace context (set, show, init)",
     "admin": "Administrative/diagnostic operations (validate, repair, schema, debug, migration, pollution)",
     "discover_tools": "List available tools (names only)",
     "get_tool_info": "Get detailed info for a specific tool",
@@ -487,8 +485,19 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             "returns": "Dict with operation results (or string for debug)",
             "example": "admin(action='validate', checks='orphans')"
         },
+        "context": {
+            "name": "context",
+            "description": "Manage workspace context for beads operations",
+            "parameters": {
+                "action": "str (optional) - set|show|init (default: show if no args, set if workspace_root provided)",
+                "workspace_root": "str (optional) - Workspace path for set/init actions",
+                "prefix": "str (optional) - Issue ID prefix for init action"
+            },
+            "returns": "String with context information or confirmation",
+            "example": "context(action='set', workspace_root='/path/to/project')"
+        },
     }
-    
+
     if tool_name not in tool_details:
         available = list(tool_details.keys())
         return {
@@ -500,20 +509,66 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
     return tool_details[tool_name]
 
 
-# Context management tools
+# Context management tool - unified set_context, where_am_i, and init
 @mcp.tool(
-    name="set_context",
-    description="Set the workspace root directory for all bd operations. Call this first!",
+    name="context",
+    description="""Manage workspace context for beads operations.
+Actions:
+- set: Set the workspace root directory (default when workspace_root provided)
+- show: Show current workspace context and database path (default when no args)
+- init: Initialize beads in the current workspace directory""",
 )
-async def set_context(workspace_root: str) -> str:
-    """Set workspace root directory and discover the beads database.
+async def context(
+    action: str | None = None,
+    workspace_root: str | None = None,
+    prefix: str | None = None,
+) -> str:
+    """Manage workspace context for beads operations.
 
     Args:
-        workspace_root: Absolute path to workspace/project root directory
+        action: Action to perform - set, show, or init (inferred if not provided)
+        workspace_root: Workspace path for set/init actions
+        prefix: Issue ID prefix for init action
 
     Returns:
-        Confirmation message with resolved paths
+        Context information or confirmation message
     """
+    # Infer action if not explicitly provided
+    if action is None:
+        if workspace_root is not None:
+            action = "set"
+        else:
+            action = "show"
+
+    action = action.lower()
+
+    if action == "set":
+        if workspace_root is None:
+            return "Error: workspace_root is required for 'set' action"
+        return await _context_set(workspace_root)
+
+    elif action == "show":
+        return _context_show()
+
+    elif action == "init":
+        # For init, we need context to be set first
+        context_set = (
+            _workspace_context.get("BEADS_CONTEXT_SET")
+            or os.environ.get("BEADS_CONTEXT_SET")
+        )
+        if not context_set:
+            return (
+                "Error: Context must be set before init.\n"
+                "Use context(action='set', workspace_root='/path/to/project') first."
+            )
+        return await beads_init(prefix=prefix)
+
+    else:
+        return f"Error: Unknown action '{action}'. Valid actions: set, show, init"
+
+
+async def _context_set(workspace_root: str) -> str:
+    """Set workspace root directory and discover the beads database."""
     # Resolve to git repo root if possible (run in thread to avoid blocking event loop)
     try:
         resolved_root = await asyncio.wait_for(
@@ -547,7 +602,7 @@ async def set_context(workspace_root: str) -> str:
         return (
             f"Context set successfully:\n"
             f"  Workspace root: {resolved_root}\n"
-            f"  Database: Not found (run 'bd init' to create)"
+            f"  Database: Not found (run context(action='init') to create)"
         )
 
     # Set database path in both persistent context and os.environ
@@ -561,11 +616,7 @@ async def set_context(workspace_root: str) -> str:
     )
 
 
-@mcp.tool(
-    name="where_am_i",
-    description="Show current workspace context and database path",
-)
-async def where_am_i(workspace_root: str | None = None) -> str:
+def _context_show() -> str:
     """Show current workspace context for debugging."""
     context_set = (
         _workspace_context.get("BEADS_CONTEXT_SET")
@@ -574,7 +625,7 @@ async def where_am_i(workspace_root: str | None = None) -> str:
 
     if not context_set:
         return (
-            "Context not set. Call set_context with your workspace root first.\n"
+            "Context not set. Use context(action='set', workspace_root='...') first.\n"
             f"Current process CWD: {os.getcwd()}\n"
             f"BEADS_WORKING_DIR (persistent): {_workspace_context.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
             f"BEADS_WORKING_DIR (env): {os.environ.get('BEADS_WORKING_DIR', 'NOT SET')}\n"
@@ -843,18 +894,6 @@ async def stats(workspace_root: str | None = None) -> Stats:
 async def blocked(workspace_root: str | None = None) -> list[BlockedIssue]:
     """Get blocked issues."""
     return await beads_blocked()
-
-
-@mcp.tool(
-    name="init",
-    description="""Initialize bd in current directory. Creates .beads/ directory and
-database with optional custom prefix for issue IDs.""",
-)
-@with_workspace
-@require_context
-async def init(prefix: str | None = None, workspace_root: str | None = None) -> str:
-    """Initialize bd in current directory."""
-    return await beads_init(prefix=prefix)
 
 
 @mcp.tool(
