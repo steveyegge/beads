@@ -953,6 +953,7 @@ func pruneExpiredTombstones(customTTL time.Duration) (*TombstonePruneResult, err
 			// Skip corrupt lines
 			continue
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 		allIssues = append(allIssues, &issue)
 	}
 	if err := file.Close(); err != nil {
@@ -1049,6 +1050,7 @@ func previewPruneTombstones(customTTL time.Duration) (*TombstonePruneResult, err
 			// Skip corrupt lines
 			continue
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 		allIssues = append(allIssues, &issue)
 	}
 

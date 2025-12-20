@@ -205,6 +205,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
 				os.Exit(1)
 			}
+			issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 			allIssues = append(allIssues, &issue)
 		}

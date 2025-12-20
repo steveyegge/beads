@@ -294,6 +294,7 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
 			return fmt.Errorf("failed to parse issue: %w", err)
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 		issues = append(issues, &issue)
 	}
 

@@ -103,6 +103,7 @@ func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNum, err)
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 		issues = append(issues, &issue)
 	}

@@ -900,3 +900,62 @@ func containsMiddle(s, substr string) bool {
 	}
 	return false
 }
+
+func TestSetDefaults(t *testing.T) {
+	tests := []struct {
+		name           string
+		issue          Issue
+		expectedStatus Status
+		expectedType   IssueType
+	}{
+		{
+			name:           "empty fields get defaults",
+			issue:          Issue{Title: "Test"},
+			expectedStatus: StatusOpen,
+			expectedType:   TypeTask,
+		},
+		{
+			name: "existing status preserved",
+			issue: Issue{
+				Title:  "Test",
+				Status: StatusInProgress,
+			},
+			expectedStatus: StatusInProgress,
+			expectedType:   TypeTask,
+		},
+		{
+			name: "existing type preserved",
+			issue: Issue{
+				Title:     "Test",
+				IssueType: TypeBug,
+			},
+			expectedStatus: StatusOpen,
+			expectedType:   TypeBug,
+		},
+		{
+			name: "all fields set - no changes",
+			issue: Issue{
+				Title:     "Test",
+				Status:    StatusClosed,
+				IssueType: TypeFeature,
+				ClosedAt:  timePtr(time.Now()),
+			},
+			expectedStatus: StatusClosed,
+			expectedType:   TypeFeature,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := tt.issue
+			issue.SetDefaults()
+
+			if issue.Status != tt.expectedStatus {
+				t.Errorf("SetDefaults() Status = %v, want %v", issue.Status, tt.expectedStatus)
+			}
+			if issue.IssueType != tt.expectedType {
+				t.Errorf("SetDefaults() IssueType = %v, want %v", issue.IssueType, tt.expectedType)
+			}
+		})
+	}
+}

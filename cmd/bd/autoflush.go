@@ -165,6 +165,7 @@ func autoImportIfNewer() {
 			fmt.Fprintf(os.Stderr, "Auto-import skipped: parse error at line %d: %v\nSnippet: %s\n", lineNo, err, snippet)
 			return
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 		// Fix closed_at invariant: closed issues must have closed_at timestamp
 		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
@@ -662,6 +663,7 @@ func flushToJSONLWithState(state flushState) {
 				}
 				var issue types.Issue
 				if err := json.Unmarshal([]byte(line), &issue); err == nil {
+					issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 					issueMap[issue.ID] = &issue
 				} else {
 					// Warn about malformed JSONL lines

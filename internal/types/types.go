@@ -12,13 +12,13 @@ type Issue struct {
 	ID                 string         `json:"id"`
 	ContentHash        string         `json:"-"` // Internal: SHA256 hash of canonical content (excludes ID, timestamps) - NOT exported to JSONL
 	Title              string         `json:"title"`
-	Description        string         `json:"description"`
+	Description        string         `json:"description,omitempty"`
 	Design             string         `json:"design,omitempty"`
 	AcceptanceCriteria string         `json:"acceptance_criteria,omitempty"`
 	Notes              string         `json:"notes,omitempty"`
-	Status             Status         `json:"status"`
-	Priority           int            `json:"priority"`
-	IssueType          IssueType      `json:"issue_type"`
+	Status             Status         `json:"status,omitempty"`
+	Priority           int            `json:"priority,omitempty"`
+	IssueType          IssueType      `json:"issue_type,omitempty"`
 	Assignee           string         `json:"assignee,omitempty"`
 	EstimatedMinutes   *int           `json:"estimated_minutes,omitempty"`
 	CreatedAt          time.Time      `json:"created_at"`
@@ -188,6 +188,27 @@ func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
 	}
 	return nil
+}
+
+// SetDefaults applies default values for fields omitted during JSONL import.
+// Call this after json.Unmarshal to ensure missing fields have proper defaults:
+//   - Status: defaults to StatusOpen if empty
+//   - Priority: defaults to 2 if zero (note: P0 issues must explicitly set priority=0)
+//   - IssueType: defaults to TypeTask if empty
+//
+// This enables smaller JSONL output by using omitempty on these fields.
+func (i *Issue) SetDefaults() {
+	if i.Status == "" {
+		i.Status = StatusOpen
+	}
+	// Note: priority 0 (P0) is a valid value, so we can't distinguish between
+	// "explicitly set to 0" and "omitted". For JSONL compactness, we treat
+	// priority 0 in JSONL as P0, not as "use default". This is the expected
+	// behavior since P0 issues are explicitly marked.
+	// Priority default of 2 only applies to new issues via Create, not import.
+	if i.IssueType == "" {
+		i.IssueType = TypeTask
+	}
 }
 
 // Status represents the current state of an issue

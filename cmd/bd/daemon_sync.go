@@ -183,6 +183,7 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse JSONL line %d: %v\n", lineNum, err)
 			continue
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 		issues = append(issues, &issue)
 	}
