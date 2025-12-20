@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/memory"
@@ -631,6 +632,19 @@ var rootCmd = &cobra.Command{
 				}
 			} else {
 				autoImportIfNewer()
+			}
+		}
+
+		// Load molecule templates from hierarchical catalog locations (gt-0ei3)
+		// Templates are loaded after auto-import to ensure the database is up-to-date.
+		// Skip for import command to avoid conflicts during import operations.
+		if cmd.Name() != "import" && store != nil {
+			beadsDir := filepath.Dir(dbPath)
+			loader := molecules.NewLoader(store)
+			if result, err := loader.LoadAll(rootCtx, beadsDir); err != nil {
+				debug.Logf("warning: failed to load molecules: %v", err)
+			} else if result.Loaded > 0 {
+				debug.Logf("loaded %d molecules from %v", result.Loaded, result.Sources)
 			}
 		}
 	},
