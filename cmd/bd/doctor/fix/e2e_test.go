@@ -753,6 +753,11 @@ func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
 		if runtime.GOOS == "darwin" {
 			t.Skip("skipping on macOS: file owner can write to read-only files")
 		}
+		// Skip in CI - containers may have CAP_DAC_OVERRIDE or other capabilities
+		// that bypass file permission checks
+		if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Skip("skipping in CI: container may bypass file permission checks")
+		}
 
 		dir := setupTestGitRepo(t)
 
