@@ -293,6 +293,7 @@ var versionChanges = []VersionChange{
 		Changes: []string{
 			"FIX: bd graph no longer crashes with nil pointer on epics (fixes #657)",
 			"FIX: Windows npm installer no longer fails with file lock error (fixes #652)",
+			"NEW: Version Bump molecule template for repeatable release workflows",
 		},
 	},
 	{
