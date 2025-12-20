@@ -179,9 +179,20 @@ Use --merge to merge the sync branch back to main branch.`,
 			os.Exit(1)
 		}
 
+		// GH#638: Check sync.branch BEFORE upstream check
+		// When sync.branch is configured, we should use worktree-based sync even if
+		// the current branch has no upstream (e.g., detached HEAD in jj, git worktrees)
+		var hasSyncBranchConfig bool
+		if err := ensureStoreActive(); err == nil && store != nil {
+			if syncBranch, _ := syncbranch.Get(ctx, store); syncBranch != "" {
+				hasSyncBranchConfig = true
+			}
+		}
+
 		// Preflight: check for upstream tracking
 		// If no upstream, automatically switch to --from-main mode (gt-ick9: ephemeral branch support)
-		if !noPull && !gitHasUpstream() {
+		// GH#638: Skip this fallback if sync.branch is explicitly configured
+		if !noPull && !gitHasUpstream() && !hasSyncBranchConfig {
 			if hasGitRemote(ctx) {
 				// Remote exists but no upstream - use from-main mode
 				fmt.Println("→ No upstream configured, using --from-main mode")
