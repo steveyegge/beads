@@ -613,9 +613,12 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 }
 
 // DetectCycles finds circular dependencies and returns the actual cycle paths
+// Note: relates-to dependencies are excluded because they are intentionally bidirectional
+// ("see also" relationships) and do not represent problematic cycles.
 func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, error) {
 	// Use recursive CTE to find cycles with full paths
 	// We track the path as a string to work around SQLite's lack of arrays
+	// Exclude relates-to dependencies since they are inherently bidirectional
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE paths AS (
 			SELECT
@@ -625,6 +628,7 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 				issue_id || '→' || depends_on_id as path,
 				0 as depth
 			FROM dependencies
+			WHERE type != 'relates-to'
 
 			UNION ALL
 
@@ -636,7 +640,8 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 			p.depth + 1
 			FROM dependencies d
 			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
+			WHERE d.type != 'relates-to'
+			AND p.depth < ?
 			AND (d.depends_on_id = p.start_id OR p.path NOT LIKE '%' || d.depends_on_id || '→%')
 		)
 		SELECT DISTINCT path as cycle_path

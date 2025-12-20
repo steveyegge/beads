@@ -505,3 +505,141 @@ func TestDetectCyclesMixedTypes(t *testing.T) {
 		t.Errorf("Expected cycle of length 3, got %d", len(cycle))
 	}
 }
+
+// TestDetectCyclesRelatesToNotACycle tests that bidirectional relates-to links are NOT reported as cycles
+// This is the fix for GitHub issue #661: relates-to relationships should be excluded from cycle detection
+// because they are inherently bidirectional ("see also" links) and don't affect work ordering.
+func TestDetectCyclesRelatesToNotACycle(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create two issues
+	issue1 := &types.Issue{Title: "Todo 1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Todo 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+
+	if err := store.CreateIssue(ctx, issue1, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue2, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Create bidirectional relates_to links (simulating what bd relate does)
+	// issue1 relates_to issue2
+	_, err := store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue1.ID, issue2.ID, types.DepRelatesTo)
+	if err != nil {
+		t.Fatalf("Insert relates_to dependency failed: %v", err)
+	}
+
+	// issue2 relates_to issue1 (the reverse link)
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue2.ID, issue1.ID, types.DepRelatesTo)
+	if err != nil {
+		t.Fatalf("Insert relates_to dependency failed: %v", err)
+	}
+
+	// Detect cycles - should find NONE because relates_to is excluded
+	cycles, err := store.DetectCycles(ctx)
+	if err != nil {
+		t.Fatalf("DetectCycles failed: %v", err)
+	}
+
+	if len(cycles) != 0 {
+		t.Errorf("Expected no cycles for relates_to bidirectional links, but found %d cycles", len(cycles))
+		for i, cycle := range cycles {
+			t.Logf("Cycle %d:", i+1)
+			for _, issue := range cycle {
+				t.Logf("  - %s: %s", issue.ID, issue.Title)
+			}
+		}
+	}
+}
+
+// TestDetectCyclesRelatesToWithOtherCycle tests that relates-to is excluded but other cycles are still detected
+func TestDetectCyclesRelatesToWithOtherCycle(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create three issues
+	issue1 := &types.Issue{Title: "Issue A", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issue2 := &types.Issue{Title: "Issue B", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	issue3 := &types.Issue{Title: "Issue C", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+
+	if err := store.CreateIssue(ctx, issue1, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue2, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+	if err := store.CreateIssue(ctx, issue3, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Create bidirectional relates_to between issue1 and issue2 (should NOT trigger cycle)
+	_, err := store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue1.ID, issue2.ID, types.DepRelatesTo)
+	if err != nil {
+		t.Fatalf("Insert relates_to dependency failed: %v", err)
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue2.ID, issue1.ID, types.DepRelatesTo)
+	if err != nil {
+		t.Fatalf("Insert relates_to dependency failed: %v", err)
+	}
+
+	// Create a real cycle with blocks: issue2 -> issue3 -> issue2
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue2.ID, issue3.ID, types.DepBlocks)
+	if err != nil {
+		t.Fatalf("Insert blocks dependency failed: %v", err)
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_by, created_at)
+		VALUES (?, ?, ?, 'test-user', CURRENT_TIMESTAMP)
+	`, issue3.ID, issue2.ID, types.DepBlocks)
+	if err != nil {
+		t.Fatalf("Insert blocks dependency failed: %v", err)
+	}
+
+	// Detect cycles - should find the blocks cycle but NOT the relates_to "cycle"
+	cycles, err := store.DetectCycles(ctx)
+	if err != nil {
+		t.Fatalf("DetectCycles failed: %v", err)
+	}
+
+	if len(cycles) == 0 {
+		t.Fatal("Expected to find the blocks cycle, but found none")
+	}
+
+	// Verify the cycle contains issue2 and issue3, but NOT issue1
+	foundIDs := make(map[string]bool)
+	for _, cycle := range cycles {
+		for _, issue := range cycle {
+			foundIDs[issue.ID] = true
+		}
+	}
+
+	if !foundIDs[issue2.ID] || !foundIDs[issue3.ID] {
+		t.Errorf("Expected cycle to contain issue2 and issue3. Found: %v", foundIDs)
+	}
+
+	// Verify issue1 is NOT in the cycle (it's only connected via relates-to)
+	if foundIDs[issue1.ID] {
+		t.Errorf("issue1 should NOT be in cycle (only connected via relates-to), but was found")
+	}
+}
