@@ -81,8 +81,8 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.Sender != nil {
 		u["sender"] = *a.Sender
 	}
-	if a.Ephemeral != nil {
-		u["ephemeral"] = *a.Ephemeral
+	if a.Wisp != nil {
+		u["wisp"] = *a.Wisp
 	}
 	if a.RepliesTo != nil {
 		u["replies_to"] = *a.RepliesTo
@@ -176,8 +176,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		EstimatedMinutes:   createArgs.EstimatedMinutes,
 		Status:             types.StatusOpen,
 		// Messaging fields (bd-kwro)
-		Sender:    createArgs.Sender,
-		Ephemeral: createArgs.Ephemeral,
+		Sender: createArgs.Sender,
+		Wisp:   createArgs.Wisp,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 	}
 	

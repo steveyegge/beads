@@ -27,9 +27,9 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		sourceRepo = "." // Default to primary repo
 	}
 
-	ephemeral := 0
-	if issue.Ephemeral {
-		ephemeral = 1
+	wisp := 0
+	if issue.Wisp {
+		wisp = 1
 	}
 	pinned := 0
 	if issue.Pinned {
@@ -55,7 +55,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, ephemeral, pinned, isTemplate,
+		issue.Sender, wisp, pinned, isTemplate,
 	)
 	if err != nil {
 		// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -90,9 +90,9 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			sourceRepo = "." // Default to primary repo
 		}
 
-		ephemeral := 0
-		if issue.Ephemeral {
-			ephemeral = 1
+		wisp := 0
+		if issue.Wisp {
+			wisp = 1
 		}
 		pinned := 0
 		if issue.Pinned {
@@ -110,7 +110,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, ephemeral, pinned, isTemplate,
+			issue.Sender, wisp, pinned, isTemplate,
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error

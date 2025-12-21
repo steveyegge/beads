@@ -73,8 +73,8 @@ type CreateArgs struct {
 	Labels             []string `json:"labels,omitempty"`
 	Dependencies       []string `json:"dependencies,omitempty"`
 	// Messaging fields (bd-kwro)
-	Sender    string `json:"sender,omitempty"`     // Who sent this (for messages)
-	Ephemeral bool   `json:"ephemeral,omitempty"`  // Can be bulk-deleted when closed
+	Sender string `json:"sender,omitempty"` // Who sent this (for messages)
+	Wisp   bool   `json:"wisp,omitempty"`   // Wisp = ephemeral vapor from the Steam Engine; bulk-deleted when closed
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 }
 
@@ -96,8 +96,8 @@ type UpdateArgs struct {
 	RemoveLabels       []string `json:"remove_labels,omitempty"`
 	SetLabels          []string `json:"set_labels,omitempty"`
 	// Messaging fields (bd-kwro)
-	Sender    *string `json:"sender,omitempty"`     // Who sent this (for messages)
-	Ephemeral *bool   `json:"ephemeral,omitempty"`  // Can be bulk-deleted when closed
+	Sender *string `json:"sender,omitempty"` // Who sent this (for messages)
+	Wisp   *bool   `json:"wisp,omitempty"`   // Wisp = ephemeral vapor from the Steam Engine; bulk-deleted when closed
 	RepliesTo *string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// Graph link fields (bd-fu83)
 	RelatesTo    *string `json:"relates_to,omitempty"`    // JSON array of related issue IDs

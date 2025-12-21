@@ -1071,10 +1071,10 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
-	// Ephemeral filtering (bd-kwro.9)
-	if filter.Ephemeral != nil {
-		if *filter.Ephemeral {
-			whereClauses = append(whereClauses, "ephemeral = 1")
+	// Wisp filtering (bd-kwro.9)
+	if filter.Wisp != nil {
+		if *filter.Wisp {
+			whereClauses = append(whereClauses, "ephemeral = 1") // SQL column is still 'ephemeral'
 		} else {
 			whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
 		}
@@ -1149,7 +1149,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var originalType sql.NullString
 	// Messaging fields (bd-kwro)
 	var sender sql.NullString
-	var ephemeral sql.NullInt64
+	var wisp sql.NullInt64
 	// Pinned field (bd-7h5)
 	var pinned sql.NullInt64
 	// Template field (beads-1ra)
@@ -1162,7 +1162,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &pinned, &isTemplate,
+		&sender, &wisp, &pinned, &isTemplate,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1213,8 +1213,8 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	if sender.Valid {
 		issue.Sender = sender.String
 	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
+	if wisp.Valid && wisp.Int64 != 0 {
+		issue.Wisp = true
 	}
 	// Pinned field (bd-7h5)
 	if pinned.Valid && pinned.Int64 != 0 {

@@ -182,9 +182,9 @@ func runMolSpawn(cmd *cobra.Command, args []string) {
 	}
 
 	// Clone the subgraph (spawn the molecule)
-	// Spawned molecules are ephemeral by default (bd-2vh3) - use --persistent to opt out
-	ephemeral := !persistent
-	result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor, ephemeral)
+	// Spawned molecules are wisps by default (bd-2vh3) - use --persistent to opt out
+	wisp := !persistent
+	result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor, wisp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error spawning molecule: %v\n", err)
 		os.Exit(1)
@@ -236,7 +236,7 @@ func init() {
 	molSpawnCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
 	molSpawnCmd.Flags().StringSlice("attach", []string{}, "Proto to attach after spawning (repeatable)")
 	molSpawnCmd.Flags().String("attach-type", types.BondTypeSequential, "Bond type for attachments: sequential, parallel, or conditional")
-	molSpawnCmd.Flags().Bool("persistent", false, "Create non-ephemeral issues (default: ephemeral for cleanup)")
+	molSpawnCmd.Flags().Bool("persistent", false, "Create non-wisp issues (default: wisp for cleanup)")
 
 	molCmd.AddCommand(molSpawnCmd)
 }

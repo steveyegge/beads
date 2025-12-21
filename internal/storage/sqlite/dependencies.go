@@ -718,7 +718,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var originalType sql.NullString
 		// Messaging fields (bd-kwro)
 		var sender sql.NullString
-		var ephemeral sql.NullInt64
+		var wisp sql.NullInt64
 		// Pinned field (bd-7h5)
 		var pinned sql.NullInt64
 		// Template field (beads-1ra)
@@ -730,7 +730,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &ephemeral, &pinned, &isTemplate,
+			&sender, &wisp, &pinned, &isTemplate,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -772,8 +772,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if sender.Valid {
 			issue.Sender = sender.String
 		}
-		if ephemeral.Valid && ephemeral.Int64 != 0 {
-			issue.Ephemeral = true
+		if wisp.Valid && wisp.Int64 != 0 {
+			issue.Wisp = true
 		}
 		// Pinned field (bd-7h5)
 		if pinned.Valid && pinned.Int64 != 0 {
@@ -821,7 +821,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var originalType sql.NullString
 		// Messaging fields (bd-kwro)
 		var sender sql.NullString
-		var ephemeral sql.NullInt64
+		var wisp sql.NullInt64
 		// Pinned field (bd-7h5)
 		var pinned sql.NullInt64
 		// Template field (beads-1ra)
@@ -834,7 +834,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &ephemeral, &pinned, &isTemplate,
+			&sender, &wisp, &pinned, &isTemplate,
 			&depType,
 		)
 		if err != nil {
@@ -874,8 +874,8 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		if sender.Valid {
 			issue.Sender = sender.String
 		}
-		if ephemeral.Valid && ephemeral.Int64 != 0 {
-			issue.Ephemeral = true
+		if wisp.Valid && wisp.Int64 != 0 {
+			issue.Wisp = true
 		}
 		// Pinned field (bd-7h5)
 		if pinned.Valid && pinned.Int64 != 0 {

@@ -292,10 +292,10 @@ var versionChanges = []VersionChange{
 		Version: "0.33.0",
 		Date:    "2025-12-21",
 		Changes: []string{
-			"NEW: Ephemeral molecules (bd-2vh3) - bd mol spawn creates ephemeral issues by default",
-			"NEW: Ephemeral issues live only in SQLite, never export to JSONL (prevents zombie resurrection)",
-			"NEW: --persistent flag on bd mol spawn to opt out of ephemeral spawning",
-			"NEW: bd mol squash compresses ephemeral children into digest issue",
+			"NEW: Wisp molecules (bd-2vh3) - bd mol spawn creates wisp issues by default",
+			"NEW: Wisp issues live only in SQLite, never export to JSONL (prevents zombie resurrection)",
+			"NEW: --persistent flag on bd mol spawn to opt out of wisp spawning",
+			"NEW: bd mol squash compresses wisp children into digest issue",
 			"NEW: --summary flag on bd mol squash for agent-provided AI summaries",
 			"FIX: DeleteIssue now cascades to comments table (bd-687g)",
 		},
@@ -391,7 +391,7 @@ var versionChanges = []VersionChange{
 		Date:    "2025-12-16",
 		Changes: []string{
 			"bd setup droid (GH#598) - Factory.ai (Droid) IDE support",
-			"Messaging schema fields (bd-kwro.1) - New 'message' issue type, sender/ephemeral/replies_to/relates_to/duplicate_of/superseded_by fields",
+			"Messaging schema fields (bd-kwro.1) - New 'message' issue type, sender/wisp/replies_to/relates_to/duplicate_of/superseded_by fields",
 			"New dependency types: replies-to, relates-to, duplicates, supersedes",
 			"Windows build fixes (GH#585) - gosec lint errors resolved",
 			"Issue ID prefix extraction fix - Word-like suffixes now parse correctly",

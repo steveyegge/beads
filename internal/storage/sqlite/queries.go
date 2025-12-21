@@ -247,7 +247,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var originalType sql.NullString
 	// Messaging fields (bd-kwro)
 	var sender sql.NullString
-	var ephemeral sql.NullInt64
+	var wisp sql.NullInt64
 	// Pinned field (bd-7h5)
 	var pinned sql.NullInt64
 	// Template field (beads-1ra)
@@ -271,7 +271,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &pinned, &isTemplate,
+		&sender, &wisp, &pinned, &isTemplate,
 	)
 
 	if err == sql.ErrNoRows {
@@ -326,8 +326,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if sender.Valid {
 		issue.Sender = sender.String
 	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
+	if wisp.Valid && wisp.Int64 != 0 {
+		issue.Wisp = true
 	}
 	// Pinned field (bd-7h5)
 	if pinned.Valid && pinned.Int64 != 0 {
@@ -442,7 +442,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var originalType sql.NullString
 	// Messaging fields (bd-kwro)
 	var sender sql.NullString
-	var ephemeral sql.NullInt64
+	var wisp sql.NullInt64
 	// Pinned field (bd-7h5)
 	var pinned sql.NullInt64
 	// Template field (beads-1ra)
@@ -464,7 +464,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
-		&sender, &ephemeral, &pinned, &isTemplate,
+		&sender, &wisp, &pinned, &isTemplate,
 	)
 
 	if err == sql.ErrNoRows {
@@ -519,8 +519,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if sender.Valid {
 		issue.Sender = sender.String
 	}
-	if ephemeral.Valid && ephemeral.Int64 != 0 {
-		issue.Ephemeral = true
+	if wisp.Valid && wisp.Int64 != 0 {
+		issue.Wisp = true
 	}
 	// Pinned field (bd-7h5)
 	if pinned.Valid && pinned.Int64 != 0 {
@@ -556,8 +556,8 @@ var allowedUpdateFields = map[string]bool{
 	"external_ref":        true,
 	"closed_at":           true,
 	// Messaging fields (bd-kwro)
-	"sender":    true,
-	"ephemeral": true,
+	"sender": true,
+	"wisp":   true, // Database column is 'ephemeral', mapped in UpdateIssue
 	// Pinned field (bd-7h5)
 	"pinned": true,
 	// NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
@@ -665,7 +665,12 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			return wrapDBError("validate field update", err)
 		}
 
-		setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
+		// Map API field names to database column names (wisp -> ephemeral)
+		columnName := key
+		if key == "wisp" {
+			columnName = "ephemeral"
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", columnName))
 		args = append(args, value)
 	}
 
@@ -1591,10 +1596,10 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
-	// Ephemeral filtering (bd-kwro.9)
-	if filter.Ephemeral != nil {
-		if *filter.Ephemeral {
-			whereClauses = append(whereClauses, "ephemeral = 1")
+	// Wisp filtering (bd-kwro.9)
+	if filter.Wisp != nil {
+		if *filter.Wisp {
+			whereClauses = append(whereClauses, "ephemeral = 1") // SQL column is still 'ephemeral'
 		} else {
 			whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
 		}

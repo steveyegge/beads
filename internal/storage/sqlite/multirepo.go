@@ -257,9 +257,9 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 	var existingID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM issues WHERE id = ?`, issue.ID).Scan(&existingID)
 
-	ephemeral := 0
-	if issue.Ephemeral {
-		ephemeral = 1
+	wisp := 0
+	if issue.Wisp {
+		wisp = 1
 	}
 	pinned := 0
 	if issue.Pinned {
@@ -287,7 +287,7 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, issue.SourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, ephemeral, pinned, isTemplate,
+			issue.Sender, wisp, pinned, isTemplate,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue: %w", err)
@@ -319,7 +319,7 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 				issue.IssueType, issue.Assignee, issue.EstimatedMinutes,
 				issue.UpdatedAt, issue.ClosedAt, issue.ExternalRef, issue.SourceRepo,
 				issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-				issue.Sender, ephemeral, pinned, isTemplate,
+				issue.Sender, wisp, pinned, isTemplate,
 				issue.ID,
 			)
 			if err != nil {

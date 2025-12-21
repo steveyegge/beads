@@ -292,7 +292,7 @@ Example:
 			return
 		}
 
-		// Clone the subgraph (deprecated command, non-ephemeral for backwards compatibility)
+		// Clone the subgraph (deprecated command, non-wisp for backwards compatibility)
 		result, err := cloneSubgraph(ctx, store, subgraph, vars, assignee, actor, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error instantiating template: %v\n", err)
@@ -453,8 +453,8 @@ func substituteVariables(text string, vars map[string]string) string {
 
 // cloneSubgraph creates new issues from the template with variable substitution
 // If assignee is non-empty, it will be set on the root epic
-// If ephemeral is true, spawned issues are marked for bulk deletion when closed (bd-2vh3)
-func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, vars map[string]string, assignee string, actorName string, ephemeral bool) (*InstantiateResult, error) {
+// If wisp is true, spawned issues are marked for bulk deletion when closed (bd-2vh3)
+func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, vars map[string]string, assignee string, actorName string, wisp bool) (*InstantiateResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -484,7 +484,7 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 				IssueType:          oldIssue.IssueType,
 				Assignee:           issueAssignee,
 				EstimatedMinutes:   oldIssue.EstimatedMinutes,
-				Ephemeral:          ephemeral, // bd-2vh3: mark for cleanup when closed
+				Wisp:               wisp, // bd-2vh3: mark for cleanup when closed
 				CreatedAt:          time.Now(),
 				UpdatedAt:          time.Now(),
 			}

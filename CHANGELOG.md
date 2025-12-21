@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Ephemeral molecules** (bd-2vh3) - Spawn molecules as ephemeral by default
-  - `bd mol spawn` creates ephemeral issues that live only in SQLite
-  - Ephemeral issues never export to JSONL (prevents zombie resurrection)
-  - Use `--persistent` flag to opt out of ephemeral spawning
-  - `bd mol squash` compresses ephemeral children into a digest issue
+- **Wisp molecules** (bd-2vh3) - Spawn molecules as wisps by default
+  - `bd mol spawn` creates wisp issues that live only in SQLite
+  - Wisp issues never export to JSONL (prevents zombie resurrection)
+  - Use `--persistent` flag to opt out of wisp spawning
+  - `bd mol squash` compresses wisp children into a digest issue
   - `--summary` flag allows agents to provide AI-generated summaries
 
 ### Fixed
@@ -225,7 +225,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Messaging schema fields** (bd-kwro.1) - Foundation for inter-agent messaging
   - New `message` issue type for agent-to-agent communication
-  - New fields: `sender`, `ephemeral`, `replies_to`, `relates_to`, `duplicate_of`, `superseded_by`
+  - New fields: `sender`, `wisp`, `replies_to`, `relates_to`, `duplicate_of`, `superseded_by`
   - New dependency types: `replies-to`, `relates-to`, `duplicates`, `supersedes`
   - Schema migration 019 (automatic on first use)
 
@@ -251,8 +251,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `.beads/hooks/on_message` - Runs after message send
   - Hooks receive issue ID, event type as args, full JSON on stdin
 
-- **`bd cleanup --ephemeral` flag** (bd-kwro.9) - Clean up transient messages
-  - Deletes only closed issues with `ephemeral=true`
+- **`bd cleanup --wisp` flag** (bd-kwro.9) - Clean up transient messages
+  - Deletes only closed issues with `wisp=true`
   - Useful for cleaning up messages after swarms complete
 
 ### Fixed

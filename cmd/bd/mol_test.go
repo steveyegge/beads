@@ -489,7 +489,7 @@ func TestSquashMolecule(t *testing.T) {
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:   true,
+		Wisp:        true,
 		CloseReason: "Completed design",
 	}
 	child2 := &types.Issue{
@@ -498,7 +498,7 @@ func TestSquashMolecule(t *testing.T) {
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:   true,
+		Wisp:        true,
 		CloseReason: "Code merged",
 	}
 
@@ -547,7 +547,7 @@ func TestSquashMolecule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get digest: %v", err)
 	}
-	if digest.Ephemeral {
+	if digest.Wisp {
 		t.Error("Digest should NOT be ephemeral")
 	}
 	if digest.Status != types.StatusClosed {
@@ -591,11 +591,11 @@ func TestSquashMoleculeWithDelete(t *testing.T) {
 	}
 
 	child := &types.Issue{
-		Title:     "Ephemeral Step",
+		Title:     "Wisp Step",
 		Status:    types.StatusClosed,
 		Priority:  2,
 		IssueType: types.TypeTask,
-		Ephemeral: true,
+		Wisp:      true,
 	}
 	if err := s.CreateIssue(ctx, child, "test"); err != nil {
 		t.Fatalf("Failed to create child: %v", err)
@@ -700,12 +700,12 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	}
 
 	child := &types.Issue{
-		Title:       "Ephemeral Step",
+		Title:       "Wisp Step",
 		Description: "This should NOT appear in digest",
 		Status:      types.StatusClosed,
 		Priority:    2,
 		IssueType:   types.TypeTask,
-		Ephemeral:   true,
+		Wisp:        true,
 		CloseReason: "Done",
 	}
 	if err := s.CreateIssue(ctx, child, "test"); err != nil {
@@ -737,15 +737,15 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	}
 
 	// Verify auto-generated content is NOT present
-	if strings.Contains(digest.Description, "Ephemeral Step") {
+	if strings.Contains(digest.Description, "Wisp Step") {
 		t.Error("Digest should NOT contain auto-generated content when agent summary provided")
 	}
 }
 
-// TestEphemeralFilteringFromExport verifies that ephemeral issues are filtered
-// from JSONL export (bd-687g). Ephemeral issues should only exist in SQLite,
+// TestWispFilteringFromExport verifies that wisp issues are filtered
+// from JSONL export (bd-687g). Wisp issues should only exist in SQLite,
 // not in issues.jsonl, to prevent "zombie" resurrection after mol squash.
-func TestEphemeralFilteringFromExport(t *testing.T) {
+func TestWispFilteringFromExport(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/test.db"
 	s, err := sqlite.New(ctx, dbPath)
@@ -757,27 +757,27 @@ func TestEphemeralFilteringFromExport(t *testing.T) {
 		t.Fatalf("Failed to set config: %v", err)
 	}
 
-	// Create a mix of ephemeral and non-ephemeral issues
+	// Create a mix of wisp and non-wisp issues
 	normalIssue := &types.Issue{
 		Title:     "Normal Issue",
 		Status:    types.StatusOpen,
 		Priority:  1,
 		IssueType: types.TypeTask,
-		Ephemeral: false,
+		Wisp:      false,
 	}
-	ephemeralIssue := &types.Issue{
-		Title:     "Ephemeral Issue",
+	wispIssue := &types.Issue{
+		Title:     "Wisp Issue",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		IssueType: types.TypeTask,
-		Ephemeral: true,
+		Wisp:      true,
 	}
 
 	if err := s.CreateIssue(ctx, normalIssue, "test"); err != nil {
 		t.Fatalf("Failed to create normal issue: %v", err)
 	}
-	if err := s.CreateIssue(ctx, ephemeralIssue, "test"); err != nil {
-		t.Fatalf("Failed to create ephemeral issue: %v", err)
+	if err := s.CreateIssue(ctx, wispIssue, "test"); err != nil {
+		t.Fatalf("Failed to create wisp issue: %v", err)
 	}
 
 	// Get all issues from DB - should include both
@@ -789,15 +789,15 @@ func TestEphemeralFilteringFromExport(t *testing.T) {
 		t.Fatalf("Expected 2 issues in DB, got %d", len(allIssues))
 	}
 
-	// Filter ephemeral issues (simulating export behavior)
+	// Filter wisp issues (simulating export behavior)
 	exportableIssues := make([]*types.Issue, 0)
 	for _, issue := range allIssues {
-		if !issue.Ephemeral {
+		if !issue.Wisp {
 			exportableIssues = append(exportableIssues, issue)
 		}
 	}
 
-	// Should only have the non-ephemeral issue
+	// Should only have the non-wisp issue
 	if len(exportableIssues) != 1 {
 		t.Errorf("Expected 1 exportable issue, got %d", len(exportableIssues))
 	}

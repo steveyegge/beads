@@ -295,7 +295,7 @@ func TestRepliesTo(t *testing.T) {
 		IssueType:   types.TypeMessage,
 		Sender:      "alice",
 		Assignee:    "bob",
-		Ephemeral:   true,
+		Wisp:        true,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -307,7 +307,7 @@ func TestRepliesTo(t *testing.T) {
 		IssueType:   types.TypeMessage,
 		Sender:      "bob",
 		Assignee:    "alice",
-		Ephemeral:   true,
+		Wisp:        true,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -363,7 +363,7 @@ func TestRepliesTo_Chain(t *testing.T) {
 			IssueType: types.TypeMessage,
 			Sender:    "user",
 			Assignee:  "inbox",
-			Ephemeral: true,
+			Wisp: true,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -404,76 +404,76 @@ func TestRepliesTo_Chain(t *testing.T) {
 	}
 }
 
-func TestEphemeralField(t *testing.T) {
+func TestWispField(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	// Create ephemeral issue
-	ephemeral := &types.Issue{
-		Title:     "Ephemeral Issue",
+	// Create wisp issue
+	wisp := &types.Issue{
+		Title:     "Wisp Issue",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		IssueType: types.TypeMessage,
-		Ephemeral: true,
+		Wisp:      true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
-	// Create non-ephemeral issue
+	// Create non-wisp issue
 	permanent := &types.Issue{
 		Title:     "Permanent Issue",
 		Status:    types.StatusOpen,
 		Priority:  2,
 		IssueType: types.TypeTask,
-		Ephemeral: false,
+		Wisp:      false,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
-	if err := store.CreateIssue(ctx, ephemeral, "test"); err != nil {
-		t.Fatalf("Failed to create ephemeral: %v", err)
+	if err := store.CreateIssue(ctx, wisp, "test"); err != nil {
+		t.Fatalf("Failed to create wisp: %v", err)
 	}
 	if err := store.CreateIssue(ctx, permanent, "test"); err != nil {
 		t.Fatalf("Failed to create permanent: %v", err)
 	}
 
-	// Verify ephemeral flag
-	savedEphemeral, err := store.GetIssue(ctx, ephemeral.ID)
+	// Verify wisp flag
+	savedWisp, err := store.GetIssue(ctx, wisp.ID)
 	if err != nil {
 		t.Fatalf("GetIssue failed: %v", err)
 	}
-	if !savedEphemeral.Ephemeral {
-		t.Error("Ephemeral issue should have Ephemeral=true")
+	if !savedWisp.Wisp {
+		t.Error("Wisp issue should have Wisp=true")
 	}
 
 	savedPermanent, err := store.GetIssue(ctx, permanent.ID)
 	if err != nil {
 		t.Fatalf("GetIssue failed: %v", err)
 	}
-	if savedPermanent.Ephemeral {
-		t.Error("Permanent issue should have Ephemeral=false")
+	if savedPermanent.Wisp {
+		t.Error("Permanent issue should have Wisp=false")
 	}
 }
 
-func TestEphemeralFilter(t *testing.T) {
+func TestWispFilter(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	// Create mix of ephemeral and non-ephemeral issues
+	// Create mix of wisp and non-wisp issues
 	for i := 0; i < 3; i++ {
-		ephemeral := &types.Issue{
-			Title:     "Ephemeral",
+		wisp := &types.Issue{
+			Title:     "Wisp",
 			Status:    types.StatusClosed, // Closed for cleanup test
 			Priority:  2,
 			IssueType: types.TypeMessage,
-			Ephemeral: true,
+			Wisp:      true,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		if err := store.CreateIssue(ctx, ephemeral, "test"); err != nil {
-			t.Fatalf("Failed to create ephemeral %d: %v", i, err)
+		if err := store.CreateIssue(ctx, wisp, "test"); err != nil {
+			t.Fatalf("Failed to create wisp %d: %v", i, err)
 		}
 	}
 
@@ -483,7 +483,7 @@ func TestEphemeralFilter(t *testing.T) {
 			Status:    types.StatusClosed,
 			Priority:  2,
 			IssueType: types.TypeTask,
-			Ephemeral: false,
+			Wisp:      false,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -492,35 +492,35 @@ func TestEphemeralFilter(t *testing.T) {
 		}
 	}
 
-	// Filter for ephemeral only
-	ephemeralTrue := true
+	// Filter for wisp only
+	wispTrue := true
 	closedStatus := types.StatusClosed
-	ephemeralFilter := types.IssueFilter{
-		Status:    &closedStatus,
-		Ephemeral: &ephemeralTrue,
+	wispFilter := types.IssueFilter{
+		Status: &closedStatus,
+		Wisp:   &wispTrue,
 	}
 
-	ephemeralIssues, err := store.SearchIssues(ctx, "", ephemeralFilter)
+	wispIssues, err := store.SearchIssues(ctx, "", wispFilter)
 	if err != nil {
 		t.Fatalf("SearchIssues failed: %v", err)
 	}
-	if len(ephemeralIssues) != 3 {
-		t.Errorf("Expected 3 ephemeral issues, got %d", len(ephemeralIssues))
+	if len(wispIssues) != 3 {
+		t.Errorf("Expected 3 wisp issues, got %d", len(wispIssues))
 	}
 
-	// Filter for non-ephemeral only
-	ephemeralFalse := false
-	nonEphemeralFilter := types.IssueFilter{
-		Status:    &closedStatus,
-		Ephemeral: &ephemeralFalse,
+	// Filter for non-wisp only
+	wispFalse := false
+	nonWispFilter := types.IssueFilter{
+		Status: &closedStatus,
+		Wisp:   &wispFalse,
 	}
 
-	permanentIssues, err := store.SearchIssues(ctx, "", nonEphemeralFilter)
+	permanentIssues, err := store.SearchIssues(ctx, "", nonWispFilter)
 	if err != nil {
 		t.Fatalf("SearchIssues failed: %v", err)
 	}
 	if len(permanentIssues) != 2 {
-		t.Errorf("Expected 2 non-ephemeral issues, got %d", len(permanentIssues))
+		t.Errorf("Expected 2 non-wisp issues, got %d", len(permanentIssues))
 	}
 }
 
