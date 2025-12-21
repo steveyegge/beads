@@ -18,14 +18,17 @@ import (
 // Molecule commands - work templates for agent workflows
 //
 // Terminology:
-//   - Molecule: A template epic with child issues forming a DAG workflow
-//   - Bond: Instantiate a molecule, creating real issues from the template
-//   - Catalog: List available molecules
+//   - Proto: Uninstantiated template (easter egg: 'protomolecule' alias)
+//   - Molecule: A spawned instance of a proto
+//   - Spawn: Instantiate a proto, creating real issues from the template
+//   - Bond: Polymorphic combine operation (proto+proto, proto+mol, mol+mol)
+//   - Distill: Extract ad-hoc epic → reusable proto
+//   - Compound: Result of bonding
 //
 // Usage:
-//   bd mol catalog                        # List available molecules
-//   bd mol show <id>                      # Show molecule structure
-//   bd mol bond <id> --var key=value      # Create issues from molecule
+//   bd mol catalog                        # List available protos
+//   bd mol show <id>                      # Show proto/molecule structure
+//   bd mol spawn <id> --var key=value     # Instantiate proto → molecule
 
 // MoleculeLabel is the label used to identify molecules (templates)
 // Molecules use the same label as templates - they ARE templates with workflow semantics
@@ -36,22 +39,26 @@ const MoleculeLabel = BeadsTemplateLabel
 type MoleculeSubgraph = TemplateSubgraph
 
 var molCmd = &cobra.Command{
-	Use:   "mol",
-	Short: "Molecule commands (work templates)",
+	Use:     "mol",
+	Aliases: []string{"protomolecule"}, // Easter egg for The Expanse fans
+	Short:   "Molecule commands (work templates)",
 	Long: `Manage molecules - work templates for agent workflows.
 
-Molecules are epics with the "template" label. They define a DAG of work
-that can be instantiated ("bonded") to create real issues.
+Protos are template epics with the "template" label. They define a DAG of work
+that can be spawned to create real issues (molecules).
 
 The molecule metaphor:
-  - A molecule is a template (reusable work pattern)
-  - Bonding creates new issues from the template
-  - Variables ({{key}}) are substituted during bonding
+  - A proto is an uninstantiated template (reusable work pattern)
+  - Spawning creates a molecule (real issues) from the proto
+  - Variables ({{key}}) are substituted during spawning
+  - Bonding combines protos or molecules into compounds
+  - Distilling extracts a proto from an ad-hoc epic
 
 Commands:
-  catalog  List available molecules
-  show     Show molecule structure and variables
-  bond     Create issues from a molecule template`,
+  catalog  List available protos
+  show     Show proto/molecule structure and variables
+  spawn    Instantiate a proto → molecule
+  run      Spawn + assign + pin for durable execution`,
 }
 
 var molCatalogCmd = &cobra.Command{
@@ -97,17 +104,17 @@ var molCatalogCmd = &cobra.Command{
 		}
 
 		if len(molecules) == 0 {
-			fmt.Println("No molecules available.")
-			fmt.Println("\nTo create a molecule:")
+			fmt.Println("No protos available.")
+			fmt.Println("\nTo create a proto:")
 			fmt.Println("  1. Create an epic with child issues")
 			fmt.Println("  2. Add the 'template' label: bd label add <epic-id> template")
 			fmt.Println("  3. Use {{variable}} placeholders in titles/descriptions")
-			fmt.Println("\nTo bond (instantiate) a molecule:")
-			fmt.Println("  bd mol bond <id> --var key=value")
+			fmt.Println("\nTo spawn (instantiate) a molecule from a proto:")
+			fmt.Println("  bd mol spawn <id> --var key=value")
 			return
 		}
 
-		fmt.Printf("%s\n", ui.RenderPass("Molecules (for bd mol bond):"))
+		fmt.Printf("%s\n", ui.RenderPass("Protos (for bd mol spawn):"))
 		for _, mol := range molecules {
 			vars := extractVariables(mol.Title + " " + mol.Description)
 			varStr := ""
@@ -182,28 +189,28 @@ func showMolecule(subgraph *MoleculeSubgraph) {
 	fmt.Println()
 }
 
-var molBondCmd = &cobra.Command{
-	Use:   "bond <molecule-id>",
-	Short: "Create issues from a molecule template",
-	Long: `Bond (instantiate) a molecule by creating real issues from its template.
+var molSpawnCmd = &cobra.Command{
+	Use:   "spawn <proto-id>",
+	Short: "Instantiate a proto into a molecule",
+	Long: `Spawn a molecule by instantiating a proto template into real issues.
 
-Variables are specified with --var key=value flags. The molecule's {{key}}
+Variables are specified with --var key=value flags. The proto's {{key}}
 placeholders will be replaced with the corresponding values.
 
 Example:
-  bd mol bond mol-code-review --var pr=123 --var repo=myproject
-  bd mol bond bd-abc123 --var version=1.2.0 --assignee=worker-1`,
+  bd mol spawn mol-code-review --var pr=123 --var repo=myproject
+  bd mol spawn bd-abc123 --var version=1.2.0 --assignee=worker-1`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		CheckReadonly("mol bond")
+		CheckReadonly("mol spawn")
 
 		ctx := rootCtx
 
-		// mol bond requires direct store access for subgraph loading and cloning
+		// mol spawn requires direct store access for subgraph loading and cloning
 		if store == nil {
 			if daemonClient != nil {
-				fmt.Fprintf(os.Stderr, "Error: mol bond requires direct database access\n")
-				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol bond %s ...\n", args[0])
+				fmt.Fprintf(os.Stderr, "Error: mol spawn requires direct database access\n")
+				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol spawn %s ...\n", args[0])
 			} else {
 				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 			}
@@ -272,10 +279,10 @@ Example:
 			return
 		}
 
-		// Clone the subgraph (bond the molecule)
-		result, err := bondMolecule(ctx, store, subgraph, vars, assignee, actor)
+		// Clone the subgraph (spawn the molecule)
+		result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error bonding molecule: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error spawning molecule: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -287,18 +294,18 @@ Example:
 			return
 		}
 
-		fmt.Printf("%s Bonded molecule: created %d issues\n", ui.RenderPass("✓"), result.Created)
+		fmt.Printf("%s Spawned molecule: created %d issues\n", ui.RenderPass("✓"), result.Created)
 		fmt.Printf("  Root issue: %s\n", result.NewEpicID)
 	},
 }
 
 var molRunCmd = &cobra.Command{
-	Use:   "run <molecule-id>",
-	Short: "Bond molecule and start execution (bond + assign + pin)",
-	Long: `Run a molecule by bonding it and setting up for durable execution.
+	Use:   "run <proto-id>",
+	Short: "Spawn proto and start execution (spawn + assign + pin)",
+	Long: `Run a molecule by spawning a proto and setting up for durable execution.
 
 This command:
-  1. Bonds the molecule (creates issues from template)
+  1. Spawns the molecule (creates issues from proto template)
   2. Assigns the root issue to the caller
   3. Sets root status to in_progress
   4. Pins the root issue for session recovery
@@ -367,10 +374,10 @@ Example:
 			os.Exit(1)
 		}
 
-		// Bond the molecule with actor as assignee
-		result, err := bondMolecule(ctx, store, subgraph, vars, actor, actor)
+		// Spawn the molecule with actor as assignee
+		result, err := spawnMolecule(ctx, store, subgraph, vars, actor, actor)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error bonding molecule: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error spawning molecule: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -410,15 +417,15 @@ Example:
 }
 
 func init() {
-	molBondCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
-	molBondCmd.Flags().Bool("dry-run", false, "Preview what would be created")
-	molBondCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
+	molSpawnCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	molSpawnCmd.Flags().Bool("dry-run", false, "Preview what would be created")
+	molSpawnCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
 
 	molRunCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
 
 	molCmd.AddCommand(molCatalogCmd)
 	molCmd.AddCommand(molShowCmd)
-	molCmd.AddCommand(molBondCmd)
+	molCmd.AddCommand(molSpawnCmd)
 	molCmd.AddCommand(molRunCmd)
 	rootCmd.AddCommand(molCmd)
 }
@@ -427,9 +434,10 @@ func init() {
 // Molecule Helper Functions
 // =============================================================================
 
-// bondMolecule creates new issues from the molecule with variable substitution
-// Wraps cloneSubgraph from template.go and returns BondResult
-func bondMolecule(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, vars map[string]string, assignee string, actorName string) (*InstantiateResult, error) {
+// spawnMolecule creates new issues from the proto with variable substitution.
+// This instantiates a proto (template) into a molecule (real issues).
+// Wraps cloneSubgraph from template.go and returns SpawnResult.
+func spawnMolecule(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, vars map[string]string, assignee string, actorName string) (*InstantiateResult, error) {
 	return cloneSubgraph(ctx, s, subgraph, vars, assignee, actorName)
 }
 

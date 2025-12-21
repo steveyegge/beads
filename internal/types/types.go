@@ -51,6 +51,9 @@ type Issue struct {
 
 	// Template field (beads-1ra): template molecule support
 	IsTemplate bool `json:"is_template,omitempty"` // If true, issue is a read-only template molecule
+
+	// Bonding fields (bd-rnnr): compound molecule lineage
+	BondedFrom []BondRef `json:"bonded_from,omitempty"` // For compounds: constituent protos
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -89,6 +92,16 @@ func (i *Issue) ComputeContentHash() string {
 	h.Write([]byte{0})
 	if i.IsTemplate {
 		h.Write([]byte("template"))
+	}
+	h.Write([]byte{0})
+	// Hash bonded_from for compound molecules (bd-rnnr)
+	for _, br := range i.BondedFrom {
+		h.Write([]byte(br.ProtoID))
+		h.Write([]byte{0})
+		h.Write([]byte(br.BondType))
+		h.Write([]byte{0})
+		h.Write([]byte(br.BondPoint))
+		h.Write([]byte{0})
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
@@ -531,8 +544,36 @@ type StaleFilter struct {
 
 // EpicStatus represents an epic with its completion status
 type EpicStatus struct {
-	Epic            *Issue `json:"epic"`
-	TotalChildren   int    `json:"total_children"`
-	ClosedChildren  int    `json:"closed_children"`
-	EligibleForClose bool  `json:"eligible_for_close"`
+	Epic             *Issue `json:"epic"`
+	TotalChildren    int    `json:"total_children"`
+	ClosedChildren   int    `json:"closed_children"`
+	EligibleForClose bool   `json:"eligible_for_close"`
+}
+
+// BondRef tracks compound molecule lineage (bd-rnnr).
+// When protos or molecules are bonded together, BondRefs record
+// which sources were combined and how they were attached.
+type BondRef struct {
+	ProtoID   string `json:"proto_id"`             // Source proto/molecule ID
+	BondType  string `json:"bond_type"`            // sequential, parallel, conditional
+	BondPoint string `json:"bond_point,omitempty"` // Attachment site (issue ID or empty for root)
+}
+
+// Bond type constants for compound molecules
+const (
+	BondTypeSequential  = "sequential"  // B runs after A completes
+	BondTypeParallel    = "parallel"    // B runs alongside A
+	BondTypeConditional = "conditional" // B runs only if A fails
+	BondTypeRoot        = "root"        // Marks the primary/root component
+)
+
+// IsCompound returns true if this issue is a compound (bonded from multiple sources).
+func (i *Issue) IsCompound() bool {
+	return len(i.BondedFrom) > 0
+}
+
+// GetConstituents returns the BondRefs for this compound's constituent protos.
+// Returns nil for non-compound issues.
+func (i *Issue) GetConstituents() []BondRef {
+	return i.BondedFrom
 }
