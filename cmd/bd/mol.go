@@ -448,9 +448,13 @@ Use cases:
   - Capture tribal knowledge as executable templates
   - Create starting point for similar future work
 
+Variable syntax (both work - we detect which side is the concrete value):
+  --var branch=feature-auth    Spawn-style: variable=value (recommended)
+  --var feature-auth=branch    Substitution-style: value=variable
+
 Examples:
-  bd mol distill bd-o5xe --as release-workflow
-  bd mol distill bd-abc --var title=feature_name --var version=1.0.0`,
+  bd mol distill bd-o5xe --as "Release Workflow"
+  bd mol distill bd-abc --var feature_name=auth-refactor --var version=1.0.0`,
 	Args: cobra.ExactArgs(1),
 	Run:  runMolDistill,
 }
@@ -960,6 +964,50 @@ type DistillResult struct {
 	Variables []string          `json:"variables"`  // variables introduced
 }
 
+// collectSubgraphText gathers all searchable text from a molecule subgraph
+func collectSubgraphText(subgraph *MoleculeSubgraph) string {
+	var parts []string
+	for _, issue := range subgraph.Issues {
+		parts = append(parts, issue.Title)
+		parts = append(parts, issue.Description)
+		parts = append(parts, issue.Design)
+		parts = append(parts, issue.AcceptanceCriteria)
+		parts = append(parts, issue.Notes)
+	}
+	return strings.Join(parts, " ")
+}
+
+// parseDistillVar parses a --var flag with smart detection of syntax.
+// Accepts both spawn-style (variable=value) and substitution-style (value=variable).
+// Returns (findText, varName, error).
+func parseDistillVar(varFlag, searchableText string) (string, string, error) {
+	parts := strings.SplitN(varFlag, "=", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid format '%s', expected 'variable=value' or 'value=variable'", varFlag)
+	}
+
+	left, right := parts[0], parts[1]
+	leftFound := strings.Contains(searchableText, left)
+	rightFound := strings.Contains(searchableText, right)
+
+	switch {
+	case rightFound && !leftFound:
+		// spawn-style: --var branch=feature-auth
+		// left is variable name, right is the value to find
+		return right, left, nil
+	case leftFound && !rightFound:
+		// substitution-style: --var feature-auth=branch
+		// left is value to find, right is variable name
+		return left, right, nil
+	case leftFound && rightFound:
+		// Both found - prefer spawn-style (more natural guess)
+		// Agent likely typed: --var varname=concrete_value
+		return right, left, nil
+	default:
+		return "", "", fmt.Errorf("neither '%s' nor '%s' found in epic text", left, right)
+	}
+}
+
 // runMolDistill implements the distill command
 func runMolDistill(cmd *cobra.Command, args []string) {
 	CheckReadonly("mol distill")
@@ -981,17 +1029,6 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 	varFlags, _ := cmd.Flags().GetStringSlice("var")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-	// Parse variable substitutions: value=variable means replace "value" with "{{variable}}"
-	replacements := make(map[string]string)
-	for _, v := range varFlags {
-		parts := strings.SplitN(v, "=", 2)
-		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: invalid variable format '%s', expected 'value=variable'\n", v)
-			os.Exit(1)
-		}
-		replacements[parts[0]] = parts[1]
-	}
-
 	// Resolve epic ID
 	epicID, err := utils.ResolvePartialID(ctx, store, args[0])
 	if err != nil {
@@ -999,11 +1036,26 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Load the epic subgraph
+	// Load the epic subgraph (needed for smart var detection)
 	subgraph, err := loadTemplateSubgraph(ctx, store, epicID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading epic: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Parse variable substitutions with smart detection
+	// Accepts both spawn-style (variable=value) and substitution-style (value=variable)
+	replacements := make(map[string]string)
+	if len(varFlags) > 0 {
+		searchableText := collectSubgraphText(subgraph)
+		for _, v := range varFlags {
+			findText, varName, err := parseDistillVar(v, searchableText)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			replacements[findText] = varName
+		}
 	}
 
 	if dryRun {
