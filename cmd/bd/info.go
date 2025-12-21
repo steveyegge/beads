@@ -289,6 +289,18 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.33.0",
+		Date:    "2025-12-21",
+		Changes: []string{
+			"NEW: Ephemeral molecules (bd-2vh3) - bd mol spawn creates ephemeral issues by default",
+			"NEW: Ephemeral issues live only in SQLite, never export to JSONL (prevents zombie resurrection)",
+			"NEW: --persistent flag on bd mol spawn to opt out of ephemeral spawning",
+			"NEW: bd mol squash compresses ephemeral children into digest issue",
+			"NEW: --summary flag on bd mol squash for agent-provided AI summaries",
+			"FIX: DeleteIssue now cascades to comments table (bd-687g)",
+		},
+	},
+	{
 		Version: "0.32.1",
 		Date:    "2025-12-21",
 		Changes: []string{

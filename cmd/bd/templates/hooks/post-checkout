@@ -1,6 +1,6 @@
 #!/bin/sh
 # bd-shim v1
-# bd-hooks-version: 0.32.1
+# bd-hooks-version: 0.33.0
 #
 # bd (beads) post-checkout hook - thin shim
 #
