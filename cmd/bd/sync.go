@@ -2157,12 +2157,10 @@ func checkOrphanedChildrenInJSONL(jsonlPath string) (*OrphanedChildren, error) {
 // This helps when git operations hang waiting for credential/browser auth.
 func runGitCmdWithTimeoutMsg(ctx context.Context, cmd *exec.Cmd, cmdName string, timeoutDelay time.Duration) ([]byte, error) {
 	// Start a timer to print a message if the command takes too long
-	timeoutChan := make(chan struct{}, 1)
 	go func() {
 		select {
 		case <-time.After(timeoutDelay):
 			fmt.Fprintf(os.Stderr, "⏳ %s is taking longer than expected (possibly waiting for authentication). If this hangs, check for a browser auth prompt or run 'git status' in another terminal.\n", cmdName)
-			timeoutChan <- struct{}{}
 		case <-ctx.Done():
 			// Context cancelled, don't print message
 		}

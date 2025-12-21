@@ -786,12 +786,10 @@ func fetchAndRebaseInWorktree(ctx context.Context, worktreePath, branch, remote 
 // Returns: combined output and error from the command
 func runCmdWithTimeoutMessage(ctx context.Context, timeoutMsg string, timeoutDelay time.Duration, cmd *exec.Cmd) ([]byte, error) {
 	// Start a timer to print a message if the command takes too long
-	timerChan := make(chan struct{}, 1)
 	go func() {
 		select {
 		case <-time.After(timeoutDelay):
 			fmt.Fprintf(os.Stderr, "⏳ %s\n", timeoutMsg)
-			timerChan <- struct{}{}
 		case <-ctx.Done():
 			// Context cancelled, don't print message
 		}
