@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.32.0] - 2025-12-20
 
+## [0.32.0] - 2025-12-20
+
 ### Changed
 
 - **Removed `bd mail` commands** - Mail is orchestration, not data plane
