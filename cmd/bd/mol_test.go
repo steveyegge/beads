@@ -458,3 +458,219 @@ func TestBondMolMol(t *testing.T) {
 		t.Errorf("Expected parent-child dependency for parallel bond, result: %+v", result2)
 	}
 }
+
+func TestSquashMolecule(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a molecule (root issue)
+	root := &types.Issue{
+		Title:     "Test Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	// Create ephemeral children
+	child1 := &types.Issue{
+		Title:       "Step 1: Design",
+		Description: "Design the architecture",
+		Status:      types.StatusClosed,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		Ephemeral:   true,
+		CloseReason: "Completed design",
+	}
+	child2 := &types.Issue{
+		Title:       "Step 2: Implement",
+		Description: "Build the feature",
+		Status:      types.StatusClosed,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		Ephemeral:   true,
+		CloseReason: "Code merged",
+	}
+
+	if err := s.CreateIssue(ctx, child1, "test"); err != nil {
+		t.Fatalf("Failed to create child1: %v", err)
+	}
+	if err := s.CreateIssue(ctx, child2, "test"); err != nil {
+		t.Fatalf("Failed to create child2: %v", err)
+	}
+
+	// Add parent-child dependencies
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     child1.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add child1 dependency: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     child2.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add child2 dependency: %v", err)
+	}
+
+	// Test squash with keep-children
+	children := []*types.Issue{child1, child2}
+	result, err := squashMolecule(ctx, s, root, children, true, "test")
+	if err != nil {
+		t.Fatalf("squashMolecule failed: %v", err)
+	}
+
+	if result.SquashedCount != 2 {
+		t.Errorf("SquashedCount = %d, want 2", result.SquashedCount)
+	}
+	if result.DeletedCount != 0 {
+		t.Errorf("DeletedCount = %d, want 0 (keep-children)", result.DeletedCount)
+	}
+	if !result.KeptChildren {
+		t.Error("KeptChildren should be true")
+	}
+
+	// Verify digest was created
+	digest, err := s.GetIssue(ctx, result.DigestID)
+	if err != nil {
+		t.Fatalf("Failed to get digest: %v", err)
+	}
+	if digest.Ephemeral {
+		t.Error("Digest should NOT be ephemeral")
+	}
+	if digest.Status != types.StatusClosed {
+		t.Errorf("Digest status = %v, want closed", digest.Status)
+	}
+	if !strings.Contains(digest.Description, "Step 1: Design") {
+		t.Error("Digest should contain child titles")
+	}
+	if !strings.Contains(digest.Description, "Completed design") {
+		t.Error("Digest should contain close reasons")
+	}
+
+	// Children should still exist
+	c1, err := s.GetIssue(ctx, child1.ID)
+	if err != nil || c1 == nil {
+		t.Error("Child1 should still exist with keep-children")
+	}
+}
+
+func TestSquashMoleculeWithDelete(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a molecule with ephemeral children
+	root := &types.Issue{
+		Title:     "Delete Test Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	child := &types.Issue{
+		Title:     "Ephemeral Step",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+	if err := s.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatalf("Failed to create child: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add dependency: %v", err)
+	}
+
+	// Squash with delete (keepChildren=false)
+	result, err := squashMolecule(ctx, s, root, []*types.Issue{child}, false, "test")
+	if err != nil {
+		t.Fatalf("squashMolecule failed: %v", err)
+	}
+
+	if result.DeletedCount != 1 {
+		t.Errorf("DeletedCount = %d, want 1", result.DeletedCount)
+	}
+
+	// Child should be deleted
+	c, err := s.GetIssue(ctx, child.ID)
+	if err == nil && c != nil {
+		t.Error("Child should have been deleted")
+	}
+
+	// Digest should exist
+	digest, err := s.GetIssue(ctx, result.DigestID)
+	if err != nil || digest == nil {
+		t.Error("Digest should exist after squash")
+	}
+}
+
+func TestGenerateDigest(t *testing.T) {
+	root := &types.Issue{
+		Title: "Test Molecule",
+	}
+	children := []*types.Issue{
+		{
+			Title:       "Step 1",
+			Description: "First step description",
+			Status:      types.StatusClosed,
+			CloseReason: "Done",
+		},
+		{
+			Title:       "Step 2",
+			Description: "Second step description that is longer",
+			Status:      types.StatusInProgress,
+		},
+	}
+
+	digest := generateDigest(root, children)
+
+	// Verify structure
+	if !strings.Contains(digest, "## Molecule Execution Summary") {
+		t.Error("Digest should have summary header")
+	}
+	if !strings.Contains(digest, "Test Molecule") {
+		t.Error("Digest should contain molecule title")
+	}
+	if !strings.Contains(digest, "**Steps**: 2") {
+		t.Error("Digest should show step count")
+	}
+	if !strings.Contains(digest, "**Completed**: 1/2") {
+		t.Error("Digest should show completion stats")
+	}
+	if !strings.Contains(digest, "**In Progress**: 1") {
+		t.Error("Digest should show in-progress count")
+	}
+	if !strings.Contains(digest, "Step 1") {
+		t.Error("Digest should list step titles")
+	}
+	if !strings.Contains(digest, "*Outcome: Done*") {
+		t.Error("Digest should include close reasons")
+	}
+}
