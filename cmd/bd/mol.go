@@ -199,9 +199,15 @@ var molSpawnCmd = &cobra.Command{
 Variables are specified with --var key=value flags. The proto's {{key}}
 placeholders will be replaced with the corresponding values.
 
+Use --attach to bond additional protos to the spawned molecule in a single
+command. Each attached proto is spawned and bonded using the --attach-type
+(default: sequential). This is equivalent to running spawn + multiple bond
+commands, but more convenient for composing workflows.
+
 Example:
   bd mol spawn mol-code-review --var pr=123 --var repo=myproject
-  bd mol spawn bd-abc123 --var version=1.2.0 --assignee=worker-1`,
+  bd mol spawn bd-abc123 --var version=1.2.0 --assignee=worker-1
+  bd mol spawn mol-feature --attach mol-testing --attach mol-docs --var name=auth`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("mol spawn")
@@ -222,6 +228,8 @@ Example:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		varFlags, _ := cmd.Flags().GetStringSlice("var")
 		assignee, _ := cmd.Flags().GetString("assignee")
+		attachFlags, _ := cmd.Flags().GetStringSlice("attach")
+		attachType, _ := cmd.Flags().GetString("attach-type")
 
 		// Parse variables
 		vars := make(map[string]string)
@@ -248,8 +256,66 @@ Example:
 			os.Exit(1)
 		}
 
-		// Check for missing variables
+		// Resolve and load attached protos
+		type attachmentInfo struct {
+			id       string
+			issue    *types.Issue
+			subgraph *MoleculeSubgraph
+		}
+		var attachments []attachmentInfo
+		for _, attachArg := range attachFlags {
+			attachID, err := utils.ResolvePartialID(ctx, store, attachArg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving attachment ID %s: %v\n", attachArg, err)
+				os.Exit(1)
+			}
+			attachIssue, err := store.GetIssue(ctx, attachID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading attachment %s: %v\n", attachID, err)
+				os.Exit(1)
+			}
+			// Verify it's a proto (has template label)
+			isProto := false
+			for _, label := range attachIssue.Labels {
+				if label == MoleculeLabel {
+					isProto = true
+					break
+				}
+			}
+			if !isProto {
+				fmt.Fprintf(os.Stderr, "Error: %s is not a proto (missing '%s' label)\n", attachID, MoleculeLabel)
+				os.Exit(1)
+			}
+			attachSubgraph, err := loadTemplateSubgraph(ctx, store, attachID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading attachment subgraph %s: %v\n", attachID, err)
+				os.Exit(1)
+			}
+			attachments = append(attachments, attachmentInfo{
+				id:       attachID,
+				issue:    attachIssue,
+				subgraph: attachSubgraph,
+			})
+		}
+
+		// Check for missing variables (primary + all attachments)
 		requiredVars := extractAllVariables(subgraph)
+		for _, attach := range attachments {
+			attachVars := extractAllVariables(attach.subgraph)
+			for _, v := range attachVars {
+				// Dedupe: only add if not already in requiredVars
+				found := false
+				for _, rv := range requiredVars {
+					if rv == v {
+						found = true
+						break
+					}
+				}
+				if !found {
+					requiredVars = append(requiredVars, v)
+				}
+			}
+		}
 		var missingVars []string
 		for _, v := range requiredVars {
 			if _, ok := vars[v]; !ok {
@@ -272,6 +338,16 @@ Example:
 				}
 				fmt.Printf("  - %s (from %s)%s\n", newTitle, issue.ID, suffix)
 			}
+			if len(attachments) > 0 {
+				fmt.Printf("\nAttachments (%s bonding):\n", attachType)
+				for _, attach := range attachments {
+					fmt.Printf("  + %s (%d issues)\n", attach.issue.Title, len(attach.subgraph.Issues))
+					for _, issue := range attach.subgraph.Issues {
+						newTitle := substituteVariables(issue.Title, vars)
+						fmt.Printf("    - %s (from %s)\n", newTitle, issue.ID)
+					}
+				}
+			}
 			if len(vars) > 0 {
 				fmt.Printf("\nVariables:\n")
 				for k, v := range vars {
@@ -288,16 +364,44 @@ Example:
 			os.Exit(1)
 		}
 
+		// Attach bonded protos to the spawned molecule
+		totalAttached := 0
+		if len(attachments) > 0 {
+			// Get the spawned molecule issue for bonding
+			spawnedMol, err := store.GetIssue(ctx, result.NewEpicID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading spawned molecule: %v\n", err)
+				os.Exit(1)
+			}
+
+			for _, attach := range attachments {
+				bondResult, err := bondProtoMol(ctx, store, attach.issue, spawnedMol, attachType, vars, actor)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error attaching %s: %v\n", attach.id, err)
+					os.Exit(1)
+				}
+				totalAttached += bondResult.Spawned
+			}
+		}
+
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
 		if jsonOutput {
-			outputJSON(result)
+			// Enhance result with attachment info
+			type spawnWithAttach struct {
+				*InstantiateResult
+				Attached int `json:"attached"`
+			}
+			outputJSON(spawnWithAttach{result, totalAttached})
 			return
 		}
 
 		fmt.Printf("%s Spawned molecule: created %d issues\n", ui.RenderPass("✓"), result.Created)
 		fmt.Printf("  Root issue: %s\n", result.NewEpicID)
+		if totalAttached > 0 {
+			fmt.Printf("  Attached: %d issues from %d protos\n", totalAttached, len(attachments))
+		}
 	},
 }
 
@@ -472,6 +576,8 @@ func init() {
 	molSpawnCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
 	molSpawnCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	molSpawnCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
+	molSpawnCmd.Flags().StringSlice("attach", []string{}, "Proto to attach after spawning (repeatable)")
+	molSpawnCmd.Flags().String("attach-type", types.BondTypeSequential, "Bond type for attachments: sequential, parallel, or conditional")
 
 	molRunCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
 
@@ -761,41 +867,26 @@ func bondProtoMol(ctx context.Context, s storage.Storage, proto, mol *types.Issu
 
 	// Attach spawned molecule to existing molecule
 	err = s.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		// Add parent-child from spawned root to molecule
+		// Add dependency from spawned root to molecule
+		// For sequential: use blocks (captures workflow semantics)
+		// For parallel/conditional: use parent-child (organizational)
+		// Note: Schema only allows one dependency per (issue_id, depends_on_id) pair
+		depType := types.DepParentChild
+		if bondType == types.BondTypeSequential {
+			depType = types.DepBlocks
+		}
 		dep := &types.Dependency{
 			IssueID:     spawnResult.NewEpicID,
 			DependsOnID: mol.ID,
-			Type:        types.DepParentChild,
+			Type:        depType,
 		}
-		if err := tx.AddDependency(ctx, dep, actorName); err != nil {
-			return fmt.Errorf("attaching to molecule: %w", err)
-		}
-
-		// For sequential, spawned work blocks on molecule completion
-		if bondType == types.BondTypeSequential {
-			seqDep := &types.Dependency{
-				IssueID:     spawnResult.NewEpicID,
-				DependsOnID: mol.ID,
-				Type:        types.DepBlocks,
-			}
-			if err := tx.AddDependency(ctx, seqDep, actorName); err != nil {
-				return fmt.Errorf("adding sequence dep: %w", err)
-			}
-		}
-
-		// Update molecule with bond lineage
-		updates := map[string]interface{}{
-			"bonded_from": append(mol.BondedFrom, types.BondRef{
-				ProtoID:   proto.ID,
-				BondType:  bondType,
-				BondPoint: mol.ID,
-			}),
-		}
-		return tx.UpdateIssue(ctx, mol.ID, updates, actorName)
+		return tx.AddDependency(ctx, dep, actorName)
+		// Note: bonded_from field tracking is not yet supported by storage layer.
+		// The dependency relationship captures the bonding semantics.
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("attaching to molecule: %w", err)
 	}
 
 	return &BondResult{
@@ -816,52 +907,30 @@ func bondMolProto(ctx context.Context, s storage.Storage, mol, proto *types.Issu
 // bondMolMol bonds two molecules together
 func bondMolMol(ctx context.Context, s storage.Storage, molA, molB *types.Issue, bondType, actorName string) (*BondResult, error) {
 	err := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		// Add parent-child: B becomes child of A
+		// Add dependency: B links to A
+		// For sequential: use blocks (captures workflow semantics)
+		// For parallel/conditional: use parent-child (organizational)
+		// Note: Schema only allows one dependency per (issue_id, depends_on_id) pair
+		depType := types.DepParentChild
+		if bondType == types.BondTypeSequential {
+			depType = types.DepBlocks
+		}
 		dep := &types.Dependency{
 			IssueID:     molB.ID,
 			DependsOnID: molA.ID,
-			Type:        types.DepParentChild,
+			Type:        depType,
 		}
 		if err := tx.AddDependency(ctx, dep, actorName); err != nil {
 			return fmt.Errorf("linking molecules: %w", err)
 		}
 
-		// For sequential, B blocks on A
-		if bondType == types.BondTypeSequential {
-			seqDep := &types.Dependency{
-				IssueID:     molB.ID,
-				DependsOnID: molA.ID,
-				Type:        types.DepBlocks,
-			}
-			if err := tx.AddDependency(ctx, seqDep, actorName); err != nil {
-				return fmt.Errorf("adding sequence dep: %w", err)
-			}
-		}
-
-		// Update both with bond lineage
-		updatesA := map[string]interface{}{
-			"bonded_from": append(molA.BondedFrom, types.BondRef{
-				ProtoID:   molB.ID,
-				BondType:  bondType,
-				BondPoint: "",
-			}),
-		}
-		if err := tx.UpdateIssue(ctx, molA.ID, updatesA, actorName); err != nil {
-			return err
-		}
-
-		updatesB := map[string]interface{}{
-			"bonded_from": append(molB.BondedFrom, types.BondRef{
-				ProtoID:   molA.ID,
-				BondType:  bondType,
-				BondPoint: molA.ID,
-			}),
-		}
-		return tx.UpdateIssue(ctx, molB.ID, updatesB, actorName)
+		// Note: bonded_from field tracking is not yet supported by storage layer.
+		// The dependency relationship captures the bonding semantics.
+		return nil
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("linking molecules: %w", err)
 	}
 
 	return &BondResult{
