@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.32.1] - 2025-12-20
+### Added
+
+- **Ephemeral molecules** (bd-2vh3) - Spawn molecules as ephemeral by default
+  - `bd mol spawn` creates ephemeral issues that live only in SQLite
+  - Ephemeral issues never export to JSONL (prevents zombie resurrection)
+  - Use `--persistent` flag to opt out of ephemeral spawning
+  - `bd mol squash` compresses ephemeral children into a digest issue
+  - `--summary` flag allows agents to provide AI-generated summaries
+
+### Fixed
+
+- **Comments not deleted with issue** (bd-687g) - `DeleteIssue` now cascades to comments table
 
 ## [0.32.1] - 2025-12-21
 
