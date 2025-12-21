@@ -288,6 +288,24 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.31.0",
+		Date:    "2025-12-20",
+		Changes: []string{
+			"NEW: bd defer/bd undefer commands - Deferred status for icebox issues (bd-4jr)",
+			"NEW: Agent audit trail - .beads/interactions.jsonl with bd audit record/label (GH#649)",
+			"NEW: Directory-aware label scoping for monorepos (GH#541) - Auto-filter by directory.labels config",
+			"NEW: Molecules catalog - Templates in separate molecules.jsonl with hierarchical loading",
+			"NEW: Git commit config - git.author and git.no-gpg-sign options (GH#600)",
+			"NEW: create.require-description config option (GH#596)",
+			"CHANGED: bd stats merged into bd status (GH#644) - stats is now alias, colorized output",
+			"CHANGED: Thin hook shims (GH#615) - Hooks delegate to bd hooks run, no more version drift",
+			"CHANGED: MCP context tool consolidation - set_context/where_am_i/init merged into single context tool",
+			"FIX: relates-to excluded from cycle detection (GH#661)",
+			"FIX: Doctor checks .local_version instead of deprecated LastBdVersion (GH#662)",
+			"FIX: Read-only gitignore in stealth mode prints manual instructions (GH#663)",
+		},
+	},
+	{
 		Version: "0.30.7",
 		Date:    "2025-12-19",
 		Changes: []string{
