@@ -77,6 +77,7 @@ const (
 	StatusOpen       = types.StatusOpen
 	StatusInProgress = types.StatusInProgress
 	StatusBlocked    = types.StatusBlocked
+	StatusDeferred   = types.StatusDeferred
 	StatusClosed     = types.StatusClosed
 )
 

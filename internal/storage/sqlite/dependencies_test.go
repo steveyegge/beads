@@ -1527,9 +1527,10 @@ func TestDetectCycles_MultipleGraphs(t *testing.T) {
 	}
 }
 
-// TestDetectCycles_RelatedTypeAllowsAdditionButReportsDetection tests relates-to allows bidirectional links
-// even though they're technically cycles. The cycle prevention only skips relates-to during AddDependency.
-func TestDetectCycles_RelatedTypeAllowsAdditionButReportsDetection(t *testing.T) {
+// TestDetectCycles_RelatesTypeAllowsBidirectionalWithoutCycleReport tests relates-to allows bidirectional links
+// and DetectCycles correctly excludes them (they're "see also" links, not problematic cycles).
+// This was fixed in GH#661 - relates-to is explicitly excluded from cycle detection.
+func TestDetectCycles_RelatesTypeAllowsBidirectionalWithoutCycleReport(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -1552,7 +1553,7 @@ func TestDetectCycles_RelatedTypeAllowsAdditionButReportsDetection(t *testing.T)
 		t.Fatalf("AddDependency for relates-to failed: %v", err)
 	}
 
-	// Add B relates-to A (this should succeed despite creating a cycle because relates-to skips cycle detection)
+	// Add B relates-to A (this should succeed - relates-to skips cycle prevention)
 	err = store.AddDependency(ctx, &types.Dependency{
 		IssueID:     issueB.ID,
 		DependsOnID: issueA.ID,
@@ -1562,15 +1563,16 @@ func TestDetectCycles_RelatedTypeAllowsAdditionButReportsDetection(t *testing.T)
 		t.Fatalf("AddDependency for reverse relates-to failed: %v", err)
 	}
 
-	// DetectCycles will report the cycle even though AddDependency allowed it
+	// DetectCycles should NOT report relates-to as cycles (GH#661 fix)
+	// relates-to is inherently bidirectional ("see also") and doesn't affect work ordering
 	cycles, err := store.DetectCycles(ctx)
 	if err != nil {
 		t.Fatalf("DetectCycles failed: %v", err)
 	}
 
-	// Relates-to bidirectional creates cycles (may report multiple entry points for same cycle)
-	if len(cycles) == 0 {
-		t.Error("Expected at least 1 cycle detected for bidirectional relates-to")
+	// relates-to bidirectional should NOT be reported as a cycle
+	if len(cycles) != 0 {
+		t.Errorf("Expected 0 cycles for bidirectional relates-to (GH#661 fix), got %d", len(cycles))
 	}
 
 	// Verify both directions exist

@@ -384,6 +384,9 @@ func renderNodeBox(node *GraphNode, width int) string {
 	case types.StatusBlocked:
 		statusIcon = "●"
 		titleStr = ui.RenderFail(padRight(title, width-4))
+	case types.StatusDeferred:
+		statusIcon = "❄"
+		titleStr = ui.RenderAccent(padRight(title, width-4))
 	case types.StatusClosed:
 		statusIcon = "✓"
 		titleStr = ui.RenderPass(padRight(title, width-4))
@@ -461,6 +464,9 @@ func renderNodeBoxWithDeps(node *GraphNode, width int, blocksCount int, blockedB
 	case types.StatusBlocked:
 		statusIcon = "●"
 		titleStr = ui.RenderFail(padRight(title, width-4))
+	case types.StatusDeferred:
+		statusIcon = "❄"
+		titleStr = ui.RenderAccent(padRight(title, width-4))
 	case types.StatusClosed:
 		statusIcon = "✓"
 		titleStr = ui.RenderPass(padRight(title, width-4))

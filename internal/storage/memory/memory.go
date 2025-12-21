@@ -1033,7 +1033,7 @@ func (m *MemoryStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	return results, nil
 }
 
-// getOpenBlockers returns the IDs of blockers that are currently open/in_progress/blocked.
+// getOpenBlockers returns the IDs of blockers that are currently open/in_progress/blocked/deferred.
 // The caller must hold at least a read lock.
 func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 	deps := m.dependencies[issueID]
@@ -1053,7 +1053,7 @@ func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 			continue
 		}
 		switch blocker.Status {
-		case types.StatusOpen, types.StatusInProgress, types.StatusBlocked:
+		case types.StatusOpen, types.StatusInProgress, types.StatusBlocked, types.StatusDeferred:
 			blockers = append(blockers, blocker.ID)
 		}
 	}
@@ -1082,7 +1082,8 @@ func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 		}
 
 		blockers := m.getOpenBlockers(issue.ID)
-		if issue.Status != types.StatusBlocked && len(blockers) == 0 {
+		// Issue is "blocked" if: status is blocked, status is deferred, or has open blockers
+		if issue.Status != types.StatusBlocked && issue.Status != types.StatusDeferred && len(blockers) == 0 {
 			continue
 		}
 
@@ -1219,13 +1220,17 @@ func (m *MemoryStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 			stats.InProgressIssues++
 		case types.StatusClosed:
 			stats.ClosedIssues++
+		case types.StatusDeferred:
+			stats.DeferredIssues++
 		case types.StatusTombstone:
 			stats.TombstoneIssues++
+		case types.StatusPinned:
+			stats.PinnedIssues++
 		}
 	}
 
 	// TotalIssues excludes tombstones (matches SQLite behavior)
-	stats.TotalIssues = stats.OpenIssues + stats.InProgressIssues + stats.ClosedIssues
+	stats.TotalIssues = stats.OpenIssues + stats.InProgressIssues + stats.ClosedIssues + stats.DeferredIssues + stats.PinnedIssues
 
 	// Second pass: calculate blocked and ready issues based on dependencies
 	// An issue is blocked if it has open blockers (uses same logic as GetBlockedIssues)

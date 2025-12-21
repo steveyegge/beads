@@ -112,16 +112,18 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 
 	// Get counts (bd-nyt: exclude tombstones from TotalIssues, report separately)
 	// (bd-6v2: also count pinned issues)
+	// (bd-4jr: also count deferred issues)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN status != 'tombstone' THEN 1 ELSE 0 END), 0) as total,
 			COALESCE(SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END), 0) as open,
 			COALESCE(SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress,
 			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0) as closed,
+			COALESCE(SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END), 0) as deferred,
 			COALESCE(SUM(CASE WHEN status = 'tombstone' THEN 1 ELSE 0 END), 0) as tombstone,
 			COALESCE(SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), 0) as pinned
 		FROM issues
-	`).Scan(&stats.TotalIssues, &stats.OpenIssues, &stats.InProgressIssues, &stats.ClosedIssues, &stats.TombstoneIssues, &stats.PinnedIssues)
+	`).Scan(&stats.TotalIssues, &stats.OpenIssues, &stats.InProgressIssues, &stats.ClosedIssues, &stats.DeferredIssues, &stats.TombstoneIssues, &stats.PinnedIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue counts: %w", err)
 	}
@@ -132,9 +134,9 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		JOIN issues blocker ON d.depends_on_id = blocker.id
-		WHERE i.status IN ('open', 'in_progress', 'blocked')
+		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
 		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked')
+		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
 	`).Scan(&stats.BlockedIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocked count: %w", err)
@@ -147,10 +149,10 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		WHERE i.status = 'open'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM dependencies d
-		    JOIN issues blocked ON d.depends_on_id = blocked.id
+		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.issue_id = i.id
 		      AND d.type = 'blocks'
-		      AND blocked.status IN ('open', 'in_progress', 'blocked')
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
 		  )
 	`).Scan(&stats.ReadyIssues)
 	if err != nil {

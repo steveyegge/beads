@@ -490,6 +490,8 @@ func getStatusEmoji(status types.Status) string {
 		return "◧" // U+25E7 Square Left Half Black
 	case types.StatusBlocked:
 		return "⚠" // U+26A0 Warning Sign
+	case types.StatusDeferred:
+		return "❄" // U+2744 Snowflake (on ice)
 	case types.StatusClosed:
 		return "☑" // U+2611 Ballot Box with Check
 	default:
@@ -736,7 +738,7 @@ func init() {
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
 	depTreeCmd.Flags().Bool("reverse", false, "Show dependent tree (deprecated: use --direction=up)")
 	depTreeCmd.Flags().String("direction", "", "Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'")
-	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, closed)")
+	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)")
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 

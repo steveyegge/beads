@@ -205,8 +205,9 @@ type (
 const (
 	StatusOpen       = types.StatusOpen
 	StatusInProgress = types.StatusInProgress
-	StatusClosed     = types.StatusClosed
 	StatusBlocked    = types.StatusBlocked
+	StatusDeferred   = types.StatusDeferred
+	StatusClosed     = types.StatusClosed
 )
 
 // IssueType constants

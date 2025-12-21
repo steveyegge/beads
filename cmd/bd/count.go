@@ -421,7 +421,7 @@ Examples:
 
 func init() {
 	// Filter flags (same as list command)
-	countCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, closed)")
+	countCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, deferred, closed)")
 	countCmd.Flags().IntP("priority", "p", 0, "Filter by priority (0-4: 0=critical, 1=high, 2=medium, 3=low, 4=backlog)")
 	countCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	countCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
