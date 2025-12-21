@@ -2156,17 +2156,21 @@ func checkOrphanedChildrenInJSONL(jsonlPath string) (*OrphanedChildren, error) {
 // runGitCmdWithTimeoutMsg runs a git command and prints a helpful message if it takes too long.
 // This helps when git operations hang waiting for credential/browser auth.
 func runGitCmdWithTimeoutMsg(ctx context.Context, cmd *exec.Cmd, cmdName string, timeoutDelay time.Duration) ([]byte, error) {
-	// Start a timer to print a message if the command takes too long
+	// Use done channel to cleanly exit goroutine when command completes
+	done := make(chan struct{})
 	go func() {
 		select {
 		case <-time.After(timeoutDelay):
 			fmt.Fprintf(os.Stderr, "⏳ %s is taking longer than expected (possibly waiting for authentication). If this hangs, check for a browser auth prompt or run 'git status' in another terminal.\n", cmdName)
+		case <-done:
+			// Command completed, exit cleanly
 		case <-ctx.Done():
 			// Context canceled, don't print message
 		}
 	}()
 
 	output, err := cmd.CombinedOutput()
+	close(done)
 	return output, err
 }
 

@@ -785,17 +785,21 @@ func fetchAndRebaseInWorktree(ctx context.Context, worktreePath, branch, remote 
 //
 // Returns: combined output and error from the command
 func runCmdWithTimeoutMessage(ctx context.Context, timeoutMsg string, timeoutDelay time.Duration, cmd *exec.Cmd) ([]byte, error) {
-	// Start a timer to print a message if the command takes too long
+	// Use done channel to cleanly exit goroutine when command completes
+	done := make(chan struct{})
 	go func() {
 		select {
 		case <-time.After(timeoutDelay):
 			fmt.Fprintf(os.Stderr, "⏳ %s\n", timeoutMsg)
+		case <-done:
+			// Command completed, exit cleanly
 		case <-ctx.Done():
 			// Context canceled, don't print message
 		}
 	}()
 
 	output, err := cmd.CombinedOutput()
+	close(done)
 	return output, err
 }
 
