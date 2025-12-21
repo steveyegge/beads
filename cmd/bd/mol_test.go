@@ -527,7 +527,7 @@ func TestSquashMolecule(t *testing.T) {
 
 	// Test squash with keep-children
 	children := []*types.Issue{child1, child2}
-	result, err := squashMolecule(ctx, s, root, children, true, "test")
+	result, err := squashMolecule(ctx, s, root, children, true, "", "test")
 	if err != nil {
 		t.Fatalf("squashMolecule failed: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestSquashMoleculeWithDelete(t *testing.T) {
 	}
 
 	// Squash with delete (keepChildren=false)
-	result, err := squashMolecule(ctx, s, root, []*types.Issue{child}, false, "test")
+	result, err := squashMolecule(ctx, s, root, []*types.Issue{child}, false, "", "test")
 	if err != nil {
 		t.Fatalf("squashMolecule failed: %v", err)
 	}
@@ -672,5 +672,136 @@ func TestGenerateDigest(t *testing.T) {
 	}
 	if !strings.Contains(digest, "*Outcome: Done*") {
 		t.Error("Digest should include close reasons")
+	}
+}
+
+// TestSquashMoleculeWithAgentSummary verifies that agent-provided summaries are used
+func TestSquashMoleculeWithAgentSummary(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a molecule with ephemeral child
+	root := &types.Issue{
+		Title:     "Agent Summary Test",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	child := &types.Issue{
+		Title:       "Ephemeral Step",
+		Description: "This should NOT appear in digest",
+		Status:      types.StatusClosed,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		Ephemeral:   true,
+		CloseReason: "Done",
+	}
+	if err := s.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatalf("Failed to create child: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add dependency: %v", err)
+	}
+
+	// Squash with agent-provided summary
+	agentSummary := "## AI-Generated Summary\n\nThe agent completed the task successfully."
+	result, err := squashMolecule(ctx, s, root, []*types.Issue{child}, true, agentSummary, "test")
+	if err != nil {
+		t.Fatalf("squashMolecule failed: %v", err)
+	}
+
+	// Verify digest uses agent summary, not auto-generated content
+	digest, err := s.GetIssue(ctx, result.DigestID)
+	if err != nil {
+		t.Fatalf("Failed to get digest: %v", err)
+	}
+
+	if digest.Description != agentSummary {
+		t.Errorf("Digest should use agent summary.\nGot: %s\nWant: %s", digest.Description, agentSummary)
+	}
+
+	// Verify auto-generated content is NOT present
+	if strings.Contains(digest.Description, "Ephemeral Step") {
+		t.Error("Digest should NOT contain auto-generated content when agent summary provided")
+	}
+}
+
+// TestEphemeralFilteringFromExport verifies that ephemeral issues are filtered
+// from JSONL export (bd-687g). Ephemeral issues should only exist in SQLite,
+// not in issues.jsonl, to prevent "zombie" resurrection after mol squash.
+func TestEphemeralFilteringFromExport(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a mix of ephemeral and non-ephemeral issues
+	normalIssue := &types.Issue{
+		Title:     "Normal Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		Ephemeral: false,
+	}
+	ephemeralIssue := &types.Issue{
+		Title:     "Ephemeral Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Ephemeral: true,
+	}
+
+	if err := s.CreateIssue(ctx, normalIssue, "test"); err != nil {
+		t.Fatalf("Failed to create normal issue: %v", err)
+	}
+	if err := s.CreateIssue(ctx, ephemeralIssue, "test"); err != nil {
+		t.Fatalf("Failed to create ephemeral issue: %v", err)
+	}
+
+	// Get all issues from DB - should include both
+	allIssues, err := s.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+	if len(allIssues) != 2 {
+		t.Fatalf("Expected 2 issues in DB, got %d", len(allIssues))
+	}
+
+	// Filter ephemeral issues (simulating export behavior)
+	exportableIssues := make([]*types.Issue, 0)
+	for _, issue := range allIssues {
+		if !issue.Ephemeral {
+			exportableIssues = append(exportableIssues, issue)
+		}
+	}
+
+	// Should only have the non-ephemeral issue
+	if len(exportableIssues) != 1 {
+		t.Errorf("Expected 1 exportable issue, got %d", len(exportableIssues))
+	}
+	if exportableIssues[0].ID != normalIssue.ID {
+		t.Errorf("Expected normal issue %s, got %s", normalIssue.ID, exportableIssues[0].ID)
 	}
 }

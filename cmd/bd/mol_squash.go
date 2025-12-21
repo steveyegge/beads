@@ -30,13 +30,20 @@ The squash operation:
   4. Creates a non-ephemeral digest issue
   5. Deletes the ephemeral children (unless --keep-children)
 
+AGENT INTEGRATION:
+Use --summary to provide an AI-generated summary. This keeps bd as a pure
+tool - the calling agent (Gas Town polecat, Claude Code, etc.) is responsible
+for generating intelligent summaries. Without --summary, a basic concatenation
+of child issue content is used.
+
 This is part of the ephemeral workflow: spawn creates ephemeral issues,
 execution happens, squash compresses the trace into an outcome.
 
 Example:
-  bd mol squash bd-abc123              # Squash molecule children
+  bd mol squash bd-abc123              # Squash with auto-generated digest
   bd mol squash bd-abc123 --dry-run    # Preview what would be squashed
-  bd mol squash bd-abc123 --keep-children  # Create digest but keep children`,
+  bd mol squash bd-abc123 --keep-children  # Create digest but keep children
+  bd mol squash bd-abc123 --summary "Agent-generated summary of work done"`,
 	Args: cobra.ExactArgs(1),
 	Run:  runMolSquash,
 }
@@ -69,6 +76,7 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	keepChildren, _ := cmd.Flags().GetBool("keep-children")
+	summary, _ := cmd.Flags().GetString("summary")
 
 	// Resolve molecule ID
 	moleculeID, err := utils.ResolvePartialID(ctx, store, args[0])
@@ -132,7 +140,7 @@ func runMolSquash(cmd *cobra.Command, args []string) {
 	}
 
 	// Perform the squash
-	result, err := squashMolecule(ctx, store, subgraph.Root, ephemeralChildren, keepChildren, actor)
+	result, err := squashMolecule(ctx, store, subgraph.Root, ephemeralChildren, keepChildren, summary, actor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error squashing molecule: %v\n", err)
 		os.Exit(1)
@@ -205,7 +213,10 @@ func generateDigest(root *types.Issue, children []*types.Issue) string {
 }
 
 // squashMolecule performs the squash operation
-func squashMolecule(ctx context.Context, s storage.Storage, root *types.Issue, children []*types.Issue, keepChildren bool, actorName string) (*SquashResult, error) {
+// If summary is provided (non-empty), it's used as the digest content.
+// Otherwise, generateDigest() creates a basic concatenation.
+// This enables agents to provide AI-generated summaries while keeping bd as a pure tool.
+func squashMolecule(ctx context.Context, s storage.Storage, root *types.Issue, children []*types.Issue, keepChildren bool, summary string, actorName string) (*SquashResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -216,8 +227,13 @@ func squashMolecule(ctx context.Context, s storage.Storage, root *types.Issue, c
 		childIDs[i] = c.ID
 	}
 
-	// Generate digest content
-	digestContent := generateDigest(root, children)
+	// Use agent-provided summary if available, otherwise generate basic digest
+	var digestContent string
+	if summary != "" {
+		digestContent = summary
+	} else {
+		digestContent = generateDigest(root, children)
+	}
 
 	// Create digest issue (non-ephemeral)
 	now := time.Now()
@@ -301,6 +317,7 @@ func deleteEphemeralChildren(ctx context.Context, s storage.Storage, ids []strin
 func init() {
 	molSquashCmd.Flags().Bool("dry-run", false, "Preview what would be squashed")
 	molSquashCmd.Flags().Bool("keep-children", false, "Don't delete ephemeral children after squash")
+	molSquashCmd.Flags().String("summary", "", "Agent-provided summary (bypasses auto-generation)")
 
 	molCmd.AddCommand(molSquashCmd)
 }

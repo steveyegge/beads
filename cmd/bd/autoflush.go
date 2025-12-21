@@ -704,9 +704,20 @@ func flushToJSONLWithState(state flushState) {
 	}
 
 	// Convert map to slice (will be sorted by writeJSONLAtomic)
+	// Filter out ephemeral issues - they should never be exported to JSONL (bd-687g)
+	// Ephemeral issues exist only in SQLite and are shared via .beads/redirect, not JSONL.
+	// This prevents "zombie" issues that resurrect after mol squash deletes them.
 	issues := make([]*types.Issue, 0, len(issueMap))
+	ephemeralSkipped := 0
 	for _, issue := range issueMap {
+		if issue.Ephemeral {
+			ephemeralSkipped++
+			continue
+		}
 		issues = append(issues, issue)
+	}
+	if ephemeralSkipped > 0 {
+		debug.Logf("auto-flush: filtered %d ephemeral issues from export", ephemeralSkipped)
 	}
 
 	// Filter issues by prefix in multi-repo mode for non-primary repos (fixes GH #437)

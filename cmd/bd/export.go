@@ -346,6 +346,16 @@ Examples:
 			}
 		}
 
+		// Filter out ephemeral issues - they should never be exported to JSONL (bd-687g)
+		// Ephemeral issues exist only in SQLite and are shared via .beads/redirect, not JSONL.
+		filtered := make([]*types.Issue, 0, len(issues))
+		for _, issue := range issues {
+			if !issue.Ephemeral {
+				filtered = append(filtered, issue)
+			}
+		}
+		issues = filtered
+
 		// Sort by ID for consistent output
 		sort.Slice(issues, func(i, j int) bool {
 			return issues[i].ID < issues[j].ID

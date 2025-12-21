@@ -1093,6 +1093,12 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to delete events: %w", err)
 	}
 
+	// Delete comments (no FK cascade on this table) (bd-687g)
+	_, err = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete comments: %w", err)
+	}
+
 	// Delete from dirty_issues
 	_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, id)
 	if err != nil {

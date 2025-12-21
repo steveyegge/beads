@@ -754,7 +754,7 @@ history/
 - ✅ Link discovered work with `discovered-from` dependencies
 - ✅ Run `gt mail inbox` from your cwd, not ~/gt
 - ✅ Store AI planning docs in `history/` directory
-- ❌ Do NOT use `bd ready` or `bd list` to find work - the overseer directs your work
+- ✅ Use `bd ready` to see unblocked work available for pickup
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT clutter repo root with planning documents
 
