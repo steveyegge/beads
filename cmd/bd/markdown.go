@@ -306,6 +306,15 @@ func parseMarkdownFile(path string) ([]*IssueTemplate, error) {
 
 // createIssuesFromMarkdown parses a markdown file and creates multiple issues from it
 func createIssuesFromMarkdown(_ *cobra.Command, filepath string) {
+	// Ensure globals are initialized (bd-m0tl: fix nil pointer when store not ready)
+	if store == nil {
+		fmt.Fprintf(os.Stderr, "Error: database not initialized\n")
+		os.Exit(1)
+	}
+	if actor == "" {
+		actor = "bd" // Default actor if not set
+	}
+
 	// Parse markdown file
 	templates, err := parseMarkdownFile(filepath)
 	if err != nil {

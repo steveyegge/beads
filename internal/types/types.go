@@ -17,7 +17,7 @@ type Issue struct {
 	AcceptanceCriteria string         `json:"acceptance_criteria,omitempty"`
 	Notes              string         `json:"notes,omitempty"`
 	Status             Status         `json:"status,omitempty"`
-	Priority           int            `json:"priority,omitempty"`
+	Priority           int            `json:"priority"` // No omitempty: 0 is valid (P0/critical)
 	IssueType          IssueType      `json:"issue_type,omitempty"`
 	Assignee           string         `json:"assignee,omitempty"`
 	EstimatedMinutes   *int           `json:"estimated_minutes,omitempty"`

@@ -44,7 +44,7 @@ type Issue struct {
 	Description  string       `json:"description,omitempty"`
 	Notes        string       `json:"notes,omitempty"`
 	Status       string       `json:"status,omitempty"`
-	Priority     int          `json:"priority,omitempty"`
+	Priority     int          `json:"priority"` // No omitempty: 0 is valid (P0/critical)
 	IssueType    string       `json:"issue_type,omitempty"`
 	CreatedAt    string       `json:"created_at,omitempty"`
 	UpdatedAt    string       `json:"updated_at,omitempty"`
