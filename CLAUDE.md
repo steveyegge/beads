@@ -412,7 +412,7 @@ bd deleted --json              # Machine-readable output
 - `relates_to` - Bidirectional "see also" links (`bd relate <id1> <id2>`)
 - `duplicates` - Mark issue as duplicate (`bd duplicate <id> --of <canonical>`)
 - `supersedes` - Version chains (`bd supersede <old> --with <new>`)
-- `replies_to` - Message threads (`bd mail reply`)
+- `replies_to` - Message threads (`gt mail reply`)
 
 Only `blocks` dependencies affect the ready work queue.
 
