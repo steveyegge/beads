@@ -89,8 +89,8 @@ func runMolRun(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Spawn the molecule with actor as assignee
-	result, err := spawnMolecule(ctx, store, subgraph, vars, actor, actor)
+	// Spawn the molecule with actor as assignee (ephemeral for cleanup - bd-2vh3)
+	result, err := spawnMolecule(ctx, store, subgraph, vars, actor, actor, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error spawning molecule: %v\n", err)
 		os.Exit(1)

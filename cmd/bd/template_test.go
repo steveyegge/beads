@@ -268,7 +268,7 @@ func TestCloneSubgraph(t *testing.T) {
 		}
 
 		vars := map[string]string{"version": "2.0.0"}
-		result, err := cloneSubgraph(ctx, s, subgraph, vars, "", "test-user")
+		result, err := cloneSubgraph(ctx, s, subgraph, vars, "", "test-user", false)
 		if err != nil {
 			t.Fatalf("cloneSubgraph failed: %v", err)
 		}
@@ -308,7 +308,7 @@ func TestCloneSubgraph(t *testing.T) {
 		}
 
 		vars := map[string]string{"service": "api-gateway"}
-		result, err := cloneSubgraph(ctx, s, subgraph, vars, "", "test-user")
+		result, err := cloneSubgraph(ctx, s, subgraph, vars, "", "test-user", false)
 		if err != nil {
 			t.Fatalf("cloneSubgraph failed: %v", err)
 		}
@@ -367,7 +367,7 @@ func TestCloneSubgraph(t *testing.T) {
 			t.Fatalf("loadTemplateSubgraph failed: %v", err)
 		}
 
-		result, err := cloneSubgraph(ctx, s, subgraph, nil, "", "test-user")
+		result, err := cloneSubgraph(ctx, s, subgraph, nil, "", "test-user", false)
 		if err != nil {
 			t.Fatalf("cloneSubgraph failed: %v", err)
 		}
@@ -402,7 +402,7 @@ func TestCloneSubgraph(t *testing.T) {
 		}
 
 		// Clone with assignee override
-		result, err := cloneSubgraph(ctx, s, subgraph, nil, "new-assignee", "test-user")
+		result, err := cloneSubgraph(ctx, s, subgraph, nil, "new-assignee", "test-user", false)
 		if err != nil {
 			t.Fatalf("cloneSubgraph failed: %v", err)
 		}

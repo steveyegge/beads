@@ -62,8 +62,9 @@ Commands:
 // spawnMolecule creates new issues from the proto with variable substitution.
 // This instantiates a proto (template) into a molecule (real issues).
 // Wraps cloneSubgraph from template.go and returns InstantiateResult.
-func spawnMolecule(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, vars map[string]string, assignee string, actorName string) (*InstantiateResult, error) {
-	return cloneSubgraph(ctx, s, subgraph, vars, assignee, actorName)
+// If ephemeral is true, spawned issues are marked for bulk deletion when closed.
+func spawnMolecule(ctx context.Context, s storage.Storage, subgraph *MoleculeSubgraph, vars map[string]string, assignee string, actorName string, ephemeral bool) (*InstantiateResult, error) {
+	return cloneSubgraph(ctx, s, subgraph, vars, assignee, actorName, ephemeral)
 }
 
 // printMoleculeTree prints the molecule structure as a tree

@@ -283,8 +283,8 @@ func bondProtoMol(ctx context.Context, s storage.Storage, proto, mol *types.Issu
 		return nil, fmt.Errorf("missing required variables: %s (use --var)", strings.Join(missingVars, ", "))
 	}
 
-	// Spawn the proto
-	spawnResult, err := spawnMolecule(ctx, s, subgraph, vars, "", actorName)
+	// Spawn the proto (ephemeral by default for molecule execution - bd-2vh3)
+	spawnResult, err := spawnMolecule(ctx, s, subgraph, vars, "", actorName, true)
 	if err != nil {
 		return nil, fmt.Errorf("spawning proto: %w", err)
 	}
