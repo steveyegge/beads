@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.32.0] - 2025-12-20
+## [0.32.1] - 2025-12-20
+
+## [0.32.1] - 2025-12-21
+
+### Added
+
+- **MCP output control parameters** (PR#667) - Reduce context window usage by up to 97%
+  - `brief` - Return minimal responses: `BriefIssue` for reads, `OperationResult` for writes
+  - `brief_deps` - Full issue with compact dependencies
+  - `fields` - Custom field projection with validation
+  - `max_description_length` - Truncate long descriptions
+  - New models: `BriefIssue`, `BriefDep`, `OperationResult`
+  - Default `brief=True` for writes (minimal confirmations)
+
+- **MCP filtering parameters** - Align MCP tools with CLI capabilities
+  - `labels` / `labels_any` - AND/OR label filtering
+  - `query` - Title search (case-insensitive)
+  - `unassigned` - Filter to unassigned issues
+  - `sort_policy` - Sort ready work by hybrid/priority/oldest
+
+### Fixed
+
+- **Pin field not in allowed update fields** (gt-zr0a)
+  - `bd update --pinned` was failing with "invalid field" error
+  - Added `pinned` to allowedUpdateFields and importer
 
 ## [0.32.0] - 2025-12-20
 
