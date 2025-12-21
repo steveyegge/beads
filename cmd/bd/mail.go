@@ -68,6 +68,7 @@ Examples:
 		cmdArgs := append(parts[1:], args...)
 
 		// Execute the delegate command
+		// #nosec G204 - cmdName comes from user configuration (mail_delegate setting)
 		execCmd := exec.Command(cmdName, cmdArgs...)
 		execCmd.Stdin = os.Stdin
 		execCmd.Stdout = os.Stdout
