@@ -22,6 +22,18 @@ set -e
 #   6. Verify installation
 #
 # Until bd mol bond is implemented (bd-usro), use bd molecule instantiate.
+#
+# IMPORTANT: Run from mayor/rig to avoid git conflicts with bd sync
+# =============================================================================
+#
+# Gas Town agents share a beads database at mayor/rig/.beads/. The bd sync
+# command commits from that clone. Running version bumps from a different
+# clone (e.g., crew/dave) causes push conflicts when bd sync tries to push.
+#
+# Always run releases from the rig root:
+#
+#   cd ~/gt/beads/mayor/rig && ./scripts/bump-version.sh X.Y.Z --commit --tag --push
+#
 # =============================================================================
 
 # Colors for output
