@@ -212,8 +212,10 @@ func TestResolveForWrite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != target {
-			t.Errorf("got %q, want %q", got, target)
+		// Resolve target too - on macOS, /var is symlink to /private/var
+		wantTarget, _ := filepath.EvalSymlinks(target)
+		if got != wantTarget {
+			t.Errorf("got %q, want %q", got, wantTarget)
 		}
 	})
 
