@@ -289,6 +289,15 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.33.1",
+		Date:    "2025-12-21",
+		Changes: []string{
+			"BREAKING: Ephemeral → Wisp rename - JSON field changed from 'ephemeral' to 'wisp'",
+			"BREAKING: CLI flag changed from --ephemeral to --wisp (bd cleanup)",
+			"NOTE: SQLite column remains 'ephemeral' (no migration needed)",
+		},
+	},
+	{
 		Version: "0.33.0",
 		Date:    "2025-12-21",
 		Changes: []string{

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.1] - 2025-12-21
+
+### Changed
+
+- **Ephemeral → Wisp rename** - Aligns with Steam Engine metaphor (wisps = ephemeral vapor)
+  - JSON field changed from `ephemeral` to `wisp` (breaking change for API consumers)
+  - CLI flag changed from `--ephemeral` to `--wisp` on `bd cleanup`
+  - SQLite column remains `ephemeral` (no migration needed)
+
+### Fixed
+
+- **Lint error in mail.go** - Added nosec directive for mail delegate exec.Command
+
 ## [0.33.0] - 2025-12-21
 
 ### Added
