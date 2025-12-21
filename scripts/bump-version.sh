@@ -1,6 +1,41 @@
 #!/bin/bash
 set -e
 
+# =============================================================================
+# MOLECULE WORKFLOW (Recommended)
+# =============================================================================
+#
+# This script handles the mechanical version updates, but the full release
+# workflow is captured as a molecule. For guided, resumable releases:
+#
+#   bd template instantiate bd-6s61 --var version=X.Y.Z --assignee <identity>
+#
+# This creates child beads for each release step. The molecule survives
+# session restarts - any agent can pick up where another left off.
+#
+# The molecule (bd-6s61 "Version Bump: {{version}}") includes:
+#   1. Update CHANGELOG.md and info.go
+#   2. Run this script (bump-version.sh)
+#   3. Run tests and linting
+#   4. Commit, tag, push
+#   5. Update Homebrew formula
+#   6. Verify installation
+#
+# Until bd mol bond is implemented (bd-usro), use bd molecule instantiate.
+#
+# IMPORTANT: Run from mayor/rig to avoid git conflicts with bd sync
+# =============================================================================
+#
+# Gas Town agents share a beads database at mayor/rig/.beads/. The bd sync
+# command commits from that clone. Running version bumps from a different
+# clone (e.g., crew/dave) causes push conflicts when bd sync tries to push.
+#
+# Always run releases from the rig root:
+#
+#   cd ~/gt/beads/mayor/rig && ./scripts/bump-version.sh X.Y.Z --commit --tag --push
+#
+# =============================================================================
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -289,6 +289,27 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.32.1",
+		Date:    "2025-12-21",
+		Changes: []string{
+			"NEW: MCP output control params (PR#667) - brief, brief_deps, fields, max_description_length",
+			"NEW: MCP filtering params - labels, labels_any, query, unassigned, sort_policy",
+			"NEW: BriefIssue, BriefDep, OperationResult models for 97% context reduction",
+			"FIX: Pin field not in allowed update fields (gt-zr0a) - bd update --pinned now works",
+		},
+	},
+	{
+		Version: "0.32.0",
+		Date:    "2025-12-20",
+		Changes: []string{
+			"REMOVED: bd mail commands (send, inbox, read, ack, reply) - Mail is orchestration, not data plane",
+			"NOTE: Data model unchanged - type=message, Sender, Ephemeral, replies_to fields remain",
+			"NOTE: Orchestration tools should implement mail UI on top of beads data model",
+			"FIX: Symlink preservation in atomicWriteFile (PR#665) - bd setup no longer clobbers nix/home-manager configs",
+			"FIX: Broken link to LABELS.md in examples (GH#666)",
+		},
+	},
+	{
 		Version: "0.31.0",
 		Date:    "2025-12-20",
 		Changes: []string{

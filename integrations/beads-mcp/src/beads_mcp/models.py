@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 IssueStatus = Literal["open", "in_progress", "blocked", "deferred", "closed"]
 IssueType = Literal["bug", "feature", "task", "epic", "chore"]
 DependencyType = Literal["blocks", "related", "parent-child", "discovered-from"]
+OperationAction = Literal["created", "updated", "closed", "reopened"]
 
 
 # =============================================================================
@@ -43,7 +44,7 @@ class IssueMinimal(BaseModel):
 
 class CompactedResult(BaseModel):
     """Result container for compacted list responses.
-    
+
     When results exceed threshold, returns preview + metadata instead of full data.
     This prevents context window overflow for large issue lists.
     """
@@ -52,6 +53,42 @@ class CompactedResult(BaseModel):
     preview: list[IssueMinimal]
     preview_count: int
     hint: str = "Use show(issue_id) for full issue details"
+
+
+class BriefIssue(BaseModel):
+    """Ultra-minimal issue for scanning (4 fields).
+
+    Use for quick scans where only identification + priority needed.
+    ~95% smaller than full Issue.
+    """
+    id: str
+    title: str
+    status: IssueStatus
+    priority: int = Field(ge=0, le=4)
+
+
+class BriefDep(BaseModel):
+    """Brief dependency for overview (5 fields).
+
+    Use with brief_deps=True to get full issue but compact dependencies.
+    ~90% smaller than full LinkedIssue.
+    """
+    id: str
+    title: str
+    status: IssueStatus
+    priority: int = Field(ge=0, le=4)
+    dependency_type: DependencyType | None = None
+
+
+class OperationResult(BaseModel):
+    """Minimal confirmation for write operations.
+
+    Default response for create/update/close/reopen when verbose=False.
+    ~97% smaller than returning full Issue object.
+    """
+    id: str
+    action: OperationAction
+    message: str | None = None
 
 
 # =============================================================================
@@ -168,6 +205,10 @@ class ReadyWorkParams(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     priority: int | None = Field(default=None, ge=0, le=4)
     assignee: str | None = None
+    labels: list[str] | None = None  # AND: must have ALL labels
+    labels_any: list[str] | None = None  # OR: must have at least one
+    unassigned: bool = False  # Filter to only unassigned issues
+    sort_policy: str | None = None  # hybrid, priority, oldest
 
 
 class ListIssuesParams(BaseModel):
@@ -177,6 +218,10 @@ class ListIssuesParams(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=4)
     issue_type: IssueType | None = None
     assignee: str | None = None
+    labels: list[str] | None = None  # AND: must have ALL labels
+    labels_any: list[str] | None = None  # OR: must have at least one
+    query: str | None = None  # Search in title (case-insensitive)
+    unassigned: bool = False  # Filter to only unassigned issues
     limit: int = Field(default=20, ge=1, le=100)  # Reduced to avoid MCP buffer overflow
 
 
