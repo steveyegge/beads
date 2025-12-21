@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2025-12-20
+
+### Changed
+
+- **Removed `bd mail` commands** - Mail is orchestration, not data plane
+  - Removed: `bd mail send`, `bd mail inbox`, `bd mail read`, `bd mail ack`, `bd mail reply`
+  - The underlying data model is unchanged: `type=message`, `Sender`, `Ephemeral`, `replies_to` fields remain
+  - Orchestration tools should implement mail interfaces on top of the beads data model
+  - This follows the principle that beads is a data store, not a workflow engine
+
+### Fixed
+
+- **Symlink preservation in atomicWriteFile** (PR#665) - Thanks @qmx
+  - `bd setup claude` no longer clobbers nix/home-manager managed `~/.claude/settings.json`
+  - New `ResolveForWrite()` helper writes to symlink target instead of replacing symlink
+
+- **Broken link in examples** (GH#666) - Fixed LABELS.md link in multiple-personas example
+
 ## [0.31.0] - 2025-12-20
 
 ### Added
