@@ -11,6 +11,10 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
+// DefaultRemoteSyncInterval is the default interval for periodic remote sync.
+// Can be overridden via BEADS_REMOTE_SYNC_INTERVAL environment variable.
+const DefaultRemoteSyncInterval = 30 * time.Second
+
 // runEventDrivenLoop implements event-driven daemon architecture.
 // Replaces polling ticker with reactive event handlers for:
 // - File system changes (JSONL modifications)
@@ -18,6 +22,10 @@ import (
 // - Git operations (via hooks, optional)
 // - Parent process monitoring (exit if parent dies)
 // - Periodic remote sync (to pull updates from other clones)
+//
+// The remoteSyncInterval parameter controls how often the daemon pulls from
+// remote to check for updates from other clones. Use DefaultRemoteSyncInterval
+// or configure via BEADS_REMOTE_SYNC_INTERVAL environment variable.
 func runEventDrivenLoop(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -90,8 +98,9 @@ func runEventDrivenLoop(
 	// Periodic remote sync to pull updates from other clones
 	// This is essential for multi-clone workflows where the file watcher only
 	// sees local changes but remote may have updates from other clones.
-	// Uses a 30-second interval as a balance between responsiveness and overhead.
-	remoteSyncTicker := time.NewTicker(30 * time.Second)
+	// Default is 30 seconds; configurable via BEADS_REMOTE_SYNC_INTERVAL.
+	remoteSyncInterval := getRemoteSyncInterval(log)
+	remoteSyncTicker := time.NewTicker(remoteSyncInterval)
 	defer remoteSyncTicker.Stop()
 
 	// Parent process check (every 10 seconds)
@@ -232,4 +241,45 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	if heapMB > 500 {
 		log.log("Health check: high memory usage warning: %dMB heap allocated", heapMB)
 	}
+}
+
+// getRemoteSyncInterval returns the interval for periodic remote sync.
+// It checks the BEADS_REMOTE_SYNC_INTERVAL environment variable first,
+// then falls back to DefaultRemoteSyncInterval (30s).
+//
+// The environment variable accepts Go duration strings like:
+// - "30s" (30 seconds)
+// - "1m" (1 minute)
+// - "5m" (5 minutes)
+// - "0" or "0s" (disables periodic sync - use with caution)
+//
+// Minimum allowed value is 5 seconds to prevent excessive load.
+func getRemoteSyncInterval(log daemonLogger) time.Duration {
+	envVal := os.Getenv("BEADS_REMOTE_SYNC_INTERVAL")
+	if envVal == "" {
+		return DefaultRemoteSyncInterval
+	}
+
+	duration, err := time.ParseDuration(envVal)
+	if err != nil {
+		log.log("Warning: invalid BEADS_REMOTE_SYNC_INTERVAL '%s': %v, using default %v",
+			envVal, err, DefaultRemoteSyncInterval)
+		return DefaultRemoteSyncInterval
+	}
+
+	// Minimum 5 seconds to prevent excessive load
+	if duration > 0 && duration < 5*time.Second {
+		log.log("Warning: BEADS_REMOTE_SYNC_INTERVAL too low (%v), using minimum 5s", duration)
+		return 5 * time.Second
+	}
+
+	// Zero disables periodic sync (not recommended but allowed)
+	if duration == 0 {
+		log.log("Warning: BEADS_REMOTE_SYNC_INTERVAL is 0, periodic remote sync disabled")
+		// Return a very large interval effectively disabling it
+		return 24 * time.Hour * 365
+	}
+
+	log.log("Using custom remote sync interval: %v", duration)
+	return duration
 }
