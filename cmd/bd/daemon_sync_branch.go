@@ -182,7 +182,8 @@ func gitCommitInWorktree(ctx context.Context, worktreePath, filePath, message st
 	return nil
 }
 
-// gitPushFromWorktree pushes the sync branch from the worktree
+// gitPushFromWorktree pushes the sync branch from the worktree.
+// If push fails due to remote having newer commits, it will fetch, rebase, and retry.
 func gitPushFromWorktree(ctx context.Context, worktreePath, branch string) error {
 	// Get remote name (usually "origin")
 	remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) // #nosec G204 - worktreePath and branch are from config
@@ -197,6 +198,32 @@ func gitPushFromWorktree(ctx context.Context, worktreePath, branch string) error
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch) // #nosec G204 - worktreePath, remote, and branch are from config
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Check if push failed due to remote having newer commits
+		outputStr := string(output)
+		if strings.Contains(outputStr, "fetch first") || strings.Contains(outputStr, "non-fast-forward") {
+			// Fetch and rebase, then retry push
+			fetchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "fetch", remote, branch) // #nosec G204
+			if fetchOutput, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+				return fmt.Errorf("git fetch failed in worktree: %w\n%s", fetchErr, fetchOutput)
+			}
+			
+			// Rebase local commits on top of remote
+			rebaseCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", remote+"/"+branch) // #nosec G204
+			if rebaseOutput, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
+				// If rebase fails (conflict), abort and return error
+				abortCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", "--abort") // #nosec G204
+				_ = abortCmd.Run()
+				return fmt.Errorf("git rebase failed in worktree (sync branch may have conflicts): %w\n%s", rebaseErr, rebaseOutput)
+			}
+			
+			// Retry push after successful rebase
+			retryCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch) // #nosec G204
+			if retryOutput, retryErr := retryCmd.CombinedOutput(); retryErr != nil {
+				return fmt.Errorf("git push failed after rebase: %w\n%s", retryErr, retryOutput)
+			}
+			
+			return nil
+		}
 		return fmt.Errorf("git push failed from worktree: %w\n%s", err, output)
 	}
 	
