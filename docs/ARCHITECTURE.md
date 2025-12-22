@@ -265,6 +265,56 @@ open ──▶ in_progress ──▶ closed
 | Import logic | `cmd/bd/import.go`, `internal/importer/` |
 | Auto-sync | `internal/autoimport/`, `internal/flush/` |
 
+## Wisps and Molecules
+
+**Molecules** are template work items that define structured workflows. When spawned, they create **wisps** - ephemeral child issues that track execution steps.
+
+### Wisp Lifecycle
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   bd mol spawn  │───▶│  Wisp Issues    │───▶│  bd mol squash  │
+│   (from template)│    │  (local-only)   │    │  (→ digest)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+1. **Spawn:** Create wisps from a molecule template
+2. **Execute:** Agent works through wisp steps (local SQLite only)
+3. **Squash:** Compress wisps into a permanent digest issue
+
+### Why Wisps Don't Sync
+
+Wisps are intentionally **local-only**:
+
+- They exist only in the spawning agent's SQLite database
+- They are **never exported to JSONL**
+- They cannot resurrect from other clones (they were never there)
+- They are **hard-deleted** when squashed (no tombstones needed)
+
+This design enables:
+
+- **Fast local iteration:** No sync overhead during execution
+- **Clean history:** Only the digest (outcome) enters git
+- **Agent isolation:** Each agent's execution trace is private
+- **Bounded storage:** Wisps don't accumulate across clones
+
+### Wisp vs Regular Issue Deletion
+
+| Aspect | Regular Issues | Wisps |
+|--------|---------------|-------|
+| Exported to JSONL | Yes | No |
+| Tombstone on delete | Yes | No |
+| Can resurrect | Yes (without tombstone) | No (never synced) |
+| Deletion method | `CreateTombstone()` | `DeleteIssue()` (hard delete) |
+
+The `bd mol squash` command uses hard delete intentionally - tombstones would be wasted overhead for data that never leaves the local database.
+
+### Future Directions
+
+- **Separate wisp repo:** Keep wisps in a dedicated ephemeral git repo
+- **Digest migration:** Explicit step to promote digests to main repo
+- **Wisp retention:** Option to preserve wisps in local git history
+
 ## Related Documentation
 
 - [INTERNALS.md](INTERNALS.md) - FlushManager, Blocked Cache implementation details

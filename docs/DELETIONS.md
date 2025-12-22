@@ -200,8 +200,45 @@ Clock skew between machines can cause issues:
 
 The 1-hour grace period ensures tombstones propagate even with minor clock drift.
 
+## Wisps: Intentional Tombstone Bypass
+
+**Wisps** (ephemeral issues created by `bd mol spawn`) are intentionally excluded from tombstone tracking.
+
+### Why Wisps Don't Need Tombstones
+
+Tombstones exist to prevent resurrection during sync. Wisps don't sync:
+
+| Property | Regular Issues | Wisps |
+|----------|---------------|-------|
+| Exported to JSONL | Yes | No |
+| Synced to other clones | Yes | No |
+| Can resurrect | Yes | No |
+| Tombstone on delete | Yes | No (hard delete) |
+
+Since wisps never leave the local SQLite database, they cannot resurrect from remote clones. Creating tombstones for them would be unnecessary overhead.
+
+### How Wisp Deletion Works
+
+When `bd mol squash` compresses wisps into a digest:
+
+1. The digest issue is created (permanent, syncs normally)
+2. Wisp children are **hard-deleted** via `DeleteIssue()`
+3. No tombstones are created
+4. The wisps simply disappear from local SQLite
+
+This is intentional, not a bug. See [ARCHITECTURE.md](ARCHITECTURE.md#wisps-and-molecules) for the full design rationale.
+
+### If You Need Wisp History
+
+Wisps exist in local git history (SQLite database commits) until garbage collected. Future enhancements may include:
+
+- Separate ephemeral repository for wisp storage
+- Explicit migration step to promote wisps to permanent storage
+- Configurable wisp retention policies
+
 ## Related
 
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Overall architecture including Wisps and Molecules
 - [CONFIG.md](CONFIG.md) - Configuration options
 - [DAEMON.md](DAEMON.md) - Daemon auto-sync behavior
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - General troubleshooting
