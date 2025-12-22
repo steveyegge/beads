@@ -98,6 +98,15 @@ var labelAddCmd = &cobra.Command{
 			resolvedIDs = append(resolvedIDs, fullID)
 		}
 		issueIDs = resolvedIDs
+
+		// Protect reserved label namespaces (bd-eijl)
+		// provides:* labels can only be added via 'bd ship' command
+		if strings.HasPrefix(label, "provides:") {
+			fmt.Fprintf(os.Stderr, "Error: 'provides:' labels are reserved for cross-project capabilities\n")
+			fmt.Fprintf(os.Stderr, "Hint: use 'bd ship %s' instead\n", strings.TrimPrefix(label, "provides:"))
+			os.Exit(1)
+		}
+
 		processBatchLabelOperation(issueIDs, label, "added", jsonOutput,
 			func(issueID, lbl string) error {
 				_, err := daemonClient.AddLabel(&rpc.LabelAddArgs{ID: issueID, Label: lbl})
