@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -104,6 +105,12 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	}
 	if needCloseStore {
 		defer func() { _ = sqliteStore.Close() }()
+	}
+
+	// GH#686: In multi-repo mode, skip prefix validation for all issues.
+	// Issues from additional repos have their own prefixes which are expected and correct.
+	if config.GetMultiRepoConfig() != nil && !opts.SkipPrefixValidation {
+		opts.SkipPrefixValidation = true
 	}
 
 	// Clear export_hashes before import to prevent staleness (bd-160)
@@ -208,6 +215,12 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 	result.ExpectedPrefix = configuredPrefix
 
+	// GH#686: In multi-repo mode, allow all prefixes (nil = allow all)
+	allowedPrefixes := buildAllowedPrefixSet(configuredPrefix)
+	if allowedPrefixes == nil {
+		return issues, nil
+	}
+
 	// Analyze prefixes in imported issues
 	// Track tombstones separately - they don't count as "real" mismatches (bd-6pni)
 	tombstoneMismatchPrefixes := make(map[string]int)
@@ -219,7 +232,7 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 	for _, issue := range issues {
 		prefix := utils.ExtractIssuePrefix(issue.ID)
-		if prefix != configuredPrefix {
+		if !allowedPrefixes[prefix] {
 			if issue.IsTombstone() {
 				tombstoneMismatchPrefixes[prefix]++
 				tombstonesToRemove = append(tombstonesToRemove, issue.ID)
@@ -938,4 +951,13 @@ func validateNoDuplicateExternalRefs(issues []*types.Issue, clearDuplicates bool
 	}
 
 	return nil
+}
+
+// buildAllowedPrefixSet returns allowed prefixes, or nil to allow all (GH#686).
+// In multi-repo mode, additional repos have their own prefixes - allow all.
+func buildAllowedPrefixSet(primaryPrefix string) map[string]bool {
+	if config.GetMultiRepoConfig() != nil {
+		return nil // Multi-repo: allow all prefixes
+	}
+	return map[string]bool{primaryPrefix: true}
 }
