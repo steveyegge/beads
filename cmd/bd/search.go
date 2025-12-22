@@ -309,6 +309,7 @@ Examples:
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					SourceRepo:      issue.SourceRepo,
 				}
 			}
 			outputJSON(issuesWithCounts)

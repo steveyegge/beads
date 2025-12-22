@@ -21,17 +21,17 @@ func parseTimeRPC(s string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
-	
+
 	// Try YYYY-MM-DD format (common user input)
 	if t, err := time.Parse("2006-01-02", s); err == nil {
 		return t, nil
 	}
-	
+
 	// Try YYYY-MM-DD HH:MM:SS format
 	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
 		return t, nil
 	}
-	
+
 	return time.Time{}, fmt.Errorf("unsupported date format: %q (use YYYY-MM-DD or RFC3339)", s)
 }
 
@@ -180,7 +180,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		Wisp:   createArgs.Wisp,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 	}
-	
+
 	// Check if any dependencies are discovered-from type
 	// If so, inherit source_repo from the parent issue
 	var discoveredFromParentID string
@@ -189,16 +189,16 @@ func (s *Server) handleCreate(req *Request) Response {
 		if depSpec == "" {
 			continue
 		}
-		
+
 		var depType types.DependencyType
 		var dependsOnID string
-		
+
 		if strings.Contains(depSpec, ":") {
 			parts := strings.SplitN(depSpec, ":", 2)
 			if len(parts) == 2 {
 				depType = types.DependencyType(strings.TrimSpace(parts[0]))
 				dependsOnID = strings.TrimSpace(parts[1])
-				
+
 				if depType == types.DepDiscoveredFrom {
 					discoveredFromParentID = dependsOnID
 					break
@@ -206,7 +206,7 @@ func (s *Server) handleCreate(req *Request) Response {
 			}
 		}
 	}
-	
+
 	// If we found a discovered-from dependency, inherit source_repo from parent
 	if discoveredFromParentID != "" {
 		parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
@@ -215,7 +215,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 		// If error getting parent or parent has no source_repo, continue with default
 	}
-	
+
 	if err := store.CreateIssue(ctx, issue, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -629,13 +629,13 @@ func (s *Server) handleList(req *Request) Response {
 	filter := types.IssueFilter{
 		Limit: listArgs.Limit,
 	}
-	
+
 	// Normalize status: treat "" or "all" as unset (no filter)
 	if listArgs.Status != "" && listArgs.Status != "all" {
 		status := types.Status(listArgs.Status)
 		filter.Status = &status
 	}
-	
+
 	if listArgs.IssueType != "" {
 		issueType := types.IssueType(listArgs.IssueType)
 		filter.IssueType = &issueType
@@ -646,7 +646,7 @@ func (s *Server) handleList(req *Request) Response {
 	if listArgs.Priority != nil {
 		filter.Priority = listArgs.Priority
 	}
-	
+
 	// Normalize and apply label filters
 	labels := util.NormalizeLabels(listArgs.Labels)
 	labelsAny := util.NormalizeLabels(listArgs.LabelsAny)
@@ -665,12 +665,12 @@ func (s *Server) handleList(req *Request) Response {
 			filter.IDs = ids
 		}
 	}
-	
+
 	// Pattern matching
 	filter.TitleContains = listArgs.TitleContains
 	filter.DescriptionContains = listArgs.DescriptionContains
 	filter.NotesContains = listArgs.NotesContains
-	
+
 	// Date ranges - use parseTimeRPC helper for flexible formats
 	if listArgs.CreatedAfter != "" {
 		t, err := parseTimeRPC(listArgs.CreatedAfter)
@@ -732,12 +732,12 @@ func (s *Server) handleList(req *Request) Response {
 		}
 		filter.ClosedBefore = &t
 	}
-	
+
 	// Empty/null checks
 	filter.EmptyDescription = listArgs.EmptyDescription
 	filter.NoAssignee = listArgs.NoAssignee
 	filter.NoLabels = listArgs.NoLabels
-	
+
 	// Priority range
 	filter.PriorityMin = listArgs.PriorityMin
 	filter.PriorityMax = listArgs.PriorityMax
@@ -793,6 +793,7 @@ func (s *Server) handleList(req *Request) Response {
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
+			SourceRepo:      issue.SourceRepo,
 		}
 	}
 
@@ -1101,7 +1102,7 @@ func (s *Server) handleShow(req *Request) Response {
 
 	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	
+
 	// Get dependencies and dependents with metadata (including dependency type)
 	var deps []*types.IssueWithDependencyMetadata
 	var dependents []*types.IssueWithDependencyMetadata
@@ -1129,7 +1130,7 @@ func (s *Server) handleShow(req *Request) Response {
 	// Create detailed response with related data
 	type IssueDetails struct {
 		*types.Issue
-		Labels       []string                              `json:"labels,omitempty"`
+		Labels       []string                             `json:"labels,omitempty"`
 		Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 		Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
 	}

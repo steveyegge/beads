@@ -117,12 +117,12 @@ var listCmd = &cobra.Command{
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")
 		reverse, _ := cmd.Flags().GetBool("reverse")
-		
+
 		// Pattern matching flags
 		titleContains, _ := cmd.Flags().GetString("title-contains")
 		descContains, _ := cmd.Flags().GetString("desc-contains")
 		notesContains, _ := cmd.Flags().GetString("notes-contains")
-		
+
 		// Date range flags
 		createdAfter, _ := cmd.Flags().GetString("created-after")
 		createdBefore, _ := cmd.Flags().GetString("created-before")
@@ -130,12 +130,12 @@ var listCmd = &cobra.Command{
 		updatedBefore, _ := cmd.Flags().GetString("updated-before")
 		closedAfter, _ := cmd.Flags().GetString("closed-after")
 		closedBefore, _ := cmd.Flags().GetString("closed-before")
-		
+
 		// Empty/null check flags
 		emptyDesc, _ := cmd.Flags().GetBool("empty-description")
 		noAssignee, _ := cmd.Flags().GetBool("no-assignee")
 		noLabels, _ := cmd.Flags().GetBool("no-labels")
-		
+
 		// Priority range flags
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
 		priorityMaxStr, _ := cmd.Flags().GetString("priority-max")
@@ -199,7 +199,7 @@ var listCmd = &cobra.Command{
 				filter.IDs = ids
 			}
 		}
-		
+
 		// Pattern matching
 		if titleContains != "" {
 			filter.TitleContains = titleContains
@@ -210,7 +210,7 @@ var listCmd = &cobra.Command{
 		if notesContains != "" {
 			filter.NotesContains = notesContains
 		}
-		
+
 		// Date ranges
 		if createdAfter != "" {
 			t, err := parseTimeFlag(createdAfter)
@@ -260,7 +260,7 @@ var listCmd = &cobra.Command{
 			}
 			filter.ClosedBefore = &t
 		}
-		
+
 		// Empty/null checks
 		if emptyDesc {
 			filter.EmptyDescription = true
@@ -271,7 +271,7 @@ var listCmd = &cobra.Command{
 		if noLabels {
 			filter.NoLabels = true
 		}
-		
+
 		// Priority ranges
 		if cmd.Flags().Changed("priority-min") {
 			priorityMin, err := validation.ValidatePriority(priorityMinStr)
@@ -320,7 +320,7 @@ var listCmd = &cobra.Command{
 			}
 		}
 
-	// If daemon is running, use RPC
+		// If daemon is running, use RPC
 		if daemonClient != nil {
 			listArgs := &rpc.ListArgs{
 				Status:    status,
@@ -345,17 +345,17 @@ var listCmd = &cobra.Command{
 			}
 			// Forward title search via Query field (searches title/description/id)
 			if titleSearch != "" {
-			 listArgs.Query = titleSearch
+				listArgs.Query = titleSearch
 			}
-			 if len(filter.IDs) > 0 {
-			listArgs.IDs = filter.IDs
-			 }
-			
+			if len(filter.IDs) > 0 {
+				listArgs.IDs = filter.IDs
+			}
+
 			// Pattern matching
 			listArgs.TitleContains = titleContains
 			listArgs.DescriptionContains = descContains
 			listArgs.NotesContains = notesContains
-			
+
 			// Date ranges
 			if filter.CreatedAfter != nil {
 				listArgs.CreatedAfter = filter.CreatedAfter.Format(time.RFC3339)
@@ -375,12 +375,12 @@ var listCmd = &cobra.Command{
 			if filter.ClosedBefore != nil {
 				listArgs.ClosedBefore = filter.ClosedBefore.Format(time.RFC3339)
 			}
-			
+
 			// Empty/null checks
 			listArgs.EmptyDescription = filter.EmptyDescription
 			listArgs.NoAssignee = filter.NoAssignee
 			listArgs.NoLabels = filter.NoLabels
-			
+
 			// Priority range
 			listArgs.PriorityMin = filter.PriorityMin
 			listArgs.PriorityMax = filter.PriorityMax
@@ -391,7 +391,7 @@ var listCmd = &cobra.Command{
 			// Template filtering (beads-1ra)
 			listArgs.IncludeTemplates = includeTemplates
 
-			 resp, err := daemonClient.List(listArgs)
+			resp, err := daemonClient.List(listArgs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -484,21 +484,21 @@ var listCmd = &cobra.Command{
 		// ctx already created above for staleness check
 		issues, err := store.SearchIssues(ctx, "", filter)
 		if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
-	// If no issues found, check if git has issues and auto-import
-	if len(issues) == 0 {
-		if checkAndAutoImport(ctx, store) {
-			// Re-run the query after import
-			issues, err = store.SearchIssues(ctx, "", filter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		// If no issues found, check if git has issues and auto-import
+		if len(issues) == 0 {
+			if checkAndAutoImport(ctx, store) {
+				// Re-run the query after import
+				issues, err = store.SearchIssues(ctx, "", filter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
-	}
 
 		// Apply sorting
 		sortIssues(issues, sortBy, reverse)
@@ -537,6 +537,7 @@ var listCmd = &cobra.Command{
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					SourceRepo:      issue.SourceRepo,
 				}
 			}
 			outputJSON(issuesWithCounts)
@@ -635,12 +636,12 @@ func init() {
 	listCmd.Flags().Bool("long", false, "Show detailed multi-line output for each issue")
 	listCmd.Flags().String("sort", "", "Sort by field: priority, created, updated, closed, status, id, title, type, assignee")
 	listCmd.Flags().BoolP("reverse", "r", false, "Reverse sort order")
-	
+
 	// Pattern matching
 	listCmd.Flags().String("title-contains", "", "Filter by title substring (case-insensitive)")
 	listCmd.Flags().String("desc-contains", "", "Filter by description substring (case-insensitive)")
 	listCmd.Flags().String("notes-contains", "", "Filter by notes substring (case-insensitive)")
-	
+
 	// Date ranges
 	listCmd.Flags().String("created-after", "", "Filter issues created after date (YYYY-MM-DD or RFC3339)")
 	listCmd.Flags().String("created-before", "", "Filter issues created before date (YYYY-MM-DD or RFC3339)")
@@ -648,12 +649,12 @@ func init() {
 	listCmd.Flags().String("updated-before", "", "Filter issues updated before date (YYYY-MM-DD or RFC3339)")
 	listCmd.Flags().String("closed-after", "", "Filter issues closed after date (YYYY-MM-DD or RFC3339)")
 	listCmd.Flags().String("closed-before", "", "Filter issues closed before date (YYYY-MM-DD or RFC3339)")
-	
+
 	// Empty/null checks
 	listCmd.Flags().Bool("empty-description", false, "Filter issues with empty or missing description")
 	listCmd.Flags().Bool("no-assignee", false, "Filter issues with no assignee")
 	listCmd.Flags().Bool("no-labels", false, "Filter issues with no labels")
-	
+
 	// Priority ranges
 	listCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	listCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")

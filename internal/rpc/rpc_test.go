@@ -87,7 +87,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to connect client: %v", err)
 	}
-	
+
 	if client == nil {
 		cancel()
 		server.Stop()
@@ -95,7 +95,7 @@ func setupTestServer(t *testing.T) (*Server, *Client, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Client is nil after connection")
 	}
-	
+
 	// Set the client's dbPath to the test database so it doesn't route to the wrong DB
 	client.dbPath = dbPath
 
@@ -329,6 +329,59 @@ func TestListIssues(t *testing.T) {
 	}
 }
 
+// TestListIssuesWithSourceRepo verifies that source_repo is included in list JSON output
+// for beads-ui-svelte multi-repo filtering (bd-zyk5)
+func TestListIssuesWithSourceRepo(t *testing.T) {
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create an issue
+	args := &CreateArgs{
+		Title:     "Test Issue",
+		IssueType: "task",
+		Priority:  2,
+	}
+	if _, err := client.Create(args); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	listArgs := &ListArgs{
+		Limit: 10,
+	}
+
+	resp, err := client.List(listArgs)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	// Unmarshal to IssueWithCounts to verify source_repo is present
+	var issuesWithCounts []types.IssueWithCounts
+	if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+		t.Fatalf("Failed to unmarshal issues with counts: %v", err)
+	}
+
+	if len(issuesWithCounts) != 1 {
+		t.Errorf("Expected 1 issue, got %d", len(issuesWithCounts))
+	}
+
+	// Verify source_repo is in the raw JSON (should be "." for local repo)
+	var rawJSON []map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &rawJSON); err != nil {
+		t.Fatalf("Failed to unmarshal raw JSON: %v", err)
+	}
+
+	if len(rawJSON) == 0 {
+		t.Fatal("Expected at least one issue in raw JSON")
+	}
+
+	sourceRepo, ok := rawJSON[0]["source_repo"]
+	if !ok {
+		t.Error("Expected source_repo field in JSON output, but it was missing")
+	} else if sourceRepo != "." {
+		t.Errorf("Expected source_repo to be '.', got %v", sourceRepo)
+	}
+}
+
 func TestSocketCleanup(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "bd-rpc-cleanup-test-*")
 	if err != nil {
@@ -476,7 +529,7 @@ func TestDatabaseHandshake(t *testing.T) {
 	// Test 1: Client with correct ExpectedDB should succeed
 	// Change to tmpDir1 so cwd resolution doesn't find other databases.
 	t.Chdir(tmpDir1)
-	
+
 	client1, err := TryConnect(socketPath1)
 	if err != nil {
 		t.Fatalf("Failed to connect to server 1: %v", err)

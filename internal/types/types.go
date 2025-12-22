@@ -9,31 +9,31 @@ import (
 
 // Issue represents a trackable work item
 type Issue struct {
-	ID                 string         `json:"id"`
-	ContentHash        string         `json:"-"` // Internal: SHA256 hash of canonical content (excludes ID, timestamps) - NOT exported to JSONL
-	Title              string         `json:"title"`
-	Description        string         `json:"description,omitempty"`
-	Design             string         `json:"design,omitempty"`
-	AcceptanceCriteria string         `json:"acceptance_criteria,omitempty"`
-	Notes              string         `json:"notes,omitempty"`
-	Status             Status         `json:"status,omitempty"`
-	Priority           int            `json:"priority"` // No omitempty: 0 is valid (P0/critical)
-	IssueType          IssueType      `json:"issue_type,omitempty"`
-	Assignee           string         `json:"assignee,omitempty"`
-	EstimatedMinutes   *int           `json:"estimated_minutes,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	ClosedAt           *time.Time     `json:"closed_at,omitempty"`
-	CloseReason        string         `json:"close_reason,omitempty"` // Reason provided when closing the issue
-	ExternalRef        *string        `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
-	CompactionLevel    int            `json:"compaction_level,omitempty"`
-	CompactedAt        *time.Time     `json:"compacted_at,omitempty"`
-	CompactedAtCommit  *string        `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
-	OriginalSize       int            `json:"original_size,omitempty"`
-	SourceRepo         string         `json:"-"` // Internal: Which repo owns this issue (multi-repo support) - NOT exported to JSONL
-	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
-	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
-	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
+	ID                 string        `json:"id"`
+	ContentHash        string        `json:"-"` // Internal: SHA256 hash of canonical content (excludes ID, timestamps) - NOT exported to JSONL
+	Title              string        `json:"title"`
+	Description        string        `json:"description,omitempty"`
+	Design             string        `json:"design,omitempty"`
+	AcceptanceCriteria string        `json:"acceptance_criteria,omitempty"`
+	Notes              string        `json:"notes,omitempty"`
+	Status             Status        `json:"status,omitempty"`
+	Priority           int           `json:"priority"` // No omitempty: 0 is valid (P0/critical)
+	IssueType          IssueType     `json:"issue_type,omitempty"`
+	Assignee           string        `json:"assignee,omitempty"`
+	EstimatedMinutes   *int          `json:"estimated_minutes,omitempty"`
+	CreatedAt          time.Time     `json:"created_at"`
+	UpdatedAt          time.Time     `json:"updated_at"`
+	ClosedAt           *time.Time    `json:"closed_at,omitempty"`
+	CloseReason        string        `json:"close_reason,omitempty"` // Reason provided when closing the issue
+	ExternalRef        *string       `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
+	CompactionLevel    int           `json:"compaction_level,omitempty"`
+	CompactedAt        *time.Time    `json:"compacted_at,omitempty"`
+	CompactedAtCommit  *string       `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
+	OriginalSize       int           `json:"original_size,omitempty"`
+	SourceRepo         string        `json:"-"`                      // Internal: Which repo owns this issue (multi-repo support) - NOT exported to JSONL
+	Labels             []string      `json:"labels,omitempty"`       // Populated only for export/import
+	Dependencies       []*Dependency `json:"dependencies,omitempty"` // Populated only for export/import
+	Comments           []*Comment    `json:"comments,omitempty"`     // Populated only for export/import
 	// Tombstone fields (bd-vw8): inline soft-delete support
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When the issue was deleted
 	DeletedBy    string     `json:"deleted_by,omitempty"`    // Who deleted the issue
@@ -61,7 +61,7 @@ type Issue struct {
 // to ensure that identical content produces identical hashes across all clones.
 func (i *Issue) ComputeContentHash() string {
 	h := sha256.New()
-	
+
 	// Hash all substantive fields in a stable order
 	h.Write([]byte(i.Title))
 	h.Write([]byte{0}) // separator
@@ -81,7 +81,7 @@ func (i *Issue) ComputeContentHash() string {
 	h.Write([]byte{0})
 	h.Write([]byte(i.Assignee))
 	h.Write([]byte{0})
-	
+
 	if i.ExternalRef != nil {
 		h.Write([]byte(*i.ExternalRef))
 	}
@@ -318,8 +318,9 @@ type IssueWithDependencyMetadata struct {
 // IssueWithCounts extends Issue with dependency relationship counts
 type IssueWithCounts struct {
 	*Issue
-	DependencyCount int `json:"dependency_count"`
-	DependentCount  int `json:"dependent_count"`
+	DependencyCount int    `json:"dependency_count"`
+	DependentCount  int    `json:"dependent_count"`
+	SourceRepo      string `json:"source_repo,omitempty"` // Exposed for JSON output (Issue.SourceRepo has json:"-")
 }
 
 // DependencyType categorizes the relationship
@@ -336,10 +337,10 @@ const (
 	DepDiscoveredFrom DependencyType = "discovered-from"
 
 	// Graph link types (bd-kwro)
-	DepRepliesTo  DependencyType = "replies-to"  // Conversation threading
-	DepRelatesTo  DependencyType = "relates-to"  // Loose knowledge graph edges
-	DepDuplicates DependencyType = "duplicates"  // Deduplication link
-	DepSupersedes DependencyType = "supersedes"  // Version chain link
+	DepRepliesTo  DependencyType = "replies-to" // Conversation threading
+	DepRelatesTo  DependencyType = "relates-to" // Loose knowledge graph edges
+	DepDuplicates DependencyType = "duplicates" // Deduplication link
+	DepSupersedes DependencyType = "supersedes" // Version chain link
 
 	// Entity types (HOP foundation - Decision 004)
 	DepAuthoredBy DependencyType = "authored-by" // Creator relationship
@@ -389,14 +390,14 @@ type Comment struct {
 
 // Event represents an audit trail entry
 type Event struct {
-	ID        int64      `json:"id"`
-	IssueID   string     `json:"issue_id"`
-	EventType EventType  `json:"event_type"`
-	Actor     string     `json:"actor"`
-	OldValue  *string    `json:"old_value,omitempty"`
-	NewValue  *string    `json:"new_value,omitempty"`
-	Comment   *string    `json:"comment,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        int64     `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	EventType EventType `json:"event_type"`
+	Actor     string    `json:"actor"`
+	OldValue  *string   `json:"old_value,omitempty"`
+	NewValue  *string   `json:"new_value,omitempty"`
+	Comment   *string   `json:"comment,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // EventType categorizes audit trail events
@@ -434,17 +435,17 @@ type TreeNode struct {
 
 // Statistics provides aggregate metrics
 type Statistics struct {
-	TotalIssues              int     `json:"total_issues"`
-	OpenIssues               int     `json:"open_issues"`
-	InProgressIssues         int     `json:"in_progress_issues"`
-	ClosedIssues             int     `json:"closed_issues"`
-	BlockedIssues            int     `json:"blocked_issues"`
-	DeferredIssues           int     `json:"deferred_issues"`  // Issues on ice (bd-4jr)
-	ReadyIssues              int     `json:"ready_issues"`
-	TombstoneIssues          int     `json:"tombstone_issues"` // Soft-deleted issues (bd-nyt)
-	PinnedIssues             int     `json:"pinned_issues"`    // Persistent issues (bd-6v2)
-	EpicsEligibleForClosure  int     `json:"epics_eligible_for_closure"`
-	AverageLeadTime          float64 `json:"average_lead_time_hours"`
+	TotalIssues             int     `json:"total_issues"`
+	OpenIssues              int     `json:"open_issues"`
+	InProgressIssues        int     `json:"in_progress_issues"`
+	ClosedIssues            int     `json:"closed_issues"`
+	BlockedIssues           int     `json:"blocked_issues"`
+	DeferredIssues          int     `json:"deferred_issues"` // Issues on ice (bd-4jr)
+	ReadyIssues             int     `json:"ready_issues"`
+	TombstoneIssues         int     `json:"tombstone_issues"` // Soft-deleted issues (bd-nyt)
+	PinnedIssues            int     `json:"pinned_issues"`    // Persistent issues (bd-6v2)
+	EpicsEligibleForClosure int     `json:"epics_eligible_for_closure"`
+	AverageLeadTime         float64 `json:"average_lead_time_hours"`
 }
 
 // IssueFilter is used to filter issue queries
@@ -453,17 +454,17 @@ type IssueFilter struct {
 	Priority    *int
 	IssueType   *IssueType
 	Assignee    *string
-	Labels      []string  // AND semantics: issue must have ALL these labels
-	LabelsAny   []string  // OR semantics: issue must have AT LEAST ONE of these labels
+	Labels      []string // AND semantics: issue must have ALL these labels
+	LabelsAny   []string // OR semantics: issue must have AT LEAST ONE of these labels
 	TitleSearch string
-	IDs         []string  // Filter by specific issue IDs
+	IDs         []string // Filter by specific issue IDs
 	Limit       int
-	
+
 	// Pattern matching
 	TitleContains       string
 	DescriptionContains string
 	NotesContains       string
-	
+
 	// Date ranges
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
@@ -471,12 +472,12 @@ type IssueFilter struct {
 	UpdatedBefore *time.Time
 	ClosedAfter   *time.Time
 	ClosedBefore  *time.Time
-	
+
 	// Empty/null checks
 	EmptyDescription bool
 	NoAssignee       bool
 	NoLabels         bool
-	
+
 	// Numeric ranges
 	PriorityMin *int
 	PriorityMax *int
@@ -525,12 +526,12 @@ func (s SortPolicy) IsValid() bool {
 // WorkFilter is used to filter ready work queries
 type WorkFilter struct {
 	Status     Status
-	Type       string     // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
+	Type       string // Filter by issue type (task, bug, feature, epic, merge-request, etc.)
 	Priority   *int
 	Assignee   *string
-	Unassigned bool       // Filter for issues with no assignee
-	Labels     []string   // AND semantics: issue must have ALL these labels
-	LabelsAny  []string   // OR semantics: issue must have AT LEAST ONE of these labels
+	Unassigned bool     // Filter for issues with no assignee
+	Labels     []string // AND semantics: issue must have ALL these labels
+	LabelsAny  []string // OR semantics: issue must have AT LEAST ONE of these labels
 	Limit      int
 	SortPolicy SortPolicy
 }
