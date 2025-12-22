@@ -185,9 +185,9 @@ bd ready
 - Socket file stale: `rm .beads/bd.sock` (auto-cleans on next start)
 - Multiple bd versions installed: `which bd` and `bd version`
 
-## Event-Driven Daemon Mode (Experimental)
+## Event-Driven Daemon Mode (Default)
 
-**NEW in v0.16+**: Event-driven mode replaces 5-second polling with instant reactivity.
+**Default since v0.21.0**: Event-driven mode replaces 5-second polling with instant reactivity.
 
 ### Benefits
 
@@ -195,19 +195,39 @@ bd ready
 - 🔋 **~60% less CPU usage** (no continuous polling)
 - 🎯 **Instant sync** on mutations and file changes
 - 🛡️ **Dropped events safety net** prevents data loss
+- 🔄 **Periodic remote sync** pulls updates from other clones
 
 ### How It Works
 
 **Architecture:**
 ```
-FileWatcher (platform-native)
-    ├─ .beads/issues.jsonl (file changes)
-    ├─ .git/refs/heads (git updates)
-    └─ RPC mutations (create, update, close)
-         ↓
-    Debouncer (500ms batch window)
-         ↓
-    Export → Git Commit/Push
+┌─────────────────────────────────────────────────────────────────┐
+│                    EVENT-DRIVEN MODE                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  EXPORT FLOW (Mutation-Triggered)                         │   │
+│  │                                                           │   │
+│  │  FileWatcher (platform-native)                            │   │
+│  │      ├─ .beads/issues.jsonl (file changes)                │   │
+│  │      └─ RPC mutations (create, update, close)             │   │
+│  │           ↓                                               │   │
+│  │      Debouncer (500ms batch window)                       │   │
+│  │           ↓                                               │   │
+│  │      Export → Git Commit → Git Push (if --auto-push)      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  IMPORT FLOW (Periodic Remote Sync)                       │   │
+│  │                                                           │   │
+│  │  remoteSyncTicker (default: 30s, configurable)            │   │
+│  │           ↓                                               │   │
+│  │      Git Pull (from sync branch or origin)                │   │
+│  │           ↓                                               │   │
+│  │      Import JSONL → Database                              │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Platform-native APIs:**
@@ -215,29 +235,26 @@ FileWatcher (platform-native)
 - macOS: `FSEvents` (via kqueue)
 - Windows: `ReadDirectoryChangesW`
 
-**Mutation events** from RPC trigger immediate export  
-**Debouncer** batches rapid changes (500ms window) to avoid export storms  
-**Polling fallback** if fsnotify unavailable (network filesystems)
+**Key behaviors:**
+- **Mutation events** from RPC trigger immediate export (debounced 500ms)
+- **Periodic remote sync** pulls updates from other clones (default 30s interval)
+- **Polling fallback** if fsnotify unavailable (network filesystems)
 
 ### Enabling Event-Driven Mode
 
-**Opt-In (Phase 1):**
+Event-driven mode is the **default** as of v0.21.0. No configuration needed.
 
 ```bash
-# Enable for single daemon
+# Event-driven mode starts automatically
+bd daemon --start
+
+# Explicitly enable (same as default)
 BEADS_DAEMON_MODE=events bd daemon --start
-
-# Set globally in shell profile
-export BEADS_DAEMON_MODE=events
-
-# Restart all daemons to apply
-bd daemons killall
-# Next bd command auto-starts with new mode
 ```
 
 **Available modes:**
-- `poll` (default) - Traditional 5-second polling, stable and battle-tested
-- `events` - Event-driven mode, experimental but thoroughly tested
+- `events` (default) - Event-driven mode with instant reactivity
+- `poll` - Traditional 5-second polling, fallback for edge cases
 
 ### Configuration
 
@@ -245,25 +262,56 @@ bd daemons killall
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
-| `BEADS_DAEMON_MODE` | `poll`, `events` | `poll` | Daemon operation mode |
+| `BEADS_DAEMON_MODE` | `poll`, `events` | `events` | Daemon operation mode |
 | `BEADS_WATCHER_FALLBACK` | `true`, `false` | `true` | Fall back to polling if fsnotify fails |
+| `BEADS_REMOTE_SYNC_INTERVAL` | duration | `30s` | How often to pull from remote (event mode) |
 
-**Disable polling fallback (require fsnotify):**
+**config.yaml settings:**
 
-```bash
-# Fail if watcher unavailable (e.g., testing)
-BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon --start
+```yaml
+# .beads/config.yaml
+
+# Interval for daemon to pull remote sync branch updates
+# Accepts Go duration strings: "30s", "1m", "5m", etc.
+# Minimum: 5s (values below are clamped)
+# Set to "0" to disable periodic remote sync (not recommended)
+remote-sync-interval: "30s"
 ```
 
-**Switch back to polling:**
+**Configuration precedence:**
+1. `BEADS_REMOTE_SYNC_INTERVAL` environment variable (highest)
+2. `remote-sync-interval` in `.beads/config.yaml`
+3. Default: 30 seconds
+
+### Remote Sync Interval
+
+The `remote-sync-interval` controls how often the daemon pulls from remote to check for updates from other clones.
+
+| Value | Use Case |
+|-------|----------|
+| `30s` (default) | Good balance for most workflows |
+| `1m` | Lower network traffic, acceptable for solo work |
+| `5m` | Very low traffic, for slow-changing projects |
+| `5s` (minimum) | Fastest updates, higher network usage |
+
+**Minimum value:** 5 seconds (lower values are clamped to prevent git rate limiting and excessive network traffic)
+
+**Disabling remote sync:**
+```bash
+# Set to 0 to disable (not recommended - other clones' changes won't sync)
+export BEADS_REMOTE_SYNC_INTERVAL=0
+```
+
+### Switch to Polling Mode
+
+For edge cases (NFS, containers, WSL) where fsnotify is unreliable:
 
 ```bash
 # Explicitly use polling mode
 BEADS_DAEMON_MODE=poll bd daemon --start
 
-# Or unset to use default
-unset BEADS_DAEMON_MODE
-bd daemons killall  # Restart with default (poll) mode
+# With custom interval
+bd daemon --start --interval 10s
 ```
 
 ### Troubleshooting Event-Driven Mode
