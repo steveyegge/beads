@@ -89,7 +89,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: failed to open wisp storage: %v\n", err)
 			os.Exit(1)
 		}
-		defer wispStore.Close()
+		defer func() { _ = wispStore.Close() }()
 		targetStore = wispStore
 
 		// Ensure wisp directory is gitignored

@@ -34,14 +34,12 @@ func CheckCLIVersion(cliVersion string) DoctorCheck {
 
 	// Compare versions using simple semver-aware comparison
 	if CompareVersions(latestVersion, cliVersion) > 0 {
-		upgradeCmds := `  • Homebrew: brew upgrade bd
-  • Script: curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash`
-
+		upgradeCmd := getUpgradeCommand()
 		return DoctorCheck{
 			Name:    "CLI Version",
 			Status:  StatusWarning,
 			Message: fmt.Sprintf("%s (latest: %s)", cliVersion, latestVersion),
-			Fix:     fmt.Sprintf("Upgrade to latest version:\n%s", upgradeCmds),
+			Fix:     fmt.Sprintf("Upgrade: %s", upgradeCmd),
 		}
 	}
 
@@ -50,6 +48,36 @@ func CheckCLIVersion(cliVersion string) DoctorCheck {
 		Status:  StatusOK,
 		Message: fmt.Sprintf("%s (latest)", cliVersion),
 	}
+}
+
+// getUpgradeCommand returns the appropriate upgrade command based on how bd was installed.
+// Detects Homebrew on macOS/Linux, and falls back to the install script on all platforms.
+func getUpgradeCommand() string {
+	// Get the executable path
+	execPath, err := os.Executable()
+	if err != nil {
+		return "curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash"
+	}
+
+	// Resolve symlinks to get the real path
+	realPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		realPath = execPath
+	}
+
+	// Normalize to lowercase for comparison
+	lowerPath := strings.ToLower(realPath)
+
+	// Check for Homebrew installation (macOS/Linux)
+	// Homebrew paths: /opt/homebrew/Cellar/bd, /usr/local/Cellar/bd, /home/linuxbrew/.linuxbrew/Cellar/bd
+	if strings.Contains(lowerPath, "/cellar/bd/") ||
+		strings.Contains(lowerPath, "/homebrew/") ||
+		strings.Contains(lowerPath, "/linuxbrew/") {
+		return "brew upgrade bd"
+	}
+
+	// Default to install script (works on all platforms including Windows via WSL/Git Bash)
+	return "curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash"
 }
 
 // localVersionFile is the gitignored file that stores the last bd version used locally.

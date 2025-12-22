@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // Daemon start failure tracking for exponential backoff
@@ -135,6 +136,8 @@ func restartDaemonForVersionMismatch() bool {
 	}
 
 	debug.Logf("new daemon failed to become ready")
+	fmt.Fprintf(os.Stderr, "%s Daemon restart timed out (>5s). Running in direct mode.\n", ui.RenderWarn("Warning:"))
+	fmt.Fprintf(os.Stderr, "  %s Run 'bd doctor' to diagnose daemon issues\n", ui.RenderMuted("Hint:"))
 	return false
 }
 
@@ -286,6 +289,9 @@ func startDaemonProcess(socketPath string) bool {
 
 	recordDaemonStartFailure()
 	debugLog("daemon socket not ready after 5 seconds")
+	// Emit visible warning so user understands why command was slow
+	fmt.Fprintf(os.Stderr, "%s Daemon took too long to start (>5s). Running in direct mode.\n", ui.RenderWarn("Warning:"))
+	fmt.Fprintf(os.Stderr, "  %s Run 'bd doctor' to diagnose daemon issues\n", ui.RenderMuted("Hint:"))
 	return false
 }
 

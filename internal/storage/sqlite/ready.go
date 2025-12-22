@@ -210,6 +210,7 @@ func (s *SQLiteStorage) getExternalDepsForIssues(ctx context.Context, issueIDs [
 		args[i] = id
 	}
 
+	// #nosec G201 -- placeholders are "?" literals, not user input
 	query := fmt.Sprintf(`
 		SELECT issue_id, depends_on_id
 		FROM dependencies

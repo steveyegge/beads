@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -371,6 +372,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.DatabaseVersion(path)
 		case "Schema Compatibility":
 			err = fix.SchemaCompatibility(path)
+		case "Repo Fingerprint":
+			err = fix.RepoFingerprint(path)
 		case "Git Merge Driver":
 			err = fix.MergeDriver(path)
 		case "Sync Branch Config":
@@ -586,7 +589,14 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 2b: Database integrity (bd-2au)
+	// Check 2b: Repo fingerprint (detects wrong database or URL change)
+	fingerprintCheck := convertWithCategory(doctor.CheckRepoFingerprint(path), doctor.CategoryCore)
+	result.Checks = append(result.Checks, fingerprintCheck)
+	if fingerprintCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check 2c: Database integrity (bd-2au)
 	integrityCheck := convertWithCategory(doctor.CheckDatabaseIntegrity(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, integrityCheck)
 	if integrityCheck.Status == statusError {
@@ -883,10 +893,30 @@ func printDiagnostics(result doctorResult) {
 	if len(warnings) > 0 {
 		fmt.Println()
 		fmt.Println(ui.RenderWarn(ui.IconWarn + "  WARNINGS"))
-		for _, check := range warnings {
-			fmt.Printf("   %s: %s\n", check.Name, check.Message)
+
+		// Sort by severity: errors first, then warnings
+		sort.Slice(warnings, func(i, j int) bool {
+			// Errors (statusError) come before warnings (statusWarning)
+			if warnings[i].Status == statusError && warnings[j].Status != statusError {
+				return true
+			}
+			if warnings[i].Status != statusError && warnings[j].Status == statusError {
+				return false
+			}
+			return false // maintain original order within same severity
+		})
+
+		for i, check := range warnings {
+			// Show numbered items with icon and color based on status
+			// Errors get entire line in red, warnings just the number in yellow
+			line := fmt.Sprintf("%s: %s", check.Name, check.Message)
+			if check.Status == statusError {
+				fmt.Printf("  %s  %s %s\n", ui.RenderFailIcon(), ui.RenderFail(fmt.Sprintf("%d.", i+1)), ui.RenderFail(line))
+			} else {
+				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
+			}
 			if check.Fix != "" {
-				fmt.Printf("   %s%s\n", ui.MutedStyle.Render(ui.TreeLast), check.Fix)
+				fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), check.Fix)
 			}
 		}
 	} else {

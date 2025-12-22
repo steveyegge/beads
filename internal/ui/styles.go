@@ -160,7 +160,7 @@ var CategoryStyle = lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 const (
 	IconPass = "✓"
 	IconWarn = "⚠"
-	IconFail = "✗"
+	IconFail = "✖"
 	IconSkip = "-"
 	IconInfo = "ℹ"
 )
