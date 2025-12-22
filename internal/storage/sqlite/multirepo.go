@@ -388,6 +388,124 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 	return nil
 }
 
+// DeleteIssuesBySourceRepo permanently removes all issues from a specific source repository.
+// This is used when a repo is removed from the multi-repo configuration.
+// It also cleans up related data: dependencies, labels, comments, events, and dirty markers.
+// Returns the number of issues deleted.
+func (s *SQLiteStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Get the list of issue IDs to delete
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query issues: %w", err)
+	}
+	var issueIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan issue ID: %w", err)
+		}
+		issueIDs = append(issueIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("failed to iterate issues: %w", err)
+	}
+
+	if len(issueIDs) == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit empty transaction: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Delete dependencies (both directions) for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dependencies for %s: %w", id, err)
+		}
+	}
+
+	// Delete events for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete events for %s: %w", id, err)
+		}
+	}
+
+	// Delete comments for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete comments for %s: %w", id, err)
+		}
+	}
+
+	// Delete labels for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM labels WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete labels for %s: %w", id, err)
+		}
+	}
+
+	// Delete dirty markers for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dirty marker for %s: %w", id, err)
+		}
+	}
+
+	// Delete the issues themselves
+	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete issues: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+// ClearRepoMtime removes the mtime cache entry for a repository.
+// This is used when a repo is removed from the multi-repo configuration.
+func (s *SQLiteStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	// Expand tilde in path to match how it's stored
+	expandedPath, err := expandTilde(repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to expand path: %w", err)
+	}
+
+	// Get absolute path to match how it's stored in repo_mtimes
+	absRepoPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM repo_mtimes WHERE repo_path = ?`, absRepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete mtime cache: %w", err)
+	}
+
+	return nil
+}
+
 // expandTilde expands ~ in a file path to the user's home directory.
 func expandTilde(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
