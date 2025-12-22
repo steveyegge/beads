@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -1476,4 +1477,90 @@ func TestImportMixedPrefixMismatch(t *testing.T) {
 	if !strings.Contains(err.Error(), "prefix mismatch") {
 		t.Errorf("Error should mention prefix mismatch, got: %v", err)
 	}
+}
+
+// TestMultiRepoPrefixValidation tests GH#686: multi-repo allows foreign prefixes.
+func TestMultiRepoPrefixValidation(t *testing.T) {
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
+	ctx := context.Background()
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(ctx, tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "primary"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	t.Run("single-repo mode rejects foreign prefixes", func(t *testing.T) {
+		config.Set("repos.primary", "")
+		config.Set("repos.additional", nil)
+
+		issues := []*types.Issue{
+			{
+				ID:        "primary-1",
+				Title:     "Primary issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+			{
+				ID:        "foreign-1",
+				Title:     "Foreign issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+		}
+
+		_, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+		if err == nil {
+			t.Error("Expected error for foreign prefix in single-repo mode")
+		}
+		if err != nil && !strings.Contains(err.Error(), "prefix mismatch") {
+			t.Errorf("Expected prefix mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("multi-repo mode allows foreign prefixes", func(t *testing.T) {
+		config.Set("repos.primary", "/some/primary/path")
+		config.Set("repos.additional", []string{"/some/additional/path"})
+		defer func() {
+			config.Set("repos.primary", "")
+			config.Set("repos.additional", nil)
+		}()
+
+		issues := []*types.Issue{
+			{
+				ID:        "primary-abc1",
+				Title:     "Primary issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+			{
+				ID:         "foreign-xyz2",
+				Title:      "Foreign issue",
+				Status:     types.StatusOpen,
+				Priority:   2,
+				IssueType:  types.TypeTask,
+				SourceRepo: "~/code/foreign",
+			},
+		}
+
+		result, err := ImportIssues(ctx, tmpDB, store, issues, Options{
+			SkipPrefixValidation: false, // Verify auto-skip kicks in
+		})
+		if err != nil {
+			t.Errorf("Multi-repo mode should allow foreign prefixes, got error: %v", err)
+		}
+		if result != nil && result.PrefixMismatch {
+			t.Error("Multi-repo mode should not report prefix mismatch")
+		}
+	})
 }
