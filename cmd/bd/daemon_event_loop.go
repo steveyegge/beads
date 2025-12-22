@@ -17,6 +17,7 @@ import (
 // - RPC mutations (create, update, delete)
 // - Git operations (via hooks, optional)
 // - Parent process monitoring (exit if parent dies)
+// - Periodic remote sync (to pull updates from other clones)
 func runEventDrivenLoop(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -86,6 +87,13 @@ func runEventDrivenLoop(
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Periodic remote sync to pull updates from other clones
+	// This is essential for multi-clone workflows where the file watcher only
+	// sees local changes but remote may have updates from other clones.
+	// Uses a 30-second interval as a balance between responsiveness and overhead.
+	remoteSyncTicker := time.NewTicker(30 * time.Second)
+	defer remoteSyncTicker.Stop()
+
 	// Parent process check (every 10 seconds)
 	parentCheckTicker := time.NewTicker(10 * time.Second)
 	defer parentCheckTicker.Stop()
@@ -107,6 +115,13 @@ func runEventDrivenLoop(
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
+
+		case <-remoteSyncTicker.C:
+			// Periodic remote sync to pull updates from other clones
+			// This ensures the daemon sees changes pushed by other clones
+			// even when the local file watcher doesn't trigger
+			log.log("Periodic remote sync: checking for updates")
+			doAutoImport()
 
 		case <-parentCheckTicker.C:
 			// Check if parent process is still alive
