@@ -586,7 +586,7 @@ func TestEventDrivenLoop_PeriodicRemoteSync(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runEventDrivenLoop(ctx2, cancel2, server, serverErrChan, testStore, jsonlPath, doExport, doAutoImport, 0, log)
+		runEventDrivenLoop(ctx2, cancel2, server, serverErrChan, testStore, jsonlPath, doExport, doAutoImport, true, 0, log)
 		close(done)
 	}()
 

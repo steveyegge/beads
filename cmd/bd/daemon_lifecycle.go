@@ -102,6 +102,7 @@ func showDaemonStatus(pidFile string) {
 			fmt.Printf("  Sync Interval: %s\n", rpcStatus.SyncInterval)
 			fmt.Printf("  Auto-Commit: %v\n", rpcStatus.AutoCommit)
 			fmt.Printf("  Auto-Push: %v\n", rpcStatus.AutoPush)
+			fmt.Printf("  Auto-Pull: %v\n", rpcStatus.AutoPull)
 			if rpcStatus.LocalMode {
 				fmt.Printf("  Local Mode: %v (no git sync)\n", rpcStatus.LocalMode)
 			}
@@ -359,7 +360,7 @@ func stopAllDaemons() {
 }
 
 // startDaemon starts the daemon (in foreground if requested, otherwise background)
-func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foreground bool, logFile, pidFile string) {
+func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile string) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -368,7 +369,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 
 	// Run in foreground if --foreground flag set or if we're the forked child process
 	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, localMode, logPath, pidFile)
+		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile)
 		return
 	}
 
@@ -386,6 +387,9 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 	}
 	if autoPush {
 		args = append(args, "--auto-push")
+	}
+	if autoPull {
+		args = append(args, "--auto-pull")
 	}
 	if localMode {
 		args = append(args, "--local")

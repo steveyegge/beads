@@ -57,6 +57,7 @@ type Server struct {
 	// Daemon configuration (set via SetConfig after creation)
 	autoCommit   bool
 	autoPush     bool
+	autoPull     bool
 	localMode    bool
 	syncInterval string
 	daemonMode   string
@@ -159,11 +160,12 @@ func (s *Server) MutationChan() <-chan MutationEvent {
 }
 
 // SetConfig sets the daemon configuration for status reporting
-func (s *Server) SetConfig(autoCommit, autoPush, localMode bool, syncInterval, daemonMode string) {
+func (s *Server) SetConfig(autoCommit, autoPush, autoPull, localMode bool, syncInterval, daemonMode string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.autoCommit = autoCommit
 	s.autoPush = autoPush
+	s.autoPull = autoPull
 	s.localMode = localMode
 	s.syncInterval = syncInterval
 	s.daemonMode = daemonMode

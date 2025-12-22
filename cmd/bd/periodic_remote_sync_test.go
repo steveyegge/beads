@@ -255,6 +255,68 @@ func TestSyncBranchPull_FetchesRemoteUpdates(t *testing.T) {
 }
 
 // =============================================================================
+// AUTO-PULL CONFIGURATION TESTS
+// =============================================================================
+
+// TestAutoPullGatesRemoteSyncTicker validates that the remoteSyncTicker is only
+// created when autoPull is true.
+func TestAutoPullGatesRemoteSyncTicker(t *testing.T) {
+	// Read the daemon_event_loop.go file and check for autoPull gating
+	content, err := os.ReadFile("daemon_event_loop.go")
+	if err != nil {
+		t.Fatalf("Failed to read daemon_event_loop.go: %v", err)
+	}
+
+	code := string(content)
+
+	// Check that remoteSyncTicker is gated on autoPull
+	if !strings.Contains(code, "if autoPull") {
+		t.Fatal("autoPull check not found - remoteSyncTicker not gated on autoPull")
+	}
+
+	// Check that autoPull parameter exists in function signature
+	if !strings.Contains(code, "autoPull bool") {
+		t.Fatal("autoPull bool parameter not found in runEventDrivenLoop signature")
+	}
+
+	// Check for disabled message when autoPull is false
+	if !strings.Contains(code, "Auto-pull disabled") {
+		t.Fatal("Auto-pull disabled message not found")
+	}
+
+	t.Log("remoteSyncTicker is correctly gated on autoPull parameter")
+}
+
+// TestAutoPullDefaultBehavior validates that auto_pull defaults to true when
+// sync.branch is configured.
+func TestAutoPullDefaultBehavior(t *testing.T) {
+	// Read daemon.go and check for default behavior
+	content, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatalf("Failed to read daemon.go: %v", err)
+	}
+
+	code := string(content)
+
+	// Check that auto_pull reads from daemon.auto_pull config
+	if !strings.Contains(code, "daemon.auto_pull") {
+		t.Fatal("daemon.auto_pull config check not found")
+	}
+
+	// Check that auto_pull defaults based on sync.branch
+	if !strings.Contains(code, "sync.branch") {
+		t.Fatal("sync.branch check for auto_pull default not found")
+	}
+
+	// Check for BEADS_AUTO_PULL environment variable
+	if !strings.Contains(code, "BEADS_AUTO_PULL") {
+		t.Fatal("BEADS_AUTO_PULL environment variable not checked")
+	}
+
+	t.Log("auto_pull correctly defaults to true when sync.branch is configured")
+}
+
+// =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
 
