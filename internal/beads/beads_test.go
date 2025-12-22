@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -1251,5 +1252,289 @@ func TestFindDatabasePath_WorktreeNoLocalDB(t *testing.T) {
 
 	if resultResolved != mainDBPathResolved {
 		t.Errorf("FindDatabasePath() = %q, want main repo shared db %q", result, mainDBPath)
+	}
+}
+
+// TestFindEphemeralDir tests that FindEphemeralDir returns the correct path
+func TestFindEphemeralDir(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
+	// Create temporary directory with .beads
+	tmpDir, err := os.MkdirTemp("", "beads-ephemeral-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Add a project file so it's recognized
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set BEADS_DIR
+	os.Setenv("BEADS_DIR", beadsDir)
+
+	// FindEphemeralDir should return sibling directory
+	result := FindEphemeralDir()
+	expected := filepath.Join(tmpDir, EphemeralDirName)
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	expectedResolved, _ := filepath.EvalSymlinks(expected)
+
+	if resultResolved != expectedResolved {
+		t.Errorf("FindEphemeralDir() = %q, want %q", result, expected)
+	}
+}
+
+// TestFindEphemeralDir_NoBeadsDir tests that FindEphemeralDir returns empty string
+// when no .beads directory exists
+func TestFindEphemeralDir_NoBeadsDir(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+	os.Unsetenv("BEADS_DIR")
+
+	// Create temporary directory without .beads
+	tmpDir, err := os.MkdirTemp("", "beads-no-ephemeral-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	t.Chdir(tmpDir)
+
+	// FindEphemeralDir should return empty string
+	result := FindEphemeralDir()
+	if result != "" {
+		t.Errorf("FindEphemeralDir() = %q, want empty string", result)
+	}
+}
+
+// TestFindEphemeralDatabasePath tests that FindEphemeralDatabasePath creates
+// the ephemeral directory and returns the correct database path
+func TestFindEphemeralDatabasePath(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
+	// Create temporary directory with .beads
+	tmpDir, err := os.MkdirTemp("", "beads-ephdb-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	os.Setenv("BEADS_DIR", beadsDir)
+
+	// FindEphemeralDatabasePath should create directory and return path
+	result, err := FindEphemeralDatabasePath()
+	if err != nil {
+		t.Fatalf("FindEphemeralDatabasePath() error = %v", err)
+	}
+
+	expected := filepath.Join(tmpDir, EphemeralDirName, CanonicalDatabaseName)
+
+	// Resolve symlinks for comparison
+	resultResolved, _ := filepath.EvalSymlinks(result)
+	expectedResolved, _ := filepath.EvalSymlinks(expected)
+
+	if resultResolved != expectedResolved {
+		t.Errorf("FindEphemeralDatabasePath() = %q, want %q", result, expected)
+	}
+
+	// Verify the directory was created
+	ephemeralDir := filepath.Join(tmpDir, EphemeralDirName)
+	if _, err := os.Stat(ephemeralDir); os.IsNotExist(err) {
+		t.Errorf("Ephemeral directory was not created: %q", ephemeralDir)
+	}
+}
+
+// TestIsEphemeralDatabase tests that IsEphemeralDatabase correctly identifies
+// ephemeral database paths
+func TestIsEphemeralDatabase(t *testing.T) {
+	tests := []struct {
+		name     string
+		dbPath   string
+		expected bool
+	}{
+		{
+			name:     "empty path",
+			dbPath:   "",
+			expected: false,
+		},
+		{
+			name:     "regular database",
+			dbPath:   "/project/.beads/beads.db",
+			expected: false,
+		},
+		{
+			name:     "ephemeral database",
+			dbPath:   "/project/.beads-ephemeral/beads.db",
+			expected: true,
+		},
+		{
+			name:     "nested ephemeral",
+			dbPath:   "/some/deep/path/.beads-ephemeral/beads.db",
+			expected: true,
+		},
+		{
+			name:     "similar but not ephemeral",
+			dbPath:   "/project/.beads-ephemeral-backup/beads.db",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsEphemeralDatabase(tt.dbPath)
+			if result != tt.expected {
+				t.Errorf("IsEphemeralDatabase(%q) = %v, want %v", tt.dbPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEnsureEphemeralGitignore tests that EnsureEphemeralGitignore correctly
+// adds the ephemeral directory to .gitignore
+func TestEnsureEphemeralGitignore(t *testing.T) {
+	// Save original state
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
+	tests := []struct {
+		name            string
+		existingContent string
+		expectAppend    bool
+	}{
+		{
+			name:            "no existing gitignore",
+			existingContent: "",
+			expectAppend:    true,
+		},
+		{
+			name:            "already gitignored",
+			existingContent: ".beads-ephemeral/\n",
+			expectAppend:    false,
+		},
+		{
+			name:            "already gitignored without slash",
+			existingContent: ".beads-ephemeral\n",
+			expectAppend:    false,
+		},
+		{
+			name:            "other entries only",
+			existingContent: "node_modules/\n.env\n",
+			expectAppend:    true,
+		},
+		{
+			name:            "other entries no trailing newline",
+			existingContent: "node_modules/\n.env",
+			expectAppend:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary directory with .beads
+			tmpDir, err := os.MkdirTemp("", "beads-gitignore-test-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.MkdirAll(beadsDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			os.Setenv("BEADS_DIR", beadsDir)
+
+			// Create .gitignore if needed
+			gitignorePath := filepath.Join(tmpDir, ".gitignore")
+			if tt.existingContent != "" {
+				if err := os.WriteFile(gitignorePath, []byte(tt.existingContent), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Call EnsureEphemeralGitignore
+			if err := EnsureEphemeralGitignore(); err != nil {
+				t.Fatalf("EnsureEphemeralGitignore() error = %v", err)
+			}
+
+			// Read result
+			content, err := os.ReadFile(gitignorePath)
+			if err != nil {
+				t.Fatalf("Failed to read .gitignore: %v", err)
+			}
+
+			// Check if ephemeral dir is in gitignore
+			hasEntry := false
+			lines := strings.Split(string(content), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == EphemeralDirName || line == EphemeralDirName+"/" {
+					hasEntry = true
+					break
+				}
+			}
+
+			if !hasEntry {
+				t.Errorf("EnsureEphemeralGitignore() did not add %s to .gitignore", EphemeralDirName)
+			}
+
+			// Verify idempotent: calling again should not duplicate
+			if err := EnsureEphemeralGitignore(); err != nil {
+				t.Fatalf("EnsureEphemeralGitignore() second call error = %v", err)
+			}
+
+			content2, _ := os.ReadFile(gitignorePath)
+			count := strings.Count(string(content2), EphemeralDirName)
+			if count > 1 {
+				t.Errorf("EnsureEphemeralGitignore() added duplicate entry (count=%d)", count)
+			}
+		})
 	}
 }
