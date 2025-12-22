@@ -186,6 +186,8 @@ func (sm *SnapshotManager) Validate() error {
 }
 
 // Cleanup removes all snapshot files and metadata
+//
+//nolint:unparam // error return kept for API consistency with other methods
 func (sm *SnapshotManager) Cleanup() error {
 	basePath, leftPath := sm.getSnapshotPaths()
 	baseMetaPath, leftMetaPath := sm.getSnapshotMetadataPaths()

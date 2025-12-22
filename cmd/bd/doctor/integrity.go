@@ -396,6 +396,103 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 	}
 }
 
+// CheckRepoFingerprint validates that the database belongs to this repository.
+// This detects when a .beads directory was copied from another repo or when
+// the git remote URL changed. A mismatch can cause data loss during sync.
+func CheckRepoFingerprint(path string) DoctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Get database path
+	var dbPath string
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	} else {
+		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	}
+
+	// Skip if database doesn't exist
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusOK,
+			Message: "N/A (no database)",
+		}
+	}
+
+	// Open database
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusWarning,
+			Message: "Unable to open database",
+			Detail:  err.Error(),
+		}
+	}
+	defer db.Close()
+
+	// Get stored repo ID
+	var storedRepoID string
+	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'repo_id'").Scan(&storedRepoID)
+	if err != nil {
+		if err == sql.ErrNoRows || strings.Contains(err.Error(), "no such table") {
+			// Legacy database without repo_id
+			return DoctorCheck{
+				Name:    "Repo Fingerprint",
+				Status:  StatusWarning,
+				Message: "Legacy database (no fingerprint)",
+				Detail:  "Database was created before version 0.17.5",
+				Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint",
+			}
+		}
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusWarning,
+			Message: "Unable to read repo fingerprint",
+			Detail:  err.Error(),
+		}
+	}
+
+	// If repo_id is empty, treat as legacy
+	if storedRepoID == "" {
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusWarning,
+			Message: "Legacy database (empty fingerprint)",
+			Detail:  "Database was created before version 0.17.5",
+			Fix:     "Run 'bd migrate --update-repo-id' to add fingerprint",
+		}
+	}
+
+	// Compute current repo ID
+	currentRepoID, err := beads.ComputeRepoID()
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusWarning,
+			Message: "Unable to compute current repo ID",
+			Detail:  err.Error(),
+		}
+	}
+
+	// Compare
+	if storedRepoID != currentRepoID {
+		return DoctorCheck{
+			Name:    "Repo Fingerprint",
+			Status:  StatusError,
+			Message: "Database belongs to different repository",
+			Detail:  fmt.Sprintf("stored: %s, current: %s", storedRepoID[:8], currentRepoID[:8]),
+			Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init' if wrong database",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Repo Fingerprint",
+		Status:  StatusOK,
+		Message: fmt.Sprintf("Verified (%s)", currentRepoID[:8]),
+	}
+}
+
 // Fix functions
 
 // FixMigrateTombstones converts legacy deletions.jsonl entries to inline tombstones
