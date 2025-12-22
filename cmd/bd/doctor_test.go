@@ -895,7 +895,8 @@ func TestCheckMetadataVersionTracking(t *testing.T) {
 		{
 			name: "slightly outdated version",
 			setupVersion: func(beadsDir string) error {
-				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.24.0\n"), 0644)
+				// Use a version that's less than 10 minor versions behind current
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.30.0\n"), 0644)
 			},
 			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
@@ -903,7 +904,8 @@ func TestCheckMetadataVersionTracking(t *testing.T) {
 		{
 			name: "very old version",
 			setupVersion: func(beadsDir string) error {
-				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.14.0\n"), 0644)
+				// Use a version that's 10+ minor versions behind current (triggers warning)
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.24.0\n"), 0644)
 			},
 			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,

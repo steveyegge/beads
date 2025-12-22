@@ -664,13 +664,39 @@ func FindWispDatabasePath() (string, error) {
 // NewWispStorage opens the wisp database for ephemeral molecule storage.
 // Creates the database and directory if they don't exist.
 // The wisp database uses the same schema as the main database.
+// Automatically copies issue_prefix from the main beads config if not set.
 func NewWispStorage(ctx context.Context) (Storage, error) {
 	dbPath, err := FindWispDatabasePath()
 	if err != nil {
 		return nil, err
 	}
 
-	return sqlite.New(ctx, dbPath)
+	wispStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if wisp db has issue_prefix configured
+	prefix, err := wispStore.GetConfig(ctx, "issue_prefix")
+	if err != nil || prefix == "" {
+		// Copy issue_prefix from main beads database
+		mainDBPath := FindDatabasePath()
+		if mainDBPath != "" {
+			mainStore, mainErr := sqlite.New(ctx, mainDBPath)
+			if mainErr == nil {
+				defer mainStore.Close()
+				mainPrefix, _ := mainStore.GetConfig(ctx, "issue_prefix")
+				if mainPrefix != "" {
+					if setErr := wispStore.SetConfig(ctx, "issue_prefix", mainPrefix); setErr != nil {
+						wispStore.Close()
+						return nil, fmt.Errorf("setting wisp issue_prefix: %w", setErr)
+					}
+				}
+			}
+		}
+	}
+
+	return wispStore, nil
 }
 
 // EnsureWispGitignore ensures the wisp directory is gitignored.
