@@ -621,3 +621,109 @@ func FindAllDatabases() []DatabaseInfo {
 
 	return databases
 }
+
+// EphemeralDirName is the default name for the ephemeral storage directory.
+// This directory is a sibling to .beads/ and should be gitignored.
+const EphemeralDirName = ".beads-ephemeral"
+
+// FindEphemeralDir locates or determines the ephemeral storage directory.
+// The ephemeral directory is a sibling to the .beads directory.
+//
+// Returns the path to the ephemeral directory (which may not exist yet).
+// Returns empty string if no .beads directory can be found.
+func FindEphemeralDir() string {
+	beadsDir := FindBeadsDir()
+	if beadsDir == "" {
+		return ""
+	}
+
+	// Ephemeral dir is a sibling to .beads
+	// e.g., /project/.beads -> /project/.beads-ephemeral
+	projectRoot := filepath.Dir(beadsDir)
+	return filepath.Join(projectRoot, EphemeralDirName)
+}
+
+// FindEphemeralDatabasePath returns the path to the ephemeral database file.
+// Creates the ephemeral directory if it doesn't exist.
+// Returns empty string if no .beads directory can be found.
+func FindEphemeralDatabasePath() (string, error) {
+	ephemeralDir := FindEphemeralDir()
+	if ephemeralDir == "" {
+		return "", fmt.Errorf("no .beads directory found")
+	}
+
+	// Create ephemeral directory if it doesn't exist
+	if err := os.MkdirAll(ephemeralDir, 0755); err != nil {
+		return "", fmt.Errorf("creating ephemeral directory: %w", err)
+	}
+
+	return filepath.Join(ephemeralDir, CanonicalDatabaseName), nil
+}
+
+// NewEphemeralStorage opens the ephemeral database for wisp storage.
+// Creates the database and directory if they don't exist.
+// The ephemeral database uses the same schema as the main database.
+func NewEphemeralStorage(ctx context.Context) (Storage, error) {
+	dbPath, err := FindEphemeralDatabasePath()
+	if err != nil {
+		return nil, err
+	}
+
+	return sqlite.New(ctx, dbPath)
+}
+
+// EnsureEphemeralGitignore ensures the ephemeral directory is gitignored.
+// This should be called after creating the ephemeral directory.
+func EnsureEphemeralGitignore() error {
+	beadsDir := FindBeadsDir()
+	if beadsDir == "" {
+		return fmt.Errorf("no .beads directory found")
+	}
+
+	projectRoot := filepath.Dir(beadsDir)
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+
+	// Check if .gitignore exists and already contains the ephemeral dir
+	content, err := os.ReadFile(gitignorePath)
+	if err == nil {
+		// File exists, check if already gitignored
+		lines := strings.Split(string(content), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == EphemeralDirName || line == EphemeralDirName+"/" {
+				return nil // Already gitignored
+			}
+		}
+	}
+
+	// Append to .gitignore (or create it)
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening .gitignore: %w", err)
+	}
+	defer f.Close()
+
+	// Add newline before if file doesn't end with one
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		if _, err := f.WriteString("\n"); err != nil {
+			return fmt.Errorf("writing to .gitignore: %w", err)
+		}
+	}
+
+	// Add the ephemeral directory
+	if _, err := f.WriteString(EphemeralDirName + "/\n"); err != nil {
+		return fmt.Errorf("writing to .gitignore: %w", err)
+	}
+
+	return nil
+}
+
+// IsEphemeralDatabase checks if a database path is an ephemeral database.
+// Returns true if the database is in a .beads-ephemeral directory.
+func IsEphemeralDatabase(dbPath string) bool {
+	if dbPath == "" {
+		return false
+	}
+	dir := filepath.Dir(dbPath)
+	return filepath.Base(dir) == EphemeralDirName
+}
