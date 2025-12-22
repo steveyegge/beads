@@ -500,6 +500,263 @@ func TestImportJSONLFileOutOfOrderDeps(t *testing.T) {
 	})
 }
 
+func TestDeleteIssuesBySourceRepo(t *testing.T) {
+	t.Run("deletes all issues from specified repo", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create issues with different source_repos
+		issue1 := &types.Issue{
+			ID:         "bd-repo1-1",
+			Title:      "Repo1 Issue 1",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: "~/test-repo",
+		}
+		issue1.ContentHash = issue1.ComputeContentHash()
+
+		issue2 := &types.Issue{
+			ID:         "bd-repo1-2",
+			Title:      "Repo1 Issue 2",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: "~/test-repo",
+		}
+		issue2.ContentHash = issue2.ComputeContentHash()
+
+		issue3 := &types.Issue{
+			ID:         "bd-primary-1",
+			Title:      "Primary Issue",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: ".",
+		}
+		issue3.ContentHash = issue3.ComputeContentHash()
+
+		// Insert all issues
+		if err := store.CreateIssue(ctx, issue1, "test"); err != nil {
+			t.Fatalf("failed to create issue1: %v", err)
+		}
+		if err := store.CreateIssue(ctx, issue2, "test"); err != nil {
+			t.Fatalf("failed to create issue2: %v", err)
+		}
+		if err := store.CreateIssue(ctx, issue3, "test"); err != nil {
+			t.Fatalf("failed to create issue3: %v", err)
+		}
+
+		// Delete issues from ~/test-repo
+		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, "~/test-repo")
+		if err != nil {
+			t.Fatalf("DeleteIssuesBySourceRepo() error = %v", err)
+		}
+		if deletedCount != 2 {
+			t.Errorf("expected 2 issues deleted, got %d", deletedCount)
+		}
+
+		// Verify ~/test-repo issues are gone
+		// GetIssue returns (nil, nil) when issue doesn't exist
+		issue1After, err := store.GetIssue(ctx, "bd-repo1-1")
+		if issue1After != nil || err != nil {
+			t.Errorf("expected bd-repo1-1 to be deleted, got issue=%v, err=%v", issue1After, err)
+		}
+		issue2After, err := store.GetIssue(ctx, "bd-repo1-2")
+		if issue2After != nil || err != nil {
+			t.Errorf("expected bd-repo1-2 to be deleted, got issue=%v, err=%v", issue2After, err)
+		}
+
+		// Verify primary issue still exists
+		primary, err := store.GetIssue(ctx, "bd-primary-1")
+		if err != nil {
+			t.Fatalf("primary issue should still exist: %v", err)
+		}
+		if primary.Title != "Primary Issue" {
+			t.Errorf("expected 'Primary Issue', got %q", primary.Title)
+		}
+	})
+
+	t.Run("returns 0 when no issues match", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create an issue with a different source_repo
+		issue := &types.Issue{
+			ID:         "bd-other-1",
+			Title:      "Other Issue",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: ".",
+		}
+		issue.ContentHash = issue.ComputeContentHash()
+
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		// Delete from non-existent repo
+		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, "~/nonexistent")
+		if err != nil {
+			t.Fatalf("DeleteIssuesBySourceRepo() error = %v", err)
+		}
+		if deletedCount != 0 {
+			t.Errorf("expected 0 issues deleted, got %d", deletedCount)
+		}
+
+		// Verify original issue still exists
+		_, err = store.GetIssue(ctx, "bd-other-1")
+		if err != nil {
+			t.Errorf("issue should still exist: %v", err)
+		}
+	})
+
+	t.Run("cleans up related data", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Create an issue with labels and comments
+		issue := &types.Issue{
+			ID:         "bd-cleanup-1",
+			Title:      "Cleanup Test Issue",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: "~/cleanup-repo",
+			Labels:     []string{"test", "cleanup"},
+		}
+		issue.ContentHash = issue.ComputeContentHash()
+
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		// Add a comment
+		_, err := store.AddIssueComment(ctx, "bd-cleanup-1", "test", "Test comment")
+		if err != nil {
+			t.Fatalf("failed to add comment: %v", err)
+		}
+
+		// Delete the repo
+		deletedCount, err := store.DeleteIssuesBySourceRepo(ctx, "~/cleanup-repo")
+		if err != nil {
+			t.Fatalf("DeleteIssuesBySourceRepo() error = %v", err)
+		}
+		if deletedCount != 1 {
+			t.Errorf("expected 1 issue deleted, got %d", deletedCount)
+		}
+
+		// Verify issue is gone
+		// GetIssue returns (nil, nil) when issue doesn't exist
+		issueAfter, err := store.GetIssue(ctx, "bd-cleanup-1")
+		if issueAfter != nil || err != nil {
+			t.Errorf("expected issue to be deleted, got issue=%v, err=%v", issueAfter, err)
+		}
+
+		// Verify labels are gone (query directly to check)
+		var labelCount int
+		err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM labels WHERE issue_id = ?`, "bd-cleanup-1").Scan(&labelCount)
+		if err != nil {
+			t.Fatalf("failed to query labels: %v", err)
+		}
+		if labelCount != 0 {
+			t.Errorf("expected 0 labels, got %d", labelCount)
+		}
+
+		// Verify comments are gone
+		var commentCount int
+		err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM comments WHERE issue_id = ?`, "bd-cleanup-1").Scan(&commentCount)
+		if err != nil {
+			t.Fatalf("failed to query comments: %v", err)
+		}
+		if commentCount != 0 {
+			t.Errorf("expected 0 comments, got %d", commentCount)
+		}
+	})
+}
+
+func TestClearRepoMtime(t *testing.T) {
+	t.Run("clears mtime cache for repo", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Insert a mtime cache entry directly
+		tmpDir := t.TempDir()
+		jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+
+		// Create a dummy JSONL file for the mtime
+		f, err := os.Create(jsonlPath)
+		if err != nil {
+			t.Fatalf("failed to create JSONL: %v", err)
+		}
+		f.Close()
+
+		_, err = store.db.ExecContext(ctx, `
+			INSERT INTO repo_mtimes (repo_path, jsonl_path, mtime_ns, last_checked)
+			VALUES (?, ?, ?, ?)
+		`, tmpDir, jsonlPath, 12345, time.Now())
+		if err != nil {
+			t.Fatalf("failed to insert mtime cache: %v", err)
+		}
+
+		// Verify it exists
+		var count int
+		err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM repo_mtimes WHERE repo_path = ?`, tmpDir).Scan(&count)
+		if err != nil {
+			t.Fatalf("failed to query mtime cache: %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 mtime cache entry, got %d", count)
+		}
+
+		// Clear it
+		if err := store.ClearRepoMtime(ctx, tmpDir); err != nil {
+			t.Fatalf("ClearRepoMtime() error = %v", err)
+		}
+
+		// Verify it's gone
+		err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM repo_mtimes WHERE repo_path = ?`, tmpDir).Scan(&count)
+		if err != nil {
+			t.Fatalf("failed to query mtime cache: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("expected 0 mtime cache entries, got %d", count)
+		}
+	})
+
+	t.Run("handles non-existent repo gracefully", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+
+		// Clear a repo that doesn't exist in cache - should not error
+		err := store.ClearRepoMtime(ctx, "/nonexistent/path")
+		if err != nil {
+			t.Errorf("ClearRepoMtime() should not error for non-existent path: %v", err)
+		}
+	})
+}
+
 func TestExportToMultiRepo(t *testing.T) {
 	t.Run("returns nil in single-repo mode", func(t *testing.T) {
 		store, cleanup := setupTestDB(t)

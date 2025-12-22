@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 var repoCmd = &cobra.Command{
@@ -95,10 +96,37 @@ var repoRemoveCmd = &cobra.Command{
 	Long: `Remove a repository path from the repos.additional list in config.yaml.
 
 The path must exactly match what was added (e.g., if you added "~/foo",
-you must remove "~/foo", not "/home/user/foo").`,
+you must remove "~/foo", not "/home/user/foo").
+
+This command also removes any previously-hydrated issues from the database
+that came from the removed repository.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoPath := args[0]
+
+		// Ensure we have direct database access for cleanup
+		if err := ensureDirectMode("repo remove requires direct database access"); err != nil {
+			return err
+		}
+
+		ctx := rootCtx
+
+		// Delete issues from the removed repo before removing from config
+		// The source_repo field uses the original path (e.g., "~/foo")
+		deletedCount := 0
+		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+			count, err := sqliteStore.DeleteIssuesBySourceRepo(ctx, repoPath)
+			if err != nil {
+				return fmt.Errorf("failed to delete issues from repo: %w", err)
+			}
+			deletedCount = count
+
+			// Also clear the mtime cache entry
+			if err := sqliteStore.ClearRepoMtime(ctx, repoPath); err != nil {
+				// Non-fatal: just log a warning
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear mtime cache: %v\n", err)
+			}
+		}
 
 		// Find config.yaml
 		configPath, err := config.FindConfigYAMLPath()
@@ -106,20 +134,24 @@ you must remove "~/foo", not "/home/user/foo").`,
 			return fmt.Errorf("failed to find config.yaml: %w", err)
 		}
 
-		// Remove the repo
+		// Remove the repo from config
 		if err := config.RemoveRepo(configPath, repoPath); err != nil {
 			return fmt.Errorf("failed to remove repository: %w", err)
 		}
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"removed": true,
-				"path":    repoPath,
+				"removed":        true,
+				"path":           repoPath,
+				"issues_deleted": deletedCount,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
 
 		fmt.Printf("Removed repository: %s\n", repoPath)
+		if deletedCount > 0 {
+			fmt.Printf("Deleted %d issue(s) from the database\n", deletedCount)
+		}
 		return nil
 	},
 }
