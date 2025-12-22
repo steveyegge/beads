@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -244,10 +245,12 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 }
 
 // getRemoteSyncInterval returns the interval for periodic remote sync.
-// It checks the BEADS_REMOTE_SYNC_INTERVAL environment variable first,
-// then falls back to DefaultRemoteSyncInterval (30s).
+// Configuration sources (in order of precedence):
+//  1. BEADS_REMOTE_SYNC_INTERVAL environment variable
+//  2. remote-sync-interval in .beads/config.yaml
+//  3. DefaultRemoteSyncInterval (30s)
 //
-// The environment variable accepts Go duration strings like:
+// Accepts Go duration strings like:
 // - "30s" (30 seconds)
 // - "1m" (1 minute)
 // - "5m" (5 minutes)
@@ -255,31 +258,32 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 //
 // Minimum allowed value is 5 seconds to prevent excessive load.
 func getRemoteSyncInterval(log daemonLogger) time.Duration {
-	envVal := os.Getenv("BEADS_REMOTE_SYNC_INTERVAL")
-	if envVal == "" {
-		return DefaultRemoteSyncInterval
-	}
-
-	duration, err := time.ParseDuration(envVal)
-	if err != nil {
-		log.log("Warning: invalid BEADS_REMOTE_SYNC_INTERVAL '%s': %v, using default %v",
-			envVal, err, DefaultRemoteSyncInterval)
+	// config.GetDuration handles both config.yaml and env var (env takes precedence)
+	duration := config.GetDuration("remote-sync-interval")
+	
+	// If config returns 0, it could mean:
+	// 1. User explicitly set "0" to disable
+	// 2. Config not found (use default)
+	// Check if there's an explicit value set
+	if duration == 0 {
+		// Check if user explicitly set it to 0 via env var
+		if envVal := os.Getenv("BEADS_REMOTE_SYNC_INTERVAL"); envVal == "0" || envVal == "0s" {
+			log.log("Warning: remote-sync-interval is 0, periodic remote sync disabled")
+			return 24 * time.Hour * 365
+		}
+		// Otherwise use default
 		return DefaultRemoteSyncInterval
 	}
 
 	// Minimum 5 seconds to prevent excessive load
 	if duration > 0 && duration < 5*time.Second {
-		log.log("Warning: BEADS_REMOTE_SYNC_INTERVAL too low (%v), using minimum 5s", duration)
+		log.log("Warning: remote-sync-interval too low (%v), using minimum 5s", duration)
 		return 5 * time.Second
 	}
 
-	// Zero disables periodic sync (not recommended but allowed)
-	if duration == 0 {
-		log.log("Warning: BEADS_REMOTE_SYNC_INTERVAL is 0, periodic remote sync disabled")
-		// Return a very large interval effectively disabling it
-		return 24 * time.Hour * 365
+	// Log if using non-default value
+	if duration != DefaultRemoteSyncInterval {
+		log.log("Using custom remote sync interval: %v", duration)
 	}
-
-	log.log("Using custom remote sync interval: %v", duration)
 	return duration
 }
