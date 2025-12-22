@@ -289,6 +289,14 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.33.2",
+		Date:    "2025-12-21",
+		Changes: []string{
+			"FIX: P0 priority preserved - omitempty removed from Priority field (GH#671)",
+			"FIX: nil pointer check in markdown parsing (GH#674)",
+		},
+	},
+	{
 		Version: "0.33.1",
 		Date:    "2025-12-21",
 		Changes: []string{
