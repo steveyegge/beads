@@ -89,7 +89,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: failed to open ephemeral storage: %v\n", err)
 			os.Exit(1)
 		}
-		defer ephStore.Close()
+		defer func() { _ = ephStore.Close() }()
 		targetStore = ephStore
 
 		// Ensure ephemeral directory is gitignored

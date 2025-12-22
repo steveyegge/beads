@@ -697,6 +697,7 @@ func EnsureEphemeralGitignore() error {
 	}
 
 	// Append to .gitignore (or create it)
+	// #nosec G302 -- .gitignore is a public config file, 0644 is standard
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("opening .gitignore: %w", err)
