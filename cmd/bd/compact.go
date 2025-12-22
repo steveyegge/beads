@@ -34,6 +34,81 @@ var (
 	compactLimit   int
 )
 
+// JSON response types for compact command output
+
+// CompactDryRunResponse is returned for --dry-run mode
+type CompactDryRunResponse struct {
+	DryRun            bool   `json:"dry_run"`
+	Tier              int    `json:"tier"`
+	IssueID           string `json:"issue_id,omitempty"`
+	OriginalSize      int    `json:"original_size,omitempty"`
+	CandidateCount    int    `json:"candidate_count,omitempty"`
+	TotalSizeBytes    int    `json:"total_size_bytes,omitempty"`
+	EstimatedReduction string `json:"estimated_reduction"`
+}
+
+// CompactSuccessResponse is returned for successful single-issue compaction
+type CompactSuccessResponse struct {
+	Success       bool    `json:"success"`
+	Tier          int     `json:"tier"`
+	IssueID       string  `json:"issue_id"`
+	OriginalSize  int     `json:"original_size"`
+	CompactedSize int     `json:"compacted_size"`
+	SavedBytes    int     `json:"saved_bytes"`
+	ReductionPct  float64 `json:"reduction_pct"`
+	ElapsedMs     int64   `json:"elapsed_ms"`
+}
+
+// CompactNoCandidatesResponse is returned when no candidates are found
+type CompactNoCandidatesResponse struct {
+	Success bool   `json:"success"`
+	Count   int    `json:"count"`
+	Message string `json:"message"`
+}
+
+// CompactBatchSuccessResponse is returned for successful batch compaction
+type CompactBatchSuccessResponse struct {
+	Success      bool  `json:"success"`
+	Tier         int   `json:"tier"`
+	Total        int   `json:"total"`
+	Succeeded    int   `json:"succeeded"`
+	Failed       int   `json:"failed"`
+	SavedBytes   int   `json:"saved_bytes"`
+	OriginalSize int   `json:"original_size"`
+	ElapsedMs    int64 `json:"elapsed_ms"`
+}
+
+// CompactTierStats holds statistics for a compaction tier
+type CompactTierStats struct {
+	Candidates int `json:"candidates"`
+	TotalSize  int `json:"total_size"`
+}
+
+// CompactStatsResponse is returned for --stats mode
+type CompactStatsResponse struct {
+	Tier1 CompactTierStats `json:"tier1"`
+	Tier2 CompactTierStats `json:"tier2"`
+}
+
+// TombstonePrunedInfo holds info about pruned tombstones
+type TombstonePrunedInfo struct {
+	Count   int `json:"count"`
+	TTLDays int `json:"ttl_days"`
+}
+
+// CompactApplyResponse is returned for --apply mode
+type CompactApplyResponse struct {
+	Success          bool                 `json:"success"`
+	IssueID          string               `json:"issue_id"`
+	Tier             int                  `json:"tier"`
+	OriginalSize     int                  `json:"original_size"`
+	CompactedSize    int                  `json:"compacted_size"`
+	SavedBytes       int                  `json:"saved_bytes"`
+	ReductionPct     float64              `json:"reduction_pct"`
+	ElapsedMs        int64                `json:"elapsed_ms"`
+	TombstonesPruned *TombstonePrunedInfo `json:"tombstones_pruned,omitempty"`
+}
+
 // TODO: Consider consolidating into 'bd doctor --fix' for simpler maintenance UX
 var compactCmd = &cobra.Command{
 	Use:     "compact",
@@ -248,14 +323,13 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 
 	if compactDryRun {
 		if jsonOutput {
-			output := map[string]interface{}{
-				"dry_run":             true,
-				"tier":                compactTier,
-				"issue_id":            issueID,
-				"original_size":       originalSize,
-				"estimated_reduction": "70-80%",
-			}
-			outputJSON(output)
+			outputJSON(CompactDryRunResponse{
+				DryRun:             true,
+				Tier:               compactTier,
+				IssueID:            issueID,
+				OriginalSize:       originalSize,
+				EstimatedReduction: "70-80%",
+			})
 			return
 		}
 
@@ -290,17 +364,16 @@ func runCompactSingle(ctx context.Context, compactor *compact.Compactor, store *
 	elapsed := time.Since(start)
 
 	if jsonOutput {
-		output := map[string]interface{}{
-			"success":        true,
-			"tier":           compactTier,
-			"issue_id":       issueID,
-			"original_size":  originalSize,
-			"compacted_size": compactedSize,
-			"saved_bytes":    savingBytes,
-			"reduction_pct":  float64(savingBytes) / float64(originalSize) * 100,
-			"elapsed_ms":     elapsed.Milliseconds(),
-		}
-		outputJSON(output)
+		outputJSON(CompactSuccessResponse{
+			Success:       true,
+			Tier:          compactTier,
+			IssueID:       issueID,
+			OriginalSize:  originalSize,
+			CompactedSize: compactedSize,
+			SavedBytes:    savingBytes,
+			ReductionPct:  float64(savingBytes) / float64(originalSize) * 100,
+			ElapsedMs:     elapsed.Milliseconds(),
+		})
 		return
 	}
 
@@ -348,10 +421,10 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 
 	if len(candidates) == 0 {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"success": true,
-				"count":   0,
-				"message": "No eligible candidates",
+			outputJSON(CompactNoCandidatesResponse{
+				Success: true,
+				Count:   0,
+				Message: "No eligible candidates",
 			})
 			return
 		}
@@ -370,14 +443,13 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 		}
 
 		if jsonOutput {
-			output := map[string]interface{}{
-				"dry_run":             true,
-				"tier":                compactTier,
-				"candidate_count":     len(candidates),
-				"total_size_bytes":    totalSize,
-				"estimated_reduction": "70-80%",
-			}
-			outputJSON(output)
+			outputJSON(CompactDryRunResponse{
+				DryRun:             true,
+				Tier:               compactTier,
+				CandidateCount:     len(candidates),
+				TotalSizeBytes:     totalSize,
+				EstimatedReduction: "70-80%",
+			})
 			return
 		}
 
@@ -420,17 +492,16 @@ func runCompactAll(ctx context.Context, compactor *compact.Compactor, store *sql
 	elapsed := time.Since(start)
 
 	if jsonOutput {
-		output := map[string]interface{}{
-			"success":       true,
-			"tier":          compactTier,
-			"total":         len(results),
-			"succeeded":     successCount,
-			"failed":        failCount,
-			"saved_bytes":   totalSaved,
-			"original_size": totalOriginal,
-			"elapsed_ms":    elapsed.Milliseconds(),
-		}
-		outputJSON(output)
+		outputJSON(CompactBatchSuccessResponse{
+			Success:      true,
+			Tier:         compactTier,
+			Total:        len(results),
+			Succeeded:    successCount,
+			Failed:       failCount,
+			SavedBytes:   totalSaved,
+			OriginalSize: totalOriginal,
+			ElapsedMs:    elapsed.Milliseconds(),
+		})
 		return
 	}
 
@@ -480,17 +551,16 @@ func runCompactStats(ctx context.Context, store *sqlite.SQLiteStorage) {
 	}
 
 	if jsonOutput {
-		output := map[string]interface{}{
-			"tier1": map[string]interface{}{
-				"candidates": len(tier1),
-				"total_size": tier1Size,
+		outputJSON(CompactStatsResponse{
+			Tier1: CompactTierStats{
+				Candidates: len(tier1),
+				TotalSize:  tier1Size,
 			},
-			"tier2": map[string]interface{}{
-				"candidates": len(tier2),
-				"total_size": tier2Size,
+			Tier2: CompactTierStats{
+				Candidates: len(tier2),
+				TotalSize:  tier2Size,
 			},
-		}
-		outputJSON(output)
+		})
 		return
 	}
 
@@ -892,24 +962,24 @@ func runCompactApply(ctx context.Context, store *sqlite.SQLiteStorage) {
 	}
 
 	if jsonOutput {
-		output := map[string]interface{}{
-			"success":        true,
-			"issue_id":       compactID,
-			"tier":           compactTier,
-			"original_size":  originalSize,
-			"compacted_size": compactedSize,
-			"saved_bytes":    savingBytes,
-			"reduction_pct":  reductionPct,
-			"elapsed_ms":     elapsed.Milliseconds(),
+		response := CompactApplyResponse{
+			Success:       true,
+			IssueID:       compactID,
+			Tier:          compactTier,
+			OriginalSize:  originalSize,
+			CompactedSize: compactedSize,
+			SavedBytes:    savingBytes,
+			ReductionPct:  reductionPct,
+			ElapsedMs:     elapsed.Milliseconds(),
 		}
 		// Include tombstone pruning results (bd-okh)
 		if tombstonePruneResult != nil && tombstonePruneResult.PrunedCount > 0 {
-			output["tombstones_pruned"] = map[string]interface{}{
-				"count":    tombstonePruneResult.PrunedCount,
-				"ttl_days": tombstonePruneResult.TTLDays,
+			response.TombstonesPruned = &TombstonePrunedInfo{
+				Count:   tombstonePruneResult.PrunedCount,
+				TTLDays: tombstonePruneResult.TTLDays,
 			}
 		}
-		outputJSON(output)
+		outputJSON(response)
 		return
 	}
 

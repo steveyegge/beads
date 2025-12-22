@@ -14,6 +14,19 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
+// DaemonStatusResponse is returned for daemon status check
+type DaemonStatusResponse struct {
+	Running      bool   `json:"running"`
+	PID          int    `json:"pid,omitempty"`
+	Started      string `json:"started,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
+	AutoCommit   bool   `json:"auto_commit,omitempty"`
+	AutoPush     bool   `json:"auto_push,omitempty"`
+	LocalMode    bool   `json:"local_mode,omitempty"`
+	SyncInterval string `json:"sync_interval,omitempty"`
+	DaemonMode   string `json:"daemon_mode,omitempty"`
+}
+
 // isDaemonRunning checks if the daemon is currently running
 func isDaemonRunning(pidFile string) (bool, int) {
 	beadsDir := filepath.Dir(pidFile)
@@ -67,23 +80,19 @@ func showDaemonStatus(pidFile string) {
 		}
 
 		if jsonOutput {
-			status := map[string]interface{}{
-				"running": true,
-				"pid":     pid,
-			}
-			if started != "" {
-				status["started"] = started
-			}
-			if logPath != "" {
-				status["log_path"] = logPath
+			status := DaemonStatusResponse{
+				Running: true,
+				PID:     pid,
+				Started: started,
+				LogPath: logPath,
 			}
 			// Add config from RPC status if available
 			if rpcStatus != nil {
-				status["auto_commit"] = rpcStatus.AutoCommit
-				status["auto_push"] = rpcStatus.AutoPush
-				status["local_mode"] = rpcStatus.LocalMode
-				status["sync_interval"] = rpcStatus.SyncInterval
-				status["daemon_mode"] = rpcStatus.DaemonMode
+				status.AutoCommit = rpcStatus.AutoCommit
+				status.AutoPush = rpcStatus.AutoPush
+				status.LocalMode = rpcStatus.LocalMode
+				status.SyncInterval = rpcStatus.SyncInterval
+				status.DaemonMode = rpcStatus.DaemonMode
 			}
 			outputJSON(status)
 			return
@@ -108,7 +117,7 @@ func showDaemonStatus(pidFile string) {
 		}
 	} else {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{"running": false})
+			outputJSON(DaemonStatusResponse{Running: false})
 			return
 		}
 		fmt.Println("Daemon is not running")

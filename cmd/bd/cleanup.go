@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -10,6 +9,14 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
+
+// CleanupEmptyResponse is returned when there are no closed issues to delete
+type CleanupEmptyResponse struct {
+	DeletedCount int    `json:"deleted_count"`
+	Message      string `json:"message"`
+	Filter       string `json:"filter,omitempty"`
+	Wisp         bool   `json:"wisp,omitempty"`
+}
 
 // Hard delete mode: bypass tombstone TTL safety, use --older-than days directly
 
@@ -146,18 +153,17 @@ SEE ALSO:
 
 		if len(closedIssues) == 0 {
 			if jsonOutput {
-				result := map[string]interface{}{
-					"deleted_count": 0,
-					"message":       "No closed issues to delete",
+				result := CleanupEmptyResponse{
+					DeletedCount: 0,
+					Message:      "No closed issues to delete",
 				}
 				if olderThanDays > 0 {
-					result["filter"] = fmt.Sprintf("older than %d days", olderThanDays)
+					result.Filter = fmt.Sprintf("older than %d days", olderThanDays)
 				}
 				if wispOnly {
-					result["wisp"] = true
+					result.Wisp = true
 				}
-				output, _ := json.MarshalIndent(result, "", "  ")
-				fmt.Println(string(output))
+				outputJSON(result)
 			} else {
 				msg := "No closed issues to delete"
 				if wispOnly && olderThanDays > 0 {
