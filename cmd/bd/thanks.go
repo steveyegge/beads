@@ -1,8 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -130,8 +131,8 @@ func getContributorsSorted() []string {
 	for name, commits := range beadsContributors {
 		sorted = append(sorted, kv{name, commits})
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].commits > sorted[j].commits
+	slices.SortFunc(sorted, func(a, b kv) int {
+		return cmp.Compare(b.commits, a.commits) // descending order
 	})
 	names := make([]string, len(sorted))
 	for i, kv := range sorted {

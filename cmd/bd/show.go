@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -1204,8 +1204,8 @@ func showMessageThread(ctx context.Context, messageID string, jsonOutput bool) {
 	}
 
 	// Sort by creation time
-	sort.Slice(threadMessages, func(i, j int) bool {
-		return threadMessages[i].CreatedAt.Before(threadMessages[j].CreatedAt)
+	slices.SortFunc(threadMessages, func(a, b *types.Issue) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
 	})
 
 	if jsonOutput {

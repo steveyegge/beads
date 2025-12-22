@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -316,7 +317,7 @@ Examples:
 					len(jsonlIDs), len(issues), len(missingIDs))
 				
 				if len(missingIDs) > 0 {
-					sort.Strings(missingIDs)
+					slices.Sort(missingIDs)
 					fmt.Fprintf(os.Stderr, "Error: refusing to export stale database that would lose issues\n")
 					fmt.Fprintf(os.Stderr, "  Database has %d issues\n", len(issues))
 					fmt.Fprintf(os.Stderr, "  JSONL has %d issues\n", len(jsonlIDs))
@@ -357,8 +358,8 @@ Examples:
 		issues = filtered
 
 		// Sort by ID for consistent output
-		sort.Slice(issues, func(i, j int) bool {
-			return issues[i].ID < issues[j].ID
+		slices.SortFunc(issues, func(a, b *types.Issue) int {
+			return cmp.Compare(a.ID, b.ID)
 		})
 
 		// Populate dependencies for all issues in one query (avoids N+1 problem)

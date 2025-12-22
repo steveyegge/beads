@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -397,8 +397,8 @@ func runWispList(cmd *cobra.Command, args []string) {
 	}
 
 	// Sort by updated_at descending (most recent first)
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	slices.SortFunc(items, func(a, b WispListItem) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt) // descending order
 	})
 
 	result := WispListResult{

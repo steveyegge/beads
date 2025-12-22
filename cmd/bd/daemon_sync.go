@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,8 +60,8 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	}
 
 	// Sort by ID for consistent output
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	// Populate dependencies for all issues

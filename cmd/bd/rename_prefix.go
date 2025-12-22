@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -247,11 +248,11 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 	}
 
 	// Sort incorrect issues: first by prefix lexicographically, then by number
-	sort.Slice(incorrectIssues, func(i, j int) bool {
-		if incorrectIssues[i].prefix != incorrectIssues[j].prefix {
-			return incorrectIssues[i].prefix < incorrectIssues[j].prefix
-		}
-		return incorrectIssues[i].number < incorrectIssues[j].number
+	slices.SortFunc(incorrectIssues, func(a, b issueSort) int {
+		return cmp.Or(
+			cmp.Compare(a.prefix, b.prefix),
+			cmp.Compare(a.number, b.number),
+		)
 	})
 
 	// Get a database connection for ID generation

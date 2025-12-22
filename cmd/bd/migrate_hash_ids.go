@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -272,8 +273,8 @@ func migrateToHashIDs(ctx context.Context, store *sqlite.SQLiteStorage, issues [
 	// We need to also update text references in descriptions, notes, design, acceptance criteria
 	
 	// Sort issues by ID to process parents before children
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 	
 	// Update all issues
@@ -394,8 +395,8 @@ func saveMappingFile(path string, mapping map[string]string) error {
 	}
 	
 	// Sort by old ID for readability
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].OldID < entries[j].OldID
+	slices.SortFunc(entries, func(a, b mappingEntry) int {
+		return cmp.Compare(a.OldID, b.OldID)
 	})
 	
 	data, err := json.MarshalIndent(map[string]interface{}{

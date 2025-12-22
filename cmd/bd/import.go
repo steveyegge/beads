@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -359,8 +360,8 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			for oldID, newID := range result.IDMapping {
 				mappings = append(mappings, mapping{oldID, newID})
 			}
-			sort.Slice(mappings, func(i, j int) bool {
-				return mappings[i].oldID < mappings[j].oldID
+			slices.SortFunc(mappings, func(a, b mapping) int {
+				return cmp.Compare(a.oldID, b.oldID)
 			})
 
 			fmt.Fprintf(os.Stderr, "Remappings:\n")

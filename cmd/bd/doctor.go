@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -895,15 +895,15 @@ func printDiagnostics(result doctorResult) {
 		fmt.Println(ui.RenderWarn(ui.IconWarn + "  WARNINGS"))
 
 		// Sort by severity: errors first, then warnings
-		sort.Slice(warnings, func(i, j int) bool {
+		slices.SortStableFunc(warnings, func(a, b doctorCheck) int {
 			// Errors (statusError) come before warnings (statusWarning)
-			if warnings[i].Status == statusError && warnings[j].Status != statusError {
-				return true
+			if a.Status == statusError && b.Status != statusError {
+				return -1
 			}
-			if warnings[i].Status != statusError && warnings[j].Status == statusError {
-				return false
+			if a.Status != statusError && b.Status == statusError {
+				return 1
 			}
-			return false // maintain original order within same severity
+			return 0 // maintain original order within same severity
 		})
 
 		for i, check := range warnings {
