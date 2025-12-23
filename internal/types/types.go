@@ -434,8 +434,8 @@ var FailureCloseKeywords = []string{
 	"rejected",
 	"wontfix",
 	"won't fix",
-	"cancelled",
 	"canceled",
+	"cancelled", //nolint:misspell // British spelling intentionally included
 	"abandoned",
 	"blocked",
 	"error",

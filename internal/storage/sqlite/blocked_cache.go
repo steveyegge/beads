@@ -20,7 +20,7 @@
 // Gate types: "all-children" (default, blocked until ALL close) or "any-children" (until ANY closes).
 //
 // Conditional blocks (bd-kzda): B runs only if A fails. B is blocked until A is closed
-// with a failure close reason (failed, rejected, wontfix, cancelled, abandoned, etc.).
+// with a failure close reason (failed, rejected, wontfix, canceled, abandoned, etc.).
 // If A succeeds (closed without failure), B stays blocked.
 //
 // The cache is maintained automatically by invalidating and rebuilding whenever:
@@ -132,7 +132,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 	// - 'parent-child': Propagates blockage to children
 	//
 	// Failure close reasons are detected by matching keywords in close_reason:
-	// failed, rejected, wontfix, won't fix, cancelled, canceled, abandoned,
+	// failed, rejected, wontfix, won't fix, canceled, abandoned,
 	// blocked, error, timeout, aborted
 	query := `
 		INSERT INTO blocked_issues_cache (issue_id)

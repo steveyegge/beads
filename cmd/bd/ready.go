@@ -268,7 +268,7 @@ var blockedCmd = &cobra.Command{
 }
 
 // runMoleculeReady shows ready steps within a specific molecule
-func runMoleculeReady(cmd *cobra.Command, molIDArg string) {
+func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 	ctx := rootCtx
 
 	// Molecule-ready requires direct store access for subgraph loading

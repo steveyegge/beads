@@ -126,7 +126,7 @@ func ExpiredTombstones(path string) error {
 		issue.SetDefaults()
 		allIssues = append(allIssues, &issue)
 	}
-	file.Close()
+	_ = file.Close()
 
 	ttl := types.DefaultTombstoneTTL
 
@@ -156,16 +156,16 @@ func ExpiredTombstones(path string) error {
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range kept {
 		if err := encoder.Encode(issue); err != nil {
-			tempFile.Close()
-			os.Remove(tempPath)
+			_ = tempFile.Close()
+			_ = os.Remove(tempPath)
 			return fmt.Errorf("failed to write issue %s: %w", issue.ID, err)
 		}
 	}
-	tempFile.Close()
+	_ = tempFile.Close()
 
 	// Atomically replace
 	if err := os.Rename(tempPath, jsonlPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("failed to replace issues.jsonl: %w", err)
 	}
 
