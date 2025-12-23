@@ -276,15 +276,15 @@ func stopDaemon(pidFile string) {
 		os.Exit(1)
 	}
 
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
+	for i := 0; i < daemonShutdownAttempts; i++ {
+		time.Sleep(daemonShutdownPollInterval)
 		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
 			fmt.Println("Daemon stopped")
 			return
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, forcing termination\n")
+	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after %v, forcing termination\n", daemonShutdownTimeout)
 
 	// Check one more time before killing the process to avoid a race.
 	if isRunning, _ := isDaemonRunning(pidFile); !isRunning {

@@ -22,7 +22,7 @@ import (
 
 var renamePrefixCmd = &cobra.Command{
 	Use:     "rename-prefix <new-prefix>",
-	GroupID: "advanced",
+	GroupID: GroupMaintenance,
 	Short:   "Rename the issue prefix for all issues in the database",
 	Long: `Rename the issue prefix for all issues in the database.
 This will update all issue IDs and all text references across all fields.
