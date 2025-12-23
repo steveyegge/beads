@@ -36,6 +36,7 @@ func runEventDrivenLoop(
 	jsonlPath string,
 	doExport func(),
 	doAutoImport func(),
+	autoPull bool,
 	parentPID int,
 	log daemonLogger,
 ) {
@@ -100,9 +101,20 @@ func runEventDrivenLoop(
 	// This is essential for multi-clone workflows where the file watcher only
 	// sees local changes but remote may have updates from other clones.
 	// Default is 30 seconds; configurable via BEADS_REMOTE_SYNC_INTERVAL.
-	remoteSyncInterval := getRemoteSyncInterval(log)
-	remoteSyncTicker := time.NewTicker(remoteSyncInterval)
-	defer remoteSyncTicker.Stop()
+	// Only enabled when autoPull is true (default when sync.branch is configured).
+	var remoteSyncTicker *time.Ticker
+	if autoPull {
+		remoteSyncInterval := getRemoteSyncInterval(log)
+		if remoteSyncInterval > 0 {
+			remoteSyncTicker = time.NewTicker(remoteSyncInterval)
+			defer remoteSyncTicker.Stop()
+			log.log("Auto-pull enabled: checking remote every %v", remoteSyncInterval)
+		} else {
+			log.log("Auto-pull disabled: remote-sync-interval is 0")
+		}
+	} else {
+		log.log("Auto-pull disabled: use 'git pull' manually to sync remote changes")
+	}
 
 	// Parent process check (every 10 seconds)
 	parentCheckTicker := time.NewTicker(10 * time.Second)
@@ -126,7 +138,13 @@ func runEventDrivenLoop(
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
 
-		case <-remoteSyncTicker.C:
+		case <-func() <-chan time.Time {
+			if remoteSyncTicker != nil {
+				return remoteSyncTicker.C
+			}
+			// Never fire if auto-pull is disabled
+			return make(chan time.Time)
+		}():
 			// Periodic remote sync to pull updates from other clones
 			// This ensures the daemon sees changes pushed by other clones
 			// even when the local file watcher doesn't trigger

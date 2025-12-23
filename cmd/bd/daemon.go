@@ -52,6 +52,7 @@ Run 'bd daemon' with no flags to see available options.`,
 		interval, _ := cmd.Flags().GetDuration("interval")
 		autoCommit, _ := cmd.Flags().GetBool("auto-commit")
 		autoPush, _ := cmd.Flags().GetBool("auto-push")
+		autoPull, _ := cmd.Flags().GetBool("auto-pull")
 		localMode, _ := cmd.Flags().GetBool("local")
 		logFile, _ := cmd.Flags().GetString("log")
 		foreground, _ := cmd.Flags().GetBool("foreground")
@@ -84,6 +85,31 @@ Run 'bd daemon' with no flags to see available options.`,
 					if err == nil {
 						if configVal, err := store.GetConfig(ctx, "daemon.auto_push"); err == nil && configVal == "true" {
 							autoPush = true
+						}
+						_ = store.Close()
+					}
+				}
+			}
+			if !cmd.Flags().Changed("auto-pull") {
+				// Check environment variable first
+				if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
+					autoPull = envVal == "true" || envVal == "1"
+				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
+					// Check database config
+					ctx := context.Background()
+					store, err := sqlite.New(ctx, dbPath)
+					if err == nil {
+						if configVal, err := store.GetConfig(ctx, "daemon.auto_pull"); err == nil {
+							if configVal == "true" {
+								autoPull = true
+							} else if configVal == "false" {
+								autoPull = false
+							}
+						} else {
+							// Default: auto_pull is true when sync.branch is configured
+							if syncBranch, err := store.GetConfig(ctx, "sync.branch"); err == nil && syncBranch != "" {
+								autoPull = true
+							}
 						}
 						_ = store.Close()
 					}
@@ -212,14 +238,14 @@ Run 'bd daemon' with no flags to see available options.`,
 		if localMode {
 			fmt.Printf("Starting bd daemon in LOCAL mode (interval: %v, no git sync)\n", interval)
 		} else {
-			fmt.Printf("Starting bd daemon (interval: %v, auto-commit: %v, auto-push: %v)\n",
-				interval, autoCommit, autoPush)
+			fmt.Printf("Starting bd daemon (interval: %v, auto-commit: %v, auto-push: %v, auto-pull: %v)\n",
+				interval, autoCommit, autoPush, autoPull)
 		}
 		if logFile != "" {
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		startDaemon(interval, autoCommit, autoPush, localMode, foreground, logFile, pidFile)
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile)
 	},
 }
 
@@ -228,6 +254,7 @@ func init() {
 	daemonCmd.Flags().Duration("interval", 5*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
+	daemonCmd.Flags().Bool("auto-pull", false, "Automatically pull from remote (default: true when sync.branch configured)")
 	daemonCmd.Flags().Bool("local", false, "Run in local-only mode (no git required, no sync)")
 	daemonCmd.Flags().Bool("stop", false, "Stop running daemon")
 	daemonCmd.Flags().Bool("stop-all", false, "Stop all running bd daemons")
@@ -252,7 +279,7 @@ func computeDaemonParentPID() int {
 	}
 	return os.Getppid()
 }
-func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool, logPath, pidFile string) {
+func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile string) {
 	logF, log := setupDaemonLogger(logPath)
 	defer func() { _ = logF.Close() }()
 
@@ -474,7 +501,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool,
 	}
 
 	// Set daemon configuration for status reporting
-	server.SetConfig(autoCommit, autoPush, localMode, interval.String(), daemonMode)
+	server.SetConfig(autoCommit, autoPush, autoPull, localMode, interval.String(), daemonMode)
 
 	// Register daemon in global registry
 	registry, err := daemon.NewRegistry()
@@ -537,7 +564,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, localMode bool,
 				doExport = createExportFunc(ctx, store, autoCommit, autoPush, log)
 				doAutoImport = createAutoImportFunc(ctx, store, log)
 			}
-			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, parentPID, log)
+			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, autoPull, parentPID, log)
 		}
 	case "poll":
 		log.log("Using polling mode (interval: %v)", interval)
