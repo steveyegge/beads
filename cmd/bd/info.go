@@ -289,6 +289,26 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.35.0",
+		Date:    "2025-12-23",
+		Changes: []string{
+			"NEW: bd activity command - Real-time state feed for molecule monitoring (bd-xo1o.3)",
+			"NEW: Dynamic molecule bonding - bd mol bond --ref <id> attaches protos at runtime (bd-xo1o.1)",
+			"NEW: waits-for dependency type - Fanout gates for parallel step coordination (bd-xo1o.2)",
+			"NEW: Parallel step detection - Molecules auto-detect parallelizable steps (bd-xo1o.4)",
+			"NEW: bd list --parent flag - Filter issues by parent (bd-yqhh)",
+			"NEW: Molecule navigation - bd mol next/prev/current for step traversal (bd-sal9, bd-ieyy)",
+			"NEW: Entity tracking types - Creator and Validations fields for work attribution (bd-7pwh)",
+			"IMPROVED: bd doctor --fix replaces manual commands (GH#715)",
+			"IMPROVED: bd dep tree shows external dependencies (bd-vks2, bd-mv6h, bd-d9mu)",
+			"IMPROVED: Performance indexes for large databases (bd-bha9, bd-a9y3, bd-jke6, bd-8x3w, bd-lk39)",
+			"FIX: Rich mutation events emitted for status changes (bd-313v)",
+			"FIX: External deps filtered from GetBlockedIssues (bd-396j)",
+			"FIX: bd create -f works with daemon mode (GH#719)",
+			"FIX: Parallel execution migration race conditions (GH#720)",
+		},
+	},
+	{
 		Version: "0.34.0",
 		Date:    "2025-12-22",
 		Changes: []string{

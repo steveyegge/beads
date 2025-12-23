@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dynamic molecule bonding** (bd-xo1o.1) - Attach templates to running molecules at runtime
+  - `bd mol bond <proto> <target> --ref <issue-id>` - Inject template steps dynamically
+  - Enables responsive workflows: attach error recovery, expand scope mid-execution
+  - Templates can reference existing issue data via `--ref` for variable interpolation
+
+- **`bd activity` command** (bd-xo1o.3) - Real-time state feed for workflow monitoring
+  - Stream mutation events as they happen (JSON format)
+  - Monitor molecule progress without polling
+  - Useful for dashboards, debugging, and automation
+
+- **`waits-for` dependency type** (bd-xo1o.2) - Fanout coordination gates
+  - `bd dep add <gate> <step> --type waits-for` - Gate waits for all steps
+  - Unlike `blocks`, waits-for is used for parallel coordination (fan-in pattern)
+  - Gate unblocks only when ALL waits-for dependencies complete
+
+- **Parallel step detection** (bd-xo1o.4) - Auto-identify parallelizable work
+  - Molecules automatically detect steps that can run concurrently
+  - `bd mol show` displays parallel-capable step groups
+  - Helps agents optimize execution order
+
+- **Molecule navigation commands** (bd-sal9, bd-ieyy) - Track progress through workflows
+  - `bd mol current` - Show current step and molecule progress
+  - `bd close --continue` - Auto-advance to next step in molecule
+  - `bd close --no-auto` - Close without auto-claiming next step
+
 - **`bd list --parent` flag** (bd-yqhh) - Filter issues by parent
   - `bd list --parent=bd-xyz --status=open` shows open children of bd-xyz
   - Useful for epic progress tracking and molecule step listing
@@ -19,27 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bd mol bond --type conditional-blocks` for error-handling workflows
   - Step B runs only if step A fails (useful for fallback paths)
 
-- **Molecule navigation commands** (bd-sal9, bd-ieyy) - Track progress through molecules
-  - `bd mol current` - Show current step and molecule progress
-  - `bd close --continue` - Auto-advance to next step in molecule
-  - `bd close --no-auto` - Close without auto-claiming next step
-
-- **HOP entity tracking types** (bd-7pwh) - Foundation for future HOP integration
-  - `EntityRef` type with Name, Platform, Org, ID fields
-  - `Creator` field on Issue for work attribution
-  - `Validations` array for tracking approvals
-
 - **External dependency display** (bd-vks2) - Show cross-project deps in tree view
   - `bd dep tree` now displays external dependencies with repo prefix
   - Satisfied external deps filtered from blocked issues
 
-- **Performance optimization indexes** (bd-bha9, bd-a9y3) - Faster queries
+- **Performance optimization indexes** (bd-bha9, bd-a9y3) - Faster queries for large databases
   - Added indexes for common query patterns
   - Improved GetReadyWork and SearchIssues performance
 
 ### Changed
 
-- **Consolidated doctor --fix** (bd-bqcc) - Single command for all fixes
+- **Consolidated doctor --fix** (GH#715, bd-bqcc) - Single command for all fixes
   - `bd doctor --fix` now handles: hooks, permissions, sync branch, schema
   - Removed individual `bd migrate`, `bd hooks install` suggestions
   - Daemon health check integrated into doctor flow
@@ -50,28 +65,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rich mutation events for status changes** (bd-313v) - Events now include full context
+  - Status transitions emit complete before/after state
+  - Enables better monitoring and auditing
+
+- **External deps filtered from GetBlockedIssues** (bd-396j) - Correct blocking calculation
+  - External dependencies no longer incorrectly block local work
+  - Only local blocking deps affect ready queue
+
 - **Parallel execution migration race** (GH#720) - Multiple daemons no longer corrupt DB
   - Added file-based migration lock to prevent concurrent schema changes
   - Retry logic when migration lock is held by another process
 
-- **FindJSONLInDir interactions.jsonl** (GH#709) - No longer picks wrong file
-  - Skip `interactions.jsonl` when discovering JSONL files
-  - Fixes issue where wrong file was used as database source
-
 - **bd create -f with daemon** (GH#719) - File flag now works in daemon mode
   - `-f/--file` flag properly forwarded through RPC
 
+- **FindJSONLInDir interactions.jsonl** (GH#709) - No longer picks wrong file
+  - Skip `interactions.jsonl` when discovering JSONL files
+
 - **Daemon duplicate log messages** (PR#713) - Reduced log spam
-  - Deduplicate file and git ref change notifications
-
 - **Worktree health check redundancy** (PR#711) - Integrated into CreateBeadsWorktree
-  - Health check runs automatically, not as separate step
-
 - **Diverged sync branch handling** (GH#697) - Auto-recovery on push failure
-  - Fetch-rebase-retry when push fails due to divergence
-
 - **Tombstones in JSONL export** (GH#696) - Deletions now propagate correctly
-  - Tombstone records included in exportToJSONLWithStore
 
 ### Refactored
 
