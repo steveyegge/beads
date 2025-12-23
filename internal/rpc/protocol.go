@@ -72,6 +72,9 @@ type CreateArgs struct {
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	Labels             []string `json:"labels,omitempty"`
 	Dependencies       []string `json:"dependencies,omitempty"`
+	// Waits-for dependencies (bd-xo1o.2)
+	WaitsFor     string `json:"waits_for,omitempty"`      // Spawner issue ID to wait for
+	WaitsForGate string `json:"waits_for_gate,omitempty"` // Gate type: all-children or any-children
 	// Messaging fields (bd-kwro)
 	Sender string `json:"sender,omitempty"` // Who sent this (for messages)
 	Wisp   bool   `json:"wisp,omitempty"`   // Wisp = ephemeral vapor from the Steam Engine; bulk-deleted when closed

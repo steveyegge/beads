@@ -103,6 +103,8 @@ var createCmd = &cobra.Command{
 		parentID, _ := cmd.Flags().GetString("parent")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
+		waitsFor, _ := cmd.Flags().GetString("waits-for")
+		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
 		forceCreate, _ := cmd.Flags().GetBool("force")
 		repoOverride, _ := cmd.Flags().GetString("repo")
 
@@ -217,6 +219,8 @@ var createCmd = &cobra.Command{
 				EstimatedMinutes:   estimatedMinutes,
 				Labels:             labels,
 				Dependencies:       deps,
+				WaitsFor:           waitsFor,
+				WaitsForGate:       waitsForGate,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -366,6 +370,37 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Add waits-for dependency if specified (bd-xo1o.2)
+		if waitsFor != "" {
+			// Validate gate type
+			gate := waitsForGate
+			if gate == "" {
+				gate = types.WaitsForAllChildren
+			}
+			if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
+				FatalError("invalid --waits-for-gate value '%s' (valid: all-children, any-children)", gate)
+			}
+
+			// Create metadata JSON
+			meta := types.WaitsForMeta{
+				Gate: gate,
+			}
+			metaJSON, err := json.Marshal(meta)
+			if err != nil {
+				FatalError("failed to serialize waits-for metadata: %v", err)
+			}
+
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: waitsFor,
+				Type:        types.DepWaitsFor,
+				Metadata:    string(metaJSON),
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				WarnError("failed to add waits-for dependency %s -> %s: %v", issue.ID, waitsFor, err)
+			}
+		}
+
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
@@ -403,6 +438,8 @@ func init() {
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
+	createCmd.Flags().String("waits-for", "", "Spawner issue ID to wait for (creates waits-for dependency for fanout gate)")
+	createCmd.Flags().String("waits-for-gate", "all-children", "Gate type: all-children (wait for all) or any-children (wait for first)")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
 	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")

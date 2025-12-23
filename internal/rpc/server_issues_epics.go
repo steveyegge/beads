@@ -309,6 +309,46 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// Add waits-for dependency if specified (bd-xo1o.2)
+	if createArgs.WaitsFor != "" {
+		// Validate gate type
+		gate := createArgs.WaitsForGate
+		if gate == "" {
+			gate = types.WaitsForAllChildren
+		}
+		if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid waits_for_gate value '%s' (valid: all-children, any-children)", gate),
+			}
+		}
+
+		// Create metadata JSON
+		meta := types.WaitsForMeta{
+			Gate: gate,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to serialize waits-for metadata: %v", err),
+			}
+		}
+
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: createArgs.WaitsFor,
+			Type:        types.DepWaitsFor,
+			Metadata:    string(metaJSON),
+		}
+		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to add waits-for dependency %s -> %s: %v", issue.ID, createArgs.WaitsFor, err),
+			}
+		}
+	}
+
 	// Emit mutation event for event-driven daemon
 	s.emitMutation(MutationCreate, issue.ID)
 

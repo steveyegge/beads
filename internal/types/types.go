@@ -368,6 +368,7 @@ const (
 	DepBlocks            DependencyType = "blocks"
 	DepParentChild       DependencyType = "parent-child"
 	DepConditionalBlocks DependencyType = "conditional-blocks" // B runs only if A fails (bd-kzda)
+	DepWaitsFor          DependencyType = "waits-for"          // Fanout gate: wait for dynamic children (bd-xo1o.2)
 
 	// Association types
 	DepRelated        DependencyType = "related"
@@ -396,7 +397,7 @@ func (d DependencyType) IsValid() bool {
 // Returns false for custom/user-defined types (which are still valid).
 func (d DependencyType) IsWellKnown() bool {
 	switch d {
-	case DepBlocks, DepParentChild, DepConditionalBlocks, DepRelated, DepDiscoveredFrom,
+	case DepBlocks, DepParentChild, DepConditionalBlocks, DepWaitsFor, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
 		DepAuthoredBy, DepAssignedTo, DepApprovedBy:
 		return true
@@ -405,10 +406,26 @@ func (d DependencyType) IsWellKnown() bool {
 }
 
 // AffectsReadyWork returns true if this dependency type blocks work.
-// Only "blocks", "parent-child", and "conditional-blocks" affect the ready work calculation.
+// Only blocking types affect the ready work calculation.
 func (d DependencyType) AffectsReadyWork() bool {
-	return d == DepBlocks || d == DepParentChild || d == DepConditionalBlocks
+	return d == DepBlocks || d == DepParentChild || d == DepConditionalBlocks || d == DepWaitsFor
 }
+
+// WaitsForMeta holds metadata for waits-for dependencies (fanout gates).
+// Stored as JSON in the Dependency.Metadata field.
+type WaitsForMeta struct {
+	// Gate type: "all-children" (wait for all), "any-children" (wait for first)
+	Gate string `json:"gate"`
+	// SpawnerID identifies which step/issue spawns the children to wait for.
+	// If empty, waits for all direct children of the depends_on_id issue.
+	SpawnerID string `json:"spawner_id,omitempty"`
+}
+
+// WaitsForGate constants
+const (
+	WaitsForAllChildren = "all-children" // Wait for all dynamic children to complete
+	WaitsForAnyChildren = "any-children" // Proceed when first child completes (future)
+)
 
 // FailureCloseKeywords are keywords that indicate an issue was closed due to failure.
 // Used by conditional-blocks dependencies to determine if the condition is met.

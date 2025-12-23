@@ -13,14 +13,18 @@
 //   - It has a 'blocks' dependency on an open/in_progress/blocked issue (direct blocking)
 //   - It has a 'blocks' dependency on an external:* reference (cross-project blocking, bd-om4a)
 //   - It has a 'conditional-blocks' dependency where the blocker hasn't failed (bd-kzda)
+//   - It has a 'waits-for' dependency on a spawner with unclosed children (bd-xo1o.2)
 //   - Its parent is blocked and it's connected via 'parent-child' dependency (transitive blocking)
+//
+// WaitsFor gates (bd-xo1o.2): B waits for spawner A's dynamically-bonded children.
+// Gate types: "all-children" (default, blocked until ALL close) or "any-children" (until ANY closes).
 //
 // Conditional blocks (bd-kzda): B runs only if A fails. B is blocked until A is closed
 // with a failure close reason (failed, rejected, wontfix, cancelled, abandoned, etc.).
 // If A succeeds (closed without failure), B stays blocked.
 //
 // The cache is maintained automatically by invalidating and rebuilding whenever:
-//   - A 'blocks', 'conditional-blocks', or 'parent-child' dependency is added or removed
+//   - A 'blocks', 'conditional-blocks', 'waits-for', or 'parent-child' dependency is added or removed
 //   - Any issue's status changes (affects whether it blocks others)
 //   - An issue is closed (closed issues don't block others; conditional-blocks checks close_reason)
 //
@@ -121,9 +125,10 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 	// Only includes local blockers (open issues) - external refs are resolved
 	// lazily at query time by GetReadyWork (bd-zmmy supersedes bd-om4a)
 	//
-	// Handles three blocking types:
+	// Handles four blocking types:
 	// - 'blocks': B is blocked until A is closed (any close reason)
 	// - 'conditional-blocks': B is blocked until A is closed with failure (bd-kzda)
+	// - 'waits-for': B is blocked until all children of spawner A are closed (bd-xo1o.2)
 	// - 'parent-child': Propagates blockage to children
 	//
 	// Failure close reasons are detected by matching keywords in close_reason:
@@ -170,6 +175,43 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%timeout%'
 		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%aborted%'
 		        ))
+		      )
+
+		    UNION
+
+		    -- 'waits-for' dependencies: B blocked until all children of spawner closed (bd-xo1o.2)
+		    -- This is a fanout gate for dynamic molecule bonding
+		    -- B waits for A (spawner), blocked while ANY child of A is not closed
+		    -- Gate type from metadata: "all-children" (default) or "any-children"
+		    SELECT DISTINCT d.issue_id
+		    FROM dependencies d
+		    WHERE d.type = 'waits-for'
+		      AND (
+		        -- Default gate: "all-children" - blocked while ANY child is open
+		        COALESCE(json_extract(d.metadata, '$.gate'), 'all-children') = 'all-children'
+		        AND EXISTS (
+		          SELECT 1 FROM dependencies child_dep
+		          JOIN issues child ON child_dep.issue_id = child.id
+		          WHERE child_dep.type = 'parent-child'
+		            AND child_dep.depends_on_id = COALESCE(
+		              json_extract(d.metadata, '$.spawner_id'),
+		              d.depends_on_id
+		            )
+		            AND child.status NOT IN ('closed', 'tombstone')
+		        )
+		        OR
+		        -- Alternative gate: "any-children" - blocked until ANY child closes
+		        COALESCE(json_extract(d.metadata, '$.gate'), 'all-children') = 'any-children'
+		        AND NOT EXISTS (
+		          SELECT 1 FROM dependencies child_dep
+		          JOIN issues child ON child_dep.issue_id = child.id
+		          WHERE child_dep.type = 'parent-child'
+		            AND child_dep.depends_on_id = COALESCE(
+		              json_extract(d.metadata, '$.spawner_id'),
+		              d.depends_on_id
+		            )
+		            AND child.status IN ('closed', 'tombstone')
+		        )
 		      )
 		  ),
 

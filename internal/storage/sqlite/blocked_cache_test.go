@@ -460,3 +460,186 @@ func TestConditionalBlocksVariousFailureKeywords(t *testing.T) {
 		})
 	}
 }
+
+// TestWaitsForAllChildren tests the waits-for dependency with all-children gate (bd-xo1o.2)
+// B waits for spawner A's children. B is blocked until ALL children of A are closed.
+func TestWaitsForAllChildren(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create spawner (A) with two children (C1, C2), and waiter (B) that waits for A's children
+	spawner := &types.Issue{Title: "Spawner", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	child1 := &types.Issue{Title: "Child 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	child2 := &types.Issue{Title: "Child 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	waiter := &types.Issue{Title: "Waiter", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, spawner, "test-user")
+	store.CreateIssue(ctx, child1, "test-user")
+	store.CreateIssue(ctx, child2, "test-user")
+	store.CreateIssue(ctx, waiter, "test-user")
+
+	// Add parent-child relationships: C1, C2 are children of spawner
+	depChild1 := &types.Dependency{IssueID: child1.ID, DependsOnID: spawner.ID, Type: types.DepParentChild}
+	depChild2 := &types.Dependency{IssueID: child2.ID, DependsOnID: spawner.ID, Type: types.DepParentChild}
+	store.AddDependency(ctx, depChild1, "test-user")
+	store.AddDependency(ctx, depChild2, "test-user")
+
+	// Add waits-for dependency: waiter waits for spawner's children (default: all-children gate)
+	depWaits := &types.Dependency{
+		IssueID:     waiter.ID,
+		DependsOnID: spawner.ID,
+		Type:        types.DepWaitsFor,
+		Metadata:    `{"gate":"all-children"}`,
+	}
+	store.AddDependency(ctx, depWaits, "test-user")
+
+	// Initially: both children open, waiter should be blocked
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[waiter.ID] {
+		t.Errorf("Expected waiter to be blocked (children still open)")
+	}
+
+	// Close first child - waiter should still be blocked (second child still open)
+	store.CloseIssue(ctx, child1.ID, "Done", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if !cached[waiter.ID] {
+		t.Errorf("Expected waiter to still be blocked (one child still open)")
+	}
+
+	// Close second child - waiter should now be unblocked
+	store.CloseIssue(ctx, child2.ID, "Done", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if cached[waiter.ID] {
+		t.Errorf("Expected waiter to be unblocked (all children closed)")
+	}
+}
+
+// TestWaitsForAnyChildren tests the waits-for dependency with any-children gate
+// B waits for spawner A's children. B is blocked until ANY child of A is closed.
+func TestWaitsForAnyChildren(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create spawner with two children, and waiter that waits for any child to close
+	spawner := &types.Issue{Title: "Spawner", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	child1 := &types.Issue{Title: "Child 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	child2 := &types.Issue{Title: "Child 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	waiter := &types.Issue{Title: "Waiter", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, spawner, "test-user")
+	store.CreateIssue(ctx, child1, "test-user")
+	store.CreateIssue(ctx, child2, "test-user")
+	store.CreateIssue(ctx, waiter, "test-user")
+
+	// Add parent-child relationships
+	depChild1 := &types.Dependency{IssueID: child1.ID, DependsOnID: spawner.ID, Type: types.DepParentChild}
+	depChild2 := &types.Dependency{IssueID: child2.ID, DependsOnID: spawner.ID, Type: types.DepParentChild}
+	store.AddDependency(ctx, depChild1, "test-user")
+	store.AddDependency(ctx, depChild2, "test-user")
+
+	// Add waits-for dependency with any-children gate
+	depWaits := &types.Dependency{
+		IssueID:     waiter.ID,
+		DependsOnID: spawner.ID,
+		Type:        types.DepWaitsFor,
+		Metadata:    `{"gate":"any-children"}`,
+	}
+	store.AddDependency(ctx, depWaits, "test-user")
+
+	// Initially: both children open, waiter should be blocked
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[waiter.ID] {
+		t.Errorf("Expected waiter to be blocked (no children closed yet)")
+	}
+
+	// Close first child - waiter should now be unblocked (any-children gate satisfied)
+	store.CloseIssue(ctx, child1.ID, "Done", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if cached[waiter.ID] {
+		t.Errorf("Expected waiter to be unblocked (any-children gate: one child closed)")
+	}
+}
+
+// TestWaitsForNoChildren tests waits-for when spawner has no children
+// Should be unblocked immediately (vacuous truth: all 0 children are closed)
+func TestWaitsForNoChildren(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create spawner with no children
+	spawner := &types.Issue{Title: "Spawner", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	waiter := &types.Issue{Title: "Waiter", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, spawner, "test-user")
+	store.CreateIssue(ctx, waiter, "test-user")
+
+	// Add waits-for dependency (no children to wait for)
+	depWaits := &types.Dependency{
+		IssueID:     waiter.ID,
+		DependsOnID: spawner.ID,
+		Type:        types.DepWaitsFor,
+		Metadata:    `{"gate":"all-children"}`,
+	}
+	store.AddDependency(ctx, depWaits, "test-user")
+
+	// Waiter should NOT be blocked (no children means condition is satisfied)
+	cached := getCachedBlockedIssues(t, store)
+	if cached[waiter.ID] {
+		t.Errorf("Expected waiter to NOT be blocked (spawner has no children)")
+	}
+}
+
+// TestWaitsForDynamicChildrenAdded tests waits-for when children are added dynamically
+func TestWaitsForDynamicChildrenAdded(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create spawner with no children initially
+	spawner := &types.Issue{Title: "Spawner", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	waiter := &types.Issue{Title: "Waiter", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, spawner, "test-user")
+	store.CreateIssue(ctx, waiter, "test-user")
+
+	// Add waits-for dependency
+	depWaits := &types.Dependency{
+		IssueID:     waiter.ID,
+		DependsOnID: spawner.ID,
+		Type:        types.DepWaitsFor,
+		Metadata:    `{"gate":"all-children"}`,
+	}
+	store.AddDependency(ctx, depWaits, "test-user")
+
+	// Initially: no children, waiter should be unblocked
+	cached := getCachedBlockedIssues(t, store)
+	if cached[waiter.ID] {
+		t.Errorf("Expected waiter to be unblocked (no children yet)")
+	}
+
+	// Dynamically add a child
+	child := &types.Issue{Title: "Dynamic Child", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	store.CreateIssue(ctx, child, "test-user")
+	depChild := &types.Dependency{IssueID: child.ID, DependsOnID: spawner.ID, Type: types.DepParentChild}
+	store.AddDependency(ctx, depChild, "test-user")
+
+	// Now waiter should be blocked (child is open)
+	cached = getCachedBlockedIssues(t, store)
+	if !cached[waiter.ID] {
+		t.Errorf("Expected waiter to be blocked (dynamic child added)")
+	}
+
+	// Close the child - waiter should be unblocked again
+	store.CloseIssue(ctx, child.ID, "Done", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if cached[waiter.ID] {
+		t.Errorf("Expected waiter to be unblocked (dynamic child closed)")
+	}
+}

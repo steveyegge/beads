@@ -483,6 +483,7 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 		{DepBlocks, true},
 		{DepParentChild, true},
 		{DepConditionalBlocks, true},
+		{DepWaitsFor, true},
 		{DepRelated, false},
 		{DepDiscoveredFrom, false},
 		{DepRepliesTo, false},
