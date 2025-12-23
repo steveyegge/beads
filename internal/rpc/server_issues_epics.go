@@ -751,6 +751,11 @@ func (s *Server) handleList(req *Request) Response {
 		filter.IsTemplate = &isTemplate
 	}
 
+	// Parent filtering (bd-yqhh)
+	if listArgs.ParentID != "" {
+		filter.ParentID = &listArgs.ParentID
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {

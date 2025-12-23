@@ -571,6 +571,20 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			}
 		}
 
+		// Parent filtering (bd-yqhh): filter children by parent issue
+		if filter.ParentID != nil {
+			isChild := false
+			for _, dep := range m.dependencies[issue.ID] {
+				if dep.Type == types.DepParentChild && dep.DependsOnID == *filter.ParentID {
+					isChild = true
+					break
+				}
+			}
+			if !isChild {
+				continue
+			}
+		}
+
 		// Copy issue and attach metadata
 		issueCopy := *issue
 		if deps, ok := m.dependencies[issue.ID]; ok {

@@ -562,6 +562,9 @@ type IssueFilter struct {
 
 	// Template filtering (beads-1ra)
 	IsTemplate *bool // Filter by template flag (nil = any, true = only templates, false = exclude templates)
+
+	// Parent filtering (bd-yqhh): filter children by parent issue ID
+	ParentID *string // Filter by parent issue (via parent-child dependency)
 }
 
 // SortPolicy determines how ready work is ordered

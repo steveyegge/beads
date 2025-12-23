@@ -162,6 +162,9 @@ type ListArgs struct {
 
 	// Template filtering (beads-1ra)
 	IncludeTemplates bool `json:"include_templates,omitempty"`
+
+	// Parent filtering (bd-yqhh)
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation

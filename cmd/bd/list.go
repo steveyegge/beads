@@ -148,6 +148,9 @@ var listCmd = &cobra.Command{
 		// Template filtering (beads-1ra)
 		includeTemplates, _ := cmd.Flags().GetBool("include-templates")
 
+		// Parent filtering (bd-yqhh)
+		parentID, _ := cmd.Flags().GetString("parent")
+
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Normalize labels: trim, dedupe, remove empty
@@ -311,6 +314,11 @@ var listCmd = &cobra.Command{
 			filter.IsTemplate = &isTemplate
 		}
 
+		// Parent filtering (bd-yqhh): filter children by parent issue
+		if parentID != "" {
+			filter.ParentID = &parentID
+		}
+
 		// Check database freshness before reading (bd-2q6d, bd-c4rq)
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
@@ -391,6 +399,9 @@ var listCmd = &cobra.Command{
 
 			// Template filtering (beads-1ra)
 			listArgs.IncludeTemplates = includeTemplates
+
+			// Parent filtering (bd-yqhh)
+			listArgs.ParentID = parentID
 
 			 resp, err := daemonClient.List(listArgs)
 			if err != nil {
@@ -665,6 +676,9 @@ func init() {
 
 	// Template filtering (beads-1ra): exclude templates by default
 	listCmd.Flags().Bool("include-templates", false, "Include template molecules in output")
+
+	// Parent filtering (bd-yqhh): filter children by parent issue
+	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
