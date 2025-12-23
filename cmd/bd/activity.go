@@ -167,6 +167,11 @@ func runActivityFollow(sinceTime time.Time) {
 	ticker := time.NewTicker(activityInterval)
 	defer ticker.Stop()
 
+	// Track consecutive failures for error reporting
+	consecutiveFailures := 0
+	const failureWarningThreshold = 5
+	lastWarningTime := time.Time{}
+
 	for {
 		select {
 		case <-rootCtx.Done():
@@ -174,8 +179,37 @@ func runActivityFollow(sinceTime time.Time) {
 		case <-ticker.C:
 			newEvents, err := fetchMutations(lastPoll)
 			if err != nil {
-				// Daemon might be down, continue trying
+				consecutiveFailures++
+				// Show warning after threshold failures, but not more than once per 30 seconds
+				if consecutiveFailures >= failureWarningThreshold {
+					if time.Since(lastWarningTime) >= 30*time.Second {
+						if jsonOutput {
+							// Emit error event in JSON mode
+							errorEvent := map[string]interface{}{
+								"type":      "error",
+								"message":   fmt.Sprintf("daemon unreachable (%d failures)", consecutiveFailures),
+								"timestamp": time.Now().Format(time.RFC3339),
+							}
+							data, _ := json.Marshal(errorEvent)
+							fmt.Fprintln(os.Stderr, string(data))
+						} else {
+							timestamp := time.Now().Format("15:04:05")
+							fmt.Fprintf(os.Stderr, "[%s] %s daemon unreachable (%d consecutive failures)\n",
+								timestamp, ui.RenderWarn("!"), consecutiveFailures)
+						}
+						lastWarningTime = time.Now()
+					}
+				}
 				continue
+			}
+
+			// Reset failure counter on success
+			if consecutiveFailures > 0 {
+				if consecutiveFailures >= failureWarningThreshold && !jsonOutput {
+					timestamp := time.Now().Format("15:04:05")
+					fmt.Fprintf(os.Stderr, "[%s] %s daemon reconnected\n", timestamp, ui.RenderPass("✓"))
+				}
+				consecutiveFailures = 0
 			}
 
 			newEvents = filterEvents(newEvents)

@@ -465,7 +465,17 @@ func (s *Server) handleUpdate(req *Request) Response {
 
 	// Emit mutation event for event-driven daemon (only if any updates or label operations were performed)
 	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 {
-		s.emitMutation(MutationUpdate, updateArgs.ID)
+		// Check if this was a status change - emit rich MutationStatus event
+		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
+			s.emitRichMutation(MutationEvent{
+				Type:      MutationStatus,
+				IssueID:   updateArgs.ID,
+				OldStatus: string(issue.Status),
+				NewStatus: *updateArgs.Status,
+			})
+		} else {
+			s.emitMutation(MutationUpdate, updateArgs.ID)
+		}
 	}
 
 	updatedIssue, getErr := store.GetIssue(ctx, updateArgs.ID)
@@ -517,6 +527,12 @@ func (s *Server) handleClose(req *Request) Response {
 		}
 	}
 
+	// Capture old status for rich mutation event
+	oldStatus := ""
+	if issue != nil {
+		oldStatus = string(issue.Status)
+	}
+
 	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -524,8 +540,13 @@ func (s *Server) handleClose(req *Request) Response {
 		}
 	}
 
-	// Emit mutation event for event-driven daemon
-	s.emitMutation(MutationUpdate, closeArgs.ID)
+	// Emit rich status change event for event-driven daemon
+	s.emitRichMutation(MutationEvent{
+		Type:      MutationStatus,
+		IssueID:   closeArgs.ID,
+		OldStatus: oldStatus,
+		NewStatus: "closed",
+	})
 
 	closedIssue, _ := store.GetIssue(ctx, closeArgs.ID)
 	data, _ := json.Marshal(closedIssue)

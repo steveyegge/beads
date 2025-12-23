@@ -139,10 +139,19 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 // Non-blocking: drops event if channel is full (sync will happen eventually).
 // Also stores in recent mutations buffer for polling.
 func (s *Server) emitMutation(eventType, issueID string) {
-	event := MutationEvent{
-		Type:      eventType,
-		IssueID:   issueID,
-		Timestamp: time.Now(),
+	s.emitRichMutation(MutationEvent{
+		Type:    eventType,
+		IssueID: issueID,
+	})
+}
+
+// emitRichMutation sends a pre-built mutation event with optional metadata.
+// Use this for events that include additional context (status changes, bonded events, etc.)
+// Non-blocking: drops event if channel is full (sync will happen eventually).
+func (s *Server) emitRichMutation(event MutationEvent) {
+	// Always set timestamp if not provided
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
 	}
 
 	// Send to mutation channel for daemon

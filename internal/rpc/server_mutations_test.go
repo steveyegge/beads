@@ -234,6 +234,72 @@ func TestMutationEventTypes(t *testing.T) {
 	}
 }
 
+// TestEmitRichMutation verifies that rich mutation events include metadata fields
+func TestEmitRichMutation(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Emit a rich status change event
+	server.emitRichMutation(MutationEvent{
+		Type:      MutationStatus,
+		IssueID:   "bd-456",
+		OldStatus: "open",
+		NewStatus: "in_progress",
+	})
+
+	mutations := server.GetRecentMutations(0)
+	if len(mutations) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(mutations))
+	}
+
+	m := mutations[0]
+	if m.Type != MutationStatus {
+		t.Errorf("expected type %s, got %s", MutationStatus, m.Type)
+	}
+	if m.IssueID != "bd-456" {
+		t.Errorf("expected issue ID bd-456, got %s", m.IssueID)
+	}
+	if m.OldStatus != "open" {
+		t.Errorf("expected OldStatus 'open', got %s", m.OldStatus)
+	}
+	if m.NewStatus != "in_progress" {
+		t.Errorf("expected NewStatus 'in_progress', got %s", m.NewStatus)
+	}
+	if m.Timestamp.IsZero() {
+		t.Error("expected Timestamp to be set automatically")
+	}
+}
+
+// TestEmitRichMutation_Bonded verifies bonded events include step count
+func TestEmitRichMutation_Bonded(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Emit a bonded event with metadata
+	server.emitRichMutation(MutationEvent{
+		Type:      MutationBonded,
+		IssueID:   "bd-789",
+		ParentID:  "bd-parent",
+		StepCount: 5,
+	})
+
+	mutations := server.GetRecentMutations(0)
+	if len(mutations) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(mutations))
+	}
+
+	m := mutations[0]
+	if m.Type != MutationBonded {
+		t.Errorf("expected type %s, got %s", MutationBonded, m.Type)
+	}
+	if m.ParentID != "bd-parent" {
+		t.Errorf("expected ParentID 'bd-parent', got %s", m.ParentID)
+	}
+	if m.StepCount != 5 {
+		t.Errorf("expected StepCount 5, got %d", m.StepCount)
+	}
+}
+
 func TestMutationTimestamps(t *testing.T) {
 	store := memory.New("/tmp/test.jsonl")
 	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
@@ -273,6 +339,225 @@ func TestEmitMutation_NonBlocking(t *testing.T) {
 	// Verify buffer is capped at 100 (maxMutationBuffer)
 	if len(mutations) > 100 {
 		t.Errorf("expected at most 100 mutations in buffer, got %d", len(mutations))
+	}
+}
+
+// TestHandleClose_EmitsStatusMutation verifies that close operations emit MutationStatus events
+// with old/new status metadata (bd-313v fix)
+func TestHandleClose_EmitsStatusMutation(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create an issue first
+	createArgs := CreateArgs{
+		Title:     "Test Issue for Close",
+		IssueType: "bug",
+		Priority:  1,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	issueID := createdIssue["id"].(string)
+
+	// Clear mutation buffer
+	time.Sleep(10 * time.Millisecond)
+	checkpoint := time.Now().UnixMilli()
+	time.Sleep(10 * time.Millisecond)
+
+	// Close the issue
+	closeArgs := CloseArgs{
+		ID:     issueID,
+		Reason: "test complete",
+	}
+	closeJSON, _ := json.Marshal(closeArgs)
+	closeReq := &Request{
+		Operation: OpClose,
+		Args:      closeJSON,
+		Actor:     "test-user",
+	}
+
+	closeResp := server.handleClose(closeReq)
+	if !closeResp.Success {
+		t.Fatalf("close operation failed: %s", closeResp.Error)
+	}
+
+	// Verify MutationStatus event was emitted with correct metadata
+	mutations := server.GetRecentMutations(checkpoint)
+	var statusMutation *MutationEvent
+	for _, m := range mutations {
+		if m.Type == MutationStatus && m.IssueID == issueID {
+			statusMutation = &m
+			break
+		}
+	}
+
+	if statusMutation == nil {
+		t.Fatalf("expected MutationStatus event for issue %s, but none found in mutations: %+v", issueID, mutations)
+	}
+
+	if statusMutation.OldStatus != "open" {
+		t.Errorf("expected OldStatus 'open', got %s", statusMutation.OldStatus)
+	}
+	if statusMutation.NewStatus != "closed" {
+		t.Errorf("expected NewStatus 'closed', got %s", statusMutation.NewStatus)
+	}
+}
+
+// TestHandleUpdate_EmitsStatusMutationOnStatusChange verifies that status updates emit MutationStatus
+func TestHandleUpdate_EmitsStatusMutationOnStatusChange(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create an issue first
+	createArgs := CreateArgs{
+		Title:     "Test Issue for Status Update",
+		IssueType: "task",
+		Priority:  2,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	issueID := createdIssue["id"].(string)
+
+	// Clear mutation buffer
+	time.Sleep(10 * time.Millisecond)
+	checkpoint := time.Now().UnixMilli()
+	time.Sleep(10 * time.Millisecond)
+
+	// Update status to in_progress
+	status := "in_progress"
+	updateArgs := UpdateArgs{
+		ID:     issueID,
+		Status: &status,
+	}
+	updateJSON, _ := json.Marshal(updateArgs)
+	updateReq := &Request{
+		Operation: OpUpdate,
+		Args:      updateJSON,
+		Actor:     "test-user",
+	}
+
+	updateResp := server.handleUpdate(updateReq)
+	if !updateResp.Success {
+		t.Fatalf("update operation failed: %s", updateResp.Error)
+	}
+
+	// Verify MutationStatus event was emitted
+	mutations := server.GetRecentMutations(checkpoint)
+	var statusMutation *MutationEvent
+	for _, m := range mutations {
+		if m.Type == MutationStatus && m.IssueID == issueID {
+			statusMutation = &m
+			break
+		}
+	}
+
+	if statusMutation == nil {
+		t.Fatalf("expected MutationStatus event, but none found in mutations: %+v", mutations)
+	}
+
+	if statusMutation.OldStatus != "open" {
+		t.Errorf("expected OldStatus 'open', got %s", statusMutation.OldStatus)
+	}
+	if statusMutation.NewStatus != "in_progress" {
+		t.Errorf("expected NewStatus 'in_progress', got %s", statusMutation.NewStatus)
+	}
+}
+
+// TestHandleUpdate_EmitsUpdateMutationForNonStatusChanges verifies non-status updates emit MutationUpdate
+func TestHandleUpdate_EmitsUpdateMutationForNonStatusChanges(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create an issue first
+	createArgs := CreateArgs{
+		Title:     "Test Issue for Non-Status Update",
+		IssueType: "task",
+		Priority:  2,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	issueID := createdIssue["id"].(string)
+
+	// Clear mutation buffer
+	time.Sleep(10 * time.Millisecond)
+	checkpoint := time.Now().UnixMilli()
+	time.Sleep(10 * time.Millisecond)
+
+	// Update title (not status)
+	newTitle := "Updated Title"
+	updateArgs := UpdateArgs{
+		ID:    issueID,
+		Title: &newTitle,
+	}
+	updateJSON, _ := json.Marshal(updateArgs)
+	updateReq := &Request{
+		Operation: OpUpdate,
+		Args:      updateJSON,
+		Actor:     "test-user",
+	}
+
+	updateResp := server.handleUpdate(updateReq)
+	if !updateResp.Success {
+		t.Fatalf("update operation failed: %s", updateResp.Error)
+	}
+
+	// Verify MutationUpdate event was emitted (not MutationStatus)
+	mutations := server.GetRecentMutations(checkpoint)
+	var updateMutation *MutationEvent
+	for _, m := range mutations {
+		if m.IssueID == issueID {
+			updateMutation = &m
+			break
+		}
+	}
+
+	if updateMutation == nil {
+		t.Fatal("expected mutation event, but none found")
+	}
+
+	if updateMutation.Type != MutationUpdate {
+		t.Errorf("expected MutationUpdate type, got %s", updateMutation.Type)
 	}
 }
 
