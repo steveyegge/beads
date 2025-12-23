@@ -394,7 +394,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 			Status:  StatusWarning,
 			Message: fmt.Sprintf("Local %s diverged from remote", syncBranch),
 			Detail:  "The remote sync branch was likely reset/force-pushed. Your local branch has orphaned history.",
-			Fix:     fmt.Sprintf("Reset local branch: git branch -D %s (it will be recreated on next bd sync)", syncBranch),
+			Fix:     "Run 'bd doctor --fix' to reset sync branch",
 		}
 	}
 
@@ -479,7 +479,7 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 				Status:  StatusWarning,
 				Message: fmt.Sprintf("Sync branch %s commits behind %s on source files", aheadCount, mainBranch),
 				Detail:  fmt.Sprintf("%d source files differ between %s and %s. The sync branch has stale code.", fileCount, syncBranch, mainBranch),
-				Fix:     fmt.Sprintf("Reset sync branch: git branch -f %s %s && git push --force-with-lease origin %s", syncBranch, mainBranch, syncBranch),
+				Fix:     "Run 'bd doctor --fix' to reset sync branch to main",
 			}
 		}
 	}
