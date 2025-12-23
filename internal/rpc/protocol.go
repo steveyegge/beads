@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // Operation constants for all bd commands
@@ -37,6 +38,13 @@ const (
 	OpGetMutations    = "get_mutations"
 	OpShutdown        = "shutdown"
 	OpDelete          = "delete"
+
+	// Gate operations (bd-likt)
+	OpGateCreate = "gate_create"
+	OpGateList   = "gate_list"
+	OpGateShow   = "gate_show"
+	OpGateClose  = "gate_close"
+	OpGateWait   = "gate_wait"
 )
 
 // Request represents an RPC request from client to daemon
@@ -412,4 +420,47 @@ type ImportArgs struct {
 // GetMutationsArgs represents arguments for retrieving recent mutations
 type GetMutationsArgs struct {
 	Since int64 `json:"since"` // Unix timestamp in milliseconds (0 for all recent)
+}
+
+// Gate operations (bd-likt)
+
+// GateCreateArgs represents arguments for creating a gate
+type GateCreateArgs struct {
+	Title     string        `json:"title"`
+	AwaitType string        `json:"await_type"` // gh:run, gh:pr, timer, human, mail
+	AwaitID   string        `json:"await_id"`   // ID/value for the await type
+	Timeout   time.Duration `json:"timeout"`    // Timeout duration
+	Waiters   []string      `json:"waiters"`    // Mail addresses to notify when gate clears
+}
+
+// GateCreateResult represents the result of creating a gate
+type GateCreateResult struct {
+	ID string `json:"id"` // Created gate ID
+}
+
+// GateListArgs represents arguments for listing gates
+type GateListArgs struct {
+	All bool `json:"all"` // Include closed gates
+}
+
+// GateShowArgs represents arguments for showing a gate
+type GateShowArgs struct {
+	ID string `json:"id"` // Gate ID (partial or full)
+}
+
+// GateCloseArgs represents arguments for closing a gate
+type GateCloseArgs struct {
+	ID     string `json:"id"`               // Gate ID (partial or full)
+	Reason string `json:"reason,omitempty"` // Close reason
+}
+
+// GateWaitArgs represents arguments for adding waiters to a gate
+type GateWaitArgs struct {
+	ID      string   `json:"id"`      // Gate ID (partial or full)
+	Waiters []string `json:"waiters"` // Additional waiters to add
+}
+
+// GateWaitResult represents the result of adding waiters
+type GateWaitResult struct {
+	AddedCount int `json:"added_count"` // Number of new waiters added
 }

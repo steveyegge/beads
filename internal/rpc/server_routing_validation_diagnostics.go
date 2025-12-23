@@ -221,6 +221,17 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleGetMutations(req)
 	case OpShutdown:
 		resp = s.handleShutdown(req)
+	// Gate operations (bd-likt)
+	case OpGateCreate:
+		resp = s.handleGateCreate(req)
+	case OpGateList:
+		resp = s.handleGateList(req)
+	case OpGateShow:
+		resp = s.handleGateShow(req)
+	case OpGateClose:
+		resp = s.handleGateClose(req)
+	case OpGateWait:
+		resp = s.handleGateWait(req)
 	default:
 		s.metrics.RecordError(req.Operation)
 		return Response{

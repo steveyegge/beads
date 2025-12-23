@@ -395,6 +395,33 @@ func (c *Client) EpicStatus(args *EpicStatusArgs) (*Response, error) {
 	return c.Execute(OpEpicStatus, args)
 }
 
+// Gate operations (bd-likt)
+
+// GateCreate creates a gate via the daemon
+func (c *Client) GateCreate(args *GateCreateArgs) (*Response, error) {
+	return c.Execute(OpGateCreate, args)
+}
+
+// GateList lists gates via the daemon
+func (c *Client) GateList(args *GateListArgs) (*Response, error) {
+	return c.Execute(OpGateList, args)
+}
+
+// GateShow shows a gate via the daemon
+func (c *Client) GateShow(args *GateShowArgs) (*Response, error) {
+	return c.Execute(OpGateShow, args)
+}
+
+// GateClose closes a gate via the daemon
+func (c *Client) GateClose(args *GateCloseArgs) (*Response, error) {
+	return c.Execute(OpGateClose, args)
+}
+
+// GateWait adds waiters to a gate via the daemon
+func (c *Client) GateWait(args *GateWaitArgs) (*Response, error) {
+	return c.Execute(OpGateWait, args)
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).
