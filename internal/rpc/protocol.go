@@ -300,6 +300,7 @@ type StatusResponse struct {
 	// Daemon configuration
 	AutoCommit   bool   `json:"auto_commit"`            // Whether auto-commit is enabled
 	AutoPush     bool   `json:"auto_push"`              // Whether auto-push is enabled
+	AutoPull     bool   `json:"auto_pull"`              // Whether auto-pull is enabled (periodic remote sync)
 	LocalMode    bool   `json:"local_mode"`             // Whether running in local-only mode (no git)
 	SyncInterval string `json:"sync_interval"`          // Sync interval (e.g., "5s")
 	DaemonMode   string `json:"daemon_mode"`            // Sync mode: "poll" or "events"

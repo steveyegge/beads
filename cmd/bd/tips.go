@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -116,8 +117,8 @@ func selectNextTip(store storage.Storage) *Tip {
 	}
 
 	// Sort by priority (highest first)
-	sort.Slice(eligibleTips, func(i, j int) bool {
-		return eligibleTips[i].Priority > eligibleTips[j].Priority
+	slices.SortFunc(eligibleTips, func(a, b Tip) int {
+		return cmp.Compare(b.Priority, a.Priority) // descending order
 	})
 
 	// Apply probability roll (in priority order)

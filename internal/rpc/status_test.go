@@ -97,7 +97,7 @@ func TestStatusEndpointWithConfig(t *testing.T) {
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
 	// Set config before starting
-	server.SetConfig(true, true, false, "10s", "events")
+	server.SetConfig(true, true, true, false, "10s", "events")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -155,7 +155,7 @@ func TestStatusEndpointLocalMode(t *testing.T) {
 	server := NewServer(socketPath, store, tmpDir, dbPath)
 
 	// Set config for local mode
-	server.SetConfig(false, false, true, "5s", "poll")
+	server.SetConfig(false, false, false, true, "5s", "poll")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -284,7 +284,7 @@ func TestSetConfigConcurrency(t *testing.T) {
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
 		go func(n int) {
-			server.SetConfig(n%2 == 0, n%3 == 0, n%4 == 0, "5s", "events")
+			server.SetConfig(n%2 == 0, n%3 == 0, n%5 == 0, n%4 == 0, "5s", "events")
 			done <- true
 		}(i)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,7 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -218,8 +219,8 @@ func autoImportIfNewer() {
 		for oldID, newID := range result.IDMapping {
 			mappings = append(mappings, mapping{oldID, newID})
 		}
-		sort.Slice(mappings, func(i, j int) bool {
-			return mappings[i].oldID < mappings[j].oldID
+		slices.SortFunc(mappings, func(a, b mapping) int {
+			return cmp.Compare(a.oldID, b.oldID)
 		})
 
 		maxShow := 10
@@ -442,8 +443,8 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 
 func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error) {
 	// Sort issues by ID for consistent output
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	// Create temp file with PID suffix to avoid collisions (bd-306)

@@ -15,6 +15,16 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+// daemonShutdownTimeout is how long to wait for graceful shutdown before force killing.
+// 1 second is sufficient - if daemon hasn't stopped by then, it's likely hung.
+const daemonShutdownTimeout = 1 * time.Second
+
+// daemonShutdownPollInterval is how often to check if daemon has stopped.
+const daemonShutdownPollInterval = 100 * time.Millisecond
+
+// daemonShutdownAttempts is the number of poll attempts before force kill.
+const daemonShutdownAttempts = int(daemonShutdownTimeout / daemonShutdownPollInterval)
+
 // Daemon start failure tracking for exponential backoff
 var (
 	lastDaemonStartAttempt time.Time
@@ -72,9 +82,9 @@ func restartDaemonForVersionMismatch() bool {
 			return false
 		}
 
-		// Wait for daemon to stop (up to 5 seconds)
-		for i := 0; i < 50; i++ {
-			time.Sleep(100 * time.Millisecond)
+		// Wait for daemon to stop, then force kill
+		for i := 0; i < daemonShutdownAttempts; i++ {
+			time.Sleep(daemonShutdownPollInterval)
 			if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
 				debug.Logf("old daemon stopped successfully")
 				break

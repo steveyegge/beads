@@ -1,10 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -205,8 +206,11 @@ Examples:
 					outputJSON(result)
 				} else {
 					// Sort groups for consistent output
-					sort.Slice(result.Groups, func(i, j int) bool {
-						return result.Groups[i].Group < result.Groups[j].Group
+					slices.SortFunc(result.Groups, func(a, b struct {
+						Group string `json:"group"`
+						Count int    `json:"count"`
+					}) int {
+						return cmp.Compare(a.Group, b.Group)
 					})
 
 					fmt.Printf("Total: %d\n\n", result.Total)
@@ -397,8 +401,8 @@ Examples:
 		}
 
 		// Sort for consistent output
-		sort.Slice(groups, func(i, j int) bool {
-			return groups[i].Group < groups[j].Group
+		slices.SortFunc(groups, func(a, b GroupCount) int {
+			return cmp.Compare(a.Group, b.Group)
 		})
 
 		if jsonOutput {

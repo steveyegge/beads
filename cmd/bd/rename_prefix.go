@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 
 var renamePrefixCmd = &cobra.Command{
 	Use:     "rename-prefix <new-prefix>",
-	GroupID: "advanced",
+	GroupID: GroupMaintenance,
 	Short:   "Rename the issue prefix for all issues in the database",
 	Long: `Rename the issue prefix for all issues in the database.
 This will update all issue IDs and all text references across all fields.
@@ -247,11 +248,11 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 	}
 
 	// Sort incorrect issues: first by prefix lexicographically, then by number
-	sort.Slice(incorrectIssues, func(i, j int) bool {
-		if incorrectIssues[i].prefix != incorrectIssues[j].prefix {
-			return incorrectIssues[i].prefix < incorrectIssues[j].prefix
-		}
-		return incorrectIssues[i].number < incorrectIssues[j].number
+	slices.SortFunc(incorrectIssues, func(a, b issueSort) int {
+		return cmp.Or(
+			cmp.Compare(a.prefix, b.prefix),
+			cmp.Compare(a.number, b.number),
+		)
 	})
 
 	// Get a database connection for ID generation

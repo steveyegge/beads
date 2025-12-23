@@ -14,6 +14,19 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
+// DaemonStatusResponse is returned for daemon status check
+type DaemonStatusResponse struct {
+	Running      bool   `json:"running"`
+	PID          int    `json:"pid,omitempty"`
+	Started      string `json:"started,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
+	AutoCommit   bool   `json:"auto_commit,omitempty"`
+	AutoPush     bool   `json:"auto_push,omitempty"`
+	LocalMode    bool   `json:"local_mode,omitempty"`
+	SyncInterval string `json:"sync_interval,omitempty"`
+	DaemonMode   string `json:"daemon_mode,omitempty"`
+}
+
 // isDaemonRunning checks if the daemon is currently running
 func isDaemonRunning(pidFile string) (bool, int) {
 	beadsDir := filepath.Dir(pidFile)
@@ -67,23 +80,19 @@ func showDaemonStatus(pidFile string) {
 		}
 
 		if jsonOutput {
-			status := map[string]interface{}{
-				"running": true,
-				"pid":     pid,
-			}
-			if started != "" {
-				status["started"] = started
-			}
-			if logPath != "" {
-				status["log_path"] = logPath
+			status := DaemonStatusResponse{
+				Running: true,
+				PID:     pid,
+				Started: started,
+				LogPath: logPath,
 			}
 			// Add config from RPC status if available
 			if rpcStatus != nil {
-				status["auto_commit"] = rpcStatus.AutoCommit
-				status["auto_push"] = rpcStatus.AutoPush
-				status["local_mode"] = rpcStatus.LocalMode
-				status["sync_interval"] = rpcStatus.SyncInterval
-				status["daemon_mode"] = rpcStatus.DaemonMode
+				status.AutoCommit = rpcStatus.AutoCommit
+				status.AutoPush = rpcStatus.AutoPush
+				status.LocalMode = rpcStatus.LocalMode
+				status.SyncInterval = rpcStatus.SyncInterval
+				status.DaemonMode = rpcStatus.DaemonMode
 			}
 			outputJSON(status)
 			return
@@ -102,13 +111,14 @@ func showDaemonStatus(pidFile string) {
 			fmt.Printf("  Sync Interval: %s\n", rpcStatus.SyncInterval)
 			fmt.Printf("  Auto-Commit: %v\n", rpcStatus.AutoCommit)
 			fmt.Printf("  Auto-Push: %v\n", rpcStatus.AutoPush)
+			fmt.Printf("  Auto-Pull: %v\n", rpcStatus.AutoPull)
 			if rpcStatus.LocalMode {
 				fmt.Printf("  Local Mode: %v (no git sync)\n", rpcStatus.LocalMode)
 			}
 		}
 	} else {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{"running": false})
+			outputJSON(DaemonStatusResponse{Running: false})
 			return
 		}
 		fmt.Println("Daemon is not running")
@@ -267,15 +277,15 @@ func stopDaemon(pidFile string) {
 		os.Exit(1)
 	}
 
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
+	for i := 0; i < daemonShutdownAttempts; i++ {
+		time.Sleep(daemonShutdownPollInterval)
 		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
 			fmt.Println("Daemon stopped")
 			return
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, forcing termination\n")
+	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after %v, forcing termination\n", daemonShutdownTimeout)
 
 	// Check one more time before killing the process to avoid a race.
 	if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
@@ -359,7 +369,7 @@ func stopAllDaemons() {
 }
 
 // startDaemon starts the daemon (in foreground if requested, otherwise background)
-func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foreground bool, logFile, pidFile string) {
+func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile string) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -368,7 +378,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 
 	// Run in foreground if --foreground flag set or if we're the forked child process
 	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, localMode, logPath, pidFile)
+		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile)
 		return
 	}
 
@@ -386,6 +396,9 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 	}
 	if autoPush {
 		args = append(args, "--auto-push")
+	}
+	if autoPull {
+		args = append(args, "--auto-pull")
 	}
 	if localMode {
 		args = append(args, "--local")

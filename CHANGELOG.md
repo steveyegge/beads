@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2025-12-22
+
+### Added
+
+- **Wisp commands** (bd-kwjh) - Full ephemeral molecule management
+  - `bd wisp create <proto>` - Instantiate proto as ephemeral wisp (solid→vapor)
+  - `bd wisp list` - List all wisps with stale detection
+  - `bd wisp gc` - Garbage collect orphaned wisps
+  - Wisps live in `.beads-wisp/` (gitignored), never sync to remote
+
+- **Chemistry UX commands** - Phase-aware molecule operations
+  - `bd pour <proto>` - Instantiate proto as persistent mol (solid→liquid)
+  - `bd mol bond --wisp` - Force spawn as vapor when attaching to mol
+  - `bd mol bond --pour` - Force spawn as liquid when attaching to wisp
+  - Cross-store squash: condense wisp to digest in main storage
+
+- **Cross-project dependencies** (bd-66w1, bd-om4a) - Reference issues across repos
+  - `external:<repo>:<id>` dependency syntax
+  - `bd ship <id> --to <repo>` - Ship issues to other beads repos
+  - `bd ready` filters by external dependency satisfaction
+  - Configure additional repos in `.beads/config.yaml`
+
+- **Orphan detection in bd doctor** (bd-5hrq) - Find issues with missing parents
+  - Detects parent-child relationships pointing to deleted issues
+  - Suggests fix commands for orphaned issues
+
+### Changed
+
+- **Multi-repo config uses YAML** (GH#683) - `bd repo add/remove` now writes to `.beads/config.yaml`
+  - Fixes disconnect where CLI wrote to DB but hydration read from YAML
+  - `bd repo remove` now cleans up hydrated issues from removed repo
+  - Breaking: `bd repo add` no longer accepts optional alias argument
+
+### Fixed
+
+- **Wisp storage initialization** - NewWispStorage now copies issue_prefix from main db
+- **Prefix validation in multi-repo mode** (GH#686) - Skip validation for external repos
+- **Empty config values** (GH#680, GH#684) - Handle gracefully in getRepoConfig()
+- **Doctor UX improvements** (GH#687) - Better diagnostics and daemon integration
+- **Orphaned test file** - Removed repo_test.go with undefined functions
+
 ## [0.33.2] - 2025-12-21
 
 ## [0.33.1] - 2025-12-21

@@ -289,6 +289,17 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.34.0",
+		Date:    "2025-12-22",
+		Changes: []string{
+			"NEW: Wisp commands - bd wisp create/list/gc for ephemeral molecule management",
+			"NEW: Chemistry UX - bd pour, bd mol bond --wisp/--pour for phase control",
+			"NEW: Cross-project deps - external:<repo>:<id> syntax, bd ship command",
+			"BREAKING: bd repo add/remove now writes to .beads/config.yaml (not DB)",
+			"FIX: Wisp storage auto-copies issue_prefix from main database",
+		},
+	},
+	{
 		Version: "0.33.2",
 		Date:    "2025-12-21",
 		Changes: []string{

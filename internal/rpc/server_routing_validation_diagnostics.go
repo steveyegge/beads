@@ -280,6 +280,7 @@ func (s *Server) handleStatus(_ *Request) Response {
 	s.mu.RLock()
 	autoCommit := s.autoCommit
 	autoPush := s.autoPush
+	autoPull := s.autoPull
 	localMode := s.localMode
 	syncInterval := s.syncInterval
 	daemonMode := s.daemonMode
@@ -297,6 +298,7 @@ func (s *Server) handleStatus(_ *Request) Response {
 		ExclusiveLockHolder: lockHolder,
 		AutoCommit:          autoCommit,
 		AutoPush:            autoPush,
+		AutoPull:            autoPull,
 		LocalMode:           localMode,
 		SyncInterval:        syncInterval,
 		DaemonMode:          daemonMode,

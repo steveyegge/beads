@@ -2,11 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -53,50 +54,50 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 		return
 	}
 
-	sort.Slice(issues, func(i, j int) bool {
-		var less bool
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		var result int
 
 		switch sortBy {
 		case "priority":
 			// Lower priority numbers come first (P0 > P1 > P2 > P3 > P4)
-			less = issues[i].Priority < issues[j].Priority
+			result = cmp.Compare(a.Priority, b.Priority)
 		case "created":
 			// Default: newest first (descending)
-			less = issues[i].CreatedAt.After(issues[j].CreatedAt)
+			result = b.CreatedAt.Compare(a.CreatedAt)
 		case "updated":
 			// Default: newest first (descending)
-			less = issues[i].UpdatedAt.After(issues[j].UpdatedAt)
+			result = b.UpdatedAt.Compare(a.UpdatedAt)
 		case "closed":
 			// Default: newest first (descending)
 			// Handle nil ClosedAt values
-			if issues[i].ClosedAt == nil && issues[j].ClosedAt == nil {
-				less = false
-			} else if issues[i].ClosedAt == nil {
-				less = false // nil sorts last
-			} else if issues[j].ClosedAt == nil {
-				less = true // non-nil sorts before nil
+			if a.ClosedAt == nil && b.ClosedAt == nil {
+				result = 0
+			} else if a.ClosedAt == nil {
+				result = 1 // nil sorts last
+			} else if b.ClosedAt == nil {
+				result = -1 // non-nil sorts before nil
 			} else {
-				less = issues[i].ClosedAt.After(*issues[j].ClosedAt)
+				result = b.ClosedAt.Compare(*a.ClosedAt)
 			}
 		case "status":
-			less = issues[i].Status < issues[j].Status
+			result = cmp.Compare(a.Status, b.Status)
 		case "id":
-			less = issues[i].ID < issues[j].ID
+			result = cmp.Compare(a.ID, b.ID)
 		case "title":
-			less = strings.ToLower(issues[i].Title) < strings.ToLower(issues[j].Title)
+			result = cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
 		case "type":
-			less = issues[i].IssueType < issues[j].IssueType
+			result = cmp.Compare(a.IssueType, b.IssueType)
 		case "assignee":
-			less = issues[i].Assignee < issues[j].Assignee
+			result = cmp.Compare(a.Assignee, b.Assignee)
 		default:
 			// Unknown sort field, no sorting
-			less = false
+			result = 0
 		}
 
 		if reverse {
-			return !less
+			return -result
 		}
-		return less
+		return result
 	})
 }
 

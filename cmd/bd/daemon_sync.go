@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,8 +37,9 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	}
 
 	// Single-repo mode - use existing logic
-	// Get all issues
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Get all issues including tombstones for sync propagation (bd-rp4o fix)
+	// Tombstones must be exported so they propagate to other clones and prevent resurrection
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("failed to get issues: %w", err)
 	}
@@ -58,8 +60,8 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 	}
 
 	// Sort by ID for consistent output
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	// Populate dependencies for all issues
