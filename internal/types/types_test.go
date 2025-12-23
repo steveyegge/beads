@@ -482,6 +482,7 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 	}{
 		{DepBlocks, true},
 		{DepParentChild, true},
+		{DepConditionalBlocks, true},
 		{DepRelated, false},
 		{DepDiscoveredFrom, false},
 		{DepRepliesTo, false},
@@ -498,6 +499,51 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 		t.Run(string(tt.depType), func(t *testing.T) {
 			if got := tt.depType.AffectsReadyWork(); got != tt.affects {
 				t.Errorf("DependencyType(%q).AffectsReadyWork() = %v, want %v", tt.depType, got, tt.affects)
+			}
+		})
+	}
+}
+
+func TestIsFailureClose(t *testing.T) {
+	tests := []struct {
+		name        string
+		closeReason string
+		isFailure   bool
+	}{
+		// Failure keywords
+		{"failed", "Task failed due to timeout", true},
+		{"rejected", "PR was rejected by reviewer", true},
+		{"wontfix", "Closed as wontfix", true},
+		{"won't fix", "Won't fix - by design", true},
+		{"cancelled", "Work cancelled", true},
+		{"canceled", "Work canceled", true},
+		{"abandoned", "Abandoned feature", true},
+		{"blocked", "Blocked by external dependency", true},
+		{"error", "Encountered error during execution", true},
+		{"timeout", "Test timeout exceeded", true},
+		{"aborted", "Build aborted", true},
+
+		// Case insensitive
+		{"FAILED upper", "FAILED", true},
+		{"Failed mixed", "Failed to build", true},
+
+		// Success cases (no failure keywords)
+		{"completed", "Completed successfully", false},
+		{"done", "Done", false},
+		{"merged", "Merged to main", false},
+		{"fixed", "Bug fixed", false},
+		{"implemented", "Feature implemented", false},
+		{"empty", "", false},
+
+		// Partial matches should work
+		{"prefixed", "prefailed", true}, // contains "failed"
+		{"suffixed", "failedtest", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsFailureClose(tt.closeReason); got != tt.isFailure {
+				t.Errorf("IsFailureClose(%q) = %v, want %v", tt.closeReason, got, tt.isFailure)
 			}
 		})
 	}

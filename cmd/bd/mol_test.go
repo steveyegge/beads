@@ -1041,6 +1041,7 @@ func TestSpawnAttachTypes(t *testing.T) {
 	}{
 		{"sequential uses blocks", types.BondTypeSequential, types.DepBlocks},
 		{"parallel uses parent-child", types.BondTypeParallel, types.DepParentChild},
+		{"conditional uses conditional-blocks", types.BondTypeConditional, types.DepConditionalBlocks},
 	}
 
 	for _, tt := range tests {

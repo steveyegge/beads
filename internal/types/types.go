@@ -365,8 +365,9 @@ type DependencyType string
 // Dependency type constants
 const (
 	// Workflow types (affect ready work calculation)
-	DepBlocks      DependencyType = "blocks"
-	DepParentChild DependencyType = "parent-child"
+	DepBlocks            DependencyType = "blocks"
+	DepParentChild       DependencyType = "parent-child"
+	DepConditionalBlocks DependencyType = "conditional-blocks" // B runs only if A fails (bd-kzda)
 
 	// Association types
 	DepRelated        DependencyType = "related"
@@ -395,7 +396,7 @@ func (d DependencyType) IsValid() bool {
 // Returns false for custom/user-defined types (which are still valid).
 func (d DependencyType) IsWellKnown() bool {
 	switch d {
-	case DepBlocks, DepParentChild, DepRelated, DepDiscoveredFrom,
+	case DepBlocks, DepParentChild, DepConditionalBlocks, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
 		DepAuthoredBy, DepAssignedTo, DepApprovedBy:
 		return true
@@ -404,9 +405,41 @@ func (d DependencyType) IsWellKnown() bool {
 }
 
 // AffectsReadyWork returns true if this dependency type blocks work.
-// Only "blocks" and "parent-child" relationships affect the ready work calculation.
+// Only "blocks", "parent-child", and "conditional-blocks" affect the ready work calculation.
 func (d DependencyType) AffectsReadyWork() bool {
-	return d == DepBlocks || d == DepParentChild
+	return d == DepBlocks || d == DepParentChild || d == DepConditionalBlocks
+}
+
+// FailureCloseKeywords are keywords that indicate an issue was closed due to failure.
+// Used by conditional-blocks dependencies to determine if the condition is met.
+var FailureCloseKeywords = []string{
+	"failed",
+	"rejected",
+	"wontfix",
+	"won't fix",
+	"cancelled",
+	"canceled",
+	"abandoned",
+	"blocked",
+	"error",
+	"timeout",
+	"aborted",
+}
+
+// IsFailureClose returns true if the close reason indicates the issue failed.
+// This is used by conditional-blocks dependencies: B runs only if A fails.
+// A "failure" close reason contains one of the FailureCloseKeywords (case-insensitive).
+func IsFailureClose(closeReason string) bool {
+	if closeReason == "" {
+		return false
+	}
+	lower := strings.ToLower(closeReason)
+	for _, keyword := range FailureCloseKeywords {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // Label represents a tag on an issue

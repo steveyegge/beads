@@ -12,12 +12,17 @@
 // blocked. An issue is blocked if:
 //   - It has a 'blocks' dependency on an open/in_progress/blocked issue (direct blocking)
 //   - It has a 'blocks' dependency on an external:* reference (cross-project blocking, bd-om4a)
+//   - It has a 'conditional-blocks' dependency where the blocker hasn't failed (bd-kzda)
 //   - Its parent is blocked and it's connected via 'parent-child' dependency (transitive blocking)
 //
+// Conditional blocks (bd-kzda): B runs only if A fails. B is blocked until A is closed
+// with a failure close reason (failed, rejected, wontfix, cancelled, abandoned, etc.).
+// If A succeeds (closed without failure), B stays blocked.
+//
 // The cache is maintained automatically by invalidating and rebuilding whenever:
-//   - A 'blocks' or 'parent-child' dependency is added or removed
+//   - A 'blocks', 'conditional-blocks', or 'parent-child' dependency is added or removed
 //   - Any issue's status changes (affects whether it blocks others)
-//   - An issue is closed (closed issues don't block others)
+//   - An issue is closed (closed issues don't block others; conditional-blocks checks close_reason)
 //
 // Related and discovered-from dependencies do NOT trigger cache invalidation since they
 // don't affect blocking semantics.
@@ -115,17 +120,57 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 	// Rebuild using the recursive CTE logic
 	// Only includes local blockers (open issues) - external refs are resolved
 	// lazily at query time by GetReadyWork (bd-zmmy supersedes bd-om4a)
+	//
+	// Handles three blocking types:
+	// - 'blocks': B is blocked until A is closed (any close reason)
+	// - 'conditional-blocks': B is blocked until A is closed with failure (bd-kzda)
+	// - 'parent-child': Propagates blockage to children
+	//
+	// Failure close reasons are detected by matching keywords in close_reason:
+	// failed, rejected, wontfix, won't fix, cancelled, canceled, abandoned,
+	// blocked, error, timeout, aborted
 	query := `
 		INSERT INTO blocked_issues_cache (issue_id)
 		WITH RECURSIVE
 		  -- Step 1: Find issues blocked directly by LOCAL dependencies
 		  -- External refs (external:*) are excluded - they're resolved lazily by GetReadyWork
 		  blocked_directly AS (
+		    -- Regular 'blocks' dependencies: B blocked if A not closed
 		    SELECT DISTINCT d.issue_id
 		    FROM dependencies d
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.type = 'blocks'
 		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+
+		    UNION
+
+		    -- 'conditional-blocks' dependencies: B blocked unless A closed with failure (bd-kzda)
+		    -- B is blocked if:
+		    --   - A is not closed (still in progress), OR
+		    --   - A is closed without a failure indication
+		    SELECT DISTINCT d.issue_id
+		    FROM dependencies d
+		    JOIN issues blocker ON d.depends_on_id = blocker.id
+		    WHERE d.type = 'conditional-blocks'
+		      AND (
+		        -- A is not closed: B stays blocked
+		        blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		        OR
+		        -- A is closed but NOT with a failure: B stays blocked (condition not met)
+		        (blocker.status = 'closed' AND NOT (
+		          LOWER(COALESCE(blocker.close_reason, '')) LIKE '%failed%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%rejected%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%wontfix%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%won''t fix%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%cancelled%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%canceled%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%abandoned%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%blocked%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%error%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%timeout%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%aborted%'
+		        ))
+		      )
 		  ),
 
 		  -- Step 2: Propagate blockage to all descendants via parent-child

@@ -374,3 +374,89 @@ func TestMultipleBlockersInCache(t *testing.T) {
 		t.Errorf("Expected %s to be removed from cache (both blockers closed)", blocked.ID)
 	}
 }
+
+// TestConditionalBlocksCache tests the conditional-blocks dependency type (bd-kzda)
+// B runs only if A fails. B is blocked until A is closed with a failure close reason.
+func TestConditionalBlocksCache(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create A (potential failure) -> B (conditional on A's failure)
+	issueA := &types.Issue{Title: "Issue A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issueB := &types.Issue{Title: "Issue B (runs if A fails)", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, issueA, "test-user")
+	store.CreateIssue(ctx, issueB, "test-user")
+
+	// Add conditional-blocks dependency: B depends on A failing
+	dep := &types.Dependency{IssueID: issueB.ID, DependsOnID: issueA.ID, Type: types.DepConditionalBlocks}
+	store.AddDependency(ctx, dep, "test-user")
+
+	// Initially: A is open, so B should be blocked
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[issueB.ID] {
+		t.Errorf("Expected %s to be blocked (A is still open)", issueB.ID)
+	}
+
+	// Close A with SUCCESS (no failure keywords) - B should STILL be blocked
+	store.CloseIssue(ctx, issueA.ID, "Completed successfully", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if !cached[issueB.ID] {
+		t.Errorf("Expected %s to be blocked (A succeeded, condition not met)", issueB.ID)
+	}
+
+	// Reopen A
+	store.UpdateIssue(ctx, issueA.ID, map[string]interface{}{"status": types.StatusOpen}, "test-user")
+
+	// Close A with FAILURE - B should now be UNBLOCKED
+	store.CloseIssue(ctx, issueA.ID, "Task failed due to timeout", "test-user")
+
+	cached = getCachedBlockedIssues(t, store)
+	if cached[issueB.ID] {
+		t.Errorf("Expected %s to be unblocked (A failed, condition met)", issueB.ID)
+	}
+}
+
+// TestConditionalBlocksVariousFailureKeywords tests that various failure keywords unlock B
+func TestConditionalBlocksVariousFailureKeywords(t *testing.T) {
+	failureReasons := []string{
+		"failed",
+		"rejected",
+		"wontfix",
+		"won't fix",
+		"cancelled",
+		"canceled",
+		"abandoned",
+		"blocked",
+		"error",
+		"timeout",
+		"aborted",
+	}
+
+	for _, reason := range failureReasons {
+		t.Run(reason, func(t *testing.T) {
+			store, cleanup := setupTestDB(t)
+			defer cleanup()
+			ctx := context.Background()
+
+			issueA := &types.Issue{Title: "Issue A", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+			issueB := &types.Issue{Title: "Issue B", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+			store.CreateIssue(ctx, issueA, "test-user")
+			store.CreateIssue(ctx, issueB, "test-user")
+
+			dep := &types.Dependency{IssueID: issueB.ID, DependsOnID: issueA.ID, Type: types.DepConditionalBlocks}
+			store.AddDependency(ctx, dep, "test-user")
+
+			// Close A with failure reason
+			store.CloseIssue(ctx, issueA.ID, "Closed: "+reason, "test-user")
+
+			cached := getCachedBlockedIssues(t, store)
+			if cached[issueB.ID] {
+				t.Errorf("Expected B to be unblocked after A closed with '%s'", reason)
+			}
+		})
+	}
+}

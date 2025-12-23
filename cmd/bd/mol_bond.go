@@ -301,12 +301,18 @@ func bondProtoProto(ctx context.Context, s storage.Storage, protoA, protoB *type
 			return fmt.Errorf("linking proto B: %w", err)
 		}
 
-		// For sequential bonding, add blocking dependency: B blocks on A
-		if bondType == types.BondTypeSequential {
+		// For sequential/conditional bonding, add blocking dependency: B blocks on A
+		// Sequential: B runs after A completes (any outcome)
+		// Conditional: B runs only if A fails (bd-kzda)
+		if bondType == types.BondTypeSequential || bondType == types.BondTypeConditional {
+			depType := types.DepBlocks
+			if bondType == types.BondTypeConditional {
+				depType = types.DepConditionalBlocks
+			}
 			seqDep := &types.Dependency{
 				IssueID:     protoB.ID,
 				DependsOnID: protoA.ID,
-				Type:        types.DepBlocks,
+				Type:        depType,
 			}
 			if err := tx.AddDependency(ctx, seqDep, actorName); err != nil {
 				return fmt.Errorf("adding sequence dep: %w", err)
@@ -357,12 +363,18 @@ func bondProtoMol(ctx context.Context, s storage.Storage, proto, mol *types.Issu
 	// Attach spawned molecule to existing molecule
 	err = s.RunInTransaction(ctx, func(tx storage.Transaction) error {
 		// Add dependency from spawned root to molecule
-		// For sequential: use blocks (captures workflow semantics)
-		// For parallel/conditional: use parent-child (organizational)
+		// Sequential: use blocks (B runs after A completes)
+		// Conditional: use conditional-blocks (B runs only if A fails) (bd-kzda)
+		// Parallel: use parent-child (organizational, no blocking)
 		// Note: Schema only allows one dependency per (issue_id, depends_on_id) pair
-		depType := types.DepParentChild
-		if bondType == types.BondTypeSequential {
+		var depType types.DependencyType
+		switch bondType {
+		case types.BondTypeSequential:
 			depType = types.DepBlocks
+		case types.BondTypeConditional:
+			depType = types.DepConditionalBlocks
+		default:
+			depType = types.DepParentChild
 		}
 		dep := &types.Dependency{
 			IssueID:     spawnResult.NewEpicID,
@@ -397,12 +409,18 @@ func bondMolProto(ctx context.Context, s storage.Storage, mol, proto *types.Issu
 func bondMolMol(ctx context.Context, s storage.Storage, molA, molB *types.Issue, bondType, actorName string) (*BondResult, error) {
 	err := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
 		// Add dependency: B links to A
-		// For sequential: use blocks (captures workflow semantics)
-		// For parallel/conditional: use parent-child (organizational)
+		// Sequential: use blocks (B runs after A completes)
+		// Conditional: use conditional-blocks (B runs only if A fails) (bd-kzda)
+		// Parallel: use parent-child (organizational, no blocking)
 		// Note: Schema only allows one dependency per (issue_id, depends_on_id) pair
-		depType := types.DepParentChild
-		if bondType == types.BondTypeSequential {
+		var depType types.DependencyType
+		switch bondType {
+		case types.BondTypeSequential:
 			depType = types.DepBlocks
+		case types.BondTypeConditional:
+			depType = types.DepConditionalBlocks
+		default:
+			depType = types.DepParentChild
 		}
 		dep := &types.Dependency{
 			IssueID:     molB.ID,

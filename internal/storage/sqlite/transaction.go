@@ -712,8 +712,8 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 		}
 	}
 
-	// Invalidate blocked cache for blocking dependencies (bd-1c4h)
-	if dep.Type == types.DepBlocks || dep.Type == types.DepParentChild {
+	// Invalidate blocked cache for blocking dependencies (bd-1c4h, bd-kzda)
+	if dep.Type.AffectsReadyWork() {
 		if err := t.parent.invalidateBlockedCache(ctx, t.conn); err != nil {
 			return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 		}
@@ -730,10 +730,10 @@ func (t *sqliteTxStorage) RemoveDependency(ctx context.Context, issueID, depends
 		SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 	`, issueID, dependsOnID).Scan(&depType)
 
-	// Store whether cache needs invalidation before deletion
+	// Store whether cache needs invalidation before deletion (bd-1c4h, bd-kzda)
 	needsCacheInvalidation := false
 	if err == nil {
-		needsCacheInvalidation = (depType == types.DepBlocks || depType == types.DepParentChild)
+		needsCacheInvalidation = depType.AffectsReadyWork()
 	}
 
 	result, err := t.conn.ExecContext(ctx, `

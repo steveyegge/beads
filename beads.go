@@ -92,10 +92,11 @@ const (
 
 // DependencyType constants
 const (
-	DepBlocks         = types.DepBlocks
-	DepRelated        = types.DepRelated
-	DepParentChild    = types.DepParentChild
-	DepDiscoveredFrom = types.DepDiscoveredFrom
+	DepBlocks            = types.DepBlocks
+	DepRelated           = types.DepRelated
+	DepParentChild       = types.DepParentChild
+	DepDiscoveredFrom    = types.DepDiscoveredFrom
+	DepConditionalBlocks = types.DepConditionalBlocks // B runs only if A fails (bd-kzda)
 )
 
 // SortPolicy constants
