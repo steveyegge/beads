@@ -977,8 +977,16 @@ var closeCmd = &cobra.Command{
 		}
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		force, _ := cmd.Flags().GetBool("force")
+		continueFlag, _ := cmd.Flags().GetBool("continue")
+		noAuto, _ := cmd.Flags().GetBool("no-auto")
 
 		ctx := rootCtx
+
+		// --continue only works with a single issue
+		if continueFlag && len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "Error: --continue only works when closing a single issue\n")
+			os.Exit(1)
+		}
 
 		// Resolve partial IDs first
 		var resolvedIDs []string
@@ -1054,6 +1062,13 @@ var closeCmd = &cobra.Command{
 				}
 			}
 
+			// Handle --continue flag in daemon mode (bd-ieyy)
+			// Note: --continue requires direct database access to walk parent-child chain
+			if continueFlag && len(closedIssues) > 0 {
+				fmt.Fprintf(os.Stderr, "\nNote: --continue requires direct database access\n")
+				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon close %s --continue\n", resolvedIDs[0])
+			}
+
 			if jsonOutput && len(closedIssues) > 0 {
 				outputJSON(closedIssues)
 			}
@@ -1062,6 +1077,7 @@ var closeCmd = &cobra.Command{
 
 		// Direct mode
 		closedIssues := []*types.Issue{}
+		closedCount := 0
 		for _, id := range resolvedIDs {
 			// Get issue for checks
 			issue, _ := store.GetIssue(ctx, id)
@@ -1085,6 +1101,8 @@ var closeCmd = &cobra.Command{
 				continue
 			}
 
+			closedCount++
+
 			// Run close hook (bd-kwro.8)
 			closedIssue, _ := store.GetIssue(ctx, id)
 			if closedIssue != nil && hookRunner != nil {
@@ -1103,6 +1121,25 @@ var closeCmd = &cobra.Command{
 		// Schedule auto-flush if any issues were closed
 		if len(args) > 0 {
 			markDirtyAndScheduleFlush()
+		}
+
+		// Handle --continue flag (bd-ieyy)
+		if continueFlag && len(resolvedIDs) == 1 && closedCount > 0 {
+			autoClaim := !noAuto
+			result, err := AdvanceToNextStep(ctx, store, resolvedIDs[0], autoClaim, actor)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not advance to next step: %v\n", err)
+			} else if result != nil {
+				if jsonOutput {
+					// Include continue result in JSON output
+					outputJSON(map[string]interface{}{
+						"closed":   closedIssues,
+						"continue": result,
+					})
+					return
+				}
+				PrintContinueResult(result)
+			}
 		}
 
 		if jsonOutput && len(closedIssues) > 0 {
@@ -1376,5 +1413,7 @@ func init() {
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
 	closeCmd.Flags().Bool("json", false, "Output JSON format")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
+	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
+	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	rootCmd.AddCommand(closeCmd)
 }
