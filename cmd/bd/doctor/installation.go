@@ -97,7 +97,7 @@ func CheckPermissions(path string) DoctorCheck {
 			Name:    "Permissions",
 			Status:  StatusError,
 			Message: ".beads/ directory is not writable",
-			Fix:     fmt.Sprintf("Fix permissions: chmod u+w %s", beadsDir),
+			Fix:     "Run 'bd doctor --fix' to fix permissions",
 		}
 	}
 	_ = os.Remove(testFile) // Clean up test file (intentionally ignore error)
@@ -112,7 +112,7 @@ func CheckPermissions(path string) DoctorCheck {
 				Name:    "Permissions",
 				Status:  StatusError,
 				Message: "Database file exists but cannot be opened",
-				Fix:     fmt.Sprintf("Check database permissions: %s", dbPath),
+				Fix:     "Run 'bd doctor --fix' to fix permissions",
 			}
 		}
 		_ = db.Close() // Intentionally ignore close error
@@ -127,7 +127,7 @@ func CheckPermissions(path string) DoctorCheck {
 					Name:    "Permissions",
 					Status:  StatusError,
 					Message: "Database file is not readable",
-					Fix:     fmt.Sprintf("Fix permissions: chmod u+rw %s", dbPath),
+					Fix:     "Run 'bd doctor --fix' to fix permissions",
 				}
 			}
 		}
