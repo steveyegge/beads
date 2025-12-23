@@ -61,10 +61,16 @@ Issue prefix: `beads-` (e.g., beads-6v2)
 
 ```
 [ ] git status              (check for uncommitted changes)
-[ ] git push                (push any commits)
+[ ] git add && git commit   (commit any changes)
 [ ] bd sync                 (sync beads changes)
-[ ] Check inbox             (any messages needing response?)
+[ ] git push                (push to remote - CRITICAL)
+[ ] gt handoff              (hand off to fresh session)
+    # Or with context: gt handoff -s "Brief" -m "Details"
 ```
+
+**Why `gt handoff`?** This is the canonical way to end any agent session. It
+sends handoff mail, then respawns with fresh Claude instance. The SessionStart
+hook runs `gt prime` to restore context. Work continues from where you left off.
 
 Crew member: dave
 Rig: beads
@@ -831,6 +837,10 @@ For more details, see README.md and docs/QUICKSTART.md.
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+**End with `gt handoff`**: After pushing, run `gt handoff` to cycle to a fresh
+session. This is the canonical way to end any agent session - it sends handoff
+mail and respawns with fresh context.
 
 
 ## Pull Requests (PR)
