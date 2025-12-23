@@ -1057,6 +1057,8 @@ var closeCmd = &cobra.Command{
 					if hookRunner != nil {
 						hookRunner.Run(hooks.EventClose, &issue)
 					}
+					// Run config-based close hooks (bd-g4b4)
+					hooks.RunConfigCloseHooks(ctx, &issue)
 					if jsonOutput {
 						closedIssues = append(closedIssues, &issue)
 					}
@@ -1109,8 +1111,12 @@ var closeCmd = &cobra.Command{
 
 			// Run close hook (bd-kwro.8)
 			closedIssue, _ := store.GetIssue(ctx, id)
-			if closedIssue != nil && hookRunner != nil {
-				hookRunner.Run(hooks.EventClose, closedIssue)
+			if closedIssue != nil {
+				if hookRunner != nil {
+					hookRunner.Run(hooks.EventClose, closedIssue)
+				}
+				// Run config-based close hooks (bd-g4b4)
+				hooks.RunConfigCloseHooks(ctx, closedIssue)
 			}
 
 			if jsonOutput {
