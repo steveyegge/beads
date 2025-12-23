@@ -396,6 +396,22 @@ func applyFixList(path string, fixes []doctorCheck) {
 				continue
 			}
 			err = fix.SyncBranchHealth(path, syncBranch)
+		case "Merge Artifacts":
+			err = fix.MergeArtifacts(path)
+		case "Orphaned Dependencies":
+			err = fix.OrphanedDependencies(path)
+		case "Duplicate Issues":
+			// No auto-fix: duplicates require user review
+			fmt.Printf("  ⚠ Run 'bd duplicates' to review and merge duplicates\n")
+			continue
+		case "Test Pollution":
+			// No auto-fix: test cleanup requires user review
+			fmt.Printf("  ⚠ Run 'bd detect-pollution' to review and clean test issues\n")
+			continue
+		case "Git Conflicts":
+			// No auto-fix: git conflicts require manual resolution
+			fmt.Printf("  ⚠ Resolve conflicts manually: git checkout --ours or --theirs .beads/issues.jsonl\n")
+			continue
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
@@ -748,6 +764,33 @@ func runDiagnostics(path string) doctorResult {
 	untrackedCheck := convertWithCategory(doctor.CheckUntrackedBeadsFiles(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, untrackedCheck)
 	// Don't fail overall check for untracked files, just warn
+
+	// Check 21: Merge artifacts (from bd clean)
+	mergeArtifactsCheck := convertDoctorCheck(doctor.CheckMergeArtifacts(path))
+	result.Checks = append(result.Checks, mergeArtifactsCheck)
+	// Don't fail overall check for merge artifacts, just warn
+
+	// Check 22: Orphaned dependencies (from bd repair-deps, bd validate)
+	orphanedDepsCheck := convertDoctorCheck(doctor.CheckOrphanedDependencies(path))
+	result.Checks = append(result.Checks, orphanedDepsCheck)
+	// Don't fail overall check for orphaned deps, just warn
+
+	// Check 23: Duplicate issues (from bd validate)
+	duplicatesCheck := convertDoctorCheck(doctor.CheckDuplicateIssues(path))
+	result.Checks = append(result.Checks, duplicatesCheck)
+	// Don't fail overall check for duplicates, just warn
+
+	// Check 24: Test pollution (from bd validate)
+	pollutionCheck := convertDoctorCheck(doctor.CheckTestPollution(path))
+	result.Checks = append(result.Checks, pollutionCheck)
+	// Don't fail overall check for test pollution, just warn
+
+	// Check 25: Git conflicts in JSONL (from bd validate)
+	conflictsCheck := convertDoctorCheck(doctor.CheckGitConflicts(path))
+	result.Checks = append(result.Checks, conflictsCheck)
+	if conflictsCheck.Status == statusError {
+		result.OverallOK = false
+	}
 
 	return result
 }

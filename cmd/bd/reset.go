@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/git"
@@ -323,12 +324,12 @@ func stopDaemonQuiet(pidFile string) {
 
 	_ = sendStopSignal(process)
 
-	// Wait up to 5 seconds for daemon to stop
-	for i := 0; i < 50; i++ {
+	// Wait for daemon to stop gracefully
+	for i := 0; i < daemonShutdownAttempts; i++ {
+		time.Sleep(daemonShutdownPollInterval)
 		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
 			return
 		}
-		// Small sleep handled by the check
 	}
 
 	// Force kill if still running

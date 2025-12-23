@@ -91,6 +91,16 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	if err != nil {
 		debug.Logf("failed to connect to RPC endpoint: %v", err)
 		rpcDebugLog("dial failed after %v: %v", dialDuration, err)
+
+		// Fast-fail: socket exists but dial failed - check if daemon actually alive
+		// If lock is not held, daemon crashed and left stale socket - clean up immediately
+		beadsDir := filepath.Dir(socketPath)
+		running, _ := lockfile.TryDaemonLock(beadsDir)
+		if !running {
+			rpcDebugLog("daemon not running (lock free) - cleaning up stale socket")
+			cleanupStaleDaemonArtifacts(beadsDir)
+			_ = os.Remove(socketPath) // Also remove stale socket
+		}
 		return nil, nil
 	}
 	
