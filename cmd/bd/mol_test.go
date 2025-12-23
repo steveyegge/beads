@@ -1627,3 +1627,399 @@ func TestWispFilteringFromExport(t *testing.T) {
 		t.Errorf("Expected normal issue %s, got %s", normalIssue.ID, exportableIssues[0].ID)
 	}
 }
+
+// =============================================================================
+// Mol Current Tests (bd-nurq)
+// =============================================================================
+
+// TestGetMoleculeProgress tests loading a molecule and computing progress
+func TestGetMoleculeProgress(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a molecule (epic with template label)
+	root := &types.Issue{
+		Title:     "Test Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+		Labels:    []string{BeadsTemplateLabel},
+		Assignee:  "test-agent",
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	// Create steps with different statuses
+	step1 := &types.Issue{
+		Title:     "Step 1: Done",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	step2 := &types.Issue{
+		Title:     "Step 2: Current",
+		Status:    types.StatusInProgress,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	step3 := &types.Issue{
+		Title:     "Step 3: Pending",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, step := range []*types.Issue{step1, step2, step3} {
+		if err := s.CreateIssue(ctx, step, "test"); err != nil {
+			t.Fatalf("Failed to create step: %v", err)
+		}
+		// Add parent-child dependency
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID:     step.ID,
+			DependsOnID: root.ID,
+			Type:        types.DepParentChild,
+		}, "test"); err != nil {
+			t.Fatalf("Failed to add dependency: %v", err)
+		}
+	}
+
+	// Add blocking dependency: step3 blocks on step2
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     step3.ID,
+		DependsOnID: step2.ID,
+		Type:        types.DepBlocks,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add blocking dependency: %v", err)
+	}
+
+	// Get progress
+	progress, err := getMoleculeProgress(ctx, s, root.ID)
+	if err != nil {
+		t.Fatalf("getMoleculeProgress failed: %v", err)
+	}
+
+	// Verify progress
+	if progress.MoleculeID != root.ID {
+		t.Errorf("MoleculeID = %q, want %q", progress.MoleculeID, root.ID)
+	}
+	if progress.MoleculeTitle != root.Title {
+		t.Errorf("MoleculeTitle = %q, want %q", progress.MoleculeTitle, root.Title)
+	}
+	if progress.Assignee != "test-agent" {
+		t.Errorf("Assignee = %q, want %q", progress.Assignee, "test-agent")
+	}
+	if progress.Total != 3 {
+		t.Errorf("Total = %d, want 3", progress.Total)
+	}
+	if progress.Completed != 1 {
+		t.Errorf("Completed = %d, want 1", progress.Completed)
+	}
+	if progress.CurrentStep == nil {
+		t.Error("CurrentStep should not be nil")
+	} else if progress.CurrentStep.ID != step2.ID {
+		t.Errorf("CurrentStep.ID = %q, want %q", progress.CurrentStep.ID, step2.ID)
+	}
+	if len(progress.Steps) != 3 {
+		t.Errorf("Steps count = %d, want 3", len(progress.Steps))
+	}
+}
+
+// TestFindParentMolecule tests walking up parent-child chain
+func TestFindParentMolecule(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create molecule root (epic with template label)
+	root := &types.Issue{
+		Title:     "Molecule Root",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+		Labels:    []string{BeadsTemplateLabel},
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	// Create child step
+	child := &types.Issue{
+		Title:     "Child Step",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := s.CreateIssue(ctx, child, "test"); err != nil {
+		t.Fatalf("Failed to create child: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     child.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add parent-child: %v", err)
+	}
+
+	// Create grandchild
+	grandchild := &types.Issue{
+		Title:     "Grandchild Step",
+		Status:    types.StatusOpen,
+		Priority:  3,
+		IssueType: types.TypeTask,
+	}
+	if err := s.CreateIssue(ctx, grandchild, "test"); err != nil {
+		t.Fatalf("Failed to create grandchild: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     grandchild.ID,
+		DependsOnID: child.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add grandchild parent-child: %v", err)
+	}
+
+	// Find parent molecule from grandchild
+	moleculeID := findParentMolecule(ctx, s, grandchild.ID)
+	if moleculeID != root.ID {
+		t.Errorf("findParentMolecule(grandchild) = %q, want %q", moleculeID, root.ID)
+	}
+
+	// Find parent molecule from child
+	moleculeID = findParentMolecule(ctx, s, child.ID)
+	if moleculeID != root.ID {
+		t.Errorf("findParentMolecule(child) = %q, want %q", moleculeID, root.ID)
+	}
+
+	// Find parent molecule from root
+	moleculeID = findParentMolecule(ctx, s, root.ID)
+	if moleculeID != root.ID {
+		t.Errorf("findParentMolecule(root) = %q, want %q", moleculeID, root.ID)
+	}
+
+	// Create orphan issue (not part of any molecule)
+	orphan := &types.Issue{
+		Title:     "Orphan Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := s.CreateIssue(ctx, orphan, "test"); err != nil {
+		t.Fatalf("Failed to create orphan: %v", err)
+	}
+
+	// Should return empty for orphan
+	moleculeID = findParentMolecule(ctx, s, orphan.ID)
+	if moleculeID != "" {
+		t.Errorf("findParentMolecule(orphan) = %q, want empty", moleculeID)
+	}
+}
+
+// TestAdvanceToNextStep tests auto-advancing to next step
+func TestAdvanceToNextStep(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create molecule with sequential steps
+	root := &types.Issue{
+		Title:     "Advance Test Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+		Labels:    []string{BeadsTemplateLabel},
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	step1 := &types.Issue{
+		Title:     "Step 1",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	step2 := &types.Issue{
+		Title:     "Step 2",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+
+	for _, step := range []*types.Issue{step1, step2} {
+		if err := s.CreateIssue(ctx, step, "test"); err != nil {
+			t.Fatalf("Failed to create step: %v", err)
+		}
+		if err := s.AddDependency(ctx, &types.Dependency{
+			IssueID:     step.ID,
+			DependsOnID: root.ID,
+			Type:        types.DepParentChild,
+		}, "test"); err != nil {
+			t.Fatalf("Failed to add dependency: %v", err)
+		}
+	}
+
+	// step2 blocks on step1
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     step2.ID,
+		DependsOnID: step1.ID,
+		Type:        types.DepBlocks,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add blocking dependency: %v", err)
+	}
+
+	// Advance from step1 (just closed) without auto-claim
+	result, err := AdvanceToNextStep(ctx, s, step1.ID, false, "test")
+	if err != nil {
+		t.Fatalf("AdvanceToNextStep failed: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result should not be nil")
+	}
+	if result.MoleculeID != root.ID {
+		t.Errorf("MoleculeID = %q, want %q", result.MoleculeID, root.ID)
+	}
+	if result.NextStep == nil {
+		t.Error("NextStep should not be nil")
+	} else if result.NextStep.ID != step2.ID {
+		t.Errorf("NextStep.ID = %q, want %q", result.NextStep.ID, step2.ID)
+	}
+	if result.AutoAdvanced {
+		t.Error("AutoAdvanced should be false when not requested")
+	}
+
+	// Verify step2 is still open
+	step2Updated, _ := s.GetIssue(ctx, step2.ID)
+	if step2Updated.Status != types.StatusOpen {
+		t.Errorf("Step2 status = %v, want open (no auto-claim)", step2Updated.Status)
+	}
+
+	// Now test with auto-claim
+	result, err = AdvanceToNextStep(ctx, s, step1.ID, true, "test")
+	if err != nil {
+		t.Fatalf("AdvanceToNextStep with auto-claim failed: %v", err)
+	}
+	if !result.AutoAdvanced {
+		t.Error("AutoAdvanced should be true when requested")
+	}
+
+	// Verify step2 is now in_progress
+	step2Updated, _ = s.GetIssue(ctx, step2.ID)
+	if step2Updated.Status != types.StatusInProgress {
+		t.Errorf("Step2 status = %v, want in_progress (auto-claim)", step2Updated.Status)
+	}
+}
+
+// TestAdvanceToNextStepMoleculeComplete tests behavior when molecule is complete
+func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create molecule with single step
+	root := &types.Issue{
+		Title:     "Complete Test Molecule",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeEpic,
+		Labels:    []string{BeadsTemplateLabel},
+	}
+	if err := s.CreateIssue(ctx, root, "test"); err != nil {
+		t.Fatalf("Failed to create root: %v", err)
+	}
+
+	step1 := &types.Issue{
+		Title:     "Only Step",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := s.CreateIssue(ctx, step1, "test"); err != nil {
+		t.Fatalf("Failed to create step: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{
+		IssueID:     step1.ID,
+		DependsOnID: root.ID,
+		Type:        types.DepParentChild,
+	}, "test"); err != nil {
+		t.Fatalf("Failed to add dependency: %v", err)
+	}
+
+	// Advance from the only step (molecule should be complete)
+	result, err := AdvanceToNextStep(ctx, s, step1.ID, false, "test")
+	if err != nil {
+		t.Fatalf("AdvanceToNextStep failed: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result should not be nil")
+	}
+	if !result.MolComplete {
+		t.Error("MolComplete should be true when all steps are done")
+	}
+	if result.NextStep != nil {
+		t.Error("NextStep should be nil when molecule is complete")
+	}
+}
+
+// TestAdvanceToNextStepOrphanIssue tests behavior for non-molecule issues
+func TestAdvanceToNextStepOrphanIssue(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create standalone issue (not part of molecule)
+	orphan := &types.Issue{
+		Title:     "Standalone Issue",
+		Status:    types.StatusClosed,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := s.CreateIssue(ctx, orphan, "test"); err != nil {
+		t.Fatalf("Failed to create orphan: %v", err)
+	}
+
+	// Advance should return nil (not part of molecule)
+	result, err := AdvanceToNextStep(ctx, s, orphan.ID, false, "test")
+	if err != nil {
+		t.Fatalf("AdvanceToNextStep failed: %v", err)
+	}
+	if result != nil {
+		t.Error("result should be nil for orphan issue")
+	}
+}
