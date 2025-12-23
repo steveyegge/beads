@@ -42,6 +42,7 @@ var migrationsList = []Migration{
 	{"pinned_column", migrations.MigratePinnedColumn},
 	{"is_template_column", migrations.MigrateIsTemplateColumn},
 	{"remove_depends_on_fk", migrations.MigrateRemoveDependsOnFK},
+	{"additional_indexes", migrations.MigrateAdditionalIndexes},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -91,6 +92,7 @@ func getMigrationDescription(name string) string {
 		"pinned_column":                "Adds pinned column for persistent context markers (bd-7h5)",
 		"is_template_column":           "Adds is_template column for template molecules (beads-1ra)",
 		"remove_depends_on_fk":         "Removes FK constraint on depends_on_id to allow external references (bd-zmmy)",
+		"additional_indexes":           "Adds performance optimization indexes for common query patterns (bd-h0we)",
 	}
 	
 	if desc, ok := descriptions[name]; ok {
