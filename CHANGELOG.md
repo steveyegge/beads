@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2025-12-23
+
+### Added
+
+- **`bd list --parent` flag** (bd-yqhh) - Filter issues by parent
+  - `bd list --parent=bd-xyz --status=open` shows open children of bd-xyz
+  - Useful for epic progress tracking and molecule step listing
+
+- **Conditional bond type** (bd-kzda) - Run steps only when predecessors fail
+  - `bd mol bond --type conditional-blocks` for error-handling workflows
+  - Step B runs only if step A fails (useful for fallback paths)
+
+- **Molecule navigation commands** (bd-sal9, bd-ieyy) - Track progress through molecules
+  - `bd mol current` - Show current step and molecule progress
+  - `bd close --continue` - Auto-advance to next step in molecule
+  - `bd close --no-auto` - Close without auto-claiming next step
+
+- **HOP entity tracking types** (bd-7pwh) - Foundation for future HOP integration
+  - `EntityRef` type with Name, Platform, Org, ID fields
+  - `Creator` field on Issue for work attribution
+  - `Validations` array for tracking approvals
+
+- **External dependency display** (bd-vks2) - Show cross-project deps in tree view
+  - `bd dep tree` now displays external dependencies with repo prefix
+  - Satisfied external deps filtered from blocked issues
+
+- **Performance optimization indexes** (bd-bha9, bd-a9y3) - Faster queries
+  - Added indexes for common query patterns
+  - Improved GetReadyWork and SearchIssues performance
+
+### Changed
+
+- **Consolidated doctor --fix** (bd-bqcc) - Single command for all fixes
+  - `bd doctor --fix` now handles: hooks, permissions, sync branch, schema
+  - Removed individual `bd migrate`, `bd hooks install` suggestions
+  - Daemon health check integrated into doctor flow
+
+- **Auto_pull config** (GH#707) - Periodic remote sync in event-driven mode
+  - `bd config set daemon.auto_pull true` enables pull every 5 minutes
+  - Prevents staleness when git changes happen outside daemon's watch
+
+### Fixed
+
+- **Parallel execution migration race** (GH#720) - Multiple daemons no longer corrupt DB
+  - Added file-based migration lock to prevent concurrent schema changes
+  - Retry logic when migration lock is held by another process
+
+- **FindJSONLInDir interactions.jsonl** (GH#709) - No longer picks wrong file
+  - Skip `interactions.jsonl` when discovering JSONL files
+  - Fixes issue where wrong file was used as database source
+
+- **bd create -f with daemon** (GH#719) - File flag now works in daemon mode
+  - `-f/--file` flag properly forwarded through RPC
+
+- **Daemon duplicate log messages** (PR#713) - Reduced log spam
+  - Deduplicate file and git ref change notifications
+
+- **Worktree health check redundancy** (PR#711) - Integrated into CreateBeadsWorktree
+  - Health check runs automatically, not as separate step
+
+- **Diverged sync branch handling** (GH#697) - Auto-recovery on push failure
+  - Fetch-rebase-retry when push fails due to divergence
+
+- **Tombstones in JSONL export** (GH#696) - Deletions now propagate correctly
+  - Tombstone records included in exportToJSONLWithStore
+
+### Refactored
+
+- Remove legacy autoflush code paths (bd-xsl9)
+- Consolidate duplicate path-finding utilities (bd-74w1, bd-4nqq)
+- Replace map[string]interface{} with typed JSON structs (bd-u2sc.1)
+- Migrate sort.Slice to slices.SortFunc (bd-u2sc.2)
+- Add testEnv helpers, reduce SQLite test file sizes (bd-4opy)
+
 ## [0.34.0] - 2025-12-22
 
 ### Added
