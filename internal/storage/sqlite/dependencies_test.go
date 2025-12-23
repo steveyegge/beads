@@ -1657,3 +1657,161 @@ func TestRemoveDependencyExternal(t *testing.T) {
 		t.Errorf("Expected 0 dependencies after removal, got %d", len(deps))
 	}
 }
+
+// TestGetDependencyTreeExternalDeps verifies that external dependencies
+// appear in the dependency tree as synthetic leaf nodes (bd-vks2).
+func TestGetDependencyTreeExternalDeps(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a root issue
+	root := &types.Issue{
+		Title:     "Root issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, root, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Create a blocking local issue
+	blocker := &types.Issue{
+		Title:     "Local blocker",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, blocker, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Add local dependency
+	localDep := &types.Dependency{
+		IssueID:     root.ID,
+		DependsOnID: blocker.ID,
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, localDep, "test-user"); err != nil {
+		t.Fatalf("AddDependency (local) failed: %v", err)
+	}
+
+	// Add external dependency to root
+	extRef := "external:test-project:test-capability"
+	extDep := &types.Dependency{
+		IssueID:     root.ID,
+		DependsOnID: extRef,
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, extDep, "test-user"); err != nil {
+		t.Fatalf("AddDependency (external) failed: %v", err)
+	}
+
+	// Get dependency tree
+	tree, err := store.GetDependencyTree(ctx, root.ID, 10, false, false)
+	if err != nil {
+		t.Fatalf("GetDependencyTree failed: %v", err)
+	}
+
+	// Should have 3 nodes: root, local blocker, and external dep
+	if len(tree) != 3 {
+		t.Errorf("Expected 3 nodes in tree (root, local, external), got %d", len(tree))
+		for _, node := range tree {
+			t.Logf("Node: id=%s title=%s depth=%d", node.ID, node.Title, node.Depth)
+		}
+	}
+
+	// Find the external dep node
+	var extNode *types.TreeNode
+	for _, node := range tree {
+		if node.ID == extRef {
+			extNode = node
+			break
+		}
+	}
+
+	if extNode == nil {
+		t.Fatal("External dependency not found in tree")
+	}
+
+	// Verify external node properties
+	if extNode.Depth != 1 {
+		t.Errorf("Expected external dep at depth 1, got %d", extNode.Depth)
+	}
+	if extNode.ParentID != root.ID {
+		t.Errorf("Expected external dep parent to be root, got %s", extNode.ParentID)
+	}
+	// External deps should show blocked status when not configured
+	if extNode.Status != types.StatusBlocked {
+		t.Errorf("Expected external dep status to be blocked (not configured), got %s", extNode.Status)
+	}
+}
+
+// TestCycleDetectionWithExternalRefs verifies that external dependencies
+// don't participate in cycle detection (they can't form cycles with local issues).
+func TestCycleDetectionWithExternalRefs(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create two issues
+	issueA := &types.Issue{
+		Title:     "Issue A",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issueA, "test-user"); err != nil {
+		t.Fatalf("CreateIssue A failed: %v", err)
+	}
+
+	issueB := &types.Issue{
+		Title:     "Issue B",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issueB, "test-user"); err != nil {
+		t.Fatalf("CreateIssue B failed: %v", err)
+	}
+
+	// A depends on B
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueA.ID,
+		DependsOnID: issueB.ID,
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("AddDependency A->B failed: %v", err)
+	}
+
+	// B depends on external ref (should succeed - external refs don't form cycles)
+	extRef := "external:project:capability"
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueB.ID,
+		DependsOnID: extRef,
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("AddDependency B->external failed: %v", err)
+	}
+
+	// A depends on same external ref (should also succeed - no cycle with external)
+	if err := store.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueA.ID,
+		DependsOnID: extRef,
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("AddDependency A->external failed: %v", err)
+	}
+
+	// Verify DetectCycles doesn't find any cycles
+	cycles, err := store.DetectCycles(ctx)
+	if err != nil {
+		t.Fatalf("DetectCycles failed: %v", err)
+	}
+	if len(cycles) != 0 {
+		t.Errorf("Expected no cycles with external deps, got %d", len(cycles))
+	}
+}

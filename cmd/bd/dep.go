@@ -639,6 +639,21 @@ func (r *treeRenderer) renderNode(node *types.TreeNode, children map[string][]*t
 
 // formatTreeNode formats a single tree node with status, ready indicator, etc.
 func formatTreeNode(node *types.TreeNode) string {
+	// Handle external dependencies specially (bd-vks2)
+	if IsExternalRef(node.ID) {
+		// External deps use their title directly which includes the status indicator
+		var idStr string
+		switch node.Status {
+		case types.StatusClosed:
+			idStr = ui.StatusClosedStyle.Render(node.Title)
+		case types.StatusBlocked:
+			idStr = ui.StatusBlockedStyle.Render(node.Title)
+		default:
+			idStr = node.Title
+		}
+		return fmt.Sprintf("%s (external)", idStr)
+	}
+
 	// Color the ID based on status
 	var idStr string
 	switch node.Status {

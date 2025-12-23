@@ -1652,3 +1652,115 @@ func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckExternalDepNoBeadsDirectory verifies that CheckExternalDep
+// correctly reports "no beads database" when the target project exists
+// but has no .beads directory (bd-mv6h).
+func TestCheckExternalDepNoBeadsDirectory(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a project directory WITHOUT .beads
+	projectDir, err := os.MkdirTemp("", "beads-no-beads-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(projectDir)
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Configure external_projects to point to the directory
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"no-beads-project": projectDir,
+	})
+
+	// Check the external dep - should report "no beads database"
+	status := CheckExternalDep(ctx, "external:no-beads-project:some-capability")
+
+	if status.Satisfied {
+		t.Error("Expected external dep to be unsatisfied when target has no .beads directory")
+	}
+	if status.Reason != "project has no beads database" {
+		t.Errorf("Expected reason 'project has no beads database', got: %s", status.Reason)
+	}
+}
+
+// TestCheckExternalDepInvalidFormats verifies that CheckExternalDep
+// correctly handles various invalid external ref formats (bd-mv6h).
+func TestCheckExternalDepInvalidFormats(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		ref        string
+		wantReason string
+	}{
+		{
+			name:       "not external prefix",
+			ref:        "bd-xyz",
+			wantReason: "not an external reference",
+		},
+		{
+			name:       "missing capability",
+			ref:        "external:project",
+			wantReason: "invalid format (expected external:project:capability)",
+		},
+		{
+			name:       "empty project",
+			ref:        "external::capability",
+			wantReason: "missing project or capability",
+		},
+		{
+			name:       "empty capability",
+			ref:        "external:project:",
+			wantReason: "missing project or capability",
+		},
+		{
+			name:       "only external prefix",
+			ref:        "external:",
+			wantReason: "invalid format (expected external:project:capability)",
+		},
+		{
+			name:       "unconfigured project",
+			ref:        "external:unconfigured-project:capability",
+			wantReason: "project not configured in external_projects",
+		},
+	}
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Ensure no external projects are configured for some tests
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		}
+	}()
+	config.Set("external_projects", map[string]string{})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := CheckExternalDep(ctx, tt.ref)
+			if status.Satisfied {
+				t.Errorf("Expected unsatisfied for %q", tt.ref)
+			}
+			if status.Reason != tt.wantReason {
+				t.Errorf("Expected reason %q, got %q", tt.wantReason, status.Reason)
+			}
+		})
+	}
+}

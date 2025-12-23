@@ -625,7 +625,95 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 		nodes = append(nodes, &node)
 	}
 
+	// Fetch external dependencies for all issues in the tree (bd-vks2)
+	// External deps like "external:project:capability" don't exist in the issues
+	// table, so the recursive CTE above doesn't find them. We add them as
+	// synthetic leaf nodes here.
+	if len(nodes) > 0 && !reverse {
+		// Collect all issue IDs in the tree
+		issueIDs := make([]string, len(nodes))
+		depthByID := make(map[string]int)
+		for i, n := range nodes {
+			issueIDs[i] = n.ID
+			depthByID[n.ID] = n.Depth
+		}
+
+		// Query for external dependencies
+		externalDeps, err := s.getExternalDepsForIssues(ctx, issueIDs)
+		if err != nil {
+			// Non-fatal: just skip external deps if query fails
+			_ = err
+		} else {
+			// Create synthetic TreeNode for each external dep
+			for parentID, extRefs := range externalDeps {
+				parentDepth, ok := depthByID[parentID]
+				if !ok {
+					continue
+				}
+				// Skip if we've exceeded maxDepth
+				if parentDepth >= maxDepth {
+					continue
+				}
+
+				for _, ref := range extRefs {
+					// Parse external ref for display
+					_, capability := parseExternalRefParts(ref)
+					if capability == "" {
+						capability = ref // fallback to full ref
+					}
+
+					// Check resolution status
+					status := CheckExternalDep(ctx, ref)
+					var nodeStatus types.Status
+					var title string
+					if status.Satisfied {
+						nodeStatus = types.StatusClosed
+						title = fmt.Sprintf("✓ %s", capability)
+					} else {
+						nodeStatus = types.StatusBlocked
+						title = fmt.Sprintf("⏳ %s", capability)
+					}
+
+					extNode := &types.TreeNode{
+						Issue: types.Issue{
+							ID:        ref,
+							Title:     title,
+							Status:    nodeStatus,
+							Priority:  0, // External deps don't have priority
+							IssueType: types.TypeTask,
+						},
+						Depth:    parentDepth + 1,
+						ParentID: parentID,
+					}
+
+					// Apply deduplication if needed
+					if !showAllPaths {
+						if _, exists := seen[ref]; exists {
+							continue
+						}
+						seen[ref] = extNode.Depth
+					}
+
+					nodes = append(nodes, extNode)
+				}
+			}
+		}
+	}
+
 	return nodes, nil
+}
+
+// parseExternalRefParts parses "external:project:capability" and returns (project, capability).
+// Returns empty strings if the format is invalid.
+func parseExternalRefParts(ref string) (project, capability string) {
+	if !strings.HasPrefix(ref, "external:") {
+		return "", ""
+	}
+	parts := strings.SplitN(ref, ":", 3)
+	if len(parts) != 3 {
+		return "", ""
+	}
+	return parts[1], parts[2]
 }
 
 // DetectCycles finds circular dependencies and returns the actual cycle paths
