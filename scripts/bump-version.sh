@@ -47,7 +47,7 @@ NC='\033[0m' # No Color
 
 # Usage message
 usage() {
-    echo "Usage: $0 <version> [--commit] [--tag] [--push] [--install] [--upgrade-mcp] [--mcp-local] [--restart-daemons] [--all]"
+    echo "Usage: $0 <version> [--commit] [--tag] [--push] [--install] [--upgrade-mcp] [--mcp-local] [--restart-daemons] [--publish-npm] [--publish-pypi] [--publish-all] [--all]"
     echo ""
     echo "Bump version across all beads components."
     echo ""
@@ -60,6 +60,9 @@ usage() {
     echo "  --upgrade-mcp    Upgrade local beads-mcp installation via pip after version bump"
     echo "  --mcp-local      Install beads-mcp from local source (for pre-PyPI testing)"
     echo "  --restart-daemons  Restart all bd daemons to pick up new version"
+    echo "  --publish-npm    Publish npm package to registry (requires npm login)"
+    echo "  --publish-pypi   Publish beads-mcp to PyPI (requires TWINE credentials)"
+    echo "  --publish-all    Shorthand for --publish-npm --publish-pypi"
     echo "  --all            Shorthand for --install --mcp-local --restart-daemons"
     echo ""
     echo "Examples:"
@@ -72,6 +75,7 @@ usage() {
     echo "  $0 0.9.3 --commit --tag --push      # Full release preparation"
     echo "  $0 0.9.3 --all                      # Install bd, local MCP, and restart daemons"
     echo "  $0 0.9.3 --commit --all             # Commit and install everything locally"
+    echo "  $0 0.9.3 --publish-all              # Publish to npm and PyPI"
     exit 1
 }
 
@@ -147,6 +151,8 @@ main() {
     AUTO_UPGRADE_MCP=false
     AUTO_MCP_LOCAL=false
     AUTO_RESTART_DAEMONS=false
+    AUTO_PUBLISH_NPM=false
+    AUTO_PUBLISH_PYPI=false
 
     # Parse flags
     shift  # Remove version argument
@@ -172,6 +178,16 @@ main() {
                 ;;
             --restart-daemons)
                 AUTO_RESTART_DAEMONS=true
+                ;;
+            --publish-npm)
+                AUTO_PUBLISH_NPM=true
+                ;;
+            --publish-pypi)
+                AUTO_PUBLISH_PYPI=true
+                ;;
+            --publish-all)
+                AUTO_PUBLISH_NPM=true
+                AUTO_PUBLISH_PYPI=true
                 ;;
             --all)
                 AUTO_INSTALL=true
@@ -490,6 +506,102 @@ main() {
         echo ""
     fi
 
+    # Publish to npm if requested
+    if [ "$AUTO_PUBLISH_NPM" = true ]; then
+        echo "Publishing npm package..."
+        NPM_DIR="npm-package"
+
+        if [ ! -d "$NPM_DIR" ]; then
+            echo -e "${RED}✗ npm package directory not found: $NPM_DIR${NC}"
+            exit 1
+        fi
+
+        cd "$NPM_DIR"
+
+        # Check if logged in
+        if ! npm whoami &>/dev/null; then
+            echo -e "${YELLOW}⚠ Not logged into npm. Run 'npm adduser' first.${NC}"
+            cd ..
+            exit 1
+        fi
+
+        if npm publish --access public; then
+            echo -e "${GREEN}✓ Published @beads/bd@$NEW_VERSION to npm${NC}"
+        else
+            echo -e "${RED}✗ npm publish failed${NC}"
+            cd ..
+            exit 1
+        fi
+
+        cd ..
+        echo ""
+    fi
+
+    # Publish to PyPI if requested
+    if [ "$AUTO_PUBLISH_PYPI" = true ]; then
+        echo "Publishing beads-mcp to PyPI..."
+        MCP_DIR="integrations/beads-mcp"
+
+        if [ ! -d "$MCP_DIR" ]; then
+            echo -e "${RED}✗ MCP directory not found: $MCP_DIR${NC}"
+            exit 1
+        fi
+
+        cd "$MCP_DIR"
+
+        # Clean previous builds
+        rm -rf dist/ build/ *.egg-info
+
+        # Build the package
+        echo "  Building package..."
+        if command -v uv &> /dev/null; then
+            if ! uv build; then
+                echo -e "${RED}✗ uv build failed${NC}"
+                cd ../..
+                exit 1
+            fi
+        elif command -v python3 &> /dev/null; then
+            if ! python3 -m build; then
+                echo -e "${RED}✗ python build failed${NC}"
+                cd ../..
+                exit 1
+            fi
+        else
+            echo -e "${RED}✗ Neither uv nor python3 found${NC}"
+            cd ../..
+            exit 1
+        fi
+
+        # Upload to PyPI
+        echo "  Uploading to PyPI..."
+        if command -v uv &> /dev/null; then
+            if uv tool run twine upload dist/*; then
+                echo -e "${GREEN}✓ Published beads-mcp@$NEW_VERSION to PyPI${NC}"
+            else
+                echo -e "${RED}✗ PyPI upload failed${NC}"
+                echo -e "${YELLOW}  Ensure TWINE_USERNAME and TWINE_PASSWORD are set${NC}"
+                echo -e "${YELLOW}  Or configure ~/.pypirc with credentials${NC}"
+                cd ../..
+                exit 1
+            fi
+        elif command -v twine &> /dev/null; then
+            if twine upload dist/*; then
+                echo -e "${GREEN}✓ Published beads-mcp@$NEW_VERSION to PyPI${NC}"
+            else
+                echo -e "${RED}✗ PyPI upload failed${NC}"
+                cd ../..
+                exit 1
+            fi
+        else
+            echo -e "${RED}✗ twine not found. Install with: pip install twine${NC}"
+            cd ../..
+            exit 1
+        fi
+
+        cd ../..
+        echo ""
+    fi
+
     # Check if cmd/bd/info.go has been updated with the new version
     if ! grep -q "\"$NEW_VERSION\"" cmd/bd/info.go; then
         echo -e "${YELLOW}Warning: cmd/bd/info.go does not contain an entry for $NEW_VERSION${NC}"
@@ -600,8 +712,16 @@ Generated by scripts/bump-version.sh"
             echo -e "  ${YELLOW}--restart-daemons${NC} # Restart daemons to pick up new version"
         fi
         echo ""
+        echo "Publishing (after tag is pushed, CI handles this automatically):"
+        echo -e "  ${YELLOW}--publish-npm${NC}     # Publish @beads/bd to npm"
+        echo -e "  ${YELLOW}--publish-pypi${NC}    # Publish beads-mcp to PyPI"
+        echo -e "  ${YELLOW}--publish-all${NC}     # Publish to both npm and PyPI"
+        echo ""
         echo "Full release (with git commit/tag/push):"
         echo "  $0 $NEW_VERSION --commit --tag --push --all"
+        echo ""
+        echo "Note: npm/PyPI publishing happens automatically via GitHub Actions"
+        echo "when a tag is pushed. Use --publish-* only for manual releases."
     fi
 }
 
