@@ -1384,3 +1384,271 @@ func TestGetReadyWorkNoExternalProjectsConfigured(t *testing.T) {
 		t.Errorf("Expected 1 ready issue (external deps skipped), got %d", len(ready))
 	}
 }
+
+// TestGetBlockedIssuesFiltersExternalDeps tests that GetBlockedIssues filters
+// satisfied external dependencies from BlockedBy lists (bd-396j)
+func TestGetBlockedIssuesFiltersExternalDeps(t *testing.T) {
+	// Create main test database
+	mainStore, mainCleanup := setupTestDB(t)
+	defer mainCleanup()
+
+	ctx := context.Background()
+
+	// Create external project directory with beads database
+	externalDir, err := os.MkdirTemp("", "beads-blocked-external-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config in external project
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	// Create config file for external project
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save external config: %v", err)
+	}
+
+	// Create external database
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+	defer externalStore.Close()
+
+	// Set issue_prefix in external store
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set external issue_prefix: %v", err)
+	}
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Configure external_projects
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"external-test": externalDir,
+	})
+
+	// Create an issue with external dependency
+	issueWithExtDep := &types.Issue{
+		Title:     "Blocked by external",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := mainStore.CreateIssue(ctx, issueWithExtDep, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add external dependency
+	extDep := &types.Dependency{
+		IssueID:     issueWithExtDep.ID,
+		DependsOnID: "external:external-test:test-capability",
+		Type:        types.DepBlocks,
+	}
+	if err := mainStore.AddDependency(ctx, extDep, "test-user"); err != nil {
+		t.Fatalf("failed to add external dependency: %v", err)
+	}
+
+	// Test 1: External dep not satisfied - issue should appear as blocked
+	blocked, err := mainStore.GetBlockedIssues(ctx)
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+
+	if len(blocked) != 1 {
+		t.Errorf("Expected 1 blocked issue (external dep not satisfied), got %d", len(blocked))
+	}
+	if len(blocked) > 0 {
+		if len(blocked[0].BlockedBy) != 1 || blocked[0].BlockedBy[0] != "external:external-test:test-capability" {
+			t.Errorf("Expected BlockedBy to contain external ref, got %v", blocked[0].BlockedBy)
+		}
+	}
+
+	// Test 2: Ship the capability in external project
+	capabilityIssue := &types.Issue{
+		Title:     "Ship test-capability",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := externalStore.CreateIssue(ctx, capabilityIssue, "test-user"); err != nil {
+		t.Fatalf("failed to create capability issue: %v", err)
+	}
+
+	// Add the provides: label
+	if err := externalStore.AddLabel(ctx, capabilityIssue.ID, "provides:test-capability", "test-user"); err != nil {
+		t.Fatalf("failed to add provides label: %v", err)
+	}
+
+	// Close the capability issue
+	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user"); err != nil {
+		t.Fatalf("failed to close capability issue: %v", err)
+	}
+
+	// Close external store to checkpoint WAL before read-only access
+	externalStore.Close()
+
+	// Verify external dep is now satisfied
+	status := CheckExternalDep(ctx, "external:external-test:test-capability")
+	if !status.Satisfied {
+		t.Fatalf("Expected external dep to be satisfied, got: %s", status.Reason)
+	}
+
+	// Now GetBlockedIssues should NOT show the issue (external dep satisfied)
+	blocked, err = mainStore.GetBlockedIssues(ctx)
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed after shipping: %v", err)
+	}
+
+	// Issue should no longer be blocked
+	if len(blocked) != 0 {
+		t.Errorf("Expected 0 blocked issues (external dep now satisfied), got %d", len(blocked))
+		for _, b := range blocked {
+			t.Logf("Still blocked: %s - %s, blockers: %v", b.ID, b.Title, b.BlockedBy)
+		}
+	}
+}
+
+// TestGetBlockedIssuesPartialExternalDeps tests that GetBlockedIssues keeps
+// issues blocked when only SOME external deps are satisfied (bd-396j)
+func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
+	// Create main test database
+	mainStore, mainCleanup := setupTestDB(t)
+	defer mainCleanup()
+
+	ctx := context.Background()
+
+	// Create external project directory
+	externalDir, err := os.MkdirTemp("", "beads-blocked-partial-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config in external project
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save external config: %v", err)
+	}
+
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+	defer externalStore.Close()
+
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set external issue_prefix: %v", err)
+	}
+
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"external-test": externalDir,
+	})
+
+	// Create an issue with TWO external dependencies
+	issueWithExtDeps := &types.Issue{
+		Title:     "Blocked by two external deps",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := mainStore.CreateIssue(ctx, issueWithExtDeps, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add first external dependency
+	if err := mainStore.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueWithExtDeps.ID,
+		DependsOnID: "external:external-test:cap1",
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("failed to add first external dependency: %v", err)
+	}
+
+	// Add second external dependency
+	if err := mainStore.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueWithExtDeps.ID,
+		DependsOnID: "external:external-test:cap2",
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("failed to add second external dependency: %v", err)
+	}
+
+	// Ship only the first capability
+	cap1Issue := &types.Issue{
+		Title:     "Ship cap1",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := externalStore.CreateIssue(ctx, cap1Issue, "test-user"); err != nil {
+		t.Fatalf("failed to create cap1 issue: %v", err)
+	}
+	if err := externalStore.AddLabel(ctx, cap1Issue.ID, "provides:cap1", "test-user"); err != nil {
+		t.Fatalf("failed to add provides label: %v", err)
+	}
+	if err := externalStore.CloseIssue(ctx, cap1Issue.ID, "Shipped", "test-user"); err != nil {
+		t.Fatalf("failed to close cap1 issue: %v", err)
+	}
+
+	// Close external store to checkpoint WAL
+	externalStore.Close()
+
+	// Issue should still be blocked (cap2 not satisfied)
+	blocked, err := mainStore.GetBlockedIssues(ctx)
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+
+	if len(blocked) != 1 {
+		t.Errorf("Expected 1 blocked issue (cap2 still not satisfied), got %d", len(blocked))
+	}
+	if len(blocked) > 0 {
+		// Should only show cap2 in BlockedBy (cap1 is satisfied and filtered out)
+		if len(blocked[0].BlockedBy) != 1 {
+			t.Errorf("Expected 1 blocker (cap2), got %d: %v", len(blocked[0].BlockedBy), blocked[0].BlockedBy)
+		}
+		if len(blocked[0].BlockedBy) == 1 && blocked[0].BlockedBy[0] != "external:external-test:cap2" {
+			t.Errorf("Expected BlockedBy to be cap2, got %v", blocked[0].BlockedBy)
+		}
+		if blocked[0].BlockedByCount != 1 {
+			t.Errorf("Expected BlockedByCount to be 1, got %d", blocked[0].BlockedByCount)
+		}
+	}
+}

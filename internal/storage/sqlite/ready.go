@@ -490,7 +490,80 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 		blocked = append(blocked, &issue)
 	}
 
+	// Filter out satisfied external dependencies from BlockedBy lists (bd-396j)
+	// Only check if external_projects are configured
+	if len(config.GetExternalProjects()) > 0 && len(blocked) > 0 {
+		blocked = filterBlockedByExternalDeps(ctx, blocked)
+	}
+
 	return blocked, nil
+}
+
+// filterBlockedByExternalDeps removes satisfied external deps from BlockedBy lists.
+// Issues with no remaining blockers are removed unless they have status=blocked/deferred.
+func filterBlockedByExternalDeps(ctx context.Context, blocked []*types.BlockedIssue) []*types.BlockedIssue {
+	if len(blocked) == 0 {
+		return blocked
+	}
+
+	// Collect all unique external refs across all blocked issues
+	externalRefs := make(map[string]bool)
+	for _, issue := range blocked {
+		for _, ref := range issue.BlockedBy {
+			if strings.HasPrefix(ref, "external:") {
+				externalRefs[ref] = true
+			}
+		}
+	}
+
+	// If no external refs, return as-is
+	if len(externalRefs) == 0 {
+		return blocked
+	}
+
+	// Check all external refs in batch
+	refList := make([]string, 0, len(externalRefs))
+	for ref := range externalRefs {
+		refList = append(refList, ref)
+	}
+	statuses := CheckExternalDeps(ctx, refList)
+
+	// Build set of satisfied refs
+	satisfiedRefs := make(map[string]bool)
+	for ref, status := range statuses {
+		if status.Satisfied {
+			satisfiedRefs[ref] = true
+		}
+	}
+
+	// If nothing is satisfied, return as-is
+	if len(satisfiedRefs) == 0 {
+		return blocked
+	}
+
+	// Filter each issue's BlockedBy list
+	result := make([]*types.BlockedIssue, 0, len(blocked))
+	for _, issue := range blocked {
+		// Filter out satisfied external deps
+		var filteredBlockers []string
+		for _, ref := range issue.BlockedBy {
+			if !satisfiedRefs[ref] {
+				filteredBlockers = append(filteredBlockers, ref)
+			}
+		}
+
+		// Update issue with filtered blockers
+		issue.BlockedBy = filteredBlockers
+		issue.BlockedByCount = len(filteredBlockers)
+
+		// Keep issue if it has remaining blockers OR has blocked/deferred status
+		// (status=blocked/deferred issues always show even with no dep blockers)
+		if len(filteredBlockers) > 0 || issue.Status == "blocked" || issue.Status == "deferred" {
+			result = append(result, issue)
+		}
+	}
+
+	return result
 }
 
 // buildOrderByClause generates the ORDER BY clause based on sort policy
