@@ -118,3 +118,6 @@ history/
 state.json
 .beads/redirect
 .beads-wisp/
+
+# Claude Code runtime
+.runtime/
