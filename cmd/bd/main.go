@@ -118,11 +118,23 @@ var (
 	quietFlag      bool // Suppress non-essential output
 )
 
+// Command group IDs for help organization
+const (
+	GroupMaintenance  = "maintenance"
+	GroupIntegrations = "integrations"
+)
+
 func init() {
 	// Initialize viper configuration
 	if err := config.Initialize(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
 	}
+
+	// Add command groups for organized help output
+	rootCmd.AddGroup(
+		&cobra.Group{ID: GroupMaintenance, Title: "Maintenance:"},
+		&cobra.Group{ID: GroupIntegrations, Title: "Integrations & Advanced:"},
+	)
 
 	// Register persistent flags
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
@@ -388,6 +400,11 @@ var rootCmd = &cobra.Command{
 			}
 		}
 		if slices.Contains(noDbCommands, cmdName) {
+			return
+		}
+
+		// Skip for root command with no subcommand (just shows help)
+		if cmd.Parent() == nil && cmdName == "bd" {
 			return
 		}
 

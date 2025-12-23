@@ -8,7 +8,7 @@ all: build
 # Build the bd binary
 build:
 	@echo "Building bd..."
-	go build -o bd ./cmd/bd
+	go build -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o bd ./cmd/bd
 
 # Run all tests (skips known broken tests listed in .test-skip)
 test:
