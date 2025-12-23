@@ -8,36 +8,35 @@ import (
 // to allow external dependencies (external:<project>:<capability>).
 // See bd-zmmy for design context.
 func MigrateRemoveDependsOnFK(db *sql.DB) error {
-	// Disable foreign keys for table recreation
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		return err
-	}
-	defer func() { _, _ = db.Exec(`PRAGMA foreign_keys = ON`) }()
+	// NOTE: Foreign keys are disabled in RunMigrations() before the EXCLUSIVE transaction starts.
+	// This prevents ON DELETE CASCADE from deleting data when we drop/recreate the dependencies table.
 
-	// Begin transaction for atomic table recreation
-	tx, err := db.Begin()
+	// Use SAVEPOINT for atomicity (we're already inside an EXCLUSIVE transaction from RunMigrations)
+	// SQLite doesn't support nested transactions but SAVEPOINTs work inside transactions
+	_, err := db.Exec(`SAVEPOINT remove_depends_on_fk`)
 	if err != nil {
 		return err
 	}
+	savepointReleased := false
 	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
+		if !savepointReleased {
+			_, _ = db.Exec(`ROLLBACK TO SAVEPOINT remove_depends_on_fk`)
 		}
 	}()
 
 	// Drop views that depend on the dependencies table
 	// They will be recreated after the table is rebuilt
-	if _, err = tx.Exec(`DROP VIEW IF EXISTS ready_issues`); err != nil {
+	if _, err = db.Exec(`DROP VIEW IF EXISTS ready_issues`); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`DROP VIEW IF EXISTS blocked_issues`); err != nil {
+	if _, err = db.Exec(`DROP VIEW IF EXISTS blocked_issues`); err != nil {
 		return err
 	}
 
 	// Create new table without FK on depends_on_id
 	// Keep FK on issue_id (source must exist)
 	// Remove FK on depends_on_id (target can be external ref)
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE TABLE dependencies_new (
 			issue_id TEXT NOT NULL,
 			depends_on_id TEXT NOT NULL,
@@ -54,7 +53,7 @@ func MigrateRemoveDependsOnFK(db *sql.DB) error {
 	}
 
 	// Copy data from old table
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		INSERT INTO dependencies_new
 		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
 		FROM dependencies
@@ -63,48 +62,48 @@ func MigrateRemoveDependsOnFK(db *sql.DB) error {
 	}
 
 	// Drop old table
-	if _, err = tx.Exec(`DROP TABLE dependencies`); err != nil {
+	if _, err = db.Exec(`DROP TABLE dependencies`); err != nil {
 		return err
 	}
 
 	// Rename new table
-	if _, err = tx.Exec(`ALTER TABLE dependencies_new RENAME TO dependencies`); err != nil {
+	if _, err = db.Exec(`ALTER TABLE dependencies_new RENAME TO dependencies`); err != nil {
 		return err
 	}
 
 	// Recreate indexes
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE INDEX idx_dependencies_issue_id ON dependencies(issue_id)
 	`); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE INDEX idx_dependencies_depends_on ON dependencies(depends_on_id)
 	`); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE INDEX idx_dependencies_type ON dependencies(type)
 	`); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE INDEX idx_dependencies_depends_on_type ON dependencies(depends_on_id, type)
 	`); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE INDEX idx_dependencies_depends_on_type_issue ON dependencies(depends_on_id, type, issue_id)
 	`); err != nil {
 		return err
 	}
 
 	// Recreate views
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE VIEW IF NOT EXISTS ready_issues AS
 		WITH RECURSIVE
 		  blocked_directly AS (
@@ -134,7 +133,7 @@ func MigrateRemoveDependsOnFK(db *sql.DB) error {
 		return err
 	}
 
-	if _, err = tx.Exec(`
+	if _, err = db.Exec(`
 		CREATE VIEW IF NOT EXISTS blocked_issues AS
 		SELECT
 		    i.*,
@@ -150,5 +149,11 @@ func MigrateRemoveDependsOnFK(db *sql.DB) error {
 		return err
 	}
 
-	return tx.Commit()
+	// Release savepoint (commits the changes within the outer transaction)
+	_, err = db.Exec(`RELEASE SAVEPOINT remove_depends_on_fk`)
+	if err != nil {
+		return err
+	}
+	savepointReleased = true
+	return nil
 }

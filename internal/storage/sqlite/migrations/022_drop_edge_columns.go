@@ -60,19 +60,10 @@ func MigrateDropEdgeColumns(db *sql.DB) error {
 	// SQLite 3.35.0+ supports DROP COLUMN, but we use table recreation for compatibility
 	// This is idempotent - we recreate the table without the deprecated columns
 
-	// CRITICAL: Disable foreign keys to prevent CASCADE deletes when we drop the issues table
-	// The dependencies table has FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
-	// Without disabling foreign keys, dropping the issues table would delete all dependencies!
-	_, err = db.Exec(`PRAGMA foreign_keys = OFF`)
-	if err != nil {
-		return fmt.Errorf("failed to disable foreign keys: %w", err)
-	}
-	// Re-enable foreign keys at the end (deferred to ensure it runs)
-	defer func() {
-		_, _ = db.Exec(`PRAGMA foreign_keys = ON`)
-	}()
+	// NOTE: Foreign keys are disabled in RunMigrations() before the EXCLUSIVE transaction starts.
+	// This prevents ON DELETE CASCADE from deleting dependencies when we drop/recreate the issues table.
 
-	// Drop views that depend on the issues table BEFORE starting transaction
+	// Drop views that depend on the issues table BEFORE starting savepoint
 	// This is necessary because SQLite validates views during table operations
 	_, err = db.Exec(`DROP VIEW IF EXISTS ready_issues`)
 	if err != nil {
@@ -83,15 +74,21 @@ func MigrateDropEdgeColumns(db *sql.DB) error {
 		return fmt.Errorf("failed to drop blocked_issues view: %w", err)
 	}
 
-	// Start a transaction for atomicity
-	tx, err := db.Begin()
+	// Use SAVEPOINT for atomicity (we're already inside an EXCLUSIVE transaction from RunMigrations)
+	// SQLite doesn't support nested transactions but SAVEPOINTs work inside transactions
+	_, err = db.Exec(`SAVEPOINT drop_edge_columns`)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to create savepoint: %w", err)
 	}
-	defer tx.Rollback()
+	savepointReleased := false
+	defer func() {
+		if !savepointReleased {
+			_, _ = db.Exec(`ROLLBACK TO SAVEPOINT drop_edge_columns`)
+		}
+	}()
 
 	// Create new table without the deprecated columns
-	_, err = tx.Exec(`
+	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS issues_new (
 			id TEXT PRIMARY KEY,
 			content_hash TEXT,
@@ -129,7 +126,7 @@ func MigrateDropEdgeColumns(db *sql.DB) error {
 	}
 
 	// Copy data from old table to new table (excluding deprecated columns)
-	_, err = tx.Exec(`
+	_, err = db.Exec(`
 		INSERT INTO issues_new (
 			id, content_hash, title, description, design, acceptance_criteria,
 			notes, status, priority, issue_type, assignee, estimated_minutes,
@@ -151,13 +148,13 @@ func MigrateDropEdgeColumns(db *sql.DB) error {
 	}
 
 	// Drop old table
-	_, err = tx.Exec(`DROP TABLE issues`)
+	_, err = db.Exec(`DROP TABLE issues`)
 	if err != nil {
 		return fmt.Errorf("failed to drop old issues table: %w", err)
 	}
 
 	// Rename new table to issues
-	_, err = tx.Exec(`ALTER TABLE issues_new RENAME TO issues`)
+	_, err = db.Exec(`ALTER TABLE issues_new RENAME TO issues`)
 	if err != nil {
 		return fmt.Errorf("failed to rename new issues table: %w", err)
 	}
@@ -172,16 +169,18 @@ func MigrateDropEdgeColumns(db *sql.DB) error {
 	}
 
 	for _, idx := range indexes {
-		_, err = tx.Exec(idx)
+		_, err = db.Exec(idx)
 		if err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
 
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit migration: %w", err)
+	// Release savepoint (commits the changes within the outer transaction)
+	_, err = db.Exec(`RELEASE SAVEPOINT drop_edge_columns`)
+	if err != nil {
+		return fmt.Errorf("failed to release savepoint: %w", err)
 	}
+	savepointReleased = true
 
 	// Recreate views that we dropped earlier (after commit, outside transaction)
 	// ready_issues view

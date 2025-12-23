@@ -101,8 +101,36 @@ func getMigrationDescription(name string) string {
 	return "Unknown migration"
 }
 
-// RunMigrations executes all registered migrations in order with invariant checking
+// RunMigrations executes all registered migrations in order with invariant checking.
+// Uses EXCLUSIVE transaction to prevent race conditions when multiple processes
+// open the database simultaneously (GH#720).
 func RunMigrations(db *sql.DB) error {
+	// Disable foreign keys BEFORE starting the transaction.
+	// PRAGMA foreign_keys must be called when no transaction is active (SQLite limitation).
+	// Some migrations (022, 025) drop/recreate tables and need foreign keys off
+	// to prevent ON DELETE CASCADE from deleting related data.
+	_, err := db.Exec("PRAGMA foreign_keys = OFF")
+	if err != nil {
+		return fmt.Errorf("failed to disable foreign keys for migrations: %w", err)
+	}
+	defer func() { _, _ = db.Exec("PRAGMA foreign_keys = ON") }()
+
+	// Acquire EXCLUSIVE lock to serialize migrations across processes.
+	// Without this, parallel processes can race on check-then-modify operations
+	// (e.g., checking if a column exists then adding it), causing "duplicate column" errors.
+	_, err = db.Exec("BEGIN EXCLUSIVE")
+	if err != nil {
+		return fmt.Errorf("failed to acquire exclusive lock for migrations: %w", err)
+	}
+
+	// Ensure we release the lock on any exit path
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = db.Exec("ROLLBACK")
+		}
+	}()
+
 	snapshot, err := captureSnapshot(db)
 	if err != nil {
 		return fmt.Errorf("failed to capture pre-migration snapshot: %w", err)
@@ -117,6 +145,12 @@ func RunMigrations(db *sql.DB) error {
 	if err := verifyInvariants(db, snapshot); err != nil {
 		return fmt.Errorf("post-migration validation failed: %w", err)
 	}
+
+	// Commit the transaction
+	if _, err := db.Exec("COMMIT"); err != nil {
+		return fmt.Errorf("failed to commit migrations: %w", err)
+	}
+	committed = true
 
 	return nil
 }
