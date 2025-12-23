@@ -72,9 +72,9 @@ Issue prefix: `beads-` (e.g., beads-6v2)
 sends handoff mail, then respawns with fresh Claude instance. The SessionStart
 hook runs `gt prime` to restore context. Work continues from where you left off.
 
-Crew member: dave
+Crew member: zoey
 Rig: beads
-Working directory: /Users/stevey/gt/beads/crew/dave
+Working directory: /Users/stevey/gt/beads/crew/zoey
 
 ---
 
