@@ -2345,3 +2345,304 @@ func TestBondProtoMolMultipleArms(t *testing.T) {
 		t.Errorf("Nux issue not found: %v", err)
 	}
 }
+
+// =============================================================================
+// Parallel Detection Tests (bd-xo1o.4)
+// =============================================================================
+
+// TestAnalyzeMoleculeParallelNoBlocking tests parallel detection with no blocking deps
+func TestAnalyzeMoleculeParallelNoBlocking(t *testing.T) {
+	// Create a simple molecule with parallel children (no blocking deps between them)
+	root := &types.Issue{
+		ID:        "mol-test",
+		Title:     "Test Molecule",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+	}
+	child1 := &types.Issue{
+		ID:        "mol-test.step1",
+		Title:     "Step 1",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+	child2 := &types.Issue{
+		ID:        "mol-test.step2",
+		Title:     "Step 2",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+
+	subgraph := &MoleculeSubgraph{
+		Root:   root,
+		Issues: []*types.Issue{root, child1, child2},
+		IssueMap: map[string]*types.Issue{
+			root.ID:   root,
+			child1.ID: child1,
+			child2.ID: child2,
+		},
+		Dependencies: []*types.Dependency{
+			{IssueID: child1.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: child2.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+		},
+	}
+
+	analysis := analyzeMoleculeParallel(subgraph)
+
+	// All 3 should be ready (root + 2 children with no blocking deps)
+	if analysis.ReadySteps != 3 {
+		t.Errorf("ReadySteps = %d, want 3", analysis.ReadySteps)
+	}
+
+	// Children should be in the same parallel group
+	step1Info := analysis.Steps[child1.ID]
+	step2Info := analysis.Steps[child2.ID]
+
+	if step1Info.ParallelGroup == "" {
+		t.Error("Step1 should be in a parallel group")
+	}
+	if step1Info.ParallelGroup != step2Info.ParallelGroup {
+		t.Errorf("Step1 and Step2 should be in same parallel group: %s vs %s",
+			step1Info.ParallelGroup, step2Info.ParallelGroup)
+	}
+
+	// Check can_parallel
+	found := false
+	for _, id := range step1Info.CanParallel {
+		if id == child2.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Step1.CanParallel should contain Step2.ID")
+	}
+}
+
+// TestAnalyzeMoleculeParallelWithBlocking tests parallel detection with blocking deps
+func TestAnalyzeMoleculeParallelWithBlocking(t *testing.T) {
+	// Create a sequential molecule: step1 blocks step2
+	root := &types.Issue{
+		ID:        "mol-seq",
+		Title:     "Sequential Molecule",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+	}
+	step1 := &types.Issue{
+		ID:        "mol-seq.step1",
+		Title:     "Step 1",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+	step2 := &types.Issue{
+		ID:        "mol-seq.step2",
+		Title:     "Step 2 (blocked by Step 1)",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+
+	subgraph := &MoleculeSubgraph{
+		Root:   root,
+		Issues: []*types.Issue{root, step1, step2},
+		IssueMap: map[string]*types.Issue{
+			root.ID:  root,
+			step1.ID: step1,
+			step2.ID: step2,
+		},
+		Dependencies: []*types.Dependency{
+			{IssueID: step1.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: step2.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: step2.ID, DependsOnID: step1.ID, Type: types.DepBlocks}, // step2 blocked by step1
+		},
+	}
+
+	analysis := analyzeMoleculeParallel(subgraph)
+
+	// Only root and step1 should be ready (step2 is blocked)
+	if analysis.ReadySteps != 2 {
+		t.Errorf("ReadySteps = %d, want 2 (step2 blocked)", analysis.ReadySteps)
+	}
+
+	step1Info := analysis.Steps[step1.ID]
+	step2Info := analysis.Steps[step2.ID]
+
+	if !step1Info.IsReady {
+		t.Error("Step1 should be ready")
+	}
+	if step2Info.IsReady {
+		t.Error("Step2 should NOT be ready (blocked by step1)")
+	}
+	if len(step2Info.BlockedBy) != 1 || step2Info.BlockedBy[0] != step1.ID {
+		t.Errorf("Step2.BlockedBy = %v, want [%s]", step2Info.BlockedBy, step1.ID)
+	}
+
+	// Step1 and Step2 should NOT be in the same parallel group
+	if step1Info.ParallelGroup != "" && step1Info.ParallelGroup == step2Info.ParallelGroup {
+		t.Error("Blocking steps should NOT be in the same parallel group")
+	}
+}
+
+// TestAnalyzeMoleculeParallelCompletedBlockers tests that completed steps don't block
+func TestAnalyzeMoleculeParallelCompletedBlockers(t *testing.T) {
+	// Create molecule where step1 is completed, so step2 should be ready
+	root := &types.Issue{
+		ID:        "mol-done",
+		Title:     "Molecule with completed step",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+	}
+	step1 := &types.Issue{
+		ID:        "mol-done.step1",
+		Title:     "Step 1 (completed)",
+		Status:    types.StatusClosed, // Completed!
+		IssueType: types.TypeTask,
+	}
+	step2 := &types.Issue{
+		ID:        "mol-done.step2",
+		Title:     "Step 2 (depends on step1)",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+
+	subgraph := &MoleculeSubgraph{
+		Root:   root,
+		Issues: []*types.Issue{root, step1, step2},
+		IssueMap: map[string]*types.Issue{
+			root.ID:  root,
+			step1.ID: step1,
+			step2.ID: step2,
+		},
+		Dependencies: []*types.Dependency{
+			{IssueID: step1.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: step2.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: step2.ID, DependsOnID: step1.ID, Type: types.DepBlocks},
+		},
+	}
+
+	analysis := analyzeMoleculeParallel(subgraph)
+
+	step2Info := analysis.Steps[step2.ID]
+
+	// Step2 should be ready since step1 is closed
+	if !step2Info.IsReady {
+		t.Error("Step2 should be ready (step1 is completed)")
+	}
+	if len(step2Info.BlockedBy) != 0 {
+		t.Errorf("Step2.BlockedBy = %v, want empty (step1 completed)", step2Info.BlockedBy)
+	}
+}
+
+// TestAnalyzeMoleculeParallelMultipleArms tests parallel detection across bonded arms
+func TestAnalyzeMoleculeParallelMultipleArms(t *testing.T) {
+	// Create molecule with two arms that can run in parallel
+	root := &types.Issue{
+		ID:        "patrol",
+		Title:     "Patrol",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeEpic,
+	}
+	armAce := &types.Issue{
+		ID:        "patrol.arm-ace",
+		Title:     "Arm: ace",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+	armNux := &types.Issue{
+		ID:        "patrol.arm-nux",
+		Title:     "Arm: nux",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+
+	subgraph := &MoleculeSubgraph{
+		Root:   root,
+		Issues: []*types.Issue{root, armAce, armNux},
+		IssueMap: map[string]*types.Issue{
+			root.ID:   root,
+			armAce.ID: armAce,
+			armNux.ID: armNux,
+		},
+		Dependencies: []*types.Dependency{
+			{IssueID: armAce.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			{IssueID: armNux.ID, DependsOnID: root.ID, Type: types.DepParentChild},
+			// No blocking deps between arms
+		},
+	}
+
+	analysis := analyzeMoleculeParallel(subgraph)
+
+	// All 3 should be ready
+	if analysis.ReadySteps != 3 {
+		t.Errorf("ReadySteps = %d, want 3", analysis.ReadySteps)
+	}
+
+	// Arms should be in the same parallel group
+	aceInfo := analysis.Steps[armAce.ID]
+	nuxInfo := analysis.Steps[armNux.ID]
+
+	if aceInfo.ParallelGroup == "" {
+		t.Error("arm-ace should be in a parallel group")
+	}
+	if aceInfo.ParallelGroup != nuxInfo.ParallelGroup {
+		t.Errorf("Arms should be in same parallel group: %s vs %s",
+			aceInfo.ParallelGroup, nuxInfo.ParallelGroup)
+	}
+
+	// Should have at least one parallel group with both arms
+	foundGroup := false
+	for _, members := range analysis.ParallelGroups {
+		hasAce := false
+		hasNux := false
+		for _, id := range members {
+			if id == armAce.ID {
+				hasAce = true
+			}
+			if id == armNux.ID {
+				hasNux = true
+			}
+		}
+		if hasAce && hasNux {
+			foundGroup = true
+			break
+		}
+	}
+	if !foundGroup {
+		t.Error("Should have a parallel group containing both arms")
+	}
+}
+
+// TestCalculateBlockingDepths tests the depth calculation
+func TestCalculateBlockingDepths(t *testing.T) {
+	// Create chain: root -> step1 -> step2 -> step3
+	root := &types.Issue{ID: "root", Status: types.StatusOpen}
+	step1 := &types.Issue{ID: "step1", Status: types.StatusOpen}
+	step2 := &types.Issue{ID: "step2", Status: types.StatusOpen}
+	step3 := &types.Issue{ID: "step3", Status: types.StatusOpen}
+
+	subgraph := &MoleculeSubgraph{
+		Root:     root,
+		Issues:   []*types.Issue{root, step1, step2, step3},
+		IssueMap: map[string]*types.Issue{"root": root, "step1": step1, "step2": step2, "step3": step3},
+	}
+
+	blockedBy := map[string]map[string]bool{
+		"root":  {},
+		"step1": {"root": true},
+		"step2": {"step1": true},
+		"step3": {"step2": true},
+	}
+
+	depths := calculateBlockingDepths(subgraph, blockedBy)
+
+	if depths["root"] != 0 {
+		t.Errorf("root depth = %d, want 0", depths["root"])
+	}
+	if depths["step1"] != 1 {
+		t.Errorf("step1 depth = %d, want 1", depths["step1"])
+	}
+	if depths["step2"] != 2 {
+		t.Errorf("step2 depth = %d, want 2", depths["step2"])
+	}
+	if depths["step3"] != 3 {
+		t.Errorf("step3 depth = %d, want 3", depths["step3"])
+	}
+}
