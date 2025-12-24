@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"text/template"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -46,6 +50,207 @@ func pinIndicator(issue *types.Issue) string {
 		return "📌 "
 	}
 	return ""
+}
+
+// Priority symbols for pretty output (GH#654)
+var prioritySymbols = map[int]string{
+	0: "🔴", // P0 - Critical
+	1: "🟠", // P1 - High
+	2: "🟡", // P2 - Medium (default)
+	3: "🔵", // P3 - Low
+	4: "⚪", // P4 - Lowest
+}
+
+// Status symbols for pretty output (GH#654)
+var statusSymbols = map[types.Status]string{
+	"open":        "○",
+	"in_progress": "◐",
+	"blocked":     "⊗",
+	"deferred":    "◇",
+	"closed":      "●",
+}
+
+// formatPrettyIssue formats a single issue for pretty output
+func formatPrettyIssue(issue *types.Issue) string {
+	prioritySym := prioritySymbols[issue.Priority]
+	if prioritySym == "" {
+		prioritySym = "⚪"
+	}
+	statusSym := statusSymbols[issue.Status]
+	if statusSym == "" {
+		statusSym = "○"
+	}
+
+	typeBadge := ""
+	switch issue.IssueType {
+	case "epic":
+		typeBadge = "[EPIC] "
+	case "feature":
+		typeBadge = "[FEAT] "
+	case "bug":
+		typeBadge = "[BUG] "
+	}
+
+	return fmt.Sprintf("%s %s %s - %s%s", statusSym, prioritySym, issue.ID, typeBadge, issue.Title)
+}
+
+// buildIssueTree builds parent-child tree structure from issues
+func buildIssueTree(issues []*types.Issue) (roots []*types.Issue, childrenMap map[string][]*types.Issue) {
+	issueMap := make(map[string]*types.Issue)
+	childrenMap = make(map[string][]*types.Issue)
+
+	for _, issue := range issues {
+		issueMap[issue.ID] = issue
+	}
+
+	for _, issue := range issues {
+		// Check if this is a hierarchical subtask (e.g., "parent.1")
+		if strings.Contains(issue.ID, ".") {
+			parts := strings.Split(issue.ID, ".")
+			parentID := strings.Join(parts[:len(parts)-1], ".")
+			if _, exists := issueMap[parentID]; exists {
+				childrenMap[parentID] = append(childrenMap[parentID], issue)
+				continue
+			}
+		}
+		roots = append(roots, issue)
+	}
+
+	return roots, childrenMap
+}
+
+// printPrettyTree recursively prints the issue tree
+func printPrettyTree(issues []*types.Issue, childrenMap map[string][]*types.Issue, parentID string, prefix string) {
+	children := childrenMap[parentID]
+	for i, child := range children {
+		isLast := i == len(children)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child))
+
+		extension := "│   "
+		if isLast {
+			extension = "    "
+		}
+		printPrettyTree(issues, childrenMap, child.ID, prefix+extension)
+	}
+}
+
+// displayPrettyList displays issues in pretty tree format (GH#654)
+func displayPrettyList(issues []*types.Issue, showHeader bool) {
+	if showHeader {
+		// Clear screen and show header
+		fmt.Print("\033[2J\033[H")
+		fmt.Println(strings.Repeat("=", 80))
+		fmt.Printf("Beads - Open & In Progress (%s)\n", time.Now().Format("15:04:05"))
+		fmt.Println(strings.Repeat("=", 80))
+		fmt.Println()
+	}
+
+	if len(issues) == 0 {
+		fmt.Println("No issues found.")
+		return
+	}
+
+	roots, childrenMap := buildIssueTree(issues)
+
+	for i, issue := range roots {
+		fmt.Println(formatPrettyIssue(issue))
+		printPrettyTree(issues, childrenMap, issue.ID, "")
+		if i < len(roots)-1 {
+			fmt.Println()
+		}
+	}
+
+	// Summary
+	fmt.Println()
+	fmt.Println(strings.Repeat("-", 80))
+	openCount := 0
+	inProgressCount := 0
+	for _, issue := range issues {
+		switch issue.Status {
+		case "open":
+			openCount++
+		case "in_progress":
+			inProgressCount++
+		}
+	}
+	fmt.Printf("Total: %d issues (%d open, %d in progress)\n", len(issues), openCount, inProgressCount)
+	fmt.Println()
+	fmt.Println("Legend: ○ open | ◐ in progress | ⊗ blocked | 🔴 P0 | 🟠 P1 | 🟡 P2 | 🔵 P3 | ⚪ P4")
+}
+
+// watchIssues starts watching for changes and re-displays (GH#654)
+func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueFilter, sortBy string, reverse bool) {
+	// Find .beads directory
+	beadsDir := ".beads"
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: .beads directory not found\n")
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
+		return
+	}
+	defer watcher.Close()
+
+	// Watch the .beads directory
+	if err := watcher.Add(beadsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error watching directory: %v\n", err)
+		return
+	}
+
+	// Initial display
+	issues, _ := store.SearchIssues(ctx, "", filter)
+	sortIssues(issues, sortBy, reverse)
+	displayPrettyList(issues, true)
+
+	fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
+
+	// Handle Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Debounce timer
+	var debounceTimer *time.Timer
+	debounceDelay := 500 * time.Millisecond
+
+	for {
+		select {
+		case <-sigChan:
+			fmt.Fprintf(os.Stderr, "\nStopped watching.\n")
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			// Only react to writes on issues.jsonl or database files
+			if event.Has(fsnotify.Write) {
+				basename := filepath.Base(event.Name)
+				if basename == "issues.jsonl" || strings.HasSuffix(basename, ".db") {
+					// Debounce rapid changes
+					if debounceTimer != nil {
+						debounceTimer.Stop()
+					}
+					debounceTimer = time.AfterFunc(debounceDelay, func() {
+						issues, _ := store.SearchIssues(ctx, "", filter)
+						sortIssues(issues, sortBy, reverse)
+						displayPrettyList(issues, true)
+						fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
+					})
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
+		}
+	}
 }
 
 // sortIssues sorts a slice of issues by the specified field and direction
@@ -150,6 +355,15 @@ var listCmd = &cobra.Command{
 
 		// Parent filtering (bd-yqhh)
 		parentID, _ := cmd.Flags().GetString("parent")
+
+		// Pretty and watch flags (GH#654)
+		prettyFormat, _ := cmd.Flags().GetBool("pretty")
+		watchMode, _ := cmd.Flags().GetBool("watch")
+
+		// Watch mode implies pretty format
+		if watchMode {
+			prettyFormat = true
+		}
 
 		// Use global jsonOutput set by PersistentPreRun
 
@@ -515,6 +729,18 @@ var listCmd = &cobra.Command{
 		// Apply sorting
 		sortIssues(issues, sortBy, reverse)
 
+		// Handle watch mode (GH#654) - must be before other output modes
+		if watchMode {
+			watchIssues(ctx, store, filter, sortBy, reverse)
+			return
+		}
+
+		// Handle pretty format (GH#654)
+		if prettyFormat {
+			displayPrettyList(issues, false)
+			return
+		}
+
 		// Handle format flag
 		if formatStr != "" {
 			if err := outputFormattedList(ctx, store, issues, formatStr); err != nil {
@@ -679,6 +905,10 @@ func init() {
 
 	// Parent filtering (bd-yqhh): filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
+
+	// Pretty and watch flags (GH#654)
+	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
+	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
