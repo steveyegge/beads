@@ -209,6 +209,17 @@ Examples:
 			filter.LabelsAny = labelsAny
 		}
 
+		// Priority exact match (use Changed() to properly handle P0)
+		if cmd.Flags().Changed("priority") {
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --priority: %v\n", err)
+				os.Exit(1)
+			}
+			filter.Priority = &priority
+		}
+
 		// Priority ranges
 		if cmd.Flags().Changed("priority-min") {
 			priorityMin, err := validation.ValidatePriority(priorityMinStr)
@@ -536,6 +547,7 @@ func init() {
 	exportCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output export statistics in JSON format")
 
 	// Filter flags
+	registerPriorityFlag(exportCmd, "")
 	exportCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
 	exportCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, merge-request, molecule, gate)")
 	exportCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")
