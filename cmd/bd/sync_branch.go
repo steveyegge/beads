@@ -58,7 +58,7 @@ func showSyncStatus(ctx context.Context) error {
 	}
 
 	// Check if sync branch exists
-	checkCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch)
+	checkCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch) //nolint:gosec // syncBranch from config
 	if err := checkCmd.Run(); err != nil {
 		return fmt.Errorf("sync branch '%s' does not exist", syncBranch)
 	}
@@ -68,7 +68,7 @@ func showSyncStatus(ctx context.Context) error {
 
 	// Show commit diff
 	fmt.Println("Commits in sync branch not in main:")
-	logCmd := exec.CommandContext(ctx, "git", "log", "--oneline", currentBranch+".."+syncBranch)
+	logCmd := exec.CommandContext(ctx, "git", "log", "--oneline", currentBranch+".."+syncBranch) //nolint:gosec // branch names from git
 	logOutput, err := logCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to get commit log: %w\n%s", err, logOutput)
@@ -81,7 +81,7 @@ func showSyncStatus(ctx context.Context) error {
 	}
 
 	fmt.Println("\nCommits in main not in sync branch:")
-	logCmd = exec.CommandContext(ctx, "git", "log", "--oneline", syncBranch+".."+currentBranch)
+	logCmd = exec.CommandContext(ctx, "git", "log", "--oneline", syncBranch+".."+currentBranch) //nolint:gosec // branch names from git
 	logOutput, err = logCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to get commit log: %w\n%s", err, logOutput)
@@ -130,7 +130,7 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 	}
 
 	// Check if sync branch exists
-	checkCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch)
+	checkCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch) //nolint:gosec // syncBranch from config
 	if err := checkCmd.Run(); err != nil {
 		return fmt.Errorf("sync branch '%s' does not exist", syncBranch)
 	}
@@ -162,7 +162,7 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 	}
 
 	// Perform the merge
-	mergeCmd := exec.CommandContext(ctx, "git", "merge", syncBranch, "-m", fmt.Sprintf("Merge sync branch '%s'", syncBranch))
+	mergeCmd := exec.CommandContext(ctx, "git", "merge", syncBranch, "-m", fmt.Sprintf("Merge sync branch '%s'", syncBranch)) //nolint:gosec // syncBranch from config
 	mergeOutput, err := mergeCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("merge failed: %w\n%s", err, mergeOutput)
@@ -228,13 +228,13 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 		relBeadsDir = beadsDir // Fallback to absolute path
 	}
 
-	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relBeadsDir)
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relBeadsDir) //nolint:gosec // paths from trusted sources
 	if output, err := addCmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git add failed: %w\n%s", err, output)
 	}
 
 	// Check if there are staged changes
-	diffCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--cached", "--quiet")
+	diffCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--cached", "--quiet") //nolint:gosec // repoRoot from git
 	if diffCmd.Run() == nil {
 		return false, nil // No changes to commit
 	}
