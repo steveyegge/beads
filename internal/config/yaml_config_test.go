@@ -92,7 +92,7 @@ func TestUpdateYamlKey(t *testing.T) {
 			content:  "# actor: \"\"\nother: value",
 			key:      "actor",
 			value:    "steve",
-			expected: "actor: steve\nother: value",
+			expected: "actor: \"steve\"\nother: value",
 		},
 		{
 			name:     "handle duration value",
@@ -136,8 +136,8 @@ func TestFormatYamlValue(t *testing.T) {
 		{"3.14", "3.14"},
 		{"30s", "30s"},
 		{"5m", "5m"},
-		{"simple", "simple"},
-		{"has space", "has space"},
+		{"simple", "\"simple\""},
+		{"has space", "\"has space\""},
 		{"has:colon", "\"has:colon\""},
 		{"has#hash", "\"has#hash\""},
 		{" leading", "\" leading\""},
@@ -150,6 +150,77 @@ func TestFormatYamlValue(t *testing.T) {
 				t.Errorf("formatYamlValue(%q) = %q, want %q", tt.value, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestNormalizeYamlKey(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"sync.branch", "sync-branch"},  // alias should be normalized
+		{"sync-branch", "sync-branch"},  // already canonical
+		{"no-db", "no-db"},              // no alias, unchanged
+		{"json", "json"},                // no alias, unchanged
+		{"routing.mode", "routing.mode"}, // no alias for this one
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeYamlKey(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizeYamlKey(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSetYamlConfig_KeyNormalization(t *testing.T) {
+	// Create a temp directory with .beads/config.yaml
+	tmpDir, err := os.MkdirTemp("", "beads-yaml-key-norm-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	initialConfig := `# Beads Config
+sync-branch: old-value
+`
+	if err := os.WriteFile(configPath, []byte(initialConfig), 0644); err != nil {
+		t.Fatalf("Failed to write config.yaml: %v", err)
+	}
+
+	// Change to temp directory for the test
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Test SetYamlConfig with aliased key (sync.branch should write as sync-branch)
+	if err := SetYamlConfig("sync.branch", "new-value"); err != nil {
+		t.Fatalf("SetYamlConfig() error = %v", err)
+	}
+
+	// Read back and verify
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml: %v", err)
+	}
+
+	contentStr := string(content)
+	// Should update the existing sync-branch line, not add sync.branch
+	if !strings.Contains(contentStr, "sync-branch: \"new-value\"") {
+		t.Errorf("config.yaml should contain 'sync-branch: \"new-value\"', got:\n%s", contentStr)
+	}
+	if strings.Contains(contentStr, "sync.branch") {
+		t.Errorf("config.yaml should NOT contain 'sync.branch' (should be normalized to sync-branch), got:\n%s", contentStr)
 	}
 }
 

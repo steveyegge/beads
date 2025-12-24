@@ -74,13 +74,33 @@ func IsYamlOnlyKey(key string) bool {
 	return false
 }
 
+// keyAliases maps alternative key names to their canonical yaml form.
+// This ensures consistency when users use different formats (dot vs hyphen).
+var keyAliases = map[string]string{
+	"sync.branch": "sync-branch",
+}
+
+// normalizeYamlKey converts a key to its canonical yaml format.
+// Some keys have aliases (e.g., sync.branch -> sync-branch) to handle
+// different input formats consistently.
+func normalizeYamlKey(key string) string {
+	if canonical, ok := keyAliases[key]; ok {
+		return canonical
+	}
+	return key
+}
+
 // SetYamlConfig sets a configuration value in the project's config.yaml file.
 // It handles both adding new keys and updating existing (possibly commented) keys.
+// Keys are normalized to their canonical yaml format (e.g., sync.branch -> sync-branch).
 func SetYamlConfig(key, value string) error {
 	configPath, err := findProjectConfigYaml()
 	if err != nil {
 		return err
 	}
+
+	// Normalize key to canonical yaml format
+	normalizedKey := normalizeYamlKey(key)
 
 	// Read existing config
 	content, err := os.ReadFile(configPath) //nolint:gosec // configPath is from findProjectConfigYaml
@@ -89,7 +109,7 @@ func SetYamlConfig(key, value string) error {
 	}
 
 	// Update or add the key
-	newContent, err := updateYamlKey(string(content), key, value)
+	newContent, err := updateYamlKey(string(content), normalizedKey, value)
 	if err != nil {
 		return err
 	}
@@ -194,12 +214,8 @@ func formatYamlValue(value string) string {
 		return value
 	}
 
-	// String values that need quoting
-	if needsQuoting(value) {
-		return fmt.Sprintf("%q", value)
-	}
-
-	return value
+	// For all other string-like values, quote to preserve YAML string semantics
+	return fmt.Sprintf("%q", value)
 }
 
 func isNumeric(s string) bool {
