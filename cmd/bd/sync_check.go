@@ -137,7 +137,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 	}
 
 	// Get local ref
-	localRefCmd := exec.CommandContext(ctx, "git", "rev-parse", syncBranch)
+	localRefCmd := exec.CommandContext(ctx, "git", "rev-parse", syncBranch) //nolint:gosec // syncBranch from config
 	localRefOutput, err := localRefCmd.Output()
 	if err != nil {
 		result.Message = "Failed to get local sync branch ref"
@@ -153,7 +153,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 	}
 
 	// Get remote ref
-	remoteRefCmd := exec.CommandContext(ctx, "git", "rev-parse", remote+"/"+syncBranch)
+	remoteRefCmd := exec.CommandContext(ctx, "git", "rev-parse", remote+"/"+syncBranch) //nolint:gosec // remote and syncBranch from config
 	remoteRefOutput, err := remoteRefCmd.Output()
 	if err != nil {
 		result.Message = fmt.Sprintf("Remote tracking branch '%s/%s' does not exist", remote, syncBranch)
@@ -169,7 +169,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 	}
 
 	// Check if local is ahead of remote (normal case)
-	aheadCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", remoteRef, localRef)
+	aheadCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", remoteRef, localRef) //nolint:gosec // refs from git rev-parse
 	if aheadCmd.Run() == nil {
 		result.Message = "Local sync branch is ahead of remote (normal)"
 		return result
