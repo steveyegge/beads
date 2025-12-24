@@ -198,6 +198,52 @@ func TestValidate_ChildSteps(t *testing.T) {
 	}
 }
 
+func TestValidate_ChildStepsInvalidDependsOn(t *testing.T) {
+	formula := &Formula{
+		Formula: "mol-bad-child-dep",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "epic1",
+				Title: "Epic 1",
+				Children: []*Step{
+					{ID: "child1", Title: "Child 1"},
+					{ID: "child2", Title: "Child 2", DependsOn: []string{"nonexistent"}},
+				},
+			},
+		},
+	}
+
+	err := formula.Validate()
+	if err == nil {
+		t.Error("Validate should fail for child depends_on referencing unknown step")
+	}
+}
+
+func TestValidate_ChildStepsInvalidPriority(t *testing.T) {
+	p := 10 // invalid
+	formula := &Formula{
+		Formula: "mol-bad-child-priority",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "epic1",
+				Title: "Epic 1",
+				Children: []*Step{
+					{ID: "child1", Title: "Child 1", Priority: &p},
+				},
+			},
+		},
+	}
+
+	err := formula.Validate()
+	if err == nil {
+		t.Error("Validate should fail for child with invalid priority")
+	}
+}
+
 func TestValidate_BondPoints(t *testing.T) {
 	formula := &Formula{
 		Formula: "mol-compose",

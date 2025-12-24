@@ -243,6 +243,9 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*c
 		return nil, fmt.Errorf("failed to create issues: %w", err)
 	}
 
+	// Track if we need cleanup on failure
+	issuesCreated := true
+
 	// Add labels and dependencies in a transaction
 	err := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
 		// Add labels
@@ -263,6 +266,18 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*c
 	})
 
 	if err != nil {
+		// Clean up: delete the issues we created since labels/deps failed
+		if issuesCreated {
+			cleanupErr := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
+				for i := len(issues) - 1; i >= 0; i-- {
+					_ = tx.DeleteIssue(ctx, issues[i].ID) // Best effort cleanup
+				}
+				return nil
+			})
+			if cleanupErr != nil {
+				return nil, fmt.Errorf("%w (cleanup also failed: %v)", err, cleanupErr)
+			}
+		}
 		return nil, err
 	}
 

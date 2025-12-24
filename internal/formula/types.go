@@ -139,23 +139,28 @@ type Step struct {
 
 	// Expand references an expansion formula to inline here.
 	// When set, this step is replaced by the expansion's steps.
+	// TODO(future): Not yet implemented in bd cook. Filed as future work.
 	Expand string `yaml:"expand,omitempty" json:"expand,omitempty"`
 
 	// ExpandVars are variable overrides for the expansion.
+	// TODO(future): Not yet implemented in bd cook. Filed as future work.
 	ExpandVars map[string]string `yaml:"expand_vars,omitempty" json:"expand_vars,omitempty"`
 
 	// Condition makes this step optional based on a variable.
 	// Format: "{{var}}" (truthy) or "{{var}} == value".
+	// TODO(future): Not yet implemented in bd cook. Filed as future work.
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 
 	// Children are nested steps (for creating epic hierarchies).
 	Children []*Step `yaml:"children,omitempty" json:"children,omitempty"`
 
 	// Gate defines an async wait condition for this step.
+	// TODO(future): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
 	Gate *Gate `yaml:"gate,omitempty" json:"gate,omitempty"`
 }
 
 // Gate defines an async wait condition (integrates with bd-udsi).
+// TODO(future): Not yet implemented in bd cook. Schema defined for future use.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `yaml:"type" json:"type"`
@@ -239,38 +244,42 @@ func (f *Formula) Validate() error {
 		}
 	}
 
-	// Validate steps
-	stepIDs := make(map[string]bool)
+	// Validate steps - track where each ID was first defined for better error messages
+	stepIDLocations := make(map[string]string) // ID -> location where first defined
 	for i, step := range f.Steps {
+		prefix := fmt.Sprintf("steps[%d]", i)
 		if step.ID == "" {
-			errs = append(errs, fmt.Sprintf("steps[%d]: id is required", i))
+			errs = append(errs, fmt.Sprintf("%s: id is required", prefix))
 			continue
 		}
-		if stepIDs[step.ID] {
-			errs = append(errs, fmt.Sprintf("steps[%d]: duplicate id %q", i, step.ID))
+		if firstLoc, exists := stepIDLocations[step.ID]; exists {
+			errs = append(errs, fmt.Sprintf("%s: duplicate id %q (first defined at %s)", prefix, step.ID, firstLoc))
+		} else {
+			stepIDLocations[step.ID] = prefix
 		}
-		stepIDs[step.ID] = true
 
 		if step.Title == "" && step.Expand == "" {
-			errs = append(errs, fmt.Sprintf("steps[%d] (%s): title is required (unless using expand)", i, step.ID))
+			errs = append(errs, fmt.Sprintf("%s (%s): title is required (unless using expand)", prefix, step.ID))
 		}
 
 		// Validate priority range
 		if step.Priority != nil && (*step.Priority < 0 || *step.Priority > 4) {
-			errs = append(errs, fmt.Sprintf("steps[%d] (%s): priority must be 0-4", i, step.ID))
+			errs = append(errs, fmt.Sprintf("%s (%s): priority must be 0-4", prefix, step.ID))
 		}
 
 		// Collect child IDs (for dependency validation)
-		collectChildIDs(step.Children, stepIDs, &errs, fmt.Sprintf("steps[%d]", i))
+		collectChildIDs(step.Children, stepIDLocations, &errs, prefix)
 	}
 
-	// Validate step dependencies reference valid IDs
+	// Validate step dependencies reference valid IDs (including children)
 	for i, step := range f.Steps {
 		for _, dep := range step.DependsOn {
-			if !stepIDs[dep] {
+			if _, exists := stepIDLocations[dep]; !exists {
 				errs = append(errs, fmt.Sprintf("steps[%d] (%s): depends_on references unknown step %q", i, step.ID, dep))
 			}
 		}
+		// Validate children's depends_on recursively
+		validateChildDependsOn(step.Children, stepIDLocations, &errs, fmt.Sprintf("steps[%d]", i))
 	}
 
 	// Validate compose rules
@@ -282,11 +291,15 @@ func (f *Formula) Validate() error {
 			if bp.AfterStep != "" && bp.BeforeStep != "" {
 				errs = append(errs, fmt.Sprintf("compose.bond_points[%d] (%s): cannot have both after_step and before_step", i, bp.ID))
 			}
-			if bp.AfterStep != "" && !stepIDs[bp.AfterStep] {
-				errs = append(errs, fmt.Sprintf("compose.bond_points[%d] (%s): after_step references unknown step %q", i, bp.ID, bp.AfterStep))
+			if bp.AfterStep != "" {
+				if _, exists := stepIDLocations[bp.AfterStep]; !exists {
+					errs = append(errs, fmt.Sprintf("compose.bond_points[%d] (%s): after_step references unknown step %q", i, bp.ID, bp.AfterStep))
+				}
 			}
-			if bp.BeforeStep != "" && !stepIDs[bp.BeforeStep] {
-				errs = append(errs, fmt.Sprintf("compose.bond_points[%d] (%s): before_step references unknown step %q", i, bp.ID, bp.BeforeStep))
+			if bp.BeforeStep != "" {
+				if _, exists := stepIDLocations[bp.BeforeStep]; !exists {
+					errs = append(errs, fmt.Sprintf("compose.bond_points[%d] (%s): before_step references unknown step %q", i, bp.ID, bp.BeforeStep))
+				}
 			}
 		}
 
@@ -308,23 +321,43 @@ func (f *Formula) Validate() error {
 }
 
 // collectChildIDs recursively collects step IDs from children.
-func collectChildIDs(children []*Step, ids map[string]bool, errs *[]string, prefix string) {
+// idLocations maps ID -> location where first defined (for better duplicate error messages).
+func collectChildIDs(children []*Step, idLocations map[string]string, errs *[]string, prefix string) {
 	for i, child := range children {
 		childPrefix := fmt.Sprintf("%s.children[%d]", prefix, i)
 		if child.ID == "" {
 			*errs = append(*errs, fmt.Sprintf("%s: id is required", childPrefix))
 			continue
 		}
-		if ids[child.ID] {
-			*errs = append(*errs, fmt.Sprintf("%s: duplicate id %q", childPrefix, child.ID))
+		if firstLoc, exists := idLocations[child.ID]; exists {
+			*errs = append(*errs, fmt.Sprintf("%s: duplicate id %q (first defined at %s)", childPrefix, child.ID, firstLoc))
+		} else {
+			idLocations[child.ID] = childPrefix
 		}
-		ids[child.ID] = true
 
 		if child.Title == "" && child.Expand == "" {
 			*errs = append(*errs, fmt.Sprintf("%s (%s): title is required", childPrefix, child.ID))
 		}
 
-		collectChildIDs(child.Children, ids, errs, childPrefix)
+		// Validate priority range for children
+		if child.Priority != nil && (*child.Priority < 0 || *child.Priority > 4) {
+			*errs = append(*errs, fmt.Sprintf("%s (%s): priority must be 0-4", childPrefix, child.ID))
+		}
+
+		collectChildIDs(child.Children, idLocations, errs, childPrefix)
+	}
+}
+
+// validateChildDependsOn recursively validates depends_on references for children.
+func validateChildDependsOn(children []*Step, idLocations map[string]string, errs *[]string, prefix string) {
+	for i, child := range children {
+		childPrefix := fmt.Sprintf("%s.children[%d]", prefix, i)
+		for _, dep := range child.DependsOn {
+			if _, exists := idLocations[dep]; !exists {
+				*errs = append(*errs, fmt.Sprintf("%s (%s): depends_on references unknown step %q", childPrefix, child.ID, dep))
+			}
+		}
+		validateChildDependsOn(child.Children, idLocations, errs, childPrefix)
 	}
 }
 

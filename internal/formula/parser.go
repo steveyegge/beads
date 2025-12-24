@@ -14,6 +14,10 @@ import (
 const FormulaExt = ".formula.yaml"
 
 // Parser handles loading and resolving formulas.
+//
+// NOTE: Parser is NOT thread-safe. Create a new Parser per goroutine or
+// synchronize access externally. The cache and resolving maps have no
+// internal synchronization.
 type Parser struct {
 	// searchPaths are directories to search for formulas (in order).
 	searchPaths []string
