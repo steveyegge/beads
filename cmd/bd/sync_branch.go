@@ -95,7 +95,7 @@ func showSyncStatus(ctx context.Context) error {
 
 	// Show file diff for .beads/issues.jsonl
 	fmt.Println("\nFile differences in .beads/issues.jsonl:")
-	diffCmd := exec.CommandContext(ctx, "git", "diff", currentBranch+"..."+syncBranch, "--", ".beads/issues.jsonl")
+	diffCmd := exec.CommandContext(ctx, "git", "diff", currentBranch+"..."+syncBranch, "--", ".beads/issues.jsonl") //nolint:gosec // branch names from git
 	diffOutput, err := diffCmd.CombinedOutput()
 	if err != nil {
 		// diff returns non-zero when there are differences, which is fine
@@ -150,7 +150,7 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 	if dryRun {
 		fmt.Println("→ [DRY RUN] Would merge sync branch")
 		// Show what would be merged
-		logCmd := exec.CommandContext(ctx, "git", "log", "--oneline", currentBranch+".."+syncBranch)
+		logCmd := exec.CommandContext(ctx, "git", "log", "--oneline", currentBranch+".."+syncBranch) //nolint:gosec // branch names from git
 		logOutput, _ := logCmd.CombinedOutput()
 		if len(strings.TrimSpace(string(logOutput))) > 0 {
 			fmt.Println("\nCommits that would be merged:")
@@ -244,14 +244,14 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
 	commitArgs := buildGitCommitArgs(repoRoot, message)
-	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
+	commitCmd := exec.CommandContext(ctx, "git", commitArgs...) //nolint:gosec // args from buildGitCommitArgs
 	if output, err := commitCmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git commit failed: %w\n%s", err, output)
 	}
 
 	// Push if requested
 	if push {
-		pushCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "push")
+		pushCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "push") //nolint:gosec // repoRoot from git
 		if pushOutput, err := runGitCmdWithTimeoutMsg(ctx, pushCmd, "git push", 5*time.Second); err != nil {
 			return true, fmt.Errorf("git push failed: %w\n%s", err, pushOutput)
 		}
@@ -270,7 +270,7 @@ func pullFromExternalBeadsRepo(ctx context.Context, beadsDir string) error {
 	}
 
 	// Check if remote exists
-	remoteCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "remote")
+	remoteCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "remote") //nolint:gosec // repoRoot from git
 	remoteOutput, err := remoteCmd.Output()
 	if err != nil || len(strings.TrimSpace(string(remoteOutput))) == 0 {
 		return nil // No remote, skip pull
