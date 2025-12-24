@@ -212,12 +212,8 @@ func formatYamlValue(value string) string {
 		return value
 	}
 
-	// String values that need quoting
-	if needsQuoting(value) {
-		return fmt.Sprintf("%q", value)
-	}
-
-	return value
+	// For all other string-like values, quote to preserve YAML string semantics
+	return fmt.Sprintf("%q", value)
 }
 
 func isNumeric(s string) bool {

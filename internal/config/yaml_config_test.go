@@ -92,7 +92,7 @@ func TestUpdateYamlKey(t *testing.T) {
 			content:  "# actor: \"\"\nother: value",
 			key:      "actor",
 			value:    "steve",
-			expected: "actor: steve\nother: value",
+			expected: "actor: \"steve\"\nother: value",
 		},
 		{
 			name:     "handle duration value",
@@ -136,8 +136,8 @@ func TestFormatYamlValue(t *testing.T) {
 		{"3.14", "3.14"},
 		{"30s", "30s"},
 		{"5m", "5m"},
-		{"simple", "simple"},
-		{"has space", "has space"},
+		{"simple", "\"simple\""},
+		{"has space", "\"has space\""},
 		{"has:colon", "\"has:colon\""},
 		{"has#hash", "\"has#hash\""},
 		{" leading", "\" leading\""},
@@ -216,8 +216,8 @@ sync-branch: old-value
 
 	contentStr := string(content)
 	// Should update the existing sync-branch line, not add sync.branch
-	if !strings.Contains(contentStr, "sync-branch: new-value") {
-		t.Errorf("config.yaml should contain 'sync-branch: new-value', got:\n%s", contentStr)
+	if !strings.Contains(contentStr, "sync-branch: \"new-value\"") {
+		t.Errorf("config.yaml should contain 'sync-branch: \"new-value\"', got:\n%s", contentStr)
 	}
 	if strings.Contains(contentStr, "sync.branch") {
 		t.Errorf("config.yaml should NOT contain 'sync.branch' (should be normalized to sync-branch), got:\n%s", contentStr)
