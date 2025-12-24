@@ -176,7 +176,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 	}
 
 	// Check if remote is ahead of local (behind, needs pull)
-	behindCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", localRef, remoteRef)
+	behindCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", localRef, remoteRef) //nolint:gosec // refs from git rev-parse
 	if behindCmd.Run() == nil {
 		result.Message = "Local sync branch is behind remote (needs pull)"
 		return result
