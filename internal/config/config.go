@@ -282,7 +282,8 @@ func LogOverride(override ConfigOverride) {
 		overrideDesc = string(override.OverriddenBy)
 	}
 
-	debug.Logf("Config: %s overridden by %s (was: %v from %s, now: %v)\n",
+	// Always emit to stderr when verbose mode is enabled (caller guards on verbose)
+	fmt.Fprintf(os.Stderr, "Config: %s overridden by %s (was: %v from %s, now: %v)\n",
 		override.Key, overrideDesc, override.OriginalValue, sourceDesc, override.EffectiveValue)
 }
 
