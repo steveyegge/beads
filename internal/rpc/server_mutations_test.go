@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/storage/memory"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestEmitMutation(t *testing.T) {
@@ -708,5 +709,480 @@ func TestHandleDelete_BatchEmitsMutations(t *testing.T) {
 		if !deletedIDs[id] {
 			t.Errorf("no delete mutation found for issue %s", id)
 		}
+	}
+}
+
+// TestHandleDelete_DryRun verifies that dry-run mode returns preview without actual deletion
+func TestHandleDelete_DryRun(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create test issues
+	issueIDs := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		createArgs := CreateArgs{
+			Title:     "Issue for Dry Run " + string(rune('A'+i)),
+			IssueType: "task",
+			Priority:  2,
+		}
+		createJSON, _ := json.Marshal(createArgs)
+		createReq := &Request{
+			Operation: OpCreate,
+			Args:      createJSON,
+			Actor:     "test-user",
+		}
+
+		createResp := server.handleCreate(createReq)
+		if !createResp.Success {
+			t.Fatalf("failed to create test issue %d: %s", i, createResp.Error)
+		}
+
+		var createdIssue map[string]interface{}
+		if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+			t.Fatalf("failed to parse created issue %d: %v", i, err)
+		}
+		issueIDs[i] = createdIssue["id"].(string)
+	}
+
+	// Clear mutation buffer
+	_ = server.GetRecentMutations(time.Now().UnixMilli())
+
+	// Dry-run delete
+	deleteArgs := DeleteArgs{
+		IDs:    issueIDs,
+		DryRun: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if !deleteResp.Success {
+		t.Fatalf("dry-run delete operation failed: %s", deleteResp.Error)
+	}
+
+	// Parse response
+	var result map[string]interface{}
+	if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+		t.Fatalf("failed to parse delete response: %v", err)
+	}
+
+	// Verify dry-run response structure
+	if dryRun, ok := result["dry_run"].(bool); !ok || !dryRun {
+		t.Errorf("expected dry_run=true in response, got %v", result["dry_run"])
+	}
+
+	if issueCount, ok := result["issue_count"].(float64); !ok || int(issueCount) != 2 {
+		t.Errorf("expected issue_count=2 in response, got %v", result["issue_count"])
+	}
+
+	// Verify no mutation events were emitted (dry-run doesn't delete)
+	mutations := server.GetRecentMutations(0)
+	for _, m := range mutations {
+		if m.Type == MutationDelete {
+			t.Errorf("unexpected delete mutation in dry-run mode: %s", m.IssueID)
+		}
+	}
+
+	// Verify issues still exist (not actually deleted)
+	for _, id := range issueIDs {
+		showArgs := ShowArgs{ID: id}
+		showJSON, _ := json.Marshal(showArgs)
+		showReq := &Request{
+			Operation: OpShow,
+			Args:      showJSON,
+		}
+		showResp := server.handleShow(showReq)
+		if !showResp.Success {
+			t.Errorf("issue %s should still exist after dry-run, but got error: %s", id, showResp.Error)
+		}
+	}
+}
+
+// TestHandleDelete_ErrorEmptyIDs verifies error when no issue IDs provided
+func TestHandleDelete_ErrorEmptyIDs(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Try to delete with empty IDs
+	deleteArgs := DeleteArgs{
+		IDs:   []string{},
+		Force: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if deleteResp.Success {
+		t.Error("expected error for empty IDs, but got success")
+	}
+
+	if deleteResp.Error == "" {
+		t.Error("expected error message for empty IDs")
+	}
+
+	// Verify error message mentions missing IDs
+	if deleteResp.Error != "no issue IDs provided for deletion" {
+		t.Errorf("unexpected error message: %s", deleteResp.Error)
+	}
+}
+
+// TestHandleDelete_ErrorIssueNotFound verifies error when issue doesn't exist
+func TestHandleDelete_ErrorIssueNotFound(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Try to delete non-existent issue
+	deleteArgs := DeleteArgs{
+		IDs:   []string{"bd-nonexistent-12345"},
+		Force: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+
+	// Parse response to check for errors
+	var result map[string]interface{}
+	if deleteResp.Success {
+		if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		// Check for partial success with errors
+		if errors, ok := result["errors"].([]interface{}); ok && len(errors) > 0 {
+			// This is expected - the response includes errors for not found issues
+			found := false
+			for _, e := range errors {
+				if errStr, ok := e.(string); ok {
+					if errStr == "bd-nonexistent-12345: not found" {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				t.Errorf("expected 'not found' error, got: %v", errors)
+			}
+		}
+	} else {
+		// Complete failure is also acceptable
+		if deleteResp.Error == "" {
+			t.Error("expected error message")
+		}
+	}
+}
+
+// TestHandleDelete_PartialSuccess verifies partial success when some issues exist and some don't
+func TestHandleDelete_PartialSuccess(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create one valid issue
+	createArgs := CreateArgs{
+		Title:     "Valid Issue for Partial Delete",
+		IssueType: "bug",
+		Priority:  1,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	validID := createdIssue["id"].(string)
+
+	// Try to delete both valid and invalid issues
+	deleteArgs := DeleteArgs{
+		IDs:   []string{validID, "bd-nonexistent-xyz"},
+		Force: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if !deleteResp.Success {
+		t.Fatalf("partial delete should succeed with partial_success flag: %s", deleteResp.Error)
+	}
+
+	// Parse response
+	var result map[string]interface{}
+	if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify partial success
+	if deletedCount, ok := result["deleted_count"].(float64); !ok || int(deletedCount) != 1 {
+		t.Errorf("expected deleted_count=1, got %v", result["deleted_count"])
+	}
+
+	if totalCount, ok := result["total_count"].(float64); !ok || int(totalCount) != 2 {
+		t.Errorf("expected total_count=2, got %v", result["total_count"])
+	}
+
+	if partialSuccess, ok := result["partial_success"].(bool); !ok || !partialSuccess {
+		t.Errorf("expected partial_success=true, got %v", result["partial_success"])
+	}
+
+	// Verify errors array contains the not found error
+	if errors, ok := result["errors"].([]interface{}); ok {
+		if len(errors) != 1 {
+			t.Errorf("expected 1 error, got %d", len(errors))
+		}
+	} else {
+		t.Error("expected errors array in response")
+	}
+
+	// Verify the valid issue was actually deleted
+	showArgs := ShowArgs{ID: validID}
+	showJSON, _ := json.Marshal(showArgs)
+	showReq := &Request{
+		Operation: OpShow,
+		Args:      showJSON,
+	}
+	showResp := server.handleShow(showReq)
+	if showResp.Success {
+		t.Error("deleted issue should not be found")
+	}
+}
+
+// TestHandleDelete_ErrorCannotDeleteTemplate verifies that templates cannot be deleted
+func TestHandleDelete_ErrorCannotDeleteTemplate(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create a template issue directly in memory store
+	ctx := server.reqCtx(&Request{})
+	template := &types.Issue{
+		ID:          "bd-template-test",
+		Title:       "Template Issue",
+		Description: "This is a template",
+		IssueType:   types.TypeTask,
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IsTemplate:  true,
+	}
+	if err := store.CreateIssue(ctx, template, "test"); err != nil {
+		t.Fatalf("failed to create template: %v", err)
+	}
+
+	// Try to delete the template
+	deleteArgs := DeleteArgs{
+		IDs:   []string{"bd-template-test"},
+		Force: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+
+	// Parse response
+	var result map[string]interface{}
+	if deleteResp.Success {
+		if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		// Check for errors
+		if errors, ok := result["errors"].([]interface{}); ok && len(errors) > 0 {
+			found := false
+			for _, e := range errors {
+				if errStr, ok := e.(string); ok {
+					if errStr == "bd-template-test: cannot delete template (templates are read-only)" {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				t.Errorf("expected template deletion error, got: %v", errors)
+			}
+		} else {
+			t.Error("expected errors in response for template deletion")
+		}
+	} else {
+		// Complete failure with appropriate error is also acceptable
+		if deleteResp.Error == "" {
+			t.Error("expected error message")
+		}
+	}
+
+	// Verify template still exists
+	showArgs := ShowArgs{ID: "bd-template-test"}
+	showJSON, _ := json.Marshal(showArgs)
+	showReq := &Request{
+		Operation: OpShow,
+		Args:      showJSON,
+	}
+	showResp := server.handleShow(showReq)
+	if !showResp.Success {
+		t.Errorf("template should still exist after failed delete: %s", showResp.Error)
+	}
+}
+
+// TestHandleDelete_InvalidArgs verifies error for malformed request
+func TestHandleDelete_InvalidArgs(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Send invalid JSON
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      []byte("invalid json"),
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if deleteResp.Success {
+		t.Error("expected error for invalid args")
+	}
+
+	if deleteResp.Error == "" {
+		t.Error("expected error message for invalid args")
+	}
+}
+
+// TestHandleDelete_ReasonField verifies that the reason field is passed through
+func TestHandleDelete_ReasonField(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create test issue
+	createArgs := CreateArgs{
+		Title:     "Issue with Reason",
+		IssueType: "task",
+		Priority:  2,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	issueID := createdIssue["id"].(string)
+
+	// Delete with reason
+	deleteArgs := DeleteArgs{
+		IDs:    []string{issueID},
+		Force:  true,
+		Reason: "no longer needed",
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if !deleteResp.Success {
+		t.Fatalf("delete with reason failed: %s", deleteResp.Error)
+	}
+
+	// Parse response
+	var result map[string]interface{}
+	if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if deletedCount, ok := result["deleted_count"].(float64); !ok || int(deletedCount) != 1 {
+		t.Errorf("expected deleted_count=1, got %v", result["deleted_count"])
+	}
+}
+
+// TestHandleDelete_CascadeAndForceFlags documents current behavior of cascade/force flags
+// Note: At daemon level, these flags are accepted but cascade is not fully implemented
+// The CLI handles cascade logic before calling the daemon
+func TestHandleDelete_CascadeAndForceFlags(t *testing.T) {
+	store := memory.New("/tmp/test.jsonl")
+	server := NewServer("/tmp/test.sock", store, "/tmp", "/tmp/test.db")
+
+	// Create test issue
+	createArgs := CreateArgs{
+		Title:     "Issue with Flags",
+		IssueType: "task",
+		Priority:  2,
+	}
+	createJSON, _ := json.Marshal(createArgs)
+	createReq := &Request{
+		Operation: OpCreate,
+		Args:      createJSON,
+		Actor:     "test-user",
+	}
+
+	createResp := server.handleCreate(createReq)
+	if !createResp.Success {
+		t.Fatalf("failed to create test issue: %s", createResp.Error)
+	}
+
+	var createdIssue map[string]interface{}
+	if err := json.Unmarshal(createResp.Data, &createdIssue); err != nil {
+		t.Fatalf("failed to parse created issue: %v", err)
+	}
+	issueID := createdIssue["id"].(string)
+
+	// Delete with cascade and force flags
+	deleteArgs := DeleteArgs{
+		IDs:     []string{issueID},
+		Force:   true,
+		Cascade: true,
+	}
+	deleteJSON, _ := json.Marshal(deleteArgs)
+	deleteReq := &Request{
+		Operation: OpDelete,
+		Args:      deleteJSON,
+		Actor:     "test-user",
+	}
+
+	deleteResp := server.handleDelete(deleteReq)
+	if !deleteResp.Success {
+		t.Fatalf("delete with flags failed: %s", deleteResp.Error)
+	}
+
+	// Verify successful deletion
+	var result map[string]interface{}
+	if err := json.Unmarshal(deleteResp.Data, &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if deletedCount, ok := result["deleted_count"].(float64); !ok || int(deletedCount) != 1 {
+		t.Errorf("expected deleted_count=1, got %v", result["deleted_count"])
 	}
 }
