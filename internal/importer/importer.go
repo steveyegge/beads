@@ -216,8 +216,11 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 
 	result.ExpectedPrefix = configuredPrefix
 
+	// gt-2z6s: Read allowed_prefixes config for additional valid prefixes (e.g., mol-*)
+	allowedPrefixesConfig, _ := sqliteStore.GetConfig(ctx, "allowed_prefixes")
+
 	// GH#686: In multi-repo mode, allow all prefixes (nil = allow all)
-	allowedPrefixes := buildAllowedPrefixSet(configuredPrefix)
+	allowedPrefixes := buildAllowedPrefixSet(configuredPrefix, allowedPrefixesConfig)
 	if allowedPrefixes == nil {
 		return issues, nil
 	}
@@ -235,7 +238,14 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 		// GH#422: Check if issue ID starts with configured prefix directly
 		// rather than extracting/guessing. This handles multi-hyphen prefixes
 		// like "asianops-audit-" correctly.
-		prefixMatches := strings.HasPrefix(issue.ID, configuredPrefix+"-")
+		// gt-2z6s: Also check against allowed_prefixes config
+		prefixMatches := false
+		for prefix := range allowedPrefixes {
+			if strings.HasPrefix(issue.ID, prefix+"-") {
+				prefixMatches = true
+				break
+			}
+		}
 		if !prefixMatches {
 			// Extract prefix for error reporting (best effort)
 			prefix := utils.ExtractIssuePrefix(issue.ID)
@@ -970,9 +980,26 @@ func validateNoDuplicateExternalRefs(issues []*types.Issue, clearDuplicates bool
 
 // buildAllowedPrefixSet returns allowed prefixes, or nil to allow all (GH#686).
 // In multi-repo mode, additional repos have their own prefixes - allow all.
-func buildAllowedPrefixSet(primaryPrefix string) map[string]bool {
+// gt-2z6s: Also accepts allowedPrefixesConfig (comma-separated list like "gt-,mol-").
+func buildAllowedPrefixSet(primaryPrefix string, allowedPrefixesConfig string) map[string]bool {
 	if config.GetMultiRepoConfig() != nil {
 		return nil // Multi-repo: allow all prefixes
 	}
-	return map[string]bool{primaryPrefix: true}
+
+	allowed := map[string]bool{primaryPrefix: true}
+
+	// gt-2z6s: Parse allowed_prefixes config (comma-separated, with or without trailing -)
+	if allowedPrefixesConfig != "" {
+		for _, prefix := range strings.Split(allowedPrefixesConfig, ",") {
+			prefix = strings.TrimSpace(prefix)
+			if prefix == "" {
+				continue
+			}
+			// Normalize: remove trailing - if present (we match without it)
+			prefix = strings.TrimSuffix(prefix, "-")
+			allowed[prefix] = true
+		}
+	}
+
+	return allowed
 }
