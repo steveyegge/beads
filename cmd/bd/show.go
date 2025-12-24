@@ -26,7 +26,6 @@ var showCmd = &cobra.Command{
 	Short:   "Show issue details",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		jsonOutput, _ := cmd.Flags().GetBool("json")
 		showThread, _ := cmd.Flags().GetBool("thread")
 		ctx := rootCtx
 
@@ -34,8 +33,7 @@ var showCmd = &cobra.Command{
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		if daemonClient == nil {
 			if err := ensureDatabaseFresh(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -47,13 +45,11 @@ var showCmd = &cobra.Command{
 				resolveArgs := &rpc.ResolveIDArgs{ID: id}
 				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
-					os.Exit(1)
+					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
 				}
 				var resolvedID string
 				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 				}
 				resolvedIDs = append(resolvedIDs, resolvedID)
 			}
@@ -62,8 +58,7 @@ var showCmd = &cobra.Command{
 			var err error
 			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -466,7 +461,6 @@ var updateCmd = &cobra.Command{
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("update")
-		jsonOutput, _ := cmd.Flags().GetBool("json")
 		updates := make(map[string]interface{})
 
 		if cmd.Flags().Changed("status") {
@@ -975,7 +969,6 @@ var closeCmd = &cobra.Command{
 		if reason == "" {
 			reason = "Closed"
 		}
-		jsonOutput, _ := cmd.Flags().GetBool("json")
 		force, _ := cmd.Flags().GetBool("force")
 		continueFlag, _ := cmd.Flags().GetBool("continue")
 		noAuto, _ := cmd.Flags().GetBool("no-auto")
@@ -1383,7 +1376,6 @@ func findReplies(ctx context.Context, issueID string, daemonClient *rpc.Client, 
 }
 
 func init() {
-	showCmd.Flags().Bool("json", false, "Output JSON format")
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	rootCmd.AddCommand(showCmd)
 
@@ -1399,8 +1391,6 @@ func init() {
 	updateCmd.Flags().StringSlice("add-label", nil, "Add labels (repeatable)")
 	updateCmd.Flags().StringSlice("remove-label", nil, "Remove labels (repeatable)")
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
-
-	updateCmd.Flags().Bool("json", false, "Output JSON format")
 	rootCmd.AddCommand(updateCmd)
 
 	editCmd.Flags().Bool("title", false, "Edit the title")
@@ -1411,7 +1401,6 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
-	closeCmd.Flags().Bool("json", false, "Output JSON format")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")

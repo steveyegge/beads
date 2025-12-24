@@ -35,7 +35,7 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		issueID := args[0]
 
-		var comments []*types.Comment
+		comments := make([]*types.Comment, 0)
 		usedDaemon := false
 		if daemonClient != nil {
 			resp, err := daemonClient.ListComments(&rpc.CommentListArgs{ID: issueID})
@@ -77,6 +77,11 @@ Examples:
 				os.Exit(1)
 			}
 			comments = result
+		}
+
+		// Normalize nil to empty slice for consistent JSON output
+		if comments == nil {
+			comments = make([]*types.Comment, 0)
 		}
 
 		if jsonOutput {
