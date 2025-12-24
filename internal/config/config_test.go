@@ -637,3 +637,115 @@ func TestGetIdentityFromConfig(t *testing.T) {
 		t.Errorf("GetIdentity(flag-override) = %q, want \"flag-override\"", got)
 	}
 }
+
+func TestGetValueSource(t *testing.T) {
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		key      string
+		setup    func()
+		cleanup  func()
+		expected ConfigSource
+	}{
+		{
+			name:     "default value returns SourceDefault",
+			key:      "json",
+			setup:    func() {},
+			cleanup:  func() {},
+			expected: SourceDefault,
+		},
+		{
+			name: "env var returns SourceEnvVar",
+			key:  "json",
+			setup: func() {
+				os.Setenv("BD_JSON", "true")
+			},
+			cleanup: func() {
+				os.Unsetenv("BD_JSON")
+			},
+			expected: SourceEnvVar,
+		},
+		{
+			name: "BEADS_ prefixed env var returns SourceEnvVar",
+			key:  "identity",
+			setup: func() {
+				os.Setenv("BEADS_IDENTITY", "test-identity")
+			},
+			cleanup: func() {
+				os.Unsetenv("BEADS_IDENTITY")
+			},
+			expected: SourceEnvVar,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reinitialize to clear state
+			if err := Initialize(); err != nil {
+				t.Fatalf("Initialize() returned error: %v", err)
+			}
+
+			tt.setup()
+			defer tt.cleanup()
+
+			got := GetValueSource(tt.key)
+			if got != tt.expected {
+				t.Errorf("GetValueSource(%q) = %v, want %v", tt.key, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCheckOverrides_FlagOverridesEnvVar(t *testing.T) {
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Set an env var
+	os.Setenv("BD_JSON", "true")
+	defer os.Unsetenv("BD_JSON")
+
+	// Simulate flag override
+	flagOverrides := map[string]struct {
+		Value  interface{}
+		WasSet bool
+	}{
+		"json": {Value: false, WasSet: true},
+	}
+
+	overrides := CheckOverrides(flagOverrides)
+
+	// Should detect that flag overrides env var
+	found := false
+	for _, o := range overrides {
+		if o.Key == "json" && o.OverriddenBy == SourceFlag {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Expected to find flag override for 'json' key")
+	}
+}
+
+func TestConfigSourceConstants(t *testing.T) {
+	// Verify source constants have expected string values
+	if SourceDefault != "default" {
+		t.Errorf("SourceDefault = %q, want \"default\"", SourceDefault)
+	}
+	if SourceConfigFile != "config_file" {
+		t.Errorf("SourceConfigFile = %q, want \"config_file\"", SourceConfigFile)
+	}
+	if SourceEnvVar != "env_var" {
+		t.Errorf("SourceEnvVar = %q, want \"env_var\"", SourceEnvVar)
+	}
+	if SourceFlag != "flag" {
+		t.Errorf("SourceFlag = %q, want \"flag\"", SourceFlag)
+	}
+}

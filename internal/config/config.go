@@ -140,6 +140,152 @@ func Initialize() error {
 	return nil
 }
 
+// ConfigSource represents where a configuration value came from
+type ConfigSource string
+
+const (
+	SourceDefault    ConfigSource = "default"
+	SourceConfigFile ConfigSource = "config_file"
+	SourceEnvVar     ConfigSource = "env_var"
+	SourceFlag       ConfigSource = "flag"
+)
+
+// ConfigOverride represents a detected configuration override
+type ConfigOverride struct {
+	Key            string
+	EffectiveValue interface{}
+	OverriddenBy   ConfigSource
+	OriginalSource ConfigSource
+	OriginalValue  interface{}
+}
+
+// GetValueSource returns the source of a configuration value.
+// Priority (highest to lowest): env var > config file > default
+// Note: Flag overrides are handled separately in main.go since viper doesn't know about cobra flags.
+func GetValueSource(key string) ConfigSource {
+	if v == nil {
+		return SourceDefault
+	}
+
+	// Check if value is set from environment variable
+	// Viper's IsSet returns true if the key is set from any source (env, config, or default)
+	// We need to check specifically for env var by looking at the env var directly
+	envKey := "BD_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+	if os.Getenv(envKey) != "" {
+		return SourceEnvVar
+	}
+
+	// Check BEADS_ prefixed env vars for legacy compatibility
+	beadsEnvKey := "BEADS_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+	if os.Getenv(beadsEnvKey) != "" {
+		return SourceEnvVar
+	}
+
+	// Check if value is set in config file (as opposed to being a default)
+	if v.InConfig(key) {
+		return SourceConfigFile
+	}
+
+	return SourceDefault
+}
+
+// CheckOverrides checks for configuration overrides and returns a list of detected overrides.
+// This is useful for informing users when env vars or flags override config file values.
+// flagOverrides is a map of key -> (flagValue, flagWasSet) for flags that were explicitly set.
+func CheckOverrides(flagOverrides map[string]struct{ Value interface{}; WasSet bool }) []ConfigOverride {
+	var overrides []ConfigOverride
+
+	for key, flagInfo := range flagOverrides {
+		if !flagInfo.WasSet {
+			continue
+		}
+
+		source := GetValueSource(key)
+		if source == SourceConfigFile || source == SourceEnvVar {
+			// Flag is overriding a config file or env var value
+			var originalValue interface{}
+			switch v := flagInfo.Value.(type) {
+			case bool:
+				originalValue = GetBool(key)
+			case string:
+				originalValue = GetString(key)
+			case int:
+				originalValue = GetInt(key)
+			default:
+				originalValue = v
+			}
+
+			overrides = append(overrides, ConfigOverride{
+				Key:            key,
+				EffectiveValue: flagInfo.Value,
+				OverriddenBy:   SourceFlag,
+				OriginalSource: source,
+				OriginalValue:  originalValue,
+			})
+		}
+	}
+
+	// Check for env var overriding config file
+	if v != nil {
+		for _, key := range v.AllKeys() {
+			envSource := GetValueSource(key)
+			if envSource == SourceEnvVar && v.InConfig(key) {
+				// Env var is overriding config file value
+				// Get the config file value by temporarily unsetting the env
+				envKey := "BD_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+				envValue := os.Getenv(envKey)
+				if envValue == "" {
+					envKey = "BEADS_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+					envValue = os.Getenv(envKey)
+				}
+
+				// Skip if no env var actually set (shouldn't happen but be safe)
+				if envValue == "" {
+					continue
+				}
+
+				overrides = append(overrides, ConfigOverride{
+					Key:            key,
+					EffectiveValue: v.Get(key),
+					OverriddenBy:   SourceEnvVar,
+					OriginalSource: SourceConfigFile,
+					OriginalValue:  nil, // We can't easily get the config file value separately
+				})
+			}
+		}
+	}
+
+	return overrides
+}
+
+// LogOverride logs a message about a configuration override in verbose mode.
+func LogOverride(override ConfigOverride) {
+	var sourceDesc string
+	switch override.OriginalSource {
+	case SourceConfigFile:
+		sourceDesc = "config file"
+	case SourceEnvVar:
+		sourceDesc = "environment variable"
+	case SourceDefault:
+		sourceDesc = "default"
+	default:
+		sourceDesc = string(override.OriginalSource)
+	}
+
+	var overrideDesc string
+	switch override.OverriddenBy {
+	case SourceFlag:
+		overrideDesc = "command-line flag"
+	case SourceEnvVar:
+		overrideDesc = "environment variable"
+	default:
+		overrideDesc = string(override.OverriddenBy)
+	}
+
+	debug.Logf("Config: %s overridden by %s (was: %v from %s, now: %v)\n",
+		override.Key, overrideDesc, override.OriginalValue, sourceDesc, override.EffectiveValue)
+}
+
 // GetString retrieves a string configuration value
 func GetString(key string) string {
 	if v == nil {
