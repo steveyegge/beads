@@ -289,6 +289,31 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.36.0",
+		Date:    "2025-12-24",
+		Changes: []string{
+			"NEW: Formula system (bd-weu8, bd-wa2l) - bd cook <formula> for declarative workflow templates",
+			"NEW: Gate issue type (bd-udsi) - bd gate create/open/close for async coordination",
+			"NEW: bd list --pretty --watch - Built-in colorized viewer with live updates",
+			"NEW: bd search --after/--before/--priority/--content - Enhanced search filters",
+			"NEW: bd compact --prune - Standalone tombstone pruning",
+			"NEW: bd export --priority - Exact priority filter for exports",
+			"NEW: --resolution alias for --reason on bd close (GH#721)",
+			"NEW: Config-based close hooks (bd-g4b4) - Custom scripts on issue close",
+			"CHANGED: bd mol spawn removed (bd-8y9t) - Use bd pour/bd wisp create only",
+			"CHANGED: bd ready excludes workflow types by default (gt-7xtn)",
+			"FIX: Child→parent deps now blocked (bd-nim5) - Prevents LLM temporal reasoning trap",
+			"FIX: Dots in prefix handling (GH#664) - my.project prefixes work correctly",
+			"FIX: Child counter updates (GH#728) - Explicit child IDs update counters",
+			"FIX: Comment timestamps preserved during import (#735)",
+			"FIX: sync.remote config respected in daemon (#736)",
+			"FIX: Multi-hyphen prefixes (GH#422) - my-project-name works correctly",
+			"FIX: Stealth mode uses .git/info/exclude (GH#704) - Truly local",
+			"FIX: MCP output_schema=None for Claude Code (bd-49kw)",
+			"IMPROVED: Test coverage - daemon 72%, compact 82%, setup 54%",
+		},
+	},
+	{
 		Version: "0.35.0",
 		Date:    "2025-12-23",
 		Changes: []string{
