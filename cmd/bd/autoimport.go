@@ -20,6 +20,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// readFromGitRef reads file content from a git ref (branch or commit).
+// Returns the raw bytes from git show <ref>:<path>.
+// The filePath is automatically converted to forward slashes for Windows compatibility.
+// Returns nil, err if the git command fails (e.g., file not found in ref).
+func readFromGitRef(filePath, gitRef string) ([]byte, error) {
+	gitPath := filepath.ToSlash(filePath)
+	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from git: %w", err)
+	}
+	return output, nil
+}
+
 // checkAndAutoImport checks if the database is empty but git has issues.
 // If so, it automatically imports them and returns true.
 // Returns false if no import was needed or if import failed.
@@ -129,10 +143,7 @@ func checkGitForIssues() (int, string, string) {
 	}
 
 	for _, relPath := range candidates {
-		// Use ToSlash for git path compatibility on Windows
-		gitPath := filepath.ToSlash(relPath)
-		cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
-		output, err := cmd.Output()
+		output, err := readFromGitRef(relPath, gitRef)
 		if err == nil && len(output) > 0 {
 			lines := bytes.Count(output, []byte("\n"))
 			if lines > 0 {
@@ -197,12 +208,9 @@ func getLocalSyncBranch(beadsDir string) string {
 
 // importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
 func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath, gitRef string) error {
-	// Get content from git (use ToSlash for Windows compatibility)
-	gitPath := filepath.ToSlash(jsonlPath)
-	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
-	jsonlData, err := cmd.Output()
+	jsonlData, err := readFromGitRef(jsonlPath, gitRef)
 	if err != nil {
-		return fmt.Errorf("failed to read from git: %w", err)
+		return err
 	}
 
 	// Parse JSONL data
