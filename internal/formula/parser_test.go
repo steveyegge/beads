@@ -603,3 +603,172 @@ func TestFormulaType_IsValid(t *testing.T) {
 		}
 	}
 }
+
+// TestValidate_NeedsField tests validation of the needs field (bd-hr39)
+func TestValidate_NeedsField(t *testing.T) {
+	// Valid needs reference
+	formula := &Formula{
+		Formula: "mol-needs",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{ID: "step1", Title: "Step 1"},
+			{ID: "step2", Title: "Step 2", Needs: []string{"step1"}},
+		},
+	}
+
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed for valid needs reference: %v", err)
+	}
+
+	// Invalid needs reference
+	formulaBad := &Formula{
+		Formula: "mol-bad-needs",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{ID: "step1", Title: "Step 1"},
+			{ID: "step2", Title: "Step 2", Needs: []string{"nonexistent"}},
+		},
+	}
+
+	err := formulaBad.Validate()
+	if err == nil {
+		t.Error("Validate should fail for needs referencing unknown step")
+	}
+}
+
+// TestValidate_WaitsForField tests validation of the waits_for field (bd-j4cr)
+func TestValidate_WaitsForField(t *testing.T) {
+	// Valid waits_for value
+	formula := &Formula{
+		Formula: "mol-waits-for",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{ID: "fanout", Title: "Fanout"},
+			{ID: "aggregate", Title: "Aggregate", Needs: []string{"fanout"}, WaitsFor: "all-children"},
+		},
+	}
+
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed for valid waits_for: %v", err)
+	}
+
+	// Invalid waits_for value
+	formulaBad := &Formula{
+		Formula: "mol-bad-waits-for",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{ID: "step1", Title: "Step 1", WaitsFor: "invalid-gate"},
+		},
+	}
+
+	err := formulaBad.Validate()
+	if err == nil {
+		t.Error("Validate should fail for invalid waits_for value")
+	}
+}
+
+// TestValidate_ChildNeedsAndWaitsFor tests needs and waits_for in child steps
+func TestValidate_ChildNeedsAndWaitsFor(t *testing.T) {
+	formula := &Formula{
+		Formula: "mol-child-fields",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "epic1",
+				Title: "Epic 1",
+				Children: []*Step{
+					{ID: "child1", Title: "Child 1"},
+					{ID: "child2", Title: "Child 2", Needs: []string{"child1"}, WaitsFor: "any-children"},
+				},
+			},
+		},
+	}
+
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed for valid child needs/waits_for: %v", err)
+	}
+
+	// Invalid child needs
+	formulaBadNeeds := &Formula{
+		Formula: "mol-bad-child-needs",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "epic1",
+				Title: "Epic 1",
+				Children: []*Step{
+					{ID: "child1", Title: "Child 1", Needs: []string{"nonexistent"}},
+				},
+			},
+		},
+	}
+
+	if err := formulaBadNeeds.Validate(); err == nil {
+		t.Error("Validate should fail for child with invalid needs reference")
+	}
+
+	// Invalid child waits_for
+	formulaBadWaitsFor := &Formula{
+		Formula: "mol-bad-child-waits-for",
+		Version: 1,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "epic1",
+				Title: "Epic 1",
+				Children: []*Step{
+					{ID: "child1", Title: "Child 1", WaitsFor: "bad-value"},
+				},
+			},
+		},
+	}
+
+	if err := formulaBadWaitsFor.Validate(); err == nil {
+		t.Error("Validate should fail for child with invalid waits_for")
+	}
+}
+
+// TestParse_NeedsAndWaitsFor tests YAML parsing of needs and waits_for fields
+func TestParse_NeedsAndWaitsFor(t *testing.T) {
+	yaml := `
+formula: mol-deacon
+version: 1
+type: workflow
+steps:
+  - id: inbox-check
+    title: Check inbox
+  - id: health-scan
+    title: Check health
+    needs: [inbox-check]
+  - id: aggregate
+    title: Aggregate results
+    needs: [health-scan]
+    waits_for: all-children
+`
+	p := NewParser()
+	formula, err := p.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// Validate parsed formula
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed: %v", err)
+	}
+
+	// Check needs field
+	if len(formula.Steps[1].Needs) != 1 || formula.Steps[1].Needs[0] != "inbox-check" {
+		t.Errorf("Steps[1].Needs = %v, want [inbox-check]", formula.Steps[1].Needs)
+	}
+
+	// Check waits_for field
+	if formula.Steps[2].WaitsFor != "all-children" {
+		t.Errorf("Steps[2].WaitsFor = %q, want 'all-children'", formula.Steps[2].WaitsFor)
+	}
+}

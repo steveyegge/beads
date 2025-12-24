@@ -134,6 +134,15 @@ type Step struct {
 	// DependsOn lists step IDs this step blocks on (within the formula).
 	DependsOn []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
 
+	// Needs is a simpler alias for DependsOn - lists sibling step IDs that must complete first.
+	// Either Needs or DependsOn can be used; they are merged during cooking.
+	Needs []string `yaml:"needs,omitempty" json:"needs,omitempty"`
+
+	// WaitsFor specifies a fanout gate type for this step.
+	// Values: "all-children" (wait for all dynamic children) or "any-children" (wait for first).
+	// When set, the cooked issue gets a "gate:<value>" label.
+	WaitsFor string `yaml:"waits_for,omitempty" json:"waits_for,omitempty"`
+
 	// Assignee is the default assignee (supports substitution).
 	Assignee string `yaml:"assignee,omitempty" json:"assignee,omitempty"`
 
@@ -278,7 +287,20 @@ func (f *Formula) Validate() error {
 				errs = append(errs, fmt.Sprintf("steps[%d] (%s): depends_on references unknown step %q", i, step.ID, dep))
 			}
 		}
-		// Validate children's depends_on recursively
+		// Validate needs field (bd-hr39) - same validation as depends_on
+		for _, need := range step.Needs {
+			if _, exists := stepIDLocations[need]; !exists {
+				errs = append(errs, fmt.Sprintf("steps[%d] (%s): needs references unknown step %q", i, step.ID, need))
+			}
+		}
+		// Validate waits_for field (bd-j4cr) - must be a known gate type
+		if step.WaitsFor != "" {
+			validGates := map[string]bool{"all-children": true, "any-children": true}
+			if !validGates[step.WaitsFor] {
+				errs = append(errs, fmt.Sprintf("steps[%d] (%s): waits_for has invalid value %q (must be all-children or any-children)", i, step.ID, step.WaitsFor))
+			}
+		}
+		// Validate children's depends_on and needs recursively
 		validateChildDependsOn(step.Children, stepIDLocations, &errs, fmt.Sprintf("steps[%d]", i))
 	}
 
@@ -348,13 +370,26 @@ func collectChildIDs(children []*Step, idLocations map[string]string, errs *[]st
 	}
 }
 
-// validateChildDependsOn recursively validates depends_on references for children.
+// validateChildDependsOn recursively validates depends_on and needs references for children.
 func validateChildDependsOn(children []*Step, idLocations map[string]string, errs *[]string, prefix string) {
 	for i, child := range children {
 		childPrefix := fmt.Sprintf("%s.children[%d]", prefix, i)
 		for _, dep := range child.DependsOn {
 			if _, exists := idLocations[dep]; !exists {
 				*errs = append(*errs, fmt.Sprintf("%s (%s): depends_on references unknown step %q", childPrefix, child.ID, dep))
+			}
+		}
+		// Validate needs field (bd-hr39)
+		for _, need := range child.Needs {
+			if _, exists := idLocations[need]; !exists {
+				*errs = append(*errs, fmt.Sprintf("%s (%s): needs references unknown step %q", childPrefix, child.ID, need))
+			}
+		}
+		// Validate waits_for field (bd-j4cr)
+		if child.WaitsFor != "" {
+			validGates := map[string]bool{"all-children": true, "any-children": true}
+			if !validGates[child.WaitsFor] {
+				*errs = append(*errs, fmt.Sprintf("%s (%s): waits_for has invalid value %q (must be all-children or any-children)", childPrefix, child.ID, child.WaitsFor))
 			}
 		}
 		validateChildDependsOn(child.Children, idLocations, errs, childPrefix)

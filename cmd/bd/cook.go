@@ -73,6 +73,7 @@ func runCook(cmd *cobra.Command, args []string) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
 	searchPaths, _ := cmd.Flags().GetStringSlice("search-path")
+	prefix, _ := cmd.Flags().GetString("prefix")
 
 	// Create parser with search paths
 	parser := formula.NewParser(searchPaths...)
@@ -92,16 +93,22 @@ func runCook(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Apply prefix to proto ID if specified (bd-47qx)
+	protoID := resolved.Formula
+	if prefix != "" {
+		protoID = prefix + resolved.Formula
+	}
+
 	// Check if proto already exists
-	existingProto, err := store.GetIssue(ctx, resolved.Formula)
+	existingProto, err := store.GetIssue(ctx, protoID)
 	if err == nil && existingProto != nil {
 		if !force {
-			fmt.Fprintf(os.Stderr, "Error: proto %s already exists\n", resolved.Formula)
+			fmt.Fprintf(os.Stderr, "Error: proto %s already exists\n", protoID)
 			fmt.Fprintf(os.Stderr, "Hint: use --force to replace it\n")
 			os.Exit(1)
 		}
 		// Delete existing proto and its children
-		if err := deleteProtoSubgraph(ctx, store, resolved.Formula); err != nil {
+		if err := deleteProtoSubgraph(ctx, store, protoID); err != nil {
 			fmt.Fprintf(os.Stderr, "Error deleting existing proto: %v\n", err)
 			os.Exit(1)
 		}
@@ -119,7 +126,7 @@ func runCook(cmd *cobra.Command, args []string) {
 	}
 
 	if dryRun {
-		fmt.Printf("\nDry run: would cook formula %s\n\n", resolved.Formula)
+		fmt.Printf("\nDry run: would cook formula %s as proto %s\n\n", resolved.Formula, protoID)
 		fmt.Printf("Steps (%d):\n", len(resolved.Steps))
 		printFormulaSteps(resolved.Steps, "  ")
 
@@ -155,7 +162,7 @@ func runCook(cmd *cobra.Command, args []string) {
 	}
 
 	// Create the proto bead from the formula
-	result, err := cookFormula(ctx, store, resolved)
+	result, err := cookFormula(ctx, store, resolved, protoID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error cooking formula: %v\n", err)
 		os.Exit(1)
@@ -193,7 +200,8 @@ type cookFormulaResult struct {
 }
 
 // cookFormula creates a proto bead from a resolved formula.
-func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*cookFormulaResult, error) {
+// protoID is the final ID for the proto (may include a prefix).
+func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, protoID string) (*cookFormulaResult, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
@@ -212,10 +220,10 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*c
 	var deps []*types.Dependency
 	var labels []struct{ issueID, label string }
 
-	// Create root proto epic
+	// Create root proto epic using provided protoID (may include prefix, bd-47qx)
 	rootIssue := &types.Issue{
-		ID:          f.Formula,
-		Title:       f.Formula, // Title is the formula name
+		ID:          protoID,
+		Title:       f.Formula, // Title is the original formula name
 		Description: f.Description,
 		Status:      types.StatusOpen,
 		Priority:    2,
@@ -225,10 +233,10 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*c
 		UpdatedAt:   time.Now(),
 	}
 	issues = append(issues, rootIssue)
-	labels = append(labels, struct{ issueID, label string }{f.Formula, MoleculeLabel})
+	labels = append(labels, struct{ issueID, label string }{protoID, MoleculeLabel})
 
-	// Collect issues for each step
-	collectStepsRecursive(f.Steps, f.Formula, idMapping, &issues, &deps, &labels)
+	// Collect issues for each step (use protoID as parent for step IDs)
+	collectStepsRecursive(f.Steps, protoID, idMapping, &issues, &deps, &labels)
 
 	// Collect dependencies from depends_on
 	for _, step := range f.Steps {
@@ -282,7 +290,7 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula) (*c
 	}
 
 	return &cookFormulaResult{
-		ProtoID: f.Formula,
+		ProtoID: protoID,
 		Created: len(issues),
 	}, nil
 }
@@ -342,6 +350,12 @@ func collectStepsRecursive(steps []*formula.Step, parentID string, idMapping map
 			*labels = append(*labels, struct{ issueID, label string }{issueID, label})
 		}
 
+		// Add gate label for waits_for field (bd-j4cr)
+		if step.WaitsFor != "" {
+			gateLabel := fmt.Sprintf("gate:%s", step.WaitsFor)
+			*labels = append(*labels, struct{ issueID, label string }{issueID, gateLabel})
+		}
+
 		idMapping[step.ID] = issueID
 
 		// Add parent-child dependency
@@ -358,10 +372,11 @@ func collectStepsRecursive(steps []*formula.Step, parentID string, idMapping map
 	}
 }
 
-// collectDependencies collects blocking dependencies from depends_on.
+// collectDependencies collects blocking dependencies from depends_on and needs fields.
 func collectDependencies(step *formula.Step, idMapping map[string]string, deps *[]*types.Dependency) {
 	issueID := idMapping[step.ID]
 
+	// Process depends_on field
 	for _, depID := range step.DependsOn {
 		depIssueID, ok := idMapping[depID]
 		if !ok {
@@ -371,6 +386,20 @@ func collectDependencies(step *formula.Step, idMapping map[string]string, deps *
 		*deps = append(*deps, &types.Dependency{
 			IssueID:     issueID,
 			DependsOnID: depIssueID,
+			Type:        types.DepBlocks,
+		})
+	}
+
+	// Process needs field (bd-hr39) - simpler alias for sibling dependencies
+	for _, needID := range step.Needs {
+		needIssueID, ok := idMapping[needID]
+		if !ok {
+			continue // Will be caught during validation
+		}
+
+		*deps = append(*deps, &types.Dependency{
+			IssueID:     issueID,
+			DependsOnID: needIssueID,
 			Type:        types.DepBlocks,
 		})
 	}
@@ -409,9 +438,21 @@ func printFormulaSteps(steps []*formula.Step, indent string) {
 			connector = "└──"
 		}
 
-		depStr := ""
+		// Collect dependency info
+		var depParts []string
 		if len(step.DependsOn) > 0 {
-			depStr = fmt.Sprintf(" [depends: %s]", strings.Join(step.DependsOn, ", "))
+			depParts = append(depParts, fmt.Sprintf("depends: %s", strings.Join(step.DependsOn, ", ")))
+		}
+		if len(step.Needs) > 0 {
+			depParts = append(depParts, fmt.Sprintf("needs: %s", strings.Join(step.Needs, ", ")))
+		}
+		if step.WaitsFor != "" {
+			depParts = append(depParts, fmt.Sprintf("waits_for: %s", step.WaitsFor))
+		}
+
+		depStr := ""
+		if len(depParts) > 0 {
+			depStr = fmt.Sprintf(" [%s]", strings.Join(depParts, ", "))
 		}
 
 		typeStr := ""
@@ -437,6 +478,7 @@ func init() {
 	cookCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	cookCmd.Flags().Bool("force", false, "Replace existing proto if it exists")
 	cookCmd.Flags().StringSlice("search-path", []string{}, "Additional paths to search for formula inheritance")
+	cookCmd.Flags().String("prefix", "", "Prefix to prepend to proto ID (e.g., 'gt-' creates 'gt-mol-feature')")
 
 	rootCmd.AddCommand(cookCmd)
 }
