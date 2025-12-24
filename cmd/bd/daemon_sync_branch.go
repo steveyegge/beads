@@ -70,7 +70,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	}
 	
 	// Sync JSONL file to worktree
-	// Get the actual JSONL path (could be issues.jsonl, beads.base.jsonl, etc.)
+	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
 		return false, fmt.Errorf("JSONL path not found")
