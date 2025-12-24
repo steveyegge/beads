@@ -276,7 +276,7 @@ func pullFromExternalBeadsRepo(ctx context.Context, beadsDir string) error {
 		return nil // No remote, skip pull
 	}
 
-	pullCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "pull")
+	pullCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "pull") //nolint:gosec // repoRoot from git
 	if output, err := pullCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git pull failed: %w\n%s", err, output)
 	}
