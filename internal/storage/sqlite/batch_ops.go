@@ -102,6 +102,30 @@ func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) e
 	return markDirtyBatch(ctx, conn, issues)
 }
 
+// updateChildCountersForHierarchicalIDs updates child_counters for all hierarchical IDs in the batch.
+// This is called AFTER issues are inserted so that parents exist for the foreign key constraint.
+// (GH#728 fix)
+func updateChildCountersForHierarchicalIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
+	for _, issue := range issues {
+		if issue.ID == "" {
+			continue // Skip issues that were filtered out (e.g., OrphanSkip)
+		}
+		if parentID, childNum, ok := ParseHierarchicalID(issue.ID); ok {
+			// Only update if parent exists (it should after insert, but check to be safe)
+			var parentCount int
+			if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount); err != nil {
+				return fmt.Errorf("failed to check parent existence for %s: %w", parentID, err)
+			}
+			if parentCount > 0 {
+				if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // checkForExistingIDs verifies that:
 // 1. There are no duplicate IDs within the batch itself
 // 2. None of the issue IDs already exist in the database
@@ -269,6 +293,12 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 	// Phase 4: Bulk insert issues
 	if err := bulkInsertIssues(ctx, conn, issues); err != nil {
 		return wrapDBError("bulk insert issues", err)
+	}
+
+	// Phase 4.5: Update child counters for hierarchical IDs (GH#728 fix)
+	// This must happen AFTER insert so parents exist for the foreign key constraint
+	if err := updateChildCountersForHierarchicalIDs(ctx, conn, issues); err != nil {
+		return wrapDBError("update child counters", err)
 	}
 
 	// Phase 5: Record creation events

@@ -190,6 +190,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 				// Parent(s) not found in JSONL history - cannot proceed
 				return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
 			}
+
+			// Update child_counters to prevent future ID collisions (GH#728 fix)
+			// When explicit child IDs are used, the counter must be at least the child number
+			if _, childNum, ok := ParseHierarchicalID(issue.ID); ok {
+				if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+					return fmt.Errorf("failed to update child counter: %w", err)
+				}
+			}
 		}
 	}
 

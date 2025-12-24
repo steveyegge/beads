@@ -63,6 +63,33 @@ func IsHierarchicalID(id string) (isHierarchical bool, parentID string) {
 	return true, id[:lastDot]
 }
 
+// ParseHierarchicalID extracts the parent ID and child number from a hierarchical ID.
+// Returns (parentID, childNum, true) for hierarchical IDs like "bd-abc.1" -> ("bd-abc", 1, true).
+// Returns ("", 0, false) for non-hierarchical IDs.
+// (GH#728 fix)
+func ParseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return "", 0, false
+	}
+
+	suffix := id[lastDot+1:]
+	if len(suffix) == 0 {
+		return "", 0, false
+	}
+
+	// Parse the numeric suffix
+	num := 0
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return "", 0, false
+		}
+		num = num*10 + int(c-'0')
+	}
+
+	return id[:lastDot], num, true
+}
+
 // ValidateIssueIDPrefix validates that an issue ID matches the configured prefix
 // Supports both top-level (bd-a3f8e9) and hierarchical (bd-a3f8e9.1) IDs
 func ValidateIssueIDPrefix(id, prefix string) error {
@@ -233,6 +260,18 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 						// Allow orphan - no validation
 					default:
 						// Default to allow for backward compatibility
+					}
+				}
+
+				// Update child_counters to prevent future ID collisions (GH#728 fix)
+				// When explicit child IDs are imported, the counter must be at least the child number
+				// Only update if parent exists (parentCount > 0) - for orphan modes, skip this
+				// The counter will be updated when the parent is actually created/exists
+				if parentCount > 0 {
+					if _, childNum, ok := ParseHierarchicalID(issues[i].ID); ok {
+						if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+							return fmt.Errorf("failed to update child counter: %w", err)
+						}
 					}
 				}
 			}

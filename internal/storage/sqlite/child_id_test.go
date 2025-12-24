@@ -179,6 +179,80 @@ func TestCreateIssue_HierarchicalID(t *testing.T) {
 	}
 }
 
+// TestExplicitChildIDUpdatesCounter verifies that creating issues with explicit
+// hierarchical IDs (e.g., bd-test.1, bd-test.2) updates the child counter so that
+// GetNextChildID returns the correct next ID (GH#728 fix)
+func TestExplicitChildIDUpdatesCounter(t *testing.T) {
+	tmpFile := t.TempDir() + "/test.db"
+	defer os.Remove(tmpFile)
+	store := newTestStore(t, tmpFile)
+	defer store.Close()
+	ctx := context.Background()
+
+	// Create parent
+	parent := &types.Issue{
+		ID:          "bd-test",
+		Title:       "Parent",
+		Description: "Test parent",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeEpic,
+	}
+	if err := store.CreateIssue(ctx, parent, "test"); err != nil {
+		t.Fatalf("failed to create parent: %v", err)
+	}
+
+	// Create explicit child .1
+	child1 := &types.Issue{
+		ID:          "bd-test.1",
+		Title:       "Existing child 1",
+		Description: "Created with explicit ID",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, child1, "test"); err != nil {
+		t.Fatalf("failed to create child1: %v", err)
+	}
+
+	// Create explicit child .2
+	child2 := &types.Issue{
+		ID:          "bd-test.2",
+		Title:       "Existing child 2",
+		Description: "Created with explicit ID",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, child2, "test"); err != nil {
+		t.Fatalf("failed to create child2: %v", err)
+	}
+
+	// Now use GetNextChildID - should return .3 (not .1 which would collide)
+	nextID, err := store.GetNextChildID(ctx, "bd-test")
+	if err != nil {
+		t.Fatalf("GetNextChildID failed: %v", err)
+	}
+
+	expected := "bd-test.3"
+	if nextID != expected {
+		t.Errorf("GetNextChildID returned %s, expected %s (GH#728 - counter should be updated when explicit child IDs are created)", nextID, expected)
+	}
+
+	// Verify we can create an issue with the returned ID without collision
+	child3 := &types.Issue{
+		ID:          nextID,
+		Title:       "New child via --parent",
+		Description: "Created with GetNextChildID",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, child3, "test"); err != nil {
+		t.Fatalf("failed to create child3 with ID %s: %v", nextID, err)
+	}
+}
+
 func TestCreateIssue_HierarchicalID_ParentNotExists(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.db"
 	defer os.Remove(tmpFile)

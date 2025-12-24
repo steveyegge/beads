@@ -78,11 +78,11 @@ func TestGetNextChildNumber(t *testing.T) {
 func TestGetNextChildNumber_DifferentParents(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
-	
+
 	ctx := context.Background()
 	parent1 := "bd-af78e9a2"
-	parent2 := "bd-af78e9a2.1"
-	
+	parent2 := "bd-bf89e0b3" // Use non-hierarchical ID to avoid counter interaction
+
 	// Create parent issues first
 	for _, id := range []string{parent1, parent2} {
 		parent := &types.Issue{
@@ -97,7 +97,7 @@ func TestGetNextChildNumber_DifferentParents(t *testing.T) {
 			t.Fatalf("failed to create parent issue %s: %v", id, err)
 		}
 	}
-	
+
 	// Each parent should have independent counters
 	child1_1, err := store.getNextChildNumber(ctx, parent1)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestGetNextChildNumber_DifferentParents(t *testing.T) {
 	if child1_1 != 1 {
 		t.Errorf("expected parent1 child to be 1, got %d", child1_1)
 	}
-	
+
 	child2_1, err := store.getNextChildNumber(ctx, parent2)
 	if err != nil {
 		t.Fatalf("getNextChildNumber failed: %v", err)
@@ -114,7 +114,7 @@ func TestGetNextChildNumber_DifferentParents(t *testing.T) {
 	if child2_1 != 1 {
 		t.Errorf("expected parent2 child to be 1, got %d", child2_1)
 	}
-	
+
 	child1_2, err := store.getNextChildNumber(ctx, parent1)
 	if err != nil {
 		t.Fatalf("getNextChildNumber failed: %v", err)
@@ -186,10 +186,12 @@ func TestGetNextChildNumber_Concurrent(t *testing.T) {
 func TestGetNextChildNumber_NestedHierarchy(t *testing.T) {
 	store, cleanup := setupTestDB(t)
 	defer cleanup()
-	
+
 	ctx := context.Background()
-	
+
 	// Create parent issues for nested hierarchy
+	// Note: When creating bd-af78e9a2.1, the counter for bd-af78e9a2 is set to 1 (GH#728 fix)
+	// When creating bd-af78e9a2.1.2, the counter for bd-af78e9a2.1 is set to 2 (GH#728 fix)
 	parents := []string{"bd-af78e9a2", "bd-af78e9a2.1", "bd-af78e9a2.1.2"}
 	for _, id := range parents {
 		parent := &types.Issue{
@@ -204,21 +206,21 @@ func TestGetNextChildNumber_NestedHierarchy(t *testing.T) {
 			t.Fatalf("failed to create parent issue %s: %v", id, err)
 		}
 	}
-	
-	// Create nested hierarchy counters
-	// bd-af78e9a2 → .1, .2
-	// bd-af78e9a2.1 → .1.1, .1.2
-	// bd-af78e9a2.1.2 → .1.2.1, .1.2.2
-	
+
+	// With GH#728 fix, counters are updated when explicit hierarchical IDs are created:
+	// - Creating bd-af78e9a2.1 sets counter for bd-af78e9a2 to 1
+	// - Creating bd-af78e9a2.1.2 sets counter for bd-af78e9a2.1 to 2
+	// So getNextChildNumber returns the NEXT number after the existing children
+
 	tests := []struct {
 		parent   string
 		expected []int
 	}{
-		{"bd-af78e9a2", []int{1, 2}},
-		{"bd-af78e9a2.1", []int{1, 2}},
-		{"bd-af78e9a2.1.2", []int{1, 2}},
+		{"bd-af78e9a2", []int{2, 3}},     // counter was 1 after creating .1
+		{"bd-af78e9a2.1", []int{3, 4}},   // counter was 2 after creating .1.2
+		{"bd-af78e9a2.1.2", []int{1, 2}}, // no children created, starts at 1
 	}
-	
+
 	for _, tt := range tests {
 		for _, want := range tt.expected {
 			got, err := store.getNextChildNumber(ctx, tt.parent)
