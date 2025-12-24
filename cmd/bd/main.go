@@ -320,33 +320,92 @@ var rootCmd = &cobra.Command{
 		// Priority: flags > viper (config file + env vars) > defaults
 		// Do this BEFORE early-return so init/version/help respect config
 
+		// Track flag overrides for notification (only in verbose mode)
+		flagOverrides := make(map[string]struct {
+			Value  interface{}
+			WasSet bool
+		})
+
 		// If flag wasn't explicitly set, use viper value
 		if !cmd.Flags().Changed("json") {
 			jsonOutput = config.GetBool("json")
+		} else {
+			flagOverrides["json"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{jsonOutput, true}
 		}
 		if !cmd.Flags().Changed("no-daemon") {
 			noDaemon = config.GetBool("no-daemon")
+		} else {
+			flagOverrides["no-daemon"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noDaemon, true}
 		}
 		if !cmd.Flags().Changed("no-auto-flush") {
 			noAutoFlush = config.GetBool("no-auto-flush")
+		} else {
+			flagOverrides["no-auto-flush"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noAutoFlush, true}
 		}
 		if !cmd.Flags().Changed("no-auto-import") {
 			noAutoImport = config.GetBool("no-auto-import")
+		} else {
+			flagOverrides["no-auto-import"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noAutoImport, true}
 		}
 		if !cmd.Flags().Changed("no-db") {
 			noDb = config.GetBool("no-db")
+		} else {
+			flagOverrides["no-db"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noDb, true}
 		}
 		if !cmd.Flags().Changed("readonly") {
 			readonlyMode = config.GetBool("readonly")
+		} else {
+			flagOverrides["readonly"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{readonlyMode, true}
 		}
 		if !cmd.Flags().Changed("lock-timeout") {
 			lockTimeout = config.GetDuration("lock-timeout")
+		} else {
+			flagOverrides["lock-timeout"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{lockTimeout, true}
 		}
 		if !cmd.Flags().Changed("db") && dbPath == "" {
 			dbPath = config.GetString("db")
+		} else if cmd.Flags().Changed("db") {
+			flagOverrides["db"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{dbPath, true}
 		}
 		if !cmd.Flags().Changed("actor") && actor == "" {
 			actor = config.GetString("actor")
+		} else if cmd.Flags().Changed("actor") {
+			flagOverrides["actor"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{actor, true}
+		}
+
+		// Check for and log configuration overrides (only in verbose mode)
+		if verboseFlag {
+			overrides := config.CheckOverrides(flagOverrides)
+			for _, override := range overrides {
+				config.LogOverride(override)
+			}
 		}
 
 		// Protect forks from accidentally committing upstream issue database
