@@ -120,7 +120,7 @@ func buildIssueTree(issues []*types.Issue) (roots []*types.Issue, childrenMap ma
 }
 
 // printPrettyTree recursively prints the issue tree
-func printPrettyTree(issues []*types.Issue, childrenMap map[string][]*types.Issue, parentID string, prefix string) {
+func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string) {
 	children := childrenMap[parentID]
 	for i, child := range children {
 		isLast := i == len(children)-1
@@ -134,7 +134,7 @@ func printPrettyTree(issues []*types.Issue, childrenMap map[string][]*types.Issu
 		if isLast {
 			extension = "    "
 		}
-		printPrettyTree(issues, childrenMap, child.ID, prefix+extension)
+		printPrettyTree(childrenMap, child.ID, prefix+extension)
 	}
 }
 
@@ -158,7 +158,7 @@ func displayPrettyList(issues []*types.Issue, showHeader bool) {
 
 	for i, issue := range roots {
 		fmt.Println(formatPrettyIssue(issue))
-		printPrettyTree(issues, childrenMap, issue.ID, "")
+		printPrettyTree(childrenMap, issue.ID, "")
 		if i < len(roots)-1 {
 			fmt.Println()
 		}
@@ -196,7 +196,7 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 		fmt.Fprintf(os.Stderr, "Error creating watcher: %v\n", err)
 		return
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	// Watch the .beads directory
 	if err := watcher.Add(beadsDir); err != nil {
