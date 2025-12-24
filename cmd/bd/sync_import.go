@@ -116,7 +116,7 @@ func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, 
 
 	// Step 2: Checkout .beads/ directory from main
 	fmt.Printf("→ Checking out beads from %s/%s...\n", remote, defaultBranch)
-	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", fmt.Sprintf("%s/%s", remote, defaultBranch), "--", ".beads/")
+	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", fmt.Sprintf("%s/%s", remote, defaultBranch), "--", ".beads/") //nolint:gosec // remote and defaultBranch from config
 	if output, err := checkoutCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout .beads/ from %s/%s failed: %w\n%s", remote, defaultBranch, err, output)
 	}
