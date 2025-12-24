@@ -422,6 +422,21 @@ func (c *Client) GateWait(args *GateWaitArgs) (*Response, error) {
 	return c.Execute(OpGateWait, args)
 }
 
+// GetWorkerStatus retrieves worker status via the daemon
+func (c *Client) GetWorkerStatus(args *GetWorkerStatusArgs) (*GetWorkerStatusResponse, error) {
+	resp, err := c.Execute(OpGetWorkerStatus, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result GetWorkerStatusResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal worker status response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // cleanupStaleDaemonArtifacts removes stale daemon.pid file when socket is missing and lock is free.
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).

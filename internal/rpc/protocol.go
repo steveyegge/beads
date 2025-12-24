@@ -38,6 +38,7 @@ const (
 	OpGetMutations    = "get_mutations"
 	OpShutdown        = "shutdown"
 	OpDelete          = "delete"
+	OpGetWorkerStatus = "get_worker_status"
 
 	// Gate operations (bd-likt)
 	OpGateCreate = "gate_create"
@@ -463,4 +464,28 @@ type GateWaitArgs struct {
 // GateWaitResult represents the result of adding waiters
 type GateWaitResult struct {
 	AddedCount int `json:"added_count"` // Number of new waiters added
+}
+
+// GetWorkerStatusArgs represents arguments for retrieving worker status
+type GetWorkerStatusArgs struct {
+	// Assignee filters to a specific worker (optional, empty = all workers)
+	Assignee string `json:"assignee,omitempty"`
+}
+
+// WorkerStatus represents the status of a single worker and their current work
+type WorkerStatus struct {
+	Assignee      string `json:"assignee"`                 // Worker identifier
+	MoleculeID    string `json:"molecule_id,omitempty"`    // Parent molecule/epic ID (if working on a step)
+	MoleculeTitle string `json:"molecule_title,omitempty"` // Parent molecule/epic title
+	CurrentStep   int    `json:"current_step,omitempty"`   // Current step number (1-indexed)
+	TotalSteps    int    `json:"total_steps,omitempty"`    // Total number of steps in molecule
+	StepID        string `json:"step_id,omitempty"`        // Current step issue ID
+	StepTitle     string `json:"step_title,omitempty"`     // Current step issue title
+	LastActivity  string `json:"last_activity"`            // ISO 8601 timestamp of last update
+	Status        string `json:"status"`                   // Current work status (in_progress, blocked, etc.)
+}
+
+// GetWorkerStatusResponse is the response for get_worker_status operation
+type GetWorkerStatusResponse struct {
+	Workers []WorkerStatus `json:"workers"`
 }
