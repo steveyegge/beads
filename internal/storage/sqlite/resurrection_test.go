@@ -446,6 +446,27 @@ func TestExtractParentChain(t *testing.T) {
 			id:       "test-abc.1.2.3",
 			expected: []string{"test-abc", "test-abc.1", "test-abc.1.2"},
 		},
+		// GH#664: Prefixes with dots should be handled correctly
+		{
+			name:     "prefix with dot - top-level",
+			id:       "test.example-abc",
+			expected: nil, // No numeric suffix, not hierarchical
+		},
+		{
+			name:     "prefix with dot - one level deep",
+			id:       "test.example-abc.1",
+			expected: []string{"test.example-abc"},
+		},
+		{
+			name:     "prefix with dot - two levels deep",
+			id:       "test.example-abc.1.2",
+			expected: []string{"test.example-abc", "test.example-abc.1"},
+		},
+		{
+			name:     "prefix with multiple dots - one level deep",
+			id:       "my.company.project-xyz.1",
+			expected: []string{"my.company.project-xyz"},
+		},
 	}
 
 	for _, tt := range tests {
