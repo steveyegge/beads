@@ -130,7 +130,7 @@ func checkForcedPush(ctx context.Context) *ForcedPushCheck {
 	}
 
 	// Check if sync branch exists locally
-	checkLocalCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch)
+	checkLocalCmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+syncBranch) //nolint:gosec // syncBranch from config
 	if checkLocalCmd.Run() != nil {
 		result.Message = fmt.Sprintf("Sync branch '%s' does not exist locally", syncBranch)
 		return result
