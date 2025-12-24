@@ -109,7 +109,7 @@ func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, 
 
 	// Step 1: Fetch from main
 	fmt.Printf("→ Fetching from %s/%s...\n", remote, defaultBranch)
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, defaultBranch)
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, defaultBranch) //nolint:gosec // remote and defaultBranch from config
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git fetch %s %s failed: %w\n%s", remote, defaultBranch, err, output)
 	}
