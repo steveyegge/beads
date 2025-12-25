@@ -660,3 +660,138 @@ func TestIsSyncBranchSameAsCurrent(t *testing.T) {
 		}
 	})
 }
+
+// TestContentMergeRecoveryPreservesTombstones tests that contentMergeRecovery
+// uses content-level merge which properly preserves tombstones.
+// This is the fix for bd-kpy: Sync race where rebase-based divergence recovery
+// resurrects tombstones.
+func TestContentMergeRecoveryPreservesTombstones(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	t.Run("tombstone is preserved during merge recovery", func(t *testing.T) {
+		// This test simulates the race condition described in bd-kpy:
+		// 1. Repo A deletes issue (creates tombstone), pushes successfully
+		// 2. Repo B (with 'closed' status) tries to push, fails (non-fast-forward)
+		// 3. Repo B uses contentMergeRecovery
+		// 4. Verify tombstone from A is preserved, not overwritten by B's 'closed'
+
+		// Create a bare remote repo
+		remoteDir, err := os.MkdirTemp("", "bd-test-remote-*")
+		if err != nil {
+			t.Fatalf("Failed to create remote dir: %v", err)
+		}
+		defer os.RemoveAll(remoteDir)
+		runGit(t, remoteDir, "init", "--bare")
+
+		// Create local repo
+		repoDir := setupTestRepo(t)
+		defer os.RemoveAll(repoDir)
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+
+		syncBranch := "beads-sync"
+		jsonlPath := filepath.Join(repoDir, ".beads", "issues.jsonl")
+
+		// Create base commit: issue with status="closed"
+		runGit(t, repoDir, "checkout", "-b", syncBranch)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"closed","title":"Test Issue"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "base: issue closed")
+
+		// Push base to remote
+		runGit(t, repoDir, "push", "-u", "origin", syncBranch)
+		baseCommit := strings.TrimSpace(getGitOutput(t, repoDir, "rev-parse", "HEAD"))
+
+		// Create tombstone commit (simulating what Repo A did)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"tombstone","title":"Test Issue"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "remote: issue tombstoned")
+
+		// Push tombstone to remote (simulating Repo A's successful push)
+		runGit(t, repoDir, "push", "origin", syncBranch)
+
+		// Now simulate Repo B: reset to base and make different changes
+		runGit(t, repoDir, "reset", "--hard", baseCommit)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"closed","title":"Test Issue","notes":"local change"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "local: added notes")
+
+		// Now local has diverged from remote:
+		// - Local HEAD: status=closed with notes
+		// - Remote origin/beads-sync: status=tombstone
+		// - Common ancestor (base): status=closed
+
+		// Run contentMergeRecovery - this should use content-level merge
+		err = contentMergeRecovery(ctx, repoDir, syncBranch, "origin")
+		if err != nil {
+			t.Fatalf("contentMergeRecovery() error = %v", err)
+		}
+
+		// Read the merged content
+		mergedData, err := os.ReadFile(jsonlPath)
+		if err != nil {
+			t.Fatalf("Failed to read merged JSONL: %v", err)
+		}
+		merged := string(mergedData)
+
+		// The tombstone should be preserved!
+		// The 3-way merge should see:
+		//   base: status=closed
+		//   local: status=closed (unchanged)
+		//   remote: status=tombstone (changed)
+		// Result: status=tombstone (remote wins because it changed)
+		if !strings.Contains(merged, `"status":"tombstone"`) {
+			t.Errorf("contentMergeRecovery() did not preserve tombstone.\nGot: %s\nWant: status=tombstone", merged)
+		}
+	})
+
+	t.Run("both sides tombstone results in tombstone", func(t *testing.T) {
+		// Create a bare remote repo
+		remoteDir, err := os.MkdirTemp("", "bd-test-remote-*")
+		if err != nil {
+			t.Fatalf("Failed to create remote dir: %v", err)
+		}
+		defer os.RemoveAll(remoteDir)
+		runGit(t, remoteDir, "init", "--bare")
+
+		repoDir := setupTestRepo(t)
+		defer os.RemoveAll(repoDir)
+		runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+
+		syncBranch := "beads-sync"
+		jsonlPath := filepath.Join(repoDir, ".beads", "issues.jsonl")
+
+		// Create base: issue open
+		runGit(t, repoDir, "checkout", "-b", syncBranch)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"open","title":"Test"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "base")
+		runGit(t, repoDir, "push", "-u", "origin", syncBranch)
+		baseCommit := strings.TrimSpace(getGitOutput(t, repoDir, "rev-parse", "HEAD"))
+
+		// Remote: tombstone (push to remote)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"tombstone","title":"Test"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "remote tombstone")
+		runGit(t, repoDir, "push", "origin", syncBranch)
+
+		// Local: reset and also tombstone (both deleted independently)
+		runGit(t, repoDir, "reset", "--hard", baseCommit)
+		writeFile(t, jsonlPath, `{"id":"test-1","status":"tombstone","title":"Test"}`)
+		runGit(t, repoDir, "add", ".")
+		runGit(t, repoDir, "commit", "-m", "local tombstone")
+
+		err = contentMergeRecovery(ctx, repoDir, syncBranch, "origin")
+		if err != nil {
+			t.Fatalf("contentMergeRecovery() error = %v", err)
+		}
+
+		mergedData, _ := os.ReadFile(jsonlPath)
+		if !strings.Contains(string(mergedData), `"status":"tombstone"`) {
+			t.Errorf("Expected tombstone to be preserved, got: %s", mergedData)
+		}
+	})
+}

@@ -744,7 +744,72 @@ func isNonFastForwardError(output string) bool {
 		strings.Contains(output, "rejected") && strings.Contains(output, "behind")
 }
 
-// fetchAndRebaseInWorktree fetches remote and rebases local commits on top
+// contentMergeRecovery performs a content-level merge when push fails due to divergence.
+// This replaces the old fetchAndRebaseInWorktree which used git rebase (text-level).
+//
+// The problem with git rebase: it replays commits textually, which can resurrect
+// tombstones. For example, if remote has a tombstone and local has 'closed',
+// the rebase overwrites the tombstone with 'closed'.
+//
+// This function uses the same content-level merge as PullFromSyncBranch:
+// 1. Fetch remote
+// 2. Find merge base
+// 3. Extract JSONL from base, local, remote
+// 4. Run 3-way content merge (respects tombstones)
+// 5. Reset to remote, commit merged content
+//
+// Fix for bd-kpy: Sync race where rebase-based divergence recovery resurrects tombstones.
+func contentMergeRecovery(ctx context.Context, worktreePath, branch, remote string) error {
+	// The JSONL is always at .beads/issues.jsonl relative to worktree
+	jsonlRelPath := filepath.Join(".beads", "issues.jsonl")
+
+	// Step 1: Fetch latest from remote
+	fetchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "fetch", remote, branch)
+	if output, err := fetchCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("fetch failed: %w\n%s", err, output)
+	}
+
+	// Step 2: Perform content-level merge (same algorithm as PullFromSyncBranch)
+	mergedContent, err := performContentMerge(ctx, worktreePath, branch, remote, jsonlRelPath)
+	if err != nil {
+		return fmt.Errorf("content merge failed: %w", err)
+	}
+
+	// Step 3: Reset worktree to remote's history (adopt their commit graph)
+	resetCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "reset", "--hard",
+		fmt.Sprintf("%s/%s", remote, branch))
+	if output, err := resetCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git reset failed: %w\n%s", err, output)
+	}
+
+	// Step 4: Write merged content
+	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
+	if err := os.MkdirAll(filepath.Dir(worktreeJSONLPath), 0750); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	if err := os.WriteFile(worktreeJSONLPath, mergedContent, 0600); err != nil {
+		return fmt.Errorf("failed to write merged JSONL: %w", err)
+	}
+
+	// Step 5: Check if merge produced any changes from remote
+	hasChanges, err := hasChangesInWorktree(ctx, worktreePath, worktreeJSONLPath)
+	if err != nil {
+		return fmt.Errorf("failed to check for changes: %w", err)
+	}
+
+	// Step 6: Commit merged content if there are changes
+	if hasChanges {
+		message := "bd sync: merge divergent histories (content-level recovery)"
+		if err := commitInWorktree(ctx, worktreePath, jsonlRelPath, message); err != nil {
+			return fmt.Errorf("failed to commit merged content: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// fetchAndRebaseInWorktree is DEPRECATED - kept for reference only.
+// Use contentMergeRecovery instead to avoid tombstone resurrection (bd-kpy).
 func fetchAndRebaseInWorktree(ctx context.Context, worktreePath, branch, remote string) error {
 	// Fetch latest from remote
 	fetchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "fetch", remote, branch)
@@ -824,12 +889,13 @@ func pushFromWorktree(ctx context.Context, worktreePath, branch string) error {
 
 		// Check if this is a non-fast-forward error (concurrent push conflict)
 		if isNonFastForwardError(outputStr) {
-			// Attempt fetch + rebase to get ahead of remote
-			if rebaseErr := fetchAndRebaseInWorktree(ctx, worktreePath, branch, remote); rebaseErr != nil {
-				// Rebase failed - provide clear recovery options (bd-vckm)
+			// bd-kpy fix: Use content-level merge instead of git rebase.
+			// Git rebase is text-level and can resurrect tombstones.
+			if mergeErr := contentMergeRecovery(ctx, worktreePath, branch, remote); mergeErr != nil {
+				// Content merge failed - provide clear recovery options (bd-vckm)
 				return fmt.Errorf(`sync branch diverged and automatic recovery failed
 
-The sync branch '%s' has diverged from remote '%s/%s' and automatic rebase failed.
+The sync branch '%s' has diverged from remote '%s/%s' and automatic content merge failed.
 
 Recovery options:
   1. Reset to remote state (discard local sync changes):
@@ -845,9 +911,9 @@ Recovery options:
      bd sync
 
 Original error: %v
-Rebase error: %v`, branch, remote, branch, branch, lastErr, rebaseErr)
+Merge error: %v`, branch, remote, branch, branch, lastErr, mergeErr)
 			}
-			// Rebase succeeded - retry push immediately (no backoff needed)
+			// Content merge succeeded - retry push immediately (no backoff needed)
 			continue
 		}
 
