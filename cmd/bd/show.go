@@ -471,8 +471,7 @@ var updateCmd = &cobra.Command{
 			priorityStr, _ := cmd.Flags().GetString("priority")
 			priority, err := validation.ValidatePriority(priorityStr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 			updates["priority"] = priority
 		}
@@ -512,8 +511,7 @@ var updateCmd = &cobra.Command{
 		if cmd.Flags().Changed("estimate") {
 			estimate, _ := cmd.Flags().GetInt("estimate")
 			if estimate < 0 {
-				fmt.Fprintf(os.Stderr, "Error: estimate must be a non-negative number of minutes\n")
-				os.Exit(1)
+				FatalErrorRespectJSON("estimate must be a non-negative number of minutes")
 			}
 			updates["estimated_minutes"] = estimate
 		}
@@ -521,8 +519,7 @@ var updateCmd = &cobra.Command{
 			issueType, _ := cmd.Flags().GetString("type")
 			// Validate issue type
 			if !types.IssueType(issueType).IsValid() {
-				fmt.Fprintf(os.Stderr, "Error: invalid issue type %q. Valid types: bug, feature, task, epic, chore, merge-request, molecule, gate\n", issueType)
-				os.Exit(1)
+				FatalErrorRespectJSON("invalid issue type %q. Valid types: bug, feature, task, epic, chore, merge-request, molecule, gate", issueType)
 			}
 			updates["issue_type"] = issueType
 		}
@@ -542,8 +539,7 @@ var updateCmd = &cobra.Command{
 			issueType, _ := cmd.Flags().GetString("type")
 			// Validate issue type
 			if _, err := validation.ParseIssueType(issueType); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 			updates["issue_type"] = issueType
 		}
@@ -562,13 +558,11 @@ var updateCmd = &cobra.Command{
 				resolveArgs := &rpc.ResolveIDArgs{ID: id}
 				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
-					os.Exit(1)
+					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
 				}
 				var resolvedID string
 				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 				}
 				resolvedIDs = append(resolvedIDs, resolvedID)
 			}
@@ -576,8 +570,7 @@ var updateCmd = &cobra.Command{
 			var err error
 			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -784,8 +777,7 @@ Examples:
 		if daemonClient == nil {
 			fullID, err := utils.ResolvePartialID(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving %s: %v", id, err)
 			}
 			id = fullID
 		}
@@ -817,8 +809,7 @@ Examples:
 			}
 		}
 		if editor == "" {
-			fmt.Fprintf(os.Stderr, "Error: No editor found. Set $EDITOR or $VISUAL environment variable.\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("no editor found. Set $EDITOR or $VISUAL environment variable")
 		}
 
 		// Get the current issue
@@ -830,25 +821,21 @@ Examples:
 			showArgs := &rpc.ShowArgs{ID: id}
 			resp, err := daemonClient.Show(showArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching issue %s: %v\n", id, err)
-				os.Exit(1)
+				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
 			}
 
 			issue = &types.Issue{}
 			if err := json.Unmarshal(resp.Data, issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing issue data: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("parsing issue data: %v", err)
 			}
 		} else {
 			// Direct mode
 			issue, err = store.GetIssue(ctx, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching issue %s: %v\n", id, err)
-				os.Exit(1)
+				FatalErrorRespectJSON("fetching issue %s: %v", id, err)
 			}
 			if issue == nil {
-				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
-				os.Exit(1)
+				FatalErrorRespectJSON("issue %s not found", id)
 			}
 		}
 
@@ -870,8 +857,7 @@ Examples:
 		// Create a temporary file with the current value
 		tmpFile, err := os.CreateTemp("", fmt.Sprintf("bd-edit-%s-*.txt", fieldToEdit))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating temp file: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("creating temp file: %v", err)
 		}
 		tmpPath := tmpFile.Name()
 		defer func() { _ = os.Remove(tmpPath) }()
@@ -879,8 +865,7 @@ Examples:
 		// Write current value to temp file
 		if _, err := tmpFile.WriteString(currentValue); err != nil {
 			_ = tmpFile.Close()
-			fmt.Fprintf(os.Stderr, "Error writing to temp file: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("writing to temp file: %v", err)
 		}
 		_ = tmpFile.Close()
 
@@ -891,16 +876,14 @@ Examples:
 		editorCmd.Stderr = os.Stderr
 
 		if err := editorCmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running editor: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("running editor: %v", err)
 		}
 
 		// Read the edited content
 		// #nosec G304 -- tmpPath was created earlier in this function
 		editedContent, err := os.ReadFile(tmpPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading edited file: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("reading edited file: %v", err)
 		}
 
 		newValue := string(editedContent)
@@ -913,8 +896,7 @@ Examples:
 
 		// Validate title if editing title
 		if fieldToEdit == "title" && strings.TrimSpace(newValue) == "" {
-			fmt.Fprintf(os.Stderr, "Error: title cannot be empty\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("title cannot be empty")
 		}
 
 		// Update the issue
@@ -941,14 +923,12 @@ Examples:
 
 			_, err := daemonClient.Update(updateArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating issue: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("updating issue: %v", err)
 			}
 		} else {
 			// Direct mode
 			if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "Error updating issue: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("updating issue: %v", err)
 			}
 			markDirtyAndScheduleFlush()
 		}
@@ -977,8 +957,7 @@ var closeCmd = &cobra.Command{
 
 		// --continue only works with a single issue
 		if continueFlag && len(args) > 1 {
-			fmt.Fprintf(os.Stderr, "Error: --continue only works when closing a single issue\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("--continue only works when closing a single issue")
 		}
 
 		// Resolve partial IDs first
@@ -988,13 +967,11 @@ var closeCmd = &cobra.Command{
 				resolveArgs := &rpc.ResolveIDArgs{ID: id}
 				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving ID %s: %v\n", id, err)
-					os.Exit(1)
+					FatalErrorRespectJSON("resolving ID %s: %v", id, err)
 				}
 				var resolvedID string
 				if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 				}
 				resolvedIDs = append(resolvedIDs, resolvedID)
 			}
@@ -1002,8 +979,7 @@ var closeCmd = &cobra.Command{
 			var err error
 			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 
