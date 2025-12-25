@@ -93,6 +93,15 @@ func runCook(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Apply control flow operators (gt-8tmz.4) - loops, branches, gates
+	// This must happen before advice and expansions so they can act on expanded loop steps
+	controlFlowSteps, err := formula.ApplyControlFlow(resolved.Steps, resolved.Compose)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error applying control flow: %v\n", err)
+		os.Exit(1)
+	}
+	resolved.Steps = controlFlowSteps
+
 	// Apply advice transformations (gt-8tmz.2)
 	if len(resolved.Advice) > 0 {
 		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)

@@ -180,6 +180,10 @@ type Step struct {
 	// Gate defines an async wait condition for this step.
 	// TODO(future): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
 	Gate *Gate `json:"gate,omitempty"`
+
+	// Loop defines iteration for this step (gt-8tmz.4).
+	// When set, the step becomes a container that expands its body.
+	Loop *LoopSpec `json:"loop,omitempty"`
 }
 
 // Gate defines an async wait condition (integrates with bd-udsi).
@@ -193,6 +197,53 @@ type Gate struct {
 
 	// Timeout is how long to wait before escalation (e.g., "1h", "24h").
 	Timeout string `json:"timeout,omitempty"`
+}
+
+// LoopSpec defines iteration over a body of steps (gt-8tmz.4).
+// Either Count or Until must be specified (not both).
+type LoopSpec struct {
+	// Count is the fixed number of iterations.
+	// When set, the loop body is expanded Count times.
+	Count int `json:"count,omitempty"`
+
+	// Until is a condition that ends the loop.
+	// Format matches condition evaluator syntax (e.g., "step.status == 'complete'").
+	Until string `json:"until,omitempty"`
+
+	// Max is the maximum iterations for conditional loops.
+	// Required when Until is set, to prevent unbounded loops.
+	Max int `json:"max,omitempty"`
+
+	// Body contains the steps to repeat.
+	Body []*Step `json:"body"`
+}
+
+// BranchRule defines parallel execution paths that rejoin (gt-8tmz.4).
+// Creates a fork-join pattern: from -> [parallel steps] -> join.
+type BranchRule struct {
+	// From is the step ID that precedes the parallel paths.
+	// All branch steps will depend on this step.
+	From string `json:"from"`
+
+	// Steps are the step IDs that run in parallel.
+	// These steps will all depend on From.
+	Steps []string `json:"steps"`
+
+	// Join is the step ID that follows all parallel paths.
+	// This step will depend on all Steps completing.
+	Join string `json:"join"`
+}
+
+// GateRule defines a condition that must be satisfied before a step proceeds (gt-8tmz.4).
+// Gates are evaluated at runtime by the patrol executor.
+type GateRule struct {
+	// Before is the step ID that the gate applies to.
+	// The condition must be satisfied before this step can start.
+	Before string `json:"before"`
+
+	// Condition is the expression to evaluate.
+	// Format matches condition evaluator syntax (e.g., "tests.status == 'complete'").
+	Condition string `json:"condition"`
 }
 
 // ComposeRules define how formulas can be bonded together.
@@ -210,6 +261,14 @@ type ComposeRules struct {
 	// Map applies an expansion template to all steps matching a pattern.
 	// Each matching step is replaced by the expanded template steps.
 	Map []*MapRule `json:"map,omitempty"`
+
+	// Branch defines fork-join parallel execution patterns (gt-8tmz.4).
+	// Each rule creates dependencies for parallel paths that rejoin.
+	Branch []*BranchRule `json:"branch,omitempty"`
+
+	// Gate defines conditional waits before steps (gt-8tmz.4).
+	// Each rule adds a condition that must be satisfied at runtime.
+	Gate []*GateRule `json:"gate,omitempty"`
 
 	// Aspects lists aspect formula names to apply to this formula.
 	// Aspects are applied after expansions, adding before/after/around
