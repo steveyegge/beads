@@ -93,6 +93,11 @@ func runCook(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Apply advice transformations (gt-8tmz.2)
+	if len(resolved.Advice) > 0 {
+		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)
+	}
+
 	// Apply prefix to proto ID if specified (bd-47qx)
 	protoID := resolved.Formula
 	if prefix != "" {

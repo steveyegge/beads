@@ -86,6 +86,14 @@ type Formula struct {
 	// Compose defines composition/bonding rules.
 	Compose *ComposeRules `json:"compose,omitempty"`
 
+	// Advice defines step transformations (before/after/around).
+	// Applied during cooking to insert steps around matching targets.
+	Advice []*AdviceRule `json:"advice,omitempty"`
+
+	// Pointcuts defines target patterns for aspect formulas.
+	// Used with TypeAspect to specify which steps the aspect applies to.
+	Pointcuts []*Pointcut `json:"pointcuts,omitempty"`
+
 	// Source tracks where this formula was loaded from (set by parser).
 	Source string `json:"source,omitempty"`
 }
@@ -225,6 +233,68 @@ type Hook struct {
 
 	// Vars are variable overrides for the attached formula.
 	Vars map[string]string `json:"vars,omitempty"`
+}
+
+// Pointcut defines a target pattern for advice application.
+// Used in aspect formulas to specify which steps the advice applies to.
+type Pointcut struct {
+	// Glob is a glob pattern to match step IDs.
+	// Examples: "*.implement", "shiny.*", "review"
+	Glob string `json:"glob,omitempty"`
+
+	// Type matches steps by their type field.
+	// Examples: "task", "bug", "epic"
+	Type string `json:"type,omitempty"`
+
+	// Label matches steps that have a specific label.
+	Label string `json:"label,omitempty"`
+}
+
+// AdviceRule defines a step transformation rule.
+// Advice operators insert steps before, after, or around matching targets.
+type AdviceRule struct {
+	// Target is a glob pattern matching step IDs to apply advice to.
+	// Examples: "*.implement", "design", "shiny.*"
+	Target string `json:"target"`
+
+	// Before inserts a step before the target.
+	Before *AdviceStep `json:"before,omitempty"`
+
+	// After inserts a step after the target.
+	After *AdviceStep `json:"after,omitempty"`
+
+	// Around wraps the target with before and after steps.
+	Around *AroundAdvice `json:"around,omitempty"`
+}
+
+// AdviceStep defines a step to insert via advice.
+type AdviceStep struct {
+	// ID is the step identifier. Supports {step.id} substitution.
+	ID string `json:"id"`
+
+	// Title is the step title. Supports {step.id} substitution.
+	Title string `json:"title,omitempty"`
+
+	// Description is the step description.
+	Description string `json:"description,omitempty"`
+
+	// Type is the issue type (task, bug, etc).
+	Type string `json:"type,omitempty"`
+
+	// Args are additional context passed to the step.
+	Args map[string]string `json:"args,omitempty"`
+
+	// Output defines expected outputs from this step.
+	Output map[string]string `json:"output,omitempty"`
+}
+
+// AroundAdvice wraps a target with before and after steps.
+type AroundAdvice struct {
+	// Before is a list of steps to insert before the target.
+	Before []*AdviceStep `json:"before,omitempty"`
+
+	// After is a list of steps to insert after the target.
+	After []*AdviceStep `json:"after,omitempty"`
 }
 
 // Validate checks the formula for structural errors.
