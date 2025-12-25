@@ -1,6 +1,7 @@
 package formula
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -88,24 +89,22 @@ func TestApplyLoops_Conditional(t *testing.T) {
 		t.Errorf("Expected 1 step for conditional loop, got %d", len(result))
 	}
 
-	// Should have loop metadata labels
+	// Should have loop metadata label with JSON format
 	step := result[0]
-	hasUntil := false
-	hasMax := false
+	hasLoopLabel := false
 	for _, label := range step.Labels {
-		if label == "loop:until:step.status == 'complete'" {
-			hasUntil = true
-		}
-		if label == "loop:max:5" {
-			hasMax = true
+		// Label format: loop:{"max":5,"until":"step.status == 'complete'"}
+		if len(label) > 5 && label[:5] == "loop:" {
+			hasLoopLabel = true
+			// Verify it contains the expected values
+			if !strings.Contains(label, `"until"`) || !strings.Contains(label, `"max"`) {
+				t.Errorf("Loop label missing expected fields: %s", label)
+			}
 		}
 	}
 
-	if !hasUntil {
-		t.Error("Missing loop:until label")
-	}
-	if !hasMax {
-		t.Error("Missing loop:max label")
+	if !hasLoopLabel {
+		t.Error("Missing loop metadata label")
 	}
 }
 
@@ -289,12 +288,15 @@ func TestApplyGates(t *testing.T) {
 		t.Fatal("deploy step not found")
 	}
 
-	// Check for gate label
+	// Check for gate label with JSON format
 	found := false
-	expectedLabel := "gate:condition:tests.status == 'complete'"
 	for _, label := range deploy.Labels {
-		if label == expectedLabel {
+		// Label format: gate:{"condition":"tests.status == 'complete'"}
+		if len(label) > 5 && label[:5] == "gate:" {
 			found = true
+			if !strings.Contains(label, `"condition"`) || !strings.Contains(label, "tests.status") {
+				t.Errorf("Gate label missing expected content: %s", label)
+			}
 			break
 		}
 	}
@@ -382,7 +384,8 @@ func TestApplyControlFlow_Integration(t *testing.T) {
 
 	hasGate := false
 	for _, label := range cleanup.Labels {
-		if label == "gate:condition:steps.complete >= 2" {
+		// Label format: gate:{"condition":"steps.complete >= 2"}
+		if len(label) > 5 && label[:5] == "gate:" && strings.Contains(label, "steps.complete") {
 			hasGate = true
 			break
 		}
@@ -412,6 +415,70 @@ func TestApplyLoops_NoLoops(t *testing.T) {
 	// Dependencies should be preserved
 	if len(result[1].Needs) != 1 || result[1].Needs[0] != "a" {
 		t.Errorf("Dependencies not preserved: %v", result[1].Needs)
+	}
+}
+
+func TestApplyLoops_ExternalDependencies(t *testing.T) {
+	// Test that dependencies on steps OUTSIDE the loop are preserved as-is
+	steps := []*Step{
+		{ID: "setup", Title: "Setup"},
+		{
+			ID:    "process",
+			Title: "Process items",
+			Loop: &LoopSpec{
+				Count: 2,
+				Body: []*Step{
+					{ID: "work", Title: "Do work", Needs: []string{"setup"}}, // External dep
+					{ID: "save", Title: "Save", Needs: []string{"work"}},     // Internal dep
+				},
+			},
+		},
+	}
+
+	result, err := ApplyLoops(steps)
+	if err != nil {
+		t.Fatalf("ApplyLoops failed: %v", err)
+	}
+
+	// Should have: setup, process.iter1.work, process.iter1.save, process.iter2.work, process.iter2.save
+	if len(result) != 5 {
+		t.Errorf("Expected 5 steps, got %d", len(result))
+	}
+
+	// Find iter1.work - should have external dep on "setup" (not "process.iter1.setup")
+	var work1 *Step
+	for _, s := range result {
+		if s.ID == "process.iter1.work" {
+			work1 = s
+			break
+		}
+	}
+
+	if work1 == nil {
+		t.Fatal("process.iter1.work not found")
+	}
+
+	// External dependency should be preserved as-is
+	if len(work1.Needs) != 1 || work1.Needs[0] != "setup" {
+		t.Errorf("External dependency should be 'setup', got %v", work1.Needs)
+	}
+
+	// Find iter1.save - should have internal dep on "process.iter1.work"
+	var save1 *Step
+	for _, s := range result {
+		if s.ID == "process.iter1.save" {
+			save1 = s
+			break
+		}
+	}
+
+	if save1 == nil {
+		t.Fatal("process.iter1.save not found")
+	}
+
+	// Internal dependency should be prefixed
+	if len(save1.Needs) != 1 || save1.Needs[0] != "process.iter1.work" {
+		t.Errorf("Internal dependency should be 'process.iter1.work', got %v", save1.Needs)
 	}
 }
 

@@ -10,6 +10,7 @@
 package formula
 
 import (
+	"encoding/json"
 	"fmt"
 )
 
@@ -77,6 +78,13 @@ func validateLoopSpec(loop *LoopSpec, stepID string) error {
 		return fmt.Errorf("loop %q: max must be positive", stepID)
 	}
 
+	// Validate until condition syntax if present
+	if loop.Until != "" {
+		if _, err := ParseCondition(loop.Until); err != nil {
+			return fmt.Errorf("loop %q: invalid until condition %q: %w", stepID, loop.Until, err)
+		}
+	}
+
 	return nil
 }
 
@@ -109,9 +117,13 @@ func expandLoop(step *Step) ([]*Step, error) {
 		// Add loop metadata to first step for runtime evaluation
 		if len(iterSteps) > 0 {
 			firstStep := iterSteps[0]
-			// Add labels for runtime loop control
-			firstStep.Labels = append(firstStep.Labels, fmt.Sprintf("loop:until:%s", step.Loop.Until))
-			firstStep.Labels = append(firstStep.Labels, fmt.Sprintf("loop:max:%d", step.Loop.Max))
+			// Add labels for runtime loop control using JSON for unambiguous parsing
+			loopMeta := map[string]interface{}{
+				"until": step.Loop.Until,
+				"max":   step.Loop.Max,
+			}
+			loopJSON, _ := json.Marshal(loopMeta)
+			firstStep.Labels = append(firstStep.Labels, fmt.Sprintf("loop:%s", string(loopJSON)))
 		}
 
 		result = iterSteps
@@ -124,6 +136,9 @@ func expandLoop(step *Step) ([]*Step, error) {
 // The iteration index is used to generate unique step IDs.
 func expandLoopIteration(step *Step, iteration int) ([]*Step, error) {
 	result := make([]*Step, 0, len(step.Loop.Body))
+
+	// Build set of step IDs within the loop body (for dependency rewriting)
+	bodyStepIDs := collectBodyStepIDs(step.Loop.Body)
 
 	for _, bodyStep := range step.Loop.Body {
 		// Create unique ID for this iteration
@@ -138,6 +153,17 @@ func expandLoopIteration(step *Step, iteration int) ([]*Step, error) {
 			Assignee:    bodyStep.Assignee,
 			Condition:   bodyStep.Condition,
 			WaitsFor:    bodyStep.WaitsFor,
+			Expand:      bodyStep.Expand,
+			Gate:        bodyStep.Gate,
+			// Note: Loop field intentionally not copied - nested loops need explicit support
+		}
+
+		// Clone ExpandVars if present
+		if len(bodyStep.ExpandVars) > 0 {
+			clone.ExpandVars = make(map[string]string, len(bodyStep.ExpandVars))
+			for k, v := range bodyStep.ExpandVars {
+				clone.ExpandVars[k] = v
+			}
 		}
 
 		// Clone labels
@@ -146,36 +172,76 @@ func expandLoopIteration(step *Step, iteration int) ([]*Step, error) {
 			copy(clone.Labels, bodyStep.Labels)
 		}
 
-		// Clone dependencies - prefix with iteration context
-		if len(bodyStep.DependsOn) > 0 {
-			clone.DependsOn = make([]string, len(bodyStep.DependsOn))
-			for i, dep := range bodyStep.DependsOn {
-				clone.DependsOn[i] = fmt.Sprintf("%s.iter%d.%s", step.ID, iteration, dep)
-			}
-		}
+		// Clone dependencies - only prefix references to steps WITHIN the loop body
+		clone.DependsOn = rewriteLoopDependencies(bodyStep.DependsOn, step.ID, iteration, bodyStepIDs)
+		clone.Needs = rewriteLoopDependencies(bodyStep.Needs, step.ID, iteration, bodyStepIDs)
 
-		if len(bodyStep.Needs) > 0 {
-			clone.Needs = make([]string, len(bodyStep.Needs))
-			for i, need := range bodyStep.Needs {
-				clone.Needs[i] = fmt.Sprintf("%s.iter%d.%s", step.ID, iteration, need)
-			}
-		}
-
-		// Recursively handle children
+		// Recursively handle children with proper dependency rewriting
 		if len(bodyStep.Children) > 0 {
-			children := make([]*Step, 0, len(bodyStep.Children))
-			for _, child := range bodyStep.Children {
-				childClone := cloneStepDeep(child)
-				childClone.ID = fmt.Sprintf("%s.iter%d.%s", step.ID, iteration, child.ID)
-				children = append(children, childClone)
-			}
-			clone.Children = children
+			clone.Children = expandLoopChildren(bodyStep.Children, step.ID, iteration, bodyStepIDs)
 		}
 
 		result = append(result, clone)
 	}
 
 	return result, nil
+}
+
+// collectBodyStepIDs collects all step IDs within a loop body (including nested children).
+func collectBodyStepIDs(body []*Step) map[string]bool {
+	ids := make(map[string]bool)
+	var collect func([]*Step)
+	collect = func(steps []*Step) {
+		for _, s := range steps {
+			ids[s.ID] = true
+			if len(s.Children) > 0 {
+				collect(s.Children)
+			}
+		}
+	}
+	collect(body)
+	return ids
+}
+
+// rewriteLoopDependencies rewrites dependency references for loop expansion.
+// Only dependencies referencing steps WITHIN the loop body are prefixed.
+// External dependencies are preserved as-is.
+func rewriteLoopDependencies(deps []string, loopID string, iteration int, bodyStepIDs map[string]bool) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+
+	result := make([]string, len(deps))
+	for i, dep := range deps {
+		if bodyStepIDs[dep] {
+			// Internal dependency - prefix with iteration context
+			result[i] = fmt.Sprintf("%s.iter%d.%s", loopID, iteration, dep)
+		} else {
+			// External dependency - preserve as-is
+			result[i] = dep
+		}
+	}
+	return result
+}
+
+// expandLoopChildren expands children within a loop iteration.
+// Rewrites IDs and dependencies appropriately.
+func expandLoopChildren(children []*Step, loopID string, iteration int, bodyStepIDs map[string]bool) []*Step {
+	result := make([]*Step, len(children))
+	for i, child := range children {
+		clone := cloneStepDeep(child)
+		clone.ID = fmt.Sprintf("%s.iter%d.%s", loopID, iteration, child.ID)
+		clone.DependsOn = rewriteLoopDependencies(child.DependsOn, loopID, iteration, bodyStepIDs)
+		clone.Needs = rewriteLoopDependencies(child.Needs, loopID, iteration, bodyStepIDs)
+
+		// Recursively handle nested children
+		if len(child.Children) > 0 {
+			clone.Children = expandLoopChildren(child.Children, loopID, iteration, bodyStepIDs)
+		}
+
+		result[i] = clone
+	}
+	return result
 }
 
 // chainLoopIterations adds dependencies between loop iterations.
@@ -291,8 +357,10 @@ func ApplyGates(steps []*Step, compose *ComposeRules) ([]*Step, error) {
 			return nil, fmt.Errorf("gate: target step %q not found", gate.Before)
 		}
 
-		// Add gate label for runtime evaluation
-		gateLabel := fmt.Sprintf("gate:condition:%s", gate.Condition)
+		// Add gate label for runtime evaluation using JSON for unambiguous parsing
+		gateMeta := map[string]string{"condition": gate.Condition}
+		gateJSON, _ := json.Marshal(gateMeta)
+		gateLabel := fmt.Sprintf("gate:%s", string(gateJSON))
 		step.Labels = appendUnique(step.Labels, gateLabel)
 	}
 
