@@ -42,17 +42,14 @@ Examples:
 			if err != nil {
 				if isUnknownOperationError(err) {
 					if err := fallbackToDirectMode("daemon does not support comment_list RPC"); err != nil {
-						fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
-						os.Exit(1)
+						FatalErrorRespectJSON("getting comments: %v", err)
 					}
 				} else {
-					fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("getting comments: %v", err)
 				}
 			} else {
 				if err := json.Unmarshal(resp.Data, &comments); err != nil {
-					fmt.Fprintf(os.Stderr, "Error decoding comments: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("decoding comments: %v", err)
 				}
 				usedDaemon = true
 			}
@@ -60,21 +57,18 @@ Examples:
 
 		if !usedDaemon {
 			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting comments: %v", err)
 			}
 			ctx := rootCtx
 			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", issueID, err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
 			}
 			issueID = fullID
-			
+
 			result, err := store.GetIssueComments(ctx, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting comments: %v", err)
 			}
 			comments = result
 		}
@@ -87,8 +81,7 @@ Examples:
 		if jsonOutput {
 			data, err := json.MarshalIndent(comments, "", "  ")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("encoding JSON: %v", err)
 			}
 			fmt.Println(string(data))
 			return
@@ -130,13 +123,11 @@ Examples:
 			// Read from file
 			data, err := os.ReadFile(commentText) // #nosec G304 - user-provided file path is intentional
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("reading file: %v", err)
 			}
 			commentText = string(data)
 		} else if len(args) < 2 {
-			fmt.Fprintf(os.Stderr, "Error: comment text required (use -f to read from file)\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("comment text required (use -f to read from file)")
 		} else {
 			commentText = args[1]
 		}
@@ -167,18 +158,15 @@ Examples:
 			if err != nil {
 				if isUnknownOperationError(err) {
 					if err := fallbackToDirectMode("daemon does not support comment_add RPC"); err != nil {
-						fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
-						os.Exit(1)
+						FatalErrorRespectJSON("adding comment: %v", err)
 					}
 				} else {
-					fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("adding comment: %v", err)
 				}
 			} else {
 				var parsed types.Comment
 				if err := json.Unmarshal(resp.Data, &parsed); err != nil {
-					fmt.Fprintf(os.Stderr, "Error decoding comment: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("decoding comment: %v", err)
 				}
 				comment = &parsed
 			}
@@ -186,30 +174,26 @@ Examples:
 
 		if comment == nil {
 			if err := ensureStoreActive(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("adding comment: %v", err)
 			}
 			ctx := rootCtx
-			
+
 			fullID, err := utils.ResolvePartialID(ctx, store, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", issueID, err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
 			}
 			issueID = fullID
-			
+
 			comment, err = store.AddIssueComment(ctx, issueID, author, commentText)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("adding comment: %v", err)
 			}
 		}
 
 		if jsonOutput {
 			data, err := json.MarshalIndent(comment, "", "  ")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("encoding JSON: %v", err)
 			}
 			fmt.Println(string(data))
 			return

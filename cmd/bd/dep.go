@@ -71,12 +71,10 @@ Examples:
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
 			if err := json.Unmarshal(resp.Data, &fromID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
 
 			if isExternalRef {
@@ -84,27 +82,23 @@ Examples:
 				toID = args[1]
 				// Validate format: external:<project>:<capability>
 				if err := validateExternalRef(toID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("%v", err)
 				}
 			} else {
 				resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
 				resp, err = daemonClient.ResolveID(resolveArgs)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-					os.Exit(1)
+					FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
 				}
 				if err := json.Unmarshal(resp.Data, &toID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 				}
 			}
 		} else {
 			var err error
 			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
 
 			if isExternalRef {
@@ -112,14 +106,12 @@ Examples:
 				toID = args[1]
 				// Validate format: external:<project>:<capability>
 				if err := validateExternalRef(toID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("%v", err)
 				}
 			} else {
 				toID, err = utils.ResolvePartialID(ctx, store, args[1])
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-					os.Exit(1)
+					FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
 				}
 			}
 		}
@@ -127,10 +119,7 @@ Examples:
 		// Check for child→parent dependency anti-pattern (bd-nim5)
 		// This creates a deadlock: child can't start (parent open), parent can't close (children not done)
 		if isChildOf(fromID, toID) {
-			fmt.Fprintf(os.Stderr, "Error: Cannot add dependency: %s is already a child of %s.\n", fromID, toID)
-			fmt.Fprintf(os.Stderr, "Children inherit dependency on parent completion via hierarchy.\n")
-			fmt.Fprintf(os.Stderr, "Adding an explicit dependency would create a deadlock.\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
 		}
 
 		// If daemon is running, use RPC
@@ -143,8 +132,7 @@ Examples:
 
 			resp, err := daemonClient.AddDependency(depArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 
 			if jsonOutput {
@@ -165,8 +153,7 @@ Examples:
 		}
 
 		if err := store.AddDependency(ctx, dep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Schedule auto-flush
@@ -225,36 +212,30 @@ var depRemoveCmd = &cobra.Command{
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
 			if err := json.Unmarshal(resp.Data, &fromID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
-			
+
 			resolveArgs = &rpc.ResolveIDArgs{ID: args[1]}
 			resp, err = daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
 			}
 			if err := json.Unmarshal(resp.Data, &toID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
 		} else {
 			var err error
 			fromID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
-			
+
 			toID, err = utils.ResolvePartialID(ctx, store, args[1])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving dependency ID %s: %v\n", args[1], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving dependency ID %s: %v", args[1], err)
 			}
 		}
 
@@ -267,8 +248,7 @@ var depRemoveCmd = &cobra.Command{
 
 			resp, err := daemonClient.RemoveDependency(depArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 
 			if jsonOutput {
@@ -286,8 +266,7 @@ var depRemoveCmd = &cobra.Command{
 		fullToID := toID
 		
 		if err := store.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		// Schedule auto-flush
@@ -332,19 +311,16 @@ Examples:
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
 			if err := json.Unmarshal(resp.Data, &fullID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
 		} else {
 			var err error
 			fullID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving %s: %v", args[0], err)
 			}
 		}
 
@@ -353,8 +329,7 @@ Examples:
 			var err error
 			store, err = sqlite.New(rootCtx, dbPath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
 			defer func() { _ = store.Close() }()
 		}
@@ -375,13 +350,11 @@ Examples:
 
 		// Validate direction
 		if direction != "down" && direction != "up" && direction != "both" {
-			fmt.Fprintf(os.Stderr, "Error: --direction must be 'down', 'up', or 'both'\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("--direction must be 'down', 'up', or 'both'")
 		}
 
 		if maxDepth < 1 {
-			fmt.Fprintf(os.Stderr, "Error: --max-depth must be >= 1\n")
-			os.Exit(1)
+			FatalErrorRespectJSON("--max-depth must be >= 1")
 		}
 
 		// For "both" direction, we need to fetch both trees and merge them
@@ -392,15 +365,13 @@ Examples:
 			// Get dependencies (down) - what blocks this issue
 			downTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, false)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 
 			// Get dependents (up) - what this issue blocks
 			upTree, err := store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, true)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 
 			// Merge: root appears once, dependencies below, dependents above
@@ -410,8 +381,7 @@ Examples:
 		} else {
 			tree, err = store.GetDependencyTree(ctx, fullID, maxDepth, showAllPaths, direction == "up")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 
@@ -471,8 +441,7 @@ var depCyclesCmd = &cobra.Command{
 			var err error
 			store, err = sqlite.New(rootCtx, dbPath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
 			defer func() { _ = store.Close() }()
 		}
@@ -480,8 +449,7 @@ var depCyclesCmd = &cobra.Command{
 		ctx := rootCtx
 		cycles, err := store.DetectCycles(ctx)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			FatalErrorRespectJSON("%v", err)
 		}
 
 		if jsonOutput {

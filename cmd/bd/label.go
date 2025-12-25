@@ -102,9 +102,7 @@ var labelAddCmd = &cobra.Command{
 		// Protect reserved label namespaces (bd-eijl)
 		// provides:* labels can only be added via 'bd ship' command
 		if strings.HasPrefix(label, "provides:") {
-			fmt.Fprintf(os.Stderr, "Error: 'provides:' labels are reserved for cross-project capabilities\n")
-			fmt.Fprintf(os.Stderr, "Hint: use 'bd ship %s' instead\n", strings.TrimPrefix(label, "provides:"))
-			os.Exit(1)
+			FatalErrorRespectJSON("'provides:' labels are reserved for cross-project capabilities. Hint: use 'bd ship %s' instead", strings.TrimPrefix(label, "provides:"))
 		}
 
 		processBatchLabelOperation(issueIDs, label, "added", jsonOutput,
@@ -176,19 +174,16 @@ var labelListCmd = &cobra.Command{
 			resolveArgs := &rpc.ResolveIDArgs{ID: args[0]}
 			resp, err := daemonClient.ResolveID(resolveArgs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving issue ID %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving issue ID %s: %v", args[0], err)
 			}
 			if err := json.Unmarshal(resp.Data, &issueID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling resolved ID: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
 			}
 		} else {
 			var err error
 			issueID, err = utils.ResolvePartialID(ctx, store, args[0])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", args[0], err)
-				os.Exit(1)
+				FatalErrorRespectJSON("resolving %s: %v", args[0], err)
 			}
 		}
 		var labels []string
@@ -196,13 +191,11 @@ var labelListCmd = &cobra.Command{
 		if daemonClient != nil {
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: issueID})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 			var issue types.Issue
 			if err := json.Unmarshal(resp.Data, &issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("parsing response: %v", err)
 			}
 			labels = issue.Labels
 		} else {
@@ -210,8 +203,7 @@ var labelListCmd = &cobra.Command{
 			var err error
 			labels, err = store.GetLabels(ctx, issueID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 		if jsonOutput {
@@ -245,19 +237,16 @@ var labelListAllCmd = &cobra.Command{
 		if daemonClient != nil {
 			resp, err := daemonClient.List(&rpc.ListArgs{})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("parsing response: %v", err)
 			}
 		} else {
 			// Direct mode
 			issues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("%v", err)
 			}
 		}
 		// Collect unique labels with counts
@@ -272,8 +261,7 @@ var labelListAllCmd = &cobra.Command{
 				// Direct mode - need to fetch labels
 				labels, err := store.GetLabels(ctx, issue.ID)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error getting labels for %s: %v\n", issue.ID, err)
-					os.Exit(1)
+					FatalErrorRespectJSON("getting labels for %s: %v", issue.ID, err)
 				}
 				for _, label := range labels {
 					labelCounts[label]++
