@@ -240,10 +240,12 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 	}
 
 	// Commit with config-based author and signing options
+	// Use pathspec to commit ONLY beads files (bd-trgb fix)
+	// This prevents accidentally committing other staged files
 	if message == "" {
 		message = fmt.Sprintf("bd sync: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
-	commitArgs := buildGitCommitArgs(repoRoot, message)
+	commitArgs := buildGitCommitArgs(repoRoot, message, "--", relBeadsDir)
 	commitCmd := exec.CommandContext(ctx, "git", commitArgs...) //nolint:gosec // args from buildGitCommitArgs
 	if output, err := commitCmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git commit failed: %w\n%s", err, output)

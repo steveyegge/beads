@@ -893,7 +893,9 @@ func gitCommit(ctx context.Context, filePath string, message string) error {
 	}
 
 	// Commit from repo root context with config-based author and signing options
-	commitArgs := buildGitCommitArgs(repoRoot, message)
+	// Use pathspec to commit ONLY this file (bd-trgb fix)
+	// This prevents accidentally committing other staged files
+	commitArgs := buildGitCommitArgs(repoRoot, message, "--", relPath)
 	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
 	output, err := commitCmd.CombinedOutput()
 	if err != nil {
