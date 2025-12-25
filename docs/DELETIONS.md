@@ -230,11 +230,10 @@ This is intentional, not a bug. See [ARCHITECTURE.md](ARCHITECTURE.md#wisps-and-
 
 ### If You Need Wisp History
 
-Wisps exist in local git history (SQLite database commits) until garbage collected. Future enhancements may include:
+Wisps are stored in the main database with `Wisp=true` flag and are not exported to JSONL. They exist in local SQLite until garbage collected or squashed. Future enhancements may include:
 
-- Separate ephemeral repository for wisp storage
-- Explicit migration step to promote wisps to permanent storage
 - Configurable wisp retention policies
+- Automatic staleness detection based on dependency graph pressure
 
 ## Related
 

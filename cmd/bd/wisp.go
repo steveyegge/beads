@@ -75,9 +75,9 @@ var wispCreateCmd = &cobra.Command{
 	Long: `Create a wisp from a proto - sublimation from solid to vapor.
 
 This is the chemistry-inspired command for creating ephemeral work from templates.
-The resulting wisp lives in .beads-wisp/ (ephemeral storage) and is NOT synced.
+The resulting wisp is stored in the main database with Wisp=true and NOT exported to JSONL.
 
-Phase transition: Proto (solid) -> wisp -> Wisp (vapor)
+Phase transition: Proto (solid) -> Wisp (vapor)
 
 Use wisp create for:
   - Patrol cycles (deacon, witness)
@@ -86,8 +86,8 @@ Use wisp create for:
   - Routine operations with no audit value
 
 The wisp will:
-  - Be stored in .beads-wisp/ (gitignored)
-  - NOT sync to remote
+  - Be stored in main database with Wisp=true flag
+  - NOT be exported to JSONL (and thus not synced via git)
   - Either evaporate (burn) or condense to digest (squash)
 
 Examples:

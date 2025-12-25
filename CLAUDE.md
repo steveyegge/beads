@@ -317,7 +317,7 @@ bd uses a molecular chemistry metaphor for template instantiation:
 |-------|---------|--------|----------|
 | **Proto** (solid) | Built-in | N/A | Reusable templates |
 | **Mol** (liquid) | `.beads/` | Yes | Persistent work |
-| **Wisp** (vapor) | `.beads-wisp/` | No | Ephemeral operations |
+| **Wisp** (vapor) | `.beads/` (Wisp=true) | No | Ephemeral operations |
 
 **Instantiation commands:**
 
@@ -326,7 +326,7 @@ bd uses a molecular chemistry metaphor for template instantiation:
 bd pour <proto> --var key=value      # Create in .beads/
 
 # Wisp: proto → ephemeral wisp (vapor phase)
-bd wisp create <proto> --var key=value  # Create in .beads-wisp/
+bd wisp create <proto> --var key=value  # Wisp=true, not exported to JSONL
 
 # List available templates
 bd mol list --json

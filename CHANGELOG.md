@@ -275,13 +275,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bd wisp create <proto>` - Instantiate proto as ephemeral wisp (solid→vapor)
   - `bd wisp list` - List all wisps with stale detection
   - `bd wisp gc` - Garbage collect orphaned wisps
-  - Wisps live in `.beads-wisp/` (gitignored), never sync to remote
+  - Wisps have Wisp=true flag and are not exported to JSONL (never sync)
 
 - **Chemistry UX commands** - Phase-aware molecule operations
   - `bd pour <proto>` - Instantiate proto as persistent mol (solid→liquid)
   - `bd mol bond --wisp` - Force spawn as vapor when attaching to mol
   - `bd mol bond --pour` - Force spawn as liquid when attaching to wisp
-  - Cross-store squash: condense wisp to digest in main storage
+  - Squash clears Wisp flag, promoting to persistent (exported to JSONL)
 
 - **Cross-project dependencies** (bd-66w1, bd-om4a) - Reference issues across repos
   - `external:<repo>:<id>` dependency syntax
@@ -302,7 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Wisp storage initialization** - NewWispStorage now copies issue_prefix from main db
+- **Wisp flag handling** - Wisps now use Wisp=true flag in main database (not exported to JSONL)
 - **Prefix validation in multi-repo mode** (GH#686) - Skip validation for external repos
 - **Empty config values** (GH#680, GH#684) - Handle gracefully in getRepoConfig()
 - **Doctor UX improvements** (GH#687) - Better diagnostics and daemon integration

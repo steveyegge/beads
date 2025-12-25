@@ -341,7 +341,7 @@ var versionChanges = []VersionChange{
 			"NEW: Chemistry UX - bd pour, bd mol bond --wisp/--pour for phase control",
 			"NEW: Cross-project deps - external:<repo>:<id> syntax, bd ship command",
 			"BREAKING: bd repo add/remove now writes to .beads/config.yaml (not DB)",
-			"FIX: Wisp storage auto-copies issue_prefix from main database",
+			"FIX: Wisps use Wisp=true flag in main database (not exported to JSONL)",
 		},
 	},
 	{

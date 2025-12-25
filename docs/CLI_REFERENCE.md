@@ -351,7 +351,7 @@ Beads uses a chemistry metaphor for template-based workflows. See [MOLECULES.md]
 |-------|-------|---------|---------|
 | Solid | Proto | `.beads/` | `bd mol catalog` |
 | Liquid | Mol | `.beads/` | `bd pour` |
-| Vapor | Wisp | `.beads-wisp/` | `bd wisp create` |
+| Vapor | Wisp | `.beads/` (Wisp=true, not exported) | `bd wisp create` |
 
 ### Proto/Template Commands
 
