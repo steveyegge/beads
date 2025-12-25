@@ -51,7 +51,6 @@ Commands:
   catalog  List available protos
   show     Show proto/molecule structure and variables
   bond     Polymorphic combine: proto+proto, proto+mol, mol+mol
-  run      Pour + assign + pin for durable execution
   distill  Extract proto from ad-hoc epic
 
 See also:
