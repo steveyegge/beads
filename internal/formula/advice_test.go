@@ -321,3 +321,55 @@ func contains(slice []string, item string) bool {
 	}
 	return false
 }
+
+// TestApplyAdvice_SelfMatchingPrevention verifies that advice doesn't match
+// steps it inserted (gt-8tmz.16).
+func TestApplyAdvice_SelfMatchingPrevention(t *testing.T) {
+	// An advice rule with a broad pattern that would match its own insertions
+	// if self-matching weren't prevented.
+	advice := []*AdviceRule{
+		{
+			Target: "*", // Matches everything
+			Around: &AroundAdvice{
+				Before: []*AdviceStep{
+					{ID: "{step.id}-before", Title: "Before {step.id}"},
+				},
+				After: []*AdviceStep{
+					{ID: "{step.id}-after", Title: "After {step.id}"},
+				},
+			},
+		},
+	}
+
+	steps := []*Step{
+		{ID: "implement", Title: "Implement"},
+	}
+
+	result := ApplyAdvice(steps, advice)
+
+	// Without self-matching prevention, pattern "*" would match the inserted
+	// "implement-before" and "implement-after" steps, causing them to also
+	// get before/after steps, leading to potential infinite expansion.
+	// With prevention, we should only get the original step + its advice.
+
+	// Expected: implement-before, implement, implement-after (3 steps)
+	if len(result) != 3 {
+		t.Errorf("ApplyAdvice() produced %d steps, want 3. Got IDs: %v",
+			len(result), getStepIDs(result))
+	}
+
+	expectedIDs := []string{"implement-before", "implement", "implement-after"}
+	for i, want := range expectedIDs {
+		if result[i].ID != want {
+			t.Errorf("result[%d].ID = %q, want %q", i, result[i].ID, want)
+		}
+	}
+}
+
+func getStepIDs(steps []*Step) []string {
+	ids := make([]string, len(steps))
+	for i, s := range steps {
+		ids[i] = s.ID
+	}
+	return ids
+}

@@ -55,14 +55,33 @@ func MatchGlob(pattern, stepID string) bool {
 // ApplyAdvice transforms a formula's steps by applying advice rules.
 // Returns a new steps slice with advice steps inserted.
 // The original steps slice is not modified.
+//
+// Self-matching prevention (gt-8tmz.16): Advice only matches steps that
+// existed BEFORE this call. Steps inserted by advice (before/after/around)
+// are not matched, preventing infinite recursion.
 func ApplyAdvice(steps []*Step, advice []*AdviceRule) []*Step {
 	if len(advice) == 0 {
 		return steps
 	}
 
+	// Collect original step IDs to prevent self-matching (gt-8tmz.16)
+	originalIDs := collectStepIDs(steps)
+
+	return applyAdviceWithGuard(steps, advice, originalIDs)
+}
+
+// ApplyAdviceToOriginalOnly applies advice rules but only matches steps
+// whose IDs are in the originalIDs set. This prevents aspects from matching
+// steps they themselves inserted.
+func applyAdviceWithGuard(steps []*Step, advice []*AdviceRule, originalIDs map[string]bool) []*Step {
 	result := make([]*Step, 0, len(steps)*2) // Pre-allocate for insertions
 
 	for _, step := range steps {
+		// Skip steps not in original set (gt-8tmz.16)
+		if !originalIDs[step.ID] {
+			result = append(result, step)
+			continue
+		}
 		// Find matching advice rules for this step
 		var beforeSteps []*Step
 		var afterSteps []*Step
@@ -189,6 +208,23 @@ func appendUnique(slice []string, item string) []string {
 		}
 	}
 	return append(slice, item)
+}
+
+// collectStepIDs returns a set of all step IDs (including nested children).
+// Used by ApplyAdvice to prevent self-matching (gt-8tmz.16).
+func collectStepIDs(steps []*Step) map[string]bool {
+	ids := make(map[string]bool)
+	var collect func([]*Step)
+	collect = func(steps []*Step) {
+		for _, step := range steps {
+			ids[step.ID] = true
+			if len(step.Children) > 0 {
+				collect(step.Children)
+			}
+		}
+	}
+	collect(steps)
+	return ids
 }
 
 // MatchPointcut checks if a step matches a pointcut.
