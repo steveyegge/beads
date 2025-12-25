@@ -18,7 +18,7 @@ import (
 // Gate commands - async coordination primitives for agent workflows (bd-udsi)
 //
 // Gates are wisp issues that block until external conditions are met.
-// They are managed by the Deacon patrol and enable agents to wait on:
+// They enable agents to wait on:
 //   - GitHub Actions run completion (gh:run:<id>)
 //   - Pull request merge/close (gh:pr:<id>)
 //   - Simple timer delay (timer:<duration>)
@@ -38,7 +38,7 @@ var gateCmd = &cobra.Command{
 	Long: `Manage gates - async coordination primitives for agent workflows.
 
 Gates are ephemeral (wisp) issues that block until external conditions are met.
-They are typically managed by the Deacon patrol.
+The orchestrator is responsible for monitoring and closing gates.
 
 Await types:
   gh:run:<id>      Wait for GitHub Actions run to complete
@@ -60,8 +60,8 @@ var gateCreateCmd = &cobra.Command{
 	Short: "Create a new gate",
 	Long: `Create a new gate to wait on an external condition.
 
-The gate will be created as a wisp issue (ephemeral) and assigned to the
-Deacon patrol for monitoring.
+The gate will be created as a wisp issue (ephemeral). The orchestrator
+is responsible for monitoring gates and closing them when conditions are met.
 
 Examples:
   bd gate create --await gh:run:123456789 --timeout 30m --notify beads/dave
@@ -143,7 +143,7 @@ Examples:
 				IssueType: types.TypeGate,
 				Status:    types.StatusOpen,
 				Priority:  1, // Gates are typically high priority
-				Assignee:  "deacon/",
+				// Assignee left empty - orchestrator decides who processes gates
 				Wisp:      true, // Gates are wisps (ephemeral)
 				AwaitType: awaitType,
 				AwaitID:   awaitID,
