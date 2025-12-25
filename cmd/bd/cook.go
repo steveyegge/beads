@@ -15,11 +15,11 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
-// cookCmd compiles a formula YAML into a proto bead.
+// cookCmd compiles a formula JSON into a proto bead.
 var cookCmd = &cobra.Command{
 	Use:   "cook <formula-file>",
 	Short: "Compile a formula into a proto bead",
-	Long: `Cook transforms a .formula.yaml file into a proto bead.
+	Long: `Cook transforms a .formula.json file into a proto bead.
 
 Formulas are high-level workflow templates that support:
   - Variable definitions with defaults and validation
@@ -31,9 +31,9 @@ The cook command parses the formula, resolves inheritance, and
 creates a proto bead in the database that can be poured or spawned.
 
 Examples:
-  bd cook mol-feature.formula.yaml
-  bd cook .beads/formulas/mol-release.formula.yaml --force
-  bd cook mol-patrol.formula.yaml --search-path .beads/formulas
+  bd cook mol-feature.formula.json
+  bd cook .beads/formulas/mol-release.formula.json --force
+  bd cook mol-patrol.formula.json --search-path .beads/formulas
 
 Output:
   Creates a proto bead with:

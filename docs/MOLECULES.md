@@ -238,7 +238,7 @@ bd wisp gc             # Garbage collect old wisps
 For reference, here's how the layers stack:
 
 ```
-Formulas (YAML compile-time macros)      ← optional, for complex composition
+Formulas (JSON compile-time macros)      ← optional, for complex composition
     ↓
 Protos (template issues)                  ← optional, for reusable patterns
     ↓

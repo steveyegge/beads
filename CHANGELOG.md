@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Formula system** (bd-weu8, bd-wa2l) - Declarative workflow templates
   - `bd cook <formula>` - Execute a formula template with variable interpolation
-  - Formula files (`.formula.yaml`) support inheritance via `extends:`
-  - `needs:` and `waits_for:` fields for dependency declarations
+  - Formula files (`.formula.json`) support inheritance via `extends`
+  - `needs` and `waits_for` fields for dependency declarations
   - `--prefix` flag for custom issue prefix when cooking
   - Search paths: `.beads/formulas/`, `~/.beads/formulas/`, `~/gt/.beads/formulas/`
 

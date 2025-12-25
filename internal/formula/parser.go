@@ -1,17 +1,16 @@
 package formula
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // FormulaExt is the file extension for formula files.
-const FormulaExt = ".formula.yaml"
+const FormulaExt = ".formula.json"
 
 // Parser handles loading and resolving formulas.
 //
@@ -97,11 +96,11 @@ func (p *Parser) ParseFile(path string) (*Formula, error) {
 	return formula, nil
 }
 
-// Parse parses a formula from YAML bytes.
+// Parse parses a formula from JSON bytes.
 func (p *Parser) Parse(data []byte) (*Formula, error) {
 	var formula Formula
-	if err := yaml.Unmarshal(data, &formula); err != nil {
-		return nil, fmt.Errorf("yaml: %w", err)
+	if err := json.Unmarshal(data, &formula); err != nil {
+		return nil, fmt.Errorf("json: %w", err)
 	}
 
 	// Set defaults

@@ -1,4 +1,4 @@
-// Package formula provides parsing and validation for .formula.yaml files.
+// Package formula provides parsing and validation for .formula.json files.
 //
 // Formulas are high-level workflow templates that compile down to proto beads.
 // They support:
@@ -7,23 +7,24 @@
 //   - Composition rules for bonding formulas together
 //   - Inheritance via extends
 //
-// Example .formula.yaml:
+// Example .formula.json:
 //
-//	formula: mol-feature
-//	description: Standard feature workflow
-//	version: 1
-//	type: workflow
-//	vars:
-//	  component:
-//	    description: "Component name"
-//	    required: true
-//	steps:
-//	  - id: design
-//	    title: "Design {{component}}"
-//	    type: task
-//	  - id: implement
-//	    title: "Implement {{component}}"
-//	    depends_on: [design]
+//	{
+//	  "formula": "mol-feature",
+//	  "description": "Standard feature workflow",
+//	  "version": 1,
+//	  "type": "workflow",
+//	  "vars": {
+//	    "component": {
+//	      "description": "Component name",
+//	      "required": true
+//	    }
+//	  },
+//	  "steps": [
+//	    {"id": "design", "title": "Design {{component}}", "type": "task"},
+//	    {"id": "implement", "title": "Implement {{component}}", "depends_on": ["design"]}
+//	  ]
+//	}
 package formula
 
 import (
@@ -56,174 +57,174 @@ func (t FormulaType) IsValid() bool {
 	return false
 }
 
-// Formula is the root structure for .formula.yaml files.
+// Formula is the root structure for .formula.json files.
 type Formula struct {
 	// Formula is the unique identifier/name for this formula.
 	// Convention: mol-<name> for molecules, exp-<name> for expansions.
-	Formula string `yaml:"formula" json:"formula"`
+	Formula string `json:"formula"`
 
 	// Description explains what this formula does.
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 
 	// Version is the schema version (currently 1).
-	Version int `yaml:"version" json:"version"`
+	Version int `json:"version"`
 
 	// Type categorizes the formula: workflow, expansion, or aspect.
-	Type FormulaType `yaml:"type" json:"type"`
+	Type FormulaType `json:"type"`
 
 	// Extends is a list of parent formulas to inherit from.
 	// The child formula inherits all vars, steps, and compose rules.
 	// Child definitions override parent definitions with the same ID.
-	Extends []string `yaml:"extends,omitempty" json:"extends,omitempty"`
+	Extends []string `json:"extends,omitempty"`
 
 	// Vars defines template variables with defaults and validation.
-	Vars map[string]*VarDef `yaml:"vars,omitempty" json:"vars,omitempty"`
+	Vars map[string]*VarDef `json:"vars,omitempty"`
 
 	// Steps defines the work items to create.
-	Steps []*Step `yaml:"steps,omitempty" json:"steps,omitempty"`
+	Steps []*Step `json:"steps,omitempty"`
 
 	// Compose defines composition/bonding rules.
-	Compose *ComposeRules `yaml:"compose,omitempty" json:"compose,omitempty"`
+	Compose *ComposeRules `json:"compose,omitempty"`
 
 	// Source tracks where this formula was loaded from (set by parser).
-	Source string `yaml:"-" json:"source,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 // VarDef defines a template variable with optional validation.
 type VarDef struct {
 	// Description explains what this variable is for.
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 
 	// Default is the value to use if not provided.
-	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	Default string `json:"default,omitempty"`
 
 	// Required indicates the variable must be provided (no default).
-	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
+	Required bool `json:"required,omitempty"`
 
 	// Enum lists the allowed values (if non-empty).
-	Enum []string `yaml:"enum,omitempty" json:"enum,omitempty"`
+	Enum []string `json:"enum,omitempty"`
 
 	// Pattern is a regex pattern the value must match.
-	Pattern string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Pattern string `json:"pattern,omitempty"`
 
 	// Type is the expected value type: string (default), int, bool.
-	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 // Step defines a work item to create when the formula is instantiated.
 type Step struct {
 	// ID is the unique identifier within this formula.
 	// Used for dependency references and bond points.
-	ID string `yaml:"id" json:"id"`
+	ID string `json:"id"`
 
 	// Title is the issue title (supports {{variable}} substitution).
-	Title string `yaml:"title" json:"title"`
+	Title string `json:"title"`
 
 	// Description is the issue description (supports substitution).
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 
 	// Type is the issue type: task, bug, feature, epic, chore.
-	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+	Type string `json:"type,omitempty"`
 
 	// Priority is the issue priority (0-4).
-	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Priority *int `json:"priority,omitempty"`
 
 	// Labels are applied to the created issue.
-	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Labels []string `json:"labels,omitempty"`
 
 	// DependsOn lists step IDs this step blocks on (within the formula).
-	DependsOn []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	DependsOn []string `json:"depends_on,omitempty"`
 
 	// Needs is a simpler alias for DependsOn - lists sibling step IDs that must complete first.
 	// Either Needs or DependsOn can be used; they are merged during cooking.
-	Needs []string `yaml:"needs,omitempty" json:"needs,omitempty"`
+	Needs []string `json:"needs,omitempty"`
 
 	// WaitsFor specifies a fanout gate type for this step.
 	// Values: "all-children" (wait for all dynamic children) or "any-children" (wait for first).
 	// When set, the cooked issue gets a "gate:<value>" label.
-	WaitsFor string `yaml:"waits_for,omitempty" json:"waits_for,omitempty"`
+	WaitsFor string `json:"waits_for,omitempty"`
 
 	// Assignee is the default assignee (supports substitution).
-	Assignee string `yaml:"assignee,omitempty" json:"assignee,omitempty"`
+	Assignee string `json:"assignee,omitempty"`
 
 	// Expand references an expansion formula to inline here.
 	// When set, this step is replaced by the expansion's steps.
 	// TODO(future): Not yet implemented in bd cook. Filed as future work.
-	Expand string `yaml:"expand,omitempty" json:"expand,omitempty"`
+	Expand string `json:"expand,omitempty"`
 
 	// ExpandVars are variable overrides for the expansion.
 	// TODO(future): Not yet implemented in bd cook. Filed as future work.
-	ExpandVars map[string]string `yaml:"expand_vars,omitempty" json:"expand_vars,omitempty"`
+	ExpandVars map[string]string `json:"expand_vars,omitempty"`
 
 	// Condition makes this step optional based on a variable.
 	// Format: "{{var}}" (truthy) or "{{var}} == value".
 	// TODO(future): Not yet implemented in bd cook. Filed as future work.
-	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+	Condition string `json:"condition,omitempty"`
 
 	// Children are nested steps (for creating epic hierarchies).
-	Children []*Step `yaml:"children,omitempty" json:"children,omitempty"`
+	Children []*Step `json:"children,omitempty"`
 
 	// Gate defines an async wait condition for this step.
 	// TODO(future): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
-	Gate *Gate `yaml:"gate,omitempty" json:"gate,omitempty"`
+	Gate *Gate `json:"gate,omitempty"`
 }
 
 // Gate defines an async wait condition (integrates with bd-udsi).
 // TODO(future): Not yet implemented in bd cook. Schema defined for future use.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
-	Type string `yaml:"type" json:"type"`
+	Type string `json:"type"`
 
 	// ID is the condition identifier (e.g., workflow name for gh:run).
-	ID string `yaml:"id,omitempty" json:"id,omitempty"`
+	ID string `json:"id,omitempty"`
 
 	// Timeout is how long to wait before escalation (e.g., "1h", "24h").
-	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // ComposeRules define how formulas can be bonded together.
 type ComposeRules struct {
 	// BondPoints are named locations where other formulas can attach.
-	BondPoints []*BondPoint `yaml:"bond_points,omitempty" json:"bond_points,omitempty"`
+	BondPoints []*BondPoint `json:"bond_points,omitempty"`
 
 	// Hooks are automatic attachments triggered by labels or conditions.
-	Hooks []*Hook `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	Hooks []*Hook `json:"hooks,omitempty"`
 }
 
 // BondPoint is a named attachment site for composition.
 type BondPoint struct {
 	// ID is the unique identifier for this bond point.
-	ID string `yaml:"id" json:"id"`
+	ID string `json:"id"`
 
 	// Description explains what should be attached here.
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 
 	// AfterStep is the step ID after which to attach.
 	// Mutually exclusive with BeforeStep.
-	AfterStep string `yaml:"after_step,omitempty" json:"after_step,omitempty"`
+	AfterStep string `json:"after_step,omitempty"`
 
 	// BeforeStep is the step ID before which to attach.
 	// Mutually exclusive with AfterStep.
-	BeforeStep string `yaml:"before_step,omitempty" json:"before_step,omitempty"`
+	BeforeStep string `json:"before_step,omitempty"`
 
 	// Parallel makes attached steps run in parallel with the anchor step.
-	Parallel bool `yaml:"parallel,omitempty" json:"parallel,omitempty"`
+	Parallel bool `json:"parallel,omitempty"`
 }
 
 // Hook defines automatic formula attachment based on conditions.
 type Hook struct {
 	// Trigger is what activates this hook.
 	// Formats: "label:security", "type:bug", "priority:0-1".
-	Trigger string `yaml:"trigger" json:"trigger"`
+	Trigger string `json:"trigger"`
 
 	// Attach is the formula to attach when triggered.
-	Attach string `yaml:"attach" json:"attach"`
+	Attach string `json:"attach"`
 
 	// At is the bond point to attach at (default: end).
-	At string `yaml:"at,omitempty" json:"at,omitempty"`
+	At string `json:"at,omitempty"`
 
 	// Vars are variable overrides for the attached formula.
-	Vars map[string]string `yaml:"vars,omitempty" json:"vars,omitempty"`
+	Vars map[string]string `json:"vars,omitempty"`
 }
 
 // Validate checks the formula for structural errors.

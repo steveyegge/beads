@@ -7,35 +7,30 @@ import (
 )
 
 func TestParse_BasicFormula(t *testing.T) {
-	yaml := `
-formula: mol-test
-description: Test workflow
-version: 1
-type: workflow
-vars:
-  component:
-    description: Component name
-    required: true
-  framework:
-    description: Target framework
-    default: react
-    enum: [react, vue, angular]
-steps:
-  - id: design
-    title: "Design {{component}}"
-    type: task
-    priority: 1
-  - id: implement
-    title: "Implement {{component}}"
-    type: task
-    depends_on: [design]
-  - id: test
-    title: "Test {{component}} with {{framework}}"
-    type: task
-    depends_on: [implement]
-`
+	jsonData := `{
+  "formula": "mol-test",
+  "description": "Test workflow",
+  "version": 1,
+  "type": "workflow",
+  "vars": {
+    "component": {
+      "description": "Component name",
+      "required": true
+    },
+    "framework": {
+      "description": "Target framework",
+      "default": "react",
+      "enum": ["react", "vue", "angular"]
+    }
+  },
+  "steps": [
+    {"id": "design", "title": "Design {{component}}", "type": "task", "priority": 1},
+    {"id": "implement", "title": "Implement {{component}}", "type": "task", "depends_on": ["design"]},
+    {"id": "test", "title": "Test {{component}} with {{framework}}", "type": "task", "depends_on": ["implement"]}
+  ]
+}`
 	p := NewParser()
-	formula, err := p.Parse([]byte(yaml))
+	formula, err := p.Parse([]byte(jsonData))
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -426,38 +421,40 @@ func TestParseFile_AndResolve(t *testing.T) {
 	}
 
 	// Write parent formula
-	parent := `
-formula: base-workflow
-version: 1
-type: workflow
-vars:
-  project:
-    description: Project name
-    required: true
-steps:
-  - id: init
-    title: "Initialize {{project}}"
-`
-	if err := os.WriteFile(filepath.Join(formulaDir, "base-workflow.formula.yaml"), []byte(parent), 0644); err != nil {
+	parent := `{
+  "formula": "base-workflow",
+  "version": 1,
+  "type": "workflow",
+  "vars": {
+    "project": {
+      "description": "Project name",
+      "required": true
+    }
+  },
+  "steps": [
+    {"id": "init", "title": "Initialize {{project}}"}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "base-workflow.formula.json"), []byte(parent), 0644); err != nil {
 		t.Fatalf("write parent: %v", err)
 	}
 
 	// Write child formula that extends parent
-	child := `
-formula: extended-workflow
-version: 1
-type: workflow
-extends:
-  - base-workflow
-vars:
-  env:
-    default: dev
-steps:
-  - id: deploy
-    title: "Deploy {{project}} to {{env}}"
-    depends_on: [init]
-`
-	childPath := filepath.Join(formulaDir, "extended-workflow.formula.yaml")
+	child := `{
+  "formula": "extended-workflow",
+  "version": 1,
+  "type": "workflow",
+  "extends": ["base-workflow"],
+  "vars": {
+    "env": {
+      "default": "dev"
+    }
+  },
+  "steps": [
+    {"id": "deploy", "title": "Deploy {{project}} to {{env}}", "depends_on": ["init"]}
+  ]
+}`
+	childPath := filepath.Join(formulaDir, "extended-workflow.formula.json")
 	if err := os.WriteFile(childPath, []byte(child), 0644); err != nil {
 		t.Fatalf("write child: %v", err)
 	}
@@ -505,29 +502,29 @@ func TestResolve_CircularExtends(t *testing.T) {
 	}
 
 	// Write formulas that extend each other (cycle)
-	formulaA := `
-formula: cycle-a
-version: 1
-type: workflow
-extends: [cycle-b]
-steps: [{id: a, title: A}]
-`
-	formulaB := `
-formula: cycle-b
-version: 1
-type: workflow
-extends: [cycle-a]
-steps: [{id: b, title: B}]
-`
-	if err := os.WriteFile(filepath.Join(formulaDir, "cycle-a.formula.yaml"), []byte(formulaA), 0644); err != nil {
+	formulaA := `{
+  "formula": "cycle-a",
+  "version": 1,
+  "type": "workflow",
+  "extends": ["cycle-b"],
+  "steps": [{"id": "a", "title": "A"}]
+}`
+	formulaB := `{
+  "formula": "cycle-b",
+  "version": 1,
+  "type": "workflow",
+  "extends": ["cycle-a"],
+  "steps": [{"id": "b", "title": "B"}]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "cycle-a.formula.json"), []byte(formulaA), 0644); err != nil {
 		t.Fatalf("write a: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(formulaDir, "cycle-b.formula.yaml"), []byte(formulaB), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(formulaDir, "cycle-b.formula.json"), []byte(formulaB), 0644); err != nil {
 		t.Fatalf("write b: %v", err)
 	}
 
 	p := NewParser(formulaDir)
-	formula, err := p.ParseFile(filepath.Join(formulaDir, "cycle-a.formula.yaml"))
+	formula, err := p.ParseFile(filepath.Join(formulaDir, "cycle-a.formula.json"))
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
@@ -734,25 +731,20 @@ func TestValidate_ChildNeedsAndWaitsFor(t *testing.T) {
 	}
 }
 
-// TestParse_NeedsAndWaitsFor tests YAML parsing of needs and waits_for fields
+// TestParse_NeedsAndWaitsFor tests JSON parsing of needs and waits_for fields
 func TestParse_NeedsAndWaitsFor(t *testing.T) {
-	yaml := `
-formula: mol-deacon
-version: 1
-type: workflow
-steps:
-  - id: inbox-check
-    title: Check inbox
-  - id: health-scan
-    title: Check health
-    needs: [inbox-check]
-  - id: aggregate
-    title: Aggregate results
-    needs: [health-scan]
-    waits_for: all-children
-`
+	jsonData := `{
+  "formula": "mol-deacon",
+  "version": 1,
+  "type": "workflow",
+  "steps": [
+    {"id": "inbox-check", "title": "Check inbox"},
+    {"id": "health-scan", "title": "Check health", "needs": ["inbox-check"]},
+    {"id": "aggregate", "title": "Aggregate results", "needs": ["health-scan"], "waits_for": "all-children"}
+  ]
+}`
 	p := NewParser()
-	formula, err := p.Parse([]byte(yaml))
+	formula, err := p.Parse([]byte(jsonData))
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
