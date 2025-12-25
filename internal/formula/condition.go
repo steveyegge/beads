@@ -114,6 +114,9 @@ var (
 
 	// steps.complete >= 3
 	stepsStatPattern = regexp.MustCompile(`^steps\.(\w+)\s*([=!<>]+)\s*(\d+)$`)
+
+	// children(x).count(...) >= 3 (trailing comparison)
+	countComparePattern = regexp.MustCompile(`\s*([=!<>]+)\s*(\d+)$`)
 )
 
 // ParseCondition parses a condition string into a Condition struct.
@@ -163,8 +166,7 @@ func ParseCondition(expr string) (*Condition, error) {
 		}
 		// Handle count comparison: children(x).count(...) >= 3
 		if m[5] != "" {
-			countMatch := regexp.MustCompile(`\s*([=!<>]+)\s*(\d+)$`).FindStringSubmatch(m[5])
-			if countMatch != nil {
+			if countMatch := countComparePattern.FindStringSubmatch(m[5]); countMatch != nil {
 				cond.AggregateFunc = "count"
 				cond.Operator = Operator(countMatch[1])
 				cond.Value = countMatch[2]
@@ -317,6 +319,14 @@ func (c *Condition) evaluateAggregate(ctx *ConditionContext) (*ConditionResult, 
 	// Apply the aggregate function
 	switch c.AggregateFunc {
 	case "all":
+		// Empty set: "all children complete" with no children is false
+		// (avoids gates passing prematurely before children are created)
+		if len(steps) == 0 {
+			return &ConditionResult{
+				Satisfied: false,
+				Reason:    fmt.Sprintf("no %s to evaluate", c.AggregateOver),
+			}, nil
+		}
 		for _, s := range steps {
 			satisfied, _ := matchStep(s, c.Field, c.Operator, c.Value)
 			if !satisfied {
@@ -328,7 +338,7 @@ func (c *Condition) evaluateAggregate(ctx *ConditionContext) (*ConditionResult, 
 		}
 		return &ConditionResult{
 			Satisfied: true,
-			Reason:    fmt.Sprintf("all %d steps match", len(steps)),
+			Reason:    fmt.Sprintf("all %d %s match", len(steps), c.AggregateOver),
 		}, nil
 
 	case "any":
@@ -361,7 +371,10 @@ func (c *Condition) evaluateAggregate(ctx *ConditionContext) (*ConditionResult, 
 				}
 			}
 		}
-		expected, _ := strconv.Atoi(c.Value)
+		expected, err := strconv.Atoi(c.Value)
+		if err != nil {
+			return nil, fmt.Errorf("count comparison requires integer value, got %q: %w", c.Value, err)
+		}
 		satisfied, reason := compareInt(count, c.Operator, expected)
 		return &ConditionResult{
 			Satisfied: satisfied,
@@ -428,6 +441,31 @@ func getNestedValue(m map[string]interface{}, path string) interface{} {
 }
 
 func compare(actual interface{}, op Operator, expected string) (bool, string) {
+	// Handle nil values explicitly
+	if actual == nil {
+		switch op {
+		case OpEqual:
+			// nil == "" or nil == "nil" are both false unless expected is literally empty
+			satisfied := expected == ""
+			return satisfied, fmt.Sprintf("nil %s %q: %v", op, expected, satisfied)
+		case OpNotEqual:
+			satisfied := expected != ""
+			return satisfied, fmt.Sprintf("nil %s %q: %v", op, expected, satisfied)
+		default:
+			return false, fmt.Sprintf("nil cannot be compared with %s", op)
+		}
+	}
+
+	// Handle bool values (from JSON unmarshaling)
+	if b, ok := actual.(bool); ok {
+		actualStr := strconv.FormatBool(b)
+		satisfied := actualStr == expected
+		if op == OpNotEqual {
+			satisfied = actualStr != expected
+		}
+		return satisfied, fmt.Sprintf("%v %s %q: %v", b, op, expected, satisfied)
+	}
+
 	actualStr := fmt.Sprintf("%v", actual)
 
 	switch op {
@@ -491,6 +529,10 @@ func compareFloat(actual float64, op Operator, expected float64) (bool, string) 
 func compareString(actual string, op Operator, expected string) (bool, string) {
 	var satisfied bool
 	switch op {
+	case OpEqual:
+		satisfied = actual == expected
+	case OpNotEqual:
+		satisfied = actual != expected
 	case OpGreater:
 		satisfied = actual > expected
 	case OpGreaterEqual:

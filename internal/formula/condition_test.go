@@ -435,3 +435,95 @@ func TestCompareOperators(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateCondition_EmptyChildren(t *testing.T) {
+	ctx := &ConditionContext{
+		CurrentStep: "parent",
+		Steps: map[string]*StepState{
+			"parent": {
+				ID:       "parent",
+				Status:   "in_progress",
+				Children: []*StepState{}, // Empty children
+			},
+		},
+	}
+
+	// "all children complete" with no children should be false (not vacuous truth)
+	result, err := EvaluateCondition("children(parent).all(status == 'complete')", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Satisfied {
+		t.Errorf("empty children 'all' should be false, got true")
+	}
+}
+
+func TestEvaluateCondition_NilOutput(t *testing.T) {
+	ctx := &ConditionContext{
+		CurrentStep: "test",
+		Steps: map[string]*StepState{
+			"test": {
+				ID:     "test",
+				Status: "complete",
+				Output: nil, // No output
+			},
+		},
+	}
+
+	// Comparing nil output field should not panic
+	result, err := EvaluateCondition("test.output.missing == 'value'", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Satisfied {
+		t.Errorf("nil field comparison should be false")
+	}
+}
+
+func TestEvaluateCondition_BoolOutput(t *testing.T) {
+	ctx := &ConditionContext{
+		CurrentStep: "test",
+		Steps: map[string]*StepState{
+			"test": {
+				ID:     "test",
+				Status: "complete",
+				Output: map[string]interface{}{
+					"approved": true, // actual bool, not string
+				},
+			},
+		},
+	}
+
+	result, err := EvaluateCondition("test.output.approved == true", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Satisfied {
+		t.Errorf("bool true should match 'true', got: %s", result.Reason)
+	}
+}
+
+func TestEvaluateCondition_CountError(t *testing.T) {
+	ctx := &ConditionContext{
+		Steps: map[string]*StepState{
+			"s1": {ID: "s1", Status: "complete"},
+		},
+	}
+
+	// Directly construct a condition with invalid count value
+	// (regex validation normally prevents this, but test defensive code)
+	cond := &Condition{
+		Raw:           "steps.complete >= notanumber",
+		Type:          ConditionTypeAggregate,
+		AggregateOver: "steps",
+		AggregateFunc: "count",
+		Field:         "complete",
+		Operator:      OpGreaterEqual,
+		Value:         "notanumber", // Invalid: not an integer
+	}
+
+	_, err := cond.Evaluate(ctx)
+	if err == nil {
+		t.Error("expected error for non-integer count value")
+	}
+}
