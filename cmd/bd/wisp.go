@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -9,8 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -18,9 +18,9 @@ import (
 
 // Wisp commands - manage ephemeral molecules
 //
-// Wisps are ephemeral molecules stored in .beads-wisp/ (gitignored).
+// Wisps are ephemeral issues with Wisp=true in the main database.
 // They're used for patrol cycles and operational loops that shouldn't
-// accumulate in the permanent database.
+// be exported to JSONL (and thus not synced via git).
 //
 // Commands:
 //   bd wisp list    - List all wisps in current context
@@ -31,15 +31,16 @@ var wispCmd = &cobra.Command{
 	Short: "Manage ephemeral molecules (wisps)",
 	Long: `Manage wisps - ephemeral molecules for operational workflows.
 
-Wisps are ephemeral molecules stored in .beads-wisp/ (gitignored).
+Wisps are issues with Wisp=true in the main database. They're stored
+locally but NOT exported to JSONL (and thus not synced via git).
 They're used for patrol cycles, operational loops, and other workflows
-that shouldn't accumulate in the permanent database.
+that shouldn't accumulate in the shared issue database.
 
 The wisp lifecycle:
-  1. Create: bd mol bond --wisp ... (creates in .beads-wisp/)
+  1. Create: bd wisp create <proto> or bd create --wisp
   2. Execute: Normal bd operations work on wisps
-  3. Squash: bd mol squash <id> (creates permanent digest, deletes wisp)
-  4. Or burn: bd mol burn <id> (deletes wisp with no digest)
+  3. Squash: bd mol squash <id> (clears Wisp flag, promotes to persistent)
+  4. Or burn: bd mol burn <id> (deletes wisp without creating digest)
 
 Commands:
   list  List all wisps in current context
@@ -54,22 +55,18 @@ type WispListItem struct {
 	Priority  int       `json:"priority"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Orphaned  bool      `json:"orphaned,omitempty"`
-	Stale     bool      `json:"stale,omitempty"`
+	Old       bool      `json:"old,omitempty"` // Not updated in 24+ hours
 }
 
 // WispListResult is the JSON output for wisp list
 type WispListResult struct {
-	Wisps        []WispListItem `json:"wisps"`
-	Count        int            `json:"count"`
-	OrphanCount  int            `json:"orphan_count,omitempty"`
-	StaleCount   int            `json:"stale_count,omitempty"`
-	WispDir      string         `json:"wisp_dir"`
-	WispDirError string         `json:"wisp_dir_error,omitempty"`
+	Wisps    []WispListItem `json:"wisps"`
+	Count    int            `json:"count"`
+	OldCount int            `json:"old_count,omitempty"`
 }
 
-// StaleThreshold is how old a wisp must be to be considered stale
-const StaleThreshold = 24 * time.Hour
+// OldThreshold is how old a wisp must be to be flagged as old (time-based, for ephemeral cleanup)
+const OldThreshold = 24 * time.Hour
 
 // wispCreateCmd instantiates a proto as an ephemeral wisp
 var wispCreateCmd = &cobra.Command{
@@ -200,7 +197,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	if dryRun {
 		fmt.Printf("\nDry run: would create wisp with %d issues from proto %s\n\n", len(subgraph.Issues), protoID)
-		fmt.Printf("Storage: wisp (.beads-wisp/)\n\n")
+		fmt.Printf("Storage: main database (wisp=true, not exported to JSONL)\n\n")
 		for _, issue := range subgraph.Issues {
 			newTitle := substituteVariables(issue.Title, vars)
 			fmt.Printf("  - %s (from %s)\n", newTitle, issue.ID)
@@ -208,27 +205,14 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Open wisp storage
-	wispStore, err := beads.NewWispStorage(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to open wisp storage: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() { _ = wispStore.Close() }()
-
-	// Ensure wisp directory is gitignored
-	if err := beads.EnsureWispGitignore(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", err)
-	}
-
-	// Spawn as wisp (ephemeral=true)
-	result, err := spawnMolecule(ctx, wispStore, subgraph, vars, "", actor, true)
+	// Spawn as wisp in main database (ephemeral=true sets Wisp flag, skips JSONL export)
+	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Don't schedule flush - wisps are not synced
+	// Wisps are in main db but don't trigger JSONL export (Wisp flag excludes them)
 
 	if jsonOutput {
 		type wispCreateResult struct {
@@ -241,11 +225,11 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("%s Created wisp: %d issues\n", ui.RenderPass("✓"), result.Created)
 	fmt.Printf("  Root issue: %s\n", result.NewEpicID)
-	fmt.Printf("  Phase: vapor (ephemeral in .beads-wisp/)\n")
+	fmt.Printf("  Phase: vapor (ephemeral, not exported to JSONL)\n")
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  bd close %s.<step>       # Complete steps\n", result.NewEpicID)
-	fmt.Printf("  bd mol squash %s         # Condense to digest\n", result.NewEpicID)
-	fmt.Printf("  bd mol burn %s           # Discard without digest\n", result.NewEpicID)
+	fmt.Printf("  bd mol squash %s         # Condense to digest (promotes to persistent)\n", result.NewEpicID)
+	fmt.Printf("  bd mol burn %s           # Discard without creating digest\n", result.NewEpicID)
 }
 
 // isProtoIssue checks if an issue is a proto (has the template label)
@@ -285,8 +269,8 @@ var wispListCmd = &cobra.Command{
 	Short: "List all wisps in current context",
 	Long: `List all ephemeral molecules (wisps) in the current context.
 
-Wisps are stored in .beads-wisp/ alongside .beads/. They are gitignored
-and will be garbage collected over time.
+Wisps are issues with Wisp=true in the main database. They are stored
+locally but not exported to JSONL (and thus not synced via git).
 
 The list shows:
   - ID: Issue ID of the wisp
@@ -295,10 +279,9 @@ The list shows:
   - Started: When the wisp was created
   - Updated: Last modification time
 
-Orphan detection:
-  - Orphaned wisps have no root molecule (parent was deleted)
-  - Stale wisps haven't been updated in 24+ hours
-  - Use 'bd wisp gc' to clean up orphaned/stale wisps
+Old wisp detection:
+  - Old wisps haven't been updated in 24+ hours
+  - Use 'bd wisp gc' to clean up old/abandoned wisps
 
 Examples:
   bd wisp list              # List all wisps
@@ -312,64 +295,63 @@ func runWispList(cmd *cobra.Command, args []string) {
 
 	showAll, _ := cmd.Flags().GetBool("all")
 
-	// Check wisp directory exists
-	wispDir := beads.FindWispDir()
-	if wispDir == "" {
+	// Check for database connection
+	if store == nil && daemonClient == nil {
 		if jsonOutput {
 			outputJSON(WispListResult{
-				Wisps:        []WispListItem{},
-				Count:        0,
-				WispDirError: "no .beads directory found",
+				Wisps: []WispListItem{},
+				Count: 0,
 			})
 		} else {
-			fmt.Println("No wisp storage found (no .beads directory)")
+			fmt.Println("No database connection")
 		}
 		return
 	}
 
-	// Check if wisp directory exists
-	if _, err := os.Stat(wispDir); os.IsNotExist(err) {
-		if jsonOutput {
-			outputJSON(WispListResult{
-				Wisps:   []WispListItem{},
-				Count:   0,
-				WispDir: wispDir,
-			})
-		} else {
-			fmt.Println("No wisps found (wisp directory does not exist)")
-		}
-		return
-	}
+	// Query wisps from main database using Wisp filter
+	wispFlag := true
+	var issues []*types.Issue
+	var err error
 
-	// Open wisp storage
-	wispStore, err := beads.NewWispStorage(ctx)
-	if err != nil {
-		if jsonOutput {
-			outputJSON(WispListResult{
-				Wisps:        []WispListItem{},
-				Count:        0,
-				WispDir:      wispDir,
-				WispDirError: err.Error(),
-			})
+	if daemonClient != nil {
+		// Use daemon RPC
+		resp, rpcErr := daemonClient.List(&rpc.ListArgs{
+			Wisp: &wispFlag,
+		})
+		if rpcErr != nil {
+			err = rpcErr
 		} else {
-			fmt.Fprintf(os.Stderr, "Error opening wisp storage: %v\n", err)
+			if jsonErr := json.Unmarshal(resp.Data, &issues); jsonErr != nil {
+				err = jsonErr
+			}
 		}
-		return
+	} else {
+		// Direct database access
+		filter := types.IssueFilter{
+			Wisp: &wispFlag,
+		}
+		issues, err = store.SearchIssues(ctx, "", filter)
 	}
-	defer func() { _ = wispStore.Close() }()
-
-	// List all issues from wisp storage
-	issues, err := listWispIssues(ctx, wispStore, showAll)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Convert to list items and detect orphans/stale
+	// Filter closed issues unless --all is specified
+	if !showAll {
+		var filtered []*types.Issue
+		for _, issue := range issues {
+			if issue.Status != types.StatusClosed {
+				filtered = append(filtered, issue)
+			}
+		}
+		issues = filtered
+	}
+
+	// Convert to list items and detect old wisps
 	now := time.Now()
 	items := make([]WispListItem, 0, len(issues))
-	orphanCount := 0
-	staleCount := 0
+	oldCount := 0
 
 	for _, issue := range issues {
 		item := WispListItem{
@@ -381,15 +363,11 @@ func runWispList(cmd *cobra.Command, args []string) {
 			UpdatedAt: issue.UpdatedAt,
 		}
 
-		// Check if stale (not updated in 24+ hours)
-		if now.Sub(issue.UpdatedAt) > StaleThreshold {
-			item.Stale = true
-			staleCount++
+		// Check if old (not updated in 24+ hours)
+		if now.Sub(issue.UpdatedAt) > OldThreshold {
+			item.Old = true
+			oldCount++
 		}
-
-		// Orphan detection would require checking if parent exists
-		// For now, we consider root wisps without children as potential orphans
-		// This is a heuristic - true orphan detection requires dependency analysis
 
 		items = append(items, item)
 	}
@@ -400,11 +378,9 @@ func runWispList(cmd *cobra.Command, args []string) {
 	})
 
 	result := WispListResult{
-		Wisps:       items,
-		Count:       len(items),
-		OrphanCount: orphanCount,
-		StaleCount:  staleCount,
-		WispDir:     wispDir,
+		Wisps:    items,
+		Count:    len(items),
+		OldCount: oldCount,
 	}
 
 	if jsonOutput {
@@ -437,7 +413,7 @@ func runWispList(cmd *cobra.Command, args []string) {
 
 		// Format updated time
 		updated := formatTimeAgo(item.UpdatedAt)
-		if item.Stale {
+		if item.Old {
 			updated = ui.RenderWarn(updated + " ⚠")
 		}
 
@@ -446,40 +422,11 @@ func runWispList(cmd *cobra.Command, args []string) {
 	}
 
 	// Print warnings
-	if staleCount > 0 {
-		fmt.Printf("\n%s %d stale wisp(s) (not updated in 24+ hours)\n",
-			ui.RenderWarn("⚠"), staleCount)
-		fmt.Println("  Hint: Use 'bd wisp gc' to clean up stale wisps")
+	if oldCount > 0 {
+		fmt.Printf("\n%s %d old wisp(s) (not updated in 24+ hours)\n",
+			ui.RenderWarn("⚠"), oldCount)
+		fmt.Println("  Hint: Use 'bd wisp gc' to clean up old wisps")
 	}
-}
-
-// listWispIssues retrieves issues from wisp storage
-func listWispIssues(ctx context.Context, s storage.Storage, includeAll bool) ([]*types.Issue, error) {
-	// Build filter - by default, exclude closed issues
-	filter := types.IssueFilter{}
-	if !includeAll {
-		// When not showing all, we need to get everything and filter in Go
-		// since the filter only supports single status
-	}
-
-	// Get all issues from wisp storage
-	issues, err := s.SearchIssues(ctx, "", filter)
-	if err != nil {
-		return nil, err
-	}
-
-	// If not showing all, filter out closed issues
-	if !includeAll {
-		var filtered []*types.Issue
-		for _, issue := range issues {
-			if issue.Status != types.StatusClosed {
-				filtered = append(filtered, issue)
-			}
-		}
-		return filtered, nil
-	}
-
-	return issues, nil
 }
 
 // formatTimeAgo returns a human-readable relative time
@@ -514,18 +461,20 @@ func formatTimeAgo(t time.Time) string {
 
 var wispGCCmd = &cobra.Command{
 	Use:   "gc",
-	Short: "Garbage collect orphaned wisps",
-	Long: `Garbage collect orphaned wisps from wisp storage.
+	Short: "Garbage collect old/abandoned wisps",
+	Long: `Garbage collect old or abandoned wisps from the database.
 
-A wisp is considered orphaned if:
-  - It has a process_id and that process is no longer running
+A wisp is considered abandoned if:
   - It hasn't been updated in --age duration and is not closed
 
-Orphaned wisps are deleted without creating a digest. Use 'bd mol squash'
+Abandoned wisps are deleted without creating a digest. Use 'bd mol squash'
 if you want to preserve a summary before garbage collection.
 
+Note: This uses time-based cleanup, appropriate for ephemeral wisps.
+For graph-pressure staleness detection (blocking other work), see 'bd mol stale'.
+
 Examples:
-  bd wisp gc                # Clean orphans (default: 1h threshold)
+  bd wisp gc                # Clean abandoned wisps (default: 1h threshold)
   bd wisp gc --dry-run      # Preview what would be cleaned
   bd wisp gc --age 24h      # Custom age threshold
   bd wisp gc --all          # Also clean closed wisps older than threshold`,
@@ -538,7 +487,6 @@ type WispGCResult struct {
 	CleanedCount int      `json:"cleaned_count"`
 	Candidates   int      `json:"candidates,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
-	WispDir      string   `json:"wisp_dir"`
 }
 
 func runWispGC(cmd *cobra.Command, args []string) {
@@ -561,95 +509,71 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Find wisp storage
-	wispDir := beads.FindWispDir()
-	if wispDir == "" {
-		if jsonOutput {
-			outputJSON(WispGCResult{
-				CleanedIDs:   []string{},
-				CleanedCount: 0,
-			})
+	// Wisp gc requires direct store access for deletion
+	if store == nil {
+		if daemonClient != nil {
+			fmt.Fprintf(os.Stderr, "Error: wisp gc requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon wisp gc\n")
 		} else {
-			fmt.Println("No wisp storage found")
+			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		}
-		return
-	}
-
-	// Check if wisp directory exists
-	if _, err := os.Stat(wispDir); os.IsNotExist(err) {
-		if jsonOutput {
-			outputJSON(WispGCResult{
-				CleanedIDs:   []string{},
-				CleanedCount: 0,
-				WispDir:      wispDir,
-			})
-		} else {
-			fmt.Println("No wisps to clean (wisp directory does not exist)")
-		}
-		return
-	}
-
-	// Open wisp storage
-	wispStore, err := beads.NewWispStorage(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening wisp storage: %v\n", err)
 		os.Exit(1)
 	}
-	defer func() { _ = wispStore.Close() }()
 
-	// Get all issues from wisp storage
-	filter := types.IssueFilter{}
-	issues, err := wispStore.SearchIssues(ctx, "", filter)
+	// Query wisps from main database using Wisp filter
+	wispFlag := true
+	filter := types.IssueFilter{
+		Wisp: &wispFlag,
+	}
+	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Find orphans
+	// Find old/abandoned wisps
 	now := time.Now()
-	var orphans []*types.Issue
+	var abandoned []*types.Issue
 	for _, issue := range issues {
 		// Skip closed issues unless --all is specified
 		if issue.Status == types.StatusClosed && !cleanAll {
 			continue
 		}
 
-		// Check if stale (not updated within age threshold)
+		// Check if old (not updated within age threshold)
 		if now.Sub(issue.UpdatedAt) > ageThreshold {
-			orphans = append(orphans, issue)
+			abandoned = append(abandoned, issue)
 		}
 	}
 
-	if len(orphans) == 0 {
+	if len(abandoned) == 0 {
 		if jsonOutput {
 			outputJSON(WispGCResult{
 				CleanedIDs:   []string{},
 				CleanedCount: 0,
-				WispDir:      wispDir,
 				DryRun:       dryRun,
 			})
 		} else {
-			fmt.Println("No orphaned wisps found")
+			fmt.Println("No abandoned wisps found")
 		}
 		return
 	}
 
 	if dryRun {
 		if jsonOutput {
-			ids := make([]string, len(orphans))
-			for i, o := range orphans {
+			ids := make([]string, len(abandoned))
+			for i, o := range abandoned {
 				ids[i] = o.ID
 			}
 			outputJSON(WispGCResult{
 				CleanedIDs:   ids,
-				Candidates:   len(orphans),
+				Candidates:   len(abandoned),
 				CleanedCount: 0,
-				WispDir:      wispDir,
 				DryRun:       true,
 			})
 		} else {
-			fmt.Printf("Dry run: would clean %d orphaned wisp(s):\n\n", len(orphans))
-			for _, issue := range orphans {
+			fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
+			for _, issue := range abandoned {
 				age := formatTimeAgo(issue.UpdatedAt)
 				fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
 			}
@@ -658,15 +582,15 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Delete orphans
+	// Delete abandoned wisps
 	var cleanedIDs []string
-	sqliteStore, ok := wispStore.(*sqlite.SQLiteStorage)
+	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Error: wisp gc requires SQLite storage backend\n")
 		os.Exit(1)
 	}
 
-	for _, issue := range orphans {
+	for _, issue := range abandoned {
 		if err := sqliteStore.DeleteIssue(ctx, issue.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", issue.ID, err)
 			continue
@@ -677,7 +601,6 @@ func runWispGC(cmd *cobra.Command, args []string) {
 	result := WispGCResult{
 		CleanedIDs:   cleanedIDs,
 		CleanedCount: len(cleanedIDs),
-		WispDir:      wispDir,
 	}
 
 	if jsonOutput {
@@ -685,7 +608,7 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Printf("%s Cleaned %d orphaned wisp(s)\n", ui.RenderPass("✓"), result.CleanedCount)
+	fmt.Printf("%s Cleaned %d abandoned wisp(s)\n", ui.RenderPass("✓"), result.CleanedCount)
 	for _, id := range cleanedIDs {
 		fmt.Printf("  - %s\n", id)
 	}
@@ -699,7 +622,7 @@ func init() {
 	wispListCmd.Flags().Bool("all", false, "Include closed wisps")
 
 	wispGCCmd.Flags().Bool("dry-run", false, "Preview what would be cleaned")
-	wispGCCmd.Flags().String("age", "1h", "Age threshold for orphan detection")
+	wispGCCmd.Flags().String("age", "1h", "Age threshold for abandoned wisp detection")
 	wispGCCmd.Flags().Bool("all", false, "Also clean closed wisps older than threshold")
 
 	wispCmd.AddCommand(wispCreateCmd)

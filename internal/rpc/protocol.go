@@ -178,6 +178,9 @@ type ListArgs struct {
 
 	// Parent filtering (bd-yqhh)
 	ParentID string `json:"parent_id,omitempty"`
+
+	// Wisp filtering (bd-bkul)
+	Wisp *bool `json:"wisp,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation

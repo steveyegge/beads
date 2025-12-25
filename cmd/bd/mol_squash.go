@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -21,15 +20,17 @@ var molSquashCmd = &cobra.Command{
 	Short: "Compress molecule execution into a digest",
 	Long: `Squash a molecule's wisp children into a single digest issue.
 
-This command collects all wisp child issues of a molecule, generates
-a summary digest, and optionally deletes the wisps.
+This command collects all wisp child issues of a molecule (Wisp=true),
+generates a summary digest, and promotes the wisps to persistent by
+clearing their Wisp flag (or optionally deletes them).
 
 The squash operation:
   1. Loads the molecule and all its children
-  2. Filters to only wisps (ephemeral vapor from the Steam Engine)
+  2. Filters to only wisps (ephemeral issues with Wisp=true)
   3. Generates a digest (summary of work done)
-  4. Creates a permanent digest issue
-  5. Deletes the wisps (unless --keep-children)
+  4. Creates a permanent digest issue (Wisp=false)
+  5. Clears Wisp flag on children (promotes to persistent)
+     OR deletes them with --delete-children
 
 AGENT INTEGRATION:
 Use --summary to provide an AI-generated summary. This keeps bd as a pure
@@ -38,12 +39,12 @@ for generating intelligent summaries. Without --summary, a basic concatenation
 of child issue content is used.
 
 This is part of the wisp workflow: spawn creates wisps,
-execution happens, squash compresses the trace into an outcome.
+execution happens, squash compresses the trace into an outcome (digest).
 
 Example:
-  bd mol squash bd-abc123              # Squash with auto-generated digest
-  bd mol squash bd-abc123 --dry-run    # Preview what would be squashed
-  bd mol squash bd-abc123 --keep-children  # Create digest but keep children
+  bd mol squash bd-abc123                    # Squash and promote children
+  bd mol squash bd-abc123 --dry-run          # Preview what would be squashed
+  bd mol squash bd-abc123 --delete-children  # Delete wisps after digest
   bd mol squash bd-abc123 --summary "Agent-generated summary of work done"`,
 	Args: cobra.ExactArgs(1),
 	Run:  runMolSquash,
