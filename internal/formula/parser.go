@@ -24,8 +24,11 @@ type Parser struct {
 	// cache stores loaded formulas by name.
 	cache map[string]*Formula
 
-	// resolving tracks formulas currently being resolved (for cycle detection).
-	resolving map[string]bool
+	// resolvingSet tracks formulas currently being resolved (for cycle detection).
+	resolvingSet map[string]bool
+
+	// resolvingChain tracks the order of formulas being resolved (for error messages).
+	resolvingChain []string
 }
 
 // NewParser creates a new formula parser.
@@ -37,9 +40,10 @@ func NewParser(searchPaths ...string) *Parser {
 		paths = defaultSearchPaths()
 	}
 	return &Parser{
-		searchPaths: paths,
-		cache:       make(map[string]*Formula),
-		resolving:   make(map[string]bool),
+		searchPaths:    paths,
+		cache:          make(map[string]*Formula),
+		resolvingSet:   make(map[string]bool),
+		resolvingChain: nil,
 	}
 }
 
@@ -118,11 +122,17 @@ func (p *Parser) Parse(data []byte) (*Formula, error) {
 // Returns a new formula with all inheritance applied.
 func (p *Parser) Resolve(formula *Formula) (*Formula, error) {
 	// Check for cycles
-	if p.resolving[formula.Formula] {
-		return nil, fmt.Errorf("circular extends detected: %s", formula.Formula)
+	if p.resolvingSet[formula.Formula] {
+		// Build the cycle chain for a clear error message
+		chain := append(p.resolvingChain, formula.Formula)
+		return nil, fmt.Errorf("circular extends detected: %s", strings.Join(chain, " -> "))
 	}
-	p.resolving[formula.Formula] = true
-	defer delete(p.resolving, formula.Formula)
+	p.resolvingSet[formula.Formula] = true
+	p.resolvingChain = append(p.resolvingChain, formula.Formula)
+	defer func() {
+		delete(p.resolvingSet, formula.Formula)
+		p.resolvingChain = p.resolvingChain[:len(p.resolvingChain)-1]
+	}()
 
 	// If no extends, just validate and return
 	if len(formula.Extends) == 0 {

@@ -3,6 +3,7 @@ package formula
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -532,6 +533,18 @@ func TestResolve_CircularExtends(t *testing.T) {
 	_, err = p.Resolve(formula)
 	if err == nil {
 		t.Error("Resolve should fail for circular extends")
+	}
+
+	// Verify the error message shows the full cycle chain
+	errStr := err.Error()
+	if !strings.Contains(errStr, "cycle-a") {
+		t.Errorf("error should mention cycle-a: %v", err)
+	}
+	if !strings.Contains(errStr, "cycle-b") {
+		t.Errorf("error should mention cycle-b: %v", err)
+	}
+	if !strings.Contains(errStr, "->") {
+		t.Errorf("error should show cycle chain with '->': %v", err)
 	}
 }
 
