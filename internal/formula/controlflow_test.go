@@ -507,3 +507,164 @@ func TestApplyLoops_NestedChildren(t *testing.T) {
 		t.Errorf("Expected 1 child, got %d", len(result[0].Children))
 	}
 }
+
+// gt-zn35j: Tests for nested loop support
+
+func TestApplyLoops_NestedLoops(t *testing.T) {
+	// Create a loop containing another loop
+	steps := []*Step{
+		{
+			ID:    "outer",
+			Title: "Outer loop",
+			Loop: &LoopSpec{
+				Count: 2,
+				Body: []*Step{
+					{
+						ID:    "inner",
+						Title: "Inner loop",
+						Loop: &LoopSpec{
+							Count: 2,
+							Body: []*Step{
+								{ID: "work", Title: "Do work"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := ApplyLoops(steps)
+	if err != nil {
+		t.Fatalf("ApplyLoops failed: %v", err)
+	}
+
+	// Should have 4 steps total (2 outer * 2 inner)
+	if len(result) != 4 {
+		t.Errorf("Expected 4 steps, got %d", len(result))
+		for i, s := range result {
+			t.Logf("  Step %d: %s", i, s.ID)
+		}
+	}
+
+	// Check step IDs follow nested pattern
+	expectedIDs := []string{
+		"outer.iter1.inner.iter1.work",
+		"outer.iter1.inner.iter2.work",
+		"outer.iter2.inner.iter1.work",
+		"outer.iter2.inner.iter2.work",
+	}
+
+	for i, expected := range expectedIDs {
+		if i >= len(result) {
+			t.Errorf("Missing step %d: %s", i, expected)
+			continue
+		}
+		if result[i].ID != expected {
+			t.Errorf("Step %d: expected ID %s, got %s", i, expected, result[i].ID)
+		}
+	}
+}
+
+func TestApplyLoops_NestedLoopsWithDependencies(t *testing.T) {
+	// Nested loops with dependencies between inner steps
+	steps := []*Step{
+		{
+			ID:    "outer",
+			Title: "Outer loop",
+			Loop: &LoopSpec{
+				Count: 2,
+				Body: []*Step{
+					{
+						ID:    "inner",
+						Title: "Inner loop",
+						Loop: &LoopSpec{
+							Count: 2,
+							Body: []*Step{
+								{ID: "fetch", Title: "Fetch data"},
+								{ID: "process", Title: "Process data", Needs: []string{"fetch"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := ApplyLoops(steps)
+	if err != nil {
+		t.Fatalf("ApplyLoops failed: %v", err)
+	}
+
+	// Should have 8 steps (2 outer * 2 inner * 2 body steps)
+	if len(result) != 8 {
+		t.Errorf("Expected 8 steps, got %d", len(result))
+	}
+
+	// Check that inner dependencies are correctly prefixed
+	// Find outer.iter1.inner.iter1.process - should depend on outer.iter1.inner.iter1.fetch
+	var process1 *Step
+	for _, s := range result {
+		if s.ID == "outer.iter1.inner.iter1.process" {
+			process1 = s
+			break
+		}
+	}
+
+	if process1 == nil {
+		t.Fatal("outer.iter1.inner.iter1.process not found")
+	}
+
+	if len(process1.Needs) != 1 || process1.Needs[0] != "outer.iter1.inner.iter1.fetch" {
+		t.Errorf("process should need outer.iter1.inner.iter1.fetch, got %v", process1.Needs)
+	}
+}
+
+func TestApplyLoops_ThreeLevelNesting(t *testing.T) {
+	// Three levels of nesting
+	steps := []*Step{
+		{
+			ID: "l1",
+			Loop: &LoopSpec{
+				Count: 2,
+				Body: []*Step{
+					{
+						ID: "l2",
+						Loop: &LoopSpec{
+							Count: 2,
+							Body: []*Step{
+								{
+									ID: "l3",
+									Loop: &LoopSpec{
+										Count: 2,
+										Body: []*Step{
+											{ID: "leaf", Title: "Leaf step"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := ApplyLoops(steps)
+	if err != nil {
+		t.Fatalf("ApplyLoops failed: %v", err)
+	}
+
+	// Should have 8 steps (2 * 2 * 2)
+	if len(result) != 8 {
+		t.Errorf("Expected 8 steps, got %d", len(result))
+	}
+
+	// Check first and last step IDs
+	if result[0].ID != "l1.iter1.l2.iter1.l3.iter1.leaf" {
+		t.Errorf("First step ID wrong: %s", result[0].ID)
+	}
+	if result[7].ID != "l1.iter2.l2.iter2.l3.iter2.leaf" {
+		t.Errorf("Last step ID wrong: %s", result[7].ID)
+	}
+}

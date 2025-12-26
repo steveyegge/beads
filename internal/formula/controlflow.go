@@ -129,7 +129,8 @@ func expandLoop(step *Step) ([]*Step, error) {
 		result = iterSteps
 	}
 
-	return result, nil
+	// Recursively expand any nested loops in the result (gt-zn35j)
+	return ApplyLoops(result)
 }
 
 // expandLoopIteration expands a single iteration of a loop.
@@ -155,7 +156,8 @@ func expandLoopIteration(step *Step, iteration int) ([]*Step, error) {
 			WaitsFor:    bodyStep.WaitsFor,
 			Expand:      bodyStep.Expand,
 			Gate:        bodyStep.Gate,
-			// Note: Loop field intentionally not copied - nested loops need explicit support
+			Loop:        cloneLoopSpec(bodyStep.Loop), // Support nested loops (gt-zn35j)
+			OnComplete:  cloneOnComplete(bodyStep.OnComplete),
 		}
 
 		// Clone ExpandVars if present
@@ -406,5 +408,24 @@ func cloneStepDeep(s *Step) *Step {
 		}
 	}
 
+	return clone
+}
+
+// cloneLoopSpec creates a deep copy of a LoopSpec (gt-zn35j).
+func cloneLoopSpec(loop *LoopSpec) *LoopSpec {
+	if loop == nil {
+		return nil
+	}
+	clone := &LoopSpec{
+		Count: loop.Count,
+		Until: loop.Until,
+		Max:   loop.Max,
+	}
+	if len(loop.Body) > 0 {
+		clone.Body = make([]*Step, len(loop.Body))
+		for i, step := range loop.Body {
+			clone.Body[i] = cloneStepDeep(step)
+		}
+	}
 	return clone
 }
