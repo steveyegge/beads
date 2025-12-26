@@ -28,6 +28,9 @@ func DatabaseIntegrity(path string) error {
 
 	beadsDir := filepath.Join(absPath, ".beads")
 
+	// Best-effort: stop any running daemon to reduce the chance of DB file locks.
+	_ = Daemon(absPath)
+
 	// Resolve database path (respects metadata.json database override).
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -39,9 +42,11 @@ func DatabaseIntegrity(path string) error {
 	// Find JSONL source of truth.
 	jsonlPath := ""
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		candidate := cfg.JSONLPath(beadsDir)
-		if _, err := os.Stat(candidate); err == nil {
-			jsonlPath = candidate
+		if cfg.JSONLExport != "" && !isSystemJSONLFilename(cfg.JSONLExport) {
+			candidate := cfg.JSONLPath(beadsDir)
+			if _, err := os.Stat(candidate); err == nil {
+				jsonlPath = candidate
+			}
 		}
 	}
 	if jsonlPath == "" {
@@ -61,7 +66,12 @@ func DatabaseIntegrity(path string) error {
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	backupDB := dbPath + "." + ts + ".corrupt.backup.db"
 	if err := os.Rename(dbPath, backupDB); err != nil {
-		return fmt.Errorf("failed to back up database: %w", err)
+		// Retry once after attempting to kill daemons again (helps on platforms with strict file locks).
+		_ = Daemon(absPath)
+		if err2 := os.Rename(dbPath, backupDB); err2 != nil {
+			// Prefer the original error (more likely root cause).
+			return fmt.Errorf("failed to back up database: %w", err)
+		}
 	}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidecar := dbPath + suffix
@@ -84,7 +94,7 @@ func DatabaseIntegrity(path string) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		// Best-effort rollback: attempt to restore the backup, preserving any partial init output.
+		// Best-effort rollback: attempt to restore the original DB, while preserving the backup.
 		failedTS := time.Now().UTC().Format("20060102T150405Z")
 		if _, statErr := os.Stat(dbPath); statErr == nil {
 			failedDB := dbPath + "." + failedTS + ".failed.init.db"
@@ -93,9 +103,11 @@ func DatabaseIntegrity(path string) error {
 				_ = os.Rename(dbPath+suffix, failedDB+suffix)
 			}
 		}
-		_ = os.Rename(backupDB, dbPath)
+		_ = copyFile(backupDB, dbPath)
 		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-			_ = os.Rename(backupDB+suffix, dbPath+suffix)
+			if _, statErr := os.Stat(backupDB + suffix); statErr == nil {
+				_ = copyFile(backupDB+suffix, dbPath+suffix)
+			}
 		}
 		return fmt.Errorf("failed to rebuild database from JSONL: %w (backup: %s)", err, backupDB)
 	}

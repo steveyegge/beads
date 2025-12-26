@@ -353,9 +353,23 @@ func applyFixesInteractive(path string, issues []doctorCheck) {
 
 // applyFixList applies a list of fixes and reports results
 func applyFixList(path string, fixes []doctorCheck) {
-	// Run corruption recovery before any operations that need a healthy SQLite DB.
-	priority := map[string]int{
-		"Database Integrity": 0,
+	// Apply fixes in a dependency-aware order.
+	// Rough dependency chain:
+	// permissions/daemon cleanup → config sanity → DB integrity/migrations → DB↔JSONL sync.
+	order := []string{
+		"Permissions",
+		"Daemon Health",
+		"Database Config",
+		"JSONL Config",
+		"Database Integrity",
+		"Database",
+		"Schema Compatibility",
+		"JSONL Integrity",
+		"DB-JSONL Sync",
+	}
+	priority := make(map[string]int, len(order))
+	for i, name := range order {
+		priority[name] = i
 	}
 	slices.SortStableFunc(fixes, func(a, b doctorCheck) int {
 		pa, oka := priority[a.Name]
@@ -411,6 +425,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.DatabaseConfig(path)
 		case "JSONL Config":
 			err = fix.LegacyJSONLConfig(path)
+		case "JSONL Integrity":
+			err = fix.JSONLIntegrity(path)
 		case "Deletions Manifest":
 			err = fix.MigrateTombstones(path)
 		case "Untracked Files":
@@ -710,6 +726,13 @@ func runDiagnostics(path string) doctorResult {
 	configValuesCheck := convertWithCategory(doctor.CheckConfigValues(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, configValuesCheck)
 	// Don't fail overall check for config value warnings, just warn
+
+	// Check 7b: JSONL integrity (malformed lines, missing IDs)
+	jsonlIntegrityCheck := convertWithCategory(doctor.CheckJSONLIntegrity(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, jsonlIntegrityCheck)
+	if jsonlIntegrityCheck.Status == statusWarning || jsonlIntegrityCheck.Status == statusError {
+		result.OverallOK = false
+	}
 
 	// Check 8: Daemon health
 	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
