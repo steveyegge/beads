@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -21,10 +22,16 @@ var molBondCmd = &cobra.Command{
 
 The bond command is polymorphic - it handles different operand types:
 
-  proto + proto → compound proto (reusable template)
-  proto + mol   → spawn proto, attach to molecule
-  mol + proto   → spawn proto, attach to molecule
-  mol + mol     → join into compound molecule
+  formula + formula → cook both, compound proto
+  formula + proto   → cook formula, compound proto
+  formula + mol     → cook formula, spawn and attach
+  proto + proto     → compound proto (reusable template)
+  proto + mol       → spawn proto, attach to molecule
+  mol + proto       → spawn proto, attach to molecule
+  mol + mol         → join into compound molecule
+
+Formula names (e.g., mol-polecat-arm) are cooked inline as ephemeral protos.
+This avoids needing pre-cooked proto beads in the database.
 
 Bond types:
   sequential (default) - B runs after A completes
@@ -127,29 +134,35 @@ func runMolBond(cmd *cobra.Command, args []string) {
 		vars[parts[0]] = parts[1]
 	}
 
-	// Resolve both IDs
-	idA, err := utils.ResolvePartialID(ctx, store, args[0])
+	// Resolve both operands - can be issue IDs or formula names
+	// Formula names are cooked inline to ephemeral protos (gt-8tmz.25)
+	issueA, cookedA, err := resolveOrCookFormula(ctx, store, args[0], vars, actor)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: '%s' not found\n", args[0])
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	idB, err := utils.ResolvePartialID(ctx, store, args[1])
+	issueB, cookedB, err := resolveOrCookFormula(ctx, store, args[1], vars, actor)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: '%s' not found\n", args[1])
+		// Clean up first cooked formula if second one fails
+		if cookedA {
+			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Load both issues
-	issueA, err := store.GetIssue(ctx, idA)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", idA, err)
-		os.Exit(1)
+	// Track if we cooked formulas for cleanup on error
+	cleanupCooked := func() {
+		if cookedA {
+			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
+		}
+		if cookedB {
+			_ = deleteProtoSubgraph(ctx, store, issueB.ID)
+		}
 	}
-	issueB, err := store.GetIssue(ctx, idB)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", idB, err)
-		os.Exit(1)
-	}
+
+	idA := issueA.ID
+	idB := issueB.ID
 
 	// Determine operand types
 	aIsProto := isProto(issueA)
@@ -219,6 +232,7 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
+		cleanupCooked()
 		fmt.Fprintf(os.Stderr, "Error bonding: %v\n", err)
 		os.Exit(1)
 	}
@@ -488,6 +502,111 @@ func minPriority(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// resolveOrCookFormula tries to resolve an operand as an issue ID.
+// If not found and it looks like a formula name, cooks the formula inline.
+// Returns the issue, whether it was cooked (ephemeral proto), and any error.
+//
+// This implements gt-8tmz.25: formula names are cooked inline as ephemeral protos.
+func resolveOrCookFormula(ctx context.Context, s storage.Storage, operand string, vars map[string]string, actorName string) (*types.Issue, bool, error) {
+	// First, try to resolve as an existing issue
+	id, err := utils.ResolvePartialID(ctx, s, operand)
+	if err == nil {
+		issue, err := s.GetIssue(ctx, id)
+		if err == nil {
+			return issue, false, nil
+		}
+	}
+
+	// Not found as issue - check if it looks like a formula name
+	if !looksLikeFormulaName(operand) {
+		return nil, false, fmt.Errorf("'%s' not found (not an issue ID or formula name)", operand)
+	}
+
+	// Try to load and cook the formula
+	parser := formula.NewParser()
+	f, err := parser.LoadByName(operand)
+	if err != nil {
+		return nil, false, fmt.Errorf("'%s' not found as issue or formula: %w", operand, err)
+	}
+
+	// Resolve formula (inheritance, etc)
+	resolved, err := parser.Resolve(f)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolving formula '%s': %w", operand, err)
+	}
+
+	// Apply control flow operators (gt-8tmz.4)
+	controlFlowSteps, err := formula.ApplyControlFlow(resolved.Steps, resolved.Compose)
+	if err != nil {
+		return nil, false, fmt.Errorf("applying control flow to '%s': %w", operand, err)
+	}
+	resolved.Steps = controlFlowSteps
+
+	// Apply advice transformations (gt-8tmz.2)
+	if len(resolved.Advice) > 0 {
+		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)
+	}
+
+	// Apply expansion operators (gt-8tmz.3)
+	if resolved.Compose != nil && (len(resolved.Compose.Expand) > 0 || len(resolved.Compose.Map) > 0) {
+		expandedSteps, err := formula.ApplyExpansions(resolved.Steps, resolved.Compose, parser)
+		if err != nil {
+			return nil, false, fmt.Errorf("applying expansions to '%s': %w", operand, err)
+		}
+		resolved.Steps = expandedSteps
+	}
+
+	// Apply aspects (gt-8tmz.5)
+	if resolved.Compose != nil && len(resolved.Compose.Aspects) > 0 {
+		for _, aspectName := range resolved.Compose.Aspects {
+			aspectFormula, err := parser.LoadByName(aspectName)
+			if err != nil {
+				return nil, false, fmt.Errorf("loading aspect '%s': %w", aspectName, err)
+			}
+			if aspectFormula.Type != formula.TypeAspect {
+				return nil, false, fmt.Errorf("'%s' is not an aspect formula (type=%s)", aspectName, aspectFormula.Type)
+			}
+			if len(aspectFormula.Advice) > 0 {
+				resolved.Steps = formula.ApplyAdvice(resolved.Steps, aspectFormula.Advice)
+			}
+		}
+	}
+
+	// Cook the formula to create an ephemeral proto
+	// Use formula name as proto ID for clarity
+	protoID := resolved.Formula
+	result, err := cookFormula(ctx, s, resolved, protoID)
+	if err != nil {
+		return nil, false, fmt.Errorf("cooking formula '%s': %w", operand, err)
+	}
+
+	// Load the cooked proto
+	issue, err := s.GetIssue(ctx, result.ProtoID)
+	if err != nil {
+		return nil, false, fmt.Errorf("loading cooked proto '%s': %w", result.ProtoID, err)
+	}
+
+	return issue, true, nil
+}
+
+// looksLikeFormulaName checks if an operand looks like a formula name.
+// Formula names typically start with "mol-" or contain ".formula" patterns.
+func looksLikeFormulaName(operand string) bool {
+	// Common formula prefixes
+	if strings.HasPrefix(operand, "mol-") {
+		return true
+	}
+	// Formula file references
+	if strings.Contains(operand, ".formula") {
+		return true
+	}
+	// If it contains a path separator, might be a formula path
+	if strings.Contains(operand, "/") || strings.Contains(operand, "\\") {
+		return true
+	}
+	return false
 }
 
 func init() {
