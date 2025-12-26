@@ -157,6 +157,15 @@ func runCook(cmd *cobra.Command, args []string) {
 		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)
 	}
 
+	// Apply inline step expansions (gt-8tmz.35)
+	// This processes Step.Expand fields before compose.expand/map rules
+	inlineExpandedSteps, err := formula.ApplyInlineExpansions(resolved.Steps, parser)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error applying inline expansions: %v\n", err)
+		os.Exit(1)
+	}
+	resolved.Steps = inlineExpandedSteps
+
 	// Apply expansion operators (gt-8tmz.3)
 	if resolved.Compose != nil && (len(resolved.Compose.Expand) > 0 || len(resolved.Compose.Map) > 0) {
 		expandedSteps, err := formula.ApplyExpansions(resolved.Steps, resolved.Compose, parser)
@@ -585,6 +594,13 @@ func resolveAndCookFormula(formulaName string, searchPaths []string) (*TemplateS
 	if len(resolved.Advice) > 0 {
 		resolved.Steps = formula.ApplyAdvice(resolved.Steps, resolved.Advice)
 	}
+
+	// Apply inline step expansions (gt-8tmz.35)
+	inlineExpandedSteps, err := formula.ApplyInlineExpansions(resolved.Steps, parser)
+	if err != nil {
+		return nil, fmt.Errorf("applying inline expansions to %q: %w", formulaName, err)
+	}
+	resolved.Steps = inlineExpandedSteps
 
 	// Apply expansion operators (gt-8tmz.3)
 	if resolved.Compose != nil && (len(resolved.Compose.Expand) > 0 || len(resolved.Compose.Map) > 0) {

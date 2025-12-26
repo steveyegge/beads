@@ -360,3 +360,82 @@ func UpdateDependenciesForExpansion(steps []*Step, expandedID string, lastExpand
 
 	return result
 }
+
+// ApplyInlineExpansions applies Step.Expand fields to inline expansions (gt-8tmz.35).
+// Steps with the Expand field set are replaced by the referenced expansion template.
+// The step's ExpandVars are passed as variable overrides to the expansion.
+//
+// This differs from compose.Expand in that the expansion is declared inline on the
+// step itself rather than in a central compose section.
+//
+// Returns a new steps slice with inline expansions applied.
+// The original steps slice is not modified.
+func ApplyInlineExpansions(steps []*Step, parser *Parser) ([]*Step, error) {
+	if parser == nil {
+		return steps, nil
+	}
+
+	return applyInlineExpansionsRecursive(steps, parser, 0)
+}
+
+// applyInlineExpansionsRecursive handles inline expansions for a slice of steps.
+// depth tracks recursion to prevent infinite expansion loops.
+func applyInlineExpansionsRecursive(steps []*Step, parser *Parser, depth int) ([]*Step, error) {
+	if depth > DefaultMaxExpansionDepth {
+		return nil, fmt.Errorf("inline expansion depth limit exceeded: max %d levels", DefaultMaxExpansionDepth)
+	}
+
+	var result []*Step
+
+	for _, step := range steps {
+		// Check if this step has an inline expansion
+		if step.Expand != "" {
+			// Load the expansion formula
+			expFormula, err := parser.LoadByName(step.Expand)
+			if err != nil {
+				return nil, fmt.Errorf("inline expand on step %q: loading %q: %w", step.ID, step.Expand, err)
+			}
+
+			if expFormula.Type != TypeExpansion {
+				return nil, fmt.Errorf("inline expand on step %q: %q is not an expansion formula (type=%s)",
+					step.ID, step.Expand, expFormula.Type)
+			}
+
+			if len(expFormula.Template) == 0 {
+				return nil, fmt.Errorf("inline expand on step %q: %q has no template steps", step.ID, step.Expand)
+			}
+
+			// Merge formula default vars with step's ExpandVars overrides
+			vars := mergeVars(expFormula, step.ExpandVars)
+
+			// Expand the step using the template (reuse existing expandStep)
+			expandedSteps, err := expandStep(step, expFormula.Template, 0, vars)
+			if err != nil {
+				return nil, fmt.Errorf("inline expand on step %q: %w", step.ID, err)
+			}
+
+			// Recursively process expanded steps for nested inline expansions
+			processedSteps, err := applyInlineExpansionsRecursive(expandedSteps, parser, depth+1)
+			if err != nil {
+				return nil, err
+			}
+
+			result = append(result, processedSteps...)
+		} else {
+			// No inline expansion - keep the step, but process children recursively
+			clone := cloneStep(step)
+
+			if len(step.Children) > 0 {
+				processedChildren, err := applyInlineExpansionsRecursive(step.Children, parser, depth)
+				if err != nil {
+					return nil, err
+				}
+				clone.Children = processedChildren
+			}
+
+			result = append(result, clone)
+		}
+	}
+
+	return result, nil
+}
