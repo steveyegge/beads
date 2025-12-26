@@ -164,3 +164,20 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 	beadsDir := filepath.Dir(dbPath)
 	return routing.GetRoutedStorageForID(ctx, id, beadsDir)
 }
+
+// needsRouting checks if an ID would be routed to a different beads directory.
+// This is used to decide whether to bypass the daemon for cross-repo lookups.
+func needsRouting(id string) bool {
+	if dbPath == "" {
+		return false
+	}
+
+	beadsDir := filepath.Dir(dbPath)
+	targetDir, routed, err := routing.ResolveBeadsDirForID(context.Background(), id, beadsDir)
+	if err != nil || !routed {
+		return false
+	}
+
+	// Check if the routed directory is different from the current one
+	return targetDir != beadsDir
+}

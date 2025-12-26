@@ -39,9 +39,15 @@ var showCmd = &cobra.Command{
 
 		// Resolve partial IDs first (daemon mode only - direct mode uses routed resolution)
 		var resolvedIDs []string
+		var routedArgs []string // IDs that need cross-repo routing (bypass daemon)
 		if daemonClient != nil {
-			// In daemon mode, resolve via RPC
+			// In daemon mode, resolve via RPC - but check routing first
 			for _, id := range args {
+				// Check if this ID needs routing to a different beads directory
+				if needsRouting(id) {
+					routedArgs = append(routedArgs, id)
+					continue
+				}
 				resolveArgs := &rpc.ResolveIDArgs{ID: id}
 				resp, err := daemonClient.ResolveID(resolveArgs)
 				if err != nil {
@@ -74,10 +80,60 @@ var showCmd = &cobra.Command{
 			}
 		}
 
-		// If daemon is running, use RPC
+		// If daemon is running, use RPC (but fall back to direct mode for routed IDs)
 		if daemonClient != nil {
 			allDetails := []interface{}{}
-			for idx, id := range resolvedIDs {
+			displayIdx := 0
+
+			// First, handle routed IDs via direct mode
+			for _, id := range routedArgs {
+				result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+				if result != nil {
+					defer result.Close()
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
+					continue
+				}
+				if result == nil || result.Issue == nil {
+					fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+					continue
+				}
+				issue := result.Issue
+				issueStore := result.Store
+				if jsonOutput {
+					// Get labels and deps for JSON output
+					type IssueDetails struct {
+						*types.Issue
+						Labels       []string                             `json:"labels,omitempty"`
+						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
+						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+					}
+					details := &IssueDetails{Issue: issue}
+					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
+					if sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage); ok {
+						details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+						details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
+					}
+					allDetails = append(allDetails, details)
+				} else {
+					if displayIdx > 0 {
+						fmt.Println("\n" + strings.Repeat("─", 60))
+					}
+					fmt.Printf("\n%s: %s\n", ui.RenderAccent(issue.ID), issue.Title)
+					fmt.Printf("Status: %s\n", issue.Status)
+					fmt.Printf("Priority: P%d\n", issue.Priority)
+					fmt.Printf("Type: %s\n", issue.IssueType)
+					if issue.Description != "" {
+						fmt.Printf("\nDescription:\n%s\n", issue.Description)
+					}
+					fmt.Println()
+					displayIdx++
+				}
+			}
+
+			// Then, handle local IDs via daemon
+			for _, id := range resolvedIDs {
 				showArgs := &rpc.ShowArgs{ID: id}
 				resp, err := daemonClient.Show(showArgs)
 				if err != nil {
@@ -102,9 +158,10 @@ var showCmd = &cobra.Command{
 						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 						continue
 					}
-					if idx > 0 {
+					if displayIdx > 0 {
 						fmt.Println("\n" + strings.Repeat("─", 60))
 					}
+					displayIdx++
 
 					// Parse response and use existing formatting code
 					type IssueDetails struct {
