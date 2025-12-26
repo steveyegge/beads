@@ -333,6 +333,9 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 			// Pinned field fix (bd-phtv): Use COALESCE(NULLIF(?, 0), pinned) to preserve
 			// existing pinned=1 when incoming pinned=0 (which means field was absent in
 			// JSONL due to omitempty). This prevents auto-import from resetting pinned issues.
+			// Gate field fix (bd-gr4q): Same pattern for await_type, await_id, timeout_ns, waiters.
+			// Gates are wisps and aren't exported to JSONL, so importing an issue with the same
+			// ID would clear these fields without this protection.
 			_, err = tx.ExecContext(ctx, `
 				UPDATE issues SET
 					content_hash = ?, title = ?, description = ?, design = ?,
@@ -341,7 +344,10 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?,
 					deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?,
 					sender = ?, ephemeral = ?, pinned = COALESCE(NULLIF(?, 0), pinned), is_template = ?,
-					await_type = ?, await_id = ?, timeout_ns = ?, waiters = ?
+					await_type = COALESCE(NULLIF(?, ''), await_type),
+					await_id = COALESCE(NULLIF(?, ''), await_id),
+					timeout_ns = COALESCE(NULLIF(?, 0), timeout_ns),
+					waiters = COALESCE(NULLIF(?, ''), waiters)
 				WHERE id = ?
 			`,
 				issue.ContentHash, issue.Title, issue.Description, issue.Design,
