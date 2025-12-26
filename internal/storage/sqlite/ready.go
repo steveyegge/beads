@@ -471,6 +471,7 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		filterSQL = " AND " + strings.Join(filterClauses, " AND ")
 	}
 
+	// nolint:gosec // G201: filterSQL contains only parameterized WHERE clauses with ? placeholders, not user input
 	query := fmt.Sprintf(`
 		SELECT
 		    i.id, i.title, i.description, i.design, i.acceptance_criteria, i.notes,

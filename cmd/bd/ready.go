@@ -234,11 +234,11 @@ var blockedCmd = &cobra.Command{
 			var err error
 			store, err = sqlite.New(ctx, dbPath)
 			if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
-			os.Exit(1)
+				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+				os.Exit(1)
 			}
 			defer func() { _ = store.Close() }()
-			}
+		}
 		parentID, _ := cmd.Flags().GetString("parent")
 		var blockedFilter types.WorkFilter
 		if parentID != "" {
