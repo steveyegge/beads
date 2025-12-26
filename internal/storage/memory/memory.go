@@ -1097,9 +1097,15 @@ func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 
 // GetBlockedIssues returns issues that are blocked by other issues
 // Note: Pinned issues are excluded from the output (beads-ei4)
-func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error) {
+func (m *MemoryStorage) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	// Build set of descendant IDs if parent filter is specified
+	var descendantIDs map[string]bool
+	if filter.ParentID != nil {
+		descendantIDs = m.getAllDescendants(*filter.ParentID)
+	}
 
 	var results []*types.BlockedIssue
 
@@ -1111,6 +1117,11 @@ func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 
 		// Exclude pinned issues (beads-ei4)
 		if issue.Pinned {
+			continue
+		}
+
+		// Parent filtering: only include descendants of specified parent
+		if descendantIDs != nil && !descendantIDs[issue.ID] {
 			continue
 		}
 
@@ -1147,6 +1158,27 @@ func (m *MemoryStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedI
 	})
 
 	return results, nil
+}
+
+// getAllDescendants returns all descendant IDs of a parent issue recursively
+func (m *MemoryStorage) getAllDescendants(parentID string) map[string]bool {
+	descendants := make(map[string]bool)
+	m.collectDescendants(parentID, descendants)
+	return descendants
+}
+
+// collectDescendants recursively collects all descendants of a parent
+func (m *MemoryStorage) collectDescendants(parentID string, descendants map[string]bool) {
+	for issueID, deps := range m.dependencies {
+		for _, dep := range deps {
+			if dep.Type == types.DepParentChild && dep.DependsOnID == parentID {
+				if !descendants[issueID] {
+					descendants[issueID] = true
+					m.collectDescendants(issueID, descendants)
+				}
+			}
+		}
+	}
 }
 
 func (m *MemoryStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
