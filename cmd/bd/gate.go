@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -579,12 +580,10 @@ var gateEvalCmd = &cobra.Command{
 	Short: "Evaluate pending gates and close elapsed ones",
 	Long: `Evaluate all open gates and close those whose conditions are met.
 
-Currently supports:
+Supported gate types:
   - timer gates: closed when elapsed time exceeds timeout
-
-Future:
-  - gh:run gates: closed when GitHub Actions run completes
-  - gh:pr gates: closed when PR is merged/closed
+  - gh:run gates: closed when GitHub Actions run completes (requires gh CLI)
+  - gh:pr gates: closed when PR is merged/closed (requires gh CLI)
 
 This command is idempotent and safe to run repeatedly.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -627,34 +626,36 @@ This command is idempotent and safe to run repeatedly.`,
 		}
 
 		var closed []string
-		var timedOut []string
+		var skipped []string
 		now := time.Now()
 
 		for _, gate := range gates {
-			// Only evaluate timer gates for now
-			if gate.AwaitType != "timer" {
+			var shouldClose bool
+			var reason string
+
+			switch gate.AwaitType {
+			case "timer":
+				shouldClose, reason = evalTimerGate(gate, now)
+			case "gh:run":
+				shouldClose, reason = evalGHRunGate(gate)
+			case "gh:pr":
+				shouldClose, reason = evalGHPRGate(gate)
+			default:
+				// Unsupported gate type - skip
+				skipped = append(skipped, gate.ID)
 				continue
 			}
 
-			// Check if timer has elapsed
-			if gate.Timeout <= 0 {
-				continue // No timeout set
+			if !shouldClose {
+				continue
 			}
 
-			elapsed := now.Sub(gate.CreatedAt)
-			if elapsed < gate.Timeout {
-				continue // Not yet elapsed
-			}
-
-			// Timer has elapsed - close the gate
+			// Gate condition met - close it
 			if dryRun {
-				fmt.Printf("Would close gate %s (timer elapsed: %v >= %v)\n",
-					gate.ID, elapsed.Round(time.Second), gate.Timeout)
+				fmt.Printf("Would close gate %s (%s)\n", gate.ID, reason)
 				closed = append(closed, gate.ID)
 				continue
 			}
-
-			reason := fmt.Sprintf("Timer elapsed (%v)", gate.Timeout)
 
 			if daemonClient != nil {
 				_, err := daemonClient.GateClose(&rpc.GateCloseArgs{
@@ -674,18 +675,13 @@ This command is idempotent and safe to run repeatedly.`,
 			}
 
 			closed = append(closed, gate.ID)
-
-			// Check if gate exceeded its timeout (for reporting)
-			if elapsed > gate.Timeout*2 {
-				timedOut = append(timedOut, gate.ID)
-			}
 		}
 
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
 				"evaluated": len(gates),
 				"closed":    closed,
-				"timed_out": timedOut,
+				"skipped":   skipped,
 			})
 			return
 		}
@@ -697,12 +693,114 @@ This command is idempotent and safe to run repeatedly.`,
 			if dryRun {
 				action = "Would close"
 			}
-			fmt.Printf("%s %s %d timer gate(s)\n", ui.RenderPass("✓"), action, len(closed))
+			fmt.Printf("%s %s %d gate(s)\n", ui.RenderPass("✓"), action, len(closed))
 			for _, id := range closed {
 				fmt.Printf("   %s\n", id)
 			}
 		}
+		if len(skipped) > 0 {
+			fmt.Printf("Skipped %d unsupported gate(s): %s\n", len(skipped), strings.Join(skipped, ", "))
+		}
 	},
+}
+
+// evalTimerGate checks if a timer gate's duration has elapsed.
+func evalTimerGate(gate *types.Issue, now time.Time) (bool, string) {
+	if gate.Timeout <= 0 {
+		return false, "" // No timeout set
+	}
+
+	elapsed := now.Sub(gate.CreatedAt)
+	if elapsed < gate.Timeout {
+		return false, "" // Not yet elapsed
+	}
+
+	return true, fmt.Sprintf("Timer elapsed (%v)", gate.Timeout)
+}
+
+// ghRunStatus represents the JSON output of `gh run view --json`
+type ghRunStatus struct {
+	Status     string `json:"status"`     // queued, in_progress, completed
+	Conclusion string `json:"conclusion"` // success, failure, cancelled, skipped, etc.
+}
+
+// evalGHRunGate checks if a GitHub Actions run has completed.
+// Uses `gh run view <run_id> --json status,conclusion` to check status.
+func evalGHRunGate(gate *types.Issue) (bool, string) {
+	runID := gate.AwaitID
+	if runID == "" {
+		return false, ""
+	}
+
+	// Run gh CLI to get run status
+	cmd := exec.Command("gh", "run", "view", runID, "--json", "status,conclusion")
+	output, err := cmd.Output()
+	if err != nil {
+		// gh CLI failed - could be network issue, invalid run ID, or gh not installed
+		// Don't close the gate, just skip it
+		return false, ""
+	}
+
+	var status ghRunStatus
+	if err := json.Unmarshal(output, &status); err != nil {
+		return false, ""
+	}
+
+	// Only close if status is "completed"
+	if status.Status != "completed" {
+		return false, ""
+	}
+
+	// Run completed - include conclusion in reason
+	reason := fmt.Sprintf("GitHub Actions run %s completed", runID)
+	if status.Conclusion != "" {
+		reason = fmt.Sprintf("GitHub Actions run %s: %s", runID, status.Conclusion)
+	}
+
+	return true, reason
+}
+
+// ghPRStatus represents the JSON output of `gh pr view --json`
+type ghPRStatus struct {
+	State  string `json:"state"`  // OPEN, CLOSED, MERGED
+	Merged bool   `json:"merged"` // true if merged
+}
+
+// evalGHPRGate checks if a GitHub PR has been merged or closed.
+// Uses `gh pr view <pr_number> --json state,merged` to check status.
+func evalGHPRGate(gate *types.Issue) (bool, string) {
+	prNumber := gate.AwaitID
+	if prNumber == "" {
+		return false, ""
+	}
+
+	// Run gh CLI to get PR status
+	cmd := exec.Command("gh", "pr", "view", prNumber, "--json", "state,merged")
+	output, err := cmd.Output()
+	if err != nil {
+		// gh CLI failed - could be network issue, invalid PR, or gh not installed
+		// Don't close the gate, just skip it
+		return false, ""
+	}
+
+	var status ghPRStatus
+	if err := json.Unmarshal(output, &status); err != nil {
+		return false, ""
+	}
+
+	// Close gate if PR is no longer OPEN
+	switch status.State {
+	case "MERGED":
+		return true, fmt.Sprintf("PR #%s merged", prNumber)
+	case "CLOSED":
+		if status.Merged {
+			return true, fmt.Sprintf("PR #%s merged", prNumber)
+		}
+		return true, fmt.Sprintf("PR #%s closed without merge", prNumber)
+	default:
+		// Still OPEN
+		return false, ""
+	}
 }
 
 func init() {
