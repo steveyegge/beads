@@ -1,22 +1,18 @@
 package fix
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/utils"
 )
 
 // DatabaseIntegrity attempts to recover from database corruption by:
 //  1. Backing up the corrupt database (and WAL/SHM if present)
-//  2. Re-initializing the database from the git-tracked JSONL export
+//  2. Re-initializing the database from the working tree JSONL export
 //
 // This is intentionally conservative: it will not delete JSONL, and it preserves the
 // original DB as a backup for forensic recovery.
@@ -74,61 +70,35 @@ func DatabaseIntegrity(path string) error {
 		}
 	}
 
-	// Rebuild via bd init, pointing at the same db path.
+	// Rebuild by importing from the working tree JSONL into a fresh database.
 	bdBinary, err := getBdBinary()
 	if err != nil {
 		return err
 	}
 
-	args := []string{"--db", dbPath, "init", "--quiet", "--force", "--skip-hooks", "--skip-merge-driver"}
-	if prefix := detectPrefixFromJSONL(jsonlPath); prefix != "" {
-		args = append(args, "--prefix", prefix)
-	}
-
-	cmd := exec.Command(bdBinary, args...) // #nosec G204 -- bdBinary is a validated executable path
+	// Use import (not init) so we always hydrate from the working tree JSONL, not git-tracked blobs.
+	args := []string{"--db", dbPath, "import", "-i", jsonlPath, "--force", "--no-git-history"}
+	cmd := newBdCmd(bdBinary, args...)
 	cmd.Dir = absPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
 
 	if err := cmd.Run(); err != nil {
-		// Best-effort rollback: if init didn't recreate the db, restore the backup.
-		if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
-			_ = os.Rename(backupDB, dbPath)
+		// Best-effort rollback: attempt to restore the backup, preserving any partial init output.
+		failedTS := time.Now().UTC().Format("20060102T150405Z")
+		if _, statErr := os.Stat(dbPath); statErr == nil {
+			failedDB := dbPath + "." + failedTS + ".failed.init.db"
+			_ = os.Rename(dbPath, failedDB)
 			for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-				_ = os.Rename(backupDB+suffix, dbPath+suffix)
+				_ = os.Rename(dbPath+suffix, failedDB+suffix)
 			}
+		}
+		_ = os.Rename(backupDB, dbPath)
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			_ = os.Rename(backupDB+suffix, dbPath+suffix)
 		}
 		return fmt.Errorf("failed to rebuild database from JSONL: %w (backup: %s)", err, backupDB)
 	}
 
 	return nil
-}
-
-func detectPrefixFromJSONL(jsonlPath string) string {
-	f, err := os.Open(jsonlPath) // #nosec G304 -- jsonlPath is within the workspace
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var issue struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(line, &issue); err != nil {
-			continue
-		}
-		if issue.ID == "" {
-			continue
-		}
-		return utils.ExtractIssuePrefix(issue.ID)
-	}
-
-	return ""
 }

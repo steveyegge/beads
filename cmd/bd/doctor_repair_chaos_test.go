@@ -67,6 +67,14 @@ func TestDoctorRepair_CorruptDatabase_NoJSONL_FixFails(t *testing.T) {
 	if !strings.Contains(out, "cannot auto-recover") {
 		t.Fatalf("expected auto-recover error, got:\n%s", out)
 	}
+
+	// Ensure we don't mis-configure jsonl_export to a system file during failure.
+	metadata, readErr := os.ReadFile(filepath.Join(ws, ".beads", "metadata.json"))
+	if readErr == nil {
+		if strings.Contains(string(metadata), "interactions.jsonl") {
+			t.Fatalf("unexpected metadata.json jsonl_export set to interactions.jsonl:\n%s", string(metadata))
+		}
+	}
 }
 
 func TestDoctorRepair_CorruptDatabase_BacksUpSidecars(t *testing.T) {

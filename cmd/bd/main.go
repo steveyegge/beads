@@ -623,6 +623,13 @@ var rootCmd = &cobra.Command{
 			FallbackReason:   FallbackNone,
 		}
 
+		// Doctor should always run in direct mode. It's specifically used to diagnose and
+		// repair daemon/DB issues, so attempting to connect to (or auto-start) a daemon
+		// can add noise and timeouts.
+		if cmd.Name() == "doctor" {
+			noDaemon = true
+		}
+
 		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
 		if noDaemon {
 			daemonStatus.FallbackReason = FallbackFlagNoDaemon
@@ -917,8 +924,14 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
-		if profileFile != nil { pprof.StopCPUProfile(); _ = profileFile.Close() }
-		if traceFile != nil { trace.Stop(); _ = traceFile.Close() }
+		if profileFile != nil {
+			pprof.StopCPUProfile()
+			_ = profileFile.Close()
+		}
+		if traceFile != nil {
+			trace.Stop()
+			_ = traceFile.Close()
+		}
 
 		// Cancel the signal context to clean up resources
 		if rootCancel != nil {

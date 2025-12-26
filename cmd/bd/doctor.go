@@ -353,6 +353,28 @@ func applyFixesInteractive(path string, issues []doctorCheck) {
 
 // applyFixList applies a list of fixes and reports results
 func applyFixList(path string, fixes []doctorCheck) {
+	// Run corruption recovery before any operations that need a healthy SQLite DB.
+	priority := map[string]int{
+		"Database Integrity": 0,
+	}
+	slices.SortStableFunc(fixes, func(a, b doctorCheck) int {
+		pa, oka := priority[a.Name]
+		if !oka {
+			pa = 1000
+		}
+		pb, okb := priority[b.Name]
+		if !okb {
+			pb = 1000
+		}
+		if pa < pb {
+			return -1
+		}
+		if pa > pb {
+			return 1
+		}
+		return 0
+	})
+
 	fixedCount := 0
 	errorCount := 0
 

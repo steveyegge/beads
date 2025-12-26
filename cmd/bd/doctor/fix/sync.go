@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -102,21 +101,36 @@ func DBJSONLSync(path string) error {
 		return err
 	}
 
-	// Run the appropriate sync command
-	var cmd *exec.Cmd
 	if syncDirection == "export" {
 		// Export DB to JSONL file (must specify -o to write to file, not stdout)
 		jsonlOutputPath := filepath.Join(beadsDir, "issues.jsonl")
-		cmd = exec.Command(bdBinary, "export", "-o", jsonlOutputPath, "--force") // #nosec G204 -- bdBinary from validated executable path
-	} else {
-		cmd = exec.Command(bdBinary, "sync", "--import-only") // #nosec G204 -- bdBinary from validated executable path
+		exportCmd := newBdCmd(bdBinary, "export", "-o", jsonlOutputPath, "--force")
+		exportCmd.Dir = path // Set working directory without changing process dir
+		exportCmd.Stdout = os.Stdout
+		exportCmd.Stderr = os.Stderr
+		if err := exportCmd.Run(); err != nil {
+			return fmt.Errorf("failed to export database to JSONL: %w", err)
+		}
+
+		// Staleness check uses last_import_time. After exporting, JSONL mtime is newer,
+		// so mark the DB as fresh by running a no-op import (skip existing issues).
+		markFreshCmd := newBdCmd(bdBinary, "import", "-i", jsonlOutputPath, "--force", "--skip-existing", "--no-git-history")
+		markFreshCmd.Dir = path
+		markFreshCmd.Stdout = os.Stdout
+		markFreshCmd.Stderr = os.Stderr
+		if err := markFreshCmd.Run(); err != nil {
+			return fmt.Errorf("failed to mark database as fresh after export: %w", err)
+		}
+
+		return nil
 	}
 
-	cmd.Dir = path // Set working directory without changing process dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	importCmd := newBdCmd(bdBinary, "sync", "--import-only")
+	importCmd.Dir = path // Set working directory without changing process dir
+	importCmd.Stdout = os.Stdout
+	importCmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := importCmd.Run(); err != nil {
 		return fmt.Errorf("failed to sync database with JSONL: %w", err)
 	}
 

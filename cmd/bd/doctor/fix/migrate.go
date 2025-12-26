@@ -3,7 +3,6 @@ package fix
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -28,7 +27,7 @@ func DatabaseVersion(path string) error {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// No database - this is a fresh clone, run bd init
 		fmt.Println("→ No database found, running 'bd init' to hydrate from JSONL...")
-		cmd := exec.Command(bdBinary, "init") // #nosec G204 -- bdBinary from validated executable path
+		cmd := newBdCmd(bdBinary, "init")
 		cmd.Dir = path
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -41,8 +40,8 @@ func DatabaseVersion(path string) error {
 	}
 
 	// Database exists - run bd migrate
-	cmd := exec.Command(bdBinary, "migrate") // #nosec G204 -- bdBinary from validated executable path
-	cmd.Dir = path                           // Set working directory without changing process dir
+	cmd := newBdCmd(bdBinary, "migrate")
+	cmd.Dir = path // Set working directory without changing process dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
