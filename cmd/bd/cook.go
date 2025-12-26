@@ -18,8 +18,11 @@ import (
 // cookCmd compiles a formula JSON into a proto bead.
 var cookCmd = &cobra.Command{
 	Use:   "cook <formula-file>",
-	Short: "Compile a formula into a proto bead",
-	Long: `Cook transforms a .formula.json file into a proto bead.
+	Short: "Compile a formula into a proto (ephemeral by default)",
+	Long: `Cook transforms a .formula.json file into a proto.
+
+By default, cook outputs the resolved formula as JSON to stdout for
+ephemeral use. The output can be inspected, piped, or saved to a file.
 
 Formulas are high-level workflow templates that support:
   - Variable definitions with defaults and validation
@@ -27,16 +30,24 @@ Formulas are high-level workflow templates that support:
   - Composition rules for bonding formulas together
   - Inheritance via extends
 
-The cook command parses the formula, resolves inheritance, and
-creates a proto bead in the database that can be poured or spawned.
+The --persist flag enables the legacy behavior of writing the proto
+to the database. This is useful when you want to reuse the same
+proto multiple times without re-cooking.
+
+For most workflows, prefer ephemeral protos: pour and wisp commands
+accept formula names directly and cook inline (bd-rciw).
 
 Examples:
-  bd cook mol-feature.formula.json
-  bd cook .beads/formulas/mol-release.formula.json --force
-  bd cook mol-patrol.formula.json --search-path .beads/formulas
+  bd cook mol-feature.formula.json                    # Output JSON to stdout
+  bd cook mol-feature --dry-run                       # Preview steps
+  bd cook mol-release.formula.json --persist          # Write to database
+  bd cook mol-release.formula.json --persist --force  # Replace existing
 
-Output:
-  Creates a proto bead with:
+Output (default):
+  JSON representation of the resolved formula with all steps.
+
+Output (--persist):
+  Creates a proto bead in the database with:
   - ID matching the formula name (e.g., mol-feature)
   - The "template" label for proto identification
   - Child issues for each step
@@ -55,25 +66,28 @@ type cookResult struct {
 }
 
 func runCook(cmd *cobra.Command, args []string) {
-	CheckReadonly("cook")
-
-	ctx := rootCtx
-
-	// Cook requires direct store access for creating protos
-	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: cook requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon cook %s ...\n", args[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
-		os.Exit(1)
-	}
-
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	persist, _ := cmd.Flags().GetBool("persist")
 	force, _ := cmd.Flags().GetBool("force")
 	searchPaths, _ := cmd.Flags().GetStringSlice("search-path")
 	prefix, _ := cmd.Flags().GetString("prefix")
+
+	// Only need store access if persisting
+	if persist {
+		CheckReadonly("cook --persist")
+
+		if store == nil {
+			if daemonClient != nil {
+				fmt.Fprintf(os.Stderr, "Error: cook --persist requires direct database access\n")
+				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon cook %s --persist ...\n", args[0])
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+			}
+			os.Exit(1)
+		}
+	}
+
+	ctx := rootCtx
 
 	// Create parser with search paths
 	parser := formula.NewParser(searchPaths...)
@@ -141,21 +155,6 @@ func runCook(cmd *cobra.Command, args []string) {
 		protoID = prefix + resolved.Formula
 	}
 
-	// Check if proto already exists
-	existingProto, err := store.GetIssue(ctx, protoID)
-	if err == nil && existingProto != nil {
-		if !force {
-			fmt.Fprintf(os.Stderr, "Error: proto %s already exists\n", protoID)
-			fmt.Fprintf(os.Stderr, "Hint: use --force to replace it\n")
-			os.Exit(1)
-		}
-		// Delete existing proto and its children
-		if err := deleteProtoSubgraph(ctx, store, protoID); err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting existing proto: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
 	// Extract variables used in the formula
 	vars := formula.ExtractVariables(resolved)
 
@@ -201,6 +200,28 @@ func runCook(cmd *cobra.Command, args []string) {
 			}
 		}
 		return
+	}
+
+	// Ephemeral mode (default): output resolved formula as JSON to stdout (bd-rciw)
+	if !persist {
+		outputJSON(resolved)
+		return
+	}
+
+	// Persist mode: create proto bead in database (legacy behavior)
+	// Check if proto already exists
+	existingProto, err := store.GetIssue(ctx, protoID)
+	if err == nil && existingProto != nil {
+		if !force {
+			fmt.Fprintf(os.Stderr, "Error: proto %s already exists\n", protoID)
+			fmt.Fprintf(os.Stderr, "Hint: use --force to replace it\n")
+			os.Exit(1)
+		}
+		// Delete existing proto and its children
+		if err := deleteProtoSubgraph(ctx, store, protoID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting existing proto: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Create the proto bead from the formula
@@ -526,7 +547,8 @@ func printFormulaSteps(steps []*formula.Step, indent string) {
 
 func init() {
 	cookCmd.Flags().Bool("dry-run", false, "Preview what would be created")
-	cookCmd.Flags().Bool("force", false, "Replace existing proto if it exists")
+	cookCmd.Flags().Bool("persist", false, "Persist proto to database (legacy behavior)")
+	cookCmd.Flags().Bool("force", false, "Replace existing proto if it exists (requires --persist)")
 	cookCmd.Flags().StringSlice("search-path", []string{}, "Additional paths to search for formula inheritance")
 	cookCmd.Flags().String("prefix", "", "Prefix to prepend to proto ID (e.g., 'gt-' creates 'gt-mol-feature')")
 
