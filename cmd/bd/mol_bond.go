@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
@@ -134,44 +135,52 @@ func runMolBond(cmd *cobra.Command, args []string) {
 		vars[parts[0]] = parts[1]
 	}
 
-	// Resolve both operands - can be issue IDs or formula names
-	// Formula names are cooked inline to ephemeral protos (gt-8tmz.25)
-	issueA, cookedA, err := resolveOrCookFormula(ctx, store, args[0], vars, actor)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	issueB, cookedB, err := resolveOrCookFormula(ctx, store, args[1], vars, actor)
-	if err != nil {
-		// Clean up first cooked formula if second one fails
-		if cookedA {
-			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
-		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Track if we cooked formulas for cleanup on error
-	cleanupCooked := func() {
-		if cookedA {
-			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
-		}
-		if cookedB {
-			_ = deleteProtoSubgraph(ctx, store, issueB.ID)
-		}
-	}
-
-	idA := issueA.ID
-	idB := issueB.ID
-
-	// Determine operand types
-	aIsProto := isProto(issueA)
-	bIsProto := isProto(issueB)
-
+	// For dry-run, just check if operands can be resolved (don't cook)
 	if dryRun {
+		issueA, formulaA, err := resolveOrDescribe(ctx, store, args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		issueB, formulaB, err := resolveOrDescribe(ctx, store, args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		idA := args[0]
+		idB := args[1]
+		aIsProto := false
+		bIsProto := false
+
+		if issueA != nil {
+			idA = issueA.ID
+			aIsProto = isProto(issueA)
+		}
+		if issueB != nil {
+			idB = issueB.ID
+			bIsProto = isProto(issueB)
+		}
+
+		// Formulas are treated as protos for dry-run display
+		if formulaA != "" {
+			aIsProto = true
+		}
+		if formulaB != "" {
+			bIsProto = true
+		}
+
 		fmt.Printf("\nDry run: bond %s + %s\n", idA, idB)
-		fmt.Printf("  A: %s (%s)\n", issueA.Title, operandType(aIsProto))
-		fmt.Printf("  B: %s (%s)\n", issueB.Title, operandType(bIsProto))
+		if formulaA != "" {
+			fmt.Printf("  A: %s (formula → will cook as proto)\n", formulaA)
+		} else if issueA != nil {
+			fmt.Printf("  A: %s (%s)\n", issueA.Title, operandType(aIsProto))
+		}
+		if formulaB != "" {
+			fmt.Printf("  B: %s (formula → will cook as proto)\n", formulaB)
+		} else if issueB != nil {
+			fmt.Printf("  B: %s (%s)\n", issueB.Title, operandType(bIsProto))
+		}
 		fmt.Printf("  Bond type: %s\n", bondType)
 		if wisp {
 			fmt.Printf("  Phase override: vapor (--wisp)\n")
@@ -187,34 +196,50 @@ func runMolBond(cmd *cobra.Command, args []string) {
 			if customTitle != "" {
 				fmt.Printf("  Custom title: %s\n", customTitle)
 			}
-			if wisp || pour {
-				fmt.Printf("  Note: phase flags ignored for proto+proto (templates stay in permanent storage)\n")
-			}
-			if childRef != "" {
-				fmt.Printf("  Note: --ref ignored for proto+proto (use when bonding to molecule)\n")
-			}
 		} else if aIsProto || bIsProto {
 			fmt.Printf("  Result: spawn proto, attach to molecule\n")
-			if !wisp && !pour {
-				fmt.Printf("  Phase: follows target's phase\n")
-			}
-			if childRef != "" {
-				// Determine parent molecule
-				parentID := idB
-				if bIsProto {
-					parentID = idA
-				}
-				resolvedRef := substituteVariables(childRef, vars)
-				fmt.Printf("  Bonded ID: %s.%s\n", parentID, resolvedRef)
-			}
 		} else {
 			fmt.Printf("  Result: compound molecule\n")
-			if childRef != "" {
-				fmt.Printf("  Note: --ref ignored for mol+mol (use when bonding proto to molecule)\n")
-			}
+		}
+		if formulaA != "" || formulaB != "" {
+			fmt.Printf("\n  Note: Cooked formulas are ephemeral and deleted after bonding.\n")
 		}
 		return
 	}
+
+	// Resolve both operands - can be issue IDs or formula names
+	// Formula names are cooked inline to ephemeral protos (gt-8tmz.25)
+	issueA, cookedA, err := resolveOrCookFormula(ctx, store, args[0], actor)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	issueB, cookedB, err := resolveOrCookFormula(ctx, store, args[1], actor)
+	if err != nil {
+		// Clean up first cooked formula if second one fails
+		if cookedA {
+			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Track cooked formulas for cleanup (ephemeral protos deleted after use)
+	cleanupCooked := func() {
+		if cookedA {
+			_ = deleteProtoSubgraph(ctx, store, issueA.ID)
+		}
+		if cookedB {
+			_ = deleteProtoSubgraph(ctx, store, issueB.ID)
+		}
+	}
+
+	idA := issueA.ID
+	idB := issueB.ID
+
+	// Determine operand types
+	aIsProto := isProto(issueA)
+	bIsProto := isProto(issueB)
 
 	// Dispatch based on operand types
 	// All operations use the main store; wisp flag determines ephemeral vs persistent
@@ -240,6 +265,10 @@ func runMolBond(cmd *cobra.Command, args []string) {
 	// Schedule auto-flush - wisps are in main DB now, but JSONL export skips them
 	markDirtyAndScheduleFlush()
 
+	// Clean up ephemeral protos after successful bond
+	// These were only needed to get the proto structure; the spawned issues persist
+	cleanupCooked()
+
 	if jsonOutput {
 		outputJSON(result)
 		return
@@ -254,6 +283,9 @@ func runMolBond(cmd *cobra.Command, args []string) {
 		fmt.Printf("  Phase: vapor (ephemeral, Wisp=true)\n")
 	} else if pour {
 		fmt.Printf("  Phase: liquid (persistent, Wisp=false)\n")
+	}
+	if cookedA || cookedB {
+		fmt.Printf("  Ephemeral protos cleaned up after use.\n")
 	}
 }
 
@@ -504,12 +536,40 @@ func minPriority(a, b int) int {
 	return b
 }
 
+// resolveOrDescribe checks if an operand is an issue or formula without cooking.
+// Used for dry-run mode. Returns (issue, formulaName, error).
+// If it's an issue, issue is set. If it's a formula, formulaName is set.
+func resolveOrDescribe(ctx context.Context, s storage.Storage, operand string) (*types.Issue, string, error) {
+	// First, try to resolve as an existing issue
+	id, err := utils.ResolvePartialID(ctx, s, operand)
+	if err == nil {
+		issue, err := s.GetIssue(ctx, id)
+		if err == nil {
+			return issue, "", nil
+		}
+	}
+
+	// Not found as issue - check if it looks like a formula name
+	if !looksLikeFormulaName(operand) {
+		return nil, "", fmt.Errorf("'%s' not found (not an issue ID or formula name)", operand)
+	}
+
+	// Try to load the formula (but don't cook it)
+	parser := formula.NewParser()
+	f, err := parser.LoadByName(operand)
+	if err != nil {
+		return nil, "", fmt.Errorf("'%s' not found as issue or formula: %w", operand, err)
+	}
+
+	return nil, f.Formula, nil
+}
+
 // resolveOrCookFormula tries to resolve an operand as an issue ID.
 // If not found and it looks like a formula name, cooks the formula inline.
 // Returns the issue, whether it was cooked (ephemeral proto), and any error.
 //
 // This implements gt-8tmz.25: formula names are cooked inline as ephemeral protos.
-func resolveOrCookFormula(ctx context.Context, s storage.Storage, operand string, vars map[string]string, actorName string) (*types.Issue, bool, error) {
+func resolveOrCookFormula(ctx context.Context, s storage.Storage, operand string, actorName string) (*types.Issue, bool, error) {
 	// First, try to resolve as an existing issue
 	id, err := utils.ResolvePartialID(ctx, s, operand)
 	if err == nil {
@@ -575,8 +635,9 @@ func resolveOrCookFormula(ctx context.Context, s storage.Storage, operand string
 	}
 
 	// Cook the formula to create an ephemeral proto
-	// Use formula name as proto ID for clarity
-	protoID := resolved.Formula
+	// Use a unique ID to avoid collision with existing protos
+	// Format: _ephemeral-<formula>-<timestamp> (underscore prefix marks it as ephemeral)
+	protoID := fmt.Sprintf("_ephemeral-%s-%d", resolved.Formula, time.Now().UnixNano())
 	result, err := cookFormula(ctx, s, resolved, protoID)
 	if err != nil {
 		return nil, false, fmt.Errorf("cooking formula '%s': %w", operand, err)
