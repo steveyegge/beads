@@ -43,8 +43,8 @@ type doctorResult struct {
 	Checks     []doctorCheck     `json:"checks"`
 	OverallOK  bool              `json:"overall_ok"`
 	CLIVersion string            `json:"cli_version"`
-	Timestamp  string            `json:"timestamp,omitempty"`  // bd-9cc: ISO8601 timestamp for historical tracking
-	Platform   map[string]string `json:"platform,omitempty"`   // bd-9cc: platform info for debugging
+	Timestamp  string            `json:"timestamp,omitempty"` // bd-9cc: ISO8601 timestamp for historical tracking
+	Platform   map[string]string `json:"platform,omitempty"`  // bd-9cc: platform info for debugging
 }
 
 var (
@@ -373,6 +373,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = fix.Permissions(path)
 		case "Database":
 			err = fix.DatabaseVersion(path)
+		case "Database Integrity":
+			err = fix.DatabaseIntegrity(path)
 		case "Schema Compatibility":
 			err = fix.SchemaCompatibility(path)
 		case "Repo Fingerprint":
@@ -749,6 +751,16 @@ func runDiagnostics(path string) doctorResult {
 	mergeDriverCheck := convertWithCategory(doctor.CheckMergeDriver(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, mergeDriverCheck)
 	// Don't fail overall check for merge driver, just warn
+
+	// Check 15a: Git working tree cleanliness (AGENTS.md hygiene)
+	gitWorkingTreeCheck := convertWithCategory(doctor.CheckGitWorkingTree(path), doctor.CategoryGit)
+	result.Checks = append(result.Checks, gitWorkingTreeCheck)
+	// Don't fail overall check for dirty working tree, just warn
+
+	// Check 15b: Git upstream sync (ahead/behind/diverged)
+	gitUpstreamCheck := convertWithCategory(doctor.CheckGitUpstream(path), doctor.CategoryGit)
+	result.Checks = append(result.Checks, gitUpstreamCheck)
+	// Don't fail overall check for upstream drift, just warn
 
 	// Check 16: Metadata.json version tracking (bd-u4sb)
 	metadataCheck := convertWithCategory(doctor.CheckMetadataVersionTracking(path, Version), doctor.CategoryMetadata)

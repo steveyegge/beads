@@ -251,6 +251,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 			Status:  StatusError,
 			Message: "Failed to open database for integrity check",
 			Detail:  err.Error(),
+			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 		}
 	}
 	defer db.Close()
@@ -264,6 +265,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 			Status:  StatusError,
 			Message: "Failed to run integrity check",
 			Detail:  err.Error(),
+			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 		}
 	}
 	defer rows.Close()
@@ -292,7 +294,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		Status:  StatusError,
 		Message: "Database corruption detected",
 		Detail:  strings.Join(results, "; "),
-		Fix:     "Database may need recovery. Export with 'bd export' if possible, then restore from backup or reinitialize",
+		Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 	}
 }
 
