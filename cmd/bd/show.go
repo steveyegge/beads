@@ -37,7 +37,7 @@ var showCmd = &cobra.Command{
 			}
 		}
 
-		// Resolve partial IDs first
+		// Resolve partial IDs first (daemon mode only - direct mode uses routed resolution)
 		var resolvedIDs []string
 		if daemonClient != nil {
 			// In daemon mode, resolve via RPC
@@ -53,19 +53,25 @@ var showCmd = &cobra.Command{
 				}
 				resolvedIDs = append(resolvedIDs, resolvedID)
 			}
-		} else {
-			// In direct mode, resolve via storage
-			var err error
-			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
 		}
+		// Note: Direct mode uses resolveAndGetIssueWithRouting for prefix-based routing
 
 		// Handle --thread flag: show full conversation thread
-		if showThread && len(resolvedIDs) > 0 {
-			showMessageThread(ctx, resolvedIDs[0], jsonOutput)
-			return
+		if showThread {
+			if daemonClient != nil && len(resolvedIDs) > 0 {
+				showMessageThread(ctx, resolvedIDs[0], jsonOutput)
+				return
+			} else if len(args) > 0 {
+				// Direct mode - resolve first arg with routing
+				result, err := resolveAndGetIssueWithRouting(ctx, store, args[0])
+				if result != nil {
+					defer result.Close()
+				}
+				if err == nil && result != nil && result.ResolvedID != "" {
+					showMessageThread(ctx, result.ResolvedID, jsonOutput)
+					return
+				}
+			}
 		}
 
 		// If daemon is running, use RPC
@@ -246,18 +252,24 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		// Direct mode
+		// Direct mode - use routed resolution for cross-repo lookups
 		allDetails := []interface{}{}
-		for idx, id := range resolvedIDs {
-			issue, err := store.GetIssue(ctx, id)
+		for idx, id := range args {
+			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
+			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+			if result != nil {
+				defer result.Close()
+			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error fetching %s: %v\n", id, err)
 				continue
 			}
-			if issue == nil {
+			if result == nil || result.Issue == nil {
 				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 				continue
 			}
+			issue := result.Issue
+			issueStore := result.Store // Use the store that contains this issue
 
 			if jsonOutput {
 				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
@@ -269,25 +281,25 @@ var showCmd = &cobra.Command{
 					Comments     []*types.Comment                     `json:"comments,omitempty"`
 				}
 				details := &IssueDetails{Issue: issue}
-				details.Labels, _ = store.GetLabels(ctx, issue.ID)
+				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
 
 				// Get dependencies with metadata (dependency_type field)
-				if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+				if sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage); ok {
 					details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
 					details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 				} else {
 					// Fallback to regular methods without metadata for other storage backends
-					deps, _ := store.GetDependencies(ctx, issue.ID)
+					deps, _ := issueStore.GetDependencies(ctx, issue.ID)
 					for _, dep := range deps {
 						details.Dependencies = append(details.Dependencies, &types.IssueWithDependencyMetadata{Issue: *dep})
 					}
-					dependents, _ := store.GetDependents(ctx, issue.ID)
+					dependents, _ := issueStore.GetDependents(ctx, issue.ID)
 					for _, dependent := range dependents {
 						details.Dependents = append(details.Dependents, &types.IssueWithDependencyMetadata{Issue: *dependent})
 					}
 				}
 
-				details.Comments, _ = store.GetIssueComments(ctx, issue.ID)
+				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
 				allDetails = append(allDetails, details)
 				continue
 			}
@@ -366,13 +378,13 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show labels
-			labels, _ := store.GetLabels(ctx, issue.ID)
+			labels, _ := issueStore.GetLabels(ctx, issue.ID)
 			if len(labels) > 0 {
 				fmt.Printf("\nLabels: %v\n", labels)
 			}
 
 			// Show dependencies
-			deps, _ := store.GetDependencies(ctx, issue.ID)
+			deps, _ := issueStore.GetDependencies(ctx, issue.ID)
 			if len(deps) > 0 {
 				fmt.Printf("\nDepends on (%d):\n", len(deps))
 				for _, dep := range deps {
@@ -382,7 +394,7 @@ var showCmd = &cobra.Command{
 
 			// Show dependents - grouped by dependency type for clarity
 			// Use GetDependentsWithMetadata to get the dependency type
-			sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
 			if ok {
 				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 				if len(dependentsWithMeta) > 0 {
@@ -430,7 +442,7 @@ var showCmd = &cobra.Command{
 				}
 			} else {
 				// Fallback for non-SQLite storage
-				dependents, _ := store.GetDependents(ctx, issue.ID)
+				dependents, _ := issueStore.GetDependents(ctx, issue.ID)
 				if len(dependents) > 0 {
 					fmt.Printf("\nBlocks (%d):\n", len(dependents))
 					for _, dep := range dependents {
@@ -440,7 +452,7 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show comments
-			comments, _ := store.GetIssueComments(ctx, issue.ID)
+			comments, _ := issueStore.GetIssueComments(ctx, issue.ID)
 			if len(comments) > 0 {
 				fmt.Printf("\nComments (%d):\n", len(comments))
 				for _, comment := range comments {
