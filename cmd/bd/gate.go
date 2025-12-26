@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -770,9 +772,14 @@ This command is idempotent and safe to run repeatedly.`,
 				awaitingHuman = append(awaitingHuman, gate.ID)
 				continue
 			case "mail":
-				// Mail gates will be evaluated when mail gate support is added
-				awaitingMail = append(awaitingMail, gate.ID)
-				continue
+				// Mail gates check for messages matching the pattern
+				if store != nil {
+					shouldClose, reason = evalMailGate(ctx, store, gate)
+				} else {
+					// Daemon mode - can't evaluate mail gates without store access
+					awaitingMail = append(awaitingMail, gate.ID)
+					continue
+				}
 			default:
 				// Unsupported gate type - skip
 				skipped = append(skipped, gate.ID)
@@ -941,6 +948,59 @@ func evalGHPRGate(gate *types.Issue) (bool, string) {
 		// Still OPEN
 		return false, ""
 	}
+}
+
+// evalMailGate checks if any message matching the pattern exists.
+// The pattern (await_id) is matched as a case-insensitive substring of message subjects.
+// If waiters are specified, only messages addressed to those waiters are considered.
+func evalMailGate(ctx context.Context, store storage.Storage, gate *types.Issue) (bool, string) {
+	pattern := gate.AwaitID
+	if pattern == "" {
+		return false, ""
+	}
+
+	// Search for messages
+	msgType := types.TypeMessage
+	openStatus := types.StatusOpen
+	filter := types.IssueFilter{
+		IssueType: &msgType,
+		Status:    &openStatus,
+	}
+
+	messages, err := store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		return false, ""
+	}
+
+	// Convert pattern to lowercase for case-insensitive matching
+	patternLower := strings.ToLower(pattern)
+
+	// Build waiter set for efficient lookup (if waiters specified)
+	waiterSet := make(map[string]bool)
+	for _, w := range gate.Waiters {
+		waiterSet[w] = true
+	}
+
+	// Check each message
+	for _, msg := range messages {
+		// Check subject contains pattern (case-insensitive)
+		if !strings.Contains(strings.ToLower(msg.Title), patternLower) {
+			continue
+		}
+
+		// If waiters specified, check if message is addressed to a waiter
+		// Messages use Assignee field for recipient
+		if len(waiterSet) > 0 {
+			if !waiterSet[msg.Assignee] {
+				continue
+			}
+		}
+
+		// Found a matching message
+		return true, fmt.Sprintf("Mail received: %s", msg.Title)
+	}
+
+	return false, ""
 }
 
 func init() {
