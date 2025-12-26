@@ -289,6 +289,32 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.37.0",
+		Date:    "2025-12-25",
+		Changes: []string{
+			"NEW: Control flow operators (gt-8tmz.4) - loop and gate operators for formula composition",
+			"NEW: Aspect composition (gt-8tmz.5) - Cross-cutting concerns via aspects field in formulas",
+			"NEW: Runtime expansion (gt-8tmz.8) - on_complete and for-each dynamic step generation",
+			"NEW: bd formula list/show (gt-8tmz.14) - Discover and inspect available formulas",
+			"NEW: bd mol stale (bd-anv2) - Detect complete-but-unclosed molecules",
+			"NEW: Stale molecules check in bd doctor (bd-6a5z) - Proactive detection",
+			"NEW: Distinct ID prefixes (bd-hobo) - bd-proto-xxx, bd-mol-xxx, bd-wisp-xxx",
+			"NEW: no-git-ops config (GH#593) - bd config set no-git-ops true for manual git control",
+			"NEW: beads-release formula - 18-step molecular workflow for version releases",
+			"CHANGED: Formula format YAML→JSON - Formulas now use .formula.json extension",
+			"CHANGED: bd mol run removed - Orchestration moved to gt commands",
+			"CHANGED: Wisp architecture simplified (bd-bkul) - Single DB with Wisp=true flag",
+			"FIX: installed_plugins.json v2 format (GH#741) - bd doctor handles new Claude Code format",
+			"FIX: git.IsWorktree() hang on Windows (GH#727) - bd init no longer hangs outside git repos",
+			"FIX: Skill files deleted by bd sync (GH#738) - .claude/ files now preserved",
+			"FIX: doctor false positives (GH#709) - Skips interactions.jsonl and molecules.jsonl",
+			"FIX: bd sync commits non-.beads files (bd-trgb) - Now only commits .beads/ directory",
+			"FIX: Aspect self-matching recursion (gt-8tmz.16) - Prevents infinite loops",
+			"FIX: Map expansion nested matching (gt-8tmz.33) - Correctly matches child steps",
+			"FIX: Content-level merge for divergence (bd-kpy) - Better conflict resolution",
+		},
+	},
+	{
 		Version: "0.36.0",
 		Date:    "2025-12-24",
 		Changes: []string{
