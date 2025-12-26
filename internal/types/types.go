@@ -646,6 +646,9 @@ type WorkFilter struct {
 	LabelsAny  []string   // OR semantics: issue must have AT LEAST ONE of these labels
 	Limit      int
 	SortPolicy SortPolicy
+
+	// Parent filtering: filter to descendants of a bead/epic (recursive)
+	ParentID *string // Show all descendants of this issue
 }
 
 // StaleFilter is used to filter stale issue queries

@@ -20,6 +20,7 @@ const (
 	OpCount           = "count"
 	OpShow            = "show"
 	OpReady           = "ready"
+	OpBlocked         = "blocked"
 	OpStale           = "stale"
 	OpStats           = "stats"
 	OpDepAdd          = "dep_add"
@@ -253,6 +254,12 @@ type ReadyArgs struct {
 	SortPolicy string   `json:"sort_policy,omitempty"`
 	Labels     []string `json:"labels,omitempty"`
 	LabelsAny  []string `json:"labels_any,omitempty"`
+	ParentID   string   `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
+}
+
+// BlockedArgs represents arguments for the blocked operation
+type BlockedArgs struct {
+	ParentID string `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
 }
 
 // StaleArgs represents arguments for the stale command

@@ -89,7 +89,7 @@ func (m *mockStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*ty
 func (m *mockStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	return nil, nil
 }
-func (m *mockStorage) GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error) {
+func (m *mockStorage) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
