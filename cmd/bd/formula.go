@@ -18,8 +18,8 @@ var formulaCmd = &cobra.Command{
 	Short: "Manage workflow formulas",
 	Long: `Manage workflow formulas - the source layer for molecule templates.
 
-Formulas are JSON files (.formula.json) that define workflows with composition rules.
-They are "cooked" into ephemeral protos which can then be poured or wisped.
+Formulas are YAML/JSON files that define workflows with composition rules.
+They are "cooked" into proto beads which can then be poured or wisped.
 
 The Rig → Cook → Run lifecycle:
   - Rig: Compose formulas (extends, compose)

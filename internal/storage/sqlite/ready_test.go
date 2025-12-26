@@ -1512,3 +1512,56 @@ func TestCheckExternalDepInvalidFormats(t *testing.T) {
 		})
 	}
 }
+
+// TestGetNewlyUnblockedByClose tests the --suggest-next functionality (GH#679)
+func TestGetNewlyUnblockedByClose(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create a blocker issue
+	blocker := env.CreateIssueWith("Blocker", types.StatusOpen, 1, types.TypeTask)
+
+	// Create two issues blocked by the blocker
+	blocked1 := env.CreateIssueWith("Blocked 1", types.StatusOpen, 2, types.TypeTask)
+	blocked2 := env.CreateIssueWith("Blocked 2", types.StatusOpen, 3, types.TypeTask)
+
+	// Create one issue blocked by multiple issues (blocker + another)
+	otherBlocker := env.CreateIssueWith("Other Blocker", types.StatusOpen, 1, types.TypeTask)
+	multiBlocked := env.CreateIssueWith("Multi Blocked", types.StatusOpen, 2, types.TypeTask)
+
+	// Add dependencies (issue depends on blocker)
+	env.AddDep(blocked1, blocker)
+	env.AddDep(blocked2, blocker)
+	env.AddDep(multiBlocked, blocker)
+	env.AddDep(multiBlocked, otherBlocker)
+
+	// Close the blocker
+	env.Close(blocker, "Done")
+
+	// Get newly unblocked issues
+	ctx := context.Background()
+	unblocked, err := env.Store.GetNewlyUnblockedByClose(ctx, blocker.ID)
+	if err != nil {
+		t.Fatalf("GetNewlyUnblockedByClose failed: %v", err)
+	}
+
+	// Should return blocked1 and blocked2 (but not multiBlocked, which is still blocked by otherBlocker)
+	if len(unblocked) != 2 {
+		t.Errorf("Expected 2 unblocked issues, got %d", len(unblocked))
+	}
+
+	// Check that the right issues are unblocked
+	unblockedIDs := make(map[string]bool)
+	for _, issue := range unblocked {
+		unblockedIDs[issue.ID] = true
+	}
+
+	if !unblockedIDs[blocked1.ID] {
+		t.Errorf("Expected %s to be unblocked", blocked1.ID)
+	}
+	if !unblockedIDs[blocked2.ID] {
+		t.Errorf("Expected %s to be unblocked", blocked2.ID)
+	}
+	if unblockedIDs[multiBlocked.ID] {
+		t.Errorf("Expected %s to still be blocked (has another blocker)", multiBlocked.ID)
+	}
+}

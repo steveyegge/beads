@@ -555,6 +555,26 @@ func (s *Server) handleClose(req *Request) Response {
 	})
 
 	closedIssue, _ := store.GetIssue(ctx, closeArgs.ID)
+
+	// If SuggestNext is requested, find newly unblocked issues (GH#679)
+	if closeArgs.SuggestNext {
+		unblocked, err := store.GetNewlyUnblockedByClose(ctx, closeArgs.ID)
+		if err != nil {
+			// Non-fatal: still return the closed issue
+			unblocked = nil
+		}
+		result := CloseResult{
+			Closed:    closedIssue,
+			Unblocked: unblocked,
+		}
+		data, _ := json.Marshal(result)
+		return Response{
+			Success: true,
+			Data:    data,
+		}
+	}
+
+	// Backward compatible: just return the closed issue
 	data, _ := json.Marshal(closedIssue)
 	return Response{
 		Success: true,

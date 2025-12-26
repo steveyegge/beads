@@ -98,6 +98,9 @@ func (m *mockStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.
 func (m *mockStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) {
+	return nil, nil
+}
 func (m *mockStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	return nil
 }

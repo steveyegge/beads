@@ -596,6 +596,49 @@ func filterBlockedByExternalDeps(ctx context.Context, blocked []*types.BlockedIs
 	return result
 }
 
+// GetNewlyUnblockedByClose returns issues that became unblocked when the given issue was closed.
+// This is used by the --suggest-next flag on bd close to show what work is now available.
+// An issue is "newly unblocked" if:
+//   - It had a 'blocks' dependency on the closed issue
+//   - It is now unblocked (not in blocked_issues_cache)
+//   - It has status open or in_progress (ready to work on)
+//
+// The cache is already rebuilt by CloseIssue before this is called, so we just need to
+// find dependents that are no longer blocked.
+func (s *SQLiteStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) {
+	// Find issues that:
+	// 1. Had a 'blocks' dependency on the closed issue
+	// 2. Are now NOT in blocked_issues_cache (unblocked)
+	// 3. Have status open or in_progress
+	// 4. Are not pinned
+	query := `
+		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
+		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
+		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
+		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
+		       i.sender, i.ephemeral, i.pinned, i.is_template,
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters
+		FROM issues i
+		JOIN dependencies d ON i.id = d.issue_id
+		WHERE d.depends_on_id = ?
+		  AND d.type = 'blocks'
+		  AND i.status IN ('open', 'in_progress')
+		  AND i.pinned = 0
+		  AND NOT EXISTS (
+		      SELECT 1 FROM blocked_issues_cache WHERE issue_id = i.id
+		  )
+		ORDER BY i.priority ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, closedIssueID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get newly unblocked issues: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return s.scanIssues(ctx, rows)
+}
+
 // buildOrderByClause generates the ORDER BY clause based on sort policy
 func buildOrderByClause(policy types.SortPolicy) string {
 	switch policy {

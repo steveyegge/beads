@@ -83,16 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Skips interactions.jsonl and molecules.jsonl in sync checks
   - These files are runtime state, not sync targets
 
-- **Windows npm postinstall file locking** (GH#670) - Windows install fix
-  - Fixed file handle not being released before extraction on Windows
-  - Moved write stream creation after redirect handling to avoid orphan streams
-  - Added delay after file close to ensure Windows releases file handle
-
-- **Windows MCP daemon mode crash** (GH#387) - Windows compatibility
-  - beads-mcp now gracefully falls back to CLI mode on Windows
-  - Avoids `asyncio.open_unix_connection` which doesn't exist on Windows
-  - Daemon mode still works on Unix/macOS
-
 - **FatalErrorRespectJSON** (bd-28sq) - Consistent error output
   - All commands respect `--json` flag for error output
   - Errors return proper JSON structure when flag is set

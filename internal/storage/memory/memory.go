@@ -1184,6 +1184,58 @@ func (m *MemoryStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 	return stale, nil
 }
 
+// GetNewlyUnblockedByClose returns issues that became unblocked when the given issue was closed.
+// This is used by the --suggest-next flag on bd close (GH#679).
+func (m *MemoryStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var unblocked []*types.Issue
+
+	// Find issues that depend on the closed issue
+	for issueID, deps := range m.dependencies {
+		issue, exists := m.issues[issueID]
+		if !exists {
+			continue
+		}
+
+		// Only consider open/in_progress, non-pinned issues
+		if issue.Status != types.StatusOpen && issue.Status != types.StatusInProgress {
+			continue
+		}
+		if issue.Pinned {
+			continue
+		}
+
+		// Check if this issue depended on the closed issue
+		dependedOnClosed := false
+		for _, dep := range deps {
+			if dep.DependsOnID == closedIssueID && dep.Type == types.DepBlocks {
+				dependedOnClosed = true
+				break
+			}
+		}
+
+		if !dependedOnClosed {
+			continue
+		}
+
+		// Check if now unblocked (no remaining open blockers)
+		blockers := m.getOpenBlockers(issueID)
+		if len(blockers) == 0 {
+			issueCopy := *issue
+			unblocked = append(unblocked, &issueCopy)
+		}
+	}
+
+	// Sort by priority ascending
+	sort.Slice(unblocked, func(i, j int) bool {
+		return unblocked[i].Priority < unblocked[j].Priority
+	})
+
+	return unblocked, nil
+}
+
 func (m *MemoryStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	return nil
 }

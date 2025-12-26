@@ -3,6 +3,8 @@ package rpc
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // Operation constants for all bd commands
@@ -124,8 +126,16 @@ type UpdateArgs struct {
 
 // CloseArgs represents arguments for the close operation
 type CloseArgs struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason,omitempty"`
+	ID          string `json:"id"`
+	Reason      string `json:"reason,omitempty"`
+	SuggestNext bool   `json:"suggest_next,omitempty"` // Return newly unblocked issues (GH#679)
+}
+
+// CloseResult is returned when SuggestNext is true (GH#679)
+// When SuggestNext is false, just the closed issue is returned for backward compatibility
+type CloseResult struct {
+	Closed    *types.Issue   `json:"closed"`              // The issue that was closed
+	Unblocked []*types.Issue `json:"unblocked,omitempty"` // Issues newly unblocked by closing
 }
 
 // DeleteArgs represents arguments for the delete operation
