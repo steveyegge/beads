@@ -238,18 +238,49 @@ bd wisp gc             # Garbage collect old wisps
 For reference, here's how the layers stack:
 
 ```
-Formulas (JSON compile-time macros)      ← optional, for complex composition
-    ↓
-Protos (template issues)                  ← optional, for reusable patterns
-    ↓
-Molecules (bond, squash, burn)            ← workflow operations
+Formulas (.formula.json)                  ← SOURCE: shareable workflow definitions
+    ↓ cook (ephemeral)
+[Protos]                                  ← TRANSIENT: compiled templates (auto-deleted)
+    ↓ pour/wisp
+Molecules (bond, squash, burn)            ← EXECUTION: workflow operations
     ↓
 Epics (parent-child, dependencies)        ← DATA PLANE (the core)
     ↓
 Issues (JSONL, git-backed)                ← STORAGE
 ```
 
-**Most users only need the bottom two layers.** Protos and formulas are for reusable patterns and complex composition.
+**Protos are ephemeral**: When you `bd pour formula-name` or `bd wisp create formula-name`, the formula is cooked into a temporary proto, used to spawn the mol/wisp, then automatically deleted. Protos are an implementation detail, not something users manage directly.
+
+**Most users only need the bottom two layers.** Formulas are for sharing reusable patterns.
+
+## Distillation: Extracting Patterns
+
+The lifecycle is circular - you can extract formulas from completed work:
+
+```
+Formulas ──cook──→ Mols/Wisps ──distill──→ Formulas
+```
+
+**Use cases for distillation:**
+- **Emergent patterns**: Manually structured an epic that worked well
+- **Modified execution**: Poured a formula but added custom steps
+- **Learning from success**: Extract what made a complex mol succeed
+
+```bash
+bd distill <mol-id> -o my-workflow.formula.json   # Extract formula from mol
+```
+
+## Sharing: The Mol Mall
+
+All workflow sharing happens via formulas:
+
+```bash
+bd mol publish my-workflow.formula.json            # Share to GitHub repo
+bd mol install github.com/org/mol-code-review      # Install from GitHub
+bd pour mol-code-review --var repo=myproject       # Use installed formula
+```
+
+Formulas are clean source code: composable, versioned, parameterized. Mols contain execution-specific context and aren't shared directly.
 
 ## Commands Quick Reference
 
