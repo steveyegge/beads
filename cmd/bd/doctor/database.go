@@ -155,9 +155,9 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 		}
 	}
 
-	// Open database (bd-ckvw: This will run migrations and schema probe)
+	// Open database (bd-ckvw: schema probe)
 	// Note: We can't use the global 'store' because doctor can check arbitrary paths
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=foreign_keys(ON)&_pragma=busy_timeout(30000)")
+	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Schema Compatibility",
@@ -244,13 +244,14 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 	}
 
 	// Open database in read-only mode for integrity check
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(30000)")
+	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Database Integrity",
 			Status:  StatusError,
 			Message: "Failed to open database for integrity check",
 			Detail:  err.Error(),
+			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 		}
 	}
 	defer db.Close()
@@ -264,6 +265,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 			Status:  StatusError,
 			Message: "Failed to run integrity check",
 			Detail:  err.Error(),
+			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 		}
 	}
 	defer rows.Close()
@@ -292,22 +294,37 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		Status:  StatusError,
 		Message: "Database corruption detected",
 		Detail:  strings.Join(results, "; "),
-		Fix:     "Database may need recovery. Export with 'bd export' if possible, then restore from backup or reinitialize",
+		Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
 	}
 }
 
 // CheckDatabaseJSONLSync checks if database and JSONL are in sync
 func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
-	// Find JSONL file
-	var jsonlPath string
-	for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
-		testPath := filepath.Join(beadsDir, name)
-		if _, err := os.Stat(testPath); err == nil {
-			jsonlPath = testPath
-			break
+	// Resolve database path (respects metadata.json override).
+	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
+		dbPath = cfg.DatabasePath(beadsDir)
+	}
+
+	// Find JSONL file (respects metadata.json override when set).
+	jsonlPath := ""
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
+		if cfg.JSONLExport != "" && !isSystemJSONLFilename(cfg.JSONLExport) {
+			p := cfg.JSONLPath(beadsDir)
+			if _, err := os.Stat(p); err == nil {
+				jsonlPath = p
+			}
+		}
+	}
+	if jsonlPath == "" {
+		for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
+			testPath := filepath.Join(beadsDir, name)
+			if _, err := os.Stat(testPath); err == nil {
+				jsonlPath = testPath
+				break
+			}
 		}
 	}
 
@@ -333,7 +350,7 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	jsonlCount, jsonlPrefixes, jsonlErr := CountJSONLIssues(jsonlPath)
 
 	// Single database open for all queries (instead of 3 separate opens)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
 		// Database can't be opened. If JSONL has issues, suggest recovery.
 		if jsonlErr == nil && jsonlCount > 0 {
@@ -390,11 +407,16 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 
 	// Use JSONL error if we got it earlier
 	if jsonlErr != nil {
+		fixMsg := "Run 'bd doctor --fix' to attempt recovery"
+		if strings.Contains(jsonlErr.Error(), "malformed") {
+			fixMsg = "Run 'bd doctor --fix' to back up and regenerate the JSONL from the database"
+		}
 		return DoctorCheck{
 			Name:    "DB-JSONL Sync",
 			Status:  StatusWarning,
 			Message: "Unable to read JSONL file",
 			Detail:  jsonlErr.Error(),
+			Fix:     fixMsg,
 		}
 	}
 
@@ -501,7 +523,7 @@ func FixDBJSONLSync(path string) error {
 
 // getDatabaseVersionFromPath reads the database version from the given path
 func getDatabaseVersionFromPath(dbPath string) string {
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
 		return "unknown"
 	}

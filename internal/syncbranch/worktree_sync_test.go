@@ -392,7 +392,7 @@ func setupTestRepoWithRemote(t *testing.T) string {
 	}
 
 	// Initialize git repo
-	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "init", "-b", "master")
 	runGit(t, tmpDir, "config", "user.email", "test@test.com")
 	runGit(t, tmpDir, "config", "user.name", "Test User")
 
@@ -413,4 +413,3 @@ func setupTestRepoWithRemote(t *testing.T) string {
 
 	return tmpDir
 }
-
