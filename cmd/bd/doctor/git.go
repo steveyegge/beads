@@ -675,6 +675,129 @@ func FixSyncBranchHealth(path string) error {
 	return fix.DBJSONLSync(path)
 }
 
+// FindOrphanedIssues identifies issues referenced in git commits but still open in the database.
+// This is the shared core logic used by both 'bd orphans' and 'bd doctor' commands.
+// Returns empty slice if not a git repo, no database, or no orphans found (no error).
+func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
+	// Skip if not in a git repo
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	if err := cmd.Run(); err != nil {
+		return []OrphanIssue{}, nil // Not a git repo, return empty list
+	}
+
+	beadsDir := filepath.Join(path, ".beads")
+
+	// Skip if no .beads directory
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return []OrphanIssue{}, nil
+	}
+
+	// Get database path
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return []OrphanIssue{}, nil
+	}
+
+	// Open database read-only
+	db, err := openDBReadOnly(dbPath)
+	if err != nil {
+		return []OrphanIssue{}, nil
+	}
+	defer db.Close()
+
+	// Get issue prefix from config
+	var issuePrefix string
+	err = db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&issuePrefix)
+	if err != nil || issuePrefix == "" {
+		issuePrefix = "bd" // default
+	}
+
+	// Get all open/in_progress issues with their titles (title is optional for compatibility)
+	var rows *sql.Rows
+	rows, err = db.Query("SELECT id, title, status FROM issues WHERE status IN ('open', 'in_progress')")
+	// If the query fails (e.g., no title column), fall back to simpler query
+	if err != nil {
+		rows, err = db.Query("SELECT id, '', status FROM issues WHERE status IN ('open', 'in_progress')")
+		if err != nil {
+			return []OrphanIssue{}, nil
+		}
+	}
+	defer rows.Close()
+
+	openIssues := make(map[string]*OrphanIssue)
+	for rows.Next() {
+		var id, title, status string
+		if err := rows.Scan(&id, &title, &status); err == nil {
+			openIssues[id] = &OrphanIssue{
+				IssueID: id,
+				Title:   title,
+				Status:  status,
+			}
+		}
+	}
+
+	if len(openIssues) == 0 {
+		return []OrphanIssue{}, nil
+	}
+
+	// Get git log
+	cmd = exec.Command("git", "log", "--oneline", "--all")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return []OrphanIssue{}, nil
+	}
+
+	// Parse commits for issue references
+	// Match pattern like (bd-xxx) or (bd-xxx.1) including hierarchical IDs
+	pattern := fmt.Sprintf(`\(%s-[a-z0-9.]+\)`, regexp.QuoteMeta(issuePrefix))
+	re := regexp.MustCompile(pattern)
+
+	var orphanedIssues []OrphanIssue
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		// Extract commit hash and message
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 1 {
+			continue
+		}
+
+		commitHash := parts[0]
+		commitMsg := ""
+		if len(parts) > 1 {
+			commitMsg = parts[1]
+		}
+
+		// Find issue IDs in this commit
+		matches := re.FindAllString(line, -1)
+		for _, match := range matches {
+			issueID := strings.Trim(match, "()")
+			if orphan, exists := openIssues[issueID]; exists {
+				// Only record first (most recent) commit per issue
+				if orphan.LatestCommit == "" {
+					orphan.LatestCommit = commitHash
+					orphan.LatestCommitMessage = commitMsg
+				}
+			}
+		}
+	}
+
+	// Collect issues with commit references
+	for _, orphan := range openIssues {
+		if orphan.LatestCommit != "" {
+			orphanedIssues = append(orphanedIssues, *orphan)
+		}
+	}
+
+	return orphanedIssues, nil
+}
+
 // CheckOrphanedIssues detects issues referenced in git commits but still open.
 // This catches cases where someone implemented a fix with "(bd-xxx)" in the commit
 // message but forgot to run "bd close".
@@ -714,97 +837,40 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Open database read-only
+	// Use the shared FindOrphanedIssues function
+	orphans, err := FindOrphanedIssues(path)
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Orphaned Issues",
+			Status:   StatusOK,
+			Message:  "N/A (unable to check orphaned issues)",
+			Category: CategoryGit,
+		}
+	}
+
+	// Check for "no open issues" case - this requires checking the database
+	// since FindOrphanedIssues silently returns empty slice
 	db, err := openDBReadOnly(dbPath)
-	if err != nil {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (unable to open database)",
-			Category: CategoryGit,
-		}
-	}
-	defer db.Close()
-
-	// Get issue prefix from config
-	var issuePrefix string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&issuePrefix)
-	if err != nil || issuePrefix == "" {
-		issuePrefix = "bd" // default
-	}
-
-	// Get all open issue IDs
-	rows, err := db.Query("SELECT id FROM issues WHERE status IN ('open', 'in_progress')")
-	if err != nil {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (unable to query issues)",
-			Category: CategoryGit,
-		}
-	}
-	defer rows.Close()
-
-	openSet := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			openSet[id] = true
-		}
-	}
-
-	if len(openSet) == 0 {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "No open issues to check",
-			Category: CategoryGit,
-		}
-	}
-
-	// Get issue IDs referenced in git commits
-	cmd = exec.Command("git", "log", "--oneline", "--all")
-	cmd.Dir = path
-	output, err := cmd.Output()
-	if err != nil {
-		return DoctorCheck{
-			Name:     "Orphaned Issues",
-			Status:   StatusOK,
-			Message:  "N/A (unable to read git log)",
-			Category: CategoryGit,
-		}
-	}
-
-	// Parse commit messages for issue references
-	// Match pattern like (bd-xxx) or (bd-xxx.1) including hierarchical IDs
-	pattern := fmt.Sprintf(`\(%s-[a-z0-9.]+\)`, regexp.QuoteMeta(issuePrefix))
-	re := regexp.MustCompile(pattern)
-
-	// Track which open issues appear in commits (with first commit hash)
-	orphanedIssues := make(map[string]string) // issue ID -> commit hash
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		matches := re.FindAllString(line, -1)
-		for _, match := range matches {
-			// Extract issue ID (remove parentheses)
-			issueID := strings.Trim(match, "()")
-			if openSet[issueID] {
-				// Only record the first (most recent) commit
-				if _, exists := orphanedIssues[issueID]; !exists {
-					// Extract commit hash (first word of line)
-					parts := strings.SplitN(line, " ", 2)
-					if len(parts) > 0 {
-						orphanedIssues[issueID] = parts[0]
+	if err == nil {
+		defer db.Close()
+		rows, err := db.Query("SELECT COUNT(*) FROM issues WHERE status IN ('open', 'in_progress')")
+		if err == nil {
+			defer rows.Close()
+			if rows.Next() {
+				var count int
+				if err := rows.Scan(&count); err == nil && count == 0 {
+					return DoctorCheck{
+						Name:     "Orphaned Issues",
+						Status:   StatusOK,
+						Message:  "No open issues to check",
+						Category: CategoryGit,
 					}
 				}
 			}
 		}
 	}
 
-	if len(orphanedIssues) == 0 {
+	if len(orphans) == 0 {
 		return DoctorCheck{
 			Name:     "Orphaned Issues",
 			Status:   StatusOK,
@@ -815,14 +881,14 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 
 	// Build detail message
 	var details []string
-	for id, commit := range orphanedIssues {
-		details = append(details, fmt.Sprintf("%s (commit %s)", id, commit))
+	for _, orphan := range orphans {
+		details = append(details, fmt.Sprintf("%s (commit %s)", orphan.IssueID, orphan.LatestCommit))
 	}
 
 	return DoctorCheck{
 		Name:     "Orphaned Issues",
 		Status:   StatusWarning,
-		Message:  fmt.Sprintf("%d issue(s) referenced in commits but still open", len(orphanedIssues)),
+		Message:  fmt.Sprintf("%d issue(s) referenced in commits but still open", len(orphans)),
 		Detail:   strings.Join(details, ", "),
 		Fix:      "Run 'bd show <id>' to check if implemented, then 'bd close <id>' if done",
 		Category: CategoryGit,
