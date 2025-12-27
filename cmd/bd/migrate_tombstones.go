@@ -1,20 +1,79 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/deletions"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
+// legacyDeletionRecordCmd represents a single deletion entry from the legacy deletions.jsonl manifest.
+// This is inlined here for migration purposes only - new code uses inline tombstones.
+type legacyDeletionRecordCmd struct {
+	ID        string    `json:"id"`               // Issue ID that was deleted
+	Timestamp time.Time `json:"ts"`               // When the deletion occurred
+	Actor     string    `json:"by"`               // Who performed the deletion
+	Reason    string    `json:"reason,omitempty"` // Optional reason for deletion
+}
+
+// loadLegacyDeletionsCmd reads the legacy deletions.jsonl manifest.
+// Returns a map of deletion records keyed by issue ID and any warnings.
+// This is inlined here for migration purposes only.
+func loadLegacyDeletionsCmd(path string) (map[string]legacyDeletionRecordCmd, []string, error) {
+	records := make(map[string]legacyDeletionRecordCmd)
+	var warnings []string
+
+	f, err := os.Open(path) // #nosec G304 - controlled path from caller
+	if err != nil {
+		if os.IsNotExist(err) {
+			return records, nil, nil
+		}
+		return nil, nil, fmt.Errorf("failed to open deletions file: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var record legacyDeletionRecordCmd
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			warnings = append(warnings, fmt.Sprintf("line %d: invalid JSON", lineNum))
+			continue
+		}
+		if record.ID == "" {
+			warnings = append(warnings, fmt.Sprintf("line %d: missing ID", lineNum))
+			continue
+		}
+		records[record.ID] = record
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error reading deletions file: %w", err)
+	}
+
+	return records, warnings, nil
+}
+
+// TODO: Consider integrating into 'bd doctor' migration detection
 var migrateTombstonesCmd = &cobra.Command{
-	Use:   "migrate-tombstones",
-	Short: "Convert deletions.jsonl entries to inline tombstones",
+	Use:     "migrate-tombstones",
+	GroupID: "maint",
+	Short:   "Convert deletions.jsonl entries to inline tombstones",
 	Long: `Migrate legacy deletions.jsonl entries to inline tombstones in issues.jsonl.
 
 This command converts existing deletion records from the legacy deletions.jsonl
@@ -44,7 +103,7 @@ Examples:
 		}
 
 		// Find .beads directory
-		beadsDir := findBeadsDir()
+		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
@@ -59,11 +118,11 @@ Examples:
 		}
 
 		// Check paths
-		deletionsPath := deletions.DefaultPath(beadsDir)
+		deletionsPath := filepath.Join(beadsDir, "deletions.jsonl")
 		issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 
 		// Load existing deletions
-		loadResult, err := deletions.LoadDeletions(deletionsPath)
+		records, warnings, err := loadLegacyDeletionsCmd(deletionsPath)
 		if err != nil {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
@@ -76,13 +135,13 @@ Examples:
 			os.Exit(1)
 		}
 
-		if len(loadResult.Records) == 0 {
+		if len(records) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"status":  "noop",
-					"message": "No deletions to migrate",
+					"status":   "noop",
+					"message":  "No deletions to migrate",
 					"migrated": 0,
-					"skipped": 0,
+					"skipped":  0,
 				})
 			} else {
 				fmt.Println("No deletions.jsonl entries to migrate")
@@ -91,9 +150,9 @@ Examples:
 		}
 
 		// Print warnings from loading
-		for _, warning := range loadResult.Warnings {
+		for _, warning := range warnings {
 			if !jsonOutput {
-				color.Yellow("Warning: %s\n", warning)
+				fmt.Printf("%s\n", ui.RenderWarn(fmt.Sprintf("Warning: %s", warning)))
 			}
 		}
 
@@ -128,13 +187,13 @@ Examples:
 					existingTombstones[issue.ID] = true
 				}
 			}
-			file.Close()
+			_ = file.Close()
 		}
 
 		// Determine which deletions need migration
-		var toMigrate []deletions.DeletionRecord
+		var toMigrate []legacyDeletionRecordCmd
 		var skippedIDs []string
-		for id, record := range loadResult.Records {
+		for id, record := range records {
 			if existingTombstones[id] {
 				skippedIDs = append(skippedIDs, id)
 				if verbose && !jsonOutput {
@@ -148,10 +207,10 @@ Examples:
 		if len(toMigrate) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"status":  "noop",
-					"message": "All deletions already migrated to tombstones",
+					"status":   "noop",
+					"message":  "All deletions already migrated to tombstones",
 					"migrated": 0,
-					"skipped": len(skippedIDs),
+					"skipped":  len(skippedIDs),
 				})
 			} else {
 				fmt.Printf("All %d deletion(s) already have tombstones in issues.jsonl\n", len(skippedIDs))
@@ -163,10 +222,10 @@ Examples:
 		if dryRun {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"dry_run":      true,
+					"dry_run":       true,
 					"would_migrate": len(toMigrate),
-					"skipped":      len(skippedIDs),
-					"total":        len(loadResult.Records),
+					"skipped":       len(skippedIDs),
+					"total":         len(records),
 				})
 			} else {
 				fmt.Println("Dry run mode - no changes will be made")
@@ -208,12 +267,12 @@ Examples:
 		encoder := json.NewEncoder(file)
 		var migratedIDs []string
 		for _, record := range toMigrate {
-			tombstone := convertDeletionRecordToTombstone(record)
+			tombstone := convertLegacyDeletionRecordToTombstone(record)
 			if err := encoder.Encode(tombstone); err != nil {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{
-						"error":   "write_tombstone_failed",
-						"message": err.Error(),
+						"error":    "write_tombstone_failed",
+						"message":  err.Error(),
 						"issue_id": record.ID,
 					})
 				} else {
@@ -232,7 +291,7 @@ Examples:
 		if err := os.Rename(deletionsPath, archivePath); err != nil {
 			// Warn but don't fail - tombstones were already created
 			if !jsonOutput {
-				color.Yellow("Warning: could not archive deletions.jsonl: %v\n", err)
+				fmt.Printf("%s\n", ui.RenderWarn(fmt.Sprintf("Warning: could not archive deletions.jsonl: %v", err)))
 			}
 		} else if verbose && !jsonOutput {
 			fmt.Printf("  ✓ Archived deletions.jsonl to %s\n", filepath.Base(archivePath))
@@ -241,15 +300,15 @@ Examples:
 		// Success output
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"status":      "success",
-				"migrated":    len(migratedIDs),
-				"skipped":     len(skippedIDs),
-				"total":       len(loadResult.Records),
-				"archive":     archivePath,
+				"status":       "success",
+				"migrated":     len(migratedIDs),
+				"skipped":      len(skippedIDs),
+				"total":        len(records),
+				"archive":      archivePath,
 				"migrated_ids": migratedIDs,
 			})
 		} else {
-			color.Green("\n✓ Migration complete\n\n")
+			fmt.Printf("\n%s\n\n", ui.RenderPass("✓ Migration complete"))
 			fmt.Printf("  Migrated: %d tombstone(s)\n", len(migratedIDs))
 			if len(skippedIDs) > 0 {
 				fmt.Printf("  Skipped:  %d (already had tombstones)\n", len(skippedIDs))
@@ -262,10 +321,8 @@ Examples:
 	},
 }
 
-// convertDeletionRecordToTombstone creates a tombstone issue from a deletion record.
-// This is similar to the importer's convertDeletionToTombstone but operates on
-// deletions.DeletionRecord directly.
-func convertDeletionRecordToTombstone(del deletions.DeletionRecord) *types.Issue {
+// convertLegacyDeletionRecordToTombstone creates a tombstone issue from a legacy deletion record.
+func convertLegacyDeletionRecordToTombstone(del legacyDeletionRecordCmd) *types.Issue {
 	deletedAt := del.Timestamp
 	return &types.Issue{
 		ID:           del.ID,

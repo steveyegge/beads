@@ -1,18 +1,20 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -116,8 +118,8 @@ func selectNextTip(store storage.Storage) *Tip {
 	}
 
 	// Sort by priority (highest first)
-	sort.Slice(eligibleTips, func(i, j int) bool {
-		return eligibleTips[i].Priority > eligibleTips[j].Priority
+	slices.SortFunc(eligibleTips, func(a, b Tip) int {
+		return cmp.Compare(b.Priority, a.Priority) // descending order
 	})
 
 	// Apply probability roll (in priority order)
@@ -153,7 +155,7 @@ func getLastShown(store storage.Storage, tipID string) time.Time {
 func recordTipShown(store storage.Storage, tipID string) {
 	key := fmt.Sprintf("tip_%s_last_shown", tipID)
 	value := time.Now().Format(time.RFC3339)
-	_ = store.SetMetadata(context.Background(), key, value)
+	_ = store.SetMetadata(context.Background(), key, value) // Non-critical metadata, ok to fail silently
 }
 
 // InjectTip adds a dynamic tip to the registry at runtime.
@@ -352,6 +354,30 @@ func initDefaultTips() {
 			return isClaudeDetected() && !isClaudeSetupComplete()
 		},
 	)
+
+	// Sync conflict tip - ALWAYS show when sync has failed and needs manual intervention
+	// This is a proactive health check that trumps educational tips (ox-cli pattern)
+	InjectTip(
+		"sync_conflict",
+		"Run 'bd sync' to resolve sync conflict",
+		200,         // Higher than Claude setup - sync issues are urgent
+		0,           // No frequency limit - always show when applicable
+		1.0,         // 100% probability - always show when condition is true
+		syncConflictCondition,
+	)
+}
+
+// syncConflictCondition checks if there's a sync conflict that needs manual resolution.
+// This is the condition function for the sync_conflict tip.
+func syncConflictCondition() bool {
+	// Find beads directory to check sync state
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return false
+	}
+
+	state := LoadSyncState(beadsDir)
+	return state.NeedsManualSync
 }
 
 // init initializes the tip system with default tips

@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -19,6 +19,20 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 	"gopkg.in/yaml.v3"
 )
+
+// readFromGitRef reads file content from a git ref (branch or commit).
+// Returns the raw bytes from git show <ref>:<path>.
+// The filePath is automatically converted to forward slashes for Windows compatibility.
+// Returns nil, err if the git command fails (e.g., file not found in ref).
+func readFromGitRef(filePath, gitRef string) ([]byte, error) {
+	gitPath := filepath.ToSlash(filePath)
+	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from git: %w", err)
+	}
+	return output, nil
+}
 
 // checkAndAutoImport checks if the database is empty but git has issues.
 // If so, it automatically imports them and returns true.
@@ -69,13 +83,13 @@ func checkAndAutoImport(ctx context.Context, store storage.Storage) bool {
 // Returns (issue_count, relative_jsonl_path, git_ref)
 func checkGitForIssues() (int, string, string) {
 	// Try to find .beads directory
-	beadsDir := findBeadsDir()
+	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
 		return 0, "", ""
 	}
 
 	// Construct relative path from git root
-	gitRoot := findGitRoot()
+	gitRoot := git.GetRepoRoot()
 	if gitRoot == "" {
 		return 0, "", ""
 	}
@@ -129,10 +143,7 @@ func checkGitForIssues() (int, string, string) {
 	}
 
 	for _, relPath := range candidates {
-		// Use ToSlash for git path compatibility on Windows
-		gitPath := filepath.ToSlash(relPath)
-		cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
-		output, err := cmd.Output()
+		output, err := readFromGitRef(relPath, gitRef)
 		if err == nil && len(output) > 0 {
 			lines := bytes.Count(output, []byte("\n"))
 			if lines > 0 {
@@ -193,96 +204,11 @@ func getLocalSyncBranch(beadsDir string) string {
 	return cfg.SyncBranch
 }
 
-// findBeadsDir finds the .beads directory in current or parent directories
-func findBeadsDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
 
-	// Check if we're in a git worktree with sparse checkout
-	// In worktrees, .beads might not exist locally, so we need to resolve to the main repo
-	if git.IsWorktree() {
-		mainRepoRoot, err := git.GetMainRepoRoot()
-		if err == nil && mainRepoRoot != "" {
-			mainBeadsDir := filepath.Join(mainRepoRoot, ".beads")
-			if info, err := os.Stat(mainBeadsDir); err == nil && info.IsDir() {
-				resolved, err := filepath.EvalSymlinks(mainBeadsDir)
-				if err != nil {
-					return mainBeadsDir
-				}
-				return resolved
-			}
-		}
-	}
-
-	for {
-		beadsDir := filepath.Join(dir, ".beads")
-		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Resolve symlinks to get canonical path (fixes macOS /var -> /private/var)
-			resolved, err := filepath.EvalSymlinks(beadsDir)
-			if err != nil {
-				return beadsDir // Fall back to unresolved if EvalSymlinks fails
-			}
-			return resolved
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached root
-			break
-		}
-		dir = parent
-	}
-
-	return ""
-}
-
-// findGitRoot finds the git repository root
-func findGitRoot() string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	root := string(bytes.TrimSpace(output))
-
-	// Normalize path for the current OS
-	// Git on Windows may return paths with forward slashes (C:/Users/...)
-	// or Unix-style paths (/c/Users/...), convert to native format
-	if runtime.GOOS == "windows" {
-		if len(root) > 0 && root[0] == '/' && len(root) >= 3 && root[2] == '/' {
-			// Convert /c/Users/... to C:\Users\...
-			root = strings.ToUpper(string(root[1])) + ":" + filepath.FromSlash(root[2:])
-		} else {
-			// Convert C:/Users/... to C:\Users\...
-			root = filepath.FromSlash(root)
-		}
-	}
-
-	// Resolve symlinks to get canonical path (fixes macOS /var -> /private/var)
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return root // Fall back to unresolved if EvalSymlinks fails
-	}
-	return resolved
-}
-
-// readFromGit reads file content from a specific git ref (bd-y2v: shared helper)
-func readFromGit(gitRef, filePath string) ([]byte, error) {
-	// Normalize path for git (use forward slashes for Windows compatibility)
-	gitPath := filepath.ToSlash(filePath)
-	cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", gitRef, gitPath)) // #nosec G204 - git command with safe args
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read from git: %w", err)
-	}
-	return output, nil
-}
 
 // importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
 func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath, gitRef string) error {
-	jsonlData, err := readFromGit(gitRef, jsonlPath)
+	jsonlData, err := readFromGitRef(jsonlPath, gitRef)
 	if err != nil {
 		return err
 	}
@@ -303,6 +229,7 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
 			return fmt.Errorf("failed to parse issue: %w", err)
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 		issues = append(issues, &issue)
 	}
 
@@ -332,7 +259,6 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 		DryRun:               false,
 		SkipUpdate:           false,
 		SkipPrefixValidation: true,  // Auto-import is lenient about prefixes
-		NoGitHistory:         true,  // Skip git history backfill during auto-import (bd-4pv)
 	}
 
 	_, err = importIssuesCore(ctx, dbFilePath, store, issues, opts)

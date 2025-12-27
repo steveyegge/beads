@@ -33,7 +33,7 @@ bd's core design enables a distributed, git-backed issue tracker that feels like
                                v
 ┌─────────────────────────────────────────────────────────────────┐
 │                       JSONL File                                 │
-│                   (.beads/beads.jsonl)                           │
+│                   (.beads/issues.jsonl)                          │
 │                                                                  │
 │  - Git-tracked source of truth                                   │
 │  - One JSON line per entity (issue, dep, label, comment)         │
@@ -246,7 +246,7 @@ open ──▶ in_progress ──▶ closed
 ```
 .beads/
 ├── beads.db          # SQLite database (gitignored)
-├── beads.jsonl       # JSONL source of truth (git-tracked)
+├── issues.jsonl      # JSONL source of truth (git-tracked)
 ├── bd.sock           # Daemon socket (gitignored)
 ├── daemon.log        # Daemon logs (gitignored)
 ├── config.yaml       # Project config (optional)
@@ -265,8 +265,61 @@ open ──▶ in_progress ──▶ closed
 | Import logic | `cmd/bd/import.go`, `internal/importer/` |
 | Auto-sync | `internal/autoimport/`, `internal/flush/` |
 
+## Wisps and Molecules
+
+**Molecules** are template work items that define structured workflows. When spawned, they create **wisps** - ephemeral child issues that track execution steps.
+
+> **For full documentation** on the molecular chemistry metaphor (protos, pour, bond, squash, burn), see [MOLECULES.md](MOLECULES.md).
+
+### Wisp Lifecycle
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   bd mol wisp       │───▶│  Wisp Issues    │───▶│  bd mol squash  │
+│ (from template) │    │  (local-only)   │    │  (→ digest)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+1. **Create:** Create wisps from a molecule template
+2. **Execute:** Agent works through wisp steps (local SQLite only)
+3. **Squash:** Compress wisps into a permanent digest issue
+
+### Why Wisps Don't Sync
+
+Wisps are intentionally **local-only**:
+
+- They exist only in the spawning agent's SQLite database
+- They are **never exported to JSONL**
+- They cannot resurrect from other clones (they were never there)
+- They are **hard-deleted** when squashed (no tombstones needed)
+
+This design enables:
+
+- **Fast local iteration:** No sync overhead during execution
+- **Clean history:** Only the digest (outcome) enters git
+- **Agent isolation:** Each agent's execution trace is private
+- **Bounded storage:** Wisps don't accumulate across clones
+
+### Wisp vs Regular Issue Deletion
+
+| Aspect | Regular Issues | Wisps |
+|--------|---------------|-------|
+| Exported to JSONL | Yes | No |
+| Tombstone on delete | Yes | No |
+| Can resurrect | Yes (without tombstone) | No (never synced) |
+| Deletion method | `CreateTombstone()` | `DeleteIssue()` (hard delete) |
+
+The `bd mol squash` command uses hard delete intentionally - tombstones would be wasted overhead for data that never leaves the local database.
+
+### Future Directions
+
+- **Separate wisp repo:** Keep wisps in a dedicated ephemeral git repo
+- **Digest migration:** Explicit step to promote digests to main repo
+- **Wisp retention:** Option to preserve wisps in local git history
+
 ## Related Documentation
 
+- [MOLECULES.md](MOLECULES.md) - Molecular chemistry metaphor (protos, pour, bond, squash, burn)
 - [INTERNALS.md](INTERNALS.md) - FlushManager, Blocked Cache implementation details
 - [DAEMON.md](DAEMON.md) - Daemon management and configuration
 - [EXTENDING.md](EXTENDING.md) - Adding custom tables to SQLite

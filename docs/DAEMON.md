@@ -24,11 +24,22 @@ bd runs a background daemon per workspace for auto-sync, RPC operations, and rea
 
 | Scenario | How to Disable |
 |----------|----------------|
-| **Git worktrees** | `bd --no-daemon <command>` (required!) |
+| **Git worktrees (no sync-branch)** | Auto-disabled for safety |
 | **CI/CD pipelines** | `BEADS_NO_DAEMON=true` |
 | **Offline work** | `--no-daemon` (no git push available) |
 | **Resource-constrained** | `BEADS_NO_DAEMON=true` |
 | **Deterministic testing** | Use exclusive lock (see below) |
+
+### Git Worktrees and Daemon
+
+**Automatic safety:** Daemon is automatically disabled in git worktrees unless sync-branch is configured. This prevents commits going to the wrong branch.
+
+**Enable daemon in worktrees:** Configure sync-branch to safely use daemon across all worktrees:
+```bash
+bd config set sync-branch beads-sync
+```
+
+With sync-branch configured, daemon commits to a dedicated branch using an internal worktree, so your current branch is never affected. See [WORKTREES.md](WORKTREES.md) for details.
 
 ### Local-Only Users
 
@@ -174,9 +185,9 @@ bd ready
 - Socket file stale: `rm .beads/bd.sock` (auto-cleans on next start)
 - Multiple bd versions installed: `which bd` and `bd version`
 
-## Event-Driven Daemon Mode (Experimental)
+## Event-Driven Daemon Mode (Default)
 
-**NEW in v0.16+**: Event-driven mode replaces 5-second polling with instant reactivity.
+**Default since v0.21.0**: Event-driven mode replaces 5-second polling with instant reactivity.
 
 ### Benefits
 
@@ -184,19 +195,39 @@ bd ready
 - 🔋 **~60% less CPU usage** (no continuous polling)
 - 🎯 **Instant sync** on mutations and file changes
 - 🛡️ **Dropped events safety net** prevents data loss
+- 🔄 **Periodic remote sync** pulls updates from other clones
 
 ### How It Works
 
 **Architecture:**
 ```
-FileWatcher (platform-native)
-    ├─ .beads/issues.jsonl (file changes)
-    ├─ .git/refs/heads (git updates)
-    └─ RPC mutations (create, update, close)
-         ↓
-    Debouncer (500ms batch window)
-         ↓
-    Export → Git Commit/Push
+┌─────────────────────────────────────────────────────────────────┐
+│                    EVENT-DRIVEN MODE                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  EXPORT FLOW (Mutation-Triggered)                         │   │
+│  │                                                           │   │
+│  │  FileWatcher (platform-native)                            │   │
+│  │      ├─ .beads/issues.jsonl (file changes)                │   │
+│  │      └─ RPC mutations (create, update, close)             │   │
+│  │           ↓                                               │   │
+│  │      Debouncer (500ms batch window)                       │   │
+│  │           ↓                                               │   │
+│  │      Export → Git Commit → Git Push (if --auto-push)      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  IMPORT FLOW (Periodic Remote Sync)                       │   │
+│  │                                                           │   │
+│  │  remoteSyncTicker (default: 30s, configurable)            │   │
+│  │           ↓                                               │   │
+│  │      Git Pull (from sync branch or origin)                │   │
+│  │           ↓                                               │   │
+│  │      Import JSONL → Database                              │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Platform-native APIs:**
@@ -204,29 +235,26 @@ FileWatcher (platform-native)
 - macOS: `FSEvents` (via kqueue)
 - Windows: `ReadDirectoryChangesW`
 
-**Mutation events** from RPC trigger immediate export  
-**Debouncer** batches rapid changes (500ms window) to avoid export storms  
-**Polling fallback** if fsnotify unavailable (network filesystems)
+**Key behaviors:**
+- **Mutation events** from RPC trigger immediate export (debounced 500ms)
+- **Periodic remote sync** pulls updates from other clones (default 30s interval)
+- **Polling fallback** if fsnotify unavailable (network filesystems)
 
 ### Enabling Event-Driven Mode
 
-**Opt-In (Phase 1):**
+Event-driven mode is the **default** as of v0.21.0. No configuration needed.
 
 ```bash
-# Enable for single daemon
+# Event-driven mode starts automatically
+bd daemon --start
+
+# Explicitly enable (same as default)
 BEADS_DAEMON_MODE=events bd daemon --start
-
-# Set globally in shell profile
-export BEADS_DAEMON_MODE=events
-
-# Restart all daemons to apply
-bd daemons killall
-# Next bd command auto-starts with new mode
 ```
 
 **Available modes:**
-- `poll` (default) - Traditional 5-second polling, stable and battle-tested
-- `events` - Event-driven mode, experimental but thoroughly tested
+- `events` (default) - Event-driven mode with instant reactivity
+- `poll` - Traditional 5-second polling, fallback for edge cases
 
 ### Configuration
 
@@ -234,25 +262,56 @@ bd daemons killall
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
-| `BEADS_DAEMON_MODE` | `poll`, `events` | `poll` | Daemon operation mode |
+| `BEADS_DAEMON_MODE` | `poll`, `events` | `events` | Daemon operation mode |
 | `BEADS_WATCHER_FALLBACK` | `true`, `false` | `true` | Fall back to polling if fsnotify fails |
+| `BEADS_REMOTE_SYNC_INTERVAL` | duration | `30s` | How often to pull from remote (event mode) |
 
-**Disable polling fallback (require fsnotify):**
+**config.yaml settings:**
 
-```bash
-# Fail if watcher unavailable (e.g., testing)
-BEADS_WATCHER_FALLBACK=false BEADS_DAEMON_MODE=events bd daemon --start
+```yaml
+# .beads/config.yaml
+
+# Interval for daemon to pull remote sync branch updates
+# Accepts Go duration strings: "30s", "1m", "5m", etc.
+# Minimum: 5s (values below are clamped)
+# Set to "0" to disable periodic remote sync (not recommended)
+remote-sync-interval: "30s"
 ```
 
-**Switch back to polling:**
+**Configuration precedence:**
+1. `BEADS_REMOTE_SYNC_INTERVAL` environment variable (highest)
+2. `remote-sync-interval` in `.beads/config.yaml`
+3. Default: 30 seconds
+
+### Remote Sync Interval
+
+The `remote-sync-interval` controls how often the daemon pulls from remote to check for updates from other clones.
+
+| Value | Use Case |
+|-------|----------|
+| `30s` (default) | Good balance for most workflows |
+| `1m` | Lower network traffic, acceptable for solo work |
+| `5m` | Very low traffic, for slow-changing projects |
+| `5s` (minimum) | Fastest updates, higher network usage |
+
+**Minimum value:** 5 seconds (lower values are clamped to prevent git rate limiting and excessive network traffic)
+
+**Disabling remote sync:**
+```bash
+# Set to 0 to disable (not recommended - other clones' changes won't sync)
+export BEADS_REMOTE_SYNC_INTERVAL=0
+```
+
+### Switch to Polling Mode
+
+For edge cases (NFS, containers, WSL) where fsnotify is unreliable:
 
 ```bash
 # Explicitly use polling mode
 BEADS_DAEMON_MODE=poll bd daemon --start
 
-# Or unset to use default
-unset BEADS_DAEMON_MODE
-bd daemons killall  # Restart with default (poll) mode
+# With custom interval
+bd daemon --start --interval 10s
 ```
 
 ### Troubleshooting Event-Driven Mode
@@ -425,7 +484,7 @@ rm .beads/.exclusive-lock
 - CI/CD pipelines (controlled sync timing)
 - Testing frameworks (isolated test runs)
 
-See [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) for complete documentation.
+See [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) for complete documentation.
 
 ## Common Daemon Issues
 
@@ -531,6 +590,6 @@ bd daemons killall
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
-- [EXCLUSIVE_LOCK.md](../EXCLUSIVE_LOCK.md) - External tool integration
+- [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) - External tool integration
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflow and merge strategies
 - [commands/daemons.md](../commands/daemons.md) - Daemon command reference

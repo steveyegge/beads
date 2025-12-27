@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -72,6 +73,33 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	}
 	if a.EstimatedMinutes != nil {
 		u["estimated_minutes"] = *a.EstimatedMinutes
+	}
+	if a.IssueType != nil {
+		u["issue_type"] = *a.IssueType
+	}
+	// Messaging fields (bd-kwro)
+	if a.Sender != nil {
+		u["sender"] = *a.Sender
+	}
+	if a.Ephemeral != nil {
+		u["ephemeral"] = *a.Ephemeral
+	}
+	if a.RepliesTo != nil {
+		u["replies_to"] = *a.RepliesTo
+	}
+	// Graph link fields (bd-fu83)
+	if a.RelatesTo != nil {
+		u["relates_to"] = *a.RelatesTo
+	}
+	if a.DuplicateOf != nil {
+		u["duplicate_of"] = *a.DuplicateOf
+	}
+	if a.SupersededBy != nil {
+		u["superseded_by"] = *a.SupersededBy
+	}
+	// Pinned field (bd-iea)
+	if a.Pinned != nil {
+		u["pinned"] = *a.Pinned
 	}
 	return u
 }
@@ -147,6 +175,13 @@ func (s *Server) handleCreate(req *Request) Response {
 		ExternalRef:        externalRef,
 		EstimatedMinutes:   createArgs.EstimatedMinutes,
 		Status:             types.StatusOpen,
+		// Messaging fields (bd-kwro)
+		Sender:    createArgs.Sender,
+		Ephemeral: createArgs.Ephemeral,
+		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
+		// ID generation (bd-hobo)
+		IDPrefix:  createArgs.IDPrefix,
+		CreatedBy: createArgs.CreatedBy,
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -206,6 +241,22 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// If RepliesTo was specified, add replies-to dependency (Decision 004)
+	if createArgs.RepliesTo != "" {
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: createArgs.RepliesTo,
+			Type:        types.DepRepliesTo,
+			ThreadID:    createArgs.RepliesTo, // Use parent ID as thread root
+		}
+		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to add replies-to dependency %s -> %s: %v", issue.ID, createArgs.RepliesTo, err),
+			}
+		}
+	}
+
 	// Add labels if specified
 	for _, label := range createArgs.Labels {
 		if err := store.AddLabel(ctx, issue.ID, label, s.reqActor(req)); err != nil {
@@ -261,8 +312,48 @@ func (s *Server) handleCreate(req *Request) Response {
 		}
 	}
 
+	// Add waits-for dependency if specified (bd-xo1o.2)
+	if createArgs.WaitsFor != "" {
+		// Validate gate type
+		gate := createArgs.WaitsForGate
+		if gate == "" {
+			gate = types.WaitsForAllChildren
+		}
+		if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid waits_for_gate value '%s' (valid: all-children, any-children)", gate),
+			}
+		}
+
+		// Create metadata JSON
+		meta := types.WaitsForMeta{
+			Gate: gate,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to serialize waits-for metadata: %v", err),
+			}
+		}
+
+		dep := &types.Dependency{
+			IssueID:     issue.ID,
+			DependsOnID: createArgs.WaitsFor,
+			Type:        types.DepWaitsFor,
+			Metadata:    string(metaJSON),
+		}
+		if err := store.AddDependency(ctx, dep, s.reqActor(req)); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to add waits-for dependency %s -> %s: %v", issue.ID, createArgs.WaitsFor, err),
+			}
+		}
+	}
+
 	// Emit mutation event for event-driven daemon
-	s.emitMutation(MutationCreate, issue.ID)
+	s.emitMutation(MutationCreate, issue.ID, issue.Title, issue.Assignee)
 
 	data, _ := json.Marshal(issue)
 	return Response{
@@ -289,6 +380,28 @@ func (s *Server) handleUpdate(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+
+	// Check if issue is a template (beads-1ra): templates are read-only
+	issue, err := store.GetIssue(ctx, updateArgs.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", updateArgs.ID),
+		}
+	}
+	if issue.IsTemplate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("cannot update template %s: templates are read-only; use 'bd molecule instantiate' to create a work item", updateArgs.ID),
+		}
+	}
+
 	updates := updatesFromArgs(updateArgs)
 	actor := s.reqActor(req)
 
@@ -355,18 +468,30 @@ func (s *Server) handleUpdate(req *Request) Response {
 
 	// Emit mutation event for event-driven daemon (only if any updates or label operations were performed)
 	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 {
-		s.emitMutation(MutationUpdate, updateArgs.ID)
-	}
-
-	issue, err := store.GetIssue(ctx, updateArgs.ID)
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to get updated issue: %v", err),
+		// Check if this was a status change - emit rich MutationStatus event
+		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
+			s.emitRichMutation(MutationEvent{
+				Type:      MutationStatus,
+				IssueID:   updateArgs.ID,
+				Title:     issue.Title,
+				Assignee:  issue.Assignee,
+				OldStatus: string(issue.Status),
+				NewStatus: *updateArgs.Status,
+			})
+		} else {
+			s.emitMutation(MutationUpdate, updateArgs.ID, issue.Title, issue.Assignee)
 		}
 	}
 
-	data, _ := json.Marshal(issue)
+	updatedIssue, getErr := store.GetIssue(ctx, updateArgs.ID)
+	if getErr != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get updated issue: %v", getErr),
+		}
+	}
+
+	data, _ := json.Marshal(updatedIssue)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -391,6 +516,28 @@ func (s *Server) handleClose(req *Request) Response {
 	}
 
 	ctx := s.reqCtx(req)
+
+	// Check if issue is a template (beads-1ra): templates are read-only
+	issue, err := store.GetIssue(ctx, closeArgs.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue != nil && issue.IsTemplate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("cannot close template %s: templates are read-only", closeArgs.ID),
+		}
+	}
+
+	// Capture old status for rich mutation event
+	oldStatus := ""
+	if issue != nil {
+		oldStatus = string(issue.Status)
+	}
+
 	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req)); err != nil {
 		return Response{
 			Success: false,
@@ -398,11 +545,38 @@ func (s *Server) handleClose(req *Request) Response {
 		}
 	}
 
-	// Emit mutation event for event-driven daemon
-	s.emitMutation(MutationUpdate, closeArgs.ID)
+	// Emit rich status change event for event-driven daemon
+	s.emitRichMutation(MutationEvent{
+		Type:      MutationStatus,
+		IssueID:   closeArgs.ID,
+		Title:     issue.Title,
+		Assignee:  issue.Assignee,
+		OldStatus: oldStatus,
+		NewStatus: "closed",
+	})
 
-	issue, _ := store.GetIssue(ctx, closeArgs.ID)
-	data, _ := json.Marshal(issue)
+	closedIssue, _ := store.GetIssue(ctx, closeArgs.ID)
+
+	// If SuggestNext is requested, find newly unblocked issues (GH#679)
+	if closeArgs.SuggestNext {
+		unblocked, err := store.GetNewlyUnblockedByClose(ctx, closeArgs.ID)
+		if err != nil {
+			// Non-fatal: still return the closed issue
+			unblocked = nil
+		}
+		result := CloseResult{
+			Closed:    closedIssue,
+			Unblocked: unblocked,
+		}
+		data, _ := json.Marshal(result)
+		return Response{
+			Success: true,
+			Data:    data,
+		}
+	}
+
+	// Backward compatible: just return the closed issue
+	data, _ := json.Marshal(closedIssue)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -464,14 +638,36 @@ func (s *Server) handleDelete(req *Request) Response {
 			continue
 		}
 
-		// Delete the issue
-		if err := store.DeleteIssue(ctx, issueID); err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+		// Check if issue is a template (beads-1ra): templates are read-only
+		if issue.IsTemplate {
+			errors = append(errors, fmt.Sprintf("%s: cannot delete template (templates are read-only)", issueID))
 			continue
 		}
 
+		// Create tombstone instead of hard delete (bd-rp4o fix)
+		// This preserves deletion history and prevents resurrection during sync
+		type tombstoner interface {
+			CreateTombstone(ctx context.Context, id string, actor string, reason string) error
+		}
+		if t, ok := store.(tombstoner); ok {
+			reason := deleteArgs.Reason
+			if reason == "" {
+				reason = "deleted via daemon"
+			}
+			if err := t.CreateTombstone(ctx, issueID, "daemon", reason); err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+				continue
+			}
+		} else {
+			// Fallback to hard delete if CreateTombstone not available
+			if err := store.DeleteIssue(ctx, issueID); err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", issueID, err))
+				continue
+			}
+		}
+
 		// Emit mutation event for event-driven daemon
-		s.emitMutation(MutationDelete, issueID)
+		s.emitMutation(MutationDelete, issueID, issue.Title, issue.Assignee)
 		deletedCount++
 	}
 
@@ -633,6 +829,23 @@ func (s *Server) handleList(req *Request) Response {
 	// Priority range
 	filter.PriorityMin = listArgs.PriorityMin
 	filter.PriorityMax = listArgs.PriorityMax
+
+	// Pinned filtering (bd-p8e)
+	filter.Pinned = listArgs.Pinned
+
+	// Template filtering (beads-1ra): exclude templates by default
+	if !listArgs.IncludeTemplates {
+		isTemplate := false
+		filter.IsTemplate = &isTemplate
+	}
+
+	// Parent filtering (bd-yqhh)
+	if listArgs.ParentID != "" {
+		filter.ParentID = &listArgs.ParentID
+	}
+
+	// Ephemeral filtering (bd-bkul)
+	filter.Ephemeral = listArgs.Ephemeral
 
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
@@ -1009,12 +1222,16 @@ func (s *Server) handleShow(req *Request) Response {
 		}
 	}
 
+	// Fetch comments
+	comments, _ := store.GetIssueComments(ctx, issue.ID)
+
 	// Create detailed response with related data
 	type IssueDetails struct {
 		*types.Issue
 		Labels       []string                              `json:"labels,omitempty"`
 		Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 		Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+		Comments     []*types.Comment                      `json:"comments,omitempty"`
 	}
 
 	details := &IssueDetails{
@@ -1022,6 +1239,7 @@ func (s *Server) handleShow(req *Request) Response {
 		Labels:       labels,
 		Dependencies: deps,
 		Dependents:   dependents,
+		Comments:     comments,
 	}
 
 	data, _ := json.Marshal(details)
@@ -1050,6 +1268,7 @@ func (s *Server) handleReady(req *Request) Response {
 
 	wf := types.WorkFilter{
 		Status:     types.StatusOpen,
+		Type:       readyArgs.Type,
 		Priority:   readyArgs.Priority,
 		Unassigned: readyArgs.Unassigned,
 		Limit:      readyArgs.Limit,
@@ -1059,6 +1278,9 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
 		wf.Assignee = &readyArgs.Assignee
+	}
+	if readyArgs.ParentID != "" {
+		wf.ParentID = &readyArgs.ParentID
 	}
 
 	ctx := s.reqCtx(req)
@@ -1071,6 +1293,44 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	data, _ := json.Marshal(issues)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleBlocked(req *Request) Response {
+	var blockedArgs BlockedArgs
+	if err := json.Unmarshal(req.Args, &blockedArgs); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid blocked args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available (global daemon deprecated - use local daemon instead with 'bd daemon' in your project)",
+		}
+	}
+
+	var wf types.WorkFilter
+	if blockedArgs.ParentID != "" {
+		wf.ParentID = &blockedArgs.ParentID
+	}
+
+	ctx := s.reqCtx(req)
+	blocked, err := store.GetBlockedIssues(ctx, wf)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get blocked issues: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(blocked)
 	return Response{
 		Success: true,
 		Data:    data,
@@ -1185,6 +1445,344 @@ func (s *Server) handleEpicStatus(req *Request) Response {
 		}
 	}
 
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// Gate handlers (bd-likt)
+
+func (s *Server) handleGateCreate(req *Request) Response {
+	var args GateCreateArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid gate create args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+	now := time.Now()
+
+	// Create gate issue
+	gate := &types.Issue{
+		Title:     args.Title,
+		IssueType: types.TypeGate,
+		Status:    types.StatusOpen,
+		Priority:  1, // Gates are typically high priority
+		Assignee:  "deacon/",
+		Ephemeral:      true, // Gates are wisps (ephemeral)
+		AwaitType: args.AwaitType,
+		AwaitID:   args.AwaitID,
+		Timeout:   args.Timeout,
+		Waiters:   args.Waiters,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	gate.ContentHash = gate.ComputeContentHash()
+
+	if err := store.CreateIssue(ctx, gate, s.reqActor(req)); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create gate: %v", err),
+		}
+	}
+
+	// Emit mutation event
+	s.emitMutation(MutationCreate, gate.ID, gate.Title, gate.Assignee)
+
+	data, _ := json.Marshal(GateCreateResult{ID: gate.ID})
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleGateList(req *Request) Response {
+	var args GateListArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid gate list args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Build filter for gates
+	gateType := types.TypeGate
+	filter := types.IssueFilter{
+		IssueType: &gateType,
+	}
+	if !args.All {
+		openStatus := types.StatusOpen
+		filter.Status = &openStatus
+	}
+
+	gates, err := store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list gates: %v", err),
+		}
+	}
+
+	data, _ := json.Marshal(gates)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleGateShow(req *Request) Response {
+	var args GateShowArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid gate show args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Resolve partial ID
+	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve gate ID: %v", err),
+		}
+	}
+
+	gate, err := store.GetIssue(ctx, gateID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get gate: %v", err),
+		}
+	}
+	if gate == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("gate %s not found", gateID),
+		}
+	}
+	if gate.IssueType != types.TypeGate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("%s is not a gate (type: %s)", gateID, gate.IssueType),
+		}
+	}
+
+	data, _ := json.Marshal(gate)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleGateClose(req *Request) Response {
+	var args GateCloseArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid gate close args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Resolve partial ID
+	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve gate ID: %v", err),
+		}
+	}
+
+	// Verify it's a gate
+	gate, err := store.GetIssue(ctx, gateID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get gate: %v", err),
+		}
+	}
+	if gate == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("gate %s not found", gateID),
+		}
+	}
+	if gate.IssueType != types.TypeGate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("%s is not a gate (type: %s)", gateID, gate.IssueType),
+		}
+	}
+
+	reason := args.Reason
+	if reason == "" {
+		reason = "Gate closed"
+	}
+
+	oldStatus := string(gate.Status)
+
+	if err := store.CloseIssue(ctx, gateID, reason, s.reqActor(req)); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to close gate: %v", err),
+		}
+	}
+
+	// Emit rich status change event
+	s.emitRichMutation(MutationEvent{
+		Type:      MutationStatus,
+		IssueID:   gateID,
+		OldStatus: oldStatus,
+		NewStatus: "closed",
+	})
+
+	closedGate, _ := store.GetIssue(ctx, gateID)
+	data, _ := json.Marshal(closedGate)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+func (s *Server) handleGateWait(req *Request) Response {
+	var args GateWaitArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid gate wait args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Resolve partial ID
+	gateID, err := utils.ResolvePartialID(ctx, store, args.ID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to resolve gate ID: %v", err),
+		}
+	}
+
+	// Get existing gate
+	gate, err := store.GetIssue(ctx, gateID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get gate: %v", err),
+		}
+	}
+	if gate == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("gate %s not found", gateID),
+		}
+	}
+	if gate.IssueType != types.TypeGate {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("%s is not a gate (type: %s)", gateID, gate.IssueType),
+		}
+	}
+	if gate.Status == types.StatusClosed {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("gate %s is already closed", gateID),
+		}
+	}
+
+	// Add new waiters (avoiding duplicates)
+	waiterSet := make(map[string]bool)
+	for _, w := range gate.Waiters {
+		waiterSet[w] = true
+	}
+	newWaiters := []string{}
+	for _, addr := range args.Waiters {
+		if !waiterSet[addr] {
+			newWaiters = append(newWaiters, addr)
+			waiterSet[addr] = true
+		}
+	}
+
+	addedCount := len(newWaiters)
+
+	if addedCount > 0 {
+		// Update waiters using SQLite directly
+		sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+		if !ok {
+			return Response{
+				Success: false,
+				Error:   "gate wait requires SQLite storage",
+			}
+		}
+
+		allWaiters := append(gate.Waiters, newWaiters...)
+		waitersJSON, _ := json.Marshal(allWaiters)
+
+		// Use raw SQL to update the waiters field
+		_, err = sqliteStore.UnderlyingDB().ExecContext(ctx, `UPDATE issues SET waiters = ?, updated_at = ? WHERE id = ?`,
+			string(waitersJSON), time.Now(), gateID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to add waiters: %v", err),
+			}
+		}
+
+		// Emit mutation event
+		s.emitMutation(MutationUpdate, gateID, gate.Title, gate.Assignee)
+	}
+
+	data, _ := json.Marshal(GateWaitResult{AddedCount: addedCount})
 	return Response{
 		Success: true,
 		Data:    data,

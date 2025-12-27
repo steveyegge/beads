@@ -1,13 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -111,8 +112,9 @@ func validateExportPath(path string) error {
 }
 
 var exportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export issues to JSONL format",
+	Use:     "export",
+	GroupID: "sync",
+	Short:   "Export issues to JSONL format",
 	Long: `Export all issues to JSON Lines format (one JSON object per line).
 Issues are sorted by ID for consistent diffs.
 
@@ -154,7 +156,7 @@ Examples:
 			_ = daemonClient.Close()
 			daemonClient = nil
 		}
-		
+
 		// Note: We used to check database file timestamps here, but WAL files
 		// get created when opening the DB, making timestamp checks unreliable.
 		// Instead, we check issue counts after loading (see below).
@@ -166,7 +168,7 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Error: no database path found\n")
 				os.Exit(1)
 			}
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)
@@ -205,6 +207,17 @@ Examples:
 		}
 		if len(labelsAny) > 0 {
 			filter.LabelsAny = labelsAny
+		}
+
+		// Priority exact match (use Changed() to properly handle P0)
+		if cmd.Flags().Changed("priority") {
+			priorityStr, _ := cmd.Flags().GetString("priority")
+			priority, err := validation.ValidatePriority(priorityStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --priority: %v\n", err)
+				os.Exit(1)
+			}
+			filter.Priority = &priority
 		}
 
 		// Priority ranges
@@ -289,20 +302,20 @@ Examples:
 		// Safety check: prevent exporting stale database that would lose issues
 		if output != "" && !force {
 			debug.Logf("Debug: checking staleness - output=%s, force=%v\n", output, force)
-			
+
 			// Read existing JSONL to get issue IDs
 			jsonlIDs, err := getIssueIDsFromJSONL(output)
 			if err != nil && !os.IsNotExist(err) {
 				fmt.Fprintf(os.Stderr, "Warning: failed to read existing JSONL for staleness check: %v\n", err)
 			}
-			
+
 			if err == nil && len(jsonlIDs) > 0 {
 				// Build set of DB issue IDs
 				dbIDs := make(map[string]bool)
 				for _, issue := range issues {
 					dbIDs[issue.ID] = true
 				}
-				
+
 				// Check if JSONL has any issues that DB doesn't have
 				var missingIDs []string
 				for id := range jsonlIDs {
@@ -310,17 +323,17 @@ Examples:
 						missingIDs = append(missingIDs, id)
 					}
 				}
-				
-				debug.Logf("Debug: JSONL has %d issues, DB has %d issues, missing %d\n", 
+
+				debug.Logf("Debug: JSONL has %d issues, DB has %d issues, missing %d\n",
 					len(jsonlIDs), len(issues), len(missingIDs))
-				
+
 				if len(missingIDs) > 0 {
-					sort.Strings(missingIDs)
+					slices.Sort(missingIDs)
 					fmt.Fprintf(os.Stderr, "Error: refusing to export stale database that would lose issues\n")
 					fmt.Fprintf(os.Stderr, "  Database has %d issues\n", len(issues))
 					fmt.Fprintf(os.Stderr, "  JSONL has %d issues\n", len(jsonlIDs))
 					fmt.Fprintf(os.Stderr, "  Export would lose %d issue(s):\n", len(missingIDs))
-					
+
 					// Show first 10 missing issues
 					showCount := len(missingIDs)
 					if showCount > 10 {
@@ -332,7 +345,7 @@ Examples:
 					if len(missingIDs) > 10 {
 						fmt.Fprintf(os.Stderr, "    ... and %d more\n", len(missingIDs)-10)
 					}
-					
+
 					fmt.Fprintf(os.Stderr, "\n")
 					fmt.Fprintf(os.Stderr, "This usually means:\n")
 					fmt.Fprintf(os.Stderr, "  1. You need to run 'bd import -i %s' to sync the latest changes\n", output)
@@ -345,9 +358,19 @@ Examples:
 			}
 		}
 
+		// Filter out wisps - they should never be exported to JSONL (bd-687g)
+		// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
+		filtered := make([]*types.Issue, 0, len(issues))
+		for _, issue := range issues {
+			if !issue.Ephemeral {
+				filtered = append(filtered, issue)
+			}
+		}
+		issues = filtered
+
 		// Sort by ID for consistent output
-		sort.Slice(issues, func(i, j int) bool {
-			return issues[i].ID < issues[j].ID
+		slices.SortFunc(issues, func(a, b *types.Issue) int {
+			return cmp.Compare(a.ID, b.ID)
 		})
 
 		// Populate dependencies for all issues in one query (avoids N+1 problem)
@@ -411,8 +434,8 @@ Examples:
 		skippedCount := 0
 		for _, issue := range issues {
 			if err := encoder.Encode(issue); err != nil {
-			 fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
-			 os.Exit(1)
+				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
+				os.Exit(1)
 			}
 
 			exportedIDs = append(exportedIDs, issue.ID)
@@ -472,19 +495,19 @@ Examples:
 				}
 			}
 
-		// Verify JSONL file integrity after export
-			 actualCount, err := countIssuesInJSONL(finalPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Export verification failed: %v\n", err)
-			os.Exit(1)
-		}
-		if actualCount != len(exportedIDs) {
-			fmt.Fprintf(os.Stderr, "Error: Export verification failed\n")
-			fmt.Fprintf(os.Stderr, "  Expected: %d issues\n", len(exportedIDs))
-			fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
-			fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
-			os.Exit(1)
-		}
+			// Verify JSONL file integrity after export
+			actualCount, err := countIssuesInJSONL(finalPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Export verification failed: %v\n", err)
+				os.Exit(1)
+			}
+			if actualCount != len(exportedIDs) {
+				fmt.Fprintf(os.Stderr, "Error: Export verification failed\n")
+				fmt.Fprintf(os.Stderr, "  Expected: %d issues\n", len(exportedIDs))
+				fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
+				fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
+				os.Exit(1)
+			}
 
 			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 			// Only do this when exporting to default JSONL path (not arbitrary outputs)
@@ -497,9 +520,9 @@ Examples:
 					fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
 				}
 			}
-	}
+		}
 
-	// Output statistics if JSON format requested
+		// Output statistics if JSON format requested
 		if jsonOutput {
 			stats := map[string]interface{}{
 				"success":      true,
@@ -524,8 +547,9 @@ func init() {
 	exportCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output export statistics in JSON format")
 
 	// Filter flags
+	registerPriorityFlag(exportCmd, "")
 	exportCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
-	exportCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
+	exportCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, merge-request, molecule, gate)")
 	exportCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")
 	exportCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE)")
 

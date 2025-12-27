@@ -11,6 +11,7 @@ from .bd_client import BdClientBase, BdError
 from .models import (
     AddDependencyParams,
     BlockedIssue,
+    BlockedParams,
     CloseIssueParams,
     CreateIssueParams,
     InitParams,
@@ -377,6 +378,14 @@ class BdDaemonClient(BdClientBase):
             args["issue_type"] = params.issue_type
         if params.assignee:
             args["assignee"] = params.assignee
+        if params.labels:
+            args["labels"] = params.labels
+        if params.labels_any:
+            args["labels_any"] = params.labels_any
+        if params.query:
+            args["query"] = params.query
+        if params.unassigned:
+            args["unassigned"] = params.unassigned
         if params.limit:
             args["limit"] = params.limit
 
@@ -414,8 +423,19 @@ class BdDaemonClient(BdClientBase):
             args["assignee"] = params.assignee
         if params.priority is not None:
             args["priority"] = params.priority
+        if params.labels:
+            args["labels"] = params.labels
+        if params.labels_any:
+            args["labels_any"] = params.labels_any
+        if params.unassigned:
+            args["unassigned"] = params.unassigned
+        if params.sort_policy:
+            args["sort_policy"] = params.sort_policy
         if params.limit:
             args["limit"] = params.limit
+        # Parent filtering (descendants of a bead/epic)
+        if params.parent_id:
+            args["parent_id"] = params.parent_id
 
         data = await self._send_request("ready", args)
         issues_data = json.loads(data) if isinstance(data, str) else data
@@ -435,18 +455,25 @@ class BdDaemonClient(BdClientBase):
             stats_data = {}
         return Stats(**stats_data)
 
-    async def blocked(self) -> List[BlockedIssue]:
+    async def blocked(self, params: Optional[BlockedParams] = None) -> List[BlockedIssue]:
         """Get blocked issues.
+
+        Args:
+            params: Query parameters (optional)
 
         Returns:
             List of blocked issues with their blockers
-
-        Note:
-            This operation may not be implemented in daemon RPC yet
         """
-        # Note: blocked operation may not be in RPC protocol yet
-        # This is a placeholder for when it's added
-        raise NotImplementedError("Blocked operation not yet supported via daemon")
+        params = params or BlockedParams()
+        args: Dict[str, Any] = {}
+        if params.parent_id:
+            args["parent_id"] = params.parent_id
+
+        data = await self._send_request("blocked", args)
+        issues_data = json.loads(data) if isinstance(data, str) else data
+        if issues_data is None:
+            return []
+        return [BlockedIssue(**issue) for issue in issues_data]
 
     async def inspect_migration(self) -> dict[str, Any]:
         """Get migration plan and database state for agent analysis.

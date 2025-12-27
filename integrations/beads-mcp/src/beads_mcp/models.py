@@ -1,15 +1,99 @@
 """Pydantic models for beads issue tracker types."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Any
 
 from pydantic import BaseModel, Field, field_validator
 
 # Type aliases for issue statuses, types, and dependencies
-IssueStatus = Literal["open", "in_progress", "blocked", "closed"]
+IssueStatus = Literal["open", "in_progress", "blocked", "deferred", "closed"]
 IssueType = Literal["bug", "feature", "task", "epic", "chore"]
 DependencyType = Literal["blocks", "related", "parent-child", "discovered-from"]
+OperationAction = Literal["created", "updated", "closed", "reopened"]
 
+
+# =============================================================================
+# CONTEXT ENGINEERING: Minimal Models for List Views
+# =============================================================================
+# These lightweight models reduce context window usage by ~80% for list operations.
+# Use full Issue model only when detailed information is needed (show command).
+
+class IssueMinimal(BaseModel):
+    """Minimal issue model for list views (~80% smaller than full Issue).
+    
+    Use this for ready_work, list_issues, and other bulk operations.
+    For full details including dependencies, use Issue model via show().
+    """
+    id: str
+    title: str
+    status: IssueStatus
+    priority: int = Field(ge=0, le=4)
+    issue_type: IssueType
+    assignee: str | None = None
+    labels: list[str] = Field(default_factory=list)
+    dependency_count: int = 0
+    dependent_count: int = 0
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: int) -> int:
+        if not 0 <= v <= 4:
+            raise ValueError("Priority must be between 0 and 4")
+        return v
+
+
+class CompactedResult(BaseModel):
+    """Result container for compacted list responses.
+
+    When results exceed threshold, returns preview + metadata instead of full data.
+    This prevents context window overflow for large issue lists.
+    """
+    compacted: bool = True
+    total_count: int
+    preview: list[IssueMinimal]
+    preview_count: int
+    hint: str = "Use show(issue_id) for full issue details"
+
+
+class BriefIssue(BaseModel):
+    """Ultra-minimal issue for scanning (4 fields).
+
+    Use for quick scans where only identification + priority needed.
+    ~95% smaller than full Issue.
+    """
+    id: str
+    title: str
+    status: IssueStatus
+    priority: int = Field(ge=0, le=4)
+
+
+class BriefDep(BaseModel):
+    """Brief dependency for overview (5 fields).
+
+    Use with brief_deps=True to get full issue but compact dependencies.
+    ~90% smaller than full LinkedIssue.
+    """
+    id: str
+    title: str
+    status: IssueStatus
+    priority: int = Field(ge=0, le=4)
+    dependency_type: DependencyType | None = None
+
+
+class OperationResult(BaseModel):
+    """Minimal confirmation for write operations.
+
+    Default response for create/update/close/reopen when verbose=False.
+    ~97% smaller than returning full Issue object.
+    """
+    id: str
+    action: OperationAction
+    message: str | None = None
+
+
+# =============================================================================
+# ORIGINAL MODELS (unchanged for backward compatibility)
+# =============================================================================
 
 class IssueBase(BaseModel):
     """Base issue model with shared fields."""
@@ -121,6 +205,17 @@ class ReadyWorkParams(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
     priority: int | None = Field(default=None, ge=0, le=4)
     assignee: str | None = None
+    labels: list[str] | None = None  # AND: must have ALL labels
+    labels_any: list[str] | None = None  # OR: must have at least one
+    unassigned: bool = False  # Filter to only unassigned issues
+    sort_policy: str | None = None  # hybrid, priority, oldest
+    parent_id: str | None = None  # Filter to descendants of this bead/epic
+
+
+class BlockedParams(BaseModel):
+    """Parameters for querying blocked issues."""
+
+    parent_id: str | None = None  # Filter to descendants of this bead/epic
 
 
 class ListIssuesParams(BaseModel):
@@ -130,6 +225,10 @@ class ListIssuesParams(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=4)
     issue_type: IssueType | None = None
     assignee: str | None = None
+    labels: list[str] | None = None  # AND: must have ALL labels
+    labels_any: list[str] | None = None  # OR: must have at least one
+    query: str | None = None  # Search in title (case-insensitive)
+    unassigned: bool = False  # Filter to only unassigned issues
     limit: int = Field(default=20, ge=1, le=100)  # Reduced to avoid MCP buffer overflow
 
 
@@ -170,63 +269,3 @@ class InitResult(BaseModel):
     database: str
     prefix: str
     message: str
-
-
-# Agent Mail Models
-
-class MailSendParams(BaseModel):
-    """Parameters for sending mail."""
-    
-    to: list[str]
-    subject: str
-    body: str
-    urgent: bool = False
-    cc: list[str] | None = None
-    project_key: str | None = None
-    sender_name: str | None = None
-
-
-class MailInboxParams(BaseModel):
-    """Parameters for checking inbox."""
-    
-    limit: int = 20
-    urgent_only: bool = False
-    unread_only: bool = False
-    cursor: str | None = None
-    agent_name: str | None = None
-    project_key: str | None = None
-
-
-class MailReadParams(BaseModel):
-    """Parameters for reading mail."""
-    
-    message_id: int
-    mark_read: bool = True
-    agent_name: str | None = None
-    project_key: str | None = None
-
-
-class MailReplyParams(BaseModel):
-    """Parameters for replying to mail."""
-    
-    message_id: int
-    body: str
-    subject: str | None = None
-    agent_name: str | None = None
-    project_key: str | None = None
-
-
-class MailAckParams(BaseModel):
-    """Parameters for acknowledging mail."""
-    
-    message_id: int
-    agent_name: str | None = None
-    project_key: str | None = None
-
-
-class MailDeleteParams(BaseModel):
-    """Parameters for deleting mail."""
-    
-    message_id: int
-    agent_name: str | None = None
-    project_key: str | None = None

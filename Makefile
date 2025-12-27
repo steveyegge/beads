@@ -8,12 +8,12 @@ all: build
 # Build the bd binary
 build:
 	@echo "Building bd..."
-	go build -o bd ./cmd/bd
+	go build -ldflags="-X main.Build=$$(git rev-parse --short HEAD)" -o bd ./cmd/bd
 
 # Run all tests (skips known broken tests listed in .test-skip)
 test:
 	@echo "Running tests..."
-	@./scripts/test.sh
+	@TEST_COVER=1 ./scripts/test.sh
 
 # Run performance benchmarks (10K and 20K issue databases with automatic CPU profiling)
 # Generates CPU profile: internal/storage/sqlite/bench-cpu-<timestamp>.prof

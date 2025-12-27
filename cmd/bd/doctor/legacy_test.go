@@ -40,6 +40,18 @@ func TestCheckAgentDocumentation(t *testing.T) {
 			expectFix:      false,
 		},
 		{
+			name:           "claude.local.md exists (local-only)",
+			files:          []string{"claude.local.md"},
+			expectedStatus: "ok",
+			expectFix:      false,
+		},
+		{
+			name:           ".claude/claude.local.md exists (local-only)",
+			files:          []string{".claude/claude.local.md"},
+			expectedStatus: "ok",
+			expectFix:      false,
+		},
+		{
 			name:           "multiple docs",
 			files:          []string{"AGENTS.md", "CLAUDE.md"},
 			expectedStatus: "ok",
@@ -123,6 +135,22 @@ func TestCheckLegacyBeadsSlashCommands(t *testing.T) {
 			name: "legacy slash command in .claude/CLAUDE.md",
 			fileContent: map[string]string{
 				".claude/CLAUDE.md": "Use /beads:show to see an issue.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "legacy slash command in claude.local.md",
+			fileContent: map[string]string{
+				"claude.local.md": "Use /beads:show to see an issue.",
+			},
+			expectedStatus: "warning",
+			expectWarning:  true,
+		},
+		{
+			name: "legacy slash command in .claude/claude.local.md",
+			fileContent: map[string]string{
+				".claude/claude.local.md": "Use /beads:ready to see ready issues.",
 			},
 			expectedStatus: "warning",
 			expectWarning:  true,
@@ -250,6 +278,24 @@ func TestCheckLegacyJSONLFilename(t *testing.T) {
 			expectedStatus: "ok",
 			expectWarning:  false,
 		},
+		{
+			name:           "interactions.jsonl ignored as system file (GH#709)",
+			files:          []string{"issues.jsonl", "interactions.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
+		{
+			name:           "molecules.jsonl ignored as system file",
+			files:          []string{"issues.jsonl", "molecules.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
+		{
+			name:           "all system files ignored together",
+			files:          []string{"issues.jsonl", "deletions.jsonl", "interactions.jsonl", "molecules.jsonl"},
+			expectedStatus: "ok",
+			expectWarning:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -361,6 +407,49 @@ func TestCheckLegacyJSONLConfig(t *testing.T) {
 				t.Error("Expected fix message for warning, got empty string")
 			}
 		})
+	}
+}
+
+func TestCheckDatabaseConfig_IgnoresSystemJSONLs(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure issues.jsonl, but only create interactions.jsonl.
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"database":"beads.db","jsonl_export":"issues.jsonl"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte(`{"id":"x"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckDatabaseConfig(tmpDir)
+	if check.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s\n%s", check.Status, check.Message, check.Detail)
+	}
+}
+
+func TestCheckDatabaseConfig_SystemJSONLExportIsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"database":"beads.db","jsonl_export":"interactions.jsonl"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte(`{"id":"x"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckDatabaseConfig(tmpDir)
+	if check.Status != "error" {
+		t.Fatalf("expected error, got %s: %s", check.Status, check.Message)
 	}
 }
 

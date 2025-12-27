@@ -165,14 +165,14 @@ func TestLibraryIntegration(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := beads.NewSQLiteStorage(dbPath)
+	ctx := context.Background()
+	store, err := beads.NewSQLiteStorage(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
 	defer store.Close()
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
@@ -328,13 +328,12 @@ func TestBatchCreateIssues(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := beads.NewSQLiteStorage(dbPath)
+	ctx := context.Background()
+	store, err := beads.NewSQLiteStorage(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
 	defer store.Close()
-
-	ctx := context.Background()
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
@@ -404,14 +403,14 @@ func TestRoundTripIssue(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := beads.NewSQLiteStorage(dbPath)
+	ctx := context.Background()
+	store, err := beads.NewSQLiteStorage(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}
 	defer store.Close()
 
 	// CRITICAL (bd-166): Set issue_prefix to prevent "database not initialized" errors
-	ctx := context.Background()
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
@@ -492,7 +491,7 @@ func TestImportWithDeletedParent(t *testing.T) {
 
 	// Phase 2: Create fresh database and import only the child
 	// (simulating scenario where parent was deleted)
-	store, err := beads.NewSQLiteStorage(dbPath)
+	store, err := beads.NewSQLiteStorage(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("NewSQLiteStorage failed: %v", err)
 	}

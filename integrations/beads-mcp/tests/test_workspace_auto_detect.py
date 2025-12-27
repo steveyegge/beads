@@ -107,7 +107,7 @@ async def test_get_client_no_workspace_found():
                 # Verify error message is helpful
                 error_msg = str(exc_info.value)
                 assert "No beads workspace found" in error_msg
-                assert "set_context" in error_msg
+                assert "context" in error_msg
                 assert ".beads/" in error_msg
     finally:
         current_workspace.reset(token)

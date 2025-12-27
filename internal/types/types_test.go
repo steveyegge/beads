@@ -503,6 +503,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 }
 
 func TestDependencyTypeIsValid(t *testing.T) {
+	// IsValid now accepts any non-empty string up to 50 chars (Decision 004)
 	tests := []struct {
 		depType DependencyType
 		valid   bool
@@ -511,14 +512,127 @@ func TestDependencyTypeIsValid(t *testing.T) {
 		{DepRelated, true},
 		{DepParentChild, true},
 		{DepDiscoveredFrom, true},
-		{DependencyType("invalid"), false},
-		{DependencyType(""), false},
+		{DepRepliesTo, true},
+		{DepRelatesTo, true},
+		{DepDuplicates, true},
+		{DepSupersedes, true},
+		{DepAuthoredBy, true},
+		{DepAssignedTo, true},
+		{DepApprovedBy, true},
+		{DependencyType("custom-type"), true},  // Custom types are now valid
+		{DependencyType("any-string"), true},   // Any non-empty string is valid
+		{DependencyType(""), false},            // Empty is still invalid
+		{DependencyType("this-is-a-very-long-dependency-type-that-exceeds-fifty-characters"), false}, // Too long
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.depType), func(t *testing.T) {
 			if got := tt.depType.IsValid(); got != tt.valid {
 				t.Errorf("DependencyType(%q).IsValid() = %v, want %v", tt.depType, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestDependencyTypeIsWellKnown(t *testing.T) {
+	tests := []struct {
+		depType   DependencyType
+		wellKnown bool
+	}{
+		{DepBlocks, true},
+		{DepRelated, true},
+		{DepParentChild, true},
+		{DepDiscoveredFrom, true},
+		{DepRepliesTo, true},
+		{DepRelatesTo, true},
+		{DepDuplicates, true},
+		{DepSupersedes, true},
+		{DepAuthoredBy, true},
+		{DepAssignedTo, true},
+		{DepApprovedBy, true},
+		{DependencyType("custom-type"), false},
+		{DependencyType("unknown"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.depType), func(t *testing.T) {
+			if got := tt.depType.IsWellKnown(); got != tt.wellKnown {
+				t.Errorf("DependencyType(%q).IsWellKnown() = %v, want %v", tt.depType, got, tt.wellKnown)
+			}
+		})
+	}
+}
+
+func TestDependencyTypeAffectsReadyWork(t *testing.T) {
+	tests := []struct {
+		depType DependencyType
+		affects bool
+	}{
+		{DepBlocks, true},
+		{DepParentChild, true},
+		{DepConditionalBlocks, true},
+		{DepWaitsFor, true},
+		{DepRelated, false},
+		{DepDiscoveredFrom, false},
+		{DepRepliesTo, false},
+		{DepRelatesTo, false},
+		{DepDuplicates, false},
+		{DepSupersedes, false},
+		{DepAuthoredBy, false},
+		{DepAssignedTo, false},
+		{DepApprovedBy, false},
+		{DependencyType("custom-type"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.depType), func(t *testing.T) {
+			if got := tt.depType.AffectsReadyWork(); got != tt.affects {
+				t.Errorf("DependencyType(%q).AffectsReadyWork() = %v, want %v", tt.depType, got, tt.affects)
+			}
+		})
+	}
+}
+
+func TestIsFailureClose(t *testing.T) {
+	tests := []struct {
+		name        string
+		closeReason string
+		isFailure   bool
+	}{
+		// Failure keywords
+		{"failed", "Task failed due to timeout", true},
+		{"rejected", "PR was rejected by reviewer", true},
+		{"wontfix", "Closed as wontfix", true},
+		{"won't fix", "Won't fix - by design", true},
+		{"cancelled", "Work cancelled", true},
+		{"canceled", "Work canceled", true},
+		{"abandoned", "Abandoned feature", true},
+		{"blocked", "Blocked by external dependency", true},
+		{"error", "Encountered error during execution", true},
+		{"timeout", "Test timeout exceeded", true},
+		{"aborted", "Build aborted", true},
+
+		// Case insensitive
+		{"FAILED upper", "FAILED", true},
+		{"Failed mixed", "Failed to build", true},
+
+		// Success cases (no failure keywords)
+		{"completed", "Completed successfully", false},
+		{"done", "Done", false},
+		{"merged", "Merged to main", false},
+		{"fixed", "Bug fixed", false},
+		{"implemented", "Feature implemented", false},
+		{"empty", "", false},
+
+		// Partial matches should work
+		{"prefixed", "prefailed", true}, // contains "failed"
+		{"suffixed", "failedtest", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsFailureClose(tt.closeReason); got != tt.isFailure {
+				t.Errorf("IsFailureClose(%q) = %v, want %v", tt.closeReason, got, tt.isFailure)
 			}
 		})
 	}
@@ -844,6 +958,31 @@ func TestIsExpired(t *testing.T) {
 			ttl:     7 * 24 * time.Hour,
 			expired: false,
 		},
+		{
+			name: "negative TTL means immediately expired (bd-4q8 --hard mode)",
+			issue: Issue{
+				ID:        "test-14",
+				Title:     "(deleted)",
+				Status:    StatusTombstone,
+				Priority:  0,
+				IssueType: TypeTask,
+				DeletedAt: timePtr(now), // Just deleted NOW
+			},
+			ttl:     -1, // Negative TTL = immediate expiration
+			expired: true,
+		},
+		{
+			name: "non-tombstone never expires even with negative TTL",
+			issue: Issue{
+				ID:        "test-15",
+				Title:     "Open issue",
+				Status:    StatusOpen,
+				Priority:  0,
+				IssueType: TypeTask,
+			},
+			ttl:     -1,
+			expired: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -895,4 +1034,371 @@ func containsMiddle(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestSetDefaults(t *testing.T) {
+	tests := []struct {
+		name           string
+		issue          Issue
+		expectedStatus Status
+		expectedType   IssueType
+	}{
+		{
+			name:           "empty fields get defaults",
+			issue:          Issue{Title: "Test"},
+			expectedStatus: StatusOpen,
+			expectedType:   TypeTask,
+		},
+		{
+			name: "existing status preserved",
+			issue: Issue{
+				Title:  "Test",
+				Status: StatusInProgress,
+			},
+			expectedStatus: StatusInProgress,
+			expectedType:   TypeTask,
+		},
+		{
+			name: "existing type preserved",
+			issue: Issue{
+				Title:     "Test",
+				IssueType: TypeBug,
+			},
+			expectedStatus: StatusOpen,
+			expectedType:   TypeBug,
+		},
+		{
+			name: "all fields set - no changes",
+			issue: Issue{
+				Title:     "Test",
+				Status:    StatusClosed,
+				IssueType: TypeFeature,
+				ClosedAt:  timePtr(time.Now()),
+			},
+			expectedStatus: StatusClosed,
+			expectedType:   TypeFeature,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := tt.issue
+			issue.SetDefaults()
+
+			if issue.Status != tt.expectedStatus {
+				t.Errorf("SetDefaults() Status = %v, want %v", issue.Status, tt.expectedStatus)
+			}
+			if issue.IssueType != tt.expectedType {
+				t.Errorf("SetDefaults() IssueType = %v, want %v", issue.IssueType, tt.expectedType)
+			}
+		})
+	}
+}
+
+// EntityRef tests (bd-nmch: HOP entity tracking foundation)
+
+func TestEntityRefIsEmpty(t *testing.T) {
+	tests := []struct {
+		name   string
+		ref    *EntityRef
+		expect bool
+	}{
+		{"nil ref", nil, true},
+		{"empty ref", &EntityRef{}, true},
+		{"only name", &EntityRef{Name: "test"}, false},
+		{"only platform", &EntityRef{Platform: "gastown"}, false},
+		{"only org", &EntityRef{Org: "steveyegge"}, false},
+		{"only id", &EntityRef{ID: "polecat-nux"}, false},
+		{"full ref", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ref.IsEmpty(); got != tt.expect {
+				t.Errorf("EntityRef.IsEmpty() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestEntityRefURI(t *testing.T) {
+	tests := []struct {
+		name   string
+		ref    *EntityRef
+		expect string
+	}{
+		{"nil ref", nil, ""},
+		{"empty ref", &EntityRef{}, ""},
+		{"missing platform", &EntityRef{Org: "steveyegge", ID: "polecat-nux"}, ""},
+		{"missing org", &EntityRef{Platform: "gastown", ID: "polecat-nux"}, ""},
+		{"missing id", &EntityRef{Platform: "gastown", Org: "steveyegge"}, ""},
+		{"full ref", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
+		{"with name", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
+		{"github platform", &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"}, "entity://hop/github/anthropics/claude-code"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ref.URI(); got != tt.expect {
+				t.Errorf("EntityRef.URI() = %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestEntityRefString(t *testing.T) {
+	tests := []struct {
+		name   string
+		ref    *EntityRef
+		expect string
+	}{
+		{"nil ref", nil, ""},
+		{"empty ref", &EntityRef{}, ""},
+		{"only name", &EntityRef{Name: "polecat/Nux"}, "polecat/Nux"},
+		{"full ref with name", &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "polecat/Nux"},
+		{"full ref without name", &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}, "entity://hop/gastown/steveyegge/polecat-nux"},
+		{"only id", &EntityRef{ID: "polecat-nux"}, "polecat-nux"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ref.String(); got != tt.expect {
+				t.Errorf("EntityRef.String() = %q, want %q", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestParseEntityURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		uri       string
+		expect    *EntityRef
+		expectErr bool
+	}{
+		{
+			name:   "valid URI",
+			uri:    "entity://hop/gastown/steveyegge/polecat-nux",
+			expect: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"},
+		},
+		{
+			name:   "github URI",
+			uri:    "entity://hop/github/anthropics/claude-code",
+			expect: &EntityRef{Platform: "github", Org: "anthropics", ID: "claude-code"},
+		},
+		{
+			name:   "id with slashes",
+			uri:    "entity://hop/gastown/steveyegge/polecat/nux",
+			expect: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat/nux"},
+		},
+		{
+			name:      "wrong prefix",
+			uri:       "beads://hop/gastown/steveyegge/polecat-nux",
+			expectErr: true,
+		},
+		{
+			name:      "missing hop",
+			uri:       "entity://gastown/steveyegge/polecat-nux",
+			expectErr: true,
+		},
+		{
+			name:      "too few parts",
+			uri:       "entity://hop/gastown/steveyegge",
+			expectErr: true,
+		},
+		{
+			name:      "empty platform",
+			uri:       "entity://hop//steveyegge/polecat-nux",
+			expectErr: true,
+		},
+		{
+			name:      "empty org",
+			uri:       "entity://hop/gastown//polecat-nux",
+			expectErr: true,
+		},
+		{
+			name:      "empty id",
+			uri:       "entity://hop/gastown/steveyegge/",
+			expectErr: true,
+		},
+		{
+			name:      "empty string",
+			uri:       "",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseEntityURI(tt.uri)
+			if tt.expectErr {
+				if err == nil {
+					t.Errorf("ParseEntityURI(%q) expected error, got nil", tt.uri)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ParseEntityURI(%q) unexpected error: %v", tt.uri, err)
+				return
+			}
+			if got.Platform != tt.expect.Platform || got.Org != tt.expect.Org || got.ID != tt.expect.ID {
+				t.Errorf("ParseEntityURI(%q) = %+v, want %+v", tt.uri, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestEntityRefRoundTrip(t *testing.T) {
+	// Test that URI() and ParseEntityURI() are inverses
+	original := &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"}
+	uri := original.URI()
+	parsed, err := ParseEntityURI(uri)
+	if err != nil {
+		t.Fatalf("ParseEntityURI(%q) error: %v", uri, err)
+	}
+	if parsed.Platform != original.Platform || parsed.Org != original.Org || parsed.ID != original.ID {
+		t.Errorf("Round trip failed: got %+v, want %+v", parsed, original)
+	}
+}
+
+func TestComputeContentHashWithCreator(t *testing.T) {
+	// Test that Creator field affects the content hash (bd-m7ib)
+	issue1 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusOpen,
+		Priority:  2,
+		IssueType: TypeTask,
+	}
+
+	issue2 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusOpen,
+		Priority:  2,
+		IssueType: TypeTask,
+		Creator:   &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"},
+	}
+
+	hash1 := issue1.ComputeContentHash()
+	hash2 := issue2.ComputeContentHash()
+
+	if hash1 == hash2 {
+		t.Error("Expected different hash when Creator is set")
+	}
+
+	// Same creator should produce same hash
+	issue3 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusOpen,
+		Priority:  2,
+		IssueType: TypeTask,
+		Creator:   &EntityRef{Name: "polecat/Nux", Platform: "gastown", Org: "steveyegge", ID: "polecat-nux"},
+	}
+
+	hash3 := issue3.ComputeContentHash()
+	if hash2 != hash3 {
+		t.Error("Expected same hash for identical Creator")
+	}
+}
+
+// Validation tests (bd-du9h: HOP proof-of-stake)
+
+func TestValidationIsValidOutcome(t *testing.T) {
+	tests := []struct {
+		outcome string
+		valid   bool
+	}{
+		{ValidationAccepted, true},
+		{ValidationRejected, true},
+		{ValidationRevisionRequested, true},
+		{"unknown", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.outcome, func(t *testing.T) {
+			v := &Validation{Outcome: tt.outcome}
+			if got := v.IsValidOutcome(); got != tt.valid {
+				t.Errorf("Validation{Outcome: %q}.IsValidOutcome() = %v, want %v", tt.outcome, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestComputeContentHashWithValidations(t *testing.T) {
+	// Test that Validations field affects the content hash (bd-du9h)
+	ts := time.Date(2025, 12, 22, 10, 30, 0, 0, time.UTC)
+
+	issue1 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusClosed,
+		Priority:  2,
+		IssueType: TypeTask,
+		ClosedAt:  &ts,
+	}
+
+	issue2 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusClosed,
+		Priority:  2,
+		IssueType: TypeTask,
+		ClosedAt:  &ts,
+		Validations: []Validation{
+			{
+				Validator: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "refinery"},
+				Outcome:   ValidationAccepted,
+				Timestamp: ts,
+			},
+		},
+	}
+
+	hash1 := issue1.ComputeContentHash()
+	hash2 := issue2.ComputeContentHash()
+
+	if hash1 == hash2 {
+		t.Error("Expected different hash when Validations is set")
+	}
+
+	// Same validations should produce same hash
+	issue3 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusClosed,
+		Priority:  2,
+		IssueType: TypeTask,
+		ClosedAt:  &ts,
+		Validations: []Validation{
+			{
+				Validator: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "refinery"},
+				Outcome:   ValidationAccepted,
+				Timestamp: ts,
+			},
+		},
+	}
+
+	hash3 := issue3.ComputeContentHash()
+	if hash2 != hash3 {
+		t.Error("Expected same hash for identical Validations")
+	}
+
+	// Test with score
+	score := float32(0.95)
+	issue4 := Issue{
+		Title:     "Test Issue",
+		Status:    StatusClosed,
+		Priority:  2,
+		IssueType: TypeTask,
+		ClosedAt:  &ts,
+		Validations: []Validation{
+			{
+				Validator: &EntityRef{Platform: "gastown", Org: "steveyegge", ID: "refinery"},
+				Outcome:   ValidationAccepted,
+				Timestamp: ts,
+				Score:     &score,
+			},
+		},
+	}
+
+	hash4 := issue4.ComputeContentHash()
+	if hash2 == hash4 {
+		t.Error("Expected different hash when Score is added")
+	}
 }

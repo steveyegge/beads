@@ -236,6 +236,57 @@ func TestDeleteIssue(t *testing.T) {
 	}
 }
 
+// TestDeleteIssueWithComments verifies that DeleteIssue also removes comments (bd-687g)
+func TestDeleteIssueWithComments(t *testing.T) {
+	store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+	ctx := context.Background()
+
+	issue := &types.Issue{
+		ID:        "bd-1",
+		Title:     "Issue with Comments",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Add a comment to the comments table (not events)
+	if _, err := store.AddIssueComment(ctx, "bd-1", "test-author", "This is a test comment"); err != nil {
+		t.Fatalf("Failed to add comment: %v", err)
+	}
+
+	// Verify comment exists
+	commentsMap, err := store.GetCommentsForIssues(ctx, []string{"bd-1"})
+	if err != nil {
+		t.Fatalf("Failed to get comments: %v", err)
+	}
+	if len(commentsMap["bd-1"]) != 1 {
+		t.Fatalf("Expected 1 comment, got %d", len(commentsMap["bd-1"]))
+	}
+
+	// Delete the issue
+	if err := store.DeleteIssue(ctx, "bd-1"); err != nil {
+		t.Fatalf("DeleteIssue failed: %v", err)
+	}
+
+	// Verify issue deleted
+	if issue, _ := store.GetIssue(ctx, "bd-1"); issue != nil {
+		t.Error("Issue should be deleted")
+	}
+
+	// Verify comments also deleted (should not leak)
+	commentsMap, err = store.GetCommentsForIssues(ctx, []string{"bd-1"})
+	if err != nil {
+		t.Fatalf("Failed to get comments after delete: %v", err)
+	}
+	if len(commentsMap["bd-1"]) != 0 {
+		t.Errorf("Comments should be deleted, but found %d", len(commentsMap["bd-1"]))
+	}
+}
+
 func TestBuildIDSet(t *testing.T) {
 	ids := []string{"bd-1", "bd-2", "bd-3"}
 	idSet := buildIDSet(ids)

@@ -6,11 +6,18 @@ import (
 )
 
 // ExtractIssuePrefix extracts the prefix from an issue ID like "bd-123" -> "bd"
-// Uses the last hyphen before a numeric or hash suffix:
+// Uses the last hyphen before a numeric or hash-like suffix:
 //   - "beads-vscode-1" -> "beads-vscode" (numeric suffix)
-//   - "web-app-a3f8e9" -> "web-app" (hash suffix)
+//   - "web-app-a3f8e9" -> "web-app" (hash suffix with digits)
 //   - "my-cool-app-123" -> "my-cool-app" (numeric suffix)
-// Only uses first hyphen for non-ID suffixes like "vc-baseline-test" -> "vc"
+//   - "bd-a3f" -> "bd" (3-char hash)
+//
+// Falls back to first hyphen when suffix looks like an English word (4+ chars, no digits):
+//   - "vc-baseline-test" -> "vc" (word-like suffix: "test" is not a hash)
+//   - "bd-multi-part-id" -> "bd" (word-like suffix: "id" is too short but "part-id" path)
+//
+// This distinguishes hash IDs (which may contain letters but have digits or are 3 chars)
+// from multi-part IDs where the suffix after the first hyphen is the entire ID.
 func ExtractIssuePrefix(issueID string) string {
 	// Try last hyphen first (handles multi-part prefixes like "beads-vscode-1")
 	lastIdx := strings.LastIndex(issueID, "-")
@@ -19,35 +26,44 @@ func ExtractIssuePrefix(issueID string) string {
 	}
 
 	suffix := issueID[lastIdx+1:]
-	// Check if suffix looks like an issue ID component (numeric or hash-like)
-	if len(suffix) > 0 {
-		// Extract just the numeric part (handle "123.1.2" -> check "123")
-		numPart := suffix
-		if dotIdx := strings.Index(suffix, "."); dotIdx > 0 {
-			numPart = suffix[:dotIdx]
-		}
-
-		// Check if it's numeric
-		var num int
-		if _, err := fmt.Sscanf(numPart, "%d", &num); err == nil {
-			// Suffix is numeric, use last hyphen
-			return issueID[:lastIdx]
-		}
-
-		// Check if it looks like a hash (hexadecimal characters, 4+ chars)
-		// Hash IDs are typically 4-8 hex characters (e.g., "a3f8e9", "1a2b")
-		if isLikelyHash(numPart) {
-			// Suffix looks like a hash, use last hyphen
-			return issueID[:lastIdx]
-		}
+	if len(suffix) == 0 {
+		// Trailing hyphen like "bd-" - return prefix before the hyphen
+		return issueID[:lastIdx]
 	}
 
-	// Suffix is not numeric or hash-like (e.g., "vc-baseline-test"), fall back to first hyphen
+	// Extract the base part before any dot (handle "123.1.2" -> check "123")
+	basePart := suffix
+	if dotIdx := strings.Index(suffix, "."); dotIdx > 0 {
+		basePart = suffix[:dotIdx]
+	}
+
+	// Check if this looks like a valid issue ID suffix (numeric or hash-like)
+	// Use isLikelyHash which requires digits for 4+ char suffixes to avoid
+	// treating English words like "test", "gate", "part" as hash IDs
+	if isNumeric(basePart) || isLikelyHash(basePart) {
+		return issueID[:lastIdx]
+	}
+
+	// Suffix looks like an English word (4+ chars, no digits) or contains special chars
+	// Fall back to first hyphen - the entire part after first hyphen is the ID
 	firstIdx := strings.Index(issueID, "-")
 	if firstIdx <= 0 {
 		return ""
 	}
 	return issueID[:firstIdx]
+}
+
+// isNumeric checks if a string contains only digits
+func isNumeric(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isLikelyHash checks if a string looks like a hash ID suffix.

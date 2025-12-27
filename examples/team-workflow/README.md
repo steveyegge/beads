@@ -216,7 +216,7 @@ bd close bd-abc --reason "PR #123 merged"
 Daemon commits and pushes automatically:
 
 ```bash
-bd daemon start --auto-commit --auto-push
+bd daemon --start --auto-commit --auto-push
 ```
 
 Benefits:
@@ -244,20 +244,20 @@ Hash-based IDs prevent most conflicts. If conflicts occur:
 ```bash
 # During git pull/merge
 git pull origin beads-metadata
-# CONFLICT in .beads/beads.jsonl
+# CONFLICT in .beads/issues.jsonl
 
 # Option 1: Accept remote
-git checkout --theirs .beads/beads.jsonl
-bd import -i .beads/beads.jsonl
+git checkout --theirs .beads/issues.jsonl
+bd import -i .beads/issues.jsonl
 
 # Option 2: Accept local
-git checkout --ours .beads/beads.jsonl
-bd import -i .beads/beads.jsonl
+git checkout --ours .beads/issues.jsonl
+bd import -i .beads/issues.jsonl
 
 # Option 3: Use beads-merge tool (recommended)
 # See docs/GIT_INTEGRATION.md for merge conflict resolution
 
-git add .beads/beads.jsonl
+git add .beads/issues.jsonl
 git commit
 ```
 
@@ -299,7 +299,7 @@ git commit
 
 ### Q: How do team members see each other's issues?
 
-A: Issues are stored in `.beads/beads.jsonl` which is version-controlled. Pull from git to sync.
+A: Issues are stored in `.beads/issues.jsonl` which is version-controlled. Pull from git to sync.
 
 ```bash
 git pull
@@ -349,7 +349,7 @@ A: Add to your CI pipeline:
 Check daemon status:
 
 ```bash
-bd daemon status
+bd daemon --status
 bd daemons list
 ```
 
@@ -363,8 +363,8 @@ bd config get daemon.auto_push
 Restart daemon:
 
 ```bash
-bd daemon stop
-bd daemon start --auto-commit --auto-push
+bd daemon --stop
+bd daemon --start --auto-commit --auto-push
 ```
 
 ### Issue: Merge conflicts in JSONL
@@ -372,9 +372,9 @@ bd daemon start --auto-commit --auto-push
 Use beads-merge or resolve manually (see [GIT_INTEGRATION.md](../../docs/GIT_INTEGRATION.md)):
 
 ```bash
-git checkout --theirs .beads/beads.jsonl
-bd import -i .beads/beads.jsonl
-git add .beads/beads.jsonl
+git checkout --theirs .beads/issues.jsonl
+bd import -i .beads/issues.jsonl
+git add .beads/issues.jsonl
 git commit
 ```
 

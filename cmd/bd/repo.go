@@ -1,118 +1,157 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 var repoCmd = &cobra.Command{
-	Use:   "repo",
-	Short: "Manage multiple repository configuration",
-	Long: `Configure and manage multiple repository support for multi-clone sync.
+	Use:     "repo",
+	GroupID: "advanced",
+	Short:   "Manage multiple repository configuration",
+	Long: `Configure and manage multiple repository support for multi-repo hydration.
+
+Multi-repo support allows hydrating issues from multiple beads repositories
+into a single database for unified cross-repo issue tracking.
+
+Configuration is stored in .beads/config.yaml under the 'repos' section:
+
+  repos:
+    primary: "."
+    additional:
+      - ~/beads-planning
+      - ~/work-repo
 
 Examples:
-  bd repo add ~/.beads-planning      # Add planning repo
-  bd repo add ../other-repo "notes"  # Add with alias
+  bd repo add ~/beads-planning       # Add planning repo
+  bd repo add ../other-repo          # Add relative path repo
   bd repo list                       # Show all configured repos
-  bd repo remove notes               # Remove by alias
-  bd repo remove ~/.beads-planning   # Remove by path`,
+  bd repo remove ~/beads-planning    # Remove by path
+  bd repo sync                       # Sync from all configured repos`,
 }
 
 var repoAddCmd = &cobra.Command{
-	Use:   "add <path> [alias]",
+	Use:   "add <path>",
 	Short: "Add an additional repository to sync",
-	Args:  cobra.RangeArgs(1, 2),
+	Long: `Add a repository path to the repos.additional list in config.yaml.
+
+The path should point to a directory containing a .beads folder.
+Paths can be absolute or relative (they are stored as-is).
+
+This modifies .beads/config.yaml, which is version-controlled and
+shared across all clones of this repository.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := ensureDirectMode("repo add requires direct database access"); err != nil {
-			return err
+		repoPath := args[0]
+
+		// Expand ~ to home directory for validation and display
+		expandedPath := repoPath
+		if len(repoPath) > 0 && repoPath[0] == '~' {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				expandedPath = filepath.Join(home, repoPath[1:])
+			}
 		}
 
-		ctx := rootCtx
-		path := args[0]
-		var alias string
-		if len(args) > 1 {
-			alias = args[1]
+		// Validate the repo path exists and has .beads
+		beadsDir := filepath.Join(expandedPath, ".beads")
+		if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+			return fmt.Errorf("no .beads directory found at %s - is this a beads repository?", expandedPath)
 		}
 
-		// Use path as key if no alias provided
-		key := alias
-		if key == "" {
-			key = path
-		}
-
-		// Get existing repos
-		existing, err := getRepoConfig(ctx, store)
+		// Find config.yaml
+		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return fmt.Errorf("failed to get existing repos: %w", err)
+			return fmt.Errorf("failed to find config.yaml: %w", err)
 		}
 
-		existing[key] = path
-
-		// Save back
-		if err := setRepoConfig(ctx, store, existing); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+		// Add the repo (use original path to preserve ~ etc.)
+		if err := config.AddRepo(configPath, repoPath); err != nil {
+			return fmt.Errorf("failed to add repository: %w", err)
 		}
 
 		if jsonOutput {
 			result := map[string]interface{}{
 				"added": true,
-				"key":   key,
-				"path":  path,
+				"path":  repoPath,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
 
-		fmt.Printf("Added repository: %s → %s\n", key, path)
+		fmt.Printf("Added repository: %s\n", repoPath)
+		fmt.Printf("Run 'bd repo sync' to hydrate issues from this repository.\n")
 		return nil
 	},
 }
 
 var repoRemoveCmd = &cobra.Command{
-	Use:   "remove <key>",
+	Use:   "remove <path>",
 	Short: "Remove a repository from sync configuration",
-	Args:  cobra.ExactArgs(1),
+	Long: `Remove a repository path from the repos.additional list in config.yaml.
+
+The path must exactly match what was added (e.g., if you added "~/foo",
+you must remove "~/foo", not "/home/user/foo").
+
+This command also removes any previously-hydrated issues from the database
+that came from the removed repository.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		repoPath := args[0]
+
+		// Ensure we have direct database access for cleanup
 		if err := ensureDirectMode("repo remove requires direct database access"); err != nil {
 			return err
 		}
 
 		ctx := rootCtx
-		key := args[0]
 
-		// Get existing repos
-		existing, err := getRepoConfig(ctx, store)
+		// Delete issues from the removed repo before removing from config
+		// The source_repo field uses the original path (e.g., "~/foo")
+		deletedCount := 0
+		if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+			count, err := sqliteStore.DeleteIssuesBySourceRepo(ctx, repoPath)
+			if err != nil {
+				return fmt.Errorf("failed to delete issues from repo: %w", err)
+			}
+			deletedCount = count
+
+			// Also clear the mtime cache entry
+			if err := sqliteStore.ClearRepoMtime(ctx, repoPath); err != nil {
+				// Non-fatal: just log a warning
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear mtime cache: %v\n", err)
+			}
+		}
+
+		// Find config.yaml
+		configPath, err := config.FindConfigYAMLPath()
 		if err != nil {
-			return fmt.Errorf("failed to get existing repos: %w", err)
+			return fmt.Errorf("failed to find config.yaml: %w", err)
 		}
 
-		path, exists := existing[key]
-		if !exists {
-			return fmt.Errorf("repository not found: %s", key)
-		}
-
-		delete(existing, key)
-
-		// Save back
-		if err := setRepoConfig(ctx, store, existing); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+		// Remove the repo from config
+		if err := config.RemoveRepo(configPath, repoPath); err != nil {
+			return fmt.Errorf("failed to remove repository: %w", err)
 		}
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"removed": true,
-				"key":     key,
-				"path":    path,
+				"removed":        true,
+				"path":           repoPath,
+				"issues_deleted": deletedCount,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
 
-		fmt.Printf("Removed repository: %s → %s\n", key, path)
+		fmt.Printf("Removed repository: %s\n", repoPath)
+		if deletedCount > 0 {
+			fmt.Printf("Deleted %d issue(s) from the database\n", deletedCount)
+		}
 		return nil
 	},
 }
@@ -120,32 +159,46 @@ var repoRemoveCmd = &cobra.Command{
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all configured repositories",
+	Long: `List all repositories configured in .beads/config.yaml.
+
+Shows the primary repository (always ".") and any additional
+repositories configured for hydration.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := ensureDirectMode("repo list requires direct database access"); err != nil {
-			return err
+		// Find config.yaml
+		configPath, err := config.FindConfigYAMLPath()
+		if err != nil {
+			return fmt.Errorf("failed to find config.yaml: %w", err)
 		}
 
-		ctx := rootCtx
-		repos, err := getRepoConfig(ctx, store)
+		// Get repos from YAML
+		repos, err := config.ListRepos(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
 		if jsonOutput {
+			primary := repos.Primary
+			if primary == "" {
+				primary = "."
+			}
 			result := map[string]interface{}{
-				"primary":    ".",
-				"additional": repos,
+				"primary":    primary,
+				"additional": repos.Additional,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
 
-		fmt.Println("Primary repository: .")
-		if len(repos) == 0 {
+		primary := repos.Primary
+		if primary == "" {
+			primary = "."
+		}
+		fmt.Printf("Primary repository: %s\n", primary)
+		if len(repos.Additional) == 0 {
 			fmt.Println("No additional repositories configured")
 		} else {
 			fmt.Println("\nAdditional repositories:")
-			for key, path := range repos {
-				fmt.Printf("  %s → %s\n", key, path)
+			for _, path := range repos.Additional {
+				fmt.Printf("  - %s\n", path)
 			}
 		}
 		return nil
@@ -155,6 +208,10 @@ var repoListCmd = &cobra.Command{
 var repoSyncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Manually trigger multi-repo sync",
+	Long: `Trigger synchronization from all configured repositories.
+
+This hydrates issues from all repos in repos.additional into the
+local database, then exports any local changes back to JSONL.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := ensureDirectMode("repo sync requires direct database access"); err != nil {
 			return err
@@ -183,34 +240,6 @@ var repoSyncCmd = &cobra.Command{
 		fmt.Println("Multi-repo sync complete")
 		return nil
 	},
-}
-
-// Helper functions for repo config management
-func getRepoConfig(ctx context.Context, store storage.Storage) (map[string]string, error) {
-	value, err := store.GetConfig(ctx, "repos.additional")
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return make(map[string]string), nil
-		}
-		return nil, err
-	}
-
-	// Parse JSON map
-	repos := make(map[string]string)
-	if err := json.Unmarshal([]byte(value), &repos); err != nil {
-		return nil, fmt.Errorf("failed to parse repos config: %w", err)
-	}
-
-	return repos, nil
-}
-
-func setRepoConfig(ctx context.Context, store storage.Storage, repos map[string]string) error {
-	data, err := json.Marshal(repos)
-	if err != nil {
-		return fmt.Errorf("failed to serialize repos: %w", err)
-	}
-
-	return store.SetConfig(ctx, "repos.additional", string(data))
 }
 
 func init() {

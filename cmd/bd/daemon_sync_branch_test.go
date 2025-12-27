@@ -48,12 +48,12 @@ func TestSyncBranchCommitAndPush_NotConfigured(t *testing.T) {
 
 	// Create test issue
 	issue := &types.Issue{
-		Title:       "Test issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -122,12 +122,12 @@ func TestSyncBranchCommitAndPush_Success(t *testing.T) {
 
 	// Create test issue
 	issue := &types.Issue{
-		Title:       "Test sync branch issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Test sync branch issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -228,12 +228,12 @@ func TestSyncBranchCommitAndPush_EnvOverridesDB(t *testing.T) {
 
 	// Create test issue and export JSONL
 	issue := &types.Issue{
-		Title:       "Env override issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Env override issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -303,12 +303,12 @@ func TestSyncBranchCommitAndPush_NoChanges(t *testing.T) {
 	}
 
 	issue := &types.Issue{
-		Title:       "Test issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -380,12 +380,12 @@ func TestSyncBranchCommitAndPush_WorktreeHealthCheck(t *testing.T) {
 	}
 
 	issue := &types.Issue{
-		Title:       "Test issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -497,7 +497,7 @@ func TestSyncBranchPull_Success(t *testing.T) {
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatalf("Failed to create remote dir: %v", err)
 	}
-	runGitCmd(t, remoteDir, "init", "--bare")
+	runGitCmd(t, remoteDir, "init", "--bare", "-b", "master")
 
 	// Create clone1 (will push changes)
 	clone1Dir := filepath.Join(tmpDir, "clone1")
@@ -528,12 +528,12 @@ func TestSyncBranchPull_Success(t *testing.T) {
 
 	// Create issue in clone1
 	issue := &types.Issue{
-		Title:       "Test sync pull issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "Test sync pull issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store1.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("Failed to create issue: %v", err)
@@ -639,7 +639,7 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 	tmpDir := t.TempDir()
 	remoteDir := filepath.Join(tmpDir, "remote")
 	os.MkdirAll(remoteDir, 0755)
-	runGitCmd(t, remoteDir, "init", "--bare")
+	runGitCmd(t, remoteDir, "init", "--bare", "-b", "master")
 
 	// Clone1: Agent A
 	clone1Dir := filepath.Join(tmpDir, "clone1")
@@ -660,12 +660,12 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 
 	// Agent A creates issue
 	issue := &types.Issue{
-		Title:       "E2E test issue",
-		Status:      types.StatusOpen,
-		Priority:    1,
-		IssueType:   types.TypeTask,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Title:     "E2E test issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	store1.CreateIssue(ctx, issue, "agent-a")
 	issueID := issue.ID
@@ -772,13 +772,11 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 // Helper types for testing
 
 func newTestSyncBranchLogger() (daemonLogger, *string) {
+	// Note: With slog, we can't easily capture formatted messages like before.
+	// For tests that need to verify log output, use strings.Builder and newTestLoggerWithWriter.
+	// This helper is kept for backward compatibility but messages won't be captured.
 	messages := ""
-	logger := daemonLogger{
-		logFunc: func(format string, args ...interface{}) {
-			messages += "\n" + format
-		},
-	}
-	return logger, &messages
+	return newTestLogger(), &messages
 }
 
 // TestSyncBranchConfigChange tests changing sync.branch after worktree exists
@@ -916,7 +914,7 @@ func TestSyncBranchMultipleConcurrentClones(t *testing.T) {
 	tmpDir := t.TempDir()
 	remoteDir := filepath.Join(tmpDir, "remote")
 	os.MkdirAll(remoteDir, 0755)
-	runGitCmd(t, remoteDir, "init", "--bare")
+	runGitCmd(t, remoteDir, "init", "--bare", "-b", "master")
 
 	syncBranch := "beads-sync"
 
@@ -1429,4 +1427,119 @@ func initMainBranch(t *testing.T, dir string) {
 	}
 	runGitCmd(t, dir, "add", "README.md")
 	runGitCmd(t, dir, "commit", "-m", "Initial commit")
+}
+
+// TestGitPushFromWorktree_FetchRebaseRetry tests that gitPushFromWorktree handles
+// the case where the remote has newer commits by fetching, rebasing, and retrying.
+// This is a regression test for the bug where daemon push would fail with
+// "fetch first" error when another clone had pushed to the sync branch.
+//
+// Bug scenario:
+// 1. Clone A pushes commit X to sync branch
+// 2. Clone B has local commit Y (not based on X)
+// 3. Clone B's push fails with "fetch first" error
+// 4. Without this fix: daemon logs failure and stops
+// 5. With this fix: daemon fetches, rebases Y on X, and retries push
+func TestGitPushFromWorktree_FetchRebaseRetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Skip on Windows due to path issues
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows")
+	}
+
+	ctx := context.Background()
+
+	// Create a "remote" bare repository
+	remoteDir := t.TempDir()
+	runGitCmd(t, remoteDir, "init", "--bare", "-b", "master")
+
+	// Create first clone (simulates another developer's clone)
+	clone1Dir := t.TempDir()
+	runGitCmd(t, clone1Dir, "clone", remoteDir, ".")
+	runGitCmd(t, clone1Dir, "config", "user.email", "test@example.com")
+	runGitCmd(t, clone1Dir, "config", "user.name", "Test User")
+
+	// Create initial commit on main
+	initMainBranch(t, clone1Dir)
+	runGitCmd(t, clone1Dir, "push", "-u", "origin", "main")
+
+	// Create sync branch in clone1
+	runGitCmd(t, clone1Dir, "checkout", "-b", "beads-sync")
+	beadsDir1 := filepath.Join(clone1Dir, ".beads")
+	if err := os.MkdirAll(beadsDir1, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+	jsonl1 := filepath.Join(beadsDir1, "issues.jsonl")
+	if err := os.WriteFile(jsonl1, []byte(`{"id":"clone1-issue","title":"Issue from clone1"}`+"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write JSONL: %v", err)
+	}
+	runGitCmd(t, clone1Dir, "add", ".beads/issues.jsonl")
+	runGitCmd(t, clone1Dir, "commit", "-m", "Clone 1 commit")
+	runGitCmd(t, clone1Dir, "push", "-u", "origin", "beads-sync")
+
+	// Create second clone (simulates our local clone)
+	clone2Dir := t.TempDir()
+	runGitCmd(t, clone2Dir, "clone", remoteDir, ".")
+	runGitCmd(t, clone2Dir, "config", "user.email", "test@example.com")
+	runGitCmd(t, clone2Dir, "config", "user.name", "Test User")
+
+	// Create worktree for sync branch in clone2
+	worktreePath := filepath.Join(clone2Dir, ".git", "beads-worktrees", "beads-sync")
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
+		t.Fatalf("Failed to create worktree parent: %v", err)
+	}
+
+	// Fetch the sync branch first
+	runGitCmd(t, clone2Dir, "fetch", "origin", "beads-sync:beads-sync")
+
+	// Create worktree - but don't pull latest yet (to simulate diverged state)
+	runGitCmd(t, clone2Dir, "worktree", "add", worktreePath, "beads-sync")
+
+	// Now clone1 makes another commit and pushes (simulating another clone pushing)
+	runGitCmd(t, clone1Dir, "checkout", "beads-sync")
+	if err := os.WriteFile(jsonl1, []byte(`{"id":"clone1-issue","title":"Issue from clone1"}`+"\n"+`{"id":"clone1-issue2","title":"Second issue"}`+"\n"), 0644); err != nil {
+		t.Fatalf("Failed to update JSONL: %v", err)
+	}
+	runGitCmd(t, clone1Dir, "add", ".beads/issues.jsonl")
+	runGitCmd(t, clone1Dir, "commit", "-m", "Clone 1 second commit")
+	runGitCmd(t, clone1Dir, "push", "origin", "beads-sync")
+
+	// Clone2's worktree makes a different commit (diverged from remote)
+	// We create a different file to avoid merge conflicts - this simulates
+	// non-conflicting JSONL changes (e.g., different issues being created)
+	beadsDir2 := filepath.Join(worktreePath, ".beads")
+	if err := os.MkdirAll(beadsDir2, 0755); err != nil {
+		t.Fatalf("Failed to create .beads in worktree: %v", err)
+	}
+	// Create a separate metadata file to avoid JSONL conflict
+	metadataPath := filepath.Join(beadsDir2, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"clone":"clone2"}`+"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write metadata in worktree: %v", err)
+	}
+	runGitCmd(t, worktreePath, "add", ".beads/metadata.json")
+	runGitCmd(t, worktreePath, "commit", "-m", "Clone 2 commit")
+
+	// Now try to push from worktree - this should trigger the fetch-rebase-retry logic
+	// because the remote has commits that the local worktree doesn't have
+	err := gitPushFromWorktree(ctx, worktreePath, "beads-sync", "")
+	if err != nil {
+		t.Fatalf("gitPushFromWorktree failed: %v (expected fetch-rebase-retry to succeed)", err)
+	}
+
+	// Verify the push succeeded by checking the remote has all commits
+	cmd := exec.Command("git", "-C", remoteDir, "rev-list", "--count", "beads-sync")
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to count commits: %v", err)
+	}
+	commitCount := strings.TrimSpace(string(output))
+	// Should have at least 3 commits: initial sync, clone1's second commit, clone2's rebased commit
+	if commitCount == "0" || commitCount == "1" || commitCount == "2" {
+		t.Errorf("Expected at least 3 commits after rebase-push, got %s", commitCount)
+	}
+
+	t.Log("Fetch-rebase-retry test passed: diverged sync branch was successfully rebased and pushed")
 }

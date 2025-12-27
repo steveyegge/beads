@@ -39,9 +39,9 @@ func TestMarkIssueDirty(t *testing.T) {
 	}
 
 	// Clear dirty issues
-	err = store.ClearDirtyIssues(ctx)
+	err = store.ClearDirtyIssuesByID(ctx, []string{issue.ID})
 	if err != nil {
-		t.Fatalf("ClearDirtyIssues failed: %v", err)
+		t.Fatalf("ClearDirtyIssuesByID failed: %v", err)
 	}
 
 	// Verify cleared
@@ -92,9 +92,9 @@ func TestMarkIssuesDirty(t *testing.T) {
 	}
 
 	// Clear all dirty issues
-	err := store.ClearDirtyIssues(ctx)
+	err := store.ClearDirtyIssuesByID(ctx, issueIDs)
 	if err != nil {
-		t.Fatalf("ClearDirtyIssues failed: %v", err)
+		t.Fatalf("ClearDirtyIssuesByID failed: %v", err)
 	}
 
 	// Mark multiple issues dirty at once

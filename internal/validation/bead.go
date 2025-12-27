@@ -32,11 +32,13 @@ func ParseIssueType(content string) (types.IssueType, error) {
 
 	// Validate issue type
 	validTypes := map[types.IssueType]bool{
-		types.TypeBug:     true,
-		types.TypeFeature: true,
-		types.TypeTask:    true,
-		types.TypeEpic:    true,
-		types.TypeChore:   true,
+		types.TypeBug:          true,
+		types.TypeFeature:      true,
+		types.TypeTask:         true,
+		types.TypeEpic:         true,
+		types.TypeChore:        true,
+		types.TypeMergeRequest: true,
+		types.TypeMolecule:     true,
 	}
 
 	if !validTypes[issueType] {
@@ -52,7 +54,7 @@ func ParseIssueType(content string) (types.IssueType, error) {
 func ValidatePriority(priorityStr string) (int, error) {
 	priority := ParsePriority(priorityStr)
 	if priority == -1 {
-		return -1, fmt.Errorf("invalid priority %q (expected 0-4 or P0-P4)", priorityStr)
+		return -1, fmt.Errorf("invalid priority %q (expected 0-4 or P0-P4, not words like high/medium/low)", priorityStr)
 	}
 	return priority, nil
 }

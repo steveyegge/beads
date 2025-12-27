@@ -4,27 +4,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
 var createCmd = &cobra.Command{
 	Use:     "create [title]",
+	GroupID: "issues",
 	Aliases: []string{"new"},
 	Short:   "Create a new issue (or multiple issues from markdown file)",
 	Args:    cobra.MinimumNArgs(0), // Changed to allow no args when using -f
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("create")
 		file, _ := cmd.Flags().GetString("file")
-		fromTemplate, _ := cmd.Flags().GetString("from-template")
 
 		// If file flag is provided, parse markdown and create multiple issues
 		if file != "" {
@@ -54,63 +57,42 @@ var createCmd = &cobra.Command{
 			FatalError("title required (or use --file to create from markdown)")
 		}
 
-		// Warn if creating a test issue in production database
-		if strings.HasPrefix(strings.ToLower(title), "test") {
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Fprintf(os.Stderr, "%s Creating issue with 'Test' prefix in production database.\n", yellow("⚠"))
+		// Get silent flag
+		silent, _ := cmd.Flags().GetBool("silent")
+
+		// Warn if creating a test issue in production database (unless silent mode)
+		if strings.HasPrefix(strings.ToLower(title), "test") && !silent && !debug.IsQuiet() {
+			fmt.Fprintf(os.Stderr, "%s Creating issue with 'Test' prefix in production database.\n", ui.RenderWarn("⚠"))
 			fmt.Fprintf(os.Stderr, "  For testing, consider using: BEADS_DB=/tmp/test.db ./bd create \"Test issue\"\n")
 		}
 
-		// Load template if specified
-		var tmpl *Template
-		if fromTemplate != "" {
-			var err error
-			tmpl, err = loadTemplate(fromTemplate)
-			if err != nil {
-				FatalError("%v", err)
+		// Get field values
+		description, _ := getDescriptionFlag(cmd)
+
+		// Check if description is required by config
+		if description == "" && !strings.Contains(strings.ToLower(title), "test") {
+			if config.GetBool("create.require-description") {
+				FatalError("description is required (set create.require-description: false in config.yaml to disable)")
+			}
+			// Warn if creating an issue without a description (unless silent mode)
+			if !silent && !debug.IsQuiet() {
+				fmt.Fprintf(os.Stderr, "%s Creating issue without description.\n", ui.RenderWarn("⚠"))
+				fmt.Fprintf(os.Stderr, "  Issues without descriptions lack context for future work.\n")
+				fmt.Fprintf(os.Stderr, "  Consider adding --description=\"Why this issue exists and what needs to be done\"\n")
 			}
 		}
 
-		// Get field values, preferring explicit flags over template defaults
-		description, _ := getDescriptionFlag(cmd)
-		if description == "" && tmpl != nil {
-			description = tmpl.Description
-		}
-
-		// Warn if creating an issue without a description (unless it's a test issue)
-		if description == "" && !strings.Contains(strings.ToLower(title), "test") {
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Fprintf(os.Stderr, "%s Creating issue without description.\n", yellow("⚠"))
-			fmt.Fprintf(os.Stderr, "  Issues without descriptions lack context for future work.\n")
-			fmt.Fprintf(os.Stderr, "  Consider adding --description=\"Why this issue exists and what needs to be done\"\n")
-		}
-
 		design, _ := cmd.Flags().GetString("design")
-		if design == "" && tmpl != nil {
-			design = tmpl.Design
-		}
-
 		acceptance, _ := cmd.Flags().GetString("acceptance")
-		if acceptance == "" && tmpl != nil {
-			acceptance = tmpl.AcceptanceCriteria
-		}
-		
+
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
 			FatalError("%v", err)
 		}
-		if cmd.Flags().Changed("priority") == false && tmpl != nil {
-			priority = tmpl.Priority
-		}
 
 		issueType, _ := cmd.Flags().GetString("type")
-		if !cmd.Flags().Changed("type") && tmpl != nil && tmpl.Type != "" {
-			// Flag not explicitly set and template has a type, use template
-			issueType = tmpl.Type
-		}
-
 		assignee, _ := cmd.Flags().GetString("assignee")
 
 		labels, _ := cmd.Flags().GetStringSlice("labels")
@@ -118,16 +100,23 @@ var createCmd = &cobra.Command{
 		if len(labelAlias) > 0 {
 			labels = append(labels, labelAlias...)
 		}
-		if len(labels) == 0 && tmpl != nil && len(tmpl.Labels) > 0 {
-			labels = tmpl.Labels
-		}
 
 		explicitID, _ := cmd.Flags().GetString("id")
 		parentID, _ := cmd.Flags().GetString("parent")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
 		deps, _ := cmd.Flags().GetStringSlice("deps")
+		waitsFor, _ := cmd.Flags().GetString("waits-for")
+		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
 		forceCreate, _ := cmd.Flags().GetBool("force")
 		repoOverride, _ := cmd.Flags().GetString("repo")
+		rigOverride, _ := cmd.Flags().GetString("rig")
+		wisp, _ := cmd.Flags().GetBool("ephemeral")
+
+		// Handle --rig flag: create issue in a different rig
+		if rigOverride != "" {
+			createInRig(cmd, rigOverride, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
+			return
+		}
 
 		// Get estimate if provided
 		var estimatedMinutes *int
@@ -240,6 +229,10 @@ var createCmd = &cobra.Command{
 				EstimatedMinutes:   estimatedMinutes,
 				Labels:             labels,
 				Dependencies:       deps,
+				WaitsFor:           waitsFor,
+				WaitsForGate:       waitsForGate,
+				Ephemeral:          wisp,
+				CreatedBy:          getActorWithGit(),
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -247,15 +240,23 @@ var createCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 
+			// Parse response to get issue for hook
+			var issue types.Issue
+			if err := json.Unmarshal(resp.Data, &issue); err != nil {
+				FatalError("parsing response: %v", err)
+			}
+
+			// Run create hook (bd-kwro.8)
+			if hookRunner != nil {
+				hookRunner.Run(hooks.EventCreate, &issue)
+			}
+
 			if jsonOutput {
 				fmt.Println(string(resp.Data))
+			} else if silent {
+				fmt.Println(issue.ID)
 			} else {
-				var issue types.Issue
-				if err := json.Unmarshal(resp.Data, &issue); err != nil {
-					FatalError("parsing response: %v", err)
-				}
-				green := color.New(color.FgGreen).SprintFunc()
-				fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
+				fmt.Printf("%s Created issue: %s\n", ui.RenderPass("✓"), issue.ID)
 				fmt.Printf("  Title: %s\n", issue.Title)
 				fmt.Printf("  Priority: P%d\n", issue.Priority)
 				fmt.Printf("  Status: %s\n", issue.Status)
@@ -279,6 +280,8 @@ var createCmd = &cobra.Command{
 			Assignee:           assignee,
 			ExternalRef:        externalRefPtr,
 			EstimatedMinutes:   estimatedMinutes,
+			Ephemeral:          wisp,
+			CreatedBy:          getActorWithGit(), // GH#748: track who created the issue
 		}
 
 		ctx := rootCtx
@@ -384,14 +387,51 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Add waits-for dependency if specified (bd-xo1o.2)
+		if waitsFor != "" {
+			// Validate gate type
+			gate := waitsForGate
+			if gate == "" {
+				gate = types.WaitsForAllChildren
+			}
+			if gate != types.WaitsForAllChildren && gate != types.WaitsForAnyChildren {
+				FatalError("invalid --waits-for-gate value '%s' (valid: all-children, any-children)", gate)
+			}
+
+			// Create metadata JSON
+			meta := types.WaitsForMeta{
+				Gate: gate,
+			}
+			metaJSON, err := json.Marshal(meta)
+			if err != nil {
+				FatalError("failed to serialize waits-for metadata: %v", err)
+			}
+
+			dep := &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: waitsFor,
+				Type:        types.DepWaitsFor,
+				Metadata:    string(metaJSON),
+			}
+			if err := store.AddDependency(ctx, dep, actor); err != nil {
+				WarnError("failed to add waits-for dependency %s -> %s: %v", issue.ID, waitsFor, err)
+			}
+		}
+
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
+		// Run create hook (bd-kwro.8)
+		if hookRunner != nil {
+			hookRunner.Run(hooks.EventCreate, issue)
+		}
+
 		if jsonOutput {
 			outputJSON(issue)
+		} else if silent {
+			fmt.Println(issue.ID)
 		} else {
-			green := color.New(color.FgGreen).SprintFunc()
-			fmt.Printf("%s Created issue: %s\n", green("✓"), issue.ID)
+			fmt.Printf("%s Created issue: %s\n", ui.RenderPass("✓"), issue.ID)
 			fmt.Printf("  Title: %s\n", issue.Title)
 			fmt.Printf("  Priority: P%d\n", issue.Priority)
 			fmt.Printf("  Status: %s\n", issue.Status)
@@ -407,20 +447,125 @@ var createCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
-	createCmd.Flags().String("from-template", "", "Create issue from template (e.g., 'epic', 'bug', 'feature')")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
+	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	registerPriorityFlag(createCmd, "2")
-	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore)")
+	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate)")
 	registerCommonIssueFlags(createCmd)
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
-	_ = createCmd.Flags().MarkHidden("label")
+	_ = createCmd.Flags().MarkHidden("label") // Only fails if flag missing (caught in tests)
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
+	createCmd.Flags().String("waits-for", "", "Spawner issue ID to wait for (creates waits-for dependency for fanout gate)")
+	createCmd.Flags().String("waits-for-gate", "all-children", "Gate type: all-children (wait for all) or any-children (wait for first)")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
 	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
+	createCmd.Flags().String("rig", "", "Create issue in a different rig (e.g., --rig beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
+	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
+}
+
+// createInRig creates an issue in a different rig using --rig flag.
+// This bypasses the normal daemon/direct flow and directly creates in the target rig.
+func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, assignee string, labels []string, externalRef string, wisp bool) {
+	ctx := rootCtx
+
+	// Find the town-level beads directory (where routes.jsonl lives)
+	townBeadsDir, err := findTownBeadsDir()
+	if err != nil {
+		FatalError("cannot use --rig: %v", err)
+	}
+
+	// Resolve the target rig's beads directory
+	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
+	if err != nil {
+		FatalError("%v", err)
+	}
+
+	// Open storage for the target rig
+	targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
+	targetStore, err := sqlite.New(ctx, targetDBPath)
+	if err != nil {
+		FatalError("failed to open rig %q database: %v", rigName, err)
+	}
+	defer targetStore.Close()
+
+	var externalRefPtr *string
+	if externalRef != "" {
+		externalRefPtr = &externalRef
+	}
+
+	// Create issue without ID - CreateIssue will generate one with the correct prefix
+	issue := &types.Issue{
+		Title:              title,
+		Description:        description,
+		Design:             design,
+		AcceptanceCriteria: acceptance,
+		Status:             types.StatusOpen,
+		Priority:           priority,
+		IssueType:          types.IssueType(issueType),
+		Assignee:           assignee,
+		ExternalRef:        externalRefPtr,
+		Ephemeral:          wisp,
+		CreatedBy:          getActorWithGit(),
+	}
+
+	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {
+		FatalError("failed to create issue in rig %q: %v", rigName, err)
+	}
+
+	// Add labels if specified
+	for _, label := range labels {
+		if err := targetStore.AddLabel(ctx, issue.ID, label, actor); err != nil {
+			WarnError("failed to add label %s: %v", label, err)
+		}
+	}
+
+	// Get silent flag
+	silent, _ := cmd.Flags().GetBool("silent")
+
+	if jsonOutput {
+		outputJSON(issue)
+	} else if silent {
+		fmt.Println(issue.ID)
+	} else {
+		fmt.Printf("%s Created issue in rig %q: %s\n", ui.RenderPass("✓"), rigName, issue.ID)
+		fmt.Printf("  Title: %s\n", issue.Title)
+		fmt.Printf("  Priority: P%d\n", issue.Priority)
+		fmt.Printf("  Status: %s\n", issue.Status)
+	}
+}
+
+// findTownBeadsDir finds the town-level .beads directory (where routes.jsonl lives).
+// It walks up from the current directory looking for a .beads directory with routes.jsonl.
+func findTownBeadsDir() (string, error) {
+	// Start from current directory and walk up
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		beadsDir := filepath.Join(dir, ".beads")
+		routesFile := filepath.Join(beadsDir, routing.RoutesFileName)
+
+		// Check if this .beads directory has routes.jsonl
+		if _, err := os.Stat(routesFile); err == nil {
+			return beadsDir, nil
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root
+			break
+		}
+		dir = parent
+	}
+
+	return "", fmt.Errorf("no routes.jsonl found in any parent .beads directory")
 }

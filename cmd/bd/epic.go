@@ -3,14 +3,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 var epicCmd = &cobra.Command{
-	Use:   "epic",
-	Short: "Epic management commands",
+	Use:     "epic",
+	GroupID: "deps",
+	Short:   "Epic management commands",
 }
 var epicStatusCmd = &cobra.Command{
 	Use:   "status",
@@ -25,23 +26,19 @@ var epicStatusCmd = &cobra.Command{
 				EligibleOnly: eligibleOnly,
 			})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error communicating with daemon: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("communicating with daemon: %v", err)
 			}
 			if !resp.Success {
-				fmt.Fprintf(os.Stderr, "Error getting epic status: %s\n", resp.Error)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting epic status: %s", resp.Error)
 			}
 			if err := json.Unmarshal(resp.Data, &epics); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("parsing response: %v", err)
 			}
 		} else {
 			ctx := rootCtx
 			epics, err = store.GetEpicsEligibleForClosure(ctx)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting epic status: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting epic status: %v", err)
 			}
 			if eligibleOnly {
 				filtered := []*types.EpicStatus{}
@@ -57,8 +54,7 @@ var epicStatusCmd = &cobra.Command{
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(epics); err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("encoding JSON: %v", err)
 			}
 			return
 		}
@@ -67,10 +63,6 @@ var epicStatusCmd = &cobra.Command{
 			fmt.Println("No open epics found")
 			return
 		}
-		cyan := color.New(color.FgCyan).SprintFunc()
-		yellow := color.New(color.FgYellow).SprintFunc()
-		green := color.New(color.FgGreen).SprintFunc()
-		bold := color.New(color.Bold).SprintFunc()
 		for _, epicStatus := range epics {
 			epic := epicStatus.Epic
 			percentage := 0
@@ -79,17 +71,17 @@ var epicStatusCmd = &cobra.Command{
 			}
 			statusIcon := ""
 			if epicStatus.EligibleForClose {
-				statusIcon = green("✓")
+				statusIcon = ui.RenderPass("✓")
 			} else if percentage > 0 {
-				statusIcon = yellow("○")
+				statusIcon = ui.RenderWarn("○")
 			} else {
 				statusIcon = "○"
 			}
-			fmt.Printf("%s %s %s\n", statusIcon, cyan(epic.ID), bold(epic.Title))
+			fmt.Printf("%s %s %s\n", statusIcon, ui.RenderAccent(epic.ID), ui.RenderBold(epic.Title))
 			fmt.Printf("   Progress: %d/%d children closed (%d%%)\n",
 				epicStatus.ClosedChildren, epicStatus.TotalChildren, percentage)
 			if epicStatus.EligibleForClose {
-				fmt.Printf("   %s\n", green("Eligible for closure"))
+				fmt.Printf("   %s\n", ui.RenderPass("Eligible for closure"))
 			}
 			fmt.Println()
 		}
@@ -111,23 +103,19 @@ var closeEligibleEpicsCmd = &cobra.Command{
 				EligibleOnly: true,
 			})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error communicating with daemon: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("communicating with daemon: %v", err)
 			}
 			if !resp.Success {
-				fmt.Fprintf(os.Stderr, "Error getting eligible epics: %s\n", resp.Error)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting eligible epics: %s", resp.Error)
 			}
 			if err := json.Unmarshal(resp.Data, &eligibleEpics); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("parsing response: %v", err)
 			}
 		} else {
 			ctx := rootCtx
 			epics, err := store.GetEpicsEligibleForClosure(ctx)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting eligible epics: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("getting eligible epics: %v", err)
 			}
 			for _, epic := range epics {
 				if epic.EligibleForClose {
@@ -148,8 +136,7 @@ var closeEligibleEpicsCmd = &cobra.Command{
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				if err := enc.Encode(eligibleEpics); err != nil {
-					fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-					os.Exit(1)
+					FatalErrorRespectJSON("encoding JSON: %v", err)
 				}
 			} else {
 				fmt.Printf("Would close %d epic(s):\n", len(eligibleEpics))
@@ -194,8 +181,7 @@ var closeEligibleEpicsCmd = &cobra.Command{
 				"closed": closedIDs,
 				"count":  len(closedIDs),
 			}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-				os.Exit(1)
+				FatalErrorRespectJSON("encoding JSON: %v", err)
 			}
 		} else {
 			fmt.Printf("✓ Closed %d epic(s)\n", len(closedIDs))

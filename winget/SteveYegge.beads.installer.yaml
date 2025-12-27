@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: SteveYegge.beads
+PackageVersion: 0.30.7
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: bd.exe
+    PortableCommandAlias: bd
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/steveyegge/beads/releases/download/v0.30.7/beads_0.30.7_windows_amd64.zip
+    InstallerSha256: 91A3D0799533DE8FA9AAB6415B8A57BDD542C59A21805FBF80A559A53F3CD02E
+ManifestType: installer
+ManifestVersion: 1.6.0

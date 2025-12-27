@@ -3,239 +3,40 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 const copilotInstructionsContent = `# GitHub Copilot Instructions
 
-## Issue Tracking with bd
+## Issue Tracking
 
-This project uses **bd (beads)** for issue tracking - a Git-backed tracker designed for AI-supervised coding workflows.
+This project uses **bd (beads)** for issue tracking.
+Run ` + "`bd prime`" + ` for workflow context, or install hooks (` + "`bd hooks install`" + `) for auto-injection.
 
-**Key Features:**
-- Dependency-aware issue tracking
-- Auto-sync with Git via JSONL
-- AI-optimized CLI with JSON output
-- Built-in daemon for background operations
-- MCP server integration for Claude and other AI assistants
+**Quick reference:**
+- ` + "`bd ready`" + ` - Find unblocked work
+- ` + "`bd create \"Title\" --type task --priority 2`" + ` - Create issue
+- ` + "`bd close <id>`" + ` - Complete work
+- ` + "`bd sync`" + ` - Sync with git (run at session end)
 
-**CRITICAL**: Use bd for ALL task tracking. Do NOT create markdown TODO lists.
+For full workflow details: ` + "`bd prime`" + ``
 
-### Essential Commands
+const agentsContent = `## Issue Tracking
 
-` + "```bash" + `
-# Find work
-bd ready --json                    # Unblocked issues
-bd stale --days 30 --json          # Forgotten issues
+This project uses **bd (beads)** for issue tracking.
+Run ` + "`bd prime`" + ` for workflow context, or install hooks (` + "`bd hooks install`" + `) for auto-injection.
 
-# Create and manage
-bd create "Title" -t bug|feature|task -p 0-4 --json
-bd create "Subtask" --parent <epic-id> --json  # Hierarchical subtask
-bd update <id> --status in_progress --json
-bd close <id> --reason "Done" --json
+**Quick reference:**
+- ` + "`bd ready`" + ` - Find unblocked work
+- ` + "`bd create \"Title\" --type task --priority 2`" + ` - Create issue
+- ` + "`bd close <id>`" + ` - Complete work
+- ` + "`bd sync`" + ` - Sync with git (run at session end)
 
-# Search
-bd list --status open --priority 1 --json
-bd show <id> --json
-
-# Sync (CRITICAL at end of session!)
-bd sync  # Force immediate export/commit/push
-` + "```" + `
-
-### Workflow
-
-1. **Check ready work**: ` + "`bd ready --json`" + `
-2. **Claim task**: ` + "`bd update <id> --status in_progress`" + `
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** ` + "`bd create \"Found bug\" -p 1 --deps discovered-from:<parent-id> --json`" + `
-5. **Complete**: ` + "`bd close <id> --reason \"Done\" --json`" + `
-6. **Sync**: ` + "`bd sync`" + ` (flushes changes to git immediately)
-
-### Priorities
-
-- ` + "`0`" + ` - Critical (security, data loss, broken builds)
-- ` + "`1`" + ` - High (major features, important bugs)
-- ` + "`2`" + ` - Medium (default, nice-to-have)
-- ` + "`3`" + ` - Low (polish, optimization)
-- ` + "`4`" + ` - Backlog (future ideas)
-
-### Git Workflow
-
-- Always commit ` + "`.beads/issues.jsonl`" + ` with code changes
-- Run ` + "`bd sync`" + ` at end of work sessions
-- Install git hooks: ` + "`bd hooks install`" + ` (ensures DB ↔ JSONL consistency)
-
-### MCP Server (Recommended)
-
-For MCP-compatible clients (Claude Desktop, etc.), install the beads MCP server:
-- Install: ` + "`pip install beads-mcp`" + `
-- Functions: ` + "`mcp__beads__ready()`" + `, ` + "`mcp__beads__create()`" + `, etc.
-
-## CLI Help
-
-Run ` + "`bd <command> --help`" + ` to see all available flags for any command.
-For example: ` + "`bd create --help`" + ` shows ` + "`--parent`" + `, ` + "`--deps`" + `, ` + "`--assignee`" + `, etc.
-
-## Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use ` + "`--json`" + ` flag for programmatic use
-- ✅ Run ` + "`bd sync`" + ` at end of sessions
-- ✅ Run ` + "`bd <cmd> --help`" + ` to discover available flags
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT commit ` + "`.beads/beads.db`" + ` (JSONL only)`
-
-const agentsContent = `## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-` + "```bash" + `
-bd ready --json
-` + "```" + `
-
-**Create new issues:**
-` + "```bash" + `
-bd create "Issue title" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
-bd create "Subtask" --parent <epic-id> --json  # Hierarchical subtask (gets ID like epic-id.1)
-` + "```" + `
-
-**Claim and update:**
-` + "```bash" + `
-bd update bd-42 --status in_progress --json
-bd update bd-42 --priority 1 --json
-` + "```" + `
-
-**Complete work:**
-` + "```bash" + `
-bd close bd-42 --reason "Completed" --json
-` + "```" + `
-
-### Issue Types
-
-- ` + "`bug`" + ` - Something broken
-- ` + "`feature`" + ` - New functionality
-- ` + "`task`" + ` - Work item (tests, docs, refactoring)
-- ` + "`epic`" + ` - Large feature with subtasks
-- ` + "`chore`" + ` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- ` + "`0`" + ` - Critical (security, data loss, broken builds)
-- ` + "`1`" + ` - High (major features, important bugs)
-- ` + "`2`" + ` - Medium (default, nice-to-have)
-- ` + "`3`" + ` - Low (polish, optimization)
-- ` + "`4`" + ` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: ` + "`bd ready`" + ` shows unblocked issues
-2. **Claim your task**: ` + "`bd update <id> --status in_progress`" + `
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - ` + "`bd create \"Found bug\" -p 1 --deps discovered-from:<parent-id>`" + `
-5. **Complete**: ` + "`bd close <id> --reason \"Done\"`" + `
-6. **Commit together**: Always commit the ` + "`.beads/issues.jsonl`" + ` file together with the code changes so issue state stays in sync with code state
-
-### Auto-Sync
-
-bd automatically syncs with git:
-- Exports to ` + "`.beads/issues.jsonl`" + ` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after ` + "`git pull`" + `)
-- No manual export/import needed!
-
-### GitHub Copilot Integration
-
-If using GitHub Copilot, also create ` + "`.github/copilot-instructions.md`" + ` for automatic instruction loading.
-Run ` + "`bd onboard`" + ` to get the content, or see step 2 of the onboard instructions.
-
-### MCP Server (Recommended)
-
-If using Claude or MCP-compatible clients, install the beads MCP server:
-
-` + "```bash" + `
-pip install beads-mcp
-` + "```" + `
-
-Add to MCP config (e.g., ` + "`~/.config/claude/config.json`" + `):
-` + "```json" + `
-{
-  "beads": {
-    "command": "beads-mcp",
-    "args": []
-  }
-}
-` + "```" + `
-
-Then use ` + "`mcp__beads__*`" + ` functions instead of CLI commands.
-
-### Managing AI-Generated Planning Documents
-
-AI assistants often create planning and design documents during development:
-- PLAN.md, IMPLEMENTATION.md, ARCHITECTURE.md
-- DESIGN.md, CODEBASE_SUMMARY.md, INTEGRATION_PLAN.md
-- TESTING_GUIDE.md, TECHNICAL_DESIGN.md, and similar files
-
-**Best Practice: Use a dedicated directory for these ephemeral files**
-
-**Recommended approach:**
-- Create a ` + "`history/`" + ` directory in the project root
-- Store ALL AI-generated planning/design docs in ` + "`history/`" + `
-- Keep the repository root clean and focused on permanent project files
-- Only access ` + "`history/`" + ` when explicitly asked to review past planning
-
-**Example .gitignore entry (optional):**
-` + "```" + `
-# AI planning documents (ephemeral)
-history/
-` + "```" + `
-
-**Benefits:**
-- ✅ Clean repository root
-- ✅ Clear separation between ephemeral and permanent documentation
-- ✅ Easy to exclude from version control if desired
-- ✅ Preserves planning history for archeological research
-- ✅ Reduces noise when browsing the project
-
-### CLI Help
-
-Run ` + "`bd <command> --help`" + ` to see all available flags for any command.
-For example: ` + "`bd create --help`" + ` shows ` + "`--parent`" + `, ` + "`--deps`" + `, ` + "`--assignee`" + `, etc.
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use ` + "`--json`" + ` flag for programmatic use
-- ✅ Link discovered work with ` + "`discovered-from`" + ` dependencies
-- ✅ Check ` + "`bd ready`" + ` before asking "what should I work on?"
-- ✅ Store AI planning docs in ` + "`history/`" + ` directory
-- ✅ Run ` + "`bd <cmd> --help`" + ` to discover available flags
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-- ❌ Do NOT clutter repo root with planning documents
-
-For more details, see README.md and QUICKSTART.md.`
+For full workflow details: ` + "`bd prime`" + ``
 
 func renderOnboardInstructions(w io.Writer) error {
-	bold := color.New(color.Bold).SprintFunc()
-	cyan := color.New(color.FgCyan).SprintFunc()
-	yellow := color.New(color.FgYellow).SprintFunc()
-	green := color.New(color.FgGreen).SprintFunc()
-
 	writef := func(format string, args ...interface{}) error {
 		_, err := fmt.Fprintf(w, format, args...)
 		return err
@@ -249,226 +50,81 @@ func renderOnboardInstructions(w io.Writer) error {
 		return err
 	}
 
-	if err := writef("\n%s\n\n", bold("bd Onboarding Instructions for AI Agent")); err != nil {
+	if err := writef("\n%s\n\n", ui.RenderBold("bd Onboarding")); err != nil {
 		return err
 	}
-	if err := writef("%s\n\n", yellow("Please complete the following tasks:")); err != nil {
-		return err
-	}
-	if err := writef("%s\n", bold("1. Update AGENTS.md")); err != nil {
-		return err
-	}
-	if err := writeln("   Add the following content to AGENTS.md in an appropriate location."); err != nil {
-		return err
-	}
-	if err := writeln("   If AGENTS.md doesn't exist, create it with this content."); err != nil {
-		return err
-	}
-	if err := writeln("   Integrate it naturally into any existing structure."); err != nil {
+	if err := writeln("Add this minimal snippet to AGENTS.md (or create it):"); err != nil {
 		return err
 	}
 	if err := writeBlank(); err != nil {
 		return err
 	}
 
-	if err := writef("%s\n", cyan("--- BEGIN AGENTS.MD CONTENT ---")); err != nil {
+	if err := writef("%s\n", ui.RenderAccent("--- BEGIN AGENTS.MD CONTENT ---")); err != nil {
 		return err
 	}
 	if err := writeln(agentsContent); err != nil {
 		return err
 	}
-	if err := writef("%s\n\n", cyan("--- END AGENTS.MD CONTENT ---")); err != nil {
+	if err := writef("%s\n\n", ui.RenderAccent("--- END AGENTS.MD CONTENT ---")); err != nil {
 		return err
 	}
 
-	if err := writef("%s\n", bold("2. Create .github/copilot-instructions.md (for GitHub Copilot)")); err != nil {
+	if err := writef("%s\n", ui.RenderBold("For GitHub Copilot users:")); err != nil {
 		return err
 	}
-	if err := writeln("   GitHub Copilot automatically loads instructions from .github/copilot-instructions.md"); err != nil {
-		return err
-	}
-	if err := writeln("   Create the .github directory if it doesn't exist, then add this file:"); err != nil {
+	if err := writeln("Add the same content to .github/copilot-instructions.md"); err != nil {
 		return err
 	}
 	if err := writeBlank(); err != nil {
 		return err
 	}
 
-	if err := writef("%s\n", cyan("--- BEGIN .GITHUB/COPILOT-INSTRUCTIONS.MD CONTENT ---")); err != nil {
+	if err := writef("%s\n", ui.RenderBold("How it works:")); err != nil {
 		return err
 	}
-	if err := writeln(copilotInstructionsContent); err != nil {
+	if err := writef("   • %s provides dynamic workflow context (~80 lines)\n", ui.RenderAccent("bd prime")); err != nil {
 		return err
 	}
-	if err := writef("%s\n\n", cyan("--- END .GITHUB/COPILOT-INSTRUCTIONS.MD CONTENT ---")); err != nil {
+	if err := writef("   • %s auto-injects bd prime at session start\n", ui.RenderAccent("bd hooks install")); err != nil {
 		return err
 	}
-
-	if err := writef("%s\n", bold("3. Update CLAUDE.md (if present)")); err != nil {
-		return err
-	}
-	if err := writeln("   If CLAUDE.md exists in this directory, add this note at the top:"); err != nil {
-		return err
-	}
-	if err := writeBlank(); err != nil {
-		return err
-	}
-	if err := writef("%s\n", cyan("   **Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)")); err != nil {
-		return err
-	}
-	if err := writef("%s\n", cyan("   for issue tracking. Use `bd` commands instead of markdown TODOs.")); err != nil {
-		return err
-	}
-	if err := writef("%s\n", cyan("   See AGENTS.md for workflow details.")); err != nil {
+	if err := writeln("   • AGENTS.md only needs this minimal pointer, not full instructions"); err != nil {
 		return err
 	}
 	if err := writeBlank(); err != nil {
 		return err
 	}
 
-	if err := writef("%s\n", bold("4. Remove bootstrap instruction")); err != nil {
+	if err := writef("%s\n\n", ui.RenderPass("This keeps AGENTS.md lean while bd prime provides up-to-date workflow details.")); err != nil {
 		return err
-	}
-	if err := writeln("   If AGENTS.md or CLAUDE.md contains a line like:"); err != nil {
-		return err
-	}
-	if err := writef("%s\n", cyan("   \"BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions\"")); err != nil {
-		return err
-	}
-	if err := writeln("   Delete that line after completing steps 1 and 2."); err != nil {
-		return err
-	}
-	if err := writeBlank(); err != nil {
-		return err
-	}
-
-	if err := writef("%s\n", bold("Important reminders:")); err != nil {
-		return err
-	}
-	if err := writeln("   • Use bd for ALL task tracking - NO markdown TODO lists"); err != nil {
-		return err
-	}
-	if err := writeln("   • Always use --json flag for programmatic bd commands"); err != nil {
-		return err
-	}
-	if err := writeln("   • Link discovered work with discovered-from dependencies"); err != nil {
-		return err
-	}
-	if err := writef("   • Check %s before asking \"what should I work on?\"\n", cyan("bd ready")); err != nil {
-		return err
-	}
-	if err := writeBlank(); err != nil {
-		return err
-	}
-
-	if err := writef("%s\n\n", green("When done, tell your AI assistant: \"bd onboarding complete\"")); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// bdGuideContent generates the canonical BD_GUIDE.md content
-const bdGuideHeader = `<!-- Auto-generated by bd v%s - DO NOT EDIT MANUALLY -->
-<!-- Run 'bd onboard --output .beads/BD_GUIDE.md' to regenerate -->
-
-# BD (Beads) Guide for AI Agents
-
-This file contains canonical bd (beads) workflow instructions for AI agents.
-It is auto-generated and version-stamped to track bd upgrades.
-
-> **For project-specific instructions**, see AGENTS.md in the repository root.
-> This file only covers bd tool usage, not project-specific workflows.
-
----
-
-`
-
-// generateBDGuide creates a version-stamped BD_GUIDE.md file
-func generateBDGuide(outputPath string) error {
-	// Create output file
-	// #nosec G304 - outputPath is a user-provided flag value for file generation
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-	defer f.Close()
-
-	// Write header with version stamp
-	if _, err := fmt.Fprintf(f, bdGuideHeader, Version); err != nil {
-		return fmt.Errorf("failed to write header: %w", err)
-	}
-
-	// Write AGENTS.md content (bd-specific instructions)
-	if _, err := f.WriteString(agentsContent); err != nil {
-		return fmt.Errorf("failed to write agents content: %w", err)
-	}
-
-	// Write separator
-	if _, err := f.WriteString("\n\n---\n\n"); err != nil {
-		return fmt.Errorf("failed to write separator: %w", err)
-	}
-
-	// Write Copilot instructions content (comprehensive technical guide)
-	if _, err := f.WriteString(copilotInstructionsContent); err != nil {
-		return fmt.Errorf("failed to write copilot content: %w", err)
-	}
-
-	// Write footer with regeneration instructions
-	footer := fmt.Sprintf("\n\n---\n\n"+
-		"**Generated by bd v%s**\n\n"+
-		"To regenerate this file after upgrading bd:\n"+
-		"```bash\n"+
-		"bd onboard --output .beads/BD_GUIDE.md\n"+
-		"```\n", Version)
-
-	if _, err := f.WriteString(footer); err != nil {
-		return fmt.Errorf("failed to write footer: %w", err)
 	}
 
 	return nil
 }
 
 var onboardCmd = &cobra.Command{
-	Use:   "onboard",
-	Short: "Display instructions for configuring AGENTS.md",
-	Long: `Display instructions for AI agents to configure AGENTS.md with bd workflow.
+	Use:     "onboard",
+	GroupID: "setup",
+	Short:   "Display minimal snippet for AGENTS.md",
+	Long: `Display a minimal snippet to add to AGENTS.md for bd integration.
 
-This command outputs instructions that AI agents should follow to integrate bd
-into the project's agent documentation. The agent will intelligently merge the
-content into AGENTS.md and update CLAUDE.md if present.
+This outputs a small (~10 line) snippet that points to 'bd prime' for full
+workflow context. This approach:
 
-Use --output to generate a canonical BD_GUIDE.md file instead:
-  bd onboard --output .beads/BD_GUIDE.md
+  • Keeps AGENTS.md lean (doesn't bloat with instructions)
+  • bd prime provides dynamic, always-current workflow details
+  • Hooks auto-inject bd prime at session start
 
-The generated BD_GUIDE.md is version-stamped and auto-generated - it should
-never be manually edited. This separates bd-specific instructions (which change
-with bd upgrades) from project-specific instructions in AGENTS.md.`,
+The old approach of embedding full instructions in AGENTS.md is deprecated
+because it wasted tokens and got stale when bd upgraded.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		outputPath, _ := cmd.Flags().GetString("output")
-
-		if outputPath != "" {
-			// Generate BD_GUIDE.md instead of onboarding instructions
-			if err := generateBDGuide(outputPath); err != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Error generating BD_GUIDE.md: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("✓ Generated %s (bd v%s)\n", outputPath, Version)
-			fmt.Println("  This file is auto-generated - do not edit manually")
-			fmt.Println("  Update your AGENTS.md to reference this file instead of duplicating bd instructions")
-			return
-		}
-
 		if err := renderOnboardInstructions(cmd.OutOrStdout()); err != nil {
-			if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "Error rendering onboarding instructions: %v\n", err); writeErr != nil {
-				fmt.Fprintf(os.Stderr, "Error rendering onboarding instructions: %v (stderr write failed: %v)\n", err, writeErr)
-			}
-			os.Exit(1)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 		}
 	},
 }
 
 func init() {
-	onboardCmd.Flags().String("output", "", "Generate BD_GUIDE.md at the specified path (e.g., .beads/BD_GUIDE.md)")
 	rootCmd.AddCommand(onboardCmd)
 }

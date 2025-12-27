@@ -19,6 +19,7 @@ daemon.lock
 daemon.log
 daemon.pid
 bd.sock
+sync-state.json
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -37,6 +38,7 @@ beads.right.meta.json
 
 # Keep JSONL exports and config (source of truth for git)
 !issues.jsonl
+!interactions.jsonl
 !metadata.json
 !config.json
 `

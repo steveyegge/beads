@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/beads/internal/deletions"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -524,7 +524,7 @@ func TestIsBoundary(t *testing.T) {
 	}
 }
 
-func TestIsNumeric(t *testing.T) {
+func TestIsValidIDSuffix(t *testing.T) {
 	tests := []struct {
 		s    string
 		want bool
@@ -538,18 +538,24 @@ func TestIsNumeric(t *testing.T) {
 		{"09ea", true},
 		{"abc123", true},
 		{"zzz", true},
+		// Hierarchical suffixes (hash.number format)
+		{"6we.2", true},
+		{"abc.1", true},
+		{"abc.1.2", true},
+		{"abc.1.2.3", true},
+		{"1.5", true},
 		// Invalid suffixes
-		{"", false},      // Empty string now returns false
-		{"1.5", false},   // Non-base36 characters
-		{"A3F8", false},  // Uppercase not allowed
-		{"@#$!", false},  // Special characters not allowed
+		{"", false},       // Empty string
+		{"A3F8", false},   // Uppercase not allowed
+		{"@#$!", false},   // Special characters not allowed
+		{"abc-def", false}, // Hyphens not allowed in suffix
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.s, func(t *testing.T) {
-			got := isNumeric(tt.s)
+			got := isValidIDSuffix(tt.s)
 			if got != tt.want {
-				t.Errorf("isNumeric(%q) = %v, want %v", tt.s, got, tt.want)
+				t.Errorf("isValidIDSuffix(%q) = %v, want %v", tt.s, got, tt.want)
 			}
 		})
 	}
@@ -1069,88 +1075,6 @@ func TestConcurrentExternalRefImports(t *testing.T) {
 	})
 }
 
-func TestCheckGitHistoryForDeletions_EmptyList(t *testing.T) {
-	// Empty list should return nil
-	result := checkGitHistoryForDeletions("/tmp/test", nil)
-	if result != nil {
-		t.Errorf("Expected nil for empty list, got %v", result)
-	}
-
-	result = checkGitHistoryForDeletions("/tmp/test", []string{})
-	if result != nil {
-		t.Errorf("Expected nil for empty slice, got %v", result)
-	}
-}
-
-func TestCheckGitHistoryForDeletions_NonGitDir(t *testing.T) {
-	// Non-git directory should return empty (conservative behavior)
-	tmpDir := t.TempDir()
-	result := checkGitHistoryForDeletions(tmpDir, []string{"bd-test"})
-	if len(result) != 0 {
-		t.Errorf("Expected empty result for non-git dir, got %v", result)
-	}
-}
-
-func TestWasEverInJSONL_NonGitDir(t *testing.T) {
-	// Non-git directory should return false (conservative behavior)
-	tmpDir := t.TempDir()
-	result := wasEverInJSONL(tmpDir, ".beads/beads.jsonl", "bd-test")
-	if result {
-		t.Error("Expected false for non-git dir")
-	}
-}
-
-func TestBatchCheckGitHistory_NonGitDir(t *testing.T) {
-	// Non-git directory should return empty (falls back to individual checks)
-	tmpDir := t.TempDir()
-	result := batchCheckGitHistory(tmpDir, ".beads/beads.jsonl", []string{"bd-test1", "bd-test2"})
-	if len(result) != 0 {
-		t.Errorf("Expected empty result for non-git dir, got %v", result)
-	}
-}
-
-func TestConvertDeletionToTombstone(t *testing.T) {
-	ts := time.Date(2025, 12, 5, 14, 30, 0, 0, time.UTC)
-	del := deletions.DeletionRecord{
-		ID:        "bd-test",
-		Timestamp: ts,
-		Actor:     "alice",
-		Reason:    "no longer needed",
-	}
-
-	tombstone := convertDeletionToTombstone("bd-test", del)
-
-	if tombstone.ID != "bd-test" {
-		t.Errorf("Expected ID 'bd-test', got %q", tombstone.ID)
-	}
-	if tombstone.Status != types.StatusTombstone {
-		t.Errorf("Expected status 'tombstone', got %q", tombstone.Status)
-	}
-	if tombstone.Title != "(deleted)" {
-		t.Errorf("Expected title '(deleted)', got %q", tombstone.Title)
-	}
-	if tombstone.DeletedAt == nil || !tombstone.DeletedAt.Equal(ts) {
-		t.Errorf("Expected DeletedAt to be %v, got %v", ts, tombstone.DeletedAt)
-	}
-	if tombstone.DeletedBy != "alice" {
-		t.Errorf("Expected DeletedBy 'alice', got %q", tombstone.DeletedBy)
-	}
-	if tombstone.DeleteReason != "no longer needed" {
-		t.Errorf("Expected DeleteReason 'no longer needed', got %q", tombstone.DeleteReason)
-	}
-	if tombstone.OriginalType != "" {
-		t.Errorf("Expected empty OriginalType, got %q", tombstone.OriginalType)
-	}
-	// Verify priority uses zero to indicate unknown (bd-9auw)
-	if tombstone.Priority != 0 {
-		t.Errorf("Expected Priority 0 (unknown), got %d", tombstone.Priority)
-	}
-	// IssueType must be valid for validation, so it defaults to task
-	if tombstone.IssueType != types.TypeTask {
-		t.Errorf("Expected IssueType 'task', got %q", tombstone.IssueType)
-	}
-}
-
 func TestImportIssues_TombstoneFromJSONL(t *testing.T) {
 	ctx := context.Background()
 
@@ -1219,181 +1143,568 @@ func TestImportIssues_TombstoneFromJSONL(t *testing.T) {
 	}
 }
 
-func TestImportIssues_TombstoneNotFilteredByDeletionsManifest(t *testing.T) {
+// TestImportOrphanSkip_CountMismatch verifies that orphaned issues are properly
+// skipped during import and tracked in the result count (bd-ckej).
+//
+// Discovery recipe: Fresh clone >> bd init >> bd doctor --fix >> bd sync --import-only
+// would show "Count mismatch: database has 823 issues, JSONL has 824" if orphaned
+// child issues weren't properly filtered out (before the fix).
+//
+// The test imports issues where a child's parent doesn't exist in the database.
+// With OrphanSkip mode, the child should be filtered out before creation.
+func TestImportOrphanSkip_CountMismatch(t *testing.T) {
 	ctx := context.Background()
-
-	tmpDir := t.TempDir()
-	tmpDB := tmpDir + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
+	store, err := sqlite.New(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 	defer store.Close()
 
+	// Set prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 
-	// Create a deletions manifest entry
-	deletionsPath := deletions.DefaultPath(tmpDir)
-	delRecord := deletions.DeletionRecord{
-		ID:        "test-abc123",
-		Timestamp: time.Now().Add(-time.Hour),
-		Actor:     "alice",
-		Reason:    "old deletion",
-	}
-	if err := deletions.AppendDeletion(deletionsPath, delRecord); err != nil {
-		t.Fatalf("Failed to write deletion record: %v", err)
+	now := time.Now()
+
+	// Prepare to import: normal issues + orphaned child
+	// The orphaned child has a parent (test-orphan) that doesn't exist in the database
+	issues := []*types.Issue{
+		{
+			ID:        "test-new1",
+			Title:     "Normal Issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "test-orphan.1",                // Child of non-existent parent
+			Title:     "Orphaned Child",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "test-new2",
+			Title:     "Another Normal Issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 	}
 
-	// Create a tombstone in JSONL for the same issue
-	deletedAt := time.Now()
-	tombstone := &types.Issue{
-		ID:           "test-abc123",
-		Title:        "(deleted)",
-		Status:       types.StatusTombstone,
-		Priority:     2,
-		IssueType:    types.TypeTask,
-		CreatedAt:    time.Now().Add(-24 * time.Hour),
-		UpdatedAt:    deletedAt,
-		DeletedAt:    &deletedAt,
-		DeletedBy:    "bob",
-		DeleteReason: "JSONL tombstone",
-	}
-
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{tombstone}, Options{})
+	// Import with OrphanSkip mode - parent doesn't exist
+	result, err := ImportIssues(ctx, "", store, issues, Options{
+		OrphanHandling:       sqlite.OrphanSkip,
+		SkipPrefixValidation: true, // Allow explicit IDs during import
+	})
 	if err != nil {
 		t.Fatalf("Import failed: %v", err)
 	}
 
-	// The tombstone should be imported (not filtered by deletions manifest)
-	if result.Created != 1 {
-		t.Errorf("Expected 1 created (tombstone), got %d", result.Created)
-	}
-	if result.SkippedDeleted != 0 {
-		t.Errorf("Expected 0 skipped deleted (tombstone should not be filtered), got %d", result.SkippedDeleted)
-	}
-}
-
-// TestImportIssues_LegacyDeletionsConvertedToTombstones tests that entries in
-// deletions.jsonl are converted to tombstones during import (bd-hp0m)
-func TestImportIssues_LegacyDeletionsConvertedToTombstones(t *testing.T) {
-	ctx := context.Background()
-
-	tmpDir := t.TempDir()
-	tmpDB := tmpDir + "/test.db"
-	store, err := sqlite.New(context.Background(), tmpDB)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		t.Fatalf("Failed to set prefix: %v", err)
-	}
-
-	// Create a deletions manifest with one entry
-	deletionsPath := deletions.DefaultPath(tmpDir)
-	deleteTime := time.Now().Add(-time.Hour)
-
-	del := deletions.DeletionRecord{
-		ID:        "test-abc",
-		Timestamp: deleteTime,
-		Actor:     "alice",
-		Reason:    "duplicate of test-xyz",
-	}
-	if err := deletions.AppendDeletion(deletionsPath, del); err != nil {
-		t.Fatalf("Failed to write deletion record: %v", err)
-	}
-
-	// Create a regular issue (not in deletions)
-	regularIssue := &types.Issue{
-		ID:        "test-def",
-		Title:     "Regular issue",
-		Status:    types.StatusOpen,
-		Priority:  2,
-		IssueType: types.TypeTask,
-		CreatedAt: time.Now().Add(-24 * time.Hour),
-		UpdatedAt: time.Now(),
-	}
-
-	// Create an issue that's in the deletions manifest (non-tombstone)
-	deletedIssue := &types.Issue{
-		ID:        "test-abc",
-		Title:     "This will be skipped and converted",
-		Status:    types.StatusOpen,
-		Priority:  1,
-		IssueType: types.TypeBug,
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: time.Now().Add(-2 * time.Hour),
-	}
-
-	// Import both issues
-	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{regularIssue, deletedIssue}, Options{})
-	if err != nil {
-		t.Fatalf("Import failed: %v", err)
-	}
-
-	// Regular issue should be created
-	// The deleted issue is skipped (in deletions manifest), but a tombstone is created from deletions.jsonl
-	// So we expect: 1 regular + 1 tombstone = 2 created
+	// Verify results:
+	// - 2 issues should be created (test-new1, test-new2)
+	// - 1 issue should be skipped (test-orphan.1 - no parent exists)
 	if result.Created != 2 {
-		t.Errorf("Expected 2 created (1 regular + 1 tombstone from deletions.jsonl), got %d", result.Created)
+		t.Errorf("Expected 2 created issues, got %d", result.Created)
 	}
-	// bd-k5kz: When an issue is in both JSONL (non-tombstone) and deletions.jsonl,
-	// we replace it with a tombstone. This should NOT count as SkippedDeleted
-	// since a tombstone is being created (counted in ConvertedToTombstone instead).
-	if result.SkippedDeleted != 0 {
-		t.Errorf("Expected 0 skipped deleted (replaced with tombstone, not skipped), got %d", result.SkippedDeleted)
-	}
-	// Verify ConvertedToTombstone counter (bd-wucl)
-	if result.ConvertedToTombstone != 1 {
-		t.Errorf("Expected 1 converted to tombstone, got %d", result.ConvertedToTombstone)
-	}
-	if len(result.ConvertedTombstoneIDs) != 1 || result.ConvertedTombstoneIDs[0] != "test-abc" {
-		t.Errorf("Expected ConvertedTombstoneIDs [test-abc], got %v", result.ConvertedTombstoneIDs)
+	if result.Skipped != 1 {
+		t.Errorf("Expected 1 skipped issue (orphan), got %d", result.Skipped)
 	}
 
-	// Verify regular issue was imported
-	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	// Verify the orphan is NOT in the database
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		t.Fatalf("Failed to search issues: %v", err)
 	}
-	foundRegular := false
-	for _, i := range issues {
-		if i.ID == "test-def" {
-			foundRegular = true
-		}
-	}
-	if !foundRegular {
-		t.Error("Regular issue not found after import")
-	}
 
-	// Verify tombstone was created from deletions.jsonl
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
-	if err != nil {
-		t.Fatalf("Failed to search all issues: %v", err)
-	}
-
-	var tombstone *types.Issue
-	for _, i := range allIssues {
-		if i.ID == "test-abc" {
-			tombstone = i
+	var orphanFound bool
+	for _, issue := range allIssues {
+		if issue.ID == "test-orphan.1" {
+			orphanFound = true
 			break
 		}
 	}
+	if orphanFound {
+		t.Error("Orphaned issue test-orphan.1 should not be in database")
+	}
 
-	// test-abc should be a tombstone (was in JSONL and deletions)
-	if tombstone == nil {
-		t.Fatal("Expected tombstone for test-abc not found")
+	// Verify normal issues ARE in the database
+	var count int
+	for _, issue := range allIssues {
+		if issue.ID == "test-new1" || issue.ID == "test-new2" {
+			count++
+		}
 	}
-	if tombstone.Status != types.StatusTombstone {
-		t.Errorf("Expected test-abc to be tombstone, got status %q", tombstone.Status)
+	if count != 2 {
+		t.Errorf("Expected 2 normal issues in database, found %d", count)
 	}
-	if tombstone.DeletedBy != "alice" {
-		t.Errorf("Expected DeletedBy 'alice', got %q", tombstone.DeletedBy)
+}
+
+// TestImportCrossPrefixContentMatch tests that importing an issue with a different prefix
+// but same content hash does NOT trigger a rename operation.
+//
+// Bug scenario:
+// 1. DB has issue "alpha-abc123" with prefix "alpha" configured
+// 2. Incoming JSONL has "beta-xyz789" with same content (same hash)
+// 3. Content hash match triggers rename detection (same content, different ID)
+// 4. handleRename tries to create "beta-xyz789" which fails prefix validation
+//
+// Expected behavior: Skip the cross-prefix "rename" and keep the existing issue unchanged.
+func TestImportCrossPrefixContentMatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
 	}
-	if tombstone.DeleteReason != "duplicate of test-xyz" {
-		t.Errorf("Expected DeleteReason 'duplicate of test-xyz', got %q", tombstone.DeleteReason)
+	defer store.Close()
+
+	// Configure database with "alpha" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "alpha"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
 	}
+
+	// Create an issue with the configured prefix
+	existingIssue := &types.Issue{
+		ID:          "alpha-abc123",
+		Title:       "Shared Content Issue",
+		Description: "This issue has content that will match a cross-prefix import",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, existingIssue, "test-setup"); err != nil {
+		t.Fatalf("Failed to create existing issue: %v", err)
+	}
+
+	// Compute the content hash of the existing issue
+	existingHash := existingIssue.ComputeContentHash()
+
+	// Create an incoming issue with DIFFERENT prefix but SAME content
+	// This simulates importing from another project with same issue content
+	incomingIssue := &types.Issue{
+		ID:          "beta-xyz789", // Different prefix!
+		Title:       "Shared Content Issue",
+		Description: "This issue has content that will match a cross-prefix import",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+
+	// Verify they have the same content hash (this is what triggers the bug)
+	incomingHash := incomingIssue.ComputeContentHash()
+	if existingHash != incomingHash {
+		t.Fatalf("Test setup error: content hashes should match. existing=%s incoming=%s", existingHash, incomingHash)
+	}
+
+	// Import the cross-prefix issue with SkipPrefixValidation (simulates auto-import behavior)
+	// This should NOT fail - cross-prefix content matches should be skipped, not renamed
+	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{incomingIssue}, Options{
+		SkipPrefixValidation: true, // Auto-import typically sets this
+	})
+	if err != nil {
+		t.Fatalf("Import should not fail for cross-prefix content match: %v", err)
+	}
+
+	// The incoming issue should be skipped (not created, not updated)
+	// because it has a different prefix than configured
+	if result.Created != 0 {
+		t.Errorf("Expected 0 created (cross-prefix should be skipped), got %d", result.Created)
+	}
+
+	// The existing issue should remain unchanged
+	retrieved, err := store.GetIssue(ctx, "alpha-abc123")
+	if err != nil {
+		t.Fatalf("Failed to retrieve existing issue: %v", err)
+	}
+	if retrieved == nil {
+		t.Fatal("Existing issue alpha-abc123 should still exist after import")
+	}
+	if retrieved.Title != "Shared Content Issue" {
+		t.Errorf("Existing issue should be unchanged, got title: %s", retrieved.Title)
+	}
+
+	// The cross-prefix issue should NOT exist in the database
+	crossPrefix, err := store.GetIssue(ctx, "beta-xyz789")
+	if err == nil && crossPrefix != nil {
+		t.Error("Cross-prefix issue beta-xyz789 should NOT be created in the database")
+	}
+}
+
+// TestImportTombstonePrefixMismatch tests that tombstoned issues with different prefixes
+// don't block import (bd-6pni). This handles pollution from contributor PRs that used
+// different test prefixes - these tombstones are safe to ignore.
+func TestImportTombstonePrefixMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Configure database with "bd" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create tombstoned issues with WRONG prefixes (simulating pollution)
+	deletedAt := time.Now().Add(-time.Hour)
+	issues := []*types.Issue{
+		// Normal issue with correct prefix
+		{
+			ID:        "bd-good1",
+			Title:     "Good issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		// Tombstone with wrong prefix "beads"
+		{
+			ID:           "beads-old1",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+		// Tombstone with wrong prefix "test"
+		{
+			ID:           "test-old2",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+	}
+
+	// Import should succeed - tombstones with wrong prefixes should be ignored
+	result, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err != nil {
+		t.Fatalf("Import should succeed when all mismatched prefixes are tombstones: %v", err)
+	}
+
+	// Should have created the good issue
+	// Tombstones with wrong prefixes are skipped (cross-prefix content match logic)
+	if result.Created < 1 {
+		t.Errorf("Expected at least 1 created issue, got %d", result.Created)
+	}
+
+	// PrefixMismatch should be false because all mismatches were tombstones
+	if result.PrefixMismatch {
+		t.Error("PrefixMismatch should be false when all mismatched prefixes are tombstones")
+	}
+
+	// Verify the good issue was imported
+	goodIssue, err := store.GetIssue(ctx, "bd-good1")
+	if err != nil {
+		t.Fatalf("Failed to get good issue: %v", err)
+	}
+	if goodIssue.Title != "Good issue" {
+		t.Errorf("Expected title 'Good issue', got %q", goodIssue.Title)
+	}
+}
+
+// TestImportMixedPrefixMismatch tests that import fails when there are non-tombstone
+// issues with wrong prefixes, even if some tombstones also have wrong prefixes.
+func TestImportMixedPrefixMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Configure database with "bd" prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	deletedAt := time.Now().Add(-time.Hour)
+	issues := []*types.Issue{
+		// Normal issue with correct prefix
+		{
+			ID:        "bd-good1",
+			Title:     "Good issue",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+		// Tombstone with wrong prefix (should be ignored)
+		{
+			ID:           "beads-old1",
+			Title:        "(deleted)",
+			Status:       types.StatusTombstone,
+			Priority:     2,
+			IssueType:    types.TypeTask,
+			DeletedAt:    &deletedAt,
+			DeletedBy:    "cleanup",
+			DeleteReason: "test cleanup",
+		},
+		// NON-tombstone with wrong prefix (should cause error)
+		{
+			ID:        "other-bad1",
+			Title:     "Bad issue with wrong prefix",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+		},
+	}
+
+	// Import should fail due to the non-tombstone with wrong prefix
+	_, err = ImportIssues(ctx, tmpDB, store, issues, Options{})
+	if err == nil {
+		t.Fatal("Import should fail when there are non-tombstone issues with wrong prefixes")
+	}
+
+	// Error message should mention prefix mismatch
+	if !strings.Contains(err.Error(), "prefix mismatch") {
+		t.Errorf("Error should mention prefix mismatch, got: %v", err)
+	}
+}
+
+// TestImportPreservesPinnedField tests that importing from JSONL (which has omitempty
+// for the pinned field) does NOT reset an existing pinned=true issue to pinned=false.
+//
+// Bug scenario (bd-phtv):
+// 1. User runs `bd pin <issue-id>` which sets pinned=true in SQLite
+// 2. Any subsequent bd command (e.g., `bd show`) triggers auto-import from JSONL
+// 3. JSONL has pinned=false due to omitempty (field absent means false in Go)
+// 4. Import overwrites pinned=true with pinned=false, losing the pinned state
+//
+// Expected: Import should preserve existing pinned=true when incoming pinned=false
+// (since false just means "field was absent in JSONL due to omitempty").
+func TestImportPreservesPinnedField(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create an issue with pinned=true (simulates `bd pin` command)
+	pinnedIssue := &types.Issue{
+		ID:        "test-abc123",
+		Title:     "Pinned Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Pinned:    true, // This is set by `bd pin`
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now().Add(-time.Hour),
+	}
+	pinnedIssue.ContentHash = pinnedIssue.ComputeContentHash()
+	if err := store.CreateIssue(ctx, pinnedIssue, "test-setup"); err != nil {
+		t.Fatalf("Failed to create pinned issue: %v", err)
+	}
+
+	// Verify issue is pinned before import
+	before, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to get issue before import: %v", err)
+	}
+	if !before.Pinned {
+		t.Fatal("Issue should be pinned before import")
+	}
+
+	// Import same issue from JSONL (simulates auto-import after git pull)
+	// JSONL has pinned=false because omitempty means absent fields are false
+	importedIssue := &types.Issue{
+		ID:        "test-abc123",
+		Title:     "Pinned Issue", // Same content
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Pinned:    false, // This is what JSONL deserialization produces due to omitempty
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now(), // Newer timestamp to trigger update
+	}
+	importedIssue.ContentHash = importedIssue.ComputeContentHash()
+
+	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{importedIssue}, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	// Import should recognize this as an update (same ID, different timestamp)
+	// The unchanged count may vary based on whether other fields changed
+	t.Logf("Import result: Created=%d Updated=%d Unchanged=%d", result.Created, result.Updated, result.Unchanged)
+
+	// CRITICAL: Verify pinned field was preserved
+	after, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to get issue after import: %v", err)
+	}
+	if !after.Pinned {
+		t.Error("FAIL (bd-phtv): pinned=true was reset to false by import. " +
+			"Import should preserve existing pinned field when incoming is false (omitempty).")
+	}
+}
+
+// TestImportSetsPinnedTrue tests that importing an issue with pinned=true
+// correctly sets the pinned field in the database.
+func TestImportSetsPinnedTrue(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(context.Background(), tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create an unpinned issue
+	unpinnedIssue := &types.Issue{
+		ID:        "test-abc123",
+		Title:     "Unpinned Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Pinned:    false,
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now().Add(-time.Hour),
+	}
+	unpinnedIssue.ContentHash = unpinnedIssue.ComputeContentHash()
+	if err := store.CreateIssue(ctx, unpinnedIssue, "test-setup"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Import with pinned=true (from JSONL that explicitly has "pinned": true)
+	importedIssue := &types.Issue{
+		ID:        "test-abc123",
+		Title:     "Unpinned Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		Pinned:    true, // Explicitly set to true in JSONL
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now(), // Newer timestamp
+	}
+	importedIssue.ContentHash = importedIssue.ComputeContentHash()
+
+	result, err := ImportIssues(ctx, tmpDB, store, []*types.Issue{importedIssue}, Options{})
+	if err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+	t.Logf("Import result: Created=%d Updated=%d Unchanged=%d", result.Created, result.Updated, result.Unchanged)
+
+	// Verify pinned field was set to true
+	after, err := store.GetIssue(ctx, "test-abc123")
+	if err != nil {
+		t.Fatalf("Failed to get issue after import: %v", err)
+	}
+	if !after.Pinned {
+		t.Error("FAIL: pinned=true from JSONL should set the field to true in database")
+	}
+}
+
+func TestMultiRepoPrefixValidation(t *testing.T) {
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
+	ctx := context.Background()
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := sqlite.New(ctx, tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "primary"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	t.Run("single-repo mode rejects foreign prefixes", func(t *testing.T) {
+		config.Set("repos.primary", "")
+		config.Set("repos.additional", nil)
+
+		issues := []*types.Issue{
+			{
+				ID:        "primary-1",
+				Title:     "Primary issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+			{
+				ID:        "foreign-1",
+				Title:     "Foreign issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+		}
+
+		_, err := ImportIssues(ctx, tmpDB, store, issues, Options{})
+		if err == nil {
+			t.Error("Expected error for foreign prefix in single-repo mode")
+		}
+		if err != nil && !strings.Contains(err.Error(), "prefix mismatch") {
+			t.Errorf("Expected prefix mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("multi-repo mode allows foreign prefixes", func(t *testing.T) {
+		config.Set("repos.primary", "/some/primary/path")
+		config.Set("repos.additional", []string{"/some/additional/path"})
+		defer func() {
+			config.Set("repos.primary", "")
+			config.Set("repos.additional", nil)
+		}()
+
+		issues := []*types.Issue{
+			{
+				ID:        "primary-abc1",
+				Title:     "Primary issue",
+				Status:    types.StatusOpen,
+				Priority:  2,
+				IssueType: types.TypeTask,
+			},
+			{
+				ID:         "foreign-xyz2",
+				Title:      "Foreign issue",
+				Status:     types.StatusOpen,
+				Priority:   2,
+				IssueType:  types.TypeTask,
+				SourceRepo: "~/code/foreign",
+			},
+		}
+
+		result, err := ImportIssues(ctx, tmpDB, store, issues, Options{
+			SkipPrefixValidation: false, // Verify auto-skip kicks in
+		})
+		if err != nil {
+			t.Errorf("Multi-repo mode should allow foreign prefixes, got error: %v", err)
+		}
+		if result != nil && result.PrefixMismatch {
+			t.Error("Multi-repo mode should not report prefix mismatch")
+		}
+	})
 }

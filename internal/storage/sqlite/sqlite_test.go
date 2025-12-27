@@ -404,12 +404,18 @@ func TestCreateIssues(t *testing.T) {
 			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
 		},
 		{
-			name: "closed_at invariant - closed status without closed_at",
+			name: "closed_at invariant - closed status without closed_at auto-sets it (GH#523)",
 			issues: []*types.Issue{
 				h.newIssue("", "Missing closed_at", types.StatusClosed, 1, types.TypeTask, nil),
 			},
-			wantErr: true,
-			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {},
+			wantErr: false, // Defensive fix auto-sets closed_at instead of rejecting
+			checkFunc: func(t *testing.T, h *createIssuesTestHelper, issues []*types.Issue) {
+				h.assertCount(issues, 1)
+				h.assertEqual(types.StatusClosed, issues[0].Status, "status")
+				if issues[0].ClosedAt == nil {
+					t.Error("ClosedAt should be auto-set for closed issues (GH#523 defensive fix)")
+				}
+			},
 		},
 		{
 			name: "nil item in batch",
@@ -506,62 +512,8 @@ func TestCreateIssuesRollback(t *testing.T) {
 		}
 	})
 
-	t.Run("rollback on conflict with existing ID", func(t *testing.T) {
-		// Create an issue with explicit ID
-		existingIssue := &types.Issue{
-			ID:        "bd-existing",
-			Title:     "Existing issue",
-			Status:    types.StatusOpen,
-			Priority:  1,
-			IssueType: types.TypeTask,
-		}
-		err := store.CreateIssue(ctx, existingIssue, "test-user")
-		if err != nil {
-			t.Fatalf("failed to create existing issue: %v", err)
-		}
-
-		// Try to create batch with conflicting ID
-		issues := []*types.Issue{
-			{
-				Title:     "Should rollback",
-				Status:    types.StatusOpen,
-				Priority:  1,
-				IssueType: types.TypeTask,
-			},
-			{
-				ID:        "bd-existing",
-				Title:     "Conflict",
-				Status:    types.StatusOpen,
-				Priority:  1,
-				IssueType: types.TypeTask,
-			},
-		}
-
-		err = store.CreateIssues(ctx, issues, "test-user")
-		if err == nil {
-			t.Fatal("expected error for duplicate ID, got nil")
-		}
-
-		// Verify rollback - "Should rollback" issue should not exist
-		filter := types.IssueFilter{}
-		allIssues, err := store.SearchIssues(ctx, "", filter)
-		if err != nil {
-			t.Fatalf("failed to search issues: %v", err)
-		}
-
-		// Count should only include the pre-existing issues
-		foundRollback := false
-		for _, issue := range allIssues {
-			if issue.Title == "Should rollback" {
-				foundRollback = true
-				break
-			}
-		}
-
-		if foundRollback {
-			t.Error("expected rollback of all issues in batch, but 'Should rollback' was found")
-		}
-	})
+	// Note: "rollback on conflict with existing ID" test removed - CreateIssues
+	// uses INSERT OR IGNORE which silently skips duplicates (needed for JSONL import)
 }
 
 func TestUpdateIssue(t *testing.T) {
@@ -706,6 +658,10 @@ func TestCloseIssue(t *testing.T) {
 	if closed.ClosedAt == nil {
 		t.Error("ClosedAt should be set")
 	}
+
+	if closed.CloseReason != "Done" {
+		t.Errorf("CloseReason not set: got %q, want %q", closed.CloseReason, "Done")
+	}
 }
 
 func TestClosedAtInvariant(t *testing.T) {
@@ -766,13 +722,16 @@ func TestClosedAtInvariant(t *testing.T) {
 			t.Fatalf("CloseIssue failed: %v", err)
 		}
 
-		// Verify it's closed with closed_at set
+		// Verify it's closed with closed_at and close_reason set
 		closed, err := store.GetIssue(ctx, issue.ID)
 		if err != nil {
 			t.Fatalf("GetIssue failed: %v", err)
 		}
 		if closed.ClosedAt == nil {
 			t.Fatal("ClosedAt should be set after closing")
+		}
+		if closed.CloseReason != "Done" {
+			t.Errorf("CloseReason should be 'Done', got %q", closed.CloseReason)
 		}
 
 		// Reopen the issue
@@ -784,7 +743,7 @@ func TestClosedAtInvariant(t *testing.T) {
 			t.Fatalf("UpdateIssue failed: %v", err)
 		}
 
-		// Verify closed_at was cleared
+		// Verify closed_at and close_reason were cleared
 		reopened, err := store.GetIssue(ctx, issue.ID)
 		if err != nil {
 			t.Fatalf("GetIssue failed: %v", err)
@@ -795,19 +754,25 @@ func TestClosedAtInvariant(t *testing.T) {
 		if reopened.ClosedAt != nil {
 			t.Error("ClosedAt should be cleared when reopening issue")
 		}
+		if reopened.CloseReason != "" {
+			t.Errorf("CloseReason should be cleared when reopening issue, got %q", reopened.CloseReason)
+		}
 	})
 
-	t.Run("CreateIssue rejects closed issue without closed_at", func(t *testing.T) {
+	t.Run("CreateIssue auto-sets closed_at for closed issue (GH#523)", func(t *testing.T) {
 		issue := &types.Issue{
 			Title:     "Test",
 			Status:    types.StatusClosed,
 			Priority:  2,
 			IssueType: types.TypeTask,
-			ClosedAt:  nil, // Invalid: closed without closed_at
+			ClosedAt:  nil, // Defensive fix should auto-set this
 		}
 		err := store.CreateIssue(ctx, issue, "test-user")
-		if err == nil {
-			t.Error("CreateIssue should reject closed issue without closed_at")
+		if err != nil {
+			t.Errorf("CreateIssue should auto-set closed_at (GH#523 defensive fix), got error: %v", err)
+		}
+		if issue.ClosedAt == nil {
+			t.Error("ClosedAt should be auto-set for closed issues (GH#523 defensive fix)")
 		}
 	})
 

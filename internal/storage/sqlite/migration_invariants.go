@@ -148,11 +148,14 @@ func checkForeignKeys(db *sql.DB, snapshot *Snapshot) error {
 	}
 
 	// Check for orphaned dependencies (depends_on_id not in issues)
+	// Exclude external dependencies (external:<project>:<capability>) which reference
+	// issues in other projects and are expected to not exist locally
 	var orphanedDepsDependsOn int
 	err = db.QueryRow(`
 		SELECT COUNT(*)
 		FROM dependencies d
 		WHERE NOT EXISTS (SELECT 1 FROM issues WHERE id = d.depends_on_id)
+		  AND d.depends_on_id NOT LIKE 'external:%'
 	`).Scan(&orphanedDepsDependsOn)
 	if err != nil {
 		return fmt.Errorf("failed to check orphaned dependencies (depends_on_id): %w", err)

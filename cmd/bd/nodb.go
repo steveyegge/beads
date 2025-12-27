@@ -72,8 +72,11 @@ func initializeNoDbMode() error {
 
 	debug.Logf("using prefix '%s'", prefix)
 
-	// Set global store
+	// Set global store and mark as active (fixes bd comment --no-db)
+	storeMutex.Lock()
 	store = memStore
+	storeActive = true
+	storeMutex.Unlock()
 	return nil
 }
 
@@ -103,6 +106,7 @@ func loadIssuesFromJSONL(path string) ([]*types.Issue, error) {
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNum, err)
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 		issues = append(issues, &issue)
 	}
@@ -212,6 +216,16 @@ func writeIssuesToJSONL(memStore *memory.MemoryStorage, beadsDir string) error {
 
 	// Get all issues from memory storage
 	issues := memStore.GetAllIssues()
+
+	// Filter out wisps - they should never be exported to JSONL (bd-9avq)
+	// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
+	filtered := make([]*types.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if !issue.Ephemeral {
+			filtered = append(filtered, issue)
+		}
+	}
+	issues = filtered
 
 	// Write atomically using common helper (handles temp file + rename + permissions)
 	if _, err := writeJSONLAtomic(jsonlPath, issues); err != nil {

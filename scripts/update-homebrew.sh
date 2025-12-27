@@ -145,30 +145,26 @@ sed -i.tmp "s/version \"[0-9.]*\"/version \"${VERSION}\"/" "$FORMULA_FILE"
 # Update SHA256s - need to handle the multi-platform structure
 # We'll use awk for more precise control since the formula has multiple sha256 lines
 
-awk -v version="$VERSION" \
-    -v sha_darwin_arm64="$SHA256_DARWIN_ARM64" \
+# Use awk to update SHA256 values while preserving all structure
+# Track which platform section we're in, then replace sha256 lines accordingly
+awk -v sha_darwin_arm64="$SHA256_DARWIN_ARM64" \
     -v sha_darwin_amd64="$SHA256_DARWIN_AMD64" \
     -v sha_linux_amd64="$SHA256_LINUX_AMD64" \
     -v sha_linux_arm64="$SHA256_LINUX_ARM64" '
-BEGIN { in_macos_arm=0; in_macos_amd=0; in_linux_arm=0; in_linux_amd=0 }
-/on_macos do/ { in_macos=1; next }
-/on_linux do/ { in_macos=0; in_linux=1; next }
-/if Hardware::CPU.arm\?/ { 
-    if (in_macos) in_macos_arm=1
-    if (in_linux) in_linux_arm=1
-    next
+BEGIN { in_macos=0; in_linux=0; in_arm=0 }
+/on_macos do/ { in_macos=1; in_linux=0; in_arm=0 }
+/on_linux do/ { in_linux=1; in_macos=0; in_arm=0 }
+/if Hardware::CPU.arm/ { in_arm=1 }
+/else/ { in_arm=0 }
+/^[[:space:]]*end/ {
+    if (in_arm) { in_arm=0 }
+    else { in_macos=0; in_linux=0 }
 }
-/else/ {
-    if (in_macos) { in_macos_arm=0; in_macos_amd=1 }
-    if (in_linux) { in_linux_arm=0; in_linux_amd=1 }
-    next
-}
-/end/ { in_macos_arm=0; in_macos_amd=0; in_linux_arm=0; in_linux_amd=0; in_macos=0; in_linux=0 }
 /sha256/ {
-    if (in_macos_arm) { print "      sha256 \"" sha_darwin_arm64 "\""; next }
-    if (in_macos_amd) { print "      sha256 \"" sha_darwin_amd64 "\""; next }
-    if (in_linux_arm) { print "      sha256 \"" sha_linux_arm64 "\""; next }
-    if (in_linux_amd) { print "      sha256 \"" sha_linux_amd64 "\""; next }
+    if (in_macos && in_arm) { sub(/"[a-f0-9]+"/, "\"" sha_darwin_arm64 "\"") }
+    else if (in_macos && !in_arm) { sub(/"[a-f0-9]+"/, "\"" sha_darwin_amd64 "\"") }
+    else if (in_linux && in_arm) { sub(/"[a-f0-9]+"/, "\"" sha_linux_arm64 "\"") }
+    else if (in_linux && !in_arm) { sub(/"[a-f0-9]+"/, "\"" sha_linux_amd64 "\"") }
 }
 { print }
 ' "$FORMULA_FILE" > "${FORMULA_FILE}.new"

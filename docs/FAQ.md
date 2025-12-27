@@ -302,7 +302,7 @@ We don't have automated migration tools yet, but you can:
 2. Write a simple script to convert to bd's JSONL format
 3. Import with `bd import -i issues.jsonl`
 
-See [examples/](examples/) for scripting patterns. Contributions welcome!
+See [examples/](../examples/) for scripting patterns. Contributions welcome!
 
 ### Can I export back to GitHub Issues / Jira?
 
@@ -426,7 +426,33 @@ bd ready
 bd create "Fix bug" -p 1
 ```
 
-See [ADVANCED.md#git-worktrees](ADVANCED.md#git-worktrees) for details.
+See [WORKTREES.md](WORKTREES.md) for details.
+
+### Why did beads create worktrees in my .git directory?
+
+Beads automatically creates git worktrees when using the **sync-branch** feature. This happens when you:
+- Run `bd init --branch <name>`
+- Set `bd config set sync.branch <name>`
+
+The worktrees allow beads to commit issue updates to a separate branch without switching your working directory.
+
+**Location:** `.git/beads-worktrees/<sync-branch>/`
+
+**Common issue:** If you see "branch already checked out" errors when switching branches, remove the beads worktrees:
+
+```bash
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+```
+
+**To disable sync-branch (stop worktree creation):**
+
+```bash
+bd config set sync.branch ""
+```
+
+See [WORKTREES.md#beads-created-worktrees-sync-branch](WORKTREES.md#beads-created-worktrees-sync-branch) for full details.
 
 ### What's the difference between SQLite corruption and ID collisions?
 
@@ -463,15 +489,15 @@ bd import -i .beads/issues.jsonl
 
 ### Where can I get more help?
 
-- **Documentation**: [README.md](README.md), [QUICKSTART.md](QUICKSTART.md), [ADVANCED.md](ADVANCED.md)
+- **Documentation**: [README.md](../README.md), [QUICKSTART.md](QUICKSTART.md), [ADVANCED.md](ADVANCED.md)
 - **Troubleshooting**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- **Examples**: [examples/](examples/)
+- **Examples**: [examples/](../examples/)
 - **GitHub Issues**: [Report bugs or request features](https://github.com/steveyegge/beads/issues)
 - **GitHub Discussions**: [Ask questions](https://github.com/steveyegge/beads/discussions)
 
 ### How can I contribute?
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+Contributions are welcome! See [CONTRIBUTING.md](../CONTRIBUTING.md) for:
 
 - Code contribution guidelines
 - How to run tests

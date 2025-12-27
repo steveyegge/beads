@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
@@ -21,19 +20,21 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize bd in the current directory",
+	Use:     "init",
+	GroupID: "setup",
+	Short:   "Initialize bd in the current directory",
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
 and database file. Optionally specify a custom issue prefix.
 
 With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite database.
 
-With --stealth: configures global git settings for invisible beads usage:
-  • Global gitignore to prevent beads files from being committed
+With --stealth: configures per-repository git settings for invisible beads usage:
+  • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.`,
 	Run: func(cmd *cobra.Command, _ []string) {
@@ -137,7 +138,12 @@ With --stealth: configures global git settings for invisible beads usage:
 		}
 
 		// Check if we're in a git worktree
-		isWorktree := git.IsWorktree()
+		// Guard with isGitRepo() check first - on Windows, git commands may hang
+		// when run outside a git repository (GH#727)
+		isWorktree := false
+		if isGitRepo() {
+			isWorktree = git.IsWorktree()
+		}
 		var beadsDir string
 		if isWorktree {
 			// For worktrees, .beads should be in the main repository root
@@ -195,6 +201,16 @@ With --stealth: configures global git settings for invisible beads usage:
 					}
 				}
 
+				// Create empty interactions.jsonl file (append-only agent audit log)
+				interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
+				if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
+					// nolint:gosec // G306: JSONL file needs to be readable by other tools
+					if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to create interactions.jsonl: %v\n", err)
+						os.Exit(1)
+					}
+				}
+
 				// Create metadata.json for --no-db mode
 				cfg := configfile.DefaultConfig()
 				if err := cfg.Save(beadsDir); err != nil {
@@ -215,15 +231,12 @@ With --stealth: configures global git settings for invisible beads usage:
 				}
 
 				if !quiet {
-					green := color.New(color.FgGreen).SprintFunc()
-					cyan := color.New(color.FgCyan).SprintFunc()
-
-					fmt.Printf("\n%s bd initialized successfully in --no-db mode!\n\n", green("✓"))
-					fmt.Printf("  Mode: %s\n", cyan("no-db (JSONL-only)"))
-					fmt.Printf("  Issues file: %s\n", cyan(jsonlPath))
-					fmt.Printf("  Issue prefix: %s\n", cyan(prefix))
-					fmt.Printf("  Issues will be named: %s\n\n", cyan(prefix+"-1, "+prefix+"-2, ..."))
-					fmt.Printf("Run %s to get started.\n\n", cyan("bd --no-db quickstart"))
+					fmt.Printf("\n%s bd initialized successfully in --no-db mode!\n\n", ui.RenderPass("✓"))
+					fmt.Printf("  Mode: %s\n", ui.RenderAccent("no-db (JSONL-only)"))
+					fmt.Printf("  Issues file: %s\n", ui.RenderAccent(jsonlPath))
+					fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
+					fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
+					fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd --no-db quickstart"))
 				}
 				return
 			}
@@ -233,6 +246,16 @@ With --stealth: configures global git settings for invisible beads usage:
 			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
 				// Non-fatal - continue anyway
+			}
+
+			// Ensure interactions.jsonl exists (append-only agent audit log)
+			interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
+			if _, err := os.Stat(interactionsPath); os.IsNotExist(err) {
+				// nolint:gosec // G306: JSONL file needs to be readable by other tools
+				if err := os.WriteFile(interactionsPath, []byte{}, 0644); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create interactions.jsonl: %v\n", err)
+					// Non-fatal - continue anyway
+				}
 			}
 		}
 
@@ -403,13 +426,30 @@ With --stealth: configures global git settings for invisible beads usage:
 			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
 
+		// Fork detection: offer to configure .git/info/exclude (GH#742)
+		setupExclude, _ := cmd.Flags().GetBool("setup-exclude")
+		if setupExclude {
+			// Manual flag - always configure
+			if err := setupForkExclude(!quiet); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
+			}
+		} else if !stealth && isGitRepo() {
+			// Auto-detect fork and prompt (skip if stealth - it handles exclude already)
+			if isFork, upstreamURL := detectForkSetup(); isFork {
+				if promptForkExclude(upstreamURL, quiet) {
+					if err := setupForkExclude(!quiet); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to configure git exclude: %v\n", err)
+					}
+				}
+			}
+		}
+
 		// Check if we're in a git repo and hooks aren't installed
 		// Install by default unless --skip-hooks is passed
 		if !skipHooks && isGitRepo() && !hooksInstalled() {
 			if err := installGitHooks(); err != nil && !quiet {
-				yellow := color.New(color.FgYellow).SprintFunc()
-				fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", yellow("⚠"), err)
-				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", color.New(color.FgCyan).Sprint("bd doctor --fix"))
+				fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", ui.RenderWarn("⚠"), err)
+				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
 			}
 		}
 
@@ -417,10 +457,15 @@ With --stealth: configures global git settings for invisible beads usage:
 		// Install by default unless --skip-merge-driver is passed
 		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
 			if err := installMergeDriver(); err != nil && !quiet {
-				yellow := color.New(color.FgYellow).SprintFunc()
-				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", yellow("⚠"), err)
-				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", color.New(color.FgCyan).Sprint("bd doctor --fix"))
+				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", ui.RenderWarn("⚠"), err)
+				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
 			}
+		}
+
+		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
+		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
+		if !stealth {
+			addLandingThePlaneInstructions(!quiet)
 		}
 
 		// Skip output if quiet mode
@@ -428,14 +473,11 @@ With --stealth: configures global git settings for invisible beads usage:
 			return
 		}
 
-		green := color.New(color.FgGreen).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
-
-		fmt.Printf("\n%s bd initialized successfully!\n\n", green("✓"))
-		fmt.Printf("  Database: %s\n", cyan(initDBPath))
-		fmt.Printf("  Issue prefix: %s\n", cyan(prefix))
-		fmt.Printf("  Issues will be named: %s\n\n", cyan(prefix+"-1, "+prefix+"-2, ..."))
-		fmt.Printf("Run %s to get started.\n\n", cyan("bd quickstart"))
+		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
+		fmt.Printf("  Database: %s\n", ui.RenderAccent(initDBPath))
+		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
+		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
+		fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd quickstart"))
 
 		// Run bd doctor diagnostics to catch setup issues early (bd-zwtq)
 		doctorResult := runDiagnostics(cwd)
@@ -448,15 +490,14 @@ With --stealth: configures global git settings for invisible beads usage:
 			}
 		}
 		if hasIssues {
-			yellow := color.New(color.FgYellow).SprintFunc()
-			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", yellow("⚠"))
+			fmt.Printf("%s Setup incomplete. Some issues were detected:\n", ui.RenderWarn("⚠"))
 			// Show just the warnings/errors, not all checks
 			for _, check := range doctorResult.Checks {
 				if check.Status != statusOK {
 					fmt.Printf("  • %s: %s\n", check.Name, check.Message)
 				}
 			}
-			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", cyan("bd doctor --fix"))
+			fmt.Printf("\nRun %s to see details and fix these issues.\n\n", ui.RenderAccent("bd doctor --fix"))
 		}
 	},
 }
@@ -468,6 +509,7 @@ func init() {
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
+	initCmd.Flags().Bool("setup-exclude", false, "Configure .git/info/exclude to keep beads files local (for forks)")
 	initCmd.Flags().Bool("skip-hooks", false, "Skip git hooks installation")
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
@@ -566,9 +608,7 @@ func detectExistingHooks() []hookInfo {
 
 // promptHookAction asks user what to do with existing hooks
 func promptHookAction(existingHooks []hookInfo) string {
-	yellow := color.New(color.FgYellow).SprintFunc()
-
-	fmt.Printf("\n%s Found existing git hooks:\n", yellow("⚠"))
+	fmt.Printf("\n%s Found existing git hooks:\n", ui.RenderWarn("⚠"))
 	for _, hook := range existingHooks {
 		if hook.exists && !hook.isBdHook {
 			hookType := "custom script"
@@ -620,7 +660,6 @@ func installGitHooks() error {
 	// Determine installation mode
 	chainHooks := false
 	if hasExistingHooks {
-		cyan := color.New(color.FgCyan).SprintFunc()
 		choice := promptHookAction(existingHooks)
 		switch choice {
 		case "1", "":
@@ -639,7 +678,7 @@ func installGitHooks() error {
 			}
 		case "3":
 			fmt.Printf("Skipping git hooks installation.\n")
-			fmt.Printf("You can install manually later with: %s\n", cyan("./examples/git-hooks/install.sh"))
+			fmt.Printf("You can install manually later with: %s\n", ui.RenderAccent("./examples/git-hooks/install.sh"))
 			return nil
 		default:
 			return fmt.Errorf("invalid choice: %s", choice)
@@ -945,8 +984,7 @@ exit 0
 	}
 
 	if chainHooks {
-		green := color.New(color.FgGreen).SprintFunc()
-		fmt.Printf("%s Chained bd hooks with existing hooks\n", green("✓"))
+		fmt.Printf("%s Chained bd hooks with existing hooks\n", ui.RenderPass("✓"))
 	}
 
 	return nil
@@ -1319,7 +1357,7 @@ func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 
 // readFirstIssueFromGit reads the first issue from a git ref (bd-0is: supports sync-branch)
 func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
-	output, err := readFromGit(gitRef, jsonlPath)
+	output, err := readFromGitRef(jsonlPath, gitRef)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,22 +1385,15 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 	return nil, nil
 }
 
-// setupStealthMode configures global git settings for stealth operation
+// setupStealthMode configures git settings for stealth operation
+// Uses .git/info/exclude (per-repository) instead of global gitignore because:
+// - Global gitignore doesn't support absolute paths (GitHub #704)
+// - .git/info/exclude is designed for user-specific, repo-local ignores
+// - Patterns are relative to repo root, so ".beads/" works correctly
 func setupStealthMode(verbose bool) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get user home directory: %w", err)
-	}
-
-	// Get the absolute path of the current project
-	projectPath, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current working directory: %w", err)
-	}
-
-	// Setup global gitignore with project-specific paths
-	if err := setupGlobalGitIgnore(homeDir, projectPath, verbose); err != nil {
-		return fmt.Errorf("failed to setup global gitignore: %w", err)
+	// Setup per-repository git exclude file
+	if err := setupGitExclude(verbose); err != nil {
+		return fmt.Errorf("failed to setup git exclude: %w", err)
 	}
 
 	// Setup claude settings
@@ -1371,18 +1402,186 @@ func setupStealthMode(verbose bool) error {
 	}
 
 	if verbose {
-		green := color.New(color.FgGreen).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
-		fmt.Printf("\n%s Stealth mode configured successfully!\n\n", green("✓"))
-		fmt.Printf("  Global gitignore: %s\n", cyan(projectPath+"/.beads/ ignored"))
-		fmt.Printf("  Claude settings: %s\n\n", cyan("configured with bd onboard instruction"))
-		fmt.Printf("Your beads setup is now %s - other repo collaborators won't see any beads-related files.\n\n", cyan("invisible"))
+		fmt.Printf("\n%s Stealth mode configured successfully!\n\n", ui.RenderPass("✓"))
+		fmt.Printf("  Git exclude: %s\n", ui.RenderAccent(".git/info/exclude configured"))
+		fmt.Printf("  Claude settings: %s\n\n", ui.RenderAccent("configured with bd onboard instruction"))
+		fmt.Printf("Your beads setup is now %s - other repo collaborators won't see any beads-related files.\n\n", ui.RenderAccent("invisible"))
 	}
 
 	return nil
 }
 
+// setupGitExclude configures .git/info/exclude to ignore beads and claude files
+// This is the correct approach for per-repository user-specific ignores (GitHub #704).
+// Unlike global gitignore, patterns here are relative to the repo root.
+func setupGitExclude(verbose bool) error {
+	// Find the .git directory (handles both regular repos and worktrees)
+	gitDir, err := exec.Command("git", "rev-parse", "--git-dir").Output()
+	if err != nil {
+		return fmt.Errorf("not a git repository")
+	}
+	gitDirPath := strings.TrimSpace(string(gitDir))
+
+	// Path to the exclude file
+	excludePath := filepath.Join(gitDirPath, "info", "exclude")
+
+	// Ensure the info directory exists
+	infoDir := filepath.Join(gitDirPath, "info")
+	if err := os.MkdirAll(infoDir, 0755); err != nil {
+		return fmt.Errorf("failed to create git info directory: %w", err)
+	}
+
+	// Read existing exclude file if it exists
+	var existingContent string
+	// #nosec G304 - git config path
+	if content, err := os.ReadFile(excludePath); err == nil {
+		existingContent = string(content)
+	}
+
+	// Use relative patterns (these work correctly in .git/info/exclude)
+	beadsPattern := ".beads/"
+	claudePattern := ".claude/settings.local.json"
+
+	hasBeads := strings.Contains(existingContent, beadsPattern)
+	hasClaude := strings.Contains(existingContent, claudePattern)
+
+	if hasBeads && hasClaude {
+		if verbose {
+			fmt.Printf("Git exclude already configured for stealth mode\n")
+		}
+		return nil
+	}
+
+	// Append missing patterns
+	newContent := existingContent
+	if !strings.HasSuffix(newContent, "\n") && len(newContent) > 0 {
+		newContent += "\n"
+	}
+
+	if !hasBeads || !hasClaude {
+		newContent += "\n# Beads stealth mode (added by bd init --stealth)\n"
+	}
+
+	if !hasBeads {
+		newContent += beadsPattern + "\n"
+	}
+	if !hasClaude {
+		newContent += claudePattern + "\n"
+	}
+
+	// Write the updated exclude file
+	// #nosec G306 - config file needs 0644
+	if err := os.WriteFile(excludePath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write git exclude file: %w", err)
+	}
+
+	if verbose {
+		fmt.Printf("Configured git exclude for stealth mode: %s\n", excludePath)
+	}
+
+	return nil
+}
+
+// setupForkExclude configures .git/info/exclude for fork workflows (GH#742)
+// Adds beads files and Claude artifacts to keep PRs to upstream clean.
+// This is separate from stealth mode - fork protection is specifically about
+// preventing beads/Claude files from appearing in upstream PRs.
+func setupForkExclude(verbose bool) error {
+	gitDir, err := exec.Command("git", "rev-parse", "--git-dir").Output()
+	if err != nil {
+		return fmt.Errorf("not a git repository")
+	}
+	gitDirPath := strings.TrimSpace(string(gitDir))
+	excludePath := filepath.Join(gitDirPath, "info", "exclude")
+
+	// Ensure info directory exists
+	if err := os.MkdirAll(filepath.Join(gitDirPath, "info"), 0755); err != nil {
+		return fmt.Errorf("failed to create git info directory: %w", err)
+	}
+
+	// Read existing content
+	var existingContent string
+	// #nosec G304 - git config path
+	if content, err := os.ReadFile(excludePath); err == nil {
+		existingContent = string(content)
+	}
+
+	// Patterns to add for fork protection
+	patterns := []string{".beads/", "**/RECOVERY*.md", "**/SESSION*.md"}
+	var toAdd []string
+	for _, p := range patterns {
+		// Check for exact line match (pattern alone on a line)
+		// This avoids false positives like ".beads/issues.jsonl" matching ".beads/"
+		if !containsExactPattern(existingContent, p) {
+			toAdd = append(toAdd, p)
+		}
+	}
+
+	if len(toAdd) == 0 {
+		if verbose {
+			fmt.Printf("%s Git exclude already configured\n", ui.RenderPass("✓"))
+		}
+		return nil
+	}
+
+	// Append patterns
+	newContent := existingContent
+	if !strings.HasSuffix(newContent, "\n") && len(newContent) > 0 {
+		newContent += "\n"
+	}
+	newContent += "\n# Beads fork protection (bd init)\n"
+	for _, p := range toAdd {
+		newContent += p + "\n"
+	}
+
+	// #nosec G306 - config file needs 0644
+	if err := os.WriteFile(excludePath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write git exclude: %w", err)
+	}
+
+	if verbose {
+		fmt.Printf("\n%s Added to .git/info/exclude:\n", ui.RenderPass("✓"))
+		for _, p := range toAdd {
+			fmt.Printf("  %s\n", p)
+		}
+		fmt.Println("\nNote: .git/info/exclude is local-only and won't affect upstream.")
+	}
+	return nil
+}
+
+// containsExactPattern checks if content contains the pattern as an exact line
+// This avoids false positives like ".beads/issues.jsonl" matching ".beads/"
+func containsExactPattern(content, pattern string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// promptForkExclude asks if user wants to configure .git/info/exclude for fork workflow (GH#742)
+func promptForkExclude(upstreamURL string, quiet bool) bool {
+	if quiet {
+		return false // Don't prompt in quiet mode
+	}
+
+	fmt.Printf("\n%s Detected fork (upstream: %s)\n\n", ui.RenderAccent("▶"), upstreamURL)
+	fmt.Println("Would you like to configure .git/info/exclude to keep beads files local?")
+	fmt.Println("This prevents beads from appearing in PRs to upstream.")
+	fmt.Print("\n[Y/n]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	// Default to yes (empty or "y" or "yes")
+	return response == "" || response == "y" || response == "yes"
+}
+
 // setupGlobalGitIgnore configures global gitignore to ignore beads and claude files for a specific project
+// DEPRECATED: This function uses absolute paths which don't work in gitignore (GitHub #704).
+// Use setupGitExclude instead for new code.
 func setupGlobalGitIgnore(homeDir string, projectPath string, verbose bool) error {
 	// Check if user already has a global gitignore file configured
 	cmd := exec.Command("git", "config", "--global", "core.excludesfile")
@@ -1474,7 +1673,19 @@ func setupGlobalGitIgnore(homeDir string, projectPath string, verbose bool) erro
 	// Write the updated ignore file
 	// #nosec G306 - config file needs 0644
 	if err := os.WriteFile(ignorePath, []byte(newContent), 0644); err != nil {
-		return fmt.Errorf("failed to write global gitignore: %w", err)
+		fmt.Printf("\nUnable to write to %s (file is read-only)\n\n", ignorePath)
+		fmt.Printf("To enable stealth mode, add these lines to your global gitignore:\n\n")
+		if !hasBeads || !hasClaude {
+			fmt.Printf("# Beads stealth mode: %s\n", projectPath)
+		}
+		if !hasBeads {
+			fmt.Printf("%s\n", beadsPattern)
+		}
+		if !hasClaude {
+			fmt.Printf("%s\n", claudePattern)
+		}
+		fmt.Println()
+		return nil
 	}
 
 	if verbose {
@@ -1500,8 +1711,10 @@ func checkExistingBeadsData(prefix string) error {
 	}
 
 	// Determine where to check for .beads directory
+	// Guard with isGitRepo() check first - on Windows, git commands may hang
+	// when run outside a git repository (GH#727)
 	var beadsDir string
-	if git.IsWorktree() {
+	if isGitRepo() && git.IsWorktree() {
 		// For worktrees, .beads should be in the main repository root
 		mainRepoRoot, err := git.GetMainRepoRoot()
 		if err != nil {
@@ -1509,7 +1722,7 @@ func checkExistingBeadsData(prefix string) error {
 		}
 		beadsDir = filepath.Join(mainRepoRoot, ".beads")
 	} else {
-		// For regular repos, check current directory
+		// For regular repos (or non-git directories), check current directory
 		beadsDir = filepath.Join(cwd, ".beads")
 	}
 
@@ -1521,9 +1734,6 @@ func checkExistingBeadsData(prefix string) error {
 	// Check for existing database file
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if _, err := os.Stat(dbPath); err == nil {
-		yellow := color.New(color.FgYellow).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
-
 		return fmt.Errorf(`
 %s Found existing database: %s
 
@@ -1535,7 +1745,7 @@ To use the existing database:
 To completely reinitialize (data loss warning):
   rm -rf .beads && bd init --prefix %s
 
-Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
+Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
 	}
 
 	// Fresh clones (JSONL exists but no database) are allowed - init will
@@ -1546,6 +1756,108 @@ Aborting.`, yellow("⚠"), dbPath, cyan("bd list"), prefix)
 	return nil // No database found, safe to init
 }
 
+// landingThePlaneSection is the "landing the plane" instructions for AI agents
+// This gets appended to AGENTS.md and @AGENTS.md during bd init
+const landingThePlaneSection = `
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until ` + "`git push`" + ` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ` + "```bash" + `
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ` + "```" + `
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until ` + "`git push`" + ` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+`
+
+// addLandingThePlaneInstructions adds "landing the plane" instructions to AGENTS.md
+func addLandingThePlaneInstructions(verbose bool) {
+	// File to update (AGENTS.md is the standard comprehensive documentation file)
+	agentFile := "AGENTS.md"
+
+	if err := updateAgentFile(agentFile, verbose); err != nil {
+		// Non-fatal - continue with other files
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update %s: %v\n", agentFile, err)
+		}
+	}
+}
+
+// updateAgentFile creates or updates an agent instructions file with landing the plane section
+func updateAgentFile(filename string, verbose bool) error {
+	// Check if file exists
+	//nolint:gosec // G304: filename comes from hardcoded list in addLandingThePlaneInstructions
+	content, err := os.ReadFile(filename)
+	if os.IsNotExist(err) {
+		// File doesn't exist - create it with basic structure
+		newContent := fmt.Sprintf(`# Agent Instructions
+
+This project uses **bd** (beads) for issue tracking. Run `+"`bd onboard`"+` to get started.
+
+## Quick Reference
+
+`+"```bash"+`
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --status in_progress  # Claim work
+bd close <id>         # Complete work
+bd sync               # Sync with git
+`+"```"+`
+%s
+`, landingThePlaneSection)
+
+		// #nosec G306 - markdown needs to be readable
+		if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+			return fmt.Errorf("failed to create %s: %w", filename, err)
+		}
+		if verbose {
+			fmt.Printf("  %s Created %s with landing-the-plane instructions\n", ui.RenderPass("✓"), filename)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to read %s: %w", filename, err)
+	}
+
+	// File exists - check if it already has landing the plane section
+	if strings.Contains(string(content), "Landing the Plane") {
+		if verbose {
+			fmt.Printf("  %s already has landing-the-plane instructions\n", filename)
+		}
+		return nil
+	}
+
+	// Append the landing the plane section
+	newContent := string(content)
+	if !strings.HasSuffix(newContent, "\n") {
+		newContent += "\n"
+	}
+	newContent += landingThePlaneSection
+
+	// #nosec G306 - markdown needs to be readable
+	if err := os.WriteFile(filename, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to update %s: %w", filename, err)
+	}
+	if verbose {
+		fmt.Printf("  %s Added landing-the-plane instructions to %s\n", ui.RenderPass("✓"), filename)
+	}
+	return nil
+}
 
 // setupClaudeSettings creates or updates .claude/settings.local.json with onboard instruction
 func setupClaudeSettings(verbose bool) error {

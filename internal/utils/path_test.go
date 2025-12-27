@@ -111,6 +111,16 @@ func TestFindJSONLInDir(t *testing.T) {
 			expected: "issues.jsonl",
 		},
 		{
+			name:     "only interactions.jsonl - returns default issues.jsonl",
+			files:    []string{"interactions.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "interactions.jsonl with issues.jsonl - prefers issues",
+			files:    []string{"interactions.jsonl", "issues.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
 			name:     "only merge artifacts - returns default issues.jsonl",
 			files:    []string{"beads.base.jsonl", "beads.left.jsonl", "beads.right.jsonl"},
 			expected: "issues.jsonl",
@@ -178,4 +188,57 @@ func TestCanonicalizePathSymlink(t *testing.T) {
 			t.Errorf("expected %q or %q, got %q", tmpDir, canonicalTmpDir, result)
 		}
 	}
+}
+
+func TestResolveForWrite(t *testing.T) {
+	t.Run("regular file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		file := filepath.Join(tmpDir, "regular.txt")
+		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := ResolveForWrite(file)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != file {
+			t.Errorf("got %q, want %q", got, file)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		target := filepath.Join(tmpDir, "target.txt")
+		if err := os.WriteFile(target, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(tmpDir, "link.txt")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := ResolveForWrite(link)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Resolve target too - on macOS, /var is symlink to /private/var
+		wantTarget, _ := filepath.EvalSymlinks(target)
+		if got != wantTarget {
+			t.Errorf("got %q, want %q", got, wantTarget)
+		}
+	})
+
+	t.Run("non-existent", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		newFile := filepath.Join(tmpDir, "new.txt")
+
+		got, err := ResolveForWrite(newFile)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != newFile {
+			t.Errorf("got %q, want %q", got, newFile)
+		}
+	})
 }

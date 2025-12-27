@@ -12,9 +12,11 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
+// TODO: Consider integrating into 'bd doctor' migration detection
 var migrateIssuesCmd = &cobra.Command{
-	Use:   "migrate-issues",
-	Short: "Move issues between repositories",
+	Use:     "migrate-issues",
+	GroupID: "maint",
+	Short:   "Move issues between repositories",
 	Long: `Move issues from one source repository to another with filtering and dependency preservation.
 
 This command updates the source_repo field for selected issues, allowing you to:
@@ -706,6 +708,6 @@ func init() {
 	migrateIssuesCmd.Flags().Bool("strict", false, "Fail on orphaned dependencies or missing repos")
 	migrateIssuesCmd.Flags().Bool("yes", false, "Skip confirmation prompt")
 
-	_ = migrateIssuesCmd.MarkFlagRequired("from")
-	_ = migrateIssuesCmd.MarkFlagRequired("to")
+	_ = migrateIssuesCmd.MarkFlagRequired("from") // Only fails if flag missing (caught in tests)
+	_ = migrateIssuesCmd.MarkFlagRequired("to")   // Only fails if flag missing (caught in tests)
 }

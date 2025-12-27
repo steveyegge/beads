@@ -43,16 +43,20 @@ func TestExtractIssuePrefixAllLetterHash(t *testing.T) {
 	}
 }
 
-// TestExtractIssuePrefixWordSuffix ensures 4+ char word suffixes still work
+// TestExtractIssuePrefixWordSuffix tests word-like suffixes (bd-fasa regression)
+// Word-like suffixes (4+ chars, no digits) use first-hyphen extraction because
+// they're likely multi-part IDs where everything after first hyphen is the ID.
+// This fixes bd-fasa regression where word-like suffixes were wrongly treated as hashes.
 func TestExtractIssuePrefixWordSuffix(t *testing.T) {
-	// These should use first-hyphen extraction (word suffixes, not hashes)
+	// Word-like suffixes (4+ chars, no digits) should use first-hyphen extraction
+	// The entire part after first hyphen is the ID, not just the last segment
 	wordSuffixes := []struct {
 		issueID  string
 		expected string
 	}{
-		{"vc-baseline-test", "vc"},     // 4-char "test" - word, not hash
-		{"vc-baseline-hello", "vc"},    // 5-char word
-		{"vc-some-feature", "vc"},      // multi-word suffix
+		{"vc-baseline-test", "vc"},  // bd-fasa: "baseline-test" is the ID, not "test"
+		{"vc-baseline-hello", "vc"}, // bd-fasa: "baseline-hello" is the ID
+		{"vc-some-feature", "vc"},   // bd-fasa: "some-feature" is the ID
 	}
 
 	for _, tc := range wordSuffixes {

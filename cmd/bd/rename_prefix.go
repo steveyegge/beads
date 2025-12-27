@@ -1,24 +1,29 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
+	"time"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
 var renamePrefixCmd = &cobra.Command{
-	Use:   "rename-prefix <new-prefix>",
-	Short: "Rename the issue prefix for all issues in the database",
+	Use:     "rename-prefix <new-prefix>",
+	GroupID: GroupMaintenance,
+	Short:   "Rename the issue prefix for all issues in the database",
 	Long: `Rename the issue prefix for all issues in the database.
 This will update all issue IDs and all text references across all fields.
 
@@ -96,12 +101,10 @@ NOTE: This is a rare operation. Most users never need this command.`,
 
 		if len(prefixes) > 1 {
 			// Multiple prefixes detected - requires repair mode
-			red := color.New(color.FgRed).SprintFunc()
-			yellow := color.New(color.FgYellow).SprintFunc()
 
-			fmt.Fprintf(os.Stderr, "%s Multiple prefixes detected in database:\n", red("✗"))
+			fmt.Fprintf(os.Stderr, "%s Multiple prefixes detected in database:\n", ui.RenderFail("✗"))
 			for prefix, count := range prefixes {
-				fmt.Fprintf(os.Stderr, "  - %s: %d issues\n", yellow(prefix), count)
+				fmt.Fprintf(os.Stderr, "  - %s: %d issues\n", ui.RenderWarn(prefix), count)
 			}
 			fmt.Fprintf(os.Stderr, "\n")
 
@@ -138,8 +141,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		}
 
 		if dryRun {
-			cyan := color.New(color.FgCyan).SprintFunc()
-			fmt.Printf("DRY RUN: Would rename %d issues from prefix '%s' to '%s'\n\n", len(issues), oldPrefix, newPrefix)
+				fmt.Printf("DRY RUN: Would rename %d issues from prefix '%s' to '%s'\n\n", len(issues), oldPrefix, newPrefix)
 			fmt.Printf("Sample changes:\n")
 			for i, issue := range issues {
 				if i >= 5 {
@@ -148,13 +150,11 @@ NOTE: This is a rare operation. Most users never need this command.`,
 				}
 				oldID := fmt.Sprintf("%s-%s", oldPrefix, strings.TrimPrefix(issue.ID, oldPrefix+"-"))
 				newID := fmt.Sprintf("%s-%s", newPrefix, strings.TrimPrefix(issue.ID, oldPrefix+"-"))
-				fmt.Printf("  %s -> %s\n", cyan(oldID), cyan(newID))
+				fmt.Printf("  %s -> %s\n", ui.RenderAccent(oldID), ui.RenderAccent(newID))
 			}
 			return
 		}
 
-		green := color.New(color.FgGreen).SprintFunc()
-		cyan := color.New(color.FgCyan).SprintFunc()
 
 		fmt.Printf("Renaming %d issues from prefix '%s' to '%s'...\n", len(issues), oldPrefix, newPrefix)
 
@@ -166,7 +166,7 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		// Schedule full export (IDs changed, incremental won't work)
 		markDirtyAndScheduleFullExport()
 
-		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", green("✓"), cyan(oldPrefix), cyan(newPrefix))
+		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
 
 		if jsonOutput {
 			result := map[string]interface{}{
@@ -225,26 +225,19 @@ type issueSort struct {
 
 // repairPrefixes consolidates multiple prefixes into a single target prefix
 // Issues with the correct prefix are left unchanged.
-// Issues with incorrect prefixes are sorted and renumbered sequentially.
+// Issues with incorrect prefixes get new hash-based IDs.
 func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, targetPrefix string, issues []*types.Issue, prefixes map[string]int, dryRun bool) error {
-	green := color.New(color.FgGreen).SprintFunc()
-	cyan := color.New(color.FgCyan).SprintFunc()
-	yellow := color.New(color.FgYellow).SprintFunc()
 
 	// Separate issues into correct and incorrect prefix groups
 	var correctIssues []*types.Issue
 	var incorrectIssues []issueSort
 
-	maxCorrectNumber := 0
 	for _, issue := range issues {
 		prefix := utils.ExtractIssuePrefix(issue.ID)
 		number := utils.ExtractIssueNumber(issue.ID)
 
 		if prefix == targetPrefix {
 			correctIssues = append(correctIssues, issue)
-			if number > maxCorrectNumber {
-				maxCorrectNumber = number
-			}
 		} else {
 			incorrectIssues = append(incorrectIssues, issueSort{
 				issue:  issue,
@@ -255,50 +248,65 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 	}
 
 	// Sort incorrect issues: first by prefix lexicographically, then by number
-	sort.Slice(incorrectIssues, func(i, j int) bool {
-		if incorrectIssues[i].prefix != incorrectIssues[j].prefix {
-			return incorrectIssues[i].prefix < incorrectIssues[j].prefix
-		}
-		return incorrectIssues[i].number < incorrectIssues[j].number
+	slices.SortFunc(incorrectIssues, func(a, b issueSort) int {
+		return cmp.Or(
+			cmp.Compare(a.prefix, b.prefix),
+			cmp.Compare(a.number, b.number),
+		)
 	})
+
+	// Get a database connection for ID generation
+	conn, err := st.UnderlyingConn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Build a map of all renames for text replacement using hash IDs
+	// Track used IDs to avoid collisions within the batch
+	renameMap := make(map[string]string)
+	usedIDs := make(map[string]bool)
+
+	// Mark existing correct IDs as used
+	for _, issue := range correctIssues {
+		usedIDs[issue.ID] = true
+	}
+
+	// Generate hash IDs for all incorrect issues
+	for _, is := range incorrectIssues {
+		newID, err := generateRepairHashID(ctx, conn, targetPrefix, is.issue, actorName, usedIDs)
+		if err != nil {
+			return fmt.Errorf("failed to generate hash ID for %s: %w", is.issue.ID, err)
+		}
+		renameMap[is.issue.ID] = newID
+		usedIDs[newID] = true
+	}
 
 	if dryRun {
 		fmt.Printf("DRY RUN: Would repair %d issues with incorrect prefixes\n\n", len(incorrectIssues))
-		fmt.Printf("Issues with correct prefix (%s): %d (highest number: %d)\n", cyan(targetPrefix), len(correctIssues), maxCorrectNumber)
+		fmt.Printf("Issues with correct prefix (%s): %d\n", ui.RenderAccent(targetPrefix), len(correctIssues))
 		fmt.Printf("Issues to repair: %d\n\n", len(incorrectIssues))
 
 		fmt.Printf("Planned renames (showing first 10):\n")
-		nextNumber := maxCorrectNumber + 1
 		for i, is := range incorrectIssues {
 			if i >= 10 {
 				fmt.Printf("... and %d more\n", len(incorrectIssues)-10)
 				break
 			}
 			oldID := is.issue.ID
-			newID := fmt.Sprintf("%s-%d", targetPrefix, nextNumber)
-			fmt.Printf("  %s -> %s\n", yellow(oldID), cyan(newID))
-			nextNumber++
+			newID := renameMap[oldID]
+			fmt.Printf("  %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
 		}
 		return nil
 	}
 
 	// Perform the repairs
 	fmt.Printf("Repairing database with multiple prefixes...\n")
-	fmt.Printf("  Issues with correct prefix (%s): %d (highest: %s-%d)\n",
-		cyan(targetPrefix), len(correctIssues), targetPrefix, maxCorrectNumber)
+	fmt.Printf("  Issues with correct prefix (%s): %d\n", ui.RenderAccent(targetPrefix), len(correctIssues))
 	fmt.Printf("  Issues to repair: %d\n\n", len(incorrectIssues))
 
-	oldPrefixPattern := regexp.MustCompile(`\b[a-z][a-z0-9-]*-(\d+)\b`)
-
-	// Build a map of all renames for text replacement
-	renameMap := make(map[string]string)
-	nextNumber := maxCorrectNumber + 1
-	for _, is := range incorrectIssues {
-		oldID := is.issue.ID
-		newID := fmt.Sprintf("%s-%d", targetPrefix, nextNumber)
-		renameMap[oldID] = newID
-		nextNumber++
-	}
+	// Pattern to match any issue ID reference in text (both hash and sequential IDs)
+	oldPrefixPattern := regexp.MustCompile(`\b[a-z][a-z0-9-]*-[a-z0-9]+\b`)
 
 	// Rename each issue
 	for _, is := range incorrectIssues {
@@ -334,7 +342,7 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 			return fmt.Errorf("failed to update issue %s -> %s: %w", oldID, newID, err)
 		}
 
-		fmt.Printf("  Renamed %s -> %s\n", yellow(oldID), cyan(newID))
+		fmt.Printf("  Renamed %s -> %s\n", ui.RenderWarn(oldID), ui.RenderAccent(newID))
 	}
 
 	// Update all dependencies to use new prefix
@@ -364,16 +372,15 @@ func repairPrefixes(ctx context.Context, st storage.Storage, actorName string, t
 	markDirtyAndScheduleFullExport()
 
 	fmt.Printf("\n%s Successfully consolidated %d prefixes into %s\n",
-		green("✓"), len(prefixes), cyan(targetPrefix))
+		ui.RenderPass("✓"), len(prefixes), ui.RenderAccent(targetPrefix))
 	fmt.Printf("  %d issues repaired, %d issues unchanged\n", len(incorrectIssues), len(correctIssues))
 
 	if jsonOutput {
 		result := map[string]interface{}{
-			"target_prefix":     targetPrefix,
-			"prefixes_found":    len(prefixes),
-			"issues_repaired":   len(incorrectIssues),
-			"issues_unchanged":  len(correctIssues),
-			"highest_number":    nextNumber - 1,
+			"target_prefix":    targetPrefix,
+			"prefixes_found":   len(prefixes),
+			"issues_repaired":  len(incorrectIssues),
+			"issues_unchanged": len(correctIssues),
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -432,6 +439,37 @@ func renamePrefixInDB(ctx context.Context, oldPrefix, newPrefix string, issues [
 	}
 
 	return nil
+}
+
+// generateRepairHashID generates a hash-based ID for an issue during repair
+// Uses the sqlite.GenerateIssueID function but also checks usedIDs for batch collision avoidance
+func generateRepairHashID(ctx context.Context, conn *sql.Conn, prefix string, issue *types.Issue, actor string, usedIDs map[string]bool) (string, error) {
+	// Try to generate a unique ID using the standard generation function
+	// This handles collision detection against existing database IDs
+	newID, err := sqlite.GenerateIssueID(ctx, conn, prefix, issue, actor)
+	if err != nil {
+		return "", err
+	}
+
+	// Check if this ID was already used in this batch
+	// If so, we need to generate a new one with a different timestamp
+	attempts := 0
+	for usedIDs[newID] && attempts < 100 {
+		// Slightly modify the creation time to get a different hash
+		modifiedIssue := *issue
+		modifiedIssue.CreatedAt = issue.CreatedAt.Add(time.Duration(attempts+1) * time.Nanosecond)
+		newID, err = sqlite.GenerateIssueID(ctx, conn, prefix, &modifiedIssue, actor)
+		if err != nil {
+			return "", err
+		}
+		attempts++
+	}
+
+	if usedIDs[newID] {
+		return "", fmt.Errorf("failed to generate unique ID after %d attempts", attempts)
+	}
+
+	return newID, nil
 }
 
 func init() {

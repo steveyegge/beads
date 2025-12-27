@@ -133,21 +133,30 @@ brew install bd
 cd your-project
 bd init --quiet
 
-# 3. Install hooks for automatic context injection
-bd hooks install
+# 3. Setup editor integration (choose one)
+bd setup claude   # Claude Code - installs SessionStart/PreCompact hooks
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
 ```
 
 **How it works:**
-- SessionStart hook runs `bd prime` automatically
-- `bd prime` injects ~1-2k tokens of workflow context
+- Editor hooks/rules inject `bd prime` automatically on session start
+- `bd prime` provides ~1-2k tokens of workflow context
 - You use `bd` CLI commands directly
-- Git hooks auto-sync the database
+- Git hooks (installed by `bd init`) auto-sync the database
 
 **Why this is recommended:**
 - **Context efficient** - ~1-2k tokens vs 10-50k for MCP tool schemas
 - **Lower latency** - Direct CLI calls, no MCP protocol overhead
 - **Universal** - Works with any editor that has shell access
 - **More sustainable** - Less compute per request
+
+**Verify installation:**
+```bash
+bd setup claude --check   # Check Claude Code integration
+bd setup cursor --check   # Check Cursor integration
+bd setup aider --check    # Check Aider integration
+```
 
 ### Claude Code Plugin (Optional)
 
@@ -210,7 +219,7 @@ Add to your MCP settings:
 - ❌ Higher context overhead (MCP schemas add 10-50k tokens)
 - ❌ Additional latency from MCP protocol
 
-See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for detailed MCP server documentation.
+See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for detailed MCP server documentation.
 
 ## Verifying Installation
 
@@ -286,9 +295,9 @@ See the "Claude Code Plugin" section above for alternative installation methods 
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Configure your agent**: Add bd instructions to `AGENTS.md` (see [README.md](README.md#quick-start))
+2. **Configure your agent**: Add bd instructions to `AGENTS.md` (see [README.md](../README.md#quick-start))
 3. **Learn the basics**: Run `bd quickstart` for an interactive tutorial
-4. **Explore examples**: Check out the [examples/](examples/) directory
+4. **Explore examples**: Check out the [examples/](../examples/) directory
 
 ## Updating bd
 

@@ -860,3 +860,273 @@ func TestCountJSONLIssues(t *testing.T) {
 		})
 	}
 }
+
+// TestGetMainRepoRoot tests the GetMainRepoRoot function for various scenarios
+func TestGetMainRepoRoot(t *testing.T) {
+	t.Run("returns correct root for regular repo", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Save current dir and change to repo
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(repoPath); err != nil {
+			t.Fatalf("Failed to chdir to repo: %v", err)
+		}
+		ResetCaches() // Reset after chdir
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison (e.g., /tmp -> /private/tmp on macOS)
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from worktree", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		wm := NewWorktreeManager(repoPath)
+		worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+
+		if err := wm.CreateBeadsWorktree("test-branch", worktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Save current dir and change to worktree
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(worktreePath); err != nil {
+			t.Fatalf("Failed to chdir to worktree: %v", err)
+		}
+		ResetCaches() // Reset after chdir
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo)", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from nested worktree (GH#509)", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Create a nested worktree directory structure: repo/.worktrees/feature/
+		nestedWorktreePath := filepath.Join(repoPath, ".worktrees", "feature-branch")
+
+		wm := NewWorktreeManager(repoPath)
+		if err := wm.CreateBeadsWorktree("feature-branch", nestedWorktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Save current dir and change to nested worktree
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(nestedWorktreePath); err != nil {
+			t.Fatalf("Failed to chdir to nested worktree: %v", err)
+		}
+		ResetCaches() // Reset after chdir
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo, not worktree)", actualRoot, expectedRoot)
+		}
+	})
+
+	t.Run("returns main repo root from subdirectory of nested worktree", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		// Create a nested worktree
+		nestedWorktreePath := filepath.Join(repoPath, ".worktrees", "feature-branch")
+
+		wm := NewWorktreeManager(repoPath)
+		if err := wm.CreateBeadsWorktree("feature-branch", nestedWorktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		// Create a subdirectory in the worktree
+		subDir := filepath.Join(nestedWorktreePath, "some", "nested", "dir")
+		if err := os.MkdirAll(subDir, 0750); err != nil {
+			t.Fatalf("Failed to create subdir: %v", err)
+		}
+
+		// Save current dir and change to subdirectory
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(subDir); err != nil {
+			t.Fatalf("Failed to chdir to subdir: %v", err)
+		}
+		ResetCaches() // Reset after chdir
+
+		root, err := GetMainRepoRoot()
+		if err != nil {
+			t.Fatalf("GetMainRepoRoot failed: %v", err)
+		}
+
+		// Resolve symlinks for comparison
+		expectedRoot, _ := filepath.EvalSymlinks(repoPath)
+		actualRoot, _ := filepath.EvalSymlinks(root)
+
+		if actualRoot != expectedRoot {
+			t.Errorf("GetMainRepoRoot() = %s, want %s (main repo)", actualRoot, expectedRoot)
+		}
+	})
+}
+
+// TestIsWorktree tests the IsWorktree function
+func TestIsWorktree(t *testing.T) {
+	t.Run("returns false for regular repo", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(repoPath); err != nil {
+			t.Fatalf("Failed to chdir to repo: %v", err)
+		}
+		ResetCaches() // Reset after chdir
+
+		if IsWorktree() {
+			t.Error("IsWorktree() should return false for regular repo")
+		}
+	})
+
+	t.Run("returns true for worktree", func(t *testing.T) {
+		ResetCaches() // Reset caches from previous subtests
+		repoPath, cleanup := setupTestRepo(t)
+		defer cleanup()
+
+		wm := NewWorktreeManager(repoPath)
+		worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+
+		if err := wm.CreateBeadsWorktree("test-branch", worktreePath); err != nil {
+			t.Fatalf("CreateBeadsWorktree failed: %v", err)
+		}
+
+		originalDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current dir: %v", err)
+		}
+		defer func() { _ = os.Chdir(originalDir) }()
+
+		if err := os.Chdir(worktreePath); err != nil {
+			t.Fatalf("Failed to chdir to worktree: %v", err)
+		}
+
+		ResetCaches() // Reset after chdir to worktree
+		if !IsWorktree() {
+			t.Error("IsWorktree() should return true for worktree")
+		}
+	})
+}
+
+// TestCreateBeadsWorktree_MissingButRegistered tests the issue #609 scenario where
+// the worktree directory is deleted but git still has it registered in .git/worktrees/.
+// The -f flag on git worktree add should handle this gracefully.
+func TestCreateBeadsWorktree_MissingButRegistered(t *testing.T) {
+	repoPath, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	wm := NewWorktreeManager(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "beads-worktree-gh609")
+	branch := "beads-metadata-gh609"
+
+	// Step 1: Create a worktree
+	if err := wm.CreateBeadsWorktree(branch, worktreePath); err != nil {
+		t.Fatalf("Initial CreateBeadsWorktree failed: %v", err)
+	}
+
+	// Verify it exists and is registered
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Fatal("Worktree was not created")
+	}
+
+	// Step 2: Manually delete the worktree directory (simulating the bug scenario)
+	// but leave the git registration in .git/worktrees/
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("Failed to remove worktree directory: %v", err)
+	}
+
+	// Verify the directory is gone
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatal("Worktree directory should not exist after removal")
+	}
+
+	// Verify git still has it registered (this is the "missing but registered" state)
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to list worktrees: %v", err)
+	}
+	if !strings.Contains(string(output), "worktree") {
+		t.Log("Note: git worktree list shows no worktrees - prune may have run")
+	}
+
+	// Step 3: Try to recreate the worktree - this should succeed with -f flag (issue #609 fix)
+	// Without the fix, this would fail with:
+	// "fatal: '.git/beads-worktrees/...' is a missing but already registered worktree"
+	if err := wm.CreateBeadsWorktree(branch, worktreePath); err != nil {
+		t.Errorf("CreateBeadsWorktree failed for missing-but-registered worktree (issue #609): %v", err)
+	}
+
+	// Verify the worktree was recreated successfully
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Error("Worktree was not recreated after issue #609 fix")
+	}
+
+	// Verify it's a valid worktree
+	valid, err := wm.isValidWorktree(worktreePath)
+	if err != nil || !valid {
+		t.Errorf("Recreated worktree should be valid: valid=%v, err=%v", valid, err)
+	}
+}

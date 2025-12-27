@@ -194,6 +194,5 @@ Potential improvements (not yet implemented):
 
 ## Related
 
-- [Hash ID Design](HASH_ID_DESIGN.md) - Overview of hash-based IDs
 - [Migration Guide](../README.md#migration) - Converting from sequential to hash IDs
-- [Configuration](../CONFIG.md) - All configuration options
+- [Configuration](CONFIG.md) - All configuration options

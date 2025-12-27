@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 )
@@ -20,6 +21,28 @@ import (
 //	}
 func FatalError(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
+	os.Exit(1)
+}
+
+// FatalErrorRespectJSON writes an error message and exits with code 1.
+// If --json flag is set, outputs structured JSON to stdout.
+// Otherwise, outputs plain text to stderr.
+//
+// Use this for errors in commands that support --json output.
+//
+// Example:
+//
+//	if err := store.GetIssue(ctx, id); err != nil {
+//	    FatalErrorRespectJSON("%v", err)
+//	}
+func FatalErrorRespectJSON(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if jsonOutput {
+		data, _ := json.MarshalIndent(map[string]string{"error": msg}, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+	}
 	os.Exit(1)
 }
 

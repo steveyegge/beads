@@ -34,6 +34,12 @@ Tool-level settings you can configure:
 | `no-daemon` | `--no-daemon` | `BD_NO_DAEMON` | `false` | Force direct mode, bypass daemon |
 | `no-auto-flush` | `--no-auto-flush` | `BD_NO_AUTO_FLUSH` | `false` | Disable auto JSONL export |
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
+| `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
+| `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
+| `git.author` | - | `BD_GIT_AUTHOR` | (none) | Override commit author for beads commits |
+| `git.no-gpg-sign` | - | `BD_GIT_NO_GPG_SIGN` | `false` | Disable GPG signing for beads commits |
+| `directory.labels` | - | - | (none) | Map directories to labels for automatic filtering |
+| `external_projects` | - | - | (none) | Map project names to paths for cross-project deps |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
@@ -70,6 +76,32 @@ daemon-log-compress: true    # Compress rotated logs (default true)
 ```yaml
 # Project team prefers longer flush delay
 flush-debounce: 15s
+
+# Require descriptions on all issues (enforces context for future work)
+create:
+  require-description: true
+
+# Git commit signing options (GH#600)
+# Useful when you have Touch ID commit signing that prompts for each commit
+git:
+  author: "beads-bot <beads@example.com>"  # Override commit author
+  no-gpg-sign: true                         # Disable GPG signing
+
+# Directory-aware label scoping for monorepos (GH#541)
+# When running bd ready/list from a matching directory, issues with
+# that label are automatically shown (as if --label-any was passed)
+directory:
+  labels:
+    packages/maverick: maverick
+    packages/agency: agency
+    packages/io: io
+
+# Cross-project dependency resolution (bd-h807)
+# Maps project names to paths for resolving external: blocked_by references
+# Paths can be relative (from cwd) or absolute
+external_projects:
+  beads: ../beads
+  gastown: /path/to/gastown
 ```
 
 ### Why Two Systems?
@@ -216,7 +248,7 @@ bd config set max_collision_prob "0.01"
 bd config set min_hash_length "5"
 ```
 
-See [docs/ADAPTIVE_IDS.md](docs/ADAPTIVE_IDS.md) for detailed documentation.
+See [ADAPTIVE_IDS.md](ADAPTIVE_IDS.md) for detailed documentation.
 
 ### Example: Export Error Handling
 
@@ -333,7 +365,7 @@ Controls for the sync branch workflow (see docs/PROTECTED_BRANCHES.md):
 
 ```bash
 # Configure sync branch (required for protected branch workflow)
-bd config set sync.branch beads-metadata
+bd config set sync.branch beads-sync
 
 # Enable mass deletion protection (optional, default: false)
 # When enabled, if >50% of issues vanish during a merge AND more than 5
@@ -376,16 +408,107 @@ bd config set jira.type_map.task "Task"
 
 ### Example: Linear Integration
 
-```bash
-# Configure Linear connection
-bd config set linear.api_token "YOUR_TOKEN"
-bd config set linear.team_id "team-123"
+Linear integration provides bidirectional sync between bd and Linear via GraphQL API.
 
-# Map statuses
-bd config set linear.status_map.open "Backlog"
-bd config set linear.status_map.in_progress "In Progress"
-bd config set linear.status_map.closed "Done"
+**Required configuration:**
+
+```bash
+# API Key (can also use LINEAR_API_KEY environment variable)
+bd config set linear.api_key "lin_api_YOUR_API_KEY"
+
+# Team ID (find in Linear team settings or URL)
+bd config set linear.team_id "team-uuid-here"
 ```
+
+**Getting your Linear credentials:**
+
+1. **API Key**: Go to Linear → Settings → API → Personal API keys → Create key
+2. **Team ID**: Go to Linear → Settings → General → Team ID (or extract from URLs)
+
+**Priority mapping (Linear 0-4 → Beads 0-4):**
+
+Linear and Beads both use 0-4 priority scales, but with different semantics:
+- Linear: 0=no priority, 1=urgent, 2=high, 3=medium, 4=low
+- Beads: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+
+Default mapping (configurable):
+
+```bash
+bd config set linear.priority_map.0 4    # No priority -> Backlog
+bd config set linear.priority_map.1 0    # Urgent -> Critical
+bd config set linear.priority_map.2 1    # High -> High
+bd config set linear.priority_map.3 2    # Medium -> Medium
+bd config set linear.priority_map.4 3    # Low -> Low
+```
+
+**State mapping (Linear state types → Beads statuses):**
+
+Map Linear workflow state types to Beads statuses:
+
+```bash
+bd config set linear.state_map.backlog open
+bd config set linear.state_map.unstarted open
+bd config set linear.state_map.started in_progress
+bd config set linear.state_map.completed closed
+bd config set linear.state_map.canceled closed
+
+# For custom workflow states, use lowercase state name:
+bd config set linear.state_map.in_review in_progress
+bd config set linear.state_map.blocked blocked
+bd config set linear.state_map.on_hold blocked
+```
+
+**Label to issue type mapping:**
+
+Infer bd issue type from Linear labels:
+
+```bash
+bd config set linear.label_type_map.bug bug
+bd config set linear.label_type_map.defect bug
+bd config set linear.label_type_map.feature feature
+bd config set linear.label_type_map.enhancement feature
+bd config set linear.label_type_map.epic epic
+bd config set linear.label_type_map.chore chore
+bd config set linear.label_type_map.maintenance chore
+bd config set linear.label_type_map.task task
+```
+
+**Relation type mapping (Linear relations → Beads dependencies):**
+
+```bash
+bd config set linear.relation_map.blocks blocks
+bd config set linear.relation_map.blockedBy blocks
+bd config set linear.relation_map.duplicate duplicates
+bd config set linear.relation_map.related related
+```
+
+**Sync commands:**
+
+```bash
+# Bidirectional sync (pull then push, with conflict resolution)
+bd linear sync
+
+# Pull only (import from Linear)
+bd linear sync --pull
+
+# Push only (export to Linear)
+bd linear sync --push
+
+# Dry run (preview without changes)
+bd linear sync --dry-run
+
+# Conflict resolution options
+bd linear sync --prefer-local    # Local version wins on conflicts
+bd linear sync --prefer-linear   # Linear version wins on conflicts
+# Default: newer timestamp wins
+
+# Check sync status
+bd linear status
+```
+
+**Automatic sync tracking:**
+
+The `linear.last_sync` config key is automatically updated after each sync, enabling incremental sync (only fetch issues updated since last sync).
 
 ### Example: GitHub Integration
 
@@ -460,6 +583,5 @@ External integration scripts can read configuration to sync with Jira, Linear, G
 
 ## See Also
 
-- [README.md](README.md) - Main documentation
+- [README.md](../README.md) - Main documentation
 - [EXTENDING.md](EXTENDING.md) - Database schema and compaction config
-- [examples/integrations/](examples/integrations/) - Integration examples

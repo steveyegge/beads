@@ -13,8 +13,8 @@ func TestCheckBdInPath(t *testing.T) {
 	check := CheckBdInPath()
 
 	// Just verify the check returns a valid result
-	if check.Name != "bd in PATH" {
-		t.Errorf("Expected check name 'bd in PATH', got %s", check.Name)
+	if check.Name != "CLI Availability" {
+		t.Errorf("Expected check name 'CLI Availability', got %s", check.Name)
 	}
 
 	if check.Status != "ok" && check.Status != "warning" {
@@ -73,6 +73,22 @@ func TestCheckDocumentationBdPrimeReference(t *testing.T) {
 			expectDetail:   true,
 		},
 		{
+			name: "claude.local.md references bd prime (local-only)",
+			fileContent: map[string]string{
+				"claude.local.md": "Run bd prime for context.",
+			},
+			expectedStatus: "ok",
+			expectDetail:   true,
+		},
+		{
+			name: ".claude/claude.local.md references bd prime (local-only)",
+			fileContent: map[string]string{
+				".claude/claude.local.md": "Use bd prime for workflow context.",
+			},
+			expectedStatus: "ok",
+			expectDetail:   true,
+		},
+		{
 			name: "multiple files reference bd prime",
 			fileContent: map[string]string{
 				"AGENTS.md": "Use bd prime",
@@ -103,8 +119,8 @@ func TestCheckDocumentationBdPrimeReference(t *testing.T) {
 
 			check := CheckDocumentationBdPrimeReference(tmpDir)
 
-			if check.Name != "Documentation bd prime" {
-				t.Errorf("Expected check name 'Documentation bd prime', got %s", check.Name)
+			if check.Name != "Prime Documentation" {
+				t.Errorf("Expected check name 'Prime Documentation', got %s", check.Name)
 			}
 
 			// The status depends on whether bd is installed, so we accept both ok and warning

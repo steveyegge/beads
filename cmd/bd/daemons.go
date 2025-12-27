@@ -1,4 +1,5 @@
 package main
+
 import (
 	"bufio"
 	"encoding/json"
@@ -10,12 +11,63 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/daemon"
 )
+
+// JSON response types for daemons commands
+
+// DaemonStopResponse is returned when a daemon is stopped
+type DaemonStopResponse struct {
+	Workspace string `json:"workspace"`
+	PID       int    `json:"pid"`
+	Stopped   bool   `json:"stopped"`
+}
+
+// DaemonRestartResponse is returned when a daemon is restarted
+type DaemonRestartResponse struct {
+	Workspace string `json:"workspace"`
+	Action    string `json:"action"`
+}
+
+// DaemonLogsResponse is returned for daemon logs in JSON mode
+type DaemonLogsResponse struct {
+	Workspace string `json:"workspace"`
+	LogPath   string `json:"log_path"`
+	Content   string `json:"content"`
+}
+
+// DaemonKillallEmptyResponse is returned when no daemons are running
+type DaemonKillallEmptyResponse struct {
+	Stopped int `json:"stopped"`
+	Failed  int `json:"failed"`
+}
+
+// DaemonHealthReport is a single daemon health report entry
+type DaemonHealthReport struct {
+	Workspace       string `json:"workspace"`
+	SocketPath      string `json:"socket_path"`
+	PID             int    `json:"pid,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Status          string `json:"status"`
+	Issue           string `json:"issue,omitempty"`
+	VersionMismatch bool   `json:"version_mismatch,omitempty"`
+}
+
+// DaemonHealthResponse is returned for daemon health check
+type DaemonHealthResponse struct {
+	Total        int                  `json:"total"`
+	Healthy      int                  `json:"healthy"`
+	Stale        int                  `json:"stale"`
+	Mismatched   int                  `json:"mismatched"`
+	Unresponsive int                  `json:"unresponsive"`
+	Daemons      []DaemonHealthReport `json:"daemons"`
+}
 var daemonsCmd = &cobra.Command{
-	Use:   "daemons",
-	Short: "Manage multiple bd daemons",
+	Use:     "daemons",
+	GroupID: "sync",
+	Short:   "Manage multiple bd daemons",
 	Long: `Manage bd daemon processes across all repositories and worktrees.
 Subcommands:
   list    - Show all running daemons
@@ -153,10 +205,10 @@ Sends shutdown command via RPC, with SIGTERM fallback if RPC fails.`,
 			os.Exit(1)
 		}
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"workspace": targetDaemon.WorkspacePath,
-				"pid":       targetDaemon.PID,
-				"stopped":   true,
+			outputJSON(DaemonStopResponse{
+				Workspace: targetDaemon.WorkspacePath,
+				PID:       targetDaemon.PID,
+				Stopped:   true,
 			})
 		} else {
 			fmt.Printf("Stopped daemon for %s (PID %d)\n", targetDaemon.WorkspacePath, targetDaemon.PID)
@@ -267,9 +319,9 @@ Stops the daemon gracefully, then starts a new one.`,
 			}
 		}()
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"workspace": workspace,
-				"action":    "restarted",
+			outputJSON(DaemonRestartResponse{
+				Workspace: workspace,
+				Action:    "restarted",
 			})
 		} else {
 			fmt.Printf("Successfully restarted daemon for workspace: %s\n", workspace)
@@ -332,10 +384,10 @@ Supports tail mode (last N lines) and follow mode (like tail -f).`,
 				outputJSON(map[string]string{"error": err.Error()})
 				os.Exit(1)
 			}
-			outputJSON(map[string]interface{}{
-				"workspace": targetDaemon.WorkspacePath,
-				"log_path":  logPath,
-				"content":   string(content),
+			outputJSON(DaemonLogsResponse{
+				Workspace: targetDaemon.WorkspacePath,
+				LogPath:   logPath,
+				Content:   string(content),
 			})
 			return
 		}
@@ -429,9 +481,9 @@ Uses escalating shutdown strategy: RPC (2s) → SIGTERM (3s) → SIGKILL (1s).`,
 		}
 		if len(aliveDaemons) == 0 {
 			if jsonOutput {
-				outputJSON(map[string]interface{}{
-					"stopped": 0,
-					"failed":  0,
+				outputJSON(DaemonKillallEmptyResponse{
+					Stopped: 0,
+					Failed:  0,
 				})
 			} else {
 				fmt.Println("No running daemons found")
@@ -471,23 +523,14 @@ stale sockets, version mismatches, and unresponsive daemons.`,
 			fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
 			os.Exit(1)
 		}
-		type healthReport struct {
-			Workspace        string `json:"workspace"`
-			SocketPath       string `json:"socket_path"`
-			PID              int    `json:"pid,omitempty"`
-			Version          string `json:"version,omitempty"`
-			Status           string `json:"status"`
-			Issue            string `json:"issue,omitempty"`
-			VersionMismatch  bool   `json:"version_mismatch,omitempty"`
-		}
-		var reports []healthReport
+		var reports []DaemonHealthReport
 		healthyCount := 0
 		staleCount := 0
 		mismatchCount := 0
 		unresponsiveCount := 0
 		currentVersion := Version
 		for _, d := range daemons {
-			report := healthReport{
+			report := DaemonHealthReport{
 				Workspace:  d.WorkspacePath,
 				SocketPath: d.SocketPath,
 				PID:        d.PID,
@@ -509,16 +552,14 @@ stale sockets, version mismatches, and unresponsive daemons.`,
 			reports = append(reports, report)
 		}
 		if jsonOutput {
-			output := map[string]interface{}{
-				"total":        len(reports),
-				"healthy":      healthyCount,
-				"stale":        staleCount,
-				"mismatched":   mismatchCount,
-				"unresponsive": unresponsiveCount,
-				"daemons":      reports,
-			}
-			data, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Println(string(data))
+			outputJSON(DaemonHealthResponse{
+				Total:        len(reports),
+				Healthy:      healthyCount,
+				Stale:        staleCount,
+				Mismatched:   mismatchCount,
+				Unresponsive: unresponsiveCount,
+				Daemons:      reports,
+			})
 			return
 		}
 		// Human-readable output

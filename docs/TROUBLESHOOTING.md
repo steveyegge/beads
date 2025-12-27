@@ -209,7 +209,7 @@ bd config set import.orphan_handling "strict"
 - Check for orphans before cleanup: `bd list --id bd-abc.*`
 - Review impact before deleting epic/parent issues
 
-See [docs/CONFIG.md](docs/CONFIG.md#example-import-orphan-handling) for complete configuration documentation.
+See [CONFIG.md](CONFIG.md#example-import-orphan-handling) for complete configuration documentation.
 
 ### Database corruption
 
@@ -342,7 +342,52 @@ chmod +x .git/hooks/post-merge
 chmod +x .git/hooks/post-checkout
 ```
 
-Or use the installer: `cd examples/git-hooks && ./install.sh`
+### "Branch already checked out" when switching branches
+
+**Symptom:**
+```bash
+$ git checkout main
+fatal: 'main' is already checked out at '/path/to/.git/beads-worktrees/beads-sync'
+```
+
+**Cause:** Beads creates git worktrees internally when using the sync-branch feature (configured via `bd init --branch` or `bd config set sync.branch`). These worktrees lock the branches they're checked out to.
+
+**Solution:**
+```bash
+# Remove beads-created worktrees
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+
+# Now you can checkout the branch
+git checkout main
+```
+
+**Permanent fix (disable sync-branch):**
+```bash
+bd config set sync.branch ""
+```
+
+See [WORKTREES.md#beads-created-worktrees-sync-branch](WORKTREES.md#beads-created-worktrees-sync-branch) for details.
+
+### Unexpected worktree directories in .git/
+
+**Symptom:** You notice `.git/beads-worktrees/` or `.git/worktrees/beads-*` directories you didn't create.
+
+**Explanation:** Beads automatically creates these worktrees when using the sync-branch feature to commit issue updates to a separate branch without switching your working directory.
+
+**If you don't want these:**
+```bash
+# Disable sync-branch feature
+bd config set sync.branch ""
+
+# Clean up existing worktrees
+rm -rf .git/beads-worktrees
+rm -rf .git/worktrees/beads-*
+git worktree prune
+```
+
+See [WORKTREES.md](WORKTREES.md) for details on how beads uses worktrees.
 
 ### Auto-sync not working
 
@@ -524,7 +569,7 @@ bd ready
 ps aux | grep "bd daemon"
 ```
 
-See [integrations/beads-mcp/README.md](integrations/beads-mcp/README.md) for MCP-specific troubleshooting.
+See [integrations/beads-mcp/README.md](../integrations/beads-mcp/README.md) for MCP-specific troubleshooting.
 
 ### Sandboxed environments (Codex, Claude Code, etc.)
 
@@ -611,7 +656,7 @@ bd --allow-stale list --status open
 ```bash
 # Most reliable for sandboxed environments
 bd --sandbox ready
-bd --sandbox import -i .beads/beads.jsonl
+bd --sandbox import -i .beads/issues.jsonl
 ```
 
 ---
@@ -625,7 +670,7 @@ If stuck in a sandboxed environment:
 bd --sandbox ready
 
 # Step 2: If you get staleness errors, force import
-bd import --force -i .beads/beads.jsonl
+bd import --force -i .beads/issues.jsonl
 
 # Step 3: If still blocked, use allow-stale (emergency only)
 bd --allow-stale ready
@@ -718,8 +763,7 @@ If none of these solutions work:
 
 ## Related Documentation
 
-- **[README.md](README.md)** - Core features and quick start
+- **[README.md](../README.md)** - Core features and quick start
 - **[ADVANCED.md](ADVANCED.md)** - Advanced features
 - **[FAQ.md](FAQ.md)** - Frequently asked questions
 - **[INSTALLING.md](INSTALLING.md)** - Installation guide
-- **[ADVANCED.md](ADVANCED.md)** - JSONL format and merge strategies

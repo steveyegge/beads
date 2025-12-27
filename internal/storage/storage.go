@@ -107,9 +107,10 @@ type Storage interface {
 
 	// Ready Work & Blocking
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
-	GetBlockedIssues(ctx context.Context) ([]*types.BlockedIssue, error)
+	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
+	GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) // GH#679
 
 	// Events
 	AddComment(ctx context.Context, issueID, actor, comment string) error
@@ -126,7 +127,6 @@ type Storage interface {
 	// Dirty tracking (for incremental JSONL export)
 	GetDirtyIssues(ctx context.Context) ([]string, error)
 	GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) // For timestamp-only dedup (bd-164)
-	ClearDirtyIssues(ctx context.Context) error                            // WARNING: Race condition (bd-52), use ClearDirtyIssuesByID
 	ClearDirtyIssuesByID(ctx context.Context, issueIDs []string) error
 
 	// Export hash tracking (for timestamp-only dedup, bd-164)

@@ -10,8 +10,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 )
+
+// DaemonStatusResponse is returned for daemon status check
+type DaemonStatusResponse struct {
+	Running      bool   `json:"running"`
+	PID          int    `json:"pid,omitempty"`
+	Started      string `json:"started,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
+	AutoCommit   bool   `json:"auto_commit,omitempty"`
+	AutoPush     bool   `json:"auto_push,omitempty"`
+	LocalMode    bool   `json:"local_mode,omitempty"`
+	SyncInterval string `json:"sync_interval,omitempty"`
+	DaemonMode   string `json:"daemon_mode,omitempty"`
+}
 
 // isDaemonRunning checks if the daemon is currently running
 func isDaemonRunning(pidFile string) (bool, int) {
@@ -54,16 +68,31 @@ func showDaemonStatus(pidFile string) {
 			}
 		}
 
+		// Try to get detailed status from daemon via RPC
+		var rpcStatus *rpc.StatusResponse
+		beadsDir := filepath.Dir(pidFile)
+		socketPath := filepath.Join(beadsDir, "bd.sock")
+		if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
+			if status, err := client.Status(); err == nil {
+				rpcStatus = status
+			}
+			_ = client.Close()
+		}
+
 		if jsonOutput {
-			status := map[string]interface{}{
-				"running": true,
-				"pid":     pid,
+			status := DaemonStatusResponse{
+				Running: true,
+				PID:     pid,
+				Started: started,
+				LogPath: logPath,
 			}
-			if started != "" {
-				status["started"] = started
-			}
-			if logPath != "" {
-				status["log_path"] = logPath
+			// Add config from RPC status if available
+			if rpcStatus != nil {
+				status.AutoCommit = rpcStatus.AutoCommit
+				status.AutoPush = rpcStatus.AutoPush
+				status.LocalMode = rpcStatus.LocalMode
+				status.SyncInterval = rpcStatus.SyncInterval
+				status.DaemonMode = rpcStatus.DaemonMode
 			}
 			outputJSON(status)
 			return
@@ -76,9 +105,20 @@ func showDaemonStatus(pidFile string) {
 		if logPath != "" {
 			fmt.Printf("  Log: %s\n", logPath)
 		}
+		// Display config from RPC status if available
+		if rpcStatus != nil {
+			fmt.Printf("  Mode: %s\n", rpcStatus.DaemonMode)
+			fmt.Printf("  Sync Interval: %s\n", rpcStatus.SyncInterval)
+			fmt.Printf("  Auto-Commit: %v\n", rpcStatus.AutoCommit)
+			fmt.Printf("  Auto-Push: %v\n", rpcStatus.AutoPush)
+			fmt.Printf("  Auto-Pull: %v\n", rpcStatus.AutoPull)
+			if rpcStatus.LocalMode {
+				fmt.Printf("  Local Mode: %v (no git sync)\n", rpcStatus.LocalMode)
+			}
+		}
 	} else {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{"running": false})
+			outputJSON(DaemonStatusResponse{Running: false})
 			return
 		}
 		fmt.Println("Daemon is not running")
@@ -237,15 +277,15 @@ func stopDaemon(pidFile string) {
 		os.Exit(1)
 	}
 
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
+	for i := 0; i < daemonShutdownAttempts; i++ {
+		time.Sleep(daemonShutdownPollInterval)
 		if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
 			fmt.Println("Daemon stopped")
 			return
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after 5 seconds, forcing termination\n")
+	fmt.Fprintf(os.Stderr, "Warning: daemon did not stop after %v, forcing termination\n", daemonShutdownTimeout)
 
 	// Check one more time before killing the process to avoid a race.
 	if isRunning, _ := isDaemonRunning(pidFile); !isRunning {
@@ -263,7 +303,7 @@ func stopDaemon(pidFile string) {
 	}
 	
 	// Clean up stale artifacts after forced kill
-	_ = os.Remove(pidFile)
+	_ = os.Remove(pidFile) // Best-effort cleanup, file may not exist
 	
 	// Also remove socket file if it exists
 	if _, err := os.Stat(socketPath); err == nil {
@@ -275,8 +315,61 @@ func stopDaemon(pidFile string) {
 	fmt.Println("Daemon killed")
 }
 
+// stopAllDaemons stops all running bd daemons (bd-47tn)
+func stopAllDaemons() {
+	// Discover all running daemons using the registry
+	daemons, err := daemon.DiscoverDaemons(nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error discovering daemons: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Filter to only alive daemons
+	var alive []daemon.DaemonInfo
+	for _, d := range daemons {
+		if d.Alive {
+			alive = append(alive, d)
+		}
+	}
+
+	if len(alive) == 0 {
+		if jsonOutput {
+			fmt.Println(`{"stopped": 0, "message": "No running daemons found"}`)
+		} else {
+			fmt.Println("No running daemons found")
+		}
+		return
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Found %d running daemon(s), stopping...\n", len(alive))
+	}
+
+	// Stop all daemons (with force=true for stubborn processes)
+	results := daemon.KillAllDaemons(alive, true)
+
+	if jsonOutput {
+		output, _ := json.MarshalIndent(results, "", "  ")
+		fmt.Println(string(output))
+	} else {
+		if results.Stopped > 0 {
+			fmt.Printf("✓ Stopped %d daemon(s)\n", results.Stopped)
+		}
+		if results.Failed > 0 {
+			fmt.Printf("✗ Failed to stop %d daemon(s):\n", results.Failed)
+			for _, f := range results.Failures {
+				fmt.Printf("  - PID %d (%s): %s\n", f.PID, f.Workspace, f.Error)
+			}
+		}
+	}
+
+	if results.Failed > 0 {
+		os.Exit(1)
+	}
+}
+
 // startDaemon starts the daemon (in foreground if requested, otherwise background)
-func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foreground bool, logFile, pidFile string) {
+func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMode, foreground bool, logFile, pidFile, logLevel string, logJSON bool) {
 	logPath, err := getLogFilePath(logFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -285,7 +378,7 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 
 	// Run in foreground if --foreground flag set or if we're the forked child process
 	if foreground || os.Getenv("BD_DAEMON_FOREGROUND") == "1" {
-		runDaemonLoop(interval, autoCommit, autoPush, localMode, logPath, pidFile)
+		runDaemonLoop(interval, autoCommit, autoPush, autoPull, localMode, logPath, pidFile, logLevel, logJSON)
 		return
 	}
 
@@ -304,11 +397,20 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, localMode, foregr
 	if autoPush {
 		args = append(args, "--auto-push")
 	}
+	if autoPull {
+		args = append(args, "--auto-pull")
+	}
 	if localMode {
 		args = append(args, "--local")
 	}
 	if logFile != "" {
 		args = append(args, "--log", logFile)
+	}
+	if logLevel != "" && logLevel != "info" {
+		args = append(args, "--log-level", logLevel)
+	}
+	if logJSON {
+		args = append(args, "--log-json")
 	}
 
 	cmd := exec.Command(exe, args...) // #nosec G204 - bd daemon command from trusted binary
@@ -359,18 +461,18 @@ func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (*DaemonLo
 	// Detect nested .beads directories (e.g., .beads/.beads/.beads/)
 	cleanPath := filepath.Clean(beadsDir)
 	if strings.Contains(cleanPath, string(filepath.Separator)+".beads"+string(filepath.Separator)+".beads") {
-		log.log("Error: Nested .beads directory detected: %s", cleanPath)
-		log.log("Hint: Do not run 'bd daemon' from inside .beads/ directory")
-		log.log("Hint: Use absolute paths for BEADS_DB or run from workspace root")
+		log.Error("nested .beads directory detected", "path", cleanPath)
+		log.Info("hint: do not run 'bd daemon' from inside .beads/ directory")
+		log.Info("hint: use absolute paths for BEADS_DB or run from workspace root")
 		return nil, fmt.Errorf("nested .beads directory detected")
 	}
 	
 	lock, err := acquireDaemonLock(beadsDir, dbPath)
 	if err != nil {
 		if err == ErrDaemonLocked {
-			log.log("Daemon already running (lock held), exiting")
+			log.Info("daemon already running (lock held), exiting")
 		} else {
-			log.log("Error acquiring daemon lock: %v", err)
+			log.Error("acquiring daemon lock", "error", err)
 		}
 		return nil, err
 	}
@@ -381,11 +483,11 @@ func setupDaemonLock(pidFile string, dbPath string, log daemonLogger) (*DaemonLo
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid == myPID {
 			// PID file is correct, continue
 		} else {
-			log.log("PID file has wrong PID (expected %d, got %d), overwriting", myPID, pid)
+			log.Warn("PID file has wrong PID, overwriting", "expected", myPID, "got", pid)
 			_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", myPID)), 0600)
 		}
 	} else {
-		log.log("PID file missing after lock acquisition, creating")
+		log.Info("PID file missing after lock acquisition, creating")
 		_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", myPID)), 0600)
 	}
 

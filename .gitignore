@@ -117,3 +117,10 @@ beads_viewer/
 
 # AI planning documents (ephemeral)
 history/
+
+# Gas Town agent state
+state.json
+.beads/redirect
+
+# Claude Code runtime
+.runtime/

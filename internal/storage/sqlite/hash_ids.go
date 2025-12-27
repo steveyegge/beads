@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -63,6 +64,38 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 	// Format as parentID.counter
 	childID := fmt.Sprintf("%s.%d", parentID, nextNum)
 	return childID, nil
+}
+
+// ensureChildCounterUpdated ensures the child_counters table has a value for parentID
+// that is at least childNum. This prevents ID collisions when children are created
+// with explicit IDs (via --id flag or import) rather than GetNextChildID.
+// (GH#728 fix)
+func (s *SQLiteStorage) ensureChildCounterUpdated(ctx context.Context, parentID string, childNum int) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO child_counters (parent_id, last_child)
+		VALUES (?, ?)
+		ON CONFLICT(parent_id) DO UPDATE SET
+			last_child = MAX(last_child, excluded.last_child)
+	`, parentID, childNum)
+	if err != nil {
+		return fmt.Errorf("failed to update child counter for parent %s: %w", parentID, err)
+	}
+	return nil
+}
+
+// ensureChildCounterUpdatedWithConn is like ensureChildCounterUpdated but uses a specific
+// connection for transaction consistency. (GH#728 fix)
+func ensureChildCounterUpdatedWithConn(ctx context.Context, conn *sql.Conn, parentID string, childNum int) error {
+	_, err := conn.ExecContext(ctx, `
+		INSERT INTO child_counters (parent_id, last_child)
+		VALUES (?, ?)
+		ON CONFLICT(parent_id) DO UPDATE SET
+			last_child = MAX(last_child, excluded.last_child)
+	`, parentID, childNum)
+	if err != nil {
+		return fmt.Errorf("failed to update child counter for parent %s: %w", parentID, err)
+	}
+	return nil
 }
 
 // generateHashID moved to ids.go (bd-0702)

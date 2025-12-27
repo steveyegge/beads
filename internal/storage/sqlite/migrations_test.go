@@ -466,10 +466,11 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				notes TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'blocked', 'closed', 'tombstone')),
 				priority INTEGER NOT NULL,
-				issue_type TEXT NOT NULL CHECK (issue_type IN ('bug', 'feature', 'task', 'epic', 'chore')),
+				issue_type TEXT NOT NULL CHECK (issue_type IN ('bug', 'feature', 'task', 'epic', 'chore', 'message')),
 				assignee TEXT,
 				estimated_minutes INTEGER,
 				created_at DATETIME NOT NULL,
+				created_by TEXT DEFAULT '',
 				updated_at DATETIME NOT NULL,
 				closed_at DATETIME,
 				external_ref TEXT,
@@ -483,9 +484,21 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				deleted_by TEXT DEFAULT '',
 				delete_reason TEXT DEFAULT '',
 				original_type TEXT DEFAULT '',
+				sender TEXT DEFAULT '',
+				ephemeral INTEGER DEFAULT 0,
+				pinned INTEGER DEFAULT 0,
+				is_template INTEGER DEFAULT 0,
+				replies_to TEXT DEFAULT '',
+				relates_to TEXT DEFAULT '',
+				duplicate_of TEXT DEFAULT '',
+				superseded_by TEXT DEFAULT '',
+				await_type TEXT DEFAULT '',
+				await_id TEXT DEFAULT '',
+				timeout_ns INTEGER DEFAULT 0,
+				waiters TEXT DEFAULT '',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '' FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, '', '', '', '', '', '', 0, '' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {
@@ -617,6 +630,85 @@ func TestMigrateOrphanDetection(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			if err := migrations.MigrateOrphanDetection(db); err != nil {
 				t.Fatalf("migration run %d failed: %v", i+1, err)
+			}
+		}
+	})
+
+	// GH#508: Verify that prefixes with dots don't trigger false positives
+	t.Run("prefix with dots is not flagged as orphan", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+		db := store.db
+
+		// Override the prefix for this test
+		_, err := db.Exec(`UPDATE config SET value = 'my.project' WHERE key = 'issue_prefix'`)
+		if err != nil {
+			t.Fatalf("failed to update prefix: %v", err)
+		}
+
+		// Insert issues with dotted prefix directly (bypassing prefix validation)
+		testCases := []struct {
+			id          string
+			expectOrphan bool
+		}{
+			// These should NOT be flagged as orphans (dots in prefix)
+			{"my.project-abc123", false},
+			{"my.project-xyz789", false},
+			{"com.example.app-issue1", false},
+
+			// This SHOULD be flagged as orphan (hierarchical, parent doesn't exist)
+			{"my.project-missing.1", true},
+		}
+
+		for _, tc := range testCases {
+			_, err := db.Exec(`
+				INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+			`, tc.id, "Test Issue", "open", 1, "task")
+			if err != nil {
+				t.Fatalf("failed to insert %s: %v", tc.id, err)
+			}
+		}
+
+		// Query for orphans using the same logic as the migration
+		rows, err := db.Query(`
+			SELECT id
+			FROM issues
+			WHERE
+			  (id GLOB '*.[0-9]' OR id GLOB '*.[0-9][0-9]' OR id GLOB '*.[0-9][0-9][0-9]' OR id GLOB '*.[0-9][0-9][0-9][0-9]')
+			  AND rtrim(rtrim(id, '0123456789'), '.') NOT IN (SELECT id FROM issues)
+			ORDER BY id
+		`)
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		defer rows.Close()
+
+		var orphans []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				t.Fatalf("scan failed: %v", err)
+			}
+			orphans = append(orphans, id)
+		}
+
+		// Verify only the expected orphan is detected
+		if len(orphans) != 1 {
+			t.Errorf("expected 1 orphan, got %d: %v", len(orphans), orphans)
+		}
+		if len(orphans) == 1 && orphans[0] != "my.project-missing.1" {
+			t.Errorf("expected orphan 'my.project-missing.1', got %q", orphans[0])
+		}
+
+		// Verify non-hierarchical dotted IDs are NOT flagged
+		for _, tc := range testCases {
+			if !tc.expectOrphan {
+				for _, orphan := range orphans {
+					if orphan == tc.id {
+						t.Errorf("false positive: %s was incorrectly flagged as orphan", tc.id)
+					}
+				}
 			}
 		}
 	})

@@ -10,7 +10,9 @@
 - [Dependencies & Labels](#dependencies--labels)
 - [Filtering & Search](#filtering--search)
 - [Advanced Operations](#advanced-operations)
+- [Molecular Chemistry](#molecular-chemistry)
 - [Database Management](#database-management)
+- [Editor Integration](#editor-integration)
 
 ## Basic Operations
 
@@ -63,6 +65,14 @@ bd create "Add support for OAuth 2.0" -d "Implement RFC 6749 (OAuth 2.0 spec)" -
 
 # Create multiple issues from markdown file
 bd create -f feature-plan.md --json
+
+# Create with description from file (avoids shell escaping issues)
+bd create "Issue title" --body-file=description.md --json
+bd create "Issue title" --body-file description.md -p 1 --json
+
+# Read description from stdin
+echo "Description text" | bd create "Issue title" --body-file=- --json
+cat description.md | bd create "Issue title" --body-file - -p 1 --json
 
 # Create epic with hierarchical child tasks
 bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
@@ -249,7 +259,7 @@ bd --allow-stale list --status open --json
 
 ```bash
 # Force metadata update even when DB appears synced
-bd import --force -i .beads/beads.jsonl
+bd import --force -i .beads/issues.jsonl
 ```
 
 **When to use:** `bd import` reports "0 created, 0 updated" but staleness errors persist.
@@ -330,6 +340,116 @@ bd restore <id>  # View full history at time of compaction
 bd rename-prefix kw- --dry-run  # Preview changes
 bd rename-prefix kw- --json     # Apply rename
 ```
+
+## Molecular Chemistry
+
+Beads uses a chemistry metaphor for template-based workflows. See [MOLECULES.md](MOLECULES.md) for full documentation.
+
+### Phase Transitions
+
+| Phase | State | Storage | Command |
+|-------|-------|---------|---------|
+| Solid | Proto | `.beads/` | `bd mol catalog` |
+| Liquid | Mol | `.beads/` | `bd mol pour` |
+| Vapor | Wisp | `.beads/` (Ephemeral=true, not exported) | `bd mol wisp` |
+
+### Proto/Template Commands
+
+```bash
+# List available protos (templates)
+bd mol catalog --json
+
+# Show proto structure and variables
+bd mol show <proto-id> --json
+
+# Extract proto from ad-hoc epic
+bd mol distill <epic-id> --json
+```
+
+### Pour (Proto to Mol)
+
+```bash
+# Instantiate proto as persistent mol (solid → liquid)
+bd mol pour <proto-id> --var key=value --json
+
+# Preview what would be created
+bd mol pour <proto-id> --var key=value --dry-run
+
+# Assign root issue
+bd mol pour <proto-id> --var key=value --assignee alice --json
+
+# Attach additional protos during pour
+bd mol pour <proto-id> --attach <other-proto> --json
+```
+
+### Wisp Commands
+
+```bash
+# Instantiate proto as ephemeral wisp (solid → vapor)
+bd mol wisp <proto-id> --var key=value --json
+
+# List all wisps
+bd mol wisp list --json
+bd mol wisp list --all --json    # Include closed
+
+# Garbage collect orphaned wisps
+bd mol wisp gc --json
+bd mol wisp gc --age 24h --json  # Custom age threshold
+bd mol wisp gc --dry-run         # Preview what would be cleaned
+```
+
+### Bonding (Combining Work)
+
+```bash
+# Polymorphic combine - handles proto+proto, proto+mol, mol+mol
+bd mol bond <A> <B> --json
+
+# Bond types
+bd mol bond <A> <B> --type sequential --json   # B runs after A (default)
+bd mol bond <A> <B> --type parallel --json     # B runs alongside A
+bd mol bond <A> <B> --type conditional --json  # B runs only if A fails
+
+# Phase control
+bd mol bond <proto> <mol> --pour --json   # Force persistent spawn
+bd mol bond <proto> <mol> --wisp --json   # Force ephemeral spawn
+
+# Dynamic bonding (custom child IDs)
+bd mol bond <proto> <mol> --ref arm-{{name}} --var name=ace --json
+
+# Preview bonding
+bd mol bond <A> <B> --dry-run
+```
+
+### Squash (Wisp to Digest)
+
+```bash
+# Compress wisp to permanent digest
+bd mol squash <ephemeral-id> --json
+
+# With agent-provided summary
+bd mol squash <ephemeral-id> --summary "Work completed" --json
+
+# Preview
+bd mol squash <ephemeral-id> --dry-run
+
+# Keep wisp children after squash
+bd mol squash <ephemeral-id> --keep-children --json
+```
+
+### Burn (Discard Wisp)
+
+```bash
+# Delete wisp without digest (destructive)
+bd mol burn <ephemeral-id> --json
+
+# Preview
+bd mol burn <ephemeral-id> --dry-run
+
+# Skip confirmation
+bd mol burn <ephemeral-id> --force --json
+```
+
+**Note:** Most mol commands require `--no-daemon` flag when daemon is running.
 
 ## Database Management
 
@@ -550,9 +670,52 @@ bd sync  # Force immediate sync, bypass debounce
 
 **ALWAYS run `bd sync` at end of agent sessions** to ensure changes are committed/pushed immediately.
 
+## Editor Integration
+
+### Setup Commands
+
+```bash
+# Setup editor integration (choose based on your editor)
+bd setup factory  # Factory.ai Droid - creates/updates AGENTS.md (universal standard)
+bd setup claude   # Claude Code - installs SessionStart/PreCompact hooks
+bd setup cursor   # Cursor IDE - creates .cursor/rules/beads.mdc
+bd setup aider    # Aider - creates .aider.conf.yml
+
+# Check if integration is installed
+bd setup factory --check
+bd setup claude --check
+bd setup cursor --check
+bd setup aider --check
+
+# Remove integration
+bd setup factory --remove
+bd setup claude --remove
+bd setup cursor --remove
+bd setup aider --remove
+```
+
+**Claude Code options:**
+```bash
+bd setup claude              # Install globally (~/.claude/settings.json)
+bd setup claude --project    # Install for this project only
+bd setup claude --stealth    # Use stealth mode (flush only, no git operations)
+```
+
+**What each setup does:**
+- **Factory.ai** (`bd setup factory`): Creates or updates AGENTS.md with beads workflow instructions (works with multiple AI tools using the AGENTS.md standard)
+- **Claude Code** (`bd setup claude`): Adds hooks to Claude Code's settings.json that run `bd prime` on SessionStart and PreCompact events
+- **Cursor** (`bd setup cursor`): Creates `.cursor/rules/beads.mdc` with workflow instructions
+- **Aider** (`bd setup aider`): Creates `.aider.conf.yml` with bd workflow instructions
+
+See also:
+- [INSTALLING.md](INSTALLING.md#ide-and-editor-integrations) - Installation guide
+- [AIDER_INTEGRATION.md](AIDER_INTEGRATION.md) - Detailed Aider guide
+- [CLAUDE_INTEGRATION.md](CLAUDE_INTEGRATION.md) - Claude integration design
+
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
+- [MOLECULES.md](MOLECULES.md) - Molecular chemistry metaphor (protos, pour, bond, squash, burn)
 - [DAEMON.md](DAEMON.md) - Daemon management and event-driven mode
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflows and merge strategies
 - [LABELS.md](../LABELS.md) - Label system guide

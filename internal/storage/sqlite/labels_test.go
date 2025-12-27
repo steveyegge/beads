@@ -351,9 +351,9 @@ func TestLabelMarksDirty(t *testing.T) {
 	}
 
 	// Clear dirty issues
-	err = store.ClearDirtyIssues(ctx)
+	err = store.ClearDirtyIssuesByID(ctx, []string{issue.ID})
 	if err != nil {
-		t.Fatalf("ClearDirtyIssues failed: %v", err)
+		t.Fatalf("ClearDirtyIssuesByID failed: %v", err)
 	}
 
 	// Add label - should mark issue dirty
@@ -372,9 +372,9 @@ func TestLabelMarksDirty(t *testing.T) {
 	}
 
 	// Clear dirty again
-	err = store.ClearDirtyIssues(ctx)
+	err = store.ClearDirtyIssuesByID(ctx, []string{issue.ID})
 	if err != nil {
-		t.Fatalf("ClearDirtyIssues failed: %v", err)
+		t.Fatalf("ClearDirtyIssuesByID failed: %v", err)
 	}
 
 	// Remove label - should mark issue dirty

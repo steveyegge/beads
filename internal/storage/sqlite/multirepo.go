@@ -217,6 +217,30 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 		)
 	}
 
+	// Check for orphaned local dependencies (non-external refs) (bd-zmmy)
+	// The FK constraint on depends_on_id was removed to allow external:* refs,
+	// so we need to validate local deps manually.
+	orphanRows, err := conn.QueryContext(ctx, `
+		SELECT d.issue_id, d.depends_on_id
+		FROM dependencies d
+		LEFT JOIN issues i ON d.depends_on_id = i.id
+		WHERE i.id IS NULL
+		  AND d.depends_on_id NOT LIKE 'external:%'
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check orphaned dependencies: %w", err)
+	}
+	defer orphanRows.Close()
+
+	if orphanRows.Next() {
+		var issueID, dependsOnID string
+		_ = orphanRows.Scan(&issueID, &dependsOnID)
+		return 0, fmt.Errorf(
+			"foreign key violation: issue %s depends on non-existent issue %s",
+			issueID, dependsOnID,
+		)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -227,6 +251,27 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 // upsertIssueInTx inserts or updates an issue within a transaction.
 // Uses INSERT OR REPLACE to handle both new and existing issues.
 func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *types.Issue, customStatuses []string) error {
+	// Defensive fix for closed_at invariant (GH#523): older versions of bd could
+	// close issues without setting closed_at. Fix by using max(created_at, updated_at) + 1s.
+	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		closedAt := maxTime.Add(time.Second)
+		issue.ClosedAt = &closedAt
+	}
+
+	// Defensive fix for deleted_at invariant: tombstones must have deleted_at
+	if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		deletedAt := maxTime.Add(time.Second)
+		issue.DeletedAt = &deletedAt
+	}
+
 	// Validate issue (with custom status support, bd-1pj6)
 	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
@@ -236,6 +281,19 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 	var existingID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM issues WHERE id = ?`, issue.ID).Scan(&existingID)
 
+	wisp := 0
+	if issue.Ephemeral {
+		wisp = 1
+	}
+	pinned := 0
+	if issue.Pinned {
+		pinned = 1
+	}
+	isTemplate := 0
+	if issue.IsTemplate {
+		isTemplate = 1
+	}
+
 	if err == sql.ErrNoRows {
 		// Issue doesn't exist - insert it
 		_, err = tx.ExecContext(ctx, `
@@ -243,8 +301,10 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 				id, content_hash, title, description, design, acceptance_criteria, notes,
 				status, priority, issue_type, assignee, estimated_minutes,
 				created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
-				deleted_at, deleted_by, delete_reason, original_type
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				deleted_at, deleted_by, delete_reason, original_type,
+				sender, ephemeral, pinned, is_template,
+				await_type, await_id, timeout_ns, waiters
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -252,6 +312,8 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 			issue.EstimatedMinutes, issue.CreatedAt, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, issue.SourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
+			issue.Sender, wisp, pinned, isTemplate,
+			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue: %w", err)
@@ -268,13 +330,35 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 		}
 
 		if existingHash != issue.ContentHash {
+			// Clone-local field protection pattern (bd-phtv, bd-gr4q):
+			//
+			// Some fields are clone-local state that shouldn't be overwritten by JSONL import:
+			//   - pinned: Local hook attachment (not synced between clones)
+			//   - await_type, await_id, timeout_ns, waiters: Gate state (wisps, never exported)
+			//
+			// Problem: Go's omitempty causes zero values to be absent from JSONL.
+			// When importing, absent fields unmarshal as zero, which would overwrite local state.
+			//
+			// Solution: COALESCE(NULLIF(incoming, zero_value), existing_column)
+			//   - For strings: COALESCE(NULLIF(?, ''), column)  -- preserve if incoming is ""
+			//   - For integers: COALESCE(NULLIF(?, 0), column)  -- preserve if incoming is 0
+			//
+			// When to use this pattern:
+			//   1. Field is clone-local (not part of shared issue ledger)
+			//   2. Field uses omitempty (so zero value means "absent", not "clear")
+			//   3. Accidental clearing would cause data loss or incorrect behavior
 			_, err = tx.ExecContext(ctx, `
 				UPDATE issues SET
 					content_hash = ?, title = ?, description = ?, design = ?,
 					acceptance_criteria = ?, notes = ?, status = ?, priority = ?,
 					issue_type = ?, assignee = ?, estimated_minutes = ?,
 					updated_at = ?, closed_at = ?, external_ref = ?, source_repo = ?,
-					deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?
+					deleted_at = ?, deleted_by = ?, delete_reason = ?, original_type = ?,
+					sender = ?, ephemeral = ?, pinned = COALESCE(NULLIF(?, 0), pinned), is_template = ?,
+					await_type = COALESCE(NULLIF(?, ''), await_type),
+					await_id = COALESCE(NULLIF(?, ''), await_id),
+					timeout_ns = COALESCE(NULLIF(?, 0), timeout_ns),
+					waiters = COALESCE(NULLIF(?, ''), waiters)
 				WHERE id = ?
 			`,
 				issue.ContentHash, issue.Title, issue.Description, issue.Design,
@@ -282,6 +366,8 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 				issue.IssueType, issue.Assignee, issue.EstimatedMinutes,
 				issue.UpdatedAt, issue.ClosedAt, issue.ExternalRef, issue.SourceRepo,
 				issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
+				issue.Sender, wisp, pinned, isTemplate,
+				issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 				issue.ID,
 			)
 			if err != nil {
@@ -321,6 +407,124 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 		if err != nil {
 			return fmt.Errorf("failed to import comment: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// DeleteIssuesBySourceRepo permanently removes all issues from a specific source repository.
+// This is used when a repo is removed from the multi-repo configuration.
+// It also cleans up related data: dependencies, labels, comments, events, and dirty markers.
+// Returns the number of issues deleted.
+func (s *SQLiteStorage) DeleteIssuesBySourceRepo(ctx context.Context, sourceRepo string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Get the list of issue IDs to delete
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query issues: %w", err)
+	}
+	var issueIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("failed to scan issue ID: %w", err)
+		}
+		issueIDs = append(issueIDs, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("failed to iterate issues: %w", err)
+	}
+
+	if len(issueIDs) == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit empty transaction: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Delete dependencies (both directions) for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dependencies for %s: %w", id, err)
+		}
+	}
+
+	// Delete events for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete events for %s: %w", id, err)
+		}
+	}
+
+	// Delete comments for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete comments for %s: %w", id, err)
+		}
+	}
+
+	// Delete labels for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM labels WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete labels for %s: %w", id, err)
+		}
+	}
+
+	// Delete dirty markers for all affected issues
+	for _, id := range issueIDs {
+		_, err = tx.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dirty marker for %s: %w", id, err)
+		}
+	}
+
+	// Delete the issues themselves
+	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete issues: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+// ClearRepoMtime removes the mtime cache entry for a repository.
+// This is used when a repo is removed from the multi-repo configuration.
+func (s *SQLiteStorage) ClearRepoMtime(ctx context.Context, repoPath string) error {
+	// Expand tilde in path to match how it's stored
+	expandedPath, err := expandTilde(repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to expand path: %w", err)
+	}
+
+	// Get absolute path to match how it's stored in repo_mtimes
+	absRepoPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM repo_mtimes WHERE repo_path = ?`, absRepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete mtime cache: %w", err)
 	}
 
 	return nil

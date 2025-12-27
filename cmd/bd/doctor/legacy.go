@@ -22,6 +22,9 @@ func CheckLegacyBeadsSlashCommands(repoPath string) DoctorCheck {
 		filepath.Join(repoPath, "AGENTS.md"),
 		filepath.Join(repoPath, "CLAUDE.md"),
 		filepath.Join(repoPath, ".claude", "CLAUDE.md"),
+		// Local-only variants (not committed to repo)
+		filepath.Join(repoPath, "claude.local.md"),
+		filepath.Join(repoPath, ".claude", "claude.local.md"),
 	}
 
 	var filesWithLegacyCommands []string
@@ -40,17 +43,17 @@ func CheckLegacyBeadsSlashCommands(repoPath string) DoctorCheck {
 
 	if len(filesWithLegacyCommands) == 0 {
 		return DoctorCheck{
-			Name:    "Documentation",
+			Name:    "Legacy Commands",
 			Status:  "ok",
 			Message: "No legacy beads slash commands detected",
 		}
 	}
 
 	return DoctorCheck{
-		Name:    "Integration Pattern",
+		Name:    "Legacy Commands",
 		Status:  "warning",
 		Message: fmt.Sprintf("Old beads integration detected in %s", strings.Join(filesWithLegacyCommands, ", ")),
-		Detail:  "Found: /beads:* slash command references (deprecated)\n" +
+		Detail: "Found: /beads:* slash command references (deprecated)\n" +
 			"  These commands are token-inefficient (~10.5k tokens per session)",
 		Fix: "Migrate to bd prime hooks for better token efficiency:\n" +
 			"\n" +
@@ -71,11 +74,15 @@ func CheckLegacyBeadsSlashCommands(repoPath string) DoctorCheck {
 
 // CheckAgentDocumentation checks if agent documentation (AGENTS.md or CLAUDE.md) exists
 // and recommends adding it if missing, suggesting bd onboard or bd setup claude.
+// Also supports local-only variants (claude.local.md) that are gitignored.
 func CheckAgentDocumentation(repoPath string) DoctorCheck {
 	docFiles := []string{
 		filepath.Join(repoPath, "AGENTS.md"),
 		filepath.Join(repoPath, "CLAUDE.md"),
 		filepath.Join(repoPath, ".claude", "CLAUDE.md"),
+		// Local-only variants (not committed to repo)
+		filepath.Join(repoPath, "claude.local.md"),
+		filepath.Join(repoPath, ".claude", "claude.local.md"),
 	}
 
 	var foundDocs []string
@@ -97,11 +104,15 @@ func CheckAgentDocumentation(repoPath string) DoctorCheck {
 		Name:    "Agent Documentation",
 		Status:  "warning",
 		Message: "No agent documentation found",
-		Detail:  "Missing: AGENTS.md or CLAUDE.md\n" +
+		Detail: "Missing: AGENTS.md or CLAUDE.md\n" +
 			"  Documenting workflow helps AI agents work more effectively",
 		Fix: "Add agent documentation:\n" +
 			"  • Run 'bd onboard' to create AGENTS.md with workflow guidance\n" +
 			"  • Or run 'bd setup claude' to add Claude-specific documentation\n" +
+			"\n" +
+			"For local-only documentation (not committed to repo):\n" +
+			"  • Create claude.local.md or .claude/claude.local.md\n" +
+			"  • Add 'claude.local.md' to your .gitignore\n" +
 			"\n" +
 			"Recommended: Include bd workflow in your project documentation so\n" +
 			"AI agents understand how to track issues and manage dependencies",
@@ -143,6 +154,8 @@ func CheckLegacyJSONLFilename(repoPath string) DoctorCheck {
 			strings.Contains(lowerName, "~") ||
 			strings.HasPrefix(lowerName, "backup_") ||
 			name == "deletions.jsonl" ||
+			name == "interactions.jsonl" ||
+			name == "molecules.jsonl" ||
 			// Git merge conflict artifacts (e.g., issues.base.jsonl, issues.left.jsonl)
 			strings.Contains(lowerName, ".base.jsonl") ||
 			strings.Contains(lowerName, ".left.jsonl") ||
@@ -174,10 +187,10 @@ func CheckLegacyJSONLFilename(repoPath string) DoctorCheck {
 		Name:    "JSONL Files",
 		Status:  "warning",
 		Message: fmt.Sprintf("Multiple JSONL files found: %s", strings.Join(realJSONLFiles, ", ")),
-		Detail:  "Having multiple JSONL files can cause sync and merge conflicts.\n" +
+		Detail: "Having multiple JSONL files can cause sync and merge conflicts.\n" +
 			"  Only one JSONL file should be used per repository.",
 		Fix: "Determine which file is current and remove the others:\n" +
-			"  1. Check 'bd stats' to see which file is being used\n" +
+			"  1. Check .beads/metadata.json for 'jsonl_export' setting\n" +
 			"  2. Verify with 'git log .beads/*.jsonl' to see commit history\n" +
 			"  3. Remove the unused file(s): git rm .beads/<unused>.jsonl\n" +
 			"  4. Commit the change",
@@ -222,7 +235,7 @@ func CheckLegacyJSONLConfig(repoPath string) DoctorCheck {
 				Name:    "JSONL Config",
 				Status:  "warning",
 				Message: "Using legacy beads.jsonl filename",
-				Detail:  "The canonical filename is now issues.jsonl (bd-6xd).\n" +
+				Detail: "The canonical filename is now issues.jsonl (bd-6xd).\n" +
 					"  Legacy beads.jsonl is still supported but should be migrated.",
 				Fix: "Run 'bd doctor --fix' to auto-migrate, or manually:\n" +
 					"  1. git mv .beads/beads.jsonl .beads/issues.jsonl\n" +
@@ -238,7 +251,7 @@ func CheckLegacyJSONLConfig(repoPath string) DoctorCheck {
 				Status:  "warning",
 				Message: "Config references beads.jsonl but issues.jsonl exists",
 				Detail:  "metadata.json says beads.jsonl but the actual file is issues.jsonl",
-				Fix: "Run 'bd doctor --fix' to update the configuration",
+				Fix:     "Run 'bd doctor --fix' to update the configuration",
 			}
 		}
 	}
@@ -290,6 +303,16 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 
 	// Check if configured JSONL exists
 	if cfg.JSONLExport != "" {
+		if cfg.JSONLExport == "deletions.jsonl" || cfg.JSONLExport == "interactions.jsonl" || cfg.JSONLExport == "molecules.jsonl" {
+			return DoctorCheck{
+				Name:    "Database Config",
+				Status:  "error",
+				Message: fmt.Sprintf("Invalid jsonl_export %q (system file)", cfg.JSONLExport),
+				Detail:  "metadata.json jsonl_export must reference the git-tracked issues export (typically issues.jsonl), not a system log file.",
+				Fix:     "Run 'bd doctor --fix' to reset metadata.json jsonl_export to issues.jsonl, then commit the change.",
+			}
+		}
+
 		jsonlPath := cfg.JSONLPath(beadsDir)
 		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 			// Check if other .jsonl files exist
@@ -302,7 +325,15 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 					lowerName := strings.ToLower(name)
 					if !strings.Contains(lowerName, "backup") &&
 						!strings.Contains(lowerName, ".orig") &&
-						!strings.Contains(lowerName, ".bak") {
+						!strings.Contains(lowerName, ".bak") &&
+						!strings.Contains(lowerName, "~") &&
+						!strings.HasPrefix(lowerName, "backup_") &&
+						name != "deletions.jsonl" &&
+						name != "interactions.jsonl" &&
+						name != "molecules.jsonl" &&
+						!strings.Contains(lowerName, ".base.jsonl") &&
+						!strings.Contains(lowerName, ".left.jsonl") &&
+						!strings.Contains(lowerName, ".right.jsonl") {
 						otherJSONLs = append(otherJSONLs, name)
 					}
 				}
@@ -408,7 +439,7 @@ func CheckFreshClone(repoPath string) DoctorCheck {
 		Name:    "Fresh Clone",
 		Status:  "warning",
 		Message: fmt.Sprintf("Fresh clone detected (%d issues in %s, no database)", issueCount, jsonlName),
-		Detail:  "This appears to be a freshly cloned repository.\n" +
+		Detail: "This appears to be a freshly cloned repository.\n" +
 			"  The JSONL file contains issues but no local database exists.\n" +
 			"  Run 'bd init' to create the database and import existing issues.",
 		Fix: fmt.Sprintf("Run '%s' to initialize the database and import issues", fixCmd),

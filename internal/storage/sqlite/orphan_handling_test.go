@@ -235,6 +235,131 @@ func TestOrphanHandling_Config(t *testing.T) {
 	}
 }
 
+// TestOrphanHandling_PrefixWithDots tests that prefixes containing dots don't trigger
+// false positives in hierarchical ID detection (GH#508)
+func TestOrphanHandling_PrefixWithDots(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Use a prefix with dots (simulating a directory name like "my.project")
+	if err := store.SetConfig(ctx, "issue_prefix", "my.project"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create a top-level issue with a dotted prefix
+	// This should NOT be treated as a hierarchical child
+	issue := &types.Issue{
+		ID:        "my.project-abc123",
+		Title:     "Top-level issue with dotted prefix",
+		Priority:  1,
+		IssueType: "task",
+		Status:    "open",
+	}
+
+	// In strict mode, this should succeed because it's not a hierarchical ID
+	// (the dot is in the prefix, not after the hyphen)
+	err := store.CreateIssuesWithOptions(ctx, []*types.Issue{issue}, "my.project", OrphanStrict)
+	if err != nil {
+		t.Fatalf("Expected success for non-hierarchical ID with dotted prefix, got: %v", err)
+	}
+
+	// Verify the issue was created
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+
+	if len(issues) != 1 {
+		t.Fatalf("Expected 1 issue, got %d", len(issues))
+	}
+
+	if issues[0].ID != "my.project-abc123" {
+		t.Errorf("Expected ID my.project-abc123, got %s", issues[0].ID)
+	}
+}
+
+// TestOrphanHandling_PrefixWithDotsAndChild tests hierarchical children with dotted prefixes
+func TestOrphanHandling_PrefixWithDotsAndChild(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Use a prefix with dots
+	if err := store.SetConfig(ctx, "issue_prefix", "my.project"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// First create the parent
+	parent := &types.Issue{
+		ID:        "my.project-abc123",
+		Title:     "Parent issue",
+		Priority:  1,
+		IssueType: "epic",
+		Status:    "open",
+	}
+
+	err := store.CreateIssuesWithOptions(ctx, []*types.Issue{parent}, "my.project", OrphanStrict)
+	if err != nil {
+		t.Fatalf("Failed to create parent: %v", err)
+	}
+
+	// Now create a child - this IS hierarchical (dot after hyphen)
+	child := &types.Issue{
+		ID:        "my.project-abc123.1",
+		Title:     "Child issue",
+		Priority:  1,
+		IssueType: "task",
+		Status:    "open",
+	}
+
+	err = store.CreateIssuesWithOptions(ctx, []*types.Issue{child}, "my.project", OrphanStrict)
+	if err != nil {
+		t.Fatalf("Expected success for child with existing parent, got: %v", err)
+	}
+
+	// Verify both were created
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+
+	if len(issues) != 2 {
+		t.Fatalf("Expected 2 issues, got %d", len(issues))
+	}
+}
+
+// TestOrphanHandling_PrefixWithDotsOrphanChild tests that orphan detection works correctly
+// with dotted prefixes - should detect orphan when parent doesn't exist
+func TestOrphanHandling_PrefixWithDotsOrphanChild(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Use a prefix with dots
+	if err := store.SetConfig(ctx, "issue_prefix", "my.project"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Try to create a child without the parent - should fail in strict mode
+	child := &types.Issue{
+		ID:        "my.project-abc123.1", // This IS hierarchical (dot after hyphen)
+		Title:     "Orphan child",
+		Priority:  1,
+		IssueType: "task",
+		Status:    "open",
+	}
+
+	err := store.CreateIssuesWithOptions(ctx, []*types.Issue{child}, "my.project", OrphanStrict)
+	if err == nil {
+		t.Fatal("Expected error for orphan child in strict mode")
+	}
+
+	if !strings.Contains(err.Error(), "parent") {
+		t.Errorf("Expected error about missing parent, got: %v", err)
+	}
+}
+
 // TestOrphanHandling_NonHierarchical tests that non-hierarchical IDs work in all modes
 func TestOrphanHandling_NonHierarchical(t *testing.T) {
 	ctx := context.Background()

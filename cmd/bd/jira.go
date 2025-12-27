@@ -2,17 +2,19 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -37,8 +39,9 @@ type JiraSyncResult struct {
 }
 
 var jiraCmd = &cobra.Command{
-	Use:   "jira",
-	Short: "Jira integration commands",
+	Use:     "jira",
+	GroupID: "advanced",
+	Short:   "Jira integration commands",
 	Long: `Synchronize issues between beads and Jira.
 
 Configuration:
@@ -478,8 +481,8 @@ func doPushToJira(ctx context.Context, dryRun bool, createOnly bool, updateRefs 
 	}
 
 	// Sort by ID for consistent output
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	// Generate JSONL for export
@@ -566,7 +569,7 @@ func findJiraScript(name string) (string, error) {
 	}
 
 	// Check BEADS_DIR or current .beads location
-	if beadsDir := findBeadsDir(); beadsDir != "" {
+	if beadsDir := beads.FindBeadsDir(); beadsDir != "" {
 		repoRoot := filepath.Dir(beadsDir)
 		locations = append(locations, filepath.Join(repoRoot, "examples", "jira-import", name))
 	}

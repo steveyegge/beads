@@ -2,56 +2,14 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"fmt"
-	"math/big"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/types"
 )
-
-// base36Alphabet is the character set for base36 encoding (0-9, a-z)
-const base36Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-
-// encodeBase36 converts a byte slice to a base36 string of specified length
-// Takes the first N bytes and converts them to base36 representation
-func encodeBase36(data []byte, length int) string {
-	// Convert bytes to big integer
-	num := new(big.Int).SetBytes(data)
-
-	// Convert to base36
-	var result strings.Builder
-	base := big.NewInt(36)
-	zero := big.NewInt(0)
-	mod := new(big.Int)
-
-	// Build the string in reverse
-	chars := make([]byte, 0, length)
-	for num.Cmp(zero) > 0 {
-		num.DivMod(num, base, mod)
-		chars = append(chars, base36Alphabet[mod.Int64()])
-	}
-
-	// Reverse the string
-	for i := len(chars) - 1; i >= 0; i-- {
-		result.WriteByte(chars[i])
-	}
-
-	// Pad with zeros if needed
-	str := result.String()
-	if len(str) < length {
-		str = strings.Repeat("0", length-len(str)) + str
-	}
-
-	// Truncate to exact length if needed (keep least significant digits)
-	if len(str) > length {
-		str = str[len(str)-length:]
-	}
-
-	return str
-}
 
 // isValidBase36 checks if a string contains only base36 characters
 func isValidBase36(s string) bool {
@@ -73,6 +31,65 @@ func isValidHex(s string) bool {
 	return true
 }
 
+// IsHierarchicalID checks if an issue ID is hierarchical (has a parent).
+// Hierarchical IDs have the format {parentID}.{N} where N is a numeric child suffix.
+// Returns true and the parent ID if hierarchical, false and empty string otherwise.
+//
+// This correctly handles prefixes that contain dots (e.g., "my.project-abc123"
+// is NOT hierarchical, but "my.project-abc123.1" IS hierarchical with parent
+// "my.project-abc123").
+//
+// The key insight is that hierarchical IDs always end with .{digits} where
+// the digits represent the child number (1, 2, 3, etc.).
+func IsHierarchicalID(id string) (isHierarchical bool, parentID string) {
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return false, ""
+	}
+
+	// Check if the suffix after the last dot is purely numeric
+	suffix := id[lastDot+1:]
+	if len(suffix) == 0 {
+		return false, ""
+	}
+
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return false, ""
+		}
+	}
+
+	// It's hierarchical - parent is everything before the last dot
+	return true, id[:lastDot]
+}
+
+// ParseHierarchicalID extracts the parent ID and child number from a hierarchical ID.
+// Returns (parentID, childNum, true) for hierarchical IDs like "bd-abc.1" -> ("bd-abc", 1, true).
+// Returns ("", 0, false) for non-hierarchical IDs.
+// (GH#728 fix)
+func ParseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return "", 0, false
+	}
+
+	suffix := id[lastDot+1:]
+	if len(suffix) == 0 {
+		return "", 0, false
+	}
+
+	// Parse the numeric suffix
+	num := 0
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return "", 0, false
+		}
+		num = num*10 + int(c-'0')
+	}
+
+	return id[:lastDot], num, true
+}
+
 // ValidateIssueIDPrefix validates that an issue ID matches the configured prefix
 // Supports both top-level (bd-a3f8e9) and hierarchical (bd-a3f8e9.1) IDs
 func ValidateIssueIDPrefix(id, prefix string) error {
@@ -92,31 +109,31 @@ func GenerateIssueID(ctx context.Context, conn *sql.Conn, prefix string, issue *
 		// Fallback to 6 on error
 		baseLength = 6
 	}
-	
+
 	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
 	maxLength := 8
 	if baseLength > maxLength {
 		baseLength = maxLength
 	}
-	
+
 	for length := baseLength; length <= maxLength; length++ {
 		// Try up to 10 nonces at each length
 		for nonce := 0; nonce < 10; nonce++ {
 			candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
-			
+
 			// Check if this ID already exists
 			var count int
 			err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
 			if err != nil {
 				return "", fmt.Errorf("failed to check for ID collision: %w", err)
 			}
-			
+
 			if count == 0 {
 				return candidate, nil
 			}
 		}
 	}
-	
+
 	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
 }
 
@@ -129,13 +146,13 @@ func GenerateBatchIssueIDs(ctx context.Context, conn *sql.Conn, prefix string, i
 		// Fallback to 6 on error
 		baseLength = 6
 	}
-	
+
 	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
 	maxLength := 8
 	if baseLength > maxLength {
 		baseLength = maxLength
 	}
-	
+
 	for i := range issues {
 		if issues[i].ID == "" {
 			var generated bool
@@ -143,18 +160,18 @@ func GenerateBatchIssueIDs(ctx context.Context, conn *sql.Conn, prefix string, i
 			for length := baseLength; length <= maxLength && !generated; length++ {
 				for nonce := 0; nonce < 10; nonce++ {
 					candidate := generateHashID(prefix, issues[i].Title, issues[i].Description, actor, issues[i].CreatedAt, length, nonce)
-					
+
 					// Check if this ID is already used in this batch or in the database
 					if usedIDs[candidate] {
 						continue
 					}
-					
+
 					var count int
 					err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
 					if err != nil {
 						return fmt.Errorf("failed to check for ID collision: %w", err)
 					}
-					
+
 					if count == 0 {
 						issues[i].ID = candidate
 						usedIDs[candidate] = true
@@ -163,7 +180,7 @@ func GenerateBatchIssueIDs(ctx context.Context, conn *sql.Conn, prefix string, i
 					}
 				}
 			}
-			
+
 			if !generated {
 				return fmt.Errorf("failed to generate unique ID for issue %d after trying lengths %d-%d with 10 nonces each", i, baseLength, maxLength)
 			}
@@ -191,9 +208,24 @@ func tryResurrectParent(parentID string, issues []*types.Issue) bool {
 func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*types.Issue, actor string, orphanHandling OrphanHandling, skipPrefixValidation bool) error {
 	usedIDs := make(map[string]bool)
 
-	// First pass: record explicitly provided IDs
+	// First pass: record explicitly provided IDs and check for duplicates within batch
 	for i := range issues {
 		if issues[i].ID != "" {
+			// Check for duplicate IDs within the batch
+			if usedIDs[issues[i].ID] {
+				return fmt.Errorf("duplicate issue ID within batch: %s", issues[i].ID)
+			}
+
+			// Check if ID already exists in database
+			var existingCount int
+			err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, issues[i].ID).Scan(&existingCount)
+			if err != nil {
+				return fmt.Errorf("failed to check ID existence: %w", err)
+			}
+			if existingCount > 0 {
+				return fmt.Errorf("issue ID already exists: %s", issues[i].ID)
+			}
+
 			// Validate that explicitly provided ID matches the configured prefix (bd-177)
 			// Skip validation during import to allow issues with different prefixes (e.g., from renamed repos)
 			if !skipPrefixValidation {
@@ -201,13 +233,10 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 					return wrapDBErrorf(err, "validate ID prefix for %s", issues[i].ID)
 				}
 			}
-			
+
 			// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-			if strings.Contains(issues[i].ID, ".") {
-				// Extract parent ID (everything before the last dot)
-				lastDot := strings.LastIndex(issues[i].ID, ".")
-				parentID := issues[i].ID[:lastDot]
-				
+			// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
+			if isHierarchical, parentID := IsHierarchicalID(issues[i].ID); isHierarchical {
 				var parentCount int
 				err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
 				if err != nil {
@@ -233,12 +262,24 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 						// Default to allow for backward compatibility
 					}
 				}
+
+				// Update child_counters to prevent future ID collisions (GH#728 fix)
+				// When explicit child IDs are imported, the counter must be at least the child number
+				// Only update if parent exists (parentCount > 0) - for orphan modes, skip this
+				// The counter will be updated when the parent is actually created/exists
+				if parentCount > 0 {
+					if _, childNum, ok := ParseHierarchicalID(issues[i].ID); ok {
+						if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+							return fmt.Errorf("failed to update child counter: %w", err)
+						}
+					}
+				}
 			}
-			
+
 			usedIDs[issues[i].ID] = true
 		}
 	}
-	
+
 	// Second pass: generate IDs for issues that need them
 	return GenerateBatchIssueIDs(ctx, conn, prefix, issues, actor, usedIDs)
 }
@@ -249,34 +290,5 @@ func EnsureIDs(ctx context.Context, conn *sql.Conn, prefix string, issues []*typ
 // Includes a nonce parameter to handle same-length collisions.
 // Uses base36 encoding (0-9, a-z) for better information density than hex.
 func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
-	// Combine inputs into a stable content string
-	// Include nonce to handle hash collisions
-	content := fmt.Sprintf("%s|%s|%s|%d|%d", title, description, creator, timestamp.UnixNano(), nonce)
-
-	// Hash the content
-	hash := sha256.Sum256([]byte(content))
-
-	// Use base36 encoding with variable length (3-8 chars)
-	// Determine how many bytes to use based on desired output length
-	var numBytes int
-	switch length {
-	case 3:
-		numBytes = 2 // 2 bytes = 16 bits ≈ 3.09 base36 chars
-	case 4:
-		numBytes = 3 // 3 bytes = 24 bits ≈ 4.63 base36 chars
-	case 5:
-		numBytes = 4 // 4 bytes = 32 bits ≈ 6.18 base36 chars
-	case 6:
-		numBytes = 4 // 4 bytes = 32 bits ≈ 6.18 base36 chars
-	case 7:
-		numBytes = 5 // 5 bytes = 40 bits ≈ 7.73 base36 chars
-	case 8:
-		numBytes = 5 // 5 bytes = 40 bits ≈ 7.73 base36 chars
-	default:
-		numBytes = 3 // default to 3 chars
-	}
-
-	shortHash := encodeBase36(hash[:numBytes], length)
-
-	return fmt.Sprintf("%s-%s", prefix, shortHash)
+	return idgen.GenerateHashID(prefix, title, description, creator, timestamp, length, nonce)
 }

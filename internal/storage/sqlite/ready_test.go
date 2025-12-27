@@ -2,94 +2,56 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestGetReadyWork(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create issues:
-	// bd-1: open, no dependencies → READY
-	// bd-2: open, depends on bd-1 (open) → BLOCKED
-	// bd-3: open, no dependencies → READY
-	// bd-4: closed, no dependencies → NOT READY (closed)
-	// bd-5: open, depends on bd-4 (closed) → READY (blocker is closed)
+	// issue1: open, no dependencies → READY
+	// issue2: open, depends on issue1 (open) → BLOCKED
+	// issue3: open, no dependencies → READY
+	// issue4: closed, no dependencies → NOT READY (closed)
+	// issue5: open, depends on issue4 (closed) → READY (blocker is closed)
+	env := newTestEnv(t)
 
-	issue1 := &types.Issue{Title: "Ready 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	issue2 := &types.Issue{Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	issue3 := &types.Issue{Title: "Ready 2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	issue4 := &types.Issue{Title: "Closed", Status: types.StatusClosed, Priority: 1, IssueType: types.TypeTask}
-	issue5 := &types.Issue{Title: "Ready 3", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
+	issue1 := env.CreateIssueWith("Ready 1", types.StatusOpen, 1, types.TypeTask)
+	issue2 := env.CreateIssueWith("Blocked", types.StatusOpen, 1, types.TypeTask)
+	issue3 := env.CreateIssueWith("Ready 2", types.StatusOpen, 2, types.TypeTask)
+	issue4 := env.CreateIssueWith("Closed", types.StatusOpen, 1, types.TypeTask) // create as open first
+	env.Close(issue4, "Done")
+	issue5 := env.CreateIssueWith("Ready 3", types.StatusOpen, 0, types.TypeTask)
 
-	store.CreateIssue(ctx, issue1, "test-user")
-	store.CreateIssue(ctx, issue2, "test-user")
-	store.CreateIssue(ctx, issue3, "test-user")
-	store.CreateIssue(ctx, issue4, "test-user")
-	store.CloseIssue(ctx, issue4.ID, "Done", "test-user")
-	store.CreateIssue(ctx, issue5, "test-user")
+	env.AddDep(issue2, issue1) // issue2 depends on issue1
+	env.AddDep(issue5, issue4) // issue5 depends on issue4 (which is closed)
 
-	// Add dependencies
-	store.AddDependency(ctx, &types.Dependency{IssueID: issue2.ID, DependsOnID: issue1.ID, Type: types.DepBlocks}, "test-user")
-	store.AddDependency(ctx, &types.Dependency{IssueID: issue5.ID, DependsOnID: issue4.ID, Type: types.DepBlocks}, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should have 3 ready issues: bd-1, bd-3, bd-5
+	// Verify ready issues: issue1, issue3, issue5
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen})
 	if len(ready) != 3 {
 		t.Fatalf("Expected 3 ready issues, got %d", len(ready))
 	}
 
-	// Verify ready issues
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if !readyIDs[issue1.ID] {
-		t.Errorf("Expected %s to be ready", issue1.ID)
-	}
-	if !readyIDs[issue3.ID] {
-		t.Errorf("Expected %s to be ready", issue3.ID)
-	}
-	if !readyIDs[issue5.ID] {
-		t.Errorf("Expected %s to be ready", issue5.ID)
-	}
-	if readyIDs[issue2.ID] {
-		t.Errorf("Expected %s to be blocked, but it was ready", issue2.ID)
-	}
+	env.AssertReady(issue1)
+	env.AssertReady(issue3)
+	env.AssertReady(issue5)  // blocker (issue4) is closed
+	env.AssertBlocked(issue2)
 }
 
 func TestGetReadyWorkPriorityOrder(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
+	env := newTestEnv(t)
 
-	ctx := context.Background()
+	// Create issues with different priorities (out of order)
+	env.CreateIssueWith("Medium", types.StatusOpen, 2, types.TypeTask)
+	env.CreateIssueWith("Highest", types.StatusOpen, 0, types.TypeTask)
+	env.CreateIssueWith("High", types.StatusOpen, 1, types.TypeTask)
 
-	// Create issues with different priorities
-	issueP0 := &types.Issue{Title: "Highest", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
-	issueP2 := &types.Issue{Title: "Medium", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-	issueP1 := &types.Issue{Title: "High", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-
-	store.CreateIssue(ctx, issueP2, "test-user")
-	store.CreateIssue(ctx, issueP0, "test-user")
-	store.CreateIssue(ctx, issueP1, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen})
 	if len(ready) != 3 {
 		t.Fatalf("Expected 3 ready issues, got %d", len(ready))
 	}
@@ -107,146 +69,90 @@ func TestGetReadyWorkPriorityOrder(t *testing.T) {
 }
 
 func TestGetReadyWorkWithPriorityFilter(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	env := newTestEnv(t)
 
 	// Create issues with different priorities
-	issueP0 := &types.Issue{Title: "P0", Status: types.StatusOpen, Priority: 0, IssueType: types.TypeTask}
-	issueP1 := &types.Issue{Title: "P1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	issueP2 := &types.Issue{Title: "P2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-
-	store.CreateIssue(ctx, issueP0, "test-user")
-	store.CreateIssue(ctx, issueP1, "test-user")
-	store.CreateIssue(ctx, issueP2, "test-user")
+	env.CreateIssueWith("P0", types.StatusOpen, 0, types.TypeTask)
+	env.CreateIssueWith("P1", types.StatusOpen, 1, types.TypeTask)
+	env.CreateIssueWith("P2", types.StatusOpen, 2, types.TypeTask)
 
 	// Filter for P0 only
 	priority0 := 0
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen, Priority: &priority0})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen, Priority: &priority0})
 	if len(ready) != 1 {
 		t.Fatalf("Expected 1 P0 issue, got %d", len(ready))
 	}
-
 	if ready[0].Priority != 0 {
 		t.Errorf("Expected P0 issue, got P%d", ready[0].Priority)
 	}
 }
 
 func TestGetReadyWorkWithAssigneeFilter(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	env := newTestEnv(t)
 
 	// Create issues with different assignees
-	issueAlice := &types.Issue{Title: "Alice's task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, Assignee: "alice"}
-	issueBob := &types.Issue{Title: "Bob's task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, Assignee: "bob"}
-	issueUnassigned := &types.Issue{Title: "Unassigned", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-
-	store.CreateIssue(ctx, issueAlice, "test-user")
-	store.CreateIssue(ctx, issueBob, "test-user")
-	store.CreateIssue(ctx, issueUnassigned, "test-user")
+	env.CreateIssueWithAssignee("Alice's task", "alice")
+	env.CreateIssueWithAssignee("Bob's task", "bob")
+	env.CreateIssue("Unassigned")
 
 	// Filter for alice
 	assignee := "alice"
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen, Assignee: &assignee})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen, Assignee: &assignee})
 	if len(ready) != 1 {
 		t.Fatalf("Expected 1 issue for alice, got %d", len(ready))
 	}
-
 	if ready[0].Assignee != "alice" {
 		t.Errorf("Expected alice's issue, got %s", ready[0].Assignee)
 	}
 }
 
 func TestGetReadyWorkWithUnassignedFilter(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	env := newTestEnv(t)
 
 	// Create issues with different assignees
-	issueAlice := &types.Issue{Title: "Alice's task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, Assignee: "alice"}
-	issueBob := &types.Issue{Title: "Bob's task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, Assignee: "bob"}
-	issueUnassigned := &types.Issue{Title: "Unassigned", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-
-	store.CreateIssue(ctx, issueAlice, "test-user")
-	store.CreateIssue(ctx, issueBob, "test-user")
-	store.CreateIssue(ctx, issueUnassigned, "test-user")
+	env.CreateIssueWithAssignee("Alice's task", "alice")
+	env.CreateIssueWithAssignee("Bob's task", "bob")
+	unassigned := env.CreateIssue("Unassigned")
 
 	// Filter for unassigned issues
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen, Unassigned: true})
-	if err != nil {
-		t.Fatalf("GetReadyWork with unassigned filter failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen, Unassigned: true})
 	if len(ready) != 1 {
 		t.Fatalf("Expected 1 unassigned issue, got %d", len(ready))
 	}
-
 	if ready[0].Assignee != "" {
 		t.Errorf("Expected unassigned issue, got assignee %q", ready[0].Assignee)
 	}
-
-	if ready[0].ID != issueUnassigned.ID {
-		t.Errorf("Expected issue %s, got %s", issueUnassigned.ID, ready[0].ID)
+	if ready[0].ID != unassigned.ID {
+		t.Errorf("Expected issue %s, got %s", unassigned.ID, ready[0].ID)
 	}
 }
 
 func TestGetReadyWorkWithLimit(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	env := newTestEnv(t)
 
 	// Create 5 ready issues
 	for i := 0; i < 5; i++ {
-		issue := &types.Issue{Title: "Task", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
-		store.CreateIssue(ctx, issue, "test-user")
+		env.CreateIssue("Task")
 	}
 
 	// Limit to 3
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen, Limit: 3})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen, Limit: 3})
 	if len(ready) != 3 {
 		t.Errorf("Expected 3 issues (limit), got %d", len(ready))
 	}
 }
 
 func TestGetReadyWorkIgnoresRelatedDeps(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	env := newTestEnv(t)
 
 	// Create two issues with "related" dependency (should not block)
-	issue1 := &types.Issue{Title: "First", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	issue2 := &types.Issue{Title: "Second", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	issue1 := env.CreateIssue("First")
+	issue2 := env.CreateIssue("Second")
 
-	store.CreateIssue(ctx, issue1, "test-user")
-	store.CreateIssue(ctx, issue2, "test-user")
-
-	// Add "related" dependency (not blocking)
-	store.AddDependency(ctx, &types.Dependency{IssueID: issue2.ID, DependsOnID: issue1.ID, Type: types.DepRelated}, "test-user")
+	env.AddDepType(issue2, issue1, types.DepRelated)
 
 	// Both should be ready (related deps don't block)
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
+	ready := env.GetReadyWork(types.WorkFilter{Status: types.StatusOpen})
 	if len(ready) != 2 {
 		t.Fatalf("Expected 2 ready issues (related deps don't block), got %d", len(ready))
 	}
@@ -276,7 +182,7 @@ func TestGetBlockedIssues(t *testing.T) {
 	store.AddDependency(ctx, &types.Dependency{IssueID: issue3.ID, DependsOnID: issue2.ID, Type: types.DepBlocks}, "test-user")
 
 	// Get blocked issues
-	blocked, err := store.GetBlockedIssues(ctx)
+	blocked, err := store.GetBlockedIssues(ctx, types.WorkFilter{})
 	if err != nil {
 		t.Fatalf("GetBlockedIssues failed: %v", err)
 	}
@@ -310,61 +216,28 @@ func TestGetBlockedIssues(t *testing.T) {
 
 // TestParentBlockerBlocksChildren tests that children inherit blockage from parents
 func TestParentBlockerBlocksChildren(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create:
 	// blocker: open
 	// epic1: open, blocked by 'blocker'
 	// task1: open, child of epic1 (via parent-child)
 	//
 	// Expected: task1 should NOT be ready (parent is blocked)
+	env := newTestEnv(t)
 
-	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	epic1 := &types.Issue{Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	task1 := &types.Issue{Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := env.CreateIssue("Blocker")
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssue("Task 1")
 
-	store.CreateIssue(ctx, blocker, "test-user")
-	store.CreateIssue(ctx, epic1, "test-user")
-	store.CreateIssue(ctx, task1, "test-user")
+	env.AddDep(epic1, blocker)        // epic1 blocked by blocker
+	env.AddParentChild(task1, epic1)  // task1 is child of epic1
 
-	// epic1 blocked by blocker
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// task1 is child of epic1
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic1.ID, Type: types.DepParentChild}, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should have only blocker ready
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if readyIDs[epic1.ID] {
-		t.Errorf("Expected epic1 to be blocked, but it was ready")
-	}
-	if readyIDs[task1.ID] {
-		t.Errorf("Expected task1 to be blocked (parent is blocked), but it was ready")
-	}
-	if !readyIDs[blocker.ID] {
-		t.Errorf("Expected blocker to be ready")
-	}
+	env.AssertBlocked(epic1)
+	env.AssertBlocked(task1)
+	env.AssertReady(blocker)
 }
 
 // TestGrandparentBlockerBlocksGrandchildren tests multi-level propagation
 func TestGrandparentBlockerBlocksGrandchildren(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create:
 	// blocker: open
 	// epic1: open, blocked by 'blocker'
@@ -372,57 +245,25 @@ func TestGrandparentBlockerBlocksGrandchildren(t *testing.T) {
 	// task1: open, child of epic2
 	//
 	// Expected: task1 should NOT be ready (grandparent is blocked)
+	env := newTestEnv(t)
 
-	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	epic1 := &types.Issue{Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	epic2 := &types.Issue{Title: "Epic 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	task1 := &types.Issue{Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := env.CreateIssue("Blocker")
+	epic1 := env.CreateEpic("Epic 1")
+	epic2 := env.CreateEpic("Epic 2")
+	task1 := env.CreateIssue("Task 1")
 
-	store.CreateIssue(ctx, blocker, "test-user")
-	store.CreateIssue(ctx, epic1, "test-user")
-	store.CreateIssue(ctx, epic2, "test-user")
-	store.CreateIssue(ctx, task1, "test-user")
+	env.AddDep(epic1, blocker)        // epic1 blocked by blocker
+	env.AddParentChild(epic2, epic1)  // epic2 is child of epic1
+	env.AddParentChild(task1, epic2)  // task1 is child of epic2
 
-	// epic1 blocked by blocker
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// epic2 is child of epic1
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic2.ID, DependsOnID: epic1.ID, Type: types.DepParentChild}, "test-user")
-	// task1 is child of epic2
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic2.ID, Type: types.DepParentChild}, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should have only blocker ready
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if readyIDs[epic1.ID] {
-		t.Errorf("Expected epic1 to be blocked, but it was ready")
-	}
-	if readyIDs[epic2.ID] {
-		t.Errorf("Expected epic2 to be blocked (parent is blocked), but it was ready")
-	}
-	if readyIDs[task1.ID] {
-		t.Errorf("Expected task1 to be blocked (grandparent is blocked), but it was ready")
-	}
-	if !readyIDs[blocker.ID] {
-		t.Errorf("Expected blocker to be ready")
-	}
+	env.AssertBlocked(epic1)
+	env.AssertBlocked(epic2)
+	env.AssertBlocked(task1)
+	env.AssertReady(blocker)
 }
 
 // TestMultipleParentsOneBlocked tests that a child is blocked if ANY parent is blocked
 func TestMultipleParentsOneBlocked(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create:
 	// blocker: open
 	// epic1: open, blocked by 'blocker'
@@ -430,161 +271,72 @@ func TestMultipleParentsOneBlocked(t *testing.T) {
 	// task1: open, child of BOTH epic1 and epic2
 	//
 	// Expected: task1 should NOT be ready (one parent is blocked)
+	env := newTestEnv(t)
 
-	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	epic1 := &types.Issue{Title: "Epic 1 (blocked)", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	epic2 := &types.Issue{Title: "Epic 2 (ready)", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	task1 := &types.Issue{Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := env.CreateIssue("Blocker")
+	epic1 := env.CreateEpic("Epic 1 (blocked)")
+	epic2 := env.CreateEpic("Epic 2 (ready)")
+	task1 := env.CreateIssue("Task 1")
 
-	store.CreateIssue(ctx, blocker, "test-user")
-	store.CreateIssue(ctx, epic1, "test-user")
-	store.CreateIssue(ctx, epic2, "test-user")
-	store.CreateIssue(ctx, task1, "test-user")
+	env.AddDep(epic1, blocker)        // epic1 blocked by blocker
+	env.AddParentChild(task1, epic1)  // task1 is child of both epic1 and epic2
+	env.AddParentChild(task1, epic2)
 
-	// epic1 blocked by blocker
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// task1 is child of both epic1 and epic2
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic1.ID, Type: types.DepParentChild}, "test-user")
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic2.ID, Type: types.DepParentChild}, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should have blocker and epic2 ready, but NOT epic1 or task1
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if readyIDs[epic1.ID] {
-		t.Errorf("Expected epic1 to be blocked, but it was ready")
-	}
-	if readyIDs[task1.ID] {
-		t.Errorf("Expected task1 to be blocked (one parent is blocked), but it was ready")
-	}
-	if !readyIDs[blocker.ID] {
-		t.Errorf("Expected blocker to be ready")
-	}
-	if !readyIDs[epic2.ID] {
-		t.Errorf("Expected epic2 to be ready")
-	}
+	env.AssertBlocked(epic1)
+	env.AssertBlocked(task1)  // blocked because one parent (epic1) is blocked
+	env.AssertReady(blocker)
+	env.AssertReady(epic2)
 }
 
 // TestBlockerClosedUnblocksChildren tests that closing a blocker unblocks descendants
 func TestBlockerClosedUnblocksChildren(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create:
 	// blocker: initially open, then closed
 	// epic1: open, blocked by 'blocker'
 	// task1: open, child of epic1
 	//
 	// After closing blocker: both epic1 and task1 should be ready
+	env := newTestEnv(t)
 
-	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	epic1 := &types.Issue{Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	task1 := &types.Issue{Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := env.CreateIssue("Blocker")
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssue("Task 1")
 
-	store.CreateIssue(ctx, blocker, "test-user")
-	store.CreateIssue(ctx, epic1, "test-user")
-	store.CreateIssue(ctx, task1, "test-user")
-
-	// epic1 blocked by blocker
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// task1 is child of epic1
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic1.ID, Type: types.DepParentChild}, "test-user")
+	env.AddDep(epic1, blocker)       // epic1 blocked by blocker
+	env.AddParentChild(task1, epic1) // task1 is child of epic1
 
 	// Initially, epic1 and task1 should be blocked
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if readyIDs[epic1.ID] || readyIDs[task1.ID] {
-		t.Errorf("Expected epic1 and task1 to be blocked initially")
-	}
+	env.AssertBlocked(epic1)
+	env.AssertBlocked(task1)
 
 	// Close the blocker
-	store.CloseIssue(ctx, blocker.ID, "Done", "test-user")
+	env.Close(blocker, "Done")
 
 	// Now epic1 and task1 should be ready
-	ready, err = store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed after closing blocker: %v", err)
-	}
-
-	readyIDs = make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if !readyIDs[epic1.ID] {
-		t.Errorf("Expected epic1 to be ready after blocker closed")
-	}
-	if !readyIDs[task1.ID] {
-		t.Errorf("Expected task1 to be ready after blocker closed")
-	}
+	env.AssertReady(epic1)
+	env.AssertReady(task1)
 }
 
 // TestRelatedDoesNotPropagate tests that 'related' deps don't cause blocking propagation
 func TestRelatedDoesNotPropagate(t *testing.T) {
-	store, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
 	// Create:
 	// blocker: open
 	// epic1: open, blocked by 'blocker'
 	// task1: open, related to epic1 (NOT parent-child)
 	//
 	// Expected: task1 SHOULD be ready (related doesn't propagate blocking)
+	env := newTestEnv(t)
 
-	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
-	epic1 := &types.Issue{Title: "Epic 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
-	task1 := &types.Issue{Title: "Task 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker := env.CreateIssue("Blocker")
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssue("Task 1")
 
-	store.CreateIssue(ctx, blocker, "test-user")
-	store.CreateIssue(ctx, epic1, "test-user")
-	store.CreateIssue(ctx, task1, "test-user")
+	env.AddDep(epic1, blocker)                      // epic1 blocked by blocker
+	env.AddDepType(task1, epic1, types.DepRelated)  // task1 is related to epic1 (NOT parent-child)
 
-	// epic1 blocked by blocker
-	store.AddDependency(ctx, &types.Dependency{IssueID: epic1.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}, "test-user")
-	// task1 is related to epic1 (NOT parent-child)
-	store.AddDependency(ctx, &types.Dependency{IssueID: task1.ID, DependsOnID: epic1.ID, Type: types.DepRelated}, "test-user")
-
-	// Get ready work
-	ready, err := store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should have blocker AND task1 ready (related doesn't propagate)
-	readyIDs := make(map[string]bool)
-	for _, issue := range ready {
-		readyIDs[issue.ID] = true
-	}
-
-	if readyIDs[epic1.ID] {
-		t.Errorf("Expected epic1 to be blocked, but it was ready")
-	}
-	if !readyIDs[task1.ID] {
-		t.Errorf("Expected task1 to be ready (related deps don't propagate blocking), but it was blocked")
-	}
-	if !readyIDs[blocker.ID] {
-		t.Errorf("Expected blocker to be ready")
-	}
+	env.AssertBlocked(epic1)
+	env.AssertReady(task1)   // related deps don't propagate blocking
+	env.AssertReady(blocker)
 }
 
 // TestCompositeIndexExists verifies the composite index is created
@@ -1129,85 +881,843 @@ func TestSortPolicyDefault(t *testing.T) {
 	}
 }
 
-// TestGetReadyWorkExcludesTombstones verifies that tombstone issues are never included in ready work
-// This tests the implementation of bd-yuv item 2.
-func TestGetReadyWorkExcludesTombstones(t *testing.T) {
-	store := newTestStore(t, "file::memory:?mode=memory&cache=private")
+// TestGetReadyWorkExternalDeps tests that GetReadyWork filters out issues
+// with unsatisfied external dependencies (bd-zmmy)
+func TestGetReadyWorkExternalDeps(t *testing.T) {
+	// Create main test database
+	mainStore, mainCleanup := setupTestDB(t)
+	defer mainCleanup()
+
 	ctx := context.Background()
 
-	// Create issues: one active, one that will become a tombstone
-	activeIssue := &types.Issue{
-		ID:        "bd-active",
-		Title:     "Active Issue",
+	// Create external project directory with beads database
+	externalDir, err := os.MkdirTemp("", "beads-external-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config in external project
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	// Create config file for external project
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save external config: %v", err)
+	}
+
+	// Create external database (must match configfile.DefaultConfig().Database)
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+	defer externalStore.Close()
+
+	// Set issue_prefix in external store
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set external issue_prefix: %v", err)
+	}
+
+	// Initialize config if not already done (required for Set to work)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Configure external_projects to point to our temp external project
+	// Save current value to restore later
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"external-test": externalDir,
+	})
+
+	// Create an issue in main DB with external dependency
+	issueWithExtDep := &types.Issue{
+		Title:     "Has external dep",
 		Status:    types.StatusOpen,
 		Priority:  1,
 		IssueType: types.TypeTask,
 	}
-	toDeleteIssue := &types.Issue{
-		ID:        "bd-deleted",
-		Title:     "Issue To Delete",
+	if err := mainStore.CreateIssue(ctx, issueWithExtDep, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add external dependency
+	extDep := &types.Dependency{
+		IssueID:     issueWithExtDep.ID,
+		DependsOnID: "external:external-test:test-capability",
+		Type:        types.DepBlocks,
+	}
+	if err := mainStore.AddDependency(ctx, extDep, "test-user"); err != nil {
+		t.Fatalf("failed to add external dependency: %v", err)
+	}
+
+	// Create a regular issue without external dep
+	regularIssue := &types.Issue{
+		Title:     "Regular issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	if err := mainStore.CreateIssue(ctx, regularIssue, "test-user"); err != nil {
+		t.Fatalf("failed to create regular issue: %v", err)
+	}
+
+	// Debug: check config
+	projects := config.GetExternalProjects()
+	t.Logf("External projects config: %v", projects)
+
+	resolvedPath := config.ResolveExternalProjectPath("external-test")
+	t.Logf("Resolved path for 'external-test': %s", resolvedPath)
+
+	// Test 1: External dep is not satisfied - issue should be blocked
+	ready, err := mainStore.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+
+	// Debug: log what we got
+	for _, issue := range ready {
+		t.Logf("Ready issue: %s - %s", issue.ID, issue.Title)
+	}
+
+	// Should only have the regular issue (external dep not satisfied)
+	if len(ready) != 1 {
+		t.Errorf("Expected 1 ready issue (external dep not satisfied), got %d", len(ready))
+	}
+	if len(ready) > 0 && ready[0].ID != regularIssue.ID {
+		t.Errorf("Expected regular issue %s to be ready, got %s", regularIssue.ID, ready[0].ID)
+	}
+
+	// Test 2: Ship the capability in external project
+	// Create an issue with provides:test-capability label and close it
+	capabilityIssue := &types.Issue{
+		Title:     "Ship test-capability",
 		Status:    types.StatusOpen,
 		Priority:  1,
 		IssueType: types.TypeTask,
 	}
-
-	if err := store.CreateIssue(ctx, activeIssue, "test"); err != nil {
-		t.Fatalf("Failed to create active issue: %v", err)
-	}
-	if err := store.CreateIssue(ctx, toDeleteIssue, "test"); err != nil {
-		t.Fatalf("Failed to create issue to delete: %v", err)
+	if err := externalStore.CreateIssue(ctx, capabilityIssue, "test-user"); err != nil {
+		t.Fatalf("failed to create capability issue: %v", err)
 	}
 
-	// Verify both are ready before deletion
+	// Add the provides: label
+	if err := externalStore.AddLabel(ctx, capabilityIssue.ID, "provides:test-capability", "test-user"); err != nil {
+		t.Fatalf("failed to add provides label: %v", err)
+	}
+
+	// Close the capability issue
+	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user"); err != nil {
+		t.Fatalf("failed to close capability issue: %v", err)
+	}
+
+	// Debug: verify the capability issue was properly set up
+	capIssue, err := externalStore.GetIssue(ctx, capabilityIssue.ID)
+	if err != nil {
+		t.Fatalf("failed to get capability issue: %v", err)
+	}
+	t.Logf("Capability issue status: %s", capIssue.Status)
+	labels, _ := externalStore.GetLabels(ctx, capabilityIssue.ID)
+	t.Logf("Capability issue labels: %v", labels)
+
+	// Close external store to checkpoint WAL before read-only access
+	externalStore.Close()
+
+	// Debug: check what path configfile.Load returns
+	testCfg, _ := configfile.Load(beadsDir)
+	if testCfg != nil {
+		t.Logf("Config database path: %s", testCfg.DatabasePath(beadsDir))
+		t.Logf("External DB path we created: %s", externalDBPath)
+	}
+
+	// Re-verify: manually check the external dep
+	status := CheckExternalDep(ctx, "external:external-test:test-capability")
+	t.Logf("External dep check: satisfied=%v, reason=%s", status.Satisfied, status.Reason)
+
+	// Now the external dep should be satisfied
+	ready, err = mainStore.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed after shipping: %v", err)
+	}
+
+	// Should now have both issues
+	if len(ready) != 2 {
+		t.Errorf("Expected 2 ready issues (external dep now satisfied), got %d", len(ready))
+		for _, issue := range ready {
+			t.Logf("Ready issue after shipping: %s - %s", issue.ID, issue.Title)
+		}
+	}
+
+	// Verify both issues are present
+	foundExtDep := false
+	foundRegular := false
+	for _, issue := range ready {
+		if issue.ID == issueWithExtDep.ID {
+			foundExtDep = true
+		}
+		if issue.ID == regularIssue.ID {
+			foundRegular = true
+		}
+	}
+	if !foundExtDep {
+		t.Error("Issue with external dep should now be ready")
+	}
+	if !foundRegular {
+		t.Error("Regular issue should still be ready")
+	}
+}
+
+// TestGetReadyWorkNoExternalProjectsConfigured tests that GetReadyWork
+// works normally when no external_projects are configured (bd-zmmy)
+func TestGetReadyWorkNoExternalProjectsConfigured(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Ensure no external_projects configured
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		}
+	}()
+	config.Set("external_projects", map[string]string{})
+
+	// Create an issue with an external dependency (shouldn't matter since no config)
+	issue := &types.Issue{
+		Title:     "Has external dep but no config",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add external dependency (will be ignored since no external_projects configured)
+	extDep := &types.Dependency{
+		IssueID:     issue.ID,
+		DependsOnID: "external:unconfigured-project:some-capability",
+		Type:        types.DepBlocks,
+	}
+	if err := store.AddDependency(ctx, extDep, "test-user"); err != nil {
+		t.Fatalf("failed to add external dependency: %v", err)
+	}
+
+	// Should skip external dep checking since no external_projects configured
 	ready, err := store.GetReadyWork(ctx, types.WorkFilter{})
 	if err != nil {
 		t.Fatalf("GetReadyWork failed: %v", err)
 	}
-	if len(ready) != 2 {
-		t.Fatalf("Expected 2 ready issues before deletion, got %d", len(ready))
-	}
 
-	// Delete one issue (creates tombstone)
-	if err := store.CreateTombstone(ctx, "bd-deleted", "tester", "testing tombstone exclusion"); err != nil {
-		t.Fatalf("CreateTombstone failed: %v", err)
-	}
-
-	// Verify tombstone still exists in database
-	tombstone, err := store.GetIssue(ctx, "bd-deleted")
-	if err != nil {
-		t.Fatalf("Failed to get tombstone: %v", err)
-	}
-	if tombstone == nil || tombstone.Status != types.StatusTombstone {
-		t.Fatal("Issue should exist as tombstone")
-	}
-
-	// Get ready work - tombstone should be excluded
-	ready, err = store.GetReadyWork(ctx, types.WorkFilter{})
-	if err != nil {
-		t.Fatalf("GetReadyWork failed: %v", err)
-	}
-
-	// Should only have the active issue
+	// Issue should be ready (external deps skipped when no config)
 	if len(ready) != 1 {
-		t.Errorf("Expected 1 ready issue after tombstone, got %d", len(ready))
+		t.Errorf("Expected 1 ready issue (external deps skipped), got %d", len(ready))
+	}
+}
+
+// TestGetBlockedIssuesFiltersExternalDeps tests that GetBlockedIssues filters
+// satisfied external dependencies from BlockedBy lists (bd-396j)
+func TestGetBlockedIssuesFiltersExternalDeps(t *testing.T) {
+	// Create main test database
+	mainStore, mainCleanup := setupTestDB(t)
+	defer mainCleanup()
+
+	ctx := context.Background()
+
+	// Create external project directory with beads database
+	externalDir, err := os.MkdirTemp("", "beads-blocked-external-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config in external project
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Verify it's the active issue, not the tombstone
-	foundActive := false
-	foundTombstone := false
+	// Create config file for external project
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save external config: %v", err)
+	}
+
+	// Create external database
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+	defer externalStore.Close()
+
+	// Set issue_prefix in external store
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set external issue_prefix: %v", err)
+	}
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Configure external_projects
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"external-test": externalDir,
+	})
+
+	// Create an issue with external dependency
+	issueWithExtDep := &types.Issue{
+		Title:     "Blocked by external",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := mainStore.CreateIssue(ctx, issueWithExtDep, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add external dependency
+	extDep := &types.Dependency{
+		IssueID:     issueWithExtDep.ID,
+		DependsOnID: "external:external-test:test-capability",
+		Type:        types.DepBlocks,
+	}
+	if err := mainStore.AddDependency(ctx, extDep, "test-user"); err != nil {
+		t.Fatalf("failed to add external dependency: %v", err)
+	}
+
+	// Test 1: External dep not satisfied - issue should appear as blocked
+	blocked, err := mainStore.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+
+	if len(blocked) != 1 {
+		t.Errorf("Expected 1 blocked issue (external dep not satisfied), got %d", len(blocked))
+	}
+	if len(blocked) > 0 {
+		if len(blocked[0].BlockedBy) != 1 || blocked[0].BlockedBy[0] != "external:external-test:test-capability" {
+			t.Errorf("Expected BlockedBy to contain external ref, got %v", blocked[0].BlockedBy)
+		}
+	}
+
+	// Test 2: Ship the capability in external project
+	capabilityIssue := &types.Issue{
+		Title:     "Ship test-capability",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := externalStore.CreateIssue(ctx, capabilityIssue, "test-user"); err != nil {
+		t.Fatalf("failed to create capability issue: %v", err)
+	}
+
+	// Add the provides: label
+	if err := externalStore.AddLabel(ctx, capabilityIssue.ID, "provides:test-capability", "test-user"); err != nil {
+		t.Fatalf("failed to add provides label: %v", err)
+	}
+
+	// Close the capability issue
+	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user"); err != nil {
+		t.Fatalf("failed to close capability issue: %v", err)
+	}
+
+	// Close external store to checkpoint WAL before read-only access
+	externalStore.Close()
+
+	// Verify external dep is now satisfied
+	status := CheckExternalDep(ctx, "external:external-test:test-capability")
+	if !status.Satisfied {
+		t.Fatalf("Expected external dep to be satisfied, got: %s", status.Reason)
+	}
+
+	// Now GetBlockedIssues should NOT show the issue (external dep satisfied)
+	blocked, err = mainStore.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed after shipping: %v", err)
+	}
+
+	// Issue should no longer be blocked
+	if len(blocked) != 0 {
+		t.Errorf("Expected 0 blocked issues (external dep now satisfied), got %d", len(blocked))
+		for _, b := range blocked {
+			t.Logf("Still blocked: %s - %s, blockers: %v", b.ID, b.Title, b.BlockedBy)
+		}
+	}
+}
+
+// TestGetBlockedIssuesPartialExternalDeps tests that GetBlockedIssues keeps
+// issues blocked when only SOME external deps are satisfied (bd-396j)
+func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
+	// Create main test database
+	mainStore, mainCleanup := setupTestDB(t)
+	defer mainCleanup()
+
+	ctx := context.Background()
+
+	// Create external project directory
+	externalDir, err := os.MkdirTemp("", "beads-blocked-partial-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config in external project
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save external config: %v", err)
+	}
+
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+	defer externalStore.Close()
+
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set external issue_prefix: %v", err)
+	}
+
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"external-test": externalDir,
+	})
+
+	// Create an issue with TWO external dependencies
+	issueWithExtDeps := &types.Issue{
+		Title:     "Blocked by two external deps",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := mainStore.CreateIssue(ctx, issueWithExtDeps, "test-user"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Add first external dependency
+	if err := mainStore.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueWithExtDeps.ID,
+		DependsOnID: "external:external-test:cap1",
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("failed to add first external dependency: %v", err)
+	}
+
+	// Add second external dependency
+	if err := mainStore.AddDependency(ctx, &types.Dependency{
+		IssueID:     issueWithExtDeps.ID,
+		DependsOnID: "external:external-test:cap2",
+		Type:        types.DepBlocks,
+	}, "test-user"); err != nil {
+		t.Fatalf("failed to add second external dependency: %v", err)
+	}
+
+	// Ship only the first capability
+	cap1Issue := &types.Issue{
+		Title:     "Ship cap1",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := externalStore.CreateIssue(ctx, cap1Issue, "test-user"); err != nil {
+		t.Fatalf("failed to create cap1 issue: %v", err)
+	}
+	if err := externalStore.AddLabel(ctx, cap1Issue.ID, "provides:cap1", "test-user"); err != nil {
+		t.Fatalf("failed to add provides label: %v", err)
+	}
+	if err := externalStore.CloseIssue(ctx, cap1Issue.ID, "Shipped", "test-user"); err != nil {
+		t.Fatalf("failed to close cap1 issue: %v", err)
+	}
+
+	// Close external store to checkpoint WAL
+	externalStore.Close()
+
+	// Issue should still be blocked (cap2 not satisfied)
+	blocked, err := mainStore.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+
+	if len(blocked) != 1 {
+		t.Errorf("Expected 1 blocked issue (cap2 still not satisfied), got %d", len(blocked))
+	}
+	if len(blocked) > 0 {
+		// Should only show cap2 in BlockedBy (cap1 is satisfied and filtered out)
+		if len(blocked[0].BlockedBy) != 1 {
+			t.Errorf("Expected 1 blocker (cap2), got %d: %v", len(blocked[0].BlockedBy), blocked[0].BlockedBy)
+		}
+		if len(blocked[0].BlockedBy) == 1 && blocked[0].BlockedBy[0] != "external:external-test:cap2" {
+			t.Errorf("Expected BlockedBy to be cap2, got %v", blocked[0].BlockedBy)
+		}
+		if blocked[0].BlockedByCount != 1 {
+			t.Errorf("Expected BlockedByCount to be 1, got %d", blocked[0].BlockedByCount)
+		}
+	}
+}
+
+// TestCheckExternalDepNoBeadsDirectory verifies that CheckExternalDep
+// correctly reports "no beads database" when the target project exists
+// but has no .beads directory (bd-mv6h).
+func TestCheckExternalDepNoBeadsDirectory(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a project directory WITHOUT .beads
+	projectDir, err := os.MkdirTemp("", "beads-no-beads-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(projectDir)
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Configure external_projects to point to the directory
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	}()
+
+	config.Set("external_projects", map[string]string{
+		"no-beads-project": projectDir,
+	})
+
+	// Check the external dep - should report "no beads database"
+	status := CheckExternalDep(ctx, "external:no-beads-project:some-capability")
+
+	if status.Satisfied {
+		t.Error("Expected external dep to be unsatisfied when target has no .beads directory")
+	}
+	if status.Reason != "project has no beads database" {
+		t.Errorf("Expected reason 'project has no beads database', got: %s", status.Reason)
+	}
+}
+
+// TestCheckExternalDepInvalidFormats verifies that CheckExternalDep
+// correctly handles various invalid external ref formats (bd-mv6h).
+func TestCheckExternalDepInvalidFormats(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		ref        string
+		wantReason string
+	}{
+		{
+			name:       "not external prefix",
+			ref:        "bd-xyz",
+			wantReason: "not an external reference",
+		},
+		{
+			name:       "missing capability",
+			ref:        "external:project",
+			wantReason: "invalid format (expected external:project:capability)",
+		},
+		{
+			name:       "empty project",
+			ref:        "external::capability",
+			wantReason: "missing project or capability",
+		},
+		{
+			name:       "empty capability",
+			ref:        "external:project:",
+			wantReason: "missing project or capability",
+		},
+		{
+			name:       "only external prefix",
+			ref:        "external:",
+			wantReason: "invalid format (expected external:project:capability)",
+		},
+		{
+			name:       "unconfigured project",
+			ref:        "external:unconfigured-project:capability",
+			wantReason: "project not configured in external_projects",
+		},
+	}
+
+	// Initialize config if not already done
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Ensure no external projects are configured for some tests
+	oldProjects := config.GetExternalProjects()
+	defer func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		}
+	}()
+	config.Set("external_projects", map[string]string{})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := CheckExternalDep(ctx, tt.ref)
+			if status.Satisfied {
+				t.Errorf("Expected unsatisfied for %q", tt.ref)
+			}
+			if status.Reason != tt.wantReason {
+				t.Errorf("Expected reason %q, got %q", tt.wantReason, status.Reason)
+			}
+		})
+	}
+}
+
+// TestGetNewlyUnblockedByClose tests the --suggest-next functionality (GH#679)
+func TestGetNewlyUnblockedByClose(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create a blocker issue
+	blocker := env.CreateIssueWith("Blocker", types.StatusOpen, 1, types.TypeTask)
+
+	// Create two issues blocked by the blocker
+	blocked1 := env.CreateIssueWith("Blocked 1", types.StatusOpen, 2, types.TypeTask)
+	blocked2 := env.CreateIssueWith("Blocked 2", types.StatusOpen, 3, types.TypeTask)
+
+	// Create one issue blocked by multiple issues (blocker + another)
+	otherBlocker := env.CreateIssueWith("Other Blocker", types.StatusOpen, 1, types.TypeTask)
+	multiBlocked := env.CreateIssueWith("Multi Blocked", types.StatusOpen, 2, types.TypeTask)
+
+	// Add dependencies (issue depends on blocker)
+	env.AddDep(blocked1, blocker)
+	env.AddDep(blocked2, blocker)
+	env.AddDep(multiBlocked, blocker)
+	env.AddDep(multiBlocked, otherBlocker)
+
+	// Close the blocker
+	env.Close(blocker, "Done")
+
+	// Get newly unblocked issues
+	ctx := context.Background()
+	unblocked, err := env.Store.GetNewlyUnblockedByClose(ctx, blocker.ID)
+	if err != nil {
+		t.Fatalf("GetNewlyUnblockedByClose failed: %v", err)
+	}
+
+	// Should return blocked1 and blocked2 (but not multiBlocked, which is still blocked by otherBlocker)
+	if len(unblocked) != 2 {
+		t.Errorf("Expected 2 unblocked issues, got %d", len(unblocked))
+	}
+
+	// Check that the right issues are unblocked
+	unblockedIDs := make(map[string]bool)
+	for _, issue := range unblocked {
+		unblockedIDs[issue.ID] = true
+	}
+
+	if !unblockedIDs[blocked1.ID] {
+		t.Errorf("Expected %s to be unblocked", blocked1.ID)
+	}
+	if !unblockedIDs[blocked2.ID] {
+		t.Errorf("Expected %s to be unblocked", blocked2.ID)
+	}
+	if unblockedIDs[multiBlocked.ID] {
+		t.Errorf("Expected %s to still be blocked (has another blocker)", multiBlocked.ID)
+	}
+}
+
+// TestParentIDFilterDescendants tests that ParentID filter returns all descendants of an epic
+func TestParentIDFilterDescendants(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create hierarchy:
+	// epic1 (root)
+	//   ├── task1 (child of epic1)
+	//   ├── task2 (child of epic1)
+	//   └── epic2 (child of epic1)
+	//         └── task3 (grandchild of epic1)
+	// task4 (unrelated, should not appear in results)
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssue("Task 1")
+	task2 := env.CreateIssue("Task 2")
+	epic2 := env.CreateEpic("Epic 2")
+	task3 := env.CreateIssue("Task 3")
+	task4 := env.CreateIssue("Task 4 - unrelated")
+
+	env.AddParentChild(task1, epic1)
+	env.AddParentChild(task2, epic1)
+	env.AddParentChild(epic2, epic1)
+	env.AddParentChild(task3, epic2)
+
+	// Query with ParentID = epic1
+	parentID := epic1.ID
+	ready := env.GetReadyWork(types.WorkFilter{ParentID: &parentID})
+
+	// Should include task1, task2, epic2, task3 (all descendants of epic1)
+	// Should NOT include epic1 itself or task4
+	if len(ready) != 4 {
+		t.Fatalf("Expected 4 ready issues in parent scope, got %d", len(ready))
+	}
+
+	// Verify the returned issues are the expected ones
+	readyIDs := make(map[string]bool)
 	for _, issue := range ready {
-		if issue.ID == "bd-active" {
-			foundActive = true
-		}
-		if issue.ID == "bd-deleted" {
-			foundTombstone = true
-		}
+		readyIDs[issue.ID] = true
 	}
 
-	if !foundActive {
-		t.Error("Active issue should be in ready work")
+	if !readyIDs[task1.ID] {
+		t.Errorf("Expected task1 to be in results")
 	}
-	if foundTombstone {
-		t.Error("Tombstone should NOT be in ready work")
+	if !readyIDs[task2.ID] {
+		t.Errorf("Expected task2 to be in results")
+	}
+	if !readyIDs[epic2.ID] {
+		t.Errorf("Expected epic2 to be in results")
+	}
+	if !readyIDs[task3.ID] {
+		t.Errorf("Expected task3 to be in results")
+	}
+	if readyIDs[epic1.ID] {
+		t.Errorf("Expected epic1 (root) to NOT be in results")
+	}
+	if readyIDs[task4.ID] {
+		t.Errorf("Expected task4 (unrelated) to NOT be in results")
+	}
+}
+
+// TestParentIDWithOtherFilters tests that ParentID can be combined with other filters
+func TestParentIDWithOtherFilters(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create hierarchy:
+	// epic1 (root)
+	//   ├── task1 (priority 0)
+	//   ├── task2 (priority 1)
+	//   └── task3 (priority 2)
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssueWith("Task 1 - P0", types.StatusOpen, 0, types.TypeTask)
+	task2 := env.CreateIssueWith("Task 2 - P1", types.StatusOpen, 1, types.TypeTask)
+	task3 := env.CreateIssueWith("Task 3 - P2", types.StatusOpen, 2, types.TypeTask)
+
+	env.AddParentChild(task1, epic1)
+	env.AddParentChild(task2, epic1)
+	env.AddParentChild(task3, epic1)
+
+	// Query with ParentID = epic1 AND priority = 1
+	parentID := epic1.ID
+	priority := 1
+	ready := env.GetReadyWork(types.WorkFilter{ParentID: &parentID, Priority: &priority})
+
+	// Should only include task2 (parent + priority 1)
+	if len(ready) != 1 {
+		t.Fatalf("Expected 1 issue with parent + priority filter, got %d", len(ready))
+	}
+	if ready[0].ID != task2.ID {
+		t.Errorf("Expected task2, got %s", ready[0].ID)
+	}
+}
+
+// TestParentIDWithBlockedDescendants tests that blocked descendants are excluded
+func TestParentIDWithBlockedDescendants(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create hierarchy:
+	// epic1 (root)
+	//   ├── task1 (ready)
+	//   ├── task2 (blocked by blocker)
+	//   └── task3 (ready)
+	// blocker (unrelated)
+	epic1 := env.CreateEpic("Epic 1")
+	task1 := env.CreateIssue("Task 1 - ready")
+	task2 := env.CreateIssue("Task 2 - blocked")
+	task3 := env.CreateIssue("Task 3 - ready")
+	blocker := env.CreateIssue("Blocker")
+
+	env.AddParentChild(task1, epic1)
+	env.AddParentChild(task2, epic1)
+	env.AddParentChild(task3, epic1)
+	env.AddDep(task2, blocker) // task2 is blocked
+
+	// Query with ParentID = epic1
+	parentID := epic1.ID
+	ready := env.GetReadyWork(types.WorkFilter{ParentID: &parentID})
+
+	// Should include task1, task3 (ready descendants)
+	// Should NOT include task2 (blocked)
+	if len(ready) != 2 {
+		t.Fatalf("Expected 2 ready descendants, got %d", len(ready))
+	}
+
+	readyIDs := make(map[string]bool)
+	for _, issue := range ready {
+		readyIDs[issue.ID] = true
+	}
+
+	if !readyIDs[task1.ID] {
+		t.Errorf("Expected task1 to be ready")
+	}
+	if !readyIDs[task3.ID] {
+		t.Errorf("Expected task3 to be ready")
+	}
+	if readyIDs[task2.ID] {
+		t.Errorf("Expected task2 to be blocked")
+	}
+}
+
+// TestParentIDEmptyParent tests that empty parent returns nothing
+func TestParentIDEmptyParent(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create an epic with no children
+	epic1 := env.CreateEpic("Epic 1 - no children")
+	env.CreateIssue("Unrelated task")
+
+	// Query with ParentID = epic1 (which has no children)
+	parentID := epic1.ID
+	ready := env.GetReadyWork(types.WorkFilter{ParentID: &parentID})
+
+	// Should return empty since epic1 has no descendants
+	if len(ready) != 0 {
+		t.Fatalf("Expected 0 ready issues for empty parent, got %d", len(ready))
 	}
 }

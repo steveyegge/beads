@@ -2,6 +2,7 @@
 package utils
 
 import (
+	"os"
 	"path/filepath"
 )
 
@@ -38,11 +39,12 @@ func FindJSONLInDir(dbDir string) string {
 		}
 	}
 
-	// Last resort: use first match (but skip deletions.jsonl and merge artifacts)
+	// Last resort: use first match (but skip deletions.jsonl, interactions.jsonl, and merge artifacts)
 	for _, match := range matches {
 		base := filepath.Base(match)
-		// Skip deletions manifest and merge artifacts
+		// Skip deletions manifest, interactions (audit trail), and merge artifacts
 		if base == "deletions.jsonl" ||
+			base == "interactions.jsonl" ||
 			base == "beads.base.jsonl" ||
 			base == "beads.left.jsonl" ||
 			base == "beads.right.jsonl" {
@@ -53,6 +55,36 @@ func FindJSONLInDir(dbDir string) string {
 
 	// If only deletions/merge files exist, default to issues.jsonl
 	return filepath.Join(dbDir, "issues.jsonl")
+}
+
+// FindMoleculesJSONLInDir finds the molecules.jsonl file in the given .beads directory.
+// Returns the path to molecules.jsonl if it exists, empty string otherwise.
+// Molecules are template issues used for instantiation (beads-1ra).
+func FindMoleculesJSONLInDir(dbDir string) string {
+	moleculesPath := filepath.Join(dbDir, "molecules.jsonl")
+	// Check if file exists - we don't fall back to any other file
+	// because molecules.jsonl is optional and specific
+	if _, err := os.Stat(moleculesPath); err == nil {
+		return moleculesPath
+	}
+	return ""
+}
+
+// ResolveForWrite returns the path to write to, resolving symlinks.
+// If path is a symlink, returns the resolved target path.
+// If path doesn't exist, returns path unchanged (new file).
+func ResolveForWrite(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return filepath.EvalSymlinks(path)
+	}
+	return path, nil
 }
 
 // CanonicalizePath converts a path to its canonical form by:

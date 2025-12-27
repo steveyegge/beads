@@ -52,7 +52,7 @@ bd update bd-XXXXX --status in_progress
 
 ```bash
 # Start daemon with auto-commit
-bd daemon start --auto-commit
+bd daemon --start --auto-commit
 
 # All issue changes are now automatically committed to beads-metadata branch
 ```
@@ -176,11 +176,11 @@ my-project/
 │   ├── beads-worktrees/       # Hidden worktree directory
 │   │   └── beads-metadata/    # Lightweight checkout of sync branch
 │   │       └── .beads/
-│   │           └── beads.jsonl
+│   │           └── issues.jsonl
 │   └── ...
 ├── .beads/                    # Main beads directory (in your workspace)
 │   ├── beads.db               # SQLite database
-│   ├── beads.jsonl            # JSONL export
+│   ├── issues.jsonl            # JSONL export
 │   └── bd.sock                # Daemon socket (if running)
 ├── src/                       # Your application code
 │   └── ...
@@ -209,7 +209,7 @@ my-project/
 
 ### Troubleshooting
 
-**"Merge conflicts in beads.jsonl"**
+**"Merge conflicts in issues.jsonl"**
 
 JSONL is append-only and line-based, so conflicts are rare. If they occur:
 1. Both versions are usually valid - keep both lines
@@ -221,14 +221,14 @@ JSONL is append-only and line-based, so conflicts are rare. If they occur:
 The daemon creates it automatically on first commit. To create manually:
 ```bash
 bd config get sync.branch  # Verify it's set
-bd daemon restart          # Daemon will create worktree
+bd daemon --stop && bd daemon --start          # Daemon will create worktree
 ```
 
 **"Changes not syncing"**
 
 Make sure:
 - `bd config get sync.branch` returns the same value on all clones
-- Daemon is running: `bd daemon status`
+- Daemon is running: `bd daemon --status`
 - Both clones have fetched: `git fetch origin beads-metadata`
 
 ## Advanced: GitHub Actions Integration

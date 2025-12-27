@@ -1,10 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,8 +15,9 @@ import (
 )
 
 var countCmd = &cobra.Command{
-	Use:   "count",
-	Short: "Count issues matching filters",
+	Use:     "count",
+	GroupID: "views",
+	Short:   "Count issues matching filters",
 	Long: `Count issues matching the specified filters.
 
 By default, returns the total count of issues matching the filters.
@@ -204,8 +206,11 @@ Examples:
 					outputJSON(result)
 				} else {
 					// Sort groups for consistent output
-					sort.Slice(result.Groups, func(i, j int) bool {
-						return result.Groups[i].Group < result.Groups[j].Group
+					slices.SortFunc(result.Groups, func(a, b struct {
+						Group string `json:"group"`
+						Count int    `json:"count"`
+					}) int {
+						return cmp.Compare(a.Group, b.Group)
 					})
 
 					fmt.Printf("Total: %d\n\n", result.Total)
@@ -396,8 +401,8 @@ Examples:
 		}
 
 		// Sort for consistent output
-		sort.Slice(groups, func(i, j int) bool {
-			return groups[i].Group < groups[j].Group
+		slices.SortFunc(groups, func(a, b GroupCount) int {
+			return cmp.Compare(a.Group, b.Group)
 		})
 
 		if jsonOutput {
@@ -420,10 +425,10 @@ Examples:
 
 func init() {
 	// Filter flags (same as list command)
-	countCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, closed)")
+	countCmd.Flags().StringP("status", "s", "", "Filter by status (open, in_progress, blocked, deferred, closed)")
 	countCmd.Flags().IntP("priority", "p", 0, "Filter by priority (0-4: 0=critical, 1=high, 2=medium, 3=low, 4=backlog)")
 	countCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
-	countCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore)")
+	countCmd.Flags().StringP("type", "t", "", "Filter by type (bug, feature, task, epic, chore, merge-request, molecule, gate)")
 	countCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL)")
 	countCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE)")
 	countCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")

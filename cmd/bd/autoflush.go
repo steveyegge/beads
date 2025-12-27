@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,15 +11,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -30,6 +31,24 @@ func outputJSON(v interface{}) {
 		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// outputJSONError outputs an error as JSON to stderr and exits with code 1.
+// Use this when jsonOutput is true and an error occurs, to ensure consistent
+// machine-readable error output. The error is formatted as:
+//
+//	{"error": "error message", "code": "error_code"}
+//
+// The code parameter is optional (pass "" to omit).
+func outputJSONError(err error, code string) {
+	errObj := map[string]string{"error": err.Error()}
+	if code != "" {
+		errObj["code"] = code
+	}
+	encoder := json.NewEncoder(os.Stderr)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(errObj)
+	os.Exit(1)
 }
 
 // findJSONLPath finds the JSONL file path for the current database
@@ -165,6 +184,7 @@ func autoImportIfNewer() {
 			fmt.Fprintf(os.Stderr, "Auto-import skipped: parse error at line %d: %v\nSnippet: %s\n", lineNo, err, snippet)
 			return
 		}
+		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 		// Fix closed_at invariant: closed issues must have closed_at timestamp
 		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
@@ -192,7 +212,6 @@ func autoImportIfNewer() {
 		SkipUpdate:           false,
 		Strict:               false,
 		SkipPrefixValidation: true, // Auto-import is lenient about prefixes
-		NoGitHistory:         true, // Skip git history backfill during auto-import (bd-4pv)
 	}
 
 	result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
@@ -218,8 +237,8 @@ func autoImportIfNewer() {
 		for oldID, newID := range result.IDMapping {
 			mappings = append(mappings, mapping{oldID, newID})
 		}
-		sort.Slice(mappings, func(i, j int) bool {
-			return mappings[i].oldID < mappings[j].oldID
+		slices.SortFunc(mappings, func(a, b mapping) int {
+			return cmp.Compare(a.oldID, b.oldID)
 		})
 
 		maxShow := 10
@@ -282,94 +301,36 @@ func autoImportIfNewer() {
 // Thread-safe: Safe to call from multiple goroutines (no shared mutable state).
 // No-op if auto-flush is disabled via --no-auto-flush flag.
 func markDirtyAndScheduleFlush() {
-	// Use FlushManager if available (new path, fixes bd-52)
+	// Use FlushManager if available
+	// No FlushManager means sandbox mode or test without flush setup - no-op is correct
 	if flushManager != nil {
 		flushManager.MarkDirty(false) // Incremental export
-		return
 	}
-
-	// Legacy path for backward compatibility with tests
-	if !autoFlushEnabled {
-		return
-	}
-
-	flushMutex.Lock()
-	defer flushMutex.Unlock()
-
-	isDirty = true
-
-	// Cancel existing timer if any
-	if flushTimer != nil {
-		flushTimer.Stop()
-		flushTimer = nil
-	}
-
-	// Schedule new flush
-	flushTimer = time.AfterFunc(getDebounceDuration(), func() {
-		flushToJSONL()
-	})
 }
 
 // markDirtyAndScheduleFullExport marks DB as needing a full export (for ID-changing operations)
 func markDirtyAndScheduleFullExport() {
-	// Use FlushManager if available (new path, fixes bd-52)
+	// Use FlushManager if available
+	// No FlushManager means sandbox mode or test without flush setup - no-op is correct
 	if flushManager != nil {
 		flushManager.MarkDirty(true) // Full export
-		return
 	}
-
-	// Legacy path for backward compatibility with tests
-	if !autoFlushEnabled {
-		return
-	}
-
-	flushMutex.Lock()
-	defer flushMutex.Unlock()
-
-	isDirty = true
-	needsFullExport = true // Force full export, not incremental
-
-	// Cancel existing timer if any
-	if flushTimer != nil {
-		flushTimer.Stop()
-		flushTimer = nil
-	}
-
-	// Schedule new flush
-	flushTimer = time.AfterFunc(getDebounceDuration(), func() {
-		flushToJSONL()
-	})
 }
 
 // clearAutoFlushState cancels pending flush and marks DB as clean (after manual export)
 func clearAutoFlushState() {
-	// With FlushManager, clearing state is unnecessary (new path)
+	// With FlushManager, clearing state is unnecessary
 	// If a flush is pending and fires after manual export, flushToJSONLWithState()
 	// will detect nothing is dirty and skip the flush. This is harmless.
-	if flushManager != nil {
-		return
-	}
-
-	// Legacy path for backward compatibility with tests
+	// Reset failure counters on manual export success
 	flushMutex.Lock()
-	defer flushMutex.Unlock()
-
-	// Cancel pending timer
-	if flushTimer != nil {
-		flushTimer.Stop()
-		flushTimer = nil
-	}
-
-	// Clear dirty flag
-	isDirty = false
-
-	// Reset failure counter (manual export succeeded)
 	flushFailureCount = 0
 	lastFlushError = nil
+	flushMutex.Unlock()
 }
 
 // writeJSONLAtomic writes issues to a JSONL file atomically using temp file + rename.
-// This is the common implementation used by both flushToJSONL (SQLite mode) and
+// This is the common implementation used by flushToJSONLWithState (SQLite mode) and
 // writeIssuesToJSONL (--no-db mode).
 //
 // Atomic write pattern:
@@ -401,10 +362,14 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// JSONL doesn't exist but we have a stored hash - clear export_hashes
+			// JSONL doesn't exist but we have a stored hash - clear export_hashes and jsonl_file_hash
 			fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file missing but export_hashes exist. Clearing export_hashes.\n")
 			if err := store.ClearAllExportHashes(ctx); err != nil {
 				return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+			}
+			// Also clear jsonl_file_hash to prevent perpetual mismatch warnings (bd-admx)
+			if err := store.SetJSONLFileHash(ctx, ""); err != nil {
+				return false, fmt.Errorf("failed to clear jsonl_file_hash: %w", err)
 			}
 			return true, nil // Signal full export needed
 		}
@@ -421,10 +386,14 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected (bd-160)\n")
 		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
 		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
-		
+
 		// Clear export_hashes to force full re-export
 		if err := store.ClearAllExportHashes(ctx); err != nil {
 			return false, fmt.Errorf("failed to clear export_hashes: %w", err)
+		}
+		// Also clear jsonl_file_hash to prevent perpetual mismatch warnings (bd-admx)
+		if err := store.SetJSONLFileHash(ctx, ""); err != nil {
+			return false, fmt.Errorf("failed to clear jsonl_file_hash: %w", err)
 		}
 		return true, nil // Signal full export needed
 	}
@@ -434,8 +403,8 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 
 func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error) {
 	// Sort issues by ID for consistent output
-	sort.Slice(issues, func(i, j int) bool {
-		return issues[i].ID < issues[j].ID
+	slices.SortFunc(issues, func(a, b *types.Issue) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	// Create temp file with PID suffix to avoid collisions (bd-306)
@@ -558,10 +527,9 @@ func flushToJSONLWithState(state flushState) {
 
 			// Show prominent warning after 3+ consecutive failures
 			if failCount >= 3 {
-				red := color.New(color.FgRed, color.Bold).SprintFunc()
-				fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
-				fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
-				fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+				fmt.Fprintf(os.Stderr, "\n%s\n", ui.RenderFail("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+				fmt.Fprintf(os.Stderr, "%s\n", ui.RenderFail("⚠️  Your JSONL file may be out of sync with the database."))
+				fmt.Fprintf(os.Stderr, "%s\n\n", ui.RenderFail("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
 			}
 			return
 		}
@@ -593,10 +561,9 @@ func flushToJSONLWithState(state flushState) {
 
 		// Show prominent warning after 3+ consecutive failures
 		if failCount >= 3 {
-			red := color.New(color.FgRed, color.Bold).SprintFunc()
-			fmt.Fprintf(os.Stderr, "\n%s\n", red("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
-			fmt.Fprintf(os.Stderr, "%s\n", red("⚠️  Your JSONL file may be out of sync with the database."))
-			fmt.Fprintf(os.Stderr, "%s\n\n", red("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
+			fmt.Fprintf(os.Stderr, "\n%s\n", ui.RenderFail("⚠️  CRITICAL: Auto-flush has failed "+fmt.Sprint(failCount)+" times consecutively!"))
+			fmt.Fprintf(os.Stderr, "%s\n", ui.RenderFail("⚠️  Your JSONL file may be out of sync with the database."))
+			fmt.Fprintf(os.Stderr, "%s\n\n", ui.RenderFail("⚠️  Run 'bd export -o .beads/issues.jsonl' manually to fix."))
 		}
 	}
 
@@ -655,6 +622,7 @@ func flushToJSONLWithState(state flushState) {
 				}
 				var issue types.Issue
 				if err := json.Unmarshal([]byte(line), &issue); err == nil {
+					issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 					issueMap[issue.ID] = &issue
 				} else {
 					// Warn about malformed JSONL lines
@@ -697,9 +665,20 @@ func flushToJSONLWithState(state flushState) {
 	}
 
 	// Convert map to slice (will be sorted by writeJSONLAtomic)
+	// Filter out wisps - they should never be exported to JSONL (bd-687g)
+	// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
+	// This prevents "zombie" issues that resurrect after mol squash deletes them.
 	issues := make([]*types.Issue, 0, len(issueMap))
+	wispsSkipped := 0
 	for _, issue := range issueMap {
+		if issue.Ephemeral {
+			wispsSkipped++
+			continue
+		}
 		issues = append(issues, issue)
+	}
+	if wispsSkipped > 0 {
+		debug.Logf("auto-flush: filtered %d wisps from export", wispsSkipped)
 	}
 
 	// Filter issues by prefix in multi-repo mode for non-primary repos (fixes GH #437)
@@ -788,38 +767,6 @@ func flushToJSONLWithState(state flushState) {
 		}
 	}
 
-	// Success! Don't clear global flags here - let the caller manage its own state.
-	// FlushManager manages its local state in run() goroutine.
-	// Legacy path clears global state in flushToJSONL() wrapper.
+	// Success! FlushManager manages its local state in run() goroutine.
 	recordSuccess()
-}
-
-// flushToJSONL is a backward-compatible wrapper that reads global state.
-// New code should use FlushManager instead of calling this directly.
-//
-// Reads global isDirty and needsFullExport flags, then calls flushToJSONLWithState.
-// Invoked by the debounce timer or immediately on command exit (for legacy code).
-func flushToJSONL() {
-	// Read current state and failure count
-	flushMutex.Lock()
-	forceDirty := isDirty
-	forceFullExport := needsFullExport
-	beforeFailCount := flushFailureCount
-	flushMutex.Unlock()
-
-	// Call new implementation
-	flushToJSONLWithState(flushState{
-		forceDirty:      forceDirty,
-		forceFullExport: forceFullExport,
-	})
-
-	// Clear global state only if flush succeeded (legacy path only)
-	// Success is indicated by failure count not increasing
-	flushMutex.Lock()
-	if flushFailureCount == beforeFailCount {
-		// Flush succeeded - clear dirty flags
-		isDirty = false
-		needsFullExport = false
-	}
-	flushMutex.Unlock()
 }

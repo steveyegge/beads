@@ -24,8 +24,7 @@ bd info --json
 # {
 #   "database_path": "/path/to/.beads/beads.db",
 #   "issue_prefix": "bd",
-#   "daemon_running": true,
-#   "agent_mail_enabled": false
+#   "daemon_running": true
 # }
 ```
 
@@ -249,7 +248,7 @@ bd --allow-stale list --status open --json
 
 ```bash
 # Force metadata update even when DB appears synced
-bd import --force -i .beads/beads.jsonl
+bd import --force -i .beads/issues.jsonl
 ```
 
 **When to use:** `bd import` reports "0 created, 0 updated" but staleness errors persist.

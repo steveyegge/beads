@@ -11,22 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 // StatusOutput represents the complete status output
 type StatusOutput struct {
-	Summary        *StatusSummary         `json:"summary"`
+	Summary        *types.Statistics      `json:"summary"`
 	RecentActivity *RecentActivitySummary `json:"recent_activity,omitempty"`
-}
-
-// StatusSummary represents counts by state
-type StatusSummary struct {
-	TotalIssues      int `json:"total_issues"`
-	OpenIssues       int `json:"open_issues"`
-	InProgressIssues int `json:"in_progress_issues"`
-	BlockedIssues    int `json:"blocked_issues"`
-	ClosedIssues     int `json:"closed_issues"`
-	ReadyIssues      int `json:"ready_issues"`
 }
 
 // RecentActivitySummary represents activity from git history
@@ -41,12 +32,15 @@ type RecentActivitySummary struct {
 }
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show issue database overview",
-	Long: `Show a quick snapshot of the issue database state.
+	Use:     "status",
+	GroupID: "views",
+	Aliases: []string{"stats"},
+	Short:   "Show issue database overview and statistics",
+	Long: `Show a quick snapshot of the issue database state and statistics.
 
-This command provides a summary of issue counts by state (open, in-progress,
-blocked, closed), ready work, and recent activity over the last 24 hours from git history.
+This command provides a summary of issue counts by state (open, in_progress,
+blocked, closed), ready work, extended statistics (tombstones, pinned issues,
+average lead time), and recent activity over the last 24 hours from git history.
 
 Similar to how 'git status' shows working tree state, 'bd status' gives you
 a quick overview of your issue database without needing multiple queries.
@@ -58,13 +52,15 @@ Use cases:
   - Daily standup reference
 
 Examples:
-  bd status                    # Show summary
+  bd status                    # Show summary with activity
+  bd status --no-activity      # Skip git activity (faster)
   bd status --json             # JSON format output
   bd status --assigned         # Show issues assigned to current user
-  bd status --all              # Show all issues (same as default)`,
+  bd stats                     # Alias for bd status`,
 	Run: func(cmd *cobra.Command, args []string) {
 		showAll, _ := cmd.Flags().GetBool("all")
 		showAssigned, _ := cmd.Flags().GetBool("assigned")
+		noActivity, _ := cmd.Flags().GetBool("no-activity")
 		jsonFormat, _ := cmd.Flags().GetBool("json")
 
 		// Override global jsonOutput if --json flag is set
@@ -108,28 +104,23 @@ Examples:
 			}
 		}
 
-		// Build summary
-		summary := &StatusSummary{
-			TotalIssues:      stats.TotalIssues,
-			OpenIssues:       stats.OpenIssues,
-			InProgressIssues: stats.InProgressIssues,
-			BlockedIssues:    stats.BlockedIssues,
-			ClosedIssues:     stats.ClosedIssues,
-			ReadyIssues:      stats.ReadyIssues,
+		// Filter by assignee if requested (overrides stats with filtered counts)
+		if showAssigned {
+			stats = getAssignedStatistics(actor)
+			if stats == nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to get assigned statistics\n")
+				os.Exit(1)
+			}
 		}
 
-		// Get recent activity from git history (last 24 hours)
+		// Get recent activity from git history (last 24 hours) unless --no-activity
 		var recentActivity *RecentActivitySummary
-		recentActivity = getGitActivity(24)
-
-		// Filter by assignee if requested
-		if showAssigned {
-			// Get filtered statistics for assigned issues
-			summary = getAssignedStatus(actor)
+		if !noActivity {
+			recentActivity = getGitActivity(24)
 		}
 
 		output := &StatusOutput{
-			Summary:        summary,
+			Summary:        stats,
 			RecentActivity: recentActivity,
 		}
 
@@ -139,25 +130,43 @@ Examples:
 			return
 		}
 
-		// Human-readable output
-		fmt.Println("\nIssue Database Status")
-		fmt.Println("=====================")
-		fmt.Printf("\nSummary:\n")
-		fmt.Printf("  Total Issues:      %d\n", summary.TotalIssues)
-		fmt.Printf("  Open:              %d\n", summary.OpenIssues)
-		fmt.Printf("  In Progress:       %d\n", summary.InProgressIssues)
-		fmt.Printf("  Blocked:           %d\n", summary.BlockedIssues)
-		fmt.Printf("  Closed:            %d\n", summary.ClosedIssues)
-		fmt.Printf("  Ready to Work:     %d\n", summary.ReadyIssues)
+		// Human-readable colorized output using semantic ui package
+		fmt.Printf("\n%s Issue Database Status\n\n", ui.RenderAccent("📊"))
+		fmt.Printf("Summary:\n")
+		fmt.Printf("  Total Issues:           %d\n", stats.TotalIssues)
+		fmt.Printf("  Open:                   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.OpenIssues)))
+		fmt.Printf("  In Progress:            %s\n", ui.RenderWarn(fmt.Sprintf("%d", stats.InProgressIssues)))
+		fmt.Printf("  Blocked:                %s\n", ui.RenderFail(fmt.Sprintf("%d", stats.BlockedIssues)))
+		fmt.Printf("  Closed:                 %d\n", stats.ClosedIssues)
+		fmt.Printf("  Ready to Work:          %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.ReadyIssues)))
+
+		// Extended statistics (only show if non-zero)
+		hasExtended := stats.TombstoneIssues > 0 || stats.PinnedIssues > 0 ||
+			stats.EpicsEligibleForClosure > 0 || stats.AverageLeadTime > 0
+		if hasExtended {
+			fmt.Printf("\nExtended:\n")
+			if stats.TombstoneIssues > 0 {
+				fmt.Printf("  Deleted:                %d (tombstones)\n", stats.TombstoneIssues)
+			}
+			if stats.PinnedIssues > 0 {
+				fmt.Printf("  Pinned:                 %d\n", stats.PinnedIssues)
+			}
+			if stats.EpicsEligibleForClosure > 0 {
+				fmt.Printf("  Epics Ready to Close:   %s\n", ui.RenderPass(fmt.Sprintf("%d", stats.EpicsEligibleForClosure)))
+			}
+			if stats.AverageLeadTime > 0 {
+				fmt.Printf("  Avg Lead Time:          %.1f hours\n", stats.AverageLeadTime)
+			}
+		}
 
 		if recentActivity != nil {
-			fmt.Printf("\nRecent Activity (last %d hours, from git history):\n", recentActivity.HoursTracked)
-			fmt.Printf("  Commits:           %d\n", recentActivity.CommitCount)
-			fmt.Printf("  Total Changes:     %d\n", recentActivity.TotalChanges)
-			fmt.Printf("  Issues Created:    %d\n", recentActivity.IssuesCreated)
-			fmt.Printf("  Issues Closed:     %d\n", recentActivity.IssuesClosed)
-			fmt.Printf("  Issues Reopened:   %d\n", recentActivity.IssuesReopened)
-			fmt.Printf("  Issues Updated:    %d\n", recentActivity.IssuesUpdated)
+			fmt.Printf("\nRecent Activity (last %d hours):\n", recentActivity.HoursTracked)
+			fmt.Printf("  Commits:                %d\n", recentActivity.CommitCount)
+			fmt.Printf("  Total Changes:          %d\n", recentActivity.TotalChanges)
+			fmt.Printf("  Issues Created:         %d\n", recentActivity.IssuesCreated)
+			fmt.Printf("  Issues Closed:          %d\n", recentActivity.IssuesClosed)
+			fmt.Printf("  Issues Reopened:        %d\n", recentActivity.IssuesReopened)
+			fmt.Printf("  Issues Updated:         %d\n", recentActivity.IssuesUpdated)
 		}
 
 		// Show hint for more details
@@ -267,8 +276,8 @@ func getGitActivity(hours int) *RecentActivitySummary {
 	return activity
 }
 
-// getAssignedStatus returns status summary for issues assigned to a specific user
-func getAssignedStatus(assignee string) *StatusSummary {
+// getAssignedStatistics returns statistics for issues assigned to a specific user
+func getAssignedStatistics(assignee string) *types.Statistics {
 	if store == nil {
 		return nil
 	}
@@ -286,7 +295,7 @@ func getAssignedStatus(assignee string) *StatusSummary {
 		return nil
 	}
 
-	summary := &StatusSummary{
+	stats := &types.Statistics{
 		TotalIssues: len(issues),
 	}
 
@@ -294,13 +303,15 @@ func getAssignedStatus(assignee string) *StatusSummary {
 	for _, issue := range issues {
 		switch issue.Status {
 		case types.StatusOpen:
-			summary.OpenIssues++
+			stats.OpenIssues++
 		case types.StatusInProgress:
-			summary.InProgressIssues++
+			stats.InProgressIssues++
 		case types.StatusBlocked:
-			summary.BlockedIssues++
+			stats.BlockedIssues++
+		case types.StatusDeferred:
+			stats.DeferredIssues++
 		case types.StatusClosed:
-			summary.ClosedIssues++
+			stats.ClosedIssues++
 		}
 	}
 
@@ -310,15 +321,16 @@ func getAssignedStatus(assignee string) *StatusSummary {
 	}
 	readyIssues, err := store.GetReadyWork(ctx, readyFilter)
 	if err == nil {
-		summary.ReadyIssues = len(readyIssues)
+		stats.ReadyIssues = len(readyIssues)
 	}
 
-	return summary
+	return stats
 }
 
 func init() {
 	statusCmd.Flags().Bool("all", false, "Show all issues (default behavior)")
 	statusCmd.Flags().Bool("assigned", false, "Show issues assigned to current user")
+	statusCmd.Flags().Bool("no-activity", false, "Skip git activity tracking (faster)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(statusCmd)
 }

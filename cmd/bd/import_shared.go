@@ -165,8 +165,6 @@ type ImportOptions struct {
 	SkipPrefixValidation       bool              // Skip prefix validation (for auto-import)
 	ClearDuplicateExternalRefs bool              // Clear duplicate external_ref values instead of erroring
 	OrphanHandling             string            // Orphan handling mode: strict/resurrect/skip/allow (empty = use config)
-	NoGitHistory               bool              // Skip git history backfill for deletions (prevents spurious deletion during JSONL migrations)
-	IgnoreDeletions            bool              // Import issues even if they're in the deletions manifest
 	ProtectLocalExportIDs      map[string]bool   // IDs from left snapshot to protect from git-history-backfill (bd-sync-deletion fix)
 }
 
@@ -183,12 +181,6 @@ type ImportResult struct {
 	ExpectedPrefix      string            // Database configured prefix
 	MismatchPrefixes    map[string]int    // Map of mismatched prefixes to count
 	SkippedDependencies []string          // Dependencies skipped due to FK constraint violations
-	Purged              int               // Issues purged from DB (found in deletions manifest)
-	PurgedIDs           []string          // IDs that were purged
-	SkippedDeleted      int               // Issues skipped because they're in deletions manifest
-	SkippedDeletedIDs   []string          // IDs that were skipped due to deletions manifest
-	PreservedLocalExport int              // Issues preserved because they were in local export (bd-sync-deletion fix)
-	PreservedLocalIDs   []string          // IDs that were preserved from local export
 }
 
 // importIssuesCore handles the core import logic used by both manual and auto-import.
@@ -228,8 +220,6 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 		SkipPrefixValidation:       opts.SkipPrefixValidation,
 		ClearDuplicateExternalRefs: opts.ClearDuplicateExternalRefs,
 		OrphanHandling:             importer.OrphanHandling(orphanHandling),
-		NoGitHistory:               opts.NoGitHistory,
-		IgnoreDeletions:            opts.IgnoreDeletions,
 		ProtectLocalExportIDs:      opts.ProtectLocalExportIDs,
 	}
 
@@ -252,12 +242,6 @@ func importIssuesCore(ctx context.Context, dbPath string, store storage.Storage,
 		ExpectedPrefix:      result.ExpectedPrefix,
 		MismatchPrefixes:    result.MismatchPrefixes,
 		SkippedDependencies: result.SkippedDependencies,
-		Purged:              result.Purged,
-		PurgedIDs:           result.PurgedIDs,
-		SkippedDeleted:      result.SkippedDeleted,
-		SkippedDeletedIDs:   result.SkippedDeletedIDs,
-		PreservedLocalExport: result.PreservedLocalExport,
-		PreservedLocalIDs:   result.PreservedLocalIDs,
 	}, nil
 }
 

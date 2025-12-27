@@ -129,14 +129,13 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	sandboxMode = false
 	noDb = false
 	autoFlushEnabled = true
-	isDirty = false
-	needsFullExport = false
 	storeActive = false
 	flushFailureCount = 0
 	lastFlushError = nil
-	if flushTimer != nil {
-		flushTimer.Stop()
-		flushTimer = nil
+	// Shutdown any existing FlushManager
+	if flushManager != nil {
+		_ = flushManager.Shutdown()
+		flushManager = nil
 	}
 	// Reset context state
 	rootCtx = nil
@@ -332,6 +331,9 @@ func TestCLI_Close(t *testing.T) {
 	json.Unmarshal([]byte(out), &closed)
 	if closed[0]["status"] != "closed" {
 		t.Errorf("Expected status 'closed', got: %v", closed[0]["status"])
+	}
+	if closed[0]["close_reason"] != "Done" {
+		t.Errorf("Expected close_reason 'Done', got: %v", closed[0]["close_reason"])
 	}
 }
 

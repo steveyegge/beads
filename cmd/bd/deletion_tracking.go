@@ -5,11 +5,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/merge"
 	"github.com/steveyegge/beads/internal/storage"
 )
+
+// isIssueNotFoundError checks if the error indicates the issue doesn't exist in the database.
+//
+// During 3-way merge, we try to delete issues that were removed remotely. However, the issue
+// may already be gone from the local database due to:
+//   - Already tombstoned by a previous sync/import
+//   - Never existed locally (multi-repo scenarios, partial clones)
+//   - Deleted by user between export and import phases
+//
+// In all these cases, "issue not found" is success from the merge's perspective - the goal
+// is to ensure the issue is deleted, and it already is. We only fail on actual database errors.
+func isIssueNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "issue not found:")
+}
 
 // getVersion returns the current bd version
 func getVersion() string {
@@ -74,11 +92,26 @@ func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, json
 		return false, fmt.Errorf("failed to compute accepted deletions: %w", err)
 	}
 
-	// Prune accepted deletions from the database
-	// Collect all deletion errors - fail the operation if any delete fails
+	// Prune accepted deletions from the database.
+	//
+	// "Accepted deletions" are issues that:
+	//   1. Existed in the base snapshot (last successful import)
+	//   2. Were NOT modified locally (still in left snapshot, unchanged)
+	//   3. Are NOT in the merged result (deleted remotely)
+	//
+	// We tolerate "issue not found" errors because the issue may already be gone:
+	//   - Tombstoned by auto-import's git-history-backfill
+	//   - Deleted manually by the user
+	//   - Never existed in this clone (multi-repo, partial history)
+	// The goal is ensuring deletion, so already-deleted is success.
 	var deletionErrors []error
+	var alreadyGone int
 	for _, id := range acceptedDeletions {
 		if err := store.DeleteIssue(ctx, id); err != nil {
+			if isIssueNotFoundError(err) {
+				alreadyGone++
+				continue
+			}
 			deletionErrors = append(deletionErrors, fmt.Errorf("issue %s: %w", id, err))
 		}
 	}
@@ -89,26 +122,18 @@ func merge3WayAndPruneDeletions(ctx context.Context, store storage.Storage, json
 
 	// Print stats if deletions were found
 	stats := sm.GetStats()
-	if stats.DeletionsFound > 0 {
-		fmt.Fprintf(os.Stderr, "3-way merge: pruned %d deleted issue(s) from database (base: %d, left: %d, merged: %d)\n",
-			stats.DeletionsFound, stats.BaseCount, stats.LeftCount, stats.MergedCount)
+	actuallyDeleted := len(acceptedDeletions) - alreadyGone
+	if stats.DeletionsFound > 0 || alreadyGone > 0 {
+		if alreadyGone > 0 {
+			fmt.Fprintf(os.Stderr, "3-way merge: pruned %d deleted issue(s) from database, %d already gone (base: %d, left: %d, merged: %d)\n",
+				actuallyDeleted, alreadyGone, stats.BaseCount, stats.LeftCount, stats.MergedCount)
+		} else {
+			fmt.Fprintf(os.Stderr, "3-way merge: pruned %d deleted issue(s) from database (base: %d, left: %d, merged: %d)\n",
+				actuallyDeleted, stats.BaseCount, stats.LeftCount, stats.MergedCount)
+		}
 	}
 
 	return true, nil
-}
-
-// cleanupSnapshots removes the snapshot files and their metadata
-// Deprecated: Use SnapshotManager.Cleanup() instead
-func cleanupSnapshots(jsonlPath string) error {
-	sm := NewSnapshotManager(jsonlPath)
-	return sm.Cleanup()
-}
-
-// validateSnapshotConsistency checks if snapshot files are consistent
-// Deprecated: Use SnapshotManager.Validate() instead
-func validateSnapshotConsistency(jsonlPath string) error {
-	sm := NewSnapshotManager(jsonlPath)
-	return sm.Validate()
 }
 
 // getSnapshotStats returns statistics about the snapshot files

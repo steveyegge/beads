@@ -21,10 +21,10 @@ const (
 func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	// Validate dependency type
 	if !dep.Type.IsValid() {
-		return fmt.Errorf("invalid dependency type: %s (must be blocks, related, parent-child, or discovered-from)", dep.Type)
+		return fmt.Errorf("invalid dependency type: %q (must be non-empty string, max 50 chars)", dep.Type)
 	}
 
-	// Validate that both issues exist
+	// Validate that source issue exists
 	issueExists, err := s.GetIssue(ctx, dep.IssueID)
 	if err != nil {
 		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
@@ -33,31 +33,38 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("issue %s not found", dep.IssueID)
 	}
 
-	dependsOnExists, err := s.GetIssue(ctx, dep.DependsOnID)
-	if err != nil {
-		return fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
-	}
-	if dependsOnExists == nil {
-		return fmt.Errorf("dependency target %s not found", dep.DependsOnID)
-	}
+	// External refs (external:<project>:<capability>) don't need target validation (bd-zmmy)
+	// They are resolved lazily at query time by CheckExternalDep
+	isExternalRef := strings.HasPrefix(dep.DependsOnID, "external:")
 
-	// Prevent self-dependency
-	if dep.IssueID == dep.DependsOnID {
-		return fmt.Errorf("issue cannot depend on itself")
-	}
+	var dependsOnExists *types.Issue
+	if !isExternalRef {
+		dependsOnExists, err = s.GetIssue(ctx, dep.DependsOnID)
+		if err != nil {
+			return fmt.Errorf("failed to check dependency %s: %w", dep.DependsOnID, err)
+		}
+		if dependsOnExists == nil {
+			return fmt.Errorf("dependency target %s not found", dep.DependsOnID)
+		}
 
-	// Validate parent-child dependency direction
-	// In parent-child relationships: child depends on parent (child is part of parent)
-	// Parent should NOT depend on child (semantically backwards)
-	// Consistent with dependency semantics: IssueID depends on DependsOnID
-	if dep.Type == types.DepParentChild {
-		// issueExists is the dependent (the one that depends on something)
-		// dependsOnExists is what it depends on
-		// Correct: Task (child) depends on Epic (parent) - child belongs to parent
-		// Incorrect: Epic (parent) depends on Task (child) - backwards
-		if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
-			return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
-				dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
+		// Prevent self-dependency (only for local deps)
+		if dep.IssueID == dep.DependsOnID {
+			return fmt.Errorf("issue cannot depend on itself")
+		}
+
+		// Validate parent-child dependency direction (only for local deps)
+		// In parent-child relationships: child depends on parent (child is part of parent)
+		// Parent should NOT depend on child (semantically backwards)
+		// Consistent with dependency semantics: IssueID depends on DependsOnID
+		if dep.Type == types.DepParentChild {
+			// issueExists is the dependent (the one that depends on something)
+			// dependsOnExists is what it depends on
+			// Correct: Task (child) depends on Epic (parent) - child belongs to parent
+			// Incorrect: Epic (parent) depends on Task (child) - backwards
+			if issueExists.IssueType == types.TypeEpic && dependsOnExists.IssueType != types.TypeEpic {
+				return fmt.Errorf("invalid parent-child dependency: parent (%s) cannot depend on child (%s). Use: bd dep add %s %s --type parent-child",
+					dep.IssueID, dep.DependsOnID, dep.DependsOnID, dep.IssueID)
+			}
 		}
 	}
 
@@ -70,66 +77,74 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		// Cycle Detection and Prevention
-	//
-	// We prevent cycles across ALL dependency types (blocks, related, parent-child, discovered-from)
-	// to maintain a directed acyclic graph (DAG). This is critical for:
-	//
-	// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
-	//    appear blocked when they're actually part of a circular dependency.
-	//
-	// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
-	//    DAG structure. Cycles would require special handling and could cause confusion.
-	//
-	// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
-	//    on B and B depends on A (directly or through other issues), which should be done first?
-	//
-	// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
-	// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
-	// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
-	// are just as problematic as single-type cycles.
-	//
-	// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
-	// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
-	var cycleExists bool
-	err = tx.QueryRowContext(ctx, `
-		WITH RECURSIVE paths AS (
-			SELECT
-				issue_id,
-				depends_on_id,
-				1 as depth
-			FROM dependencies
-			WHERE issue_id = ?
+		//
+		// We prevent cycles across most dependency types to maintain a directed acyclic graph (DAG).
+		// This is critical for:
+		//
+		// 1. Ready Work Calculation: Cycles can hide issues from the ready list by making them
+		//    appear blocked when they're actually part of a circular dependency.
+		//
+		// 2. Dependency Traversal: Operations like dep tree and blocking propagation rely on
+		//    DAG structure. Cycles would require special handling and could cause confusion.
+		//
+		// 3. Semantic Clarity: Circular dependencies are conceptually problematic - if A depends
+		//    on B and B depends on A (directly or through other issues), which should be done first?
+		//
+		// EXCEPTION: relates-to links are inherently bidirectional ("see also" relationships).
+		// When A relates-to B, we also create B relates-to A. This is not a cycle in the
+		// problematic sense - it's a symmetric relationship that doesn't affect work ordering.
+		//
+		// Implementation: We use a recursive CTE to traverse from DependsOnID to see if we can
+		// reach IssueID. If yes, adding "IssueID depends on DependsOnID" would complete a cycle.
+		// We check ALL dependency types because cross-type cycles (e.g., A blocks B, B parent-child A)
+		// are just as problematic as single-type cycles.
+		//
+		// The traversal is depth-limited to maxDependencyDepth (100) to prevent infinite loops
+		// and excessive query cost. We check before inserting to avoid unnecessary write on failure.
 
-			UNION ALL
+		// Skip cycle detection for relates-to (inherently bidirectional)
+		if dep.Type != types.DepRelatesTo {
+			var cycleExists bool
+			err = tx.QueryRowContext(ctx, `
+				WITH RECURSIVE paths AS (
+					SELECT
+						issue_id,
+						depends_on_id,
+						1 as depth
+					FROM dependencies
+					WHERE issue_id = ?
 
-			SELECT
-				d.issue_id,
-				d.depends_on_id,
-				p.depth + 1
-			FROM dependencies d
-			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
-		)
-		SELECT EXISTS(
-			SELECT 1 FROM paths
-			WHERE depends_on_id = ?
-		)
-	`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
+					UNION ALL
 
-	if err != nil {
-		return fmt.Errorf("failed to check for cycles: %w", err)
-	}
+					SELECT
+						d.issue_id,
+						d.depends_on_id,
+						p.depth + 1
+					FROM dependencies d
+					JOIN paths p ON d.issue_id = p.depends_on_id
+					WHERE p.depth < ?
+				)
+				SELECT EXISTS(
+					SELECT 1 FROM paths
+					WHERE depends_on_id = ?
+				)
+			`, dep.DependsOnID, maxDependencyDepth, dep.IssueID).Scan(&cycleExists)
 
-	if cycleExists {
-		return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
-			dep.IssueID, dep.DependsOnID, dep.IssueID)
-	}
+			if err != nil {
+				return fmt.Errorf("failed to check for cycles: %w", err)
+			}
 
-	// Insert dependency
+			if cycleExists {
+				return fmt.Errorf("cannot add dependency: would create a cycle (%s → %s → ... → %s)",
+					dep.IssueID, dep.DependsOnID, dep.IssueID)
+			}
+		}
+
+	// Insert dependency (including metadata and thread_id for edge consolidation - Decision 004)
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
-		VALUES (?, ?, ?, ?, ?)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy)
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, dep.Metadata, dep.ThreadID)
 	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
@@ -144,15 +159,19 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
-		// Mark both issues as dirty for incremental export
-		// (dependencies are exported with each issue, so both need updating)
-		if err := markIssuesDirtyTx(ctx, tx, []string{dep.IssueID, dep.DependsOnID}); err != nil {
+		// Mark issues as dirty for incremental export
+		// For external refs, only mark the source issue (target doesn't exist locally)
+		issueIDsToMark := []string{dep.IssueID}
+		if !isExternalRef {
+			issueIDsToMark = append(issueIDsToMark, dep.DependsOnID)
+		}
+		if err := markIssuesDirtyTx(ctx, tx, issueIDsToMark); err != nil {
 			return wrapDBError("mark issues dirty after adding dependency", err)
 		}
 
 		// Invalidate blocked issues cache since dependencies changed (bd-5qim)
-		// Only invalidate for 'blocks' and 'parent-child' types since they affect blocking
-		if dep.Type == types.DepBlocks || dep.Type == types.DepParentChild {
+		// Only invalidate for types that affect ready work calculation
+		if dep.Type.AffectsReadyWork() {
 			if err := s.invalidateBlockedCache(ctx, tx); err != nil {
 				return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 			}
@@ -174,7 +193,7 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 		// Store whether cache needs invalidation before deletion
 		needsCacheInvalidation := false
 		if err == nil {
-			needsCacheInvalidation = (depType == types.DepBlocks || depType == types.DepParentChild)
+			needsCacheInvalidation = depType.AffectsReadyWork()
 		}
 
 		result, err := tx.ExecContext(ctx, `
@@ -202,8 +221,13 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 			return fmt.Errorf("failed to record event: %w", err)
 		}
 
-		// Mark both issues as dirty for incremental export
-		if err := markIssuesDirtyTx(ctx, tx, []string{issueID, dependsOnID}); err != nil {
+		// Mark issues as dirty for incremental export
+		// For external refs, only mark the source issue (target doesn't exist locally)
+		issueIDsToMark := []string{issueID}
+		if !strings.HasPrefix(dependsOnID, "external:") {
+			issueIDsToMark = append(issueIDsToMark, dependsOnID)
+		}
+		if err := markIssuesDirtyTx(ctx, tx, issueIDsToMark); err != nil {
 			return wrapDBError("mark issues dirty after removing dependency", err)
 		}
 
@@ -223,8 +247,10 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
+		       i.sender, i.ephemeral, i.pinned, i.is_template,
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
@@ -244,8 +270,10 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
+		       i.sender, i.ephemeral, i.pinned, i.is_template,
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
@@ -367,7 +395,8 @@ func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []stri
 // GetDependencyRecords returns raw dependency records for an issue
 func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by
+		SELECT issue_id, depends_on_id, type, created_at, created_by,
+		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
 		FROM dependencies
 		WHERE issue_id = ?
 		ORDER BY created_at ASC
@@ -386,6 +415,8 @@ func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string
 			&dep.Type,
 			&dep.CreatedAt,
 			&dep.CreatedBy,
+			&dep.Metadata,
+			&dep.ThreadID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan dependency: %w", err)
@@ -400,7 +431,8 @@ func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string
 // This is optimized for bulk export operations to avoid N+1 queries
 func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT issue_id, depends_on_id, type, created_at, created_by
+		SELECT issue_id, depends_on_id, type, created_at, created_by,
+		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
 		FROM dependencies
 		ORDER BY issue_id, created_at ASC
 	`)
@@ -419,6 +451,8 @@ func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 			&dep.Type,
 			&dep.CreatedAt,
 			&dep.CreatedBy,
+			&dep.Metadata,
+			&dep.ThreadID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan dependency: %w", err)
@@ -450,7 +484,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 				SELECT
 				i.id, i.title, i.status, i.priority, i.description, i.design,
 				i.acceptance_criteria, i.notes, i.issue_type, i.assignee,
-				i.estimated_minutes, i.created_at, i.updated_at, i.closed_at,
+				i.estimated_minutes, i.created_at, i.created_by, i.updated_at, i.closed_at,
 				i.external_ref,
 				0 as depth,
 				i.id as path,
@@ -463,7 +497,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 				SELECT
 				i.id, i.title, i.status, i.priority, i.description, i.design,
 				i.acceptance_criteria, i.notes, i.issue_type, i.assignee,
-				i.estimated_minutes, i.created_at, i.updated_at, i.closed_at,
+				i.estimated_minutes, i.created_at, i.created_by, i.updated_at, i.closed_at,
 				i.external_ref,
 				t.depth + 1,
 				t.path || '→' || i.id,
@@ -491,7 +525,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 				SELECT
 				i.id, i.title, i.status, i.priority, i.description, i.design,
 				i.acceptance_criteria, i.notes, i.issue_type, i.assignee,
-				i.estimated_minutes, i.created_at, i.updated_at, i.closed_at,
+				i.estimated_minutes, i.created_at, i.created_by, i.updated_at, i.closed_at,
 				i.external_ref,
 				0 as depth,
 				i.id as path,
@@ -504,7 +538,7 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 				SELECT
 				i.id, i.title, i.status, i.priority, i.description, i.design,
 				i.acceptance_criteria, i.notes, i.issue_type, i.assignee,
-				i.estimated_minutes, i.created_at, i.updated_at, i.closed_at,
+				i.estimated_minutes, i.created_at, i.created_by, i.updated_at, i.closed_at,
 				i.external_ref,
 				t.depth + 1,
 				t.path || '→' || i.id,
@@ -593,13 +627,104 @@ func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, m
 		nodes = append(nodes, &node)
 	}
 
+	// Fetch external dependencies for all issues in the tree (bd-vks2)
+	// External deps like "external:project:capability" don't exist in the issues
+	// table, so the recursive CTE above doesn't find them. We add them as
+	// synthetic leaf nodes here.
+	if len(nodes) > 0 && !reverse {
+		// Collect all issue IDs in the tree
+		issueIDs := make([]string, len(nodes))
+		depthByID := make(map[string]int)
+		for i, n := range nodes {
+			issueIDs[i] = n.ID
+			depthByID[n.ID] = n.Depth
+		}
+
+		// Query for external dependencies
+		externalDeps, err := s.getExternalDepsForIssues(ctx, issueIDs)
+		if err != nil {
+			// Non-fatal: just skip external deps if query fails
+			_ = err
+		} else {
+			// Create synthetic TreeNode for each external dep
+			for parentID, extRefs := range externalDeps {
+				parentDepth, ok := depthByID[parentID]
+				if !ok {
+					continue
+				}
+				// Skip if we've exceeded maxDepth
+				if parentDepth >= maxDepth {
+					continue
+				}
+
+				for _, ref := range extRefs {
+					// Parse external ref for display
+					_, capability := parseExternalRefParts(ref)
+					if capability == "" {
+						capability = ref // fallback to full ref
+					}
+
+					// Check resolution status
+					status := CheckExternalDep(ctx, ref)
+					var nodeStatus types.Status
+					var title string
+					if status.Satisfied {
+						nodeStatus = types.StatusClosed
+						title = fmt.Sprintf("✓ %s", capability)
+					} else {
+						nodeStatus = types.StatusBlocked
+						title = fmt.Sprintf("⏳ %s", capability)
+					}
+
+					extNode := &types.TreeNode{
+						Issue: types.Issue{
+							ID:        ref,
+							Title:     title,
+							Status:    nodeStatus,
+							Priority:  0, // External deps don't have priority
+							IssueType: types.TypeTask,
+						},
+						Depth:    parentDepth + 1,
+						ParentID: parentID,
+					}
+
+					// Apply deduplication if needed
+					if !showAllPaths {
+						if _, exists := seen[ref]; exists {
+							continue
+						}
+						seen[ref] = extNode.Depth
+					}
+
+					nodes = append(nodes, extNode)
+				}
+			}
+		}
+	}
+
 	return nodes, nil
 }
 
+// parseExternalRefParts parses "external:project:capability" and returns (project, capability).
+// Returns empty strings if the format is invalid.
+func parseExternalRefParts(ref string) (project, capability string) {
+	if !strings.HasPrefix(ref, "external:") {
+		return "", ""
+	}
+	parts := strings.SplitN(ref, ":", 3)
+	if len(parts) != 3 {
+		return "", ""
+	}
+	return parts[1], parts[2]
+}
+
 // DetectCycles finds circular dependencies and returns the actual cycle paths
+// Note: relates-to dependencies are excluded because they are intentionally bidirectional
+// ("see also" relationships) and do not represent problematic cycles.
 func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, error) {
 	// Use recursive CTE to find cycles with full paths
 	// We track the path as a string to work around SQLite's lack of arrays
+	// Exclude relates-to dependencies since they are inherently bidirectional
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE paths AS (
 			SELECT
@@ -609,6 +734,7 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 				issue_id || '→' || depends_on_id as path,
 				0 as depth
 			FROM dependencies
+			WHERE type != 'relates-to'
 
 			UNION ALL
 
@@ -620,7 +746,8 @@ func (s *SQLiteStorage) DetectCycles(ctx context.Context) ([][]*types.Issue, err
 			p.depth + 1
 			FROM dependencies d
 			JOIN paths p ON d.issue_id = p.depends_on_id
-			WHERE p.depth < ?
+			WHERE d.type != 'relates-to'
+			AND p.depth < ?
 			AND (d.depends_on_id = p.start_id OR p.path NOT LIKE '%' || d.depends_on_id || '→%')
 		)
 		SELECT DISTINCT path as cycle_path
@@ -695,13 +822,27 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
+		// Messaging fields (bd-kwro)
+		var sender sql.NullString
+		var wisp sql.NullInt64
+		// Pinned field (bd-7h5)
+		var pinned sql.NullInt64
+		// Template field (beads-1ra)
+		var isTemplate sql.NullInt64
+		// Gate fields (bd-udsi)
+		var awaitType sql.NullString
+		var awaitID sql.NullString
+		var timeoutNs sql.NullInt64
+		var waiters sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
+			&sender, &wisp, &pinned, &isTemplate,
+			&awaitType, &awaitID, &timeoutNs, &waiters,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -739,6 +880,34 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if originalType.Valid {
 			issue.OriginalType = originalType.String
 		}
+		// Messaging fields (bd-kwro)
+		if sender.Valid {
+			issue.Sender = sender.String
+		}
+		if wisp.Valid && wisp.Int64 != 0 {
+			issue.Ephemeral = true
+		}
+		// Pinned field (bd-7h5)
+		if pinned.Valid && pinned.Int64 != 0 {
+			issue.Pinned = true
+		}
+		// Template field (beads-1ra)
+		if isTemplate.Valid && isTemplate.Int64 != 0 {
+			issue.IsTemplate = true
+		}
+		// Gate fields (bd-udsi)
+		if awaitType.Valid {
+			issue.AwaitType = awaitType.String
+		}
+		if awaitID.Valid {
+			issue.AwaitID = awaitID.String
+		}
+		if timeoutNs.Valid {
+			issue.Timeout = time.Duration(timeoutNs.Int64)
+		}
+		if waiters.Valid && waiters.String != "" {
+			issue.Waiters = parseJSONStringArray(waiters.String)
+		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
@@ -775,14 +944,28 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var deletedBy sql.NullString
 		var deleteReason sql.NullString
 		var originalType sql.NullString
+		// Messaging fields (bd-kwro)
+		var sender sql.NullString
+		var wisp sql.NullInt64
+		// Pinned field (bd-7h5)
+		var pinned sql.NullInt64
+		// Template field (beads-1ra)
+		var isTemplate sql.NullInt64
+		// Gate fields (bd-udsi)
+		var awaitType sql.NullString
+		var awaitID sql.NullString
+		var timeoutNs sql.NullInt64
+		var waiters sql.NullString
 		var depType types.DependencyType
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
+			&sender, &wisp, &pinned, &isTemplate,
+			&awaitType, &awaitID, &timeoutNs, &waiters,
 			&depType,
 		)
 		if err != nil {
@@ -817,6 +1000,34 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if originalType.Valid {
 			issue.OriginalType = originalType.String
+		}
+		// Messaging fields (bd-kwro)
+		if sender.Valid {
+			issue.Sender = sender.String
+		}
+		if wisp.Valid && wisp.Int64 != 0 {
+			issue.Ephemeral = true
+		}
+		// Pinned field (bd-7h5)
+		if pinned.Valid && pinned.Int64 != 0 {
+			issue.Pinned = true
+		}
+		// Template field (beads-1ra)
+		if isTemplate.Valid && isTemplate.Int64 != 0 {
+			issue.IsTemplate = true
+		}
+		// Gate fields (bd-udsi)
+		if awaitType.Valid {
+			issue.AwaitType = awaitType.String
+		}
+		if awaitID.Valid {
+			issue.AwaitID = awaitID.String
+		}
+		if timeoutNs.Valid {
+			issue.Timeout = time.Duration(timeoutNs.Int64)
+		}
+		if waiters.Valid && waiters.String != "" {
+			issue.Waiters = parseJSONStringArray(waiters.String)
 		}
 
 		// Fetch labels for this issue

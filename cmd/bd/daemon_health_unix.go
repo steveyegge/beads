@@ -1,4 +1,4 @@
-//go:build !windows && !wasm
+//go:build !windows && !wasm && !freebsd
 
 package main
 
@@ -14,8 +14,8 @@ func checkDiskSpace(path string) (uint64, bool) {
 		return 0, false
 	}
 
-	// Calculate available space in bytes, then convert to MB
-	// Bavail is uint64, Bsize is int64; overflow is intentional/safe in this context
+	// Calculate available space in bytes, then convert to MB.
+	// On most unix platforms, Bavail is unsigned but Bsize is signed.
 	availableBytes := stat.Bavail * uint64(stat.Bsize) //nolint:gosec
 	availableMB := availableBytes / (1024 * 1024)
 

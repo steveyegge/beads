@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -226,7 +227,7 @@ func TestDetectHashBasedIDs(t *testing.T) {
 			}
 
 			// Test detection
-			result := detectHashBasedIDs(db, tt.sampleIDs)
+			result := doctor.DetectHashBasedIDs(db, tt.sampleIDs)
 			if result != tt.expected {
 				t.Errorf("detectHashBasedIDs() = %v, want %v", result, tt.expected)
 			}
@@ -245,31 +246,31 @@ func TestCheckIDFormat(t *testing.T) {
 			name:           "hash IDs with letters",
 			issueIDs:       []string{"bd-a3f8e9", "bd-b2c4d6", "bd-xyz123"},
 			createTable:    false,
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 		{
 			name:           "hash IDs all numeric with leading zeros",
 			issueIDs:       []string{"bd-0088", "bd-02a4", "bd-05a1", "bd-0458"},
 			createTable:    false,
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 		{
 			name:           "hash IDs with child_counters table",
 			issueIDs:       []string{"bd-123", "bd-456"},
 			createTable:    true,
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 		{
 			name:           "sequential IDs",
 			issueIDs:       []string{"bd-1", "bd-2", "bd-3", "bd-4"},
 			createTable:    false,
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 		},
 		{
 			name:           "mixed: mostly hash IDs",
 			issueIDs:       []string{"bd-0088", "bd-0134cc5a", "bd-02a4"},
 			createTable:    false,
-			expectedStatus: statusOK, // Variable length = hash IDs
+			expectedStatus: doctor.StatusOK, // Variable length = hash IDs
 		},
 	}
 
@@ -326,19 +327,19 @@ func TestCheckIDFormat(t *testing.T) {
 			db.Close()
 
 			// Run check
-			check := checkIDFormat(tmpDir)
+			check := doctor.CheckIDFormat(tmpDir)
 
 			if check.Status != tt.expectedStatus {
 				t.Errorf("Expected status %s, got %s (message: %s)", tt.expectedStatus, check.Status, check.Message)
 			}
 
-			if tt.expectedStatus == statusOK && check.Status == statusOK {
+			if tt.expectedStatus == doctor.StatusOK && check.Status == doctor.StatusOK {
 				if !strings.Contains(check.Message, "hash-based") {
 					t.Errorf("Expected hash-based message, got: %s", check.Message)
 				}
 			}
 
-			if tt.expectedStatus == statusWarning && check.Status == statusWarning {
+			if tt.expectedStatus == doctor.StatusWarning && check.Status == doctor.StatusWarning {
 				if check.Fix == "" {
 					t.Error("Expected fix message for sequential IDs")
 				}
@@ -350,9 +351,9 @@ func TestCheckIDFormat(t *testing.T) {
 func TestCheckInstallation(t *testing.T) {
 	// Test with missing .beads directory
 	tmpDir := t.TempDir()
-	check := checkInstallation(tmpDir)
+	check := doctor.CheckInstallation(tmpDir)
 
-	if check.Status != statusError {
+	if check.Status != doctor.StatusError {
 		t.Errorf("Expected error status, got %s", check.Status)
 	}
 	if check.Fix == "" {
@@ -365,8 +366,8 @@ func TestCheckInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check = checkInstallation(tmpDir)
-	if check.Status != statusOK {
+	check = doctor.CheckInstallation(tmpDir)
+	if check.Status != doctor.StatusOK {
 		t.Errorf("Expected ok status, got %s", check.Status)
 	}
 }
@@ -392,9 +393,9 @@ func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := checkDatabaseVersion(tmpDir)
+	check := doctor.CheckDatabaseVersion(tmpDir, Version)
 
-	if check.Status != statusOK {
+	if check.Status != doctor.StatusOK {
 		t.Errorf("Expected ok status for JSONL mode, got %s", check.Status)
 	}
 	if check.Message != "JSONL-only mode" {
@@ -420,9 +421,9 @@ func TestCheckDatabaseVersionFreshClone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := checkDatabaseVersion(tmpDir)
+	check := doctor.CheckDatabaseVersion(tmpDir, Version)
 
-	if check.Status != statusWarning {
+	if check.Status != doctor.StatusWarning {
 		t.Errorf("Expected warning status for fresh clone, got %s", check.Status)
 	}
 	if check.Message != "Fresh clone detected (no database)" {
@@ -450,9 +451,9 @@ func TestCompareVersions(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := compareVersions(tc.v1, tc.v2)
+		result := doctor.CompareVersions(tc.v1, tc.v2)
 		if result != tc.expected {
-			t.Errorf("compareVersions(%q, %q) = %d, expected %d", tc.v1, tc.v2, result, tc.expected)
+			t.Errorf("doctor.CompareVersions(%q, %q) = %d, expected %d", tc.v1, tc.v2, result, tc.expected)
 		}
 	}
 }
@@ -467,31 +468,31 @@ func TestCheckMultipleDatabases(t *testing.T) {
 		{
 			name:           "no databases",
 			dbFiles:        []string{},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name:           "single database",
 			dbFiles:        []string{"beads.db"},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name:           "multiple databases",
 			dbFiles:        []string{"beads.db", "old.db"},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
 			name:           "backup files ignored",
 			dbFiles:        []string{"beads.db", "beads.backup.db"},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name:           "vc.db ignored",
 			dbFiles:        []string{"beads.db", "vc.db"},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 	}
@@ -512,7 +513,7 @@ func TestCheckMultipleDatabases(t *testing.T) {
 				}
 			}
 
-			check := checkMultipleDatabases(tmpDir)
+			check := doctor.CheckMultipleDatabases(tmpDir)
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
@@ -532,9 +533,9 @@ func TestCheckPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := checkPermissions(tmpDir)
+	check := doctor.CheckPermissions(tmpDir)
 
-	if check.Status != statusOK {
+	if check.Status != doctor.StatusOK {
 		t.Errorf("Expected ok status for writable directory, got %s: %s", check.Status, check.Message)
 	}
 }
@@ -550,13 +551,13 @@ func TestCheckDatabaseJSONLSync(t *testing.T) {
 			name:           "no database",
 			hasDB:          false,
 			hasJSONL:       true,
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 		{
 			name:           "no JSONL",
 			hasDB:          true,
 			hasJSONL:       false,
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 	}
 
@@ -588,7 +589,7 @@ func TestCheckDatabaseJSONLSync(t *testing.T) {
 				}
 			}
 
-			check := checkDatabaseJSONLSync(tmpDir)
+			check := doctor.CheckDatabaseJSONLSync(tmpDir)
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
@@ -617,7 +618,7 @@ invalid json line here
 		t.Fatal(err)
 	}
 
-	count, prefixes, err := countJSONLIssues(jsonlPath)
+	count, prefixes, err := doctor.CountJSONLIssues(jsonlPath)
 
 	// Should count valid issues (3)
 	if count != 3 {
@@ -649,35 +650,35 @@ func TestCheckGitHooks(t *testing.T) {
 			name:           "not a git repository",
 			hasGitDir:      false,
 			installedHooks: []string{},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name:           "all hooks installed",
 			hasGitDir:      true,
 			installedHooks: []string{"pre-commit", "post-merge", "pre-push"},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name:           "no hooks installed",
 			hasGitDir:      true,
 			installedHooks: []string{},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
 			name:           "some hooks installed",
 			hasGitDir:      true,
 			installedHooks: []string{"pre-commit"},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
 			name:           "partial hooks installed",
 			hasGitDir:      true,
 			installedHooks: []string{"pre-commit", "post-merge"},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 	}
@@ -724,7 +725,7 @@ func TestCheckGitHooks(t *testing.T) {
 				}
 			}
 
-			check := checkGitHooks()
+			check := doctor.CheckGitHooks()
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
@@ -741,93 +742,236 @@ func TestCheckGitHooks(t *testing.T) {
 	}
 }
 
-func TestCheckMetadataVersionTracking(t *testing.T) {
+func TestCheckClaudePlugin(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupMetadata  func(beadsDir string) error
+		claudeCodeEnv  string
+		expectedStatus string
+		expectedMsg    string
+	}{
+		{
+			name:           "not running in claude code",
+			claudeCodeEnv:  "",
+			expectedStatus: doctor.StatusOK,
+			expectedMsg:    "N/A (not running in Claude Code)",
+		},
+		{
+			name:           "not running in claude code (0)",
+			claudeCodeEnv:  "0",
+			expectedStatus: doctor.StatusOK,
+			expectedMsg:    "N/A (not running in Claude Code)",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original env
+			origEnv := os.Getenv("CLAUDECODE")
+			defer func() {
+				if origEnv == "" {
+					os.Unsetenv("CLAUDECODE")
+				} else {
+					os.Setenv("CLAUDECODE", origEnv)
+				}
+			}()
+
+			// Set test env
+			if tc.claudeCodeEnv == "" {
+				os.Unsetenv("CLAUDECODE")
+			} else {
+				os.Setenv("CLAUDECODE", tc.claudeCodeEnv)
+			}
+
+			check := doctor.CheckClaudePlugin()
+
+			if check.Status != tc.expectedStatus {
+				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
+			}
+
+			if check.Message != tc.expectedMsg {
+				t.Errorf("Expected message %q, got %q", tc.expectedMsg, check.Message)
+			}
+		})
+	}
+}
+
+func TestGetClaudePluginVersion(t *testing.T) {
+	tests := []struct {
+		name            string
+		pluginJSON      string
+		expectInstalled bool
+		expectVersion   string
+		expectError     bool
+	}{
+		{
+			name: "plugin installed v1 format",
+			pluginJSON: `{
+				"version": 1,
+				"plugins": {
+					"beads@beads-marketplace": {
+						"version": "0.21.3"
+					}
+				}
+			}`,
+			expectInstalled: true,
+			expectVersion:   "0.21.3",
+			expectError:     false,
+		},
+		{
+			name: "plugin installed v2 format (GH#741)",
+			pluginJSON: `{
+				"version": 2,
+				"plugins": {
+					"beads@beads-marketplace": [
+						{
+							"scope": "user",
+							"installPath": "/path/to/plugin",
+							"version": "1.0.0",
+							"installedAt": "2025-11-25T19:20:27.889Z",
+							"lastUpdated": "2025-11-25T19:20:27.889Z",
+							"gitCommitSha": "abc123",
+							"isLocal": true
+						}
+					]
+				}
+			}`,
+			expectInstalled: true,
+			expectVersion:   "1.0.0",
+			expectError:     false,
+		},
+		{
+			name: "plugin not installed v2 format",
+			pluginJSON: `{
+				"version": 2,
+				"plugins": {
+					"other-plugin@marketplace": [
+						{
+							"scope": "user",
+							"version": "2.0.0"
+						}
+					]
+				}
+			}`,
+			expectInstalled: false,
+			expectVersion:   "",
+			expectError:     false,
+		},
+		{
+			name: "plugin not installed v1 format",
+			pluginJSON: `{
+				"version": 1,
+				"plugins": {
+					"other-plugin@marketplace": {
+						"version": "1.0.0"
+					}
+				}
+			}`,
+			expectInstalled: false,
+			expectVersion:   "",
+			expectError:     false,
+		},
+		{
+			name:            "invalid json",
+			pluginJSON:      `{invalid json`,
+			expectInstalled: false,
+			expectVersion:   "",
+			expectError:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create temp dir with plugin file
+			tmpHome := t.TempDir()
+			pluginDir := filepath.Join(tmpHome, ".claude", "plugins")
+			if err := os.MkdirAll(pluginDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+			pluginPath := filepath.Join(pluginDir, "installed_plugins.json")
+			if err := os.WriteFile(pluginPath, []byte(tc.pluginJSON), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			// Temporarily override home directory
+			origHome := os.Getenv("HOME")
+			os.Setenv("HOME", tmpHome)
+			defer os.Setenv("HOME", origHome)
+
+			version, installed, err := doctor.GetClaudePluginVersion()
+
+			if tc.expectError && err == nil {
+				t.Error("Expected error, got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if installed != tc.expectInstalled {
+				t.Errorf("Expected installed=%v, got %v", tc.expectInstalled, installed)
+			}
+			if version != tc.expectVersion {
+				t.Errorf("Expected version %q, got %q", tc.expectVersion, version)
+			}
+		})
+	}
+}
+
+func TestCheckMetadataVersionTracking(t *testing.T) {
+	// GH#662: Tests updated to use .local_version file instead of metadata.json:LastBdVersion
+	tests := []struct {
+		name           string
+		setupVersion   func(beadsDir string) error
 		expectedStatus string
 		expectWarning  bool
 	}{
 		{
 			name: "valid current version",
-			setupMetadata: func(beadsDir string) error {
-				cfg := map[string]string{
-					"database":        "beads.db",
-					"last_bd_version": Version,
-				}
-				data, _ := json.Marshal(cfg)
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0644)
+			setupVersion: func(beadsDir string) error {
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte(Version+"\n"), 0644)
 			},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name: "slightly outdated version",
-			setupMetadata: func(beadsDir string) error {
-				cfg := map[string]string{
-					"database":        "beads.db",
-					"last_bd_version": "0.24.0",
-				}
-				data, _ := json.Marshal(cfg)
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0644)
+			setupVersion: func(beadsDir string) error {
+				// Use a version that's less than 10 minor versions behind current
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.30.0\n"), 0644)
 			},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
 			name: "very old version",
-			setupMetadata: func(beadsDir string) error {
-				cfg := map[string]string{
-					"database":        "beads.db",
-					"last_bd_version": "0.14.0",
-				}
-				data, _ := json.Marshal(cfg)
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0644)
+			setupVersion: func(beadsDir string) error {
+				// Use a version that's 10+ minor versions behind current (triggers warning)
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.24.0\n"), 0644)
 			},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
-			name: "empty version field",
-			setupMetadata: func(beadsDir string) error {
-				cfg := map[string]string{
-					"database":        "beads.db",
-					"last_bd_version": "",
-				}
-				data, _ := json.Marshal(cfg)
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0644)
+			name: "empty version file",
+			setupVersion: func(beadsDir string) error {
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte(""), 0644)
 			},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
 			name: "invalid version format",
-			setupMetadata: func(beadsDir string) error {
-				cfg := map[string]string{
-					"database":        "beads.db",
-					"last_bd_version": "invalid-version",
-				}
-				data, _ := json.Marshal(cfg)
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), data, 0644)
+			setupVersion: func(beadsDir string) error {
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("invalid-version\n"), 0644)
 			},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 		{
-			name: "corrupted metadata.json",
-			setupMetadata: func(beadsDir string) error {
-				return os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte("{invalid json}"), 0644)
-			},
-			expectedStatus: statusError,
-			expectWarning:  false,
-		},
-		{
-			name: "missing metadata.json",
-			setupMetadata: func(beadsDir string) error {
-				// Don't create metadata.json
+			name: "missing .local_version file",
+			setupVersion: func(beadsDir string) error {
+				// Don't create .local_version
 				return nil
 			},
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
 		},
 	}
@@ -840,18 +984,18 @@ func TestCheckMetadataVersionTracking(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Setup metadata.json
-			if err := tc.setupMetadata(beadsDir); err != nil {
+			// Setup .local_version file
+			if err := tc.setupVersion(beadsDir); err != nil {
 				t.Fatal(err)
 			}
 
-			check := checkMetadataVersionTracking(tmpDir)
+			check := doctor.CheckMetadataVersionTracking(tmpDir, Version)
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s (message: %s)", tc.expectedStatus, check.Status, check.Message)
 			}
 
-			if tc.expectWarning && check.Status == statusWarning && check.Fix == "" {
+			if tc.expectWarning && check.Status == doctor.StatusWarning && check.Fix == "" {
 				t.Error("Expected fix message for warning status")
 			}
 		})
@@ -874,9 +1018,9 @@ func TestIsValidSemver(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := isValidSemver(tc.version)
+		result := doctor.IsValidSemver(tc.version)
 		if result != tc.expected {
-			t.Errorf("isValidSemver(%q) = %v, expected %v", tc.version, result, tc.expected)
+			t.Errorf("doctor.IsValidSemver(%q) = %v, expected %v", tc.version, result, tc.expected)
 		}
 	}
 }
@@ -896,14 +1040,14 @@ func TestParseVersionParts(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := parseVersionParts(tc.version)
+		result := doctor.ParseVersionParts(tc.version)
 		if len(result) != len(tc.expected) {
-			t.Errorf("parseVersionParts(%q) returned %d parts, expected %d", tc.version, len(result), len(tc.expected))
+			t.Errorf("doctor.ParseVersionParts(%q) returned %d parts, expected %d", tc.version, len(result), len(tc.expected))
 			continue
 		}
 		for i := range result {
 			if result[i] != tc.expected[i] {
-				t.Errorf("parseVersionParts(%q)[%d] = %d, expected %d", tc.version, i, result[i], tc.expected[i])
+				t.Errorf("doctor.ParseVersionParts(%q)[%d] = %d, expected %d", tc.version, i, result[i], tc.expected[i])
 			}
 		}
 	}
@@ -921,7 +1065,7 @@ func TestCheckSyncBranchConfig(t *testing.T) {
 			setupFunc: func(t *testing.T, tmpDir string) {
 				// No .beads directory
 			},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
@@ -932,7 +1076,7 @@ func TestCheckSyncBranchConfig(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		{
@@ -954,7 +1098,7 @@ func TestCheckSyncBranchConfig(t *testing.T) {
 				// Set env var (simulates config.yaml or BEADS_SYNC_BRANCH)
 				t.Setenv("BEADS_SYNC_BRANCH", "beads-sync")
 			},
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
 		},
 		// Note: Tests for "not configured" scenarios are difficult because viper
@@ -968,7 +1112,7 @@ func TestCheckSyncBranchConfig(t *testing.T) {
 			tmpDir := t.TempDir()
 			tc.setupFunc(t, tmpDir)
 
-			result := checkSyncBranchConfig(tmpDir)
+			result := doctor.CheckSyncBranchConfig(tmpDir)
 
 			if result.Status != tc.expectedStatus {
 				t.Errorf("Expected status %q, got %q", tc.expectedStatus, result.Status)
@@ -1110,49 +1254,49 @@ func TestCheckSyncBranchHookCompatibility(t *testing.T) {
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      false,
 			hookVersion:    "",
-			expectedStatus: statusOK, // N/A case
+			expectedStatus: doctor.StatusOK, // N/A case
 		},
 		{
 			name:           "sync-branch configured, no pre-push hook",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "",
-			expectedStatus: statusOK, // Covered by other check
+			expectedStatus: doctor.StatusOK, // Covered by other check
 		},
 		{
 			name:           "sync-branch configured, custom hook",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "custom",
-			expectedStatus: statusWarning,
+			expectedStatus: doctor.StatusWarning,
 		},
 		{
 			name:           "sync-branch configured, old hook (0.24.2)",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "0.24.2",
-			expectedStatus: statusError,
+			expectedStatus: doctor.StatusError,
 		},
 		{
 			name:           "sync-branch configured, old hook (0.28.0)",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "0.28.0",
-			expectedStatus: statusError,
+			expectedStatus: doctor.StatusError,
 		},
 		{
 			name:           "sync-branch configured, compatible hook (0.29.0)",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "0.29.0",
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 		{
 			name:           "sync-branch configured, newer hook (0.30.0)",
 			syncBranchEnv:  "beads-sync",
 			hasGitDir:      true,
 			hookVersion:    "0.30.0",
-			expectedStatus: statusOK,
+			expectedStatus: doctor.StatusOK,
 		},
 	}
 
@@ -1188,14 +1332,14 @@ func TestCheckSyncBranchHookCompatibility(t *testing.T) {
 				}
 			}
 
-			check := checkSyncBranchHookCompatibility(tmpDir)
+			check := doctor.CheckSyncBranchHookCompatibility(tmpDir)
 
 			if check.Status != tc.expectedStatus {
 				t.Errorf("Expected status %s, got %s (message: %s)", tc.expectedStatus, check.Status, check.Message)
 			}
 
 			// Error case should have a fix message
-			if tc.expectedStatus == statusError && check.Fix == "" {
+			if tc.expectedStatus == doctor.StatusError && check.Fix == "" {
 				t.Error("Expected fix message for error status")
 			}
 		})
@@ -1254,7 +1398,7 @@ func TestCheckSyncBranchHookQuick(t *testing.T) {
 				}
 			}
 
-			issue := checkSyncBranchHookQuick(tmpDir)
+			issue := doctor.CheckSyncBranchHookQuick(tmpDir)
 
 			if tc.expectIssue && issue == "" {
 				t.Error("Expected issue to be reported, got empty string")

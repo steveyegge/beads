@@ -62,25 +62,15 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	// Initialize worktree manager
 	wtMgr := git.NewWorktreeManager(repoRoot)
 	
-	// Ensure worktree exists
+	// Ensure worktree exists and is healthy
+	// CreateBeadsWorktree now performs a full health check internally and
+	// automatically repairs unhealthy worktrees by removing and recreating them
 	if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
 		return false, fmt.Errorf("failed to create worktree: %w", err)
 	}
 	
-	// Check worktree health and repair if needed
-	if err := wtMgr.CheckWorktreeHealth(worktreePath); err != nil {
-		log.log("Worktree health check failed, attempting repair: %v", err)
-		// Try to recreate worktree
-		if err := wtMgr.RemoveBeadsWorktree(worktreePath); err != nil {
-			log.log("Failed to remove unhealthy worktree: %v", err)
-		}
-		if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
-			return false, fmt.Errorf("failed to recreate worktree after health check: %w", err)
-		}
-	}
-	
 	// Sync JSONL file to worktree
-	// Get the actual JSONL path (could be issues.jsonl, beads.base.jsonl, etc.)
+	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
 		return false, fmt.Errorf("JSONL path not found")
@@ -119,10 +109,12 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		return false, fmt.Errorf("failed to commit in worktree: %w", err)
 	}
 	log.log("Committed changes to sync branch %s", syncBranch)
-	
+
 	// Push if enabled
 	if autoPush {
-		if err := gitPushFromWorktree(ctx, worktreePath, syncBranch); err != nil {
+		// Get configured remote from bd config (sync.remote), default to empty (will use git config)
+		configuredRemote, _ := store.GetConfig(ctx, "sync.remote")
+		if err := gitPushFromWorktree(ctx, worktreePath, syncBranch, configuredRemote); err != nil {
 			return false, fmt.Errorf("failed to push from worktree: %w", err)
 		}
 		log.log("Pushed sync branch %s to remote", syncBranch)
@@ -182,21 +174,52 @@ func gitCommitInWorktree(ctx context.Context, worktreePath, filePath, message st
 	return nil
 }
 
-// gitPushFromWorktree pushes the sync branch from the worktree
-func gitPushFromWorktree(ctx context.Context, worktreePath, branch string) error {
-	// Get remote name (usually "origin")
-	remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) // #nosec G204 - worktreePath and branch are from config
-	remoteOutput, err := remoteCmd.Output()
-	if err != nil {
-		// If no remote configured, default to "origin" and set up tracking
-		remoteOutput = []byte("origin\n")
+// gitPushFromWorktree pushes the sync branch from the worktree.
+// If push fails due to remote having newer commits, it will fetch, rebase, and retry.
+// The configuredRemote parameter allows passing the bd config sync.remote value.
+func gitPushFromWorktree(ctx context.Context, worktreePath, branch, configuredRemote string) error {
+	// Use configured remote if provided, otherwise check git branch config
+	remote := configuredRemote
+	if remote == "" {
+		remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) // #nosec G204 - worktreePath and branch are from config
+		remoteOutput, err := remoteCmd.Output()
+		if err != nil {
+			// If no remote configured, default to "origin" and set up tracking
+			remoteOutput = []byte("origin\n")
+		}
+		remote = strings.TrimSpace(string(remoteOutput))
 	}
-	remote := strings.TrimSpace(string(remoteOutput))
 	
 	// Push with explicit remote and branch, set upstream if not set
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch) // #nosec G204 - worktreePath, remote, and branch are from config
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Check if push failed due to remote having newer commits
+		outputStr := string(output)
+		if strings.Contains(outputStr, "fetch first") || strings.Contains(outputStr, "non-fast-forward") {
+			// Fetch and rebase, then retry push
+			fetchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "fetch", remote, branch) // #nosec G204
+			if fetchOutput, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+				return fmt.Errorf("git fetch failed in worktree: %w\n%s", fetchErr, fetchOutput)
+			}
+			
+			// Rebase local commits on top of remote
+			rebaseCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", remote+"/"+branch) // #nosec G204
+			if rebaseOutput, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
+				// If rebase fails (conflict), abort and return error
+				abortCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rebase", "--abort") // #nosec G204
+				_ = abortCmd.Run()
+				return fmt.Errorf("git rebase failed in worktree (sync branch may have conflicts): %w\n%s", rebaseErr, rebaseOutput)
+			}
+			
+			// Retry push after successful rebase
+			retryCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "push", "--set-upstream", remote, branch) // #nosec G204
+			if retryOutput, retryErr := retryCmd.CombinedOutput(); retryErr != nil {
+				return fmt.Errorf("git push failed after rebase: %w\n%s", retryErr, retryOutput)
+			}
+			
+			return nil
+		}
 		return fmt.Errorf("git push failed from worktree: %w\n%s", err, output)
 	}
 	
@@ -245,14 +268,19 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, fmt.Errorf("failed to create worktree: %w", err)
 	}
 	
-	// Get remote name
-	remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", syncBranch)) // #nosec G204 - worktreePath and syncBranch are from config
-	remoteOutput, err := remoteCmd.Output()
-	if err != nil {
-		// If no remote configured, default to "origin"
-		remoteOutput = []byte("origin\n")
+	// Get remote name - check bd config first, then git branch config, then default to "origin"
+	remote := ""
+	if configuredRemote, err := store.GetConfig(ctx, "sync.remote"); err == nil && configuredRemote != "" {
+		remote = configuredRemote
+	} else {
+		remoteCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "config", "--get", fmt.Sprintf("branch.%s.remote", syncBranch)) // #nosec G204 - worktreePath and syncBranch are from config
+		remoteOutput, err := remoteCmd.Output()
+		if err != nil {
+			// If no remote configured, default to "origin"
+			remoteOutput = []byte("origin\n")
+		}
+		remote = strings.TrimSpace(string(remoteOutput))
 	}
-	remote := strings.TrimSpace(string(remoteOutput))
 	
 	// Pull in worktree
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "pull", remote, syncBranch) // #nosec G204 - worktreePath, remote, and syncBranch are from config

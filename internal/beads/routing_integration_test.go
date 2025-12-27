@@ -30,9 +30,9 @@ func TestRoutingIntegration(t *testing.T) {
 		{
 			name: "maintainer detected by git config",
 			setupGit: func(t *testing.T, dir string) {
-				runCmd(t, dir, "git", "init")
-				runCmd(t, dir, "git", "config", "user.email", "maintainer@example.com")
-				runCmd(t, dir, "git", "config", "beads.role", "maintainer")
+				runGitCmd(t, dir, "git", "init")
+				runGitCmd(t, dir, "git", "config", "user.email", "maintainer@example.com")
+				runGitCmd(t, dir, "git", "config", "beads.role", "maintainer")
 			},
 			expectedRole:       routing.Maintainer,
 			expectedTargetRepo: ".",
@@ -40,9 +40,9 @@ func TestRoutingIntegration(t *testing.T) {
 		{
 			name: "contributor detected by fork remote",
 			setupGit: func(t *testing.T, dir string) {
-				runCmd(t, dir, "git", "init")
-				runCmd(t, dir, "git", "remote", "add", "upstream", "https://github.com/original/repo.git")
-				runCmd(t, dir, "git", "remote", "add", "origin", "https://github.com/forker/repo.git")
+				runGitCmd(t, dir, "git", "init")
+				runGitCmd(t, dir, "git", "remote", "add", "upstream", "https://github.com/original/repo.git")
+				runGitCmd(t, dir, "git", "remote", "add", "origin", "https://github.com/forker/repo.git")
 			},
 			expectedRole:       routing.Contributor,
 			expectedTargetRepo: "", // Will use default from config
@@ -50,8 +50,8 @@ func TestRoutingIntegration(t *testing.T) {
 		{
 			name: "maintainer with SSH remote",
 			setupGit: func(t *testing.T, dir string) {
-				runCmd(t, dir, "git", "init")
-				runCmd(t, dir, "git", "remote", "add", "origin", "git@github.com:owner/repo.git")
+				runGitCmd(t, dir, "git", "init")
+				runGitCmd(t, dir, "git", "remote", "add", "origin", "git@github.com:owner/repo.git")
 			},
 			expectedRole:       routing.Maintainer, // SSH = maintainer
 			expectedTargetRepo: ".",
@@ -103,9 +103,9 @@ func TestRoutingWithExplicitOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Set up as contributor
-	runCmd(t, tmpDir, "git", "init")
-	runCmd(t, tmpDir, "git", "remote", "add", "upstream", "https://github.com/original/repo.git")
-	runCmd(t, tmpDir, "git", "remote", "add", "origin", "https://github.com/forker/repo.git")
+	runGitCmd(t, tmpDir, "git", "init")
+	runGitCmd(t, tmpDir, "git", "remote", "add", "upstream", "https://github.com/original/repo.git")
+	runGitCmd(t, tmpDir, "git", "remote", "add", "origin", "https://github.com/forker/repo.git")
 
 	role, err := routing.DetectUserRole(tmpDir)
 	if err != nil {
@@ -149,8 +149,8 @@ func TestMultiRepoEndToEnd(t *testing.T) {
 	defer store.Close()
 
 	// Set up as maintainer
-	runCmd(t, primaryDir, "git", "init")
-	runCmd(t, primaryDir, "git", "config", "beads.role", "maintainer")
+	runGitCmd(t, primaryDir, "git", "init")
+	runGitCmd(t, primaryDir, "git", "config", "beads.role", "maintainer")
 
 	// Configure multi-repo
 	planningDir := t.TempDir()
@@ -203,7 +203,7 @@ func TestMultiRepoEndToEnd(t *testing.T) {
 }
 
 // Helper to run git commands
-func runCmd(t *testing.T, dir string, name string, args ...string) {
+func runGitCmd(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir

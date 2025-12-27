@@ -61,13 +61,20 @@ func MigrateContentHashColumn(db *sql.DB) error {
 			return fmt.Errorf("error iterating issues: %w", err)
 		}
 
-		tx, err := db.Begin()
+		// Use SAVEPOINT for atomicity (we're already inside an EXCLUSIVE transaction from RunMigrations)
+		// SQLite doesn't support nested transactions but SAVEPOINTs work inside transactions
+		_, err = db.Exec(`SAVEPOINT content_hash_migration`)
 		if err != nil {
-			return fmt.Errorf("failed to begin transaction: %w", err)
+			return fmt.Errorf("failed to create savepoint: %w", err)
 		}
-		defer tx.Rollback()
+		savepointReleased := false
+		defer func() {
+			if !savepointReleased {
+				_, _ = db.Exec(`ROLLBACK TO SAVEPOINT content_hash_migration`)
+			}
+		}()
 
-		stmt, err := tx.Prepare(`UPDATE issues SET content_hash = ? WHERE id = ?`)
+		stmt, err := db.Prepare(`UPDATE issues SET content_hash = ? WHERE id = ?`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare update statement: %w", err)
 		}
@@ -79,9 +86,12 @@ func MigrateContentHashColumn(db *sql.DB) error {
 			}
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit transaction: %w", err)
+		// Release savepoint (commits the changes within the outer transaction)
+		_, err = db.Exec(`RELEASE SAVEPOINT content_hash_migration`)
+		if err != nil {
+			return fmt.Errorf("failed to release savepoint: %w", err)
 		}
+		savepointReleased = true
 
 		return nil
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,10 +90,14 @@ func Initialize() error {
 	// These are bound explicitly for backward compatibility
 	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")
 	_ = v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")
+	_ = v.BindEnv("identity", "BEADS_IDENTITY")
+	_ = v.BindEnv("remote-sync-interval", "BEADS_REMOTE_SYNC_INTERVAL")
 	
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
+	v.SetDefault("identity", "")
+	v.SetDefault("remote-sync-interval", "30s")
 	
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "auto")
@@ -102,6 +107,24 @@ func Initialize() error {
 
 	// Sync configuration defaults (bd-4u8)
 	v.SetDefault("sync.require_confirmation_on_mass_delete", false)
+
+	// Push configuration defaults
+	v.SetDefault("no-push", false)
+
+	// Create command defaults
+	v.SetDefault("create.require-description", false)
+
+	// Git configuration defaults (GH#600)
+	v.SetDefault("git.author", "")        // Override commit author (e.g., "beads-bot <beads@example.com>")
+	v.SetDefault("git.no-gpg-sign", false) // Disable GPG signing for beads commits
+
+	// Directory-aware label scoping (GH#541)
+	// Maps directory patterns to labels for automatic filtering in monorepos
+	v.SetDefault("directory.labels", map[string]string{})
+
+	// External projects for cross-project dependency resolution (bd-h807)
+	// Maps project names to paths for resolving external: blocked_by references
+	v.SetDefault("external_projects", map[string]string{})
 
 	// Read config file if it was found
 	if configFileSet {
@@ -115,6 +138,153 @@ func Initialize() error {
 	}
 
 	return nil
+}
+
+// ConfigSource represents where a configuration value came from
+type ConfigSource string
+
+const (
+	SourceDefault    ConfigSource = "default"
+	SourceConfigFile ConfigSource = "config_file"
+	SourceEnvVar     ConfigSource = "env_var"
+	SourceFlag       ConfigSource = "flag"
+)
+
+// ConfigOverride represents a detected configuration override
+type ConfigOverride struct {
+	Key            string
+	EffectiveValue interface{}
+	OverriddenBy   ConfigSource
+	OriginalSource ConfigSource
+	OriginalValue  interface{}
+}
+
+// GetValueSource returns the source of a configuration value.
+// Priority (highest to lowest): env var > config file > default
+// Note: Flag overrides are handled separately in main.go since viper doesn't know about cobra flags.
+func GetValueSource(key string) ConfigSource {
+	if v == nil {
+		return SourceDefault
+	}
+
+	// Check if value is set from environment variable
+	// Viper's IsSet returns true if the key is set from any source (env, config, or default)
+	// We need to check specifically for env var by looking at the env var directly
+	envKey := "BD_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+	if os.Getenv(envKey) != "" {
+		return SourceEnvVar
+	}
+
+	// Check BEADS_ prefixed env vars for legacy compatibility
+	beadsEnvKey := "BEADS_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+	if os.Getenv(beadsEnvKey) != "" {
+		return SourceEnvVar
+	}
+
+	// Check if value is set in config file (as opposed to being a default)
+	if v.InConfig(key) {
+		return SourceConfigFile
+	}
+
+	return SourceDefault
+}
+
+// CheckOverrides checks for configuration overrides and returns a list of detected overrides.
+// This is useful for informing users when env vars or flags override config file values.
+// flagOverrides is a map of key -> (flagValue, flagWasSet) for flags that were explicitly set.
+func CheckOverrides(flagOverrides map[string]struct{ Value interface{}; WasSet bool }) []ConfigOverride {
+	var overrides []ConfigOverride
+
+	for key, flagInfo := range flagOverrides {
+		if !flagInfo.WasSet {
+			continue
+		}
+
+		source := GetValueSource(key)
+		if source == SourceConfigFile || source == SourceEnvVar {
+			// Flag is overriding a config file or env var value
+			var originalValue interface{}
+			switch v := flagInfo.Value.(type) {
+			case bool:
+				originalValue = GetBool(key)
+			case string:
+				originalValue = GetString(key)
+			case int:
+				originalValue = GetInt(key)
+			default:
+				originalValue = v
+			}
+
+			overrides = append(overrides, ConfigOverride{
+				Key:            key,
+				EffectiveValue: flagInfo.Value,
+				OverriddenBy:   SourceFlag,
+				OriginalSource: source,
+				OriginalValue:  originalValue,
+			})
+		}
+	}
+
+	// Check for env var overriding config file
+	if v != nil {
+		for _, key := range v.AllKeys() {
+			envSource := GetValueSource(key)
+			if envSource == SourceEnvVar && v.InConfig(key) {
+				// Env var is overriding config file value
+				// Get the config file value by temporarily unsetting the env
+				envKey := "BD_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+				envValue := os.Getenv(envKey)
+				if envValue == "" {
+					envKey = "BEADS_" + strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), ".", "_"))
+					envValue = os.Getenv(envKey)
+				}
+
+				// Skip if no env var actually set (shouldn't happen but be safe)
+				if envValue == "" {
+					continue
+				}
+
+				overrides = append(overrides, ConfigOverride{
+					Key:            key,
+					EffectiveValue: v.Get(key),
+					OverriddenBy:   SourceEnvVar,
+					OriginalSource: SourceConfigFile,
+					OriginalValue:  nil, // We can't easily get the config file value separately
+				})
+			}
+		}
+	}
+
+	return overrides
+}
+
+// LogOverride logs a message about a configuration override in verbose mode.
+func LogOverride(override ConfigOverride) {
+	var sourceDesc string
+	switch override.OriginalSource {
+	case SourceConfigFile:
+		sourceDesc = "config file"
+	case SourceEnvVar:
+		sourceDesc = "environment variable"
+	case SourceDefault:
+		sourceDesc = "default"
+	default:
+		sourceDesc = string(override.OriginalSource)
+	}
+
+	var overrideDesc string
+	switch override.OverriddenBy {
+	case SourceFlag:
+		overrideDesc = "command-line flag"
+	case SourceEnvVar:
+		overrideDesc = "environment variable"
+	default:
+		overrideDesc = string(override.OverriddenBy)
+	}
+
+	// Always emit to stderr when verbose mode is enabled (caller guards on verbose)
+	fmt.Fprintf(os.Stderr, "Config: %s overridden by %s (was: %v from %s, now: %v)\n",
+		override.Key, overrideDesc, override.OriginalValue, sourceDesc, override.EffectiveValue)
 }
 
 // GetString retrieves a string configuration value
@@ -183,6 +353,44 @@ func GetStringSlice(key string) []string {
 	return v.GetStringSlice(key)
 }
 
+// GetStringMapString retrieves a map[string]string configuration value
+func GetStringMapString(key string) map[string]string {
+	if v == nil {
+		return map[string]string{}
+	}
+	return v.GetStringMapString(key)
+}
+
+// GetDirectoryLabels returns labels for the current working directory based on config.
+// It checks directory.labels config for matching patterns.
+// Returns nil if no labels are configured for the current directory.
+func GetDirectoryLabels() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+
+	dirLabels := GetStringMapString("directory.labels")
+	if len(dirLabels) == 0 {
+		return nil
+	}
+
+	// Check each configured directory pattern
+	for pattern, label := range dirLabels {
+		// Support both exact match and suffix match
+		// e.g., "packages/maverick" matches "/path/to/repo/packages/maverick"
+		if strings.HasSuffix(cwd, pattern) || strings.HasSuffix(cwd, filepath.Clean(pattern)) {
+			return []string{label}
+		}
+		// Also try as a path prefix (user might be in a subdirectory)
+		if strings.Contains(cwd, "/"+pattern+"/") || strings.Contains(cwd, "/"+pattern) {
+			return []string{label}
+		}
+	}
+
+	return nil
+}
+
 // MultiRepoConfig contains configuration for multi-repo support
 type MultiRepoConfig struct {
 	Primary    string   // Primary repo path (where canonical issues live)
@@ -195,15 +403,87 @@ func GetMultiRepoConfig() *MultiRepoConfig {
 	if v == nil {
 		return nil
 	}
-	
+
 	// Check if repos.primary is set (indicates multi-repo mode)
 	primary := v.GetString("repos.primary")
 	if primary == "" {
 		return nil // Single-repo mode
 	}
-	
+
 	return &MultiRepoConfig{
 		Primary:    primary,
 		Additional: v.GetStringSlice("repos.additional"),
 	}
+}
+
+// GetExternalProjects returns the external_projects configuration.
+// Maps project names to paths for cross-project dependency resolution.
+// Example config.yaml:
+//
+//	external_projects:
+//	  beads: ../beads
+//	  gastown: /absolute/path/to/gastown
+func GetExternalProjects() map[string]string {
+	return GetStringMapString("external_projects")
+}
+
+// ResolveExternalProjectPath resolves a project name to its absolute path.
+// Returns empty string if project not configured or path doesn't exist.
+func ResolveExternalProjectPath(projectName string) string {
+	projects := GetExternalProjects()
+	path, ok := projects[projectName]
+	if !ok {
+		return ""
+	}
+
+	// Expand relative paths from config file location or cwd
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return ""
+		}
+		path = filepath.Join(cwd, path)
+	}
+
+	// Verify path exists
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+
+	return path
+}
+
+// GetIdentity resolves the user's identity for messaging.
+// Priority chain:
+//  1. flagValue (if non-empty, from --identity flag)
+//  2. BEADS_IDENTITY env var / config.yaml identity field (via viper)
+//  3. git config user.name
+//  4. hostname
+//
+// This is used as the sender field in bd mail commands.
+func GetIdentity(flagValue string) string {
+	// 1. Command-line flag takes precedence
+	if flagValue != "" {
+		return flagValue
+	}
+
+	// 2. BEADS_IDENTITY env var or config.yaml identity (viper handles both)
+	if identity := GetString("identity"); identity != "" {
+		return identity
+	}
+
+	// 3. git config user.name
+	cmd := exec.Command("git", "config", "user.name")
+	if output, err := cmd.Output(); err == nil {
+		if gitUser := strings.TrimSpace(string(output)); gitUser != "" {
+			return gitUser
+		}
+	}
+
+	// 4. hostname
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+
+	return "unknown"
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -30,6 +31,27 @@ func validateBatchIssuesWithCustomStatuses(issues []*types.Issue, customStatuses
 		}
 		if issue.UpdatedAt.IsZero() {
 			issue.UpdatedAt = now
+		}
+
+		// Defensive fix for closed_at invariant (GH#523): older versions of bd could
+		// close issues without setting closed_at. Fix by using max(created_at, updated_at) + 1s.
+		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+			maxTime := issue.CreatedAt
+			if issue.UpdatedAt.After(maxTime) {
+				maxTime = issue.UpdatedAt
+			}
+			closedAt := maxTime.Add(time.Second)
+			issue.ClosedAt = &closedAt
+		}
+
+		// Defensive fix for deleted_at invariant: tombstones must have deleted_at
+		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+			maxTime := issue.CreatedAt
+			if issue.UpdatedAt.After(maxTime) {
+				maxTime = issue.UpdatedAt
+			}
+			deletedAt := maxTime.Add(time.Second)
+			issue.DeletedAt = &deletedAt
 		}
 
 		if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
@@ -78,6 +100,81 @@ func bulkRecordEvents(ctx context.Context, conn *sql.Conn, issues []*types.Issue
 // bulkMarkDirty delegates to markDirtyBatch helper
 func bulkMarkDirty(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
 	return markDirtyBatch(ctx, conn, issues)
+}
+
+// updateChildCountersForHierarchicalIDs updates child_counters for all hierarchical IDs in the batch.
+// This is called AFTER issues are inserted so that parents exist for the foreign key constraint.
+// (GH#728 fix)
+func updateChildCountersForHierarchicalIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
+	for _, issue := range issues {
+		if issue.ID == "" {
+			continue // Skip issues that were filtered out (e.g., OrphanSkip)
+		}
+		if parentID, childNum, ok := ParseHierarchicalID(issue.ID); ok {
+			// Only update if parent exists (it should after insert, but check to be safe)
+			var parentCount int
+			if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount); err != nil {
+				return fmt.Errorf("failed to check parent existence for %s: %w", parentID, err)
+			}
+			if parentCount > 0 {
+				if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// checkForExistingIDs verifies that:
+// 1. There are no duplicate IDs within the batch itself
+// 2. None of the issue IDs already exist in the database
+// Returns an error if any conflicts are found, ensuring CreateIssues fails atomically
+// rather than silently skipping duplicates via INSERT OR IGNORE.
+func checkForExistingIDs(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+
+	// Build list of IDs to check and detect duplicates within batch
+	seenIDs := make(map[string]bool)
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue.ID != "" {
+			// Check for duplicates within the batch
+			if seenIDs[issue.ID] {
+				return fmt.Errorf("duplicate issue ID within batch: %s", issue.ID)
+			}
+			seenIDs[issue.ID] = true
+			ids = append(ids, issue.ID)
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// Check for existing IDs in database using a single query with IN clause
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf("SELECT id FROM issues WHERE id IN (%s) LIMIT 1", strings.Join(placeholders, ","))
+	var existingID string
+	err := conn.QueryRowContext(ctx, query, args...).Scan(&existingID)
+	if err == nil {
+		// Found an existing ID
+		return fmt.Errorf("issue ID %s already exists", existingID)
+	}
+	if err != sql.ErrNoRows {
+		// Unexpected error
+		return fmt.Errorf("failed to check for existing IDs: %w", err)
+	}
+
+	return nil
 }
 
 // CreateIssues creates multiple issues atomically in a single transaction.
@@ -188,9 +285,20 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 		return wrapDBError("generate batch IDs", err)
 	}
 
+	// Phase 3.5: Check for conflicts with existing IDs in database
+	if err := checkForExistingIDs(ctx, conn, issues); err != nil {
+		return err
+	}
+
 	// Phase 4: Bulk insert issues
 	if err := bulkInsertIssues(ctx, conn, issues); err != nil {
 		return wrapDBError("bulk insert issues", err)
+	}
+
+	// Phase 4.5: Update child counters for hierarchical IDs (GH#728 fix)
+	// This must happen AFTER insert so parents exist for the foreign key constraint
+	if err := updateChildCountersForHierarchicalIDs(ctx, conn, issues); err != nil {
+		return wrapDBError("update child counters", err)
 	}
 
 	// Phase 5: Record creation events

@@ -61,6 +61,17 @@ func TestMyFeature(t *testing.T) {
 3. **Update docs**: If you changed behavior, update README.md or other docs
 4. **Commit**: Issues auto-sync to `.beads/issues.jsonl` and import after pull
 
+### Commit Message Convention
+
+When committing work for an issue, include the issue ID in parentheses at the end:
+
+```bash
+git commit -m "Fix auth validation bug (bd-abc)"
+git commit -m "Add retry logic for database locks (bd-xyz)"
+```
+
+This enables `bd doctor` to detect **orphaned issues** - work that was committed but the issue wasn't closed. The doctor check cross-references open issues against git history to find these orphans.
+
 ### Git Workflow
 
 **Auto-sync provides batching!** bd automatically:
@@ -88,7 +99,10 @@ The 30-second debounce provides a **transaction window** for batch operations - 
 **MANDATORY WORKFLOW - COMPLETE ALL STEPS:**
 
 1. **File beads issues for any remaining work** that needs follow-up
-2. **Ensure all quality gates pass** (only if code changes were made) - run tests, linters, builds (file P0 issues if broken)
+2. **Ensure all quality gates pass** (only if code changes were made):
+   - Run `make lint` or `golangci-lint run ./...` (if pre-commit installed: `pre-commit run --all-files`)
+   - Run `make test` or `go test ./...`
+   - File P0 issues if quality gates are broken
 3. **Update beads issues** - close finished work, update status
 4. **PUSH TO REMOTE - NON-NEGOTIABLE** - This step is MANDATORY. Execute ALL commands below:
    ```bash
@@ -232,6 +246,20 @@ Without the pre-push hook, you can have database changes committed locally but s
 **Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
 ## Common Development Tasks
+
+### CLI Design Principles
+
+**Minimize cognitive overload.** Every new command, flag, or option adds cognitive burden for users. Before adding anything:
+
+1. **Recovery/fix operations → `bd doctor --fix`**: Don't create separate commands like `bd recover` or `bd repair`. Doctor already detects problems - let `--fix` handle remediation. This keeps all health-related operations in one discoverable place.
+
+2. **Prefer flags on existing commands**: Before creating a new command, ask: "Can this be a flag on an existing command?" Example: `bd list --stale` instead of `bd stale`.
+
+3. **Consolidate related operations**: Related operations should live together. Daemon management uses `bd daemons {list,health,killall}`, not separate top-level commands.
+
+4. **Count the commands**: Run `bd --help` and count. If we're approaching 30+ commands, we have a discoverability problem. Consider subcommand grouping.
+
+5. **New commands need strong justification**: A new command should represent a fundamentally different operation, not just a convenience wrapper.
 
 ### Adding a New Command
 

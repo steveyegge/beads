@@ -50,6 +50,16 @@ func (s *SQLiteStorage) ExportToMultiRepo(ctx context.Context) (map[string]int, 
 		issue.Labels = labels
 	}
 
+	// Filter out wisps - they should never be exported to JSONL (bd-687g)
+	// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
+	filtered := make([]*types.Issue, 0, len(allIssues))
+	for _, issue := range allIssues {
+		if !issue.Ephemeral {
+			filtered = append(filtered, issue)
+		}
+	}
+	allIssues = filtered
+
 	// Group issues by source_repo
 	issuesByRepo := make(map[string][]*types.Issue)
 	for _, issue := range allIssues {

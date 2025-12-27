@@ -2,20 +2,15 @@ package doctor
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
-
-// DoctorCheck represents a single diagnostic check result
-type DoctorCheck struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"` // "ok", "warning", or "error"
-	Message string `json:"message"`
-	Detail  string `json:"detail,omitempty"`
-	Fix     string `json:"fix,omitempty"`
-}
 
 // CheckClaude returns Claude integration verification as a DoctorCheck
 func CheckClaude() DoctorCheck {
@@ -73,7 +68,7 @@ func CheckClaude() DoctorCheck {
 			Fix: "Set up Claude integration:\n" +
 				"  Option 1: Install the beads plugin (recommended)\n" +
 				"    • Provides hooks, slash commands, and MCP tools automatically\n" +
-				"    • See: https://github.com/steveyegge/beads#claude-code-plugin\n" +
+				"    • See: https://github.com/steveyegge/beads/blob/main/docs/PLUGIN.md\n" +
 				"\n" +
 				"  Option 2: CLI-only mode\n" +
 				"    • Run 'bd setup claude' to add SessionStart/PreCompact hooks\n" +
@@ -275,7 +270,7 @@ func CheckBdInPath() DoctorCheck {
 	_, err := exec.LookPath("bd")
 	if err != nil {
 		return DoctorCheck{
-			Name:    "bd in PATH",
+			Name:    "CLI Availability",
 			Status:  "warning",
 			Message: "'bd' command not found in PATH",
 			Detail:  "Claude hooks execute 'bd prime' and won't work without bd in PATH",
@@ -287,20 +282,24 @@ func CheckBdInPath() DoctorCheck {
 	}
 
 	return DoctorCheck{
-		Name:    "bd in PATH",
+		Name:    "CLI Availability",
 		Status:  "ok",
-		Message: "'bd' command available",
+		Message: "'bd' command available in PATH",
 	}
 }
 
 // CheckDocumentationBdPrimeReference checks if AGENTS.md or CLAUDE.md reference 'bd prime'
 // and verifies the command exists. This helps catch version mismatches where docs
 // reference features not available in the installed version.
+// Also supports local-only variants (claude.local.md) that are gitignored.
 func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
 	docFiles := []string{
 		filepath.Join(repoPath, "AGENTS.md"),
 		filepath.Join(repoPath, "CLAUDE.md"),
 		filepath.Join(repoPath, ".claude", "CLAUDE.md"),
+		// Local-only variants (not committed to repo)
+		filepath.Join(repoPath, "claude.local.md"),
+		filepath.Join(repoPath, ".claude", "claude.local.md"),
 	}
 
 	var filesWithBdPrime []string
@@ -318,7 +317,7 @@ func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
 	// If no docs reference bd prime, that's fine - not everyone uses it
 	if len(filesWithBdPrime) == 0 {
 		return DoctorCheck{
-			Name:    "Documentation bd prime",
+			Name:    "Prime Documentation",
 			Status:  "ok",
 			Message: "No bd prime references in documentation",
 		}
@@ -328,7 +327,7 @@ func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
 	cmd := exec.Command("bd", "prime", "--help")
 	if err := cmd.Run(); err != nil {
 		return DoctorCheck{
-			Name:    "Documentation bd prime",
+			Name:    "Prime Documentation",
 			Status:  "warning",
 			Message: "Documentation references 'bd prime' but command not found",
 			Detail:  "Files: " + strings.Join(filesWithBdPrime, ", "),
@@ -340,9 +339,185 @@ func CheckDocumentationBdPrimeReference(repoPath string) DoctorCheck {
 	}
 
 	return DoctorCheck{
-		Name:    "Documentation bd prime",
+		Name:    "Prime Documentation",
 		Status:  "ok",
 		Message: "Documentation references match installed features",
 		Detail:  "Files: " + strings.Join(filesWithBdPrime, ", "),
 	}
+}
+
+// CheckClaudePlugin checks if the beads Claude Code plugin is installed and up to date.
+func CheckClaudePlugin() DoctorCheck {
+	// Check if running in Claude Code
+	if os.Getenv("CLAUDECODE") != "1" {
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusOK,
+			Message: "N/A (not running in Claude Code)",
+		}
+	}
+
+	// Get plugin version from installed_plugins.json
+	pluginVersion, pluginInstalled, err := GetClaudePluginVersion()
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusWarning,
+			Message: "Unable to check plugin version",
+			Detail:  err.Error(),
+		}
+	}
+
+	if !pluginInstalled {
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusWarning,
+			Message: "beads plugin not installed",
+			Fix:     "Install plugin: /plugin install beads@beads-marketplace",
+		}
+	}
+
+	// Query PyPI for latest MCP version
+	latestMCPVersion, err := fetchLatestPyPIVersion("beads-mcp")
+	if err != nil {
+		// Network error - don't fail
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusOK,
+			Message: fmt.Sprintf("version %s (unable to check for updates)", pluginVersion),
+		}
+	}
+
+	// Compare versions
+	if latestMCPVersion == "" || pluginVersion == latestMCPVersion {
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusOK,
+			Message: fmt.Sprintf("version %s (latest)", pluginVersion),
+		}
+	}
+
+	if CompareVersions(latestMCPVersion, pluginVersion) > 0 {
+		return DoctorCheck{
+			Name:    "Claude Plugin",
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("version %s (latest: %s)", pluginVersion, latestMCPVersion),
+			Fix:     "Update plugin: /plugin update beads@beads-marketplace\nRestart Claude Code after update",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Claude Plugin",
+		Status:  StatusOK,
+		Message: fmt.Sprintf("version %s", pluginVersion),
+	}
+}
+
+// GetClaudePluginVersion returns the installed beads Claude plugin version.
+func GetClaudePluginVersion() (version string, installed bool, err error) {
+	// Get user home directory (cross-platform)
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, fmt.Errorf("unable to determine home directory: %w", err)
+	}
+
+	// Path to installed_plugins.json
+	pluginPath := filepath.Join(homeDir, ".claude", "plugins", "installed_plugins.json")
+
+	// Read plugin file
+	data, err := os.ReadFile(pluginPath) // #nosec G304 - path is controlled
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("unable to read plugin file: %w", err)
+	}
+
+	// First, determine the format version
+	var versionCheck struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &versionCheck); err != nil {
+		return "", false, fmt.Errorf("unable to parse plugin file: %w", err)
+	}
+
+	// Handle version 2 format (GH#741): plugins map contains arrays
+	if versionCheck.Version == 2 {
+		var pluginDataV2 struct {
+			Plugins map[string][]struct {
+				Version string `json:"version"`
+				Scope   string `json:"scope"`
+			} `json:"plugins"`
+		}
+		if err := json.Unmarshal(data, &pluginDataV2); err != nil {
+			return "", false, fmt.Errorf("unable to parse plugin file v2: %w", err)
+		}
+
+		// Look for beads plugin - take first entry from the array
+		if entries, ok := pluginDataV2.Plugins["beads@beads-marketplace"]; ok && len(entries) > 0 {
+			return entries[0].Version, true, nil
+		}
+		return "", false, nil
+	}
+
+	// Handle version 1 format (original): plugins map contains structs directly
+	var pluginDataV1 struct {
+		Plugins map[string]struct {
+			Version string `json:"version"`
+		} `json:"plugins"`
+	}
+
+	if err := json.Unmarshal(data, &pluginDataV1); err != nil {
+		return "", false, fmt.Errorf("unable to parse plugin file: %w", err)
+	}
+
+	// Look for beads plugin
+	if plugin, ok := pluginDataV1.Plugins["beads@beads-marketplace"]; ok {
+		return plugin.Version, true, nil
+	}
+
+	return "", false, nil
+}
+
+func fetchLatestPyPIVersion(packageName string) (string, error) {
+	url := fmt.Sprintf("https://pypi.org/pypi/%s/json", packageName)
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Set User-Agent
+	req.Header.Set("User-Agent", "beads-cli-doctor")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("pypi api returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var data struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", err
+	}
+
+	return data.Info.Version, nil
 }

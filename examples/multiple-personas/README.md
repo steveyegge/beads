@@ -27,7 +27,7 @@ cd my-project
 bd init
 
 # Start daemon for auto-sync (optional for teams)
-bd daemon start --auto-commit --auto-push
+bd daemon --start --auto-commit --auto-push
 ```
 
 ## Persona: Architect
@@ -662,4 +662,4 @@ bd dep add bd-uat1 bd-review1 --type blocks
 - [Multi-Phase Development](../multi-phase-development/) - Organize work by phase
 - [Team Workflow](../team-workflow/) - Collaborate across personas
 - [Contributor Workflow](../contributor-workflow/) - External contributions
-- [Labels Documentation](../../LABELS.md) - Label management guide
+- [Labels Documentation](../../docs/LABELS.md) - Label management guide

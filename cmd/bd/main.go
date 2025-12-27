@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
@@ -18,10 +20,13 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -45,6 +50,7 @@ const (
 	FallbackFlagNoDaemon      = "flag_no_daemon"
 	FallbackConnectFailed     = "connect_failed"
 	FallbackHealthFailed      = "health_failed"
+	FallbackWorktreeSafety    = "worktree_safety"
 	cmdDaemon                 = "daemon"
 	cmdImport                 = "import"
 	statusHealthy             = "healthy"
@@ -69,18 +75,18 @@ var (
 	rootCancel context.CancelFunc
 
 	// Auto-flush state
-	autoFlushEnabled  = true  // Can be disabled with --no-auto-flush
-	isDirty           = false // Tracks if DB has changes needing export (used by legacy code)
-	needsFullExport   = false // Set to true when IDs change (used by legacy code)
+	autoFlushEnabled  = true // Can be disabled with --no-auto-flush
 	flushMutex        sync.Mutex
-	flushTimer        *time.Timer // DEPRECATED: Use flushManager instead
-	storeMutex        sync.Mutex  // Protects store access from background goroutine
-	storeActive       = false     // Tracks if store is available
-	flushFailureCount = 0         // Consecutive flush failures
-	lastFlushError    error       // Last flush error for debugging
+	storeMutex        sync.Mutex // Protects store access from background goroutine
+	storeActive       = false    // Tracks if store is available
+	flushFailureCount = 0        // Consecutive flush failures
+	lastFlushError    error      // Last flush error for debugging
 
-	// Auto-flush manager (replaces timer-based approach to fix bd-52)
+	// Auto-flush manager (event-driven, fixes bd-52 race condition)
 	flushManager *FlushManager
+
+	// Hook runner for extensibility (bd-kwro.8)
+	hookRunner *hooks.Runner
 
 	// skipFinalFlush is set by sync command when sync.branch mode completes successfully.
 	// This prevents PersistentPostRun from re-exporting and dirtying the working directory.
@@ -110,11 +116,23 @@ var (
 	quietFlag      bool // Suppress non-essential output
 )
 
+// Command group IDs for help organization
+const (
+	GroupMaintenance  = "maintenance"
+	GroupIntegrations = "integrations"
+)
+
 func init() {
 	// Initialize viper configuration
 	if err := config.Initialize(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
 	}
+
+	// Add command groups for organized help output
+	rootCmd.AddGroup(
+		&cobra.Group{ID: GroupMaintenance, Title: "Maintenance:"},
+		&cobra.Group{ID: GroupIntegrations, Title: "Integrations & Advanced:"},
+	)
 
 	// Register persistent flags
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
@@ -134,6 +152,148 @@ func init() {
 
 	// Add --version flag to root command (same behavior as version subcommand)
 	rootCmd.Flags().BoolP("version", "V", false, "Print version information")
+
+	// Command groups for organized help output (Tufte-inspired)
+	rootCmd.AddGroup(&cobra.Group{ID: "issues", Title: "Working With Issues:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "views", Title: "Views & Reports:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "deps", Title: "Dependencies & Structure:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "sync", Title: "Sync & Data:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "setup", Title: "Setup & Configuration:"})
+	// NOTE: Many maintenance commands (clean, cleanup, compact, validate, repair-deps)
+	// should eventually be consolidated into 'bd doctor' and 'bd doctor --fix' to simplify
+	// the user experience. The doctor command can detect issues and offer fixes interactively.
+	rootCmd.AddGroup(&cobra.Group{ID: "maint", Title: "Maintenance:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "advanced", Title: "Integrations & Advanced:"})
+
+	// Custom help function with semantic coloring (Tufte-inspired)
+	// Note: Usage output (shown on errors) is not styled to avoid recursion issues
+	rootCmd.SetHelpFunc(colorizedHelpFunc)
+}
+
+// colorizedHelpFunc wraps Cobra's default help with semantic coloring
+// Applies subtle accent color to group headers for visual hierarchy
+func colorizedHelpFunc(cmd *cobra.Command, args []string) {
+	// Build full help output: Long description + Usage
+	var output strings.Builder
+
+	// Include Long description first (like Cobra's default help)
+	if cmd.Long != "" {
+		output.WriteString(cmd.Long)
+		output.WriteString("\n\n")
+	} else if cmd.Short != "" {
+		output.WriteString(cmd.Short)
+		output.WriteString("\n\n")
+	}
+
+	// Add the usage string which contains commands, flags, etc.
+	output.WriteString(cmd.UsageString())
+
+	// Apply semantic coloring
+	result := colorizeHelpOutput(output.String())
+	fmt.Print(result)
+}
+
+// colorizeHelpOutput applies semantic colors to help text
+// - Group headers get accent color for visual hierarchy
+// - Section headers (Examples:, Flags:) get accent color
+// - Command names get subtle styling for scanability
+// - Flag names get bold styling, types get muted
+// - Default values get muted styling
+func colorizeHelpOutput(help string) string {
+	// Match group header lines (e.g., "Working With Issues:")
+	// These are standalone lines ending with ":" and followed by commands
+	groupHeaderRE := regexp.MustCompile(`(?m)^([A-Z][A-Za-z &]+:)\s*$`)
+
+	result := groupHeaderRE.ReplaceAllStringFunc(help, func(match string) string {
+		// Trim whitespace, colorize, then restore
+		trimmed := strings.TrimSpace(match)
+		return ui.RenderAccent(trimmed)
+	})
+
+	// Match section headers in subcommand help (Examples:, Flags:, etc.)
+	sectionHeaderRE := regexp.MustCompile(`(?m)^(Examples|Flags|Usage|Global Flags|Aliases|Available Commands):`)
+	result = sectionHeaderRE.ReplaceAllStringFunc(result, func(match string) string {
+		return ui.RenderAccent(match)
+	})
+
+	// Match command lines: "  command   Description text"
+	// Commands are indented with 2 spaces, followed by spaces, then description
+	// Pattern matches: indent + command-name (with hyphens) + spacing + description
+	cmdLineRE := regexp.MustCompile(`(?m)^(  )([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(\s{2,})(.*)$`)
+
+	result = cmdLineRE.ReplaceAllStringFunc(result, func(match string) string {
+		parts := cmdLineRE.FindStringSubmatch(match)
+		if len(parts) != 5 {
+			return match
+		}
+		indent := parts[1]
+		cmdName := parts[2]
+		spacing := parts[3]
+		description := parts[4]
+
+		// Colorize command references in description (e.g., 'comments add')
+		description = colorizeCommandRefs(description)
+
+		// Highlight entry point hints (e.g., "(start here)")
+		description = highlightEntryPoints(description)
+
+		// Subtle styling on command name for scanability
+		return indent + ui.RenderCommand(cmdName) + spacing + description
+	})
+
+	// Match flag lines: "  -f, --file string   Description"
+	// Pattern: indent + flags + spacing + optional type + description
+	flagLineRE := regexp.MustCompile(`(?m)^(\s+)(-\w,\s+--[\w-]+|--[\w-]+)(\s+)(string|int|duration|bool)?(\s*.*)$`)
+	result = flagLineRE.ReplaceAllStringFunc(result, func(match string) string {
+		parts := flagLineRE.FindStringSubmatch(match)
+		if len(parts) < 6 {
+			return match
+		}
+		indent := parts[1]
+		flags := parts[2]
+		spacing := parts[3]
+		typeStr := parts[4]
+		desc := parts[5]
+
+		// Mute default values in description
+		desc = muteDefaults(desc)
+
+		if typeStr != "" {
+			return indent + ui.RenderCommand(flags) + spacing + ui.RenderMuted(typeStr) + desc
+		}
+		return indent + ui.RenderCommand(flags) + spacing + desc
+	})
+
+	return result
+}
+
+// muteDefaults applies muted styling to default value annotations
+func muteDefaults(text string) string {
+	defaultRE := regexp.MustCompile(`(\(default[^)]*\))`)
+	return defaultRE.ReplaceAllStringFunc(text, func(match string) string {
+		return ui.RenderMuted(match)
+	})
+}
+
+// highlightEntryPoints applies accent styling to entry point hints like "(start here)"
+func highlightEntryPoints(text string) string {
+	entryRE := regexp.MustCompile(`(\(start here\))`)
+	return entryRE.ReplaceAllStringFunc(text, func(match string) string {
+		return ui.RenderAccent(match)
+	})
+}
+
+// colorizeCommandRefs applies command styling to references in text
+// Matches patterns like 'command name' or 'bd command'
+func colorizeCommandRefs(text string) string {
+	// Match 'command words' in single quotes (e.g., 'comments add')
+	cmdRefRE := regexp.MustCompile(`'([a-z][a-z0-9 -]+)'`)
+
+	return cmdRefRE.ReplaceAllStringFunc(text, func(match string) string {
+		// Extract the command name without quotes
+		inner := match[1 : len(match)-1]
+		return "'" + ui.RenderCommand(inner) + "'"
+	})
 }
 
 var rootCmd = &cobra.Command{
@@ -153,6 +313,9 @@ var rootCmd = &cobra.Command{
 		// Set up signal-aware context for graceful cancellation
 		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
+		// Signal Gas Town daemon about bd activity (best-effort, for exponential backoff)
+		defer signalGasTownActivity()
+
 		// Apply verbosity flags early (before any output)
 		debug.SetVerbose(verboseFlag)
 		debug.SetQuiet(quietFlag)
@@ -161,34 +324,96 @@ var rootCmd = &cobra.Command{
 		// Priority: flags > viper (config file + env vars) > defaults
 		// Do this BEFORE early-return so init/version/help respect config
 
+		// Track flag overrides for notification (only in verbose mode)
+		flagOverrides := make(map[string]struct {
+			Value  interface{}
+			WasSet bool
+		})
+
 		// If flag wasn't explicitly set, use viper value
 		if !cmd.Flags().Changed("json") {
 			jsonOutput = config.GetBool("json")
+		} else {
+			flagOverrides["json"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{jsonOutput, true}
 		}
 		if !cmd.Flags().Changed("no-daemon") {
 			noDaemon = config.GetBool("no-daemon")
+		} else {
+			flagOverrides["no-daemon"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noDaemon, true}
 		}
 		if !cmd.Flags().Changed("no-auto-flush") {
 			noAutoFlush = config.GetBool("no-auto-flush")
+		} else {
+			flagOverrides["no-auto-flush"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noAutoFlush, true}
 		}
 		if !cmd.Flags().Changed("no-auto-import") {
 			noAutoImport = config.GetBool("no-auto-import")
+		} else {
+			flagOverrides["no-auto-import"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noAutoImport, true}
 		}
 		if !cmd.Flags().Changed("no-db") {
 			noDb = config.GetBool("no-db")
+		} else {
+			flagOverrides["no-db"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{noDb, true}
 		}
 		if !cmd.Flags().Changed("readonly") {
 			readonlyMode = config.GetBool("readonly")
+		} else {
+			flagOverrides["readonly"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{readonlyMode, true}
 		}
 		if !cmd.Flags().Changed("lock-timeout") {
 			lockTimeout = config.GetDuration("lock-timeout")
+		} else {
+			flagOverrides["lock-timeout"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{lockTimeout, true}
 		}
 		if !cmd.Flags().Changed("db") && dbPath == "" {
 			dbPath = config.GetString("db")
+		} else if cmd.Flags().Changed("db") {
+			flagOverrides["db"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{dbPath, true}
 		}
 		if !cmd.Flags().Changed("actor") && actor == "" {
 			actor = config.GetString("actor")
+		} else if cmd.Flags().Changed("actor") {
+			flagOverrides["actor"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{actor, true}
 		}
+
+		// Check for and log configuration overrides (only in verbose mode)
+		if verboseFlag {
+			overrides := config.CheckOverrides(flagOverrides)
+			for _, override := range overrides {
+				config.LogOverride(override)
+			}
+		}
+
+		// Protect forks from accidentally committing upstream issue database
+		ensureForkProtection()
 
 		// Performance profiling setup
 		// When --profile is enabled, force direct mode to capture actual database operations
@@ -235,6 +460,11 @@ var rootCmd = &cobra.Command{
 			}
 		}
 		if slices.Contains(noDbCommands, cmdName) {
+			return
+		}
+
+		// Skip for root command with no subcommand (just shows help)
+		if cmd.Parent() == nil && cmdName == "bd" {
 			return
 		}
 
@@ -397,10 +627,23 @@ var rootCmd = &cobra.Command{
 			FallbackReason:   FallbackNone,
 		}
 
-		// Try to connect to daemon first (unless --no-daemon flag is set)
+		// Doctor should always run in direct mode. It's specifically used to diagnose and
+		// repair daemon/DB issues, so attempting to connect to (or auto-start) a daemon
+		// can add noise and timeouts.
+		if cmd.Name() == "doctor" {
+			noDaemon = true
+		}
+
+		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
 		if noDaemon {
 			daemonStatus.FallbackReason = FallbackFlagNoDaemon
 			debug.Logf("--no-daemon flag set, using direct mode")
+		} else if shouldDisableDaemonForWorktree() {
+			// In a git worktree without sync-branch configured - daemon is unsafe
+			// because all worktrees share the same .beads directory and the daemon
+			// would commit to whatever branch its working directory has checked out.
+			daemonStatus.FallbackReason = FallbackWorktreeSafety
+			debug.Logf("git worktree detected without sync-branch, using direct mode for safety")
 		} else {
 			// Attempt daemon connection
 			client, err := rpc.TryConnect(socketPath)
@@ -592,6 +835,13 @@ var rootCmd = &cobra.Command{
 			flushManager = NewFlushManager(autoFlushEnabled, getDebounceDuration())
 		}
 
+		// Initialize hook runner (bd-kwro.8)
+		// dbPath is .beads/something.db, so workspace root is parent of .beads
+		if dbPath != "" {
+			beadsDir := filepath.Dir(dbPath)
+			hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+		}
+
 		// Warn if multiple databases detected in directory hierarchy
 		warnMultipleDatabases(dbPath)
 
@@ -612,6 +862,22 @@ var rootCmd = &cobra.Command{
 				autoImportIfNewer()
 			}
 		}
+
+		// Load molecule templates from hierarchical catalog locations (gt-0ei3)
+		// Templates are loaded after auto-import to ensure the database is up-to-date.
+		// Skip for import command to avoid conflicts during import operations.
+		if cmd.Name() != "import" && store != nil {
+			beadsDir := filepath.Dir(dbPath)
+			loader := molecules.NewLoader(store)
+			if result, err := loader.LoadAll(rootCtx, beadsDir); err != nil {
+				debug.Logf("warning: failed to load molecules: %v", err)
+			} else if result.Loaded > 0 {
+				debug.Logf("loaded %d molecules from %v", result.Loaded, result.Sources)
+			}
+		}
+
+		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
+		// after successful command execution, not in PreRun
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Handle --no-db mode: write memory storage back to JSONL
@@ -665,8 +931,14 @@ var rootCmd = &cobra.Command{
 		if store != nil {
 			_ = store.Close()
 		}
-		if profileFile != nil { pprof.StopCPUProfile(); _ = profileFile.Close() }
-		if traceFile != nil { trace.Stop(); _ = traceFile.Close() }
+		if profileFile != nil {
+			pprof.StopCPUProfile()
+			_ = profileFile.Close()
+		}
+		if traceFile != nil {
+			trace.Stop()
+			_ = traceFile.Close()
+		}
 
 		// Cancel the signal context to clean up resources
 		if rootCancel != nil {
@@ -678,6 +950,80 @@ var rootCmd = &cobra.Command{
 // getDebounceDuration returns the auto-flush debounce duration
 // Configurable via config file or BEADS_FLUSH_DEBOUNCE env var (e.g., "500ms", "10s")
 // Defaults to 5 seconds if not set or invalid
+
+// signalGasTownActivity writes an activity signal for Gas Town daemon.
+// This enables exponential backoff based on bd usage detection (gt-ws8ol).
+// Best-effort: silent on any failure, never affects bd operation.
+func signalGasTownActivity() {
+	// Determine town root
+	// Priority: GT_ROOT env > detect from cwd path > skip
+	townRoot := os.Getenv("GT_ROOT")
+	if townRoot == "" {
+		// Try to detect from cwd - if under ~/gt/, use that as town root
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		gtRoot := filepath.Join(home, "gt")
+		cwd, err := os.Getwd()
+		if err != nil {
+			return
+		}
+		if strings.HasPrefix(cwd, gtRoot+string(os.PathSeparator)) {
+			townRoot = gtRoot
+		}
+	}
+
+	if townRoot == "" {
+		return // Not in Gas Town, skip
+	}
+
+	// Ensure daemon directory exists
+	daemonDir := filepath.Join(townRoot, "daemon")
+	if err := os.MkdirAll(daemonDir, 0755); err != nil {
+		return
+	}
+
+	// Build command line from os.Args
+	cmdLine := strings.Join(os.Args, " ")
+
+	// Determine actor (use package-level var if set, else fall back to env)
+	actorName := actor
+	if actorName == "" {
+		if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
+			actorName = bdActor
+		} else if user := os.Getenv("USER"); user != "" {
+			actorName = user
+		} else {
+			actorName = "unknown"
+		}
+	}
+
+	// Build activity signal
+	activity := struct {
+		LastCommand string `json:"last_command"`
+		Actor       string `json:"actor"`
+		Timestamp   string `json:"timestamp"`
+	}{
+		LastCommand: cmdLine,
+		Actor:       actorName,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(activity)
+	if err != nil {
+		return
+	}
+
+	// Write atomically (write to temp, rename)
+	activityPath := filepath.Join(daemonDir, "activity.json")
+	tmpPath := activityPath + ".tmp"
+	// nolint:gosec // G306: 0644 is appropriate for a status file
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmpPath, activityPath)
+}
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {

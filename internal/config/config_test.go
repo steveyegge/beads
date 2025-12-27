@@ -408,3 +408,344 @@ func TestNilViperBehavior(t *testing.T) {
 	// Set should not panic
 	Set("any-key", "any-value") // Should be a no-op
 }
+
+func TestGetIdentity(t *testing.T) {
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test 1: Flag value takes precedence over everything
+	got := GetIdentity("flag-identity")
+	if got != "flag-identity" {
+		t.Errorf("GetIdentity(flag-identity) = %q, want \"flag-identity\"", got)
+	}
+
+	// Test 2: Empty flag falls back to BEADS_IDENTITY env
+	oldEnv := os.Getenv("BEADS_IDENTITY")
+	_ = os.Setenv("BEADS_IDENTITY", "env-identity")
+	defer func() {
+		if oldEnv == "" {
+			_ = os.Unsetenv("BEADS_IDENTITY")
+		} else {
+			_ = os.Setenv("BEADS_IDENTITY", oldEnv)
+		}
+	}()
+
+	// Re-initialize to pick up env var
+	_ = Initialize()
+	got = GetIdentity("")
+	if got != "env-identity" {
+		t.Errorf("GetIdentity(\"\") with BEADS_IDENTITY = %q, want \"env-identity\"", got)
+	}
+
+	// Test 3: Without flag or env, should fall back to git user.name or hostname
+	_ = os.Unsetenv("BEADS_IDENTITY")
+	_ = Initialize()
+	got = GetIdentity("")
+	// We can't predict the exact value (depends on git config and hostname)
+	// but it should not be empty or "unknown" on most systems
+	if got == "" {
+		t.Error("GetIdentity(\"\") without flag or env returned empty string")
+	}
+}
+
+func TestGetExternalProjects(t *testing.T) {
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test default (empty map)
+	got := GetExternalProjects()
+	if got == nil {
+		t.Error("GetExternalProjects() returned nil, want empty map")
+	}
+	if len(got) != 0 {
+		t.Errorf("GetExternalProjects() = %v, want empty map", got)
+	}
+
+	// Test with Set
+	Set("external_projects", map[string]string{
+		"beads":   "../beads",
+		"gastown": "/absolute/path/to/gastown",
+	})
+
+	got = GetExternalProjects()
+	if len(got) != 2 {
+		t.Errorf("GetExternalProjects() has %d items, want 2", len(got))
+	}
+	if got["beads"] != "../beads" {
+		t.Errorf("GetExternalProjects()[beads] = %q, want \"../beads\"", got["beads"])
+	}
+	if got["gastown"] != "/absolute/path/to/gastown" {
+		t.Errorf("GetExternalProjects()[gastown] = %q, want \"/absolute/path/to/gastown\"", got["gastown"])
+	}
+}
+
+func TestGetExternalProjectsFromConfig(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with external_projects
+	configContent := `
+external_projects:
+  beads: ../beads
+  gastown: /path/to/gastown
+  other: ./relative/path
+`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that external_projects is loaded correctly
+	got := GetExternalProjects()
+	if len(got) != 3 {
+		t.Errorf("GetExternalProjects() has %d items, want 3", len(got))
+	}
+	if got["beads"] != "../beads" {
+		t.Errorf("GetExternalProjects()[beads] = %q, want \"../beads\"", got["beads"])
+	}
+	if got["gastown"] != "/path/to/gastown" {
+		t.Errorf("GetExternalProjects()[gastown] = %q, want \"/path/to/gastown\"", got["gastown"])
+	}
+	if got["other"] != "./relative/path" {
+		t.Errorf("GetExternalProjects()[other] = %q, want \"./relative/path\"", got["other"])
+	}
+}
+
+func TestResolveExternalProjectPath(t *testing.T) {
+	// Create a temporary directory structure
+	tmpDir := t.TempDir()
+
+	// Create a project directory to resolve to
+	projectDir := filepath.Join(tmpDir, "beads-project")
+	if err := os.MkdirAll(projectDir, 0750); err != nil {
+		t.Fatalf("failed to create project directory: %v", err)
+	}
+
+	// Create config file
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configContent := `
+external_projects:
+  beads: beads-project
+  missing: nonexistent-path
+  absolute: ` + projectDir + `
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test resolving a relative path that exists
+	got := ResolveExternalProjectPath("beads")
+	if got != projectDir {
+		t.Errorf("ResolveExternalProjectPath(beads) = %q, want %q", got, projectDir)
+	}
+
+	// Test resolving a path that doesn't exist
+	got = ResolveExternalProjectPath("missing")
+	if got != "" {
+		t.Errorf("ResolveExternalProjectPath(missing) = %q, want empty string", got)
+	}
+
+	// Test resolving a project that isn't configured
+	got = ResolveExternalProjectPath("unknown")
+	if got != "" {
+		t.Errorf("ResolveExternalProjectPath(unknown) = %q, want empty string", got)
+	}
+
+	// Test resolving an absolute path
+	got = ResolveExternalProjectPath("absolute")
+	if got != projectDir {
+		t.Errorf("ResolveExternalProjectPath(absolute) = %q, want %q", got, projectDir)
+	}
+}
+
+func TestGetIdentityFromConfig(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with identity
+	configContent := `identity: config-identity`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Clear BEADS_IDENTITY env var
+	oldEnv := os.Getenv("BEADS_IDENTITY")
+	_ = os.Unsetenv("BEADS_IDENTITY")
+	defer func() {
+		if oldEnv != "" {
+			_ = os.Setenv("BEADS_IDENTITY", oldEnv)
+		}
+	}()
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	err := Initialize()
+	if err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that identity from config file is used
+	got := GetIdentity("")
+	if got != "config-identity" {
+		t.Errorf("GetIdentity(\"\") with config file = %q, want \"config-identity\"", got)
+	}
+
+	// Test that flag still takes precedence
+	got = GetIdentity("flag-override")
+	if got != "flag-override" {
+		t.Errorf("GetIdentity(flag-override) = %q, want \"flag-override\"", got)
+	}
+}
+
+func TestGetValueSource(t *testing.T) {
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		key      string
+		setup    func()
+		cleanup  func()
+		expected ConfigSource
+	}{
+		{
+			name:     "default value returns SourceDefault",
+			key:      "json",
+			setup:    func() {},
+			cleanup:  func() {},
+			expected: SourceDefault,
+		},
+		{
+			name: "env var returns SourceEnvVar",
+			key:  "json",
+			setup: func() {
+				os.Setenv("BD_JSON", "true")
+			},
+			cleanup: func() {
+				os.Unsetenv("BD_JSON")
+			},
+			expected: SourceEnvVar,
+		},
+		{
+			name: "BEADS_ prefixed env var returns SourceEnvVar",
+			key:  "identity",
+			setup: func() {
+				os.Setenv("BEADS_IDENTITY", "test-identity")
+			},
+			cleanup: func() {
+				os.Unsetenv("BEADS_IDENTITY")
+			},
+			expected: SourceEnvVar,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reinitialize to clear state
+			if err := Initialize(); err != nil {
+				t.Fatalf("Initialize() returned error: %v", err)
+			}
+
+			tt.setup()
+			defer tt.cleanup()
+
+			got := GetValueSource(tt.key)
+			if got != tt.expected {
+				t.Errorf("GetValueSource(%q) = %v, want %v", tt.key, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCheckOverrides_FlagOverridesEnvVar(t *testing.T) {
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Set an env var
+	os.Setenv("BD_JSON", "true")
+	defer os.Unsetenv("BD_JSON")
+
+	// Simulate flag override
+	flagOverrides := map[string]struct {
+		Value  interface{}
+		WasSet bool
+	}{
+		"json": {Value: false, WasSet: true},
+	}
+
+	overrides := CheckOverrides(flagOverrides)
+
+	// Should detect that flag overrides env var
+	found := false
+	for _, o := range overrides {
+		if o.Key == "json" && o.OverriddenBy == SourceFlag {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Expected to find flag override for 'json' key")
+	}
+}
+
+func TestConfigSourceConstants(t *testing.T) {
+	// Verify source constants have expected string values
+	if SourceDefault != "default" {
+		t.Errorf("SourceDefault = %q, want \"default\"", SourceDefault)
+	}
+	if SourceConfigFile != "config_file" {
+		t.Errorf("SourceConfigFile = %q, want \"config_file\"", SourceConfigFile)
+	}
+	if SourceEnvVar != "env_var" {
+		t.Errorf("SourceEnvVar = %q, want \"env_var\"", SourceEnvVar)
+	}
+	if SourceFlag != "flag" {
+		t.Errorf("SourceFlag = %q, want \"flag\"", SourceFlag)
+	}
+}

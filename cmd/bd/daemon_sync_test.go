@@ -335,11 +335,7 @@ func TestExportUpdatesMetadata(t *testing.T) {
 
 	// Update metadata using the actual daemon helper function (bd-ar2.3 fix)
 	// This verifies that updateExportMetadata (used by createExportFunc and createSyncFunc) works correctly
-	mockLogger := daemonLogger{
-		logFunc: func(format string, args ...interface{}) {
-			t.Logf(format, args...)
-		},
-	}
+	mockLogger := newTestLogger()
 	updateExportMetadata(ctx, store, jsonlPath, mockLogger, "")
 
 	// Verify metadata was set (renamed from last_import_hash to jsonl_content_hash - bd-39o)
@@ -438,11 +434,7 @@ func TestUpdateExportMetadataMultiRepo(t *testing.T) {
 	}
 
 	// Create mock logger
-	mockLogger := daemonLogger{
-		logFunc: func(format string, args ...interface{}) {
-			t.Logf(format, args...)
-		},
-	}
+	mockLogger := newTestLogger()
 
 	// Update metadata for each repo with different keys (bd-ar2.2 multi-repo support)
 	updateExportMetadata(ctx, store, jsonlPath1, mockLogger, jsonlPath1)
@@ -554,11 +546,7 @@ func TestExportWithMultiRepoConfigUpdatesAllMetadata(t *testing.T) {
 
 	// Simulate multi-repo export flow (as in createExportFunc)
 	// This tests the full integration: getMultiRepoJSONLPaths -> getRepoKeyForPath -> updateExportMetadata
-	mockLogger := daemonLogger{
-		logFunc: func(format string, args ...interface{}) {
-			t.Logf(format, args...)
-		},
-	}
+	mockLogger := newTestLogger()
 
 	// Simulate multi-repo mode with stable keys
 	multiRepoPaths := []string{primaryJSONL, additionalJSONL}
@@ -676,11 +664,7 @@ func TestUpdateExportMetadataInvalidKeySuffix(t *testing.T) {
 	}
 
 	// Create mock logger
-	mockLogger := daemonLogger{
-		logFunc: func(format string, args ...interface{}) {
-			t.Logf(format, args...)
-		},
-	}
+	mockLogger := newTestLogger()
 
 	// Update metadata with keySuffix containing ':' (bd-web8: should be auto-sanitized)
 	// This simulates Windows absolute paths like "C:\Users\..."
@@ -708,4 +692,123 @@ func TestUpdateExportMetadataInvalidKeySuffix(t *testing.T) {
 	if unsanitizedHash != "" {
 		t.Errorf("expected unsanitized key %s to NOT be set", unsanitizedKey)
 	}
+}
+
+// TestExportToJSONLWithStore_IncludesTombstones verifies that tombstones are included
+// in JSONL export by the daemon. This is a regression test for the bug where
+// exportToJSONLWithStore used an empty IssueFilter (IncludeTombstones: false),
+// causing deleted issues to not propagate via sync branch to other clones.
+//
+// Bug scenario:
+// 1. User runs `bd delete <issue>` with daemon active
+// 2. Database correctly marks issue as tombstone
+// 3. Main .beads/issues.jsonl correctly shows status:"tombstone"
+// 4. But sync branch worktree JSONL showed status:"open" (bug)
+// 5. Other clones would not see the deletion
+func TestExportToJSONLWithStore_IncludesTombstones(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+
+	// Create storage
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Set issue_prefix to prevent "database not initialized" errors
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Create an open issue
+	openIssue := &types.Issue{
+		ID:        "test-1",
+		Title:     "Open Issue",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, openIssue, "test"); err != nil {
+		t.Fatalf("failed to create open issue: %v", err)
+	}
+
+	// Create a tombstone issue (deleted)
+	tombstoneIssue := &types.Issue{
+		ID:        "test-2",
+		Title:     "Deleted Issue",
+		Status:    types.StatusTombstone,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, tombstoneIssue, "test"); err != nil {
+		t.Fatalf("failed to create tombstone issue: %v", err)
+	}
+
+	// Export to JSONL using daemon's export function
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		t.Fatalf("exportToJSONLWithStore failed: %v", err)
+	}
+
+	// Read and parse the exported JSONL
+	data, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("failed to read JSONL: %v", err)
+	}
+
+	// Parse JSONL (one JSON object per line)
+	lines := splitJSONLLines(data)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 issues in JSONL, got %d", len(lines))
+	}
+
+	// Verify both issues are present (including tombstone)
+	var foundOpen, foundTombstone bool
+	for _, line := range lines {
+		var issue types.Issue
+		if err := json.Unmarshal(line, &issue); err != nil {
+			t.Fatalf("failed to unmarshal issue: %v", err)
+		}
+		if issue.ID == "test-1" && issue.Status == types.StatusOpen {
+			foundOpen = true
+		}
+		if issue.ID == "test-2" && issue.Status == types.StatusTombstone {
+			foundTombstone = true
+		}
+	}
+
+	if !foundOpen {
+		t.Error("expected open issue (test-1) to be in JSONL export")
+	}
+	if !foundTombstone {
+		t.Error("expected tombstone issue (test-2) to be in JSONL export - tombstones must be included for sync propagation")
+	}
+}
+
+// splitJSONLLines splits JSONL content into individual JSON lines
+func splitJSONLLines(data []byte) [][]byte {
+	var lines [][]byte
+	var currentLine []byte
+	for _, b := range data {
+		if b == '\n' {
+			if len(currentLine) > 0 {
+				lines = append(lines, currentLine)
+				currentLine = nil
+			}
+		} else {
+			currentLine = append(currentLine, b)
+		}
+	}
+	if len(currentLine) > 0 {
+		lines = append(lines, currentLine)
+	}
+	return lines
 }

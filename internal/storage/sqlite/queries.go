@@ -11,6 +11,11 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// NOTE: createGraphEdgesFromIssueFields and createGraphEdgesFromUpdates removed
+// per Decision 004 Phase 4 - Edge Schema Consolidation.
+// Graph edges (replies-to, relates-to, duplicates, supersedes) are now managed
+// exclusively through the dependency API. Use AddDependency() instead.
+
 // parseNullableTimeString parses a nullable time string from database TEXT columns.
 // The ncruces/go-sqlite3 driver only auto-converts TEXT→time.Time for columns declared
 // as DATETIME/DATE/TIME/TIMESTAMP. For TEXT columns (like deleted_at), we must parse manually.
@@ -26,6 +31,32 @@ func parseNullableTimeString(ns sql.NullString) *time.Time {
 		}
 	}
 	return nil // Unparseable - shouldn't happen with valid data
+}
+
+// parseJSONStringArray parses a JSON string array from database TEXT column.
+// Returns empty slice if the string is empty or invalid JSON.
+func parseJSONStringArray(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		return nil // Invalid JSON - shouldn't happen with valid data
+	}
+	return result
+}
+
+// formatJSONStringArray formats a string slice as JSON for database storage.
+// Returns empty string if the slice is nil or empty.
+func formatJSONStringArray(arr []string) string {
+	if len(arr) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(arr)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
@@ -50,15 +81,40 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("failed to get custom statuses: %w", err)
 	}
 
+	// Set timestamps first so defensive fixes can use them
+	now := time.Now()
+	if issue.CreatedAt.IsZero() {
+		issue.CreatedAt = now
+	}
+	if issue.UpdatedAt.IsZero() {
+		issue.UpdatedAt = now
+	}
+
+	// Defensive fix for closed_at invariant (GH#523): older versions of bd could
+	// close issues without setting closed_at. Fix by using max(created_at, updated_at) + 1s.
+	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		closedAt := maxTime.Add(time.Second)
+		issue.ClosedAt = &closedAt
+	}
+
+	// Defensive fix for deleted_at invariant: tombstones must have deleted_at
+	if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+		maxTime := issue.CreatedAt
+		if issue.UpdatedAt.After(maxTime) {
+			maxTime = issue.UpdatedAt
+		}
+		deletedAt := maxTime.Add(time.Second)
+		issue.DeletedAt = &deletedAt
+	}
+
 	// Validate issue before creating (with custom status support)
 	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
-
-	// Set timestamps
-	now := time.Now()
-	issue.CreatedAt = now
-	issue.UpdatedAt = now
 
 	// Compute content hash (bd-95)
 	if issue.ContentHash == "" {
@@ -97,14 +153,21 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	}()
 
 	// Get prefix from config (needed for both ID generation and validation)
-	var prefix string
-	err = conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&prefix)
-	if err == sql.ErrNoRows || prefix == "" {
+	var configPrefix string
+	err = conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
+	if err == sql.ErrNoRows || configPrefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing (bd-166)
 		// This prevents duplicate issues with wrong prefix
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
+	}
+
+	// Use IDPrefix override if set, combined with config prefix (bd-hobo)
+	// e.g., configPrefix="bd" + IDPrefix="wisp" → "bd-wisp"
+	prefix := configPrefix
+	if issue.IDPrefix != "" {
+		prefix = configPrefix + "-" + issue.IDPrefix
 	}
 
 	// Generate or validate ID
@@ -122,7 +185,8 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
-		if strings.Contains(issue.ID, ".") {
+		// Use IsHierarchicalID to correctly handle prefixes with dots (GH#508)
+		if isHierarchical, parentID := IsHierarchicalID(issue.ID); isHierarchical {
 			// Try to resurrect entire parent chain if any parents are missing
 			// Use the conn-based version to participate in the same transaction
 			resurrected, err := s.tryResurrectParentChainWithConn(ctx, conn, issue.ID)
@@ -131,9 +195,15 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 			}
 			if !resurrected {
 				// Parent(s) not found in JSONL history - cannot proceed
-				lastDot := strings.LastIndex(issue.ID, ".")
-				parentID := issue.ID[:lastDot]
 				return fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
+			}
+
+			// Update child_counters to prevent future ID collisions (GH#728 fix)
+			// When explicit child IDs are used, the counter must be at least the child number
+			if _, childNum, ok := ParseHierarchicalID(issue.ID); ok {
+				if err := ensureChildCounterUpdatedWithConn(ctx, conn, parentID, childNum); err != nil {
+					return fmt.Errorf("failed to update child counter: %w", err)
+				}
 			}
 		}
 	}
@@ -147,6 +217,9 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	if err := recordCreatedEvent(ctx, conn, issue, actor); err != nil {
 		return wrapDBError("record creation event", err)
 	}
+
+	// NOTE: Graph edges (replies-to, relates-to, duplicates, supersedes) are now
+	// managed via AddDependency() per Decision 004 Phase 4.
 
 	// Mark issue as dirty for incremental export
 	if err := markDirty(ctx, conn, issue.ID); err != nil {
@@ -166,6 +239,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 // GetIssue retrieves an issue by ID
 func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	// Check for external database file modifications (daemon mode)
+	s.checkFreshness()
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	var issue types.Issue
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
@@ -179,24 +260,40 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
+	// Messaging fields (bd-kwro)
+	var sender sql.NullString
+	var wisp sql.NullInt64
+	// Pinned field (bd-7h5)
+	var pinned sql.NullInt64
+	// Template field (beads-1ra)
+	var isTemplate sql.NullInt64
+	// Gate fields (bd-udsi)
+	var awaitType sql.NullString
+	var awaitID sql.NullString
+	var timeoutNs sql.NullInt64
+	var waiters sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref,
+		       created_at, created_by, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, pinned, is_template,
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef,
+		&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
+		&sender, &wisp, &pinned, &isTemplate,
+		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
 
 	if err == sql.ErrNoRows {
@@ -246,6 +343,34 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
+	}
+	// Messaging fields (bd-kwro)
+	if sender.Valid {
+		issue.Sender = sender.String
+	}
+	if wisp.Valid && wisp.Int64 != 0 {
+		issue.Ephemeral = true
+	}
+	// Pinned field (bd-7h5)
+	if pinned.Valid && pinned.Int64 != 0 {
+		issue.Pinned = true
+	}
+	// Template field (beads-1ra)
+	if isTemplate.Valid && isTemplate.Int64 != 0 {
+		issue.IsTemplate = true
+	}
+	// Gate fields (bd-udsi)
+	if awaitType.Valid {
+		issue.AwaitType = awaitType.String
+	}
+	if awaitID.Valid {
+		issue.AwaitID = awaitID.String
+	}
+	if timeoutNs.Valid {
+		issue.Timeout = time.Duration(timeoutNs.Int64)
+	}
+	if waiters.Valid && waiters.String != "" {
+		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
 
 	// Fetch labels for this issue
@@ -350,22 +475,38 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
+	// Messaging fields (bd-kwro)
+	var sender sql.NullString
+	var wisp sql.NullInt64
+	// Pinned field (bd-7h5)
+	var pinned sql.NullInt64
+	// Template field (beads-1ra)
+	var isTemplate sql.NullInt64
+	// Gate fields (bd-udsi)
+	var awaitType sql.NullString
+	var awaitID sql.NullString
+	var timeoutNs sql.NullInt64
+	var waiters sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref,
+		       created_at, created_by, updated_at, closed_at, external_ref,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, pinned, is_template,
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRefCol,
+		&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRefCol,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
+		&sender, &wisp, &pinned, &isTemplate,
+		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
 
 	if err == sql.ErrNoRows {
@@ -416,6 +557,34 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
 	}
+	// Messaging fields (bd-kwro)
+	if sender.Valid {
+		issue.Sender = sender.String
+	}
+	if wisp.Valid && wisp.Int64 != 0 {
+		issue.Ephemeral = true
+	}
+	// Pinned field (bd-7h5)
+	if pinned.Valid && pinned.Int64 != 0 {
+		issue.Pinned = true
+	}
+	// Template field (beads-1ra)
+	if isTemplate.Valid && isTemplate.Int64 != 0 {
+		issue.IsTemplate = true
+	}
+	// Gate fields (bd-udsi)
+	if awaitType.Valid {
+		issue.AwaitType = awaitType.String
+	}
+	if awaitID.Valid {
+		issue.AwaitID = awaitID.String
+	}
+	if timeoutNs.Valid {
+		issue.Timeout = time.Duration(timeoutNs.Int64)
+	}
+	if waiters.Valid && waiters.String != "" {
+		issue.Waiters = parseJSONStringArray(waiters.String)
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -441,6 +610,13 @@ var allowedUpdateFields = map[string]bool{
 	"estimated_minutes":   true,
 	"external_ref":        true,
 	"closed_at":           true,
+	// Messaging fields (bd-kwro)
+	"sender": true,
+	"wisp":   true, // Database column is 'ephemeral', mapped in UpdateIssue
+	// Pinned field (bd-7h5)
+	"pinned": true,
+	// NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
+	// Use AddDependency() to create graph edges instead
 }
 
 // validatePriority validates a priority value
@@ -500,10 +676,13 @@ func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 		setClauses = append(setClauses, "closed_at = ?")
 		args = append(args, now)
 	} else if oldIssue.Status == types.StatusClosed {
-		// Changing from closed to something else: clear closed_at
+		// Changing from closed to something else: clear closed_at and close_reason
 		updates["closed_at"] = nil
 		setClauses = append(setClauses, "closed_at = ?")
 		args = append(args, nil)
+		updates["close_reason"] = ""
+		setClauses = append(setClauses, "close_reason = ?")
+		args = append(args, "")
 	}
 
 	return setClauses, args
@@ -541,7 +720,12 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			return wrapDBError("validate field update", err)
 		}
 
-		setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
+		// Map API field names to database column names (wisp -> ephemeral)
+		columnName := key
+		if key == "wisp" {
+			columnName = "ephemeral"
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", columnName))
 		args = append(args, value)
 	}
 
@@ -654,6 +838,8 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	if err != nil {
 		return fmt.Errorf("failed to record event: %w", err)
 	}
+
+	// NOTE: Graph edges now managed via AddDependency() per Decision 004 Phase 4.
 
 	// Mark issue as dirty for incremental export
 	_, err = tx.ExecContext(ctx, `
@@ -777,7 +963,28 @@ func (s *SQLiteStorage) UpdateIssueID(ctx context.Context, oldID, newID string, 
 }
 
 // RenameDependencyPrefix updates the prefix in all dependency records
+// GH#630: This was previously a no-op, causing dependencies to break after rename-prefix
 func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
+	// Update issue_id column
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE dependencies 
+		SET issue_id = ? || substr(issue_id, length(?) + 1)
+		WHERE issue_id LIKE ? || '%'
+	`, newPrefix, oldPrefix, oldPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to update issue_id in dependencies: %w", err)
+	}
+
+	// Update depends_on_id column
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE dependencies 
+		SET depends_on_id = ? || substr(depends_on_id, length(?) + 1)
+		WHERE depends_on_id LIKE ? || '%'
+	`, newPrefix, oldPrefix, oldPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to update depends_on_id in dependencies: %w", err)
+	}
+
 	return nil
 }
 
@@ -806,10 +1013,14 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// NOTE: close_reason is stored in two places:
+	// 1. issues.close_reason - for direct queries (bd show --json, exports)
+	// 2. events.comment - for audit history (when was it closed, by whom)
+	// Keep both in sync. If refactoring, consider deriving one from the other.
 	result, err := tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
 		WHERE id = ?
-	`, types.StatusClosed, now, now, id)
+	`, types.StatusClosed, now, now, reason, id)
 	if err != nil {
 		return fmt.Errorf("failed to close issue: %w", err)
 	}
@@ -940,6 +1151,12 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 	_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete events: %w", err)
+	}
+
+	// Delete comments (no FK cascade on this table) (bd-687g)
+	_, err = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete comments: %w", err)
 	}
 
 	// Delete from dirty_issues
@@ -1298,6 +1515,14 @@ func (s *SQLiteStorage) findAllDependentsRecursive(ctx context.Context, tx *sql.
 
 // SearchIssues finds issues matching query and filters
 func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Check for external database file modifications (daemon mode)
+	s.checkFreshness()
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	whereClauses := []string{}
 	args := []interface{}{}
 
@@ -1426,6 +1651,39 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
+	// Wisp filtering (bd-kwro.9)
+	if filter.Ephemeral != nil {
+		if *filter.Ephemeral {
+			whereClauses = append(whereClauses, "ephemeral = 1") // SQL column is still 'ephemeral'
+		} else {
+			whereClauses = append(whereClauses, "(ephemeral = 0 OR ephemeral IS NULL)")
+		}
+	}
+
+	// Pinned filtering (bd-7h5)
+	if filter.Pinned != nil {
+		if *filter.Pinned {
+			whereClauses = append(whereClauses, "pinned = 1")
+		} else {
+			whereClauses = append(whereClauses, "(pinned = 0 OR pinned IS NULL)")
+		}
+	}
+
+	// Template filtering (beads-1ra)
+	if filter.IsTemplate != nil {
+		if *filter.IsTemplate {
+			whereClauses = append(whereClauses, "is_template = 1")
+		} else {
+			whereClauses = append(whereClauses, "(is_template = 0 OR is_template IS NULL)")
+		}
+	}
+
+	// Parent filtering (bd-yqhh): filter children by parent issue
+	if filter.ParentID != nil {
+		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
+		args = append(args, *filter.ParentID)
+	}
+
 	whereSQL := ""
 	if len(whereClauses) > 0 {
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
@@ -1441,8 +1699,10 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, updated_at, closed_at, external_ref, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type
+		       created_at, created_by, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, pinned, is_template,
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

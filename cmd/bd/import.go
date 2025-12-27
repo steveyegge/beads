@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,8 +22,9 @@ import (
 )
 
 var importCmd = &cobra.Command{
-	Use:   "import",
-	Short: "Import issues from JSONL format",
+	Use:     "import",
+	GroupID: "sync",
+	Short:   "Import issues from JSONL format",
 	Long: `Import issues from JSON Lines format (one JSON object per line).
 
 Reads from stdin by default, or use -i flag for file input.
@@ -96,9 +98,9 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		clearDuplicateExternalRefs, _ := cmd.Flags().GetBool("clear-duplicate-external-refs")
 		orphanHandling, _ := cmd.Flags().GetString("orphan-handling")
 		force, _ := cmd.Flags().GetBool("force")
-		noGitHistory, _ := cmd.Flags().GetBool("no-git-history")
-		ignoreDeletions, _ := cmd.Flags().GetBool("ignore-deletions")
 		protectLeftSnapshot, _ := cmd.Flags().GetBool("protect-left-snapshot")
+		noGitHistory, _ := cmd.Flags().GetBool("no-git-history")
+		_ = noGitHistory // Accepted for compatibility with bd sync subprocess calls
 
 		// Check if stdin is being used interactively (not piped)
 		if input == "" && term.IsTerminal(int(os.Stdin.Fd())) {
@@ -205,6 +207,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 				fmt.Fprintf(os.Stderr, "Error parsing line %d: %v\n", lineNum, err)
 				os.Exit(1)
 			}
+			issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
 
 			allIssues = append(allIssues, &issue)
 		}
@@ -257,8 +260,6 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			RenameOnImport:             renameOnImport,
 			ClearDuplicateExternalRefs: clearDuplicateExternalRefs,
 			OrphanHandling:             orphanHandling,
-			NoGitHistory:               noGitHistory,
-			IgnoreDeletions:            ignoreDeletions,
 		}
 
 		// If --protect-left-snapshot is set, read the left snapshot and build ID set
@@ -359,8 +360,8 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			for oldID, newID := range result.IDMapping {
 				mappings = append(mappings, mapping{oldID, newID})
 			}
-			sort.Slice(mappings, func(i, j int) bool {
-				return mappings[i].oldID < mappings[j].oldID
+			slices.SortFunc(mappings, func(a, b mapping) int {
+				return cmp.Compare(a.oldID, b.oldID)
 			})
 
 			fmt.Fprintf(os.Stderr, "Remappings:\n")
@@ -374,7 +375,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		// Without this, daemon FileWatcher won't detect the import for up to 30s
 		// Only flush if there were actual changes to avoid unnecessary I/O
 		if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
-			flushToJSONL()
+			flushToJSONLWithState(flushState{forceDirty: true})
 		}
 
 		// Update jsonl_content_hash metadata to enable content-based staleness detection (bd-khnb fix)
@@ -423,17 +424,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		if len(result.IDMapping) > 0 {
 			fmt.Fprintf(os.Stderr, ", %d issues remapped", len(result.IDMapping))
 		}
-		if result.SkippedDeleted > 0 {
-			fmt.Fprintf(os.Stderr, ", %d skipped (deleted)", result.SkippedDeleted)
-		}
 		fmt.Fprintf(os.Stderr, "\n")
-
-		// Print skipped deleted issues summary if any (bd-4zy)
-		if result.SkippedDeleted > 0 {
-			fmt.Fprintf(os.Stderr, "\n⚠️  Skipped %d issue(s) found in deletions manifest\n", result.SkippedDeleted)
-			fmt.Fprintf(os.Stderr, "   These issues were previously deleted and will not be resurrected.\n")
-			fmt.Fprintf(os.Stderr, "   Use --ignore-deletions to force import anyway.\n")
-		}
 
 		// Print skipped dependencies summary if any
 		if len(result.SkippedDependencies) > 0 {
@@ -790,9 +781,8 @@ func init() {
 	importCmd.Flags().Bool("clear-duplicate-external-refs", false, "Clear duplicate external_ref values (keeps first occurrence)")
 	importCmd.Flags().String("orphan-handling", "", "How to handle missing parent issues: strict/resurrect/skip/allow (default: use config or 'allow')")
 	importCmd.Flags().Bool("force", false, "Force metadata update even when database is already in sync with JSONL")
-	importCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (use during JSONL filename migrations)")
-	importCmd.Flags().Bool("ignore-deletions", false, "Import issues even if they're in the deletions manifest")
 	importCmd.Flags().Bool("protect-left-snapshot", false, "Protect issues in left snapshot from git-history-backfill (bd-sync-deletion fix)")
+	importCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (passed by bd sync)")
 	importCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output import statistics in JSON format")
 	rootCmd.AddCommand(importCmd)
 }

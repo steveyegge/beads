@@ -10,11 +10,11 @@ This guide helps you adopt beads' multi-repo workflow for OSS contributions, tea
 - [Multi-Phase Development](#multi-phase-development) - Separate repos per phase
 - [Multiple Personas](#multiple-personas) - Architect vs. implementer separation
 
-**New to beads?** See [QUICKSTART.md](../QUICKSTART.md) first.
+**New to beads?** See [QUICKSTART.md](QUICKSTART.md) first.
 
 ## What is Multi-Repo Mode?
 
-By default, beads stores issues in `.beads/beads.jsonl` in your current repository. Multi-repo mode lets you:
+By default, beads stores issues in `.beads/issues.jsonl` in your current repository. Multi-repo mode lets you:
 
 - **Route issues to different repositories** based on your role (maintainer vs. contributor)
 - **Aggregate issues from multiple repos** into a unified view
@@ -223,7 +223,7 @@ bd ready
 bd list --json
 
 # Complete team work
-git add .beads/beads.jsonl
+git add .beads/issues.jsonl
 git commit -m "Updated issue tracker"
 git push origin main
 ```
@@ -394,11 +394,11 @@ bd sync
 bd list --json
 ```
 
-### Git merge conflicts in .beads/beads.jsonl
+### Git merge conflicts in .beads/issues.jsonl
 
 **Problem:** Multiple repos modifying same JSONL file.
 
-**Solution:** See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#git-merge-conflicts) and consider [beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge) tool.
+**Solution:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#git-merge-conflicts) and consider [beads-merge](https://github.com/neongreen/mono/tree/main/beads-merge) tool.
 
 ### Discovered issues in wrong repository
 
@@ -432,12 +432,12 @@ No migration needed! Multi-repo mode is opt-in:
 ```bash
 # Before (single repo)
 bd create "Issue" -p 1
-# → Creates in .beads/beads.jsonl
+# → Creates in .beads/issues.jsonl
 
 # After (multi-repo configured)
 bd create "Issue" -p 1
 # → Auto-routed based on role
-# → Old issues in .beads/beads.jsonl still work
+# → Old issues in .beads/issues.jsonl still work
 ```
 
 ### Disabling Multi-Repo
@@ -461,7 +461,7 @@ bd create "Issue" -p 1
 - ❌ Don't mix planning and implementation in the same repo
 
 ### Teams
-- ✅ Commit `.beads/beads.jsonl` to shared repository
+- ✅ Commit `.beads/issues.jsonl` to shared repository
 - ✅ Use protected branch workflow for main/master
 - ✅ Review issue changes in PRs like code changes
 - ❌ Don't gitignore `.beads/` - you lose the git ledger
@@ -475,13 +475,20 @@ bd create "Issue" -p 1
 ## Next Steps
 
 - **CLI Reference:** See [README.md](../README.md) for command details
-- **Configuration Guide:** See [CONFIG.md](../CONFIG.md) for all config options
-- **Troubleshooting:** See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
+- **Configuration Guide:** See [CONFIG.md](CONFIG.md) for all config options
+- **Troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Multi-Repo Internals:** See [MULTI_REPO_HYDRATION.md](MULTI_REPO_HYDRATION.md) and [ROUTING.md](ROUTING.md)
 
 ## Related Issues
 
-- [bd-8rd](/.beads/beads.jsonl#bd-8rd) - Migration and onboarding epic
-- [bd-mlcz](/.beads/beads.jsonl#bd-mlcz) - `bd migrate` command (planned)
-- [bd-kla1](/.beads/beads.jsonl#bd-kla1) - `bd init --contributor` wizard ✅ implemented
-- [bd-twlr](/.beads/beads.jsonl#bd-twlr) - `bd init --team` wizard ✅ implemented
+<<<<<<< HEAD
+- `bd-8rd` - Migration and onboarding epic
+- `bd-mlcz` - `bd migrate` command (planned)
+- `bd-kla1` - `bd init --contributor` wizard ✅ implemented
+- `bd-twlr` - `bd init --team` wizard ✅ implemented
+=======
+- [bd-8rd](/.beads/issues.jsonl#bd-8rd) - Migration and onboarding epic
+- [bd-mlcz](/.beads/issues.jsonl#bd-mlcz) - `bd migrate` command (planned)
+- [bd-kla1](/.beads/issues.jsonl#bd-kla1) - `bd init --contributor` wizard ✅ implemented
+- [bd-twlr](/.beads/issues.jsonl#bd-twlr) - `bd init --team` wizard ✅ implemented
+>>>>>>> origin/bd-l0pg-slit

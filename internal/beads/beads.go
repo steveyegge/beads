@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -205,25 +204,28 @@ type (
 const (
 	StatusOpen       = types.StatusOpen
 	StatusInProgress = types.StatusInProgress
-	StatusClosed     = types.StatusClosed
 	StatusBlocked    = types.StatusBlocked
+	StatusDeferred   = types.StatusDeferred
+	StatusClosed     = types.StatusClosed
 )
 
 // IssueType constants
 const (
-	TypeBug     = types.TypeBug
-	TypeFeature = types.TypeFeature
-	TypeTask    = types.TypeTask
-	TypeEpic    = types.TypeEpic
-	TypeChore   = types.TypeChore
+	TypeBug      = types.TypeBug
+	TypeFeature  = types.TypeFeature
+	TypeTask     = types.TypeTask
+	TypeEpic     = types.TypeEpic
+	TypeChore    = types.TypeChore
+	TypeMolecule = types.TypeMolecule
 )
 
 // DependencyType constants
 const (
-	DepBlocks         = types.DepBlocks
-	DepRelated        = types.DepRelated
-	DepParentChild    = types.DepParentChild
-	DepDiscoveredFrom = types.DepDiscoveredFrom
+	DepBlocks            = types.DepBlocks
+	DepRelated           = types.DepRelated
+	DepParentChild       = types.DepParentChild
+	DepDiscoveredFrom    = types.DepDiscoveredFrom
+	DepConditionalBlocks = types.DepConditionalBlocks // B runs only if A fails (bd-kzda)
 )
 
 // SortPolicy constants
@@ -440,15 +442,10 @@ type DatabaseInfo struct {
 // or empty string if not in a git repository. Used to limit directory
 // tree walking to within the current git repo (bd-c8x).
 //
-// This function is worktree-aware and will correctly identify the repository
-// root in both regular repositories and git worktrees.
+// This function delegates to git.GetRepoRoot() which is worktree-aware
+// and handles Windows path normalization.
 func findGitRoot() string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
+	return git.GetRepoRoot()
 }
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
@@ -528,10 +525,11 @@ func findDatabaseInTree() string {
 	return ""
 }
 
-// FindAllDatabases scans the directory hierarchy for all .beads directories
-// Returns a slice of DatabaseInfo for each database found, starting from the
-// closest to CWD (most relevant) to the furthest (least relevant).
-// Stops at the git repository root to avoid finding unrelated databases (bd-c8x).
+// FindAllDatabases scans the directory hierarchy for the closest .beads directory.
+// Returns a slice with at most one DatabaseInfo - the closest database to CWD.
+// Stops searching upward as soon as a .beads directory is found (gt-bzd),
+// because in multi-workspace setups (like Gas Town), nested .beads directories
+// are intentional and separate - parent directories are out of scope.
 // Redirect files are supported: if a .beads/redirect file exists, its contents
 // are used as the actual .beads directory path.
 func FindAllDatabases() []DatabaseInfo {
@@ -594,6 +592,10 @@ func FindAllDatabases() []DatabaseInfo {
 					BeadsDir:   beadsDir,
 					IssueCount: issueCount,
 				})
+
+				// Stop searching upward - the closest .beads is the one to use (gt-bzd)
+				// Parent directories are out of scope in multi-workspace setups
+				break
 			}
 		}
 
