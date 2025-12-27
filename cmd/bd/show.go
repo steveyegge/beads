@@ -1005,6 +1005,10 @@ var closeCmd = &cobra.Command{
 		CheckReadonly("close")
 		reason, _ := cmd.Flags().GetString("reason")
 		if reason == "" {
+			// Check --resolution alias (Jira CLI convention)
+			reason, _ = cmd.Flags().GetString("resolution")
+		}
+		if reason == "" {
 			reason = "Closed"
 		}
 		force, _ := cmd.Flags().GetBool("force")
@@ -1487,6 +1491,8 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
+	closeCmd.Flags().String("resolution", "", "Alias for --reason (Jira CLI convention)")
+	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
