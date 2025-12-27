@@ -95,10 +95,73 @@ func MigrateTombstoneClosedAt(db *sql.DB) error {
 	}
 
 	// Step 2: Copy data from old table to new table
-	_, err = db.Exec(`
-		INSERT INTO issues_new
-		SELECT * FROM issues
-	`)
+	// We need to check if created_by column exists in the old table
+	// If not, we insert a default empty string for it
+	var hasCreatedBy bool
+	rows, err := db.Query(`PRAGMA table_info(issues)`)
+	if err != nil {
+		return fmt.Errorf("failed to get table info: %w", err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if name == "created_by" {
+			hasCreatedBy = true
+			break
+		}
+	}
+	rows.Close()
+
+	var insertSQL string
+	if hasCreatedBy {
+		// Old table has created_by, copy all columns directly
+		insertSQL = `
+			INSERT INTO issues_new (
+				id, content_hash, title, description, design, acceptance_criteria, notes,
+				status, priority, issue_type, assignee, estimated_minutes, created_at,
+				created_by, updated_at, closed_at, external_ref, source_repo, compaction_level,
+				compacted_at, compacted_at_commit, original_size, deleted_at, deleted_by,
+				delete_reason, original_type, sender, ephemeral, close_reason, pinned,
+				is_template, await_type, await_id, timeout_ns, waiters
+			)
+			SELECT
+				id, content_hash, title, description, design, acceptance_criteria, notes,
+				status, priority, issue_type, assignee, estimated_minutes, created_at,
+				created_by, updated_at, closed_at, external_ref, source_repo, compaction_level,
+				compacted_at, compacted_at_commit, original_size, deleted_at, deleted_by,
+				delete_reason, original_type, sender, ephemeral, close_reason, pinned,
+				is_template, await_type, await_id, timeout_ns, waiters
+			FROM issues
+		`
+	} else {
+		// Old table doesn't have created_by, use empty string default
+		insertSQL = `
+			INSERT INTO issues_new (
+				id, content_hash, title, description, design, acceptance_criteria, notes,
+				status, priority, issue_type, assignee, estimated_minutes, created_at,
+				created_by, updated_at, closed_at, external_ref, source_repo, compaction_level,
+				compacted_at, compacted_at_commit, original_size, deleted_at, deleted_by,
+				delete_reason, original_type, sender, ephemeral, close_reason, pinned,
+				is_template, await_type, await_id, timeout_ns, waiters
+			)
+			SELECT
+				id, content_hash, title, description, design, acceptance_criteria, notes,
+				status, priority, issue_type, assignee, estimated_minutes, created_at,
+				'', updated_at, closed_at, external_ref, source_repo, compaction_level,
+				compacted_at, compacted_at_commit, original_size, deleted_at, deleted_by,
+				delete_reason, original_type, sender, ephemeral, close_reason, pinned,
+				is_template, await_type, await_id, timeout_ns, waiters
+			FROM issues
+		`
+	}
+
+	_, err = db.Exec(insertSQL)
 	if err != nil {
 		return fmt.Errorf("failed to copy issues data: %w", err)
 	}
