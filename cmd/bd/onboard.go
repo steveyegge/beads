@@ -21,6 +21,19 @@ Run ` + "`bd prime`" + ` for workflow context, or install hooks (` + "`bd hooks 
 - ` + "`bd close <id>`" + ` - Complete work
 - ` + "`bd sync`" + ` - Sync with git (run at session end)
 
+## Pre-Push Quality Gates ⚠️ CRITICAL
+
+**Before pushing ANY code**, run quality gates to prevent CI failures:
+
+` + "```bash" + `
+golangci-lint run ./...      # 0 errors required
+go test -short ./...         # All tests must pass
+# Or run all at once:
+./scripts/preflight.sh
+` + "```" + `
+
+**Never push if any check fails.** The main branch has 100% CI failure rate when agents skip these checks.
+
 For full workflow details: ` + "`bd prime`" + ``
 
 const agentsContent = `## Issue Tracking
@@ -33,6 +46,19 @@ Run ` + "`bd prime`" + ` for workflow context, or install hooks (` + "`bd hooks 
 - ` + "`bd create \"Title\" --type task --priority 2`" + ` - Create issue
 - ` + "`bd close <id>`" + ` - Complete work
 - ` + "`bd sync`" + ` - Sync with git (run at session end)
+
+## Pre-Push Quality Gates ⚠️ CRITICAL
+
+**Before pushing ANY code**, run quality gates to prevent CI failures:
+
+` + "```bash" + `
+golangci-lint run ./...      # 0 errors required
+go test -short ./...         # All tests must pass
+# Or run all at once:
+./scripts/preflight.sh
+` + "```" + `
+
+**Never push if any check fails.** The main branch has 100% CI failure rate when agents skip these checks.
 
 For full workflow details: ` + "`bd prime`" + ``
 

@@ -49,9 +49,23 @@ func TestOnboardCommand(t *testing.T) {
 			t.Error("agentsContent should include quick reference to 'bd sync'")
 		}
 
-		// Verify it's actually minimal (less than 500 chars)
-		if len(agentsContent) > 500 {
-			t.Errorf("agentsContent should be minimal (<500 chars), got %d chars", len(agentsContent))
+		// Verify it includes pre-push quality gates to prevent CI failures
+		if !strings.Contains(agentsContent, "Pre-Push Quality Gates") {
+			t.Error("agentsContent should include Pre-Push Quality Gates section")
+		}
+		if !strings.Contains(agentsContent, "golangci-lint run") {
+			t.Error("agentsContent should include golangci-lint check")
+		}
+		if !strings.Contains(agentsContent, "go test") {
+			t.Error("agentsContent should include go test check")
+		}
+		if !strings.Contains(agentsContent, "CRITICAL") {
+			t.Error("agentsContent should mark quality gates as CRITICAL")
+		}
+
+		// Verify it's actually minimal (less than 1200 chars with quality gates)
+		if len(agentsContent) > 1200 {
+			t.Errorf("agentsContent should be minimal (<1200 chars), got %d chars", len(agentsContent))
 		}
 	})
 
@@ -61,9 +75,17 @@ func TestOnboardCommand(t *testing.T) {
 			t.Error("copilotInstructionsContent should point to 'bd prime'")
 		}
 
-		// Verify it's minimal (less than 500 chars)
-		if len(copilotInstructionsContent) > 500 {
-			t.Errorf("copilotInstructionsContent should be minimal (<500 chars), got %d chars", len(copilotInstructionsContent))
+		// Verify it includes pre-push quality gates
+		if !strings.Contains(copilotInstructionsContent, "Pre-Push Quality Gates") {
+			t.Error("copilotInstructionsContent should include Pre-Push Quality Gates section")
+		}
+		if !strings.Contains(copilotInstructionsContent, "CRITICAL") {
+			t.Error("copilotInstructionsContent should mark quality gates as CRITICAL")
+		}
+
+		// Verify it's minimal (less than 1200 chars with quality gates)
+		if len(copilotInstructionsContent) > 1200 {
+			t.Errorf("copilotInstructionsContent should be minimal (<1200 chars), got %d chars", len(copilotInstructionsContent))
 		}
 	})
 }
