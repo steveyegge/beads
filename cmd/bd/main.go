@@ -864,6 +864,9 @@ var rootCmd = &cobra.Command{
 				debug.Logf("loaded %d molecules from %v", result.Loaded, result.Sources)
 			}
 		}
+
+		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
+		// after successful command execution, not in PreRun
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Handle --no-db mode: write memory storage back to JSONL

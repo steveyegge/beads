@@ -244,6 +244,20 @@ Without the pre-push hook, you can have database changes committed locally but s
 
 ## Common Development Tasks
 
+### CLI Design Principles
+
+**Minimize cognitive overload.** Every new command, flag, or option adds cognitive burden for users. Before adding anything:
+
+1. **Recovery/fix operations → `bd doctor --fix`**: Don't create separate commands like `bd recover` or `bd repair`. Doctor already detects problems - let `--fix` handle remediation. This keeps all health-related operations in one discoverable place.
+
+2. **Prefer flags on existing commands**: Before creating a new command, ask: "Can this be a flag on an existing command?" Example: `bd list --stale` instead of `bd stale`.
+
+3. **Consolidate related operations**: Related operations should live together. Daemon management uses `bd daemons {list,health,killall}`, not separate top-level commands.
+
+4. **Count the commands**: Run `bd --help` and count. If we're approaching 30+ commands, we have a discoverability problem. Consider subcommand grouping.
+
+5. **New commands need strong justification**: A new command should represent a fundamentally different operation, not just a convenience wrapper.
+
 ### Adding a New Command
 
 1. Create file in `cmd/bd/`
