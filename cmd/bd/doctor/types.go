@@ -41,3 +41,13 @@ type DoctorCheck struct {
 	Fix      string `json:"fix,omitempty"`
 	Category string `json:"category,omitempty"` // category for grouping in output
 }
+
+// OrphanIssue represents an issue referenced in commits but still open.
+// This is shared between 'bd orphans' and 'bd doctor' commands.
+type OrphanIssue struct {
+	IssueID              string
+	Title                string
+	Status               string
+	LatestCommit         string
+	LatestCommitMessage  string
+}
