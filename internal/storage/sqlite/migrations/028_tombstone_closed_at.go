@@ -81,9 +81,19 @@ func MigrateTombstoneClosedAt(db *sql.DB) error {
 	}
 
 	// Step 2: Copy data from old table to new table
+	// List all columns explicitly to handle cases where old table has fewer columns
+	// Note: created_by is added in migration 029, so don't reference it here
 	_, err = db.Exec(`
 		INSERT INTO issues_new
-		SELECT * FROM issues
+		SELECT
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, updated_at, closed_at, external_ref,
+			source_repo, compaction_level, compacted_at, compacted_at_commit, original_size,
+			deleted_at, deleted_by, delete_reason, original_type,
+			sender, ephemeral, close_reason, pinned, is_template,
+			await_type, await_id, timeout_ns, waiters
+		FROM issues
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to copy issues data: %w", err)
