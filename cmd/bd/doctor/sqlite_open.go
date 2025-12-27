@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-func sqliteConnString(path string) string {
+//nolint:unparam // readOnly is used to add mode=ro to connection string (false in openDB for write access)
+func sqliteConnString(path string, readOnly bool) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
@@ -29,6 +30,10 @@ func sqliteConnString(path string) string {
 		if strings.Contains(conn, "?") {
 			sep = "&"
 		}
+		if readOnly && !strings.Contains(conn, "mode=") {
+			conn += sep + "mode=ro"
+			sep = "&"
+		}
 		if !strings.Contains(conn, "_pragma=busy_timeout") {
 			conn += fmt.Sprintf("%s_pragma=busy_timeout(%d)", sep, busyMs)
 			sep = "&"
@@ -43,5 +48,8 @@ func sqliteConnString(path string) string {
 		return conn
 	}
 
+	if readOnly {
+		return fmt.Sprintf("file:%s?mode=ro&_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_time_format=sqlite", path, busyMs)
+	}
 	return fmt.Sprintf("file:%s?_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_time_format=sqlite", path, busyMs)
 }
