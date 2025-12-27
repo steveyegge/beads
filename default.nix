@@ -9,6 +9,8 @@ pkgs.buildGoModule {
   subPackages = [ "cmd/bd" ];
   doCheck = false;
   # Go module dependencies hash - if build fails with hash mismatch, update with the "got:" value
+  # NOTE: Stale after BurntSushi/toml was marked as direct dependency (GH#749)
+  # If Nix CI reports mismatch, extract the "got:" hash and update here
   vendorHash = "sha256-Brzb6HZHYtF8LTkP3uQ21GG72c5ekzSkQ2EdrqkdeO0=";
 
   # Git is required for tests
