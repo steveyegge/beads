@@ -110,11 +110,20 @@ var createCmd = &cobra.Command{
 		forceCreate, _ := cmd.Flags().GetBool("force")
 		repoOverride, _ := cmd.Flags().GetString("repo")
 		rigOverride, _ := cmd.Flags().GetString("rig")
+		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
 
-		// Handle --rig flag: create issue in a different rig
-		if rigOverride != "" {
-			createInRig(cmd, rigOverride, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
+		// Handle --rig or --prefix flag: create issue in a different rig
+		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
+		targetRig := rigOverride
+		if prefixOverride != "" {
+			if targetRig != "" {
+				FatalError("cannot specify both --rig and --prefix flags")
+			}
+			targetRig = prefixOverride
+		}
+		if targetRig != "" {
+			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
 			return
 		}
 
@@ -457,6 +466,7 @@ func init() {
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
 	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
 	createCmd.Flags().String("rig", "", "Create issue in a different rig (e.g., --rig beads)")
+	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
