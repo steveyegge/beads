@@ -57,6 +57,7 @@ Beads supports hierarchical IDs for epics:
 * **npm:** `npm install -g @beads/bd`
 * **Homebrew:** `brew install steveyegge/beads/bd`
 * **Go:** `go install github.com/steveyegge/beads/cmd/bd@latest`
+* **Nix:** `nix run github:steveyegge/beads` or `nix profile install github:steveyegge/beads`
 
 **Requirements:** Linux (glibc 2.32+), macOS, or Windows.
 

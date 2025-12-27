@@ -30,6 +30,19 @@ go test -race ./...
 go install ./cmd/bd
 ```
 
+### Nix Users
+
+If you have Nix with flakes enabled, you can enter a development shell with all dependencies:
+
+```bash
+# Enter development shell
+nix develop
+
+# Or build and run directly
+nix build
+nix run . -- --help
+```
+
 ## Project Structure
 
 ```
