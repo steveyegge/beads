@@ -91,7 +91,11 @@ func testFreshCloneAutoImport(t *testing.T) {
 
 	// Test checkGitForIssues detects issues.jsonl
 	t.Chdir(dir)
+
 	git.ResetCaches() // Reset git caches after changing directory
+
+	git.ResetCaches()
+
 
 	count, path, gitRef := checkGitForIssues()
 	if count != 1 {
@@ -171,7 +175,11 @@ func testDatabaseRemovalScenario(t *testing.T) {
 
 	// Change to test directory
 	t.Chdir(dir)
+
 	git.ResetCaches() // Reset git caches after changing directory
+
+	git.ResetCaches()
+
 
 	// Test checkGitForIssues finds issues.jsonl (canonical name)
 	count, path, gitRef := checkGitForIssues()
@@ -250,7 +258,11 @@ func testLegacyFilenameSupport(t *testing.T) {
 
 	// Change to test directory
 	t.Chdir(dir)
+
 	git.ResetCaches() // Reset git caches after changing directory
+
+	git.ResetCaches()
+
 
 	// Test checkGitForIssues finds issues.jsonl
 	count, path, gitRef := checkGitForIssues()
@@ -327,7 +339,11 @@ func testPrecedenceTest(t *testing.T) {
 
 	// Change to test directory
 	t.Chdir(dir)
+
 	git.ResetCaches() // Reset git caches after changing directory
+
+	git.ResetCaches()
+
 
 	// Test checkGitForIssues prefers issues.jsonl
 	count, path, _ := checkGitForIssues()
@@ -374,7 +390,11 @@ func testInitSafetyCheck(t *testing.T) {
 
 	// Change to test directory
 	t.Chdir(dir)
+
 	git.ResetCaches() // Reset git caches after changing directory
+
+	git.ResetCaches()
+
 
 	// Create empty database (simulating failed import)
 	dbPath := filepath.Join(beadsDir, "test.db")

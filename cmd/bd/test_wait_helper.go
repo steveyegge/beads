@@ -47,6 +47,7 @@ func setupGitRepo(t *testing.T) (repoPath string, cleanup func()) {
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to init git repo: %v", err)
 	}
+	git.ResetCaches()
 
 	// Configure git
 	_ = exec.Command("git", "config", "user.email", "test@test.com").Run()
@@ -94,6 +95,7 @@ func setupGitRepoWithBranch(t *testing.T, branch string) (repoPath string, clean
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to init git repo: %v", err)
 	}
+	git.ResetCaches()
 
 	// Configure git
 	_ = exec.Command("git", "config", "user.email", "test@test.com").Run()

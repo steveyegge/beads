@@ -81,6 +81,7 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory (required for IsWorktree to re-detect)
 		git.ResetCaches()
@@ -120,6 +121,7 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
@@ -155,6 +157,7 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
@@ -209,6 +212,7 @@ func TestShouldAutoStartDaemonWorktreeIntegration(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
@@ -246,6 +250,7 @@ func TestShouldAutoStartDaemonWorktreeIntegration(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
@@ -283,6 +288,7 @@ func TestShouldAutoStartDaemonWorktreeIntegration(t *testing.T) {
 		if err := os.Chdir(worktreeDir); err != nil {
 			t.Fatalf("Failed to change to worktree dir: %v", err)
 		}
+		git.ResetCaches()
 
 		// Reset git caches after changing directory
 		git.ResetCaches()

@@ -413,4 +413,3 @@ func setupTestRepoWithRemote(t *testing.T) string {
 
 	return tmpDir
 }
-

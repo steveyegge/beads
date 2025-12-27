@@ -111,6 +111,7 @@ var showCmd = &cobra.Command{
 						Labels       []string                             `json:"labels,omitempty"`
 						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+						Comments     []*types.Comment                     `json:"comments,omitempty"`
 					}
 					details := &IssueDetails{Issue: issue}
 					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
@@ -118,6 +119,7 @@ var showCmd = &cobra.Command{
 						details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
 						details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 					}
+					details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
 					allDetails = append(allDetails, details)
 				} else {
 					if displayIdx > 0 {
@@ -151,6 +153,7 @@ var showCmd = &cobra.Command{
 						Labels       []string                             `json:"labels,omitempty"`
 						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+						Comments     []*types.Comment                     `json:"comments,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err == nil {
@@ -173,6 +176,7 @@ var showCmd = &cobra.Command{
 						Labels       []string                             `json:"labels,omitempty"`
 						Dependencies []*types.IssueWithDependencyMetadata `json:"dependencies,omitempty"`
 						Dependents   []*types.IssueWithDependencyMetadata `json:"dependents,omitempty"`
+						Comments     []*types.Comment                     `json:"comments,omitempty"`
 					}
 					var details IssueDetails
 					if err := json.Unmarshal(resp.Data, &details); err != nil {
@@ -299,6 +303,17 @@ var showCmd = &cobra.Command{
 							fmt.Printf("\nDiscovered (%d):\n", len(discovered))
 							for _, dep := range discovered {
 								fmt.Printf("  ◊ %s: %s [P%d - %s]\n", dep.ID, dep.Title, dep.Priority, dep.Status)
+							}
+						}
+					}
+
+					if len(details.Comments) > 0 {
+						fmt.Printf("\nComments (%d):\n", len(details.Comments))
+						for _, comment := range details.Comments {
+							fmt.Printf("  [%s] %s\n", comment.Author, comment.CreatedAt.Format("2006-01-02 15:04"))
+							commentLines := strings.Split(comment.Text, "\n")
+							for _, line := range commentLines {
+								fmt.Printf("    %s\n", line)
 							}
 						}
 					}
@@ -748,8 +763,8 @@ var updateCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", id, err)
 				continue
 			}
-			if issue != nil && issue.IsTemplate {
-				fmt.Fprintf(os.Stderr, "Error: cannot update template %s: templates are read-only; use 'bd molecule instantiate' to create a work item\n", id)
+			if err := validateIssueUpdatable(id, issue); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
 			}
 
@@ -768,47 +783,20 @@ var updateCmd = &cobra.Command{
 			}
 
 			// Handle label operations
-			// Set labels (replaces all existing labels)
-			if setLabels, ok := updates["set_labels"].([]string); ok && len(setLabels) > 0 {
-				// Get current labels
-				currentLabels, err := store.GetLabels(ctx, id)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error getting labels for %s: %v\n", id, err)
+			var setLabels, addLabels, removeLabels []string
+			if v, ok := updates["set_labels"].([]string); ok {
+				setLabels = v
+			}
+			if v, ok := updates["add_labels"].([]string); ok {
+				addLabels = v
+			}
+			if v, ok := updates["remove_labels"].([]string); ok {
+				removeLabels = v
+			}
+			if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
+				if err := applyLabelUpdates(ctx, store, id, actor, setLabels, addLabels, removeLabels); err != nil {
+					fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
 					continue
-				}
-				// Remove all current labels
-				for _, label := range currentLabels {
-					if err := store.RemoveLabel(ctx, id, label, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error removing label %s from %s: %v\n", label, id, err)
-						continue
-					}
-				}
-				// Add new labels
-				for _, label := range setLabels {
-					if err := store.AddLabel(ctx, id, label, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error setting label %s on %s: %v\n", label, id, err)
-						continue
-					}
-				}
-			}
-
-			// Add labels
-			if addLabels, ok := updates["add_labels"].([]string); ok {
-				for _, label := range addLabels {
-					if err := store.AddLabel(ctx, id, label, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error adding label %s to %s: %v\n", label, id, err)
-						continue
-					}
-				}
-			}
-
-			// Remove labels
-			if removeLabels, ok := updates["remove_labels"].([]string); ok {
-				for _, label := range removeLabels {
-					if err := store.RemoveLabel(ctx, id, label, actor); err != nil {
-						fmt.Fprintf(os.Stderr, "Error removing label %s from %s: %v\n", label, id, err)
-						continue
-					}
 				}
 			}
 
@@ -1032,6 +1020,10 @@ var closeCmd = &cobra.Command{
 		CheckReadonly("close")
 		reason, _ := cmd.Flags().GetString("reason")
 		if reason == "" {
+			// Check --resolution alias (Jira CLI convention)
+			reason, _ = cmd.Flags().GetString("resolution")
+		}
+		if reason == "" {
 			reason = "Closed"
 		}
 		force, _ := cmd.Flags().GetBool("force")
@@ -1084,14 +1076,8 @@ var closeCmd = &cobra.Command{
 				if showErr == nil {
 					var issue types.Issue
 					if json.Unmarshal(showResp.Data, &issue) == nil {
-						// Check if issue is a template (beads-1ra): templates are read-only
-						if issue.IsTemplate {
-							fmt.Fprintf(os.Stderr, "Error: cannot close template %s: templates are read-only\n", id)
-							continue
-						}
-						// Check if issue is pinned (bd-6v2)
-						if !force && issue.Status == types.StatusPinned {
-							fmt.Fprintf(os.Stderr, "Error: cannot close pinned issue %s (use --force to override)\n", id)
+						if err := validateIssueClosable(id, &issue, force); err != nil {
+							fmt.Fprintf(os.Stderr, "%s\n", err)
 							continue
 						}
 					}
@@ -1169,18 +1155,9 @@ var closeCmd = &cobra.Command{
 			// Get issue for checks
 			issue, _ := store.GetIssue(ctx, id)
 
-			// Check if issue is a template (beads-1ra): templates are read-only
-			if issue != nil && issue.IsTemplate {
-				fmt.Fprintf(os.Stderr, "Error: cannot close template %s: templates are read-only\n", id)
+			if err := validateIssueClosable(id, issue, force); err != nil {
+				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
-			}
-
-			// Check if issue is pinned (bd-6v2)
-			if !force {
-				if issue != nil && issue.Status == types.StatusPinned {
-					fmt.Fprintf(os.Stderr, "Error: cannot close pinned issue %s (use --force to override)\n", id)
-					continue
-				}
 			}
 
 			if err := store.CloseIssue(ctx, id, reason, actor); err != nil {
@@ -1427,15 +1404,13 @@ func findRepliesTo(ctx context.Context, issueID string, daemonClient *rpc.Client
 		return ""
 	}
 	// Direct mode - query storage
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		deps, err := sqliteStore.GetDependenciesWithMetadata(ctx, issueID)
-		if err != nil {
-			return ""
-		}
-		for _, dep := range deps {
-			if dep.DependencyType == types.DepRepliesTo {
-				return dep.ID
-			}
+	deps, err := store.GetDependencyRecords(ctx, issueID)
+	if err != nil {
+		return ""
+	}
+	for _, dep := range deps {
+		if dep.Type == types.DepRepliesTo {
+			return dep.DependsOnID
 		}
 	}
 	return ""
@@ -1484,7 +1459,25 @@ func findReplies(ctx context.Context, issueID string, daemonClient *rpc.Client, 
 		}
 		return replies
 	}
-	return nil
+
+	allDeps, err := store.GetAllDependencyRecords(ctx)
+	if err != nil {
+		return nil
+	}
+
+	var replies []*types.Issue
+	for childID, deps := range allDeps {
+		for _, dep := range deps {
+			if dep.Type == types.DepRepliesTo && dep.DependsOnID == issueID {
+				issue, _ := store.GetIssue(ctx, childID)
+				if issue != nil {
+					replies = append(replies, issue)
+				}
+			}
+		}
+	}
+
+	return replies
 }
 
 func init() {
@@ -1513,6 +1506,8 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
+	closeCmd.Flags().String("resolution", "", "Alias for --reason (Jira CLI convention)")
+	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
