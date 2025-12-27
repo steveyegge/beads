@@ -368,13 +368,26 @@ main() {
             exit 1
         fi
 
+        # Codesign the binary on macOS (required to avoid "Killed: 9")
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            xattr -cr /tmp/bd-new 2>/dev/null
+            codesign -f -s - /tmp/bd-new 2>/dev/null
+            echo -e "${GREEN}✓ bd codesigned for macOS${NC}"
+        fi
+
         # Install to GOPATH/bin (typically ~/go/bin)
         cp /tmp/bd-new "$GOPATH_BIN/bd"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            codesign -f -s - "$GOPATH_BIN/bd" 2>/dev/null
+        fi
         echo -e "${GREEN}✓ bd installed to $GOPATH_BIN/bd${NC}"
 
         # Install to ~/.local/bin if it exists or we can create it
         if [ -d "$LOCAL_BIN" ] || mkdir -p "$LOCAL_BIN" 2>/dev/null; then
             cp /tmp/bd-new "$LOCAL_BIN/bd"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                codesign -f -s - "$LOCAL_BIN/bd" 2>/dev/null
+            fi
             echo -e "${GREEN}✓ bd installed to $LOCAL_BIN/bd${NC}"
         else
             echo -e "${YELLOW}⚠ Could not install to $LOCAL_BIN (directory doesn't exist)${NC}"
