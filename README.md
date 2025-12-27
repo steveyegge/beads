@@ -1,3 +1,5 @@
+<img width="1536" height="1024" alt="beads logo" src="https://github.com/user-attachments/assets/ed01ed8d-8cb0-47c4-bb0b-951db74ba143" />
+
 # bd - Beads
 
 **Distributed, git-backed graph issue tracker for AI agents.**
