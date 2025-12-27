@@ -110,7 +110,7 @@ func TestCheckGitUpstream(t *testing.T) {
 	t.Run("up to date", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-git-up2-*")
 		remote := mkTmpDirInTmp(t, "bd-git-remote-*")
-		runGit(t, remote, "init", "--bare")
+		runGit(t, remote, "init", "--bare", "--initial-branch=main")
 
 		initRepo(t, dir, "main")
 		commitFile(t, dir, "README.md", "# test\n", "initial")
@@ -126,7 +126,7 @@ func TestCheckGitUpstream(t *testing.T) {
 	t.Run("ahead of upstream", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-git-ahead-*")
 		remote := mkTmpDirInTmp(t, "bd-git-remote2-*")
-		runGit(t, remote, "init", "--bare")
+		runGit(t, remote, "init", "--bare", "--initial-branch=main")
 
 		initRepo(t, dir, "main")
 		commitFile(t, dir, "README.md", "# test\n", "initial")
@@ -147,7 +147,7 @@ func TestCheckGitUpstream(t *testing.T) {
 	t.Run("behind upstream", func(t *testing.T) {
 		dir := mkTmpDirInTmp(t, "bd-git-behind-*")
 		remote := mkTmpDirInTmp(t, "bd-git-remote3-*")
-		runGit(t, remote, "init", "--bare")
+		runGit(t, remote, "init", "--bare", "--initial-branch=main")
 
 		initRepo(t, dir, "main")
 		commitFile(t, dir, "README.md", "# test\n", "initial")
