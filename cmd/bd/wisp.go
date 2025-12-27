@@ -18,47 +18,47 @@ import (
 
 // Wisp commands - manage ephemeral molecules
 //
-// Ephemeral issues are ephemeral issues with Wisp=true in the main database.
+// Wisps are ephemeral issues with Ephemeral=true in the main database.
 // They're used for patrol cycles and operational loops that shouldn't
 // be exported to JSONL (and thus not synced via git).
 //
 // Commands:
-//   bd ephemeral list    - List all ephemeral issues in current context
-//   bd ephemeral gc      - Garbage collect orphaned ephemeral issues
+//   bd mol wisp list    - List all wisps in current context
+//   bd mol wisp gc      - Garbage collect orphaned wisps
 
-var ephemeralCmd = &cobra.Command{
-	Use:   "ephemeral [proto-id]",
-	Short: "Create or manage ephemeral molecules",
-	Long: `Create or manage ephemeral issues - ephemeral molecules for operational workflows.
+var wispCmd = &cobra.Command{
+	Use:   "wisp [proto-id]",
+	Short: "Create or manage wisps (ephemeral molecules)",
+	Long: `Create or manage wisps - ephemeral molecules for operational workflows.
 
-When called with a proto-id argument, creates an ephemeral mol from that proto.
-When called with a subcommand (list, gc), manages existing ephemeral issues.
+When called with a proto-id argument, creates a wisp from that proto.
+When called with a subcommand (list, gc), manages existing wisps.
 
-Ephemeral issues are issues with Ephemeral=true in the main database. They're stored
+Wisps are issues with Ephemeral=true in the main database. They're stored
 locally but NOT exported to JSONL (and thus not synced via git).
 They're used for patrol cycles, operational loops, and other workflows
 that shouldn't accumulate in the shared issue database.
 
-The ephemeral lifecycle:
-  1. Create: bd mol ephemeral <proto> or bd create --ephemeral
-  2. Execute: Normal bd operations work on ephemeral issues
+The wisp lifecycle:
+  1. Create: bd mol wisp <proto> or bd create --ephemeral
+  2. Execute: Normal bd operations work on wisp issues
   3. Squash: bd mol squash <id> (clears Ephemeral flag, promotes to persistent)
   4. Or burn: bd mol burn <id> (deletes without creating digest)
 
 Examples:
-  bd mol ephemeral mol-patrol             # Create ephemeral from proto
-  bd mol ephemeral list                   # List all ephemeral issues
-  bd mol ephemeral gc                     # Garbage collect old ephemeral issues
+  bd mol wisp mol-patrol             # Create wisp from proto
+  bd mol wisp list                   # List all wisps
+  bd mol wisp gc                     # Garbage collect old wisps
 
 Subcommands:
-  list  List all ephemeral issues in current context
-  gc    Garbage collect orphaned ephemeral issues`,
+  list  List all wisps in current context
+  gc    Garbage collect orphaned wisps`,
 	Args: cobra.MaximumNArgs(1),
-	Run:  runEphemeral,
+	Run:  runWisp,
 }
 
-// EphemeralListItem represents a wisp in list output
-type EphemeralListItem struct {
+// WispListItem represents a wisp in list output
+type WispListItem struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
@@ -68,9 +68,9 @@ type EphemeralListItem struct {
 	Old       bool      `json:"old,omitempty"` // Not updated in 24+ hours
 }
 
-// EphemeralListResult is the JSON output for wisp list
-type EphemeralListResult struct {
-	Wisps    []EphemeralListItem `json:"ephemeral_items"`
+// WispListResult is the JSON output for wisp list
+type WispListResult struct {
+	Wisps    []WispListItem `json:"wisps"`
 	Count    int            `json:"count"`
 	OldCount int            `json:"old_count,omitempty"`
 }
@@ -78,49 +78,49 @@ type EphemeralListResult struct {
 // OldThreshold is how old a wisp must be to be flagged as old (time-based, for ephemeral cleanup)
 const OldThreshold = 24 * time.Hour
 
-// runEphemeral handles the ephemeral command when called directly with a proto-id
-// It delegates to runEphemeralCreate for the actual work
-func runEphemeral(cmd *cobra.Command, args []string) {
+// runWisp handles the wisp command when called directly with a proto-id
+// It delegates to runWispCreate for the actual work
+func runWisp(cmd *cobra.Command, args []string) {
 	if len(args) == 0 {
 		// No proto-id provided, show help
 		cmd.Help()
 		return
 	}
 	// Delegate to the create logic
-	runEphemeralCreate(cmd, args)
+	runWispCreate(cmd, args)
 }
 
-// ephemeralCreateCmd instantiates a proto as an ephemeral wisp (kept for backwards compat)
-var ephemeralCreateCmd = &cobra.Command{
+// wispCreateCmd instantiates a proto as an ephemeral wisp (kept for backwards compat)
+var wispCreateCmd = &cobra.Command{
 	Use:   "create <proto-id>",
-	Short: "Instantiate a proto as an ephemeral wisp (solid -> vapor)",
+	Short: "Instantiate a proto as a wisp (solid -> vapor)",
 	Long: `Create a wisp from a proto - sublimation from solid to vapor.
 
 This is the chemistry-inspired command for creating ephemeral work from templates.
-The resulting wisp is stored in the main database with Wisp=true and NOT exported to JSONL.
+The resulting wisp is stored in the main database with Ephemeral=true and NOT exported to JSONL.
 
 Phase transition: Proto (solid) -> Wisp (vapor)
 
-Use wisp create for:
+Use wisp for:
   - Patrol cycles (deacon, witness)
   - Health checks and monitoring
   - One-shot orchestration runs
   - Routine operations with no audit value
 
 The wisp will:
-  - Be stored in main database with Wisp=true flag
+  - Be stored in main database with Ephemeral=true flag
   - NOT be exported to JSONL (and thus not synced via git)
   - Either evaporate (burn) or condense to digest (squash)
 
 Examples:
-  bd ephemeral create mol-patrol                    # Ephemeral patrol cycle
-  bd ephemeral create mol-health-check              # One-time health check
-  bd ephemeral create mol-diagnostics --var target=db  # Diagnostic run`,
+  bd mol wisp create mol-patrol                    # Ephemeral patrol cycle
+  bd mol wisp create mol-health-check              # One-time health check
+  bd mol wisp create mol-diagnostics --var target=db  # Diagnostic run`,
 	Args: cobra.ExactArgs(1),
-	Run:  runEphemeralCreate,
+	Run:  runWispCreate,
 }
 
-func runEphemeralCreate(cmd *cobra.Command, args []string) {
+func runWispCreate(cmd *cobra.Command, args []string) {
 	CheckReadonly("wisp create")
 
 	ctx := rootCtx
@@ -129,7 +129,7 @@ func runEphemeralCreate(cmd *cobra.Command, args []string) {
 	if store == nil {
 		if daemonClient != nil {
 			fmt.Fprintf(os.Stderr, "Error: wisp create requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon wisp create %s ...\n", args[0])
+			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp %s ...\n", args[0])
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		}
@@ -249,18 +249,18 @@ func runEphemeralCreate(cmd *cobra.Command, args []string) {
 	// bd-hobo: Use "eph" prefix for distinct visual recognition
 	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, "eph")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating ephemeral: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Ephemeral issues are in main db but don't trigger JSONL export (Wisp flag excludes them)
+	// Wisp issues are in main db but don't trigger JSONL export (Ephemeral flag excludes them)
 
 	if jsonOutput {
-		type ephemeralCreateResult struct {
+		type wispCreateResult struct {
 			*InstantiateResult
 			Phase string `json:"phase"`
 		}
-		outputJSON(ephemeralCreateResult{result, "vapor"})
+		outputJSON(wispCreateResult{result, "vapor"})
 		return
 	}
 
@@ -305,12 +305,12 @@ func resolvePartialIDDirect(ctx context.Context, partial string) (string, error)
 	return "", fmt.Errorf("not found: %s", partial)
 }
 
-var ephemeralListCmd = &cobra.Command{
+var wispListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all ephemeral issues in current context",
-	Long: `List all ephemeral molecules (ephemeral issues) in the current context.
+	Short: "List all wisps in current context",
+	Long: `List all wisps (ephemeral molecules) in the current context.
 
-Ephemeral issues are issues with Wisp=true in the main database. They are stored
+Wisps are issues with Ephemeral=true in the main database. They are stored
 locally but not exported to JSONL (and thus not synced via git).
 
 The list shows:
@@ -320,18 +320,18 @@ The list shows:
   - Started: When the wisp was created
   - Updated: Last modification time
 
-Old ephemeral issue detection:
-  - Old ephemeral issues haven't been updated in 24+ hours
-  - Use 'bd ephemeral gc' to clean up old/abandoned ephemeral issues
+Old wisp detection:
+  - Old wisps haven't been updated in 24+ hours
+  - Use 'bd mol wisp gc' to clean up old/abandoned wisps
 
 Examples:
-  bd ephemeral list              # List all ephemeral issues
-  bd ephemeral list --json       # JSON output for programmatic use
-  bd ephemeral list --all        # Include closed ephemeral issues`,
-	Run: runEphemeralList,
+  bd mol wisp list              # List all wisps
+  bd mol wisp list --json       # JSON output for programmatic use
+  bd mol wisp list --all        # Include closed wisps`,
+	Run: runWispList,
 }
 
-func runEphemeralList(cmd *cobra.Command, args []string) {
+func runWispList(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	showAll, _ := cmd.Flags().GetBool("all")
@@ -339,8 +339,8 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 	// Check for database connection
 	if store == nil && daemonClient == nil {
 		if jsonOutput {
-			outputJSON(EphemeralListResult{
-				Wisps: []EphemeralListItem{},
+			outputJSON(WispListResult{
+				Wisps: []WispListItem{},
 				Count: 0,
 			})
 		} else {
@@ -349,7 +349,7 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Query ephemeral issues from main database using Wisp filter
+	// Query wisps from main database using Ephemeral filter
 	ephemeralFlag := true
 	var issues []*types.Issue
 	var err error
@@ -374,7 +374,7 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 		issues, err = store.SearchIssues(ctx, "", filter)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing ephemeral issues: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -389,13 +389,13 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 		issues = filtered
 	}
 
-	// Convert to list items and detect old ephemeral issues
+	// Convert to list items and detect old wisps
 	now := time.Now()
-	items := make([]EphemeralListItem, 0, len(issues))
+	items := make([]WispListItem, 0, len(issues))
 	oldCount := 0
 
 	for _, issue := range issues {
-		item := EphemeralListItem{
+		item := WispListItem{
 			ID:        issue.ID,
 			Title:     issue.Title,
 			Status:    string(issue.Status),
@@ -414,11 +414,11 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 	}
 
 	// Sort by updated_at descending (most recent first)
-	slices.SortFunc(items, func(a, b EphemeralListItem) int {
+	slices.SortFunc(items, func(a, b WispListItem) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt) // descending order
 	})
 
-	result := EphemeralListResult{
+	result := WispListResult{
 		Wisps:    items,
 		Count:    len(items),
 		OldCount: oldCount,
@@ -431,11 +431,11 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 
 	// Human-readable output
 	if len(items) == 0 {
-		fmt.Println("No ephemeral issues found")
+		fmt.Println("No wisps found")
 		return
 	}
 
-	fmt.Printf("Ephemeral issues (%d):\n\n", len(items))
+	fmt.Printf("Wisps (%d):\n\n", len(items))
 
 	// Print header
 	fmt.Printf("%-12s %-10s %-4s %-46s %s\n",
@@ -464,9 +464,9 @@ func runEphemeralList(cmd *cobra.Command, args []string) {
 
 	// Print warnings
 	if oldCount > 0 {
-		fmt.Printf("\n%s %d old ephemeral issue(s) (not updated in 24+ hours)\n",
+		fmt.Printf("\n%s %d old wisp(s) (not updated in 24+ hours)\n",
 			ui.RenderWarn("⚠"), oldCount)
-		fmt.Println("  Hint: Use 'bd ephemeral gc' to clean up old ephemeral issues")
+		fmt.Println("  Hint: Use 'bd mol wisp gc' to clean up old wisps")
 	}
 }
 
@@ -500,38 +500,38 @@ func formatTimeAgo(t time.Time) string {
 	}
 }
 
-var ephemeralGCCmd = &cobra.Command{
+var wispGCCmd = &cobra.Command{
 	Use:   "gc",
-	Short: "Garbage collect old/abandoned ephemeral issues",
-	Long: `Garbage collect old or abandoned ephemeral issues from the database.
+	Short: "Garbage collect old/abandoned wisps",
+	Long: `Garbage collect old or abandoned wisps from the database.
 
 A wisp is considered abandoned if:
   - It hasn't been updated in --age duration and is not closed
 
-Abandoned ephemeral issues are deleted without creating a digest. Use 'bd mol squash'
+Abandoned wisps are deleted without creating a digest. Use 'bd mol squash'
 if you want to preserve a summary before garbage collection.
 
-Note: This uses time-based cleanup, appropriate for ephemeral ephemeral issues.
+Note: This uses time-based cleanup, appropriate for ephemeral wisps.
 For graph-pressure staleness detection (blocking other work), see 'bd mol stale'.
 
 Examples:
-  bd ephemeral gc                # Clean abandoned ephemeral issues (default: 1h threshold)
-  bd ephemeral gc --dry-run      # Preview what would be cleaned
-  bd ephemeral gc --age 24h      # Custom age threshold
-  bd ephemeral gc --all          # Also clean closed ephemeral issues older than threshold`,
-	Run: runEphemeralGC,
+  bd mol wisp gc                # Clean abandoned wisps (default: 1h threshold)
+  bd mol wisp gc --dry-run      # Preview what would be cleaned
+  bd mol wisp gc --age 24h      # Custom age threshold
+  bd mol wisp gc --all          # Also clean closed wisps older than threshold`,
+	Run: runWispGC,
 }
 
-// EphemeralGCResult is the JSON output for ephemeral gc
-type EphemeralGCResult struct {
+// WispGCResult is the JSON output for wisp gc
+type WispGCResult struct {
 	CleanedIDs   []string `json:"cleaned_ids"`
 	CleanedCount int      `json:"cleaned_count"`
 	Candidates   int      `json:"candidates,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
 }
 
-func runEphemeralGC(cmd *cobra.Command, args []string) {
-	CheckReadonly("ephemeral gc")
+func runWispGC(cmd *cobra.Command, args []string) {
+	CheckReadonly("wisp gc")
 
 	ctx := rootCtx
 
@@ -553,26 +553,26 @@ func runEphemeralGC(cmd *cobra.Command, args []string) {
 	// Wisp gc requires direct store access for deletion
 	if store == nil {
 		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: ephemeral gc requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ephemeral gc\n")
+			fmt.Fprintf(os.Stderr, "Error: wisp gc requires direct database access\n")
+			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp gc\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
 		}
 		os.Exit(1)
 	}
 
-	// Query ephemeral issues from main database using Wisp filter
+	// Query wisps from main database using Ephemeral filter
 	ephemeralFlag := true
 	filter := types.IssueFilter{
 		Ephemeral: &ephemeralFlag,
 	}
 	issues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing ephemeral issues: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error listing wisps: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Find old/abandoned ephemeral issues
+	// Find old/abandoned wisps
 	now := time.Now()
 	var abandoned []*types.Issue
 	for _, issue := range issues {
@@ -589,13 +589,13 @@ func runEphemeralGC(cmd *cobra.Command, args []string) {
 
 	if len(abandoned) == 0 {
 		if jsonOutput {
-			outputJSON(EphemeralGCResult{
+			outputJSON(WispGCResult{
 				CleanedIDs:   []string{},
 				CleanedCount: 0,
 				DryRun:       dryRun,
 			})
 		} else {
-			fmt.Println("No abandoned ephemeral issues found")
+			fmt.Println("No abandoned wisps found")
 		}
 		return
 	}
@@ -606,28 +606,28 @@ func runEphemeralGC(cmd *cobra.Command, args []string) {
 			for i, o := range abandoned {
 				ids[i] = o.ID
 			}
-			outputJSON(EphemeralGCResult{
+			outputJSON(WispGCResult{
 				CleanedIDs:   ids,
 				Candidates:   len(abandoned),
 				CleanedCount: 0,
 				DryRun:       true,
 			})
 		} else {
-			fmt.Printf("Dry run: would clean %d abandoned ephemeral issue(s):\n\n", len(abandoned))
+			fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
 			for _, issue := range abandoned {
 				age := formatTimeAgo(issue.UpdatedAt)
 				fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
 			}
-			fmt.Printf("\nRun without --dry-run to delete these ephemeral issues.\n")
+			fmt.Printf("\nRun without --dry-run to delete these wisps.\n")
 		}
 		return
 	}
 
-	// Delete abandoned ephemeral issues
+	// Delete abandoned wisps
 	var cleanedIDs []string
 	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: ephemeral gc requires SQLite storage backend\n")
+		fmt.Fprintf(os.Stderr, "Error: wisp gc requires SQLite storage backend\n")
 		os.Exit(1)
 	}
 
@@ -639,7 +639,7 @@ func runEphemeralGC(cmd *cobra.Command, args []string) {
 		cleanedIDs = append(cleanedIDs, issue.ID)
 	}
 
-	result := EphemeralGCResult{
+	result := WispGCResult{
 		CleanedIDs:   cleanedIDs,
 		CleanedCount: len(cleanedIDs),
 	}
@@ -649,29 +649,29 @@ func runEphemeralGC(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Printf("%s Cleaned %d abandoned ephemeral issue(s)\n", ui.RenderPass("✓"), result.CleanedCount)
+	fmt.Printf("%s Cleaned %d abandoned wisp(s)\n", ui.RenderPass("✓"), result.CleanedCount)
 	for _, id := range cleanedIDs {
 		fmt.Printf("  - %s\n", id)
 	}
 }
 
 func init() {
-	// Ephemeral command flags (for direct create: bd mol ephemeral <proto>)
-	ephemeralCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
-	ephemeralCmd.Flags().Bool("dry-run", false, "Preview what would be created")
+	// Wisp command flags (for direct create: bd mol wisp <proto>)
+	wispCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	wispCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 
-	// Ephemeral create command flags (kept for backwards compat: bd mol ephemeral create <proto>)
-	ephemeralCreateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
-	ephemeralCreateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
+	// Wisp create command flags (kept for backwards compat: bd mol wisp create <proto>)
+	wispCreateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	wispCreateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 
-	ephemeralListCmd.Flags().Bool("all", false, "Include closed ephemeral issues")
+	wispListCmd.Flags().Bool("all", false, "Include closed wisps")
 
-	ephemeralGCCmd.Flags().Bool("dry-run", false, "Preview what would be cleaned")
-	ephemeralGCCmd.Flags().String("age", "1h", "Age threshold for abandoned ephemeral issue detection")
-	ephemeralGCCmd.Flags().Bool("all", false, "Also clean closed ephemeral issues older than threshold")
+	wispGCCmd.Flags().Bool("dry-run", false, "Preview what would be cleaned")
+	wispGCCmd.Flags().String("age", "1h", "Age threshold for abandoned wisp detection")
+	wispGCCmd.Flags().Bool("all", false, "Also clean closed wisps older than threshold")
 
-	ephemeralCmd.AddCommand(ephemeralCreateCmd)
-	ephemeralCmd.AddCommand(ephemeralListCmd)
-	ephemeralCmd.AddCommand(ephemeralGCCmd)
-	molCmd.AddCommand(ephemeralCmd)
+	wispCmd.AddCommand(wispCreateCmd)
+	wispCmd.AddCommand(wispListCmd)
+	wispCmd.AddCommand(wispGCCmd)
+	molCmd.AddCommand(wispCmd)
 }

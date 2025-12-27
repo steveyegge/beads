@@ -21,7 +21,7 @@ import (
 //   bd mol catalog                        # List available protos
 //   bd mol show <id>                      # Show proto/molecule structure
 //   bd mol pour <id> --var key=value      # Instantiate proto → persistent mol
-//   bd mol ephemeral <id> --var key=value # Instantiate proto → ephemeral mol
+//   bd mol wisp <id> --var key=value      # Instantiate proto → ephemeral wisp
 
 // MoleculeLabel is the label used to identify molecules (templates)
 // Molecules use the same label as templates - they ARE templates with workflow semantics
@@ -51,10 +51,10 @@ Commands:
   catalog    List available protos
   show       Show proto/molecule structure and variables
   pour       Instantiate proto as persistent mol (liquid phase)
-  ephemeral  Instantiate proto as ephemeral mol (vapor phase)
+  wisp       Instantiate proto as ephemeral wisp (vapor phase)
   bond       Polymorphic combine: proto+proto, proto+mol, mol+mol
   squash     Condense molecule to digest
-  burn       Discard ephemeral mol
+  burn       Discard wisp
   distill    Extract proto from ad-hoc epic`,
 }
 
