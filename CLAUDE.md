@@ -165,6 +165,37 @@ fixed heuristics (N rounds → cycle), you cycle when it feels right:
 
 When you restart, your hook still has your molecule. The handoff mail provides context.
 
+## Quality Gates (Pre-Push Verification) ⚠️ CRITICAL
+
+Before pushing code to any branch, verify:
+
+1. **Run lint**: `golangci-lint run ./...` (0 errors required)
+2. **Run tests**: `go test ./...` (all must pass)
+3. **Check Nix build** (if available): `nix flake check` (must succeed)
+4. **Quick alternative**: `./scripts/preflight.sh` (runs all above)
+
+**NEVER push if:**
+- Lint reports errors
+- Tests are failing
+- Build checks don't pass
+- You skipped any verification step
+
+**Why this matters:**
+The main branch experienced 100% CI failure rate when agents pushed without pre-push verification. These gates prevent broken code from reaching CI and reduce debugging time from hours to minutes.
+
+**Example workflow:**
+```bash
+# Make your changes and commit
+git add -A && git commit -m "Your changes"
+
+# Run quality gates BEFORE push
+golangci-lint run ./...  # Check: 0 errors?
+go test ./...            # Check: all pass?
+
+# Only then push
+git push
+```
+
 ## Session End Checklist
 
 Before ending your session:

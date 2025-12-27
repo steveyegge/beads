@@ -4,6 +4,24 @@ See [CLAUDE.md](CLAUDE.md) for full instructions.
 
 This file exists for compatibility with tools that look for AGENTS.md.
 
+## Pre-Push Quality Gates ⚠️ CRITICAL
+
+**Before pushing ANY code to ANY branch**, you MUST verify:
+
+1. **Lint check**: `golangci-lint run` → 0 errors required
+2. **Tests**: `go test -short ./...` → All must pass
+3. **Nix build**: `nix flake check` → Must succeed (if Nix available)
+4. **Optional quick check**: `./scripts/preflight.sh` (runs all above)
+
+**NEVER push if:**
+- `golangci-lint run` reports errors
+- `go test -short ./...` shows failures
+- `nix flake check` fails
+- You skipped any verification step
+
+**Why this matters:**
+The main branch has experienced 100% CI failure rate when agents pushed without local verification. These gates prevent broken code from reaching CI, saving hours of debugging.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
