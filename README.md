@@ -67,6 +67,7 @@ Beads supports hierarchical IDs for epics:
 - **[bdui](https://github.com/assimelha/bdui)** - Real-time terminal UI with tree view, dependency graph, and vim-style navigation. Built by [@assimelha](https://github.com/assimelha).
 - **[perles](https://github.com/zjrosen/perles)** - Terminal UI with BQL (Beads Query Language) and multi-view kanban. Built by [@zjrosen](https://github.com/zjrosen).
 - **[vscode-beads](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads)** - VS Code extension with issues panel and daemon management. Built by [@jdillon](https://github.com/jdillon).
+- **[opencode-beads](https://github.com/joshuadavidthomas/opencode-beads)** - OpenCode plugin with automatic context injection, `/bd-*` slash commands, and autonomous task agent. Built by [@joshuadavidthomas](https://github.com/joshuadavidthomas).
 
 ## 📝 Documentation
 
