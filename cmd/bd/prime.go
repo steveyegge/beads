@@ -126,6 +126,22 @@ var isEphemeralBranch = func() bool {
 	return err != nil
 }
 
+// getRedirectNotice returns a notice string if beads is redirected
+func getRedirectNotice(verbose bool) string {
+	redirectInfo := beads.GetRedirectInfo()
+	if !redirectInfo.IsRedirected {
+		return ""
+	}
+
+	if verbose {
+		return fmt.Sprintf(`> ⚠️ **Redirected**: Local .beads → %s
+> You share issues with other clones using this redirect.
+
+`, redirectInfo.TargetDir)
+	}
+	return fmt.Sprintf("**Note**: Beads redirected to %s (shared with other clones)\n\n", redirectInfo.TargetDir)
+}
+
 // outputPrimeContext outputs workflow context in markdown format
 func outputPrimeContext(w io.Writer, mcpMode bool, stealthMode bool) error {
 	if mcpMode {
@@ -151,9 +167,11 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 		closeProtocol = "Before saying \"done\": git status → git add → bd sync → git commit → bd sync → git push"
 	}
 
+	redirectNotice := getRedirectNotice(false)
+
 	context := `# Beads Issue Tracker Active
 
-# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
@@ -238,12 +256,14 @@ bd sync                     # Push to remote
 ` + "```"
 	}
 
+	redirectNotice := getRedirectNotice(true)
+
 	context := `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code when .beads/ detected
 
-# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
