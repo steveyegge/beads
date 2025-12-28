@@ -297,6 +297,20 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.39.1",
+		Date:    "2025-12-27",
+		Changes: []string{
+			"NEW: bd where command (bd-8x43) - Show active beads location after following redirects",
+			"NEW: --parent flag for bd update (bd-cj2e) - Reparent issues between epics",
+			"NEW: Redirect info in bd prime (bd-kblo) - Shows when database is redirected",
+			"FIX: bd doctor follows redirects (bd-tvus) - Gas Town compatibility",
+			"FIX: Remove 8-char prefix limit (GH#770) - bd rename-prefix allows longer prefixes",
+			"CHANGED: Git context consolidation (bd-qph3) - Internal refactor for efficiency",
+			"DOCS: Database Redirects section (bd-8x43) - ADVANCED.md documentation",
+			"DOCS: Community Tools update (GH#771) - Added opencode-beads to README",
+		},
+	},
+	{
 		Version: "0.39.0",
 		Date:    "2025-12-27",
 		Changes: []string{
