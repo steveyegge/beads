@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/syncbranch"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -56,6 +57,8 @@ var (
 	doctorFixChildParent bool   // bd-cuek: opt-in fix for child→parent deps
 	perfMode             bool
 	checkHealthMode      bool
+	doctorCheckFlag      string // bd-kff0: run specific check (e.g., "pollution")
+	doctorClean          bool   // bd-kff0: for pollution check, delete detected issues
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -98,6 +101,10 @@ Export Mode (--output):
   Save diagnostics to a JSON file for historical analysis and bug reporting.
   Includes timestamp and platform info for tracking intermittent issues.
 
+Specific Check Mode (--check):
+  Run a specific check in detail. Available checks:
+  - pollution: Detect and optionally clean test issues from database
+
 Examples:
   bd doctor              # Check current directory
   bd doctor /path/to/repo # Check specific repository
@@ -108,7 +115,9 @@ Examples:
   bd doctor --fix --fix-child-parent  # Also fix child→parent deps (opt-in)
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
-  bd doctor --output diagnostics.json  # Export diagnostics to file`,
+  bd doctor --output diagnostics.json  # Export diagnostics to file
+  bd doctor --check=pollution          # Show potential test issues
+  bd doctor --check=pollution --clean  # Delete test issues (with confirmation)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 
@@ -135,6 +144,19 @@ Examples:
 		if checkHealthMode {
 			runCheckHealth(absPath)
 			return
+		}
+
+		// Run specific check if --check flag is set (bd-kff0)
+		if doctorCheckFlag != "" {
+			switch doctorCheckFlag {
+			case "pollution":
+				runPollutionCheck(absPath, doctorClean, doctorYes)
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "Error: unknown check %q\n", doctorCheckFlag)
+				fmt.Fprintf(os.Stderr, "Available checks: pollution\n")
+				os.Exit(1)
+			}
 		}
 
 		// Run diagnostics
@@ -457,7 +479,7 @@ func applyFixList(path string, fixes []doctorCheck) {
 			continue
 		case "Test Pollution":
 			// No auto-fix: test cleanup requires user review
-			fmt.Printf("  ⚠ Run 'bd detect-pollution' to review and clean test issues\n")
+			fmt.Printf("  ⚠ Run 'bd doctor --check=pollution' to review and clean test issues\n")
 			continue
 		case "Git Conflicts":
 			// No auto-fix: git conflicts require manual resolution
@@ -1081,9 +1103,145 @@ func printDiagnostics(result doctorResult) {
 	}
 }
 
+// runPollutionCheck runs detailed test pollution detection (bd-kff0)
+// This integrates the detect-pollution command functionality into doctor.
+func runPollutionCheck(path string, clean bool, yes bool) {
+	// Ensure we have a store initialized (uses direct mode, no daemon support yet)
+	if err := ensureDirectMode("pollution check requires direct mode"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := rootCtx
+
+	// Get all issues
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Detect pollution (reuse detectTestPollution from detect_pollution.go)
+	polluted := detectTestPollution(allIssues)
+
+	if len(polluted) == 0 {
+		if !jsonOutput {
+			fmt.Println("No test pollution detected!")
+		} else {
+			outputJSON(map[string]interface{}{
+				"polluted_count": 0,
+				"issues":         []interface{}{},
+			})
+		}
+		return
+	}
+
+	// Categorize by confidence
+	highConfidence := []pollutionResult{}
+	mediumConfidence := []pollutionResult{}
+
+	for _, p := range polluted {
+		if p.score >= 0.9 {
+			highConfidence = append(highConfidence, p)
+		} else {
+			mediumConfidence = append(mediumConfidence, p)
+		}
+	}
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"polluted_count":    len(polluted),
+			"high_confidence":   len(highConfidence),
+			"medium_confidence": len(mediumConfidence),
+			"issues":            []map[string]interface{}{},
+		}
+
+		for _, p := range polluted {
+			result["issues"] = append(result["issues"].([]map[string]interface{}), map[string]interface{}{
+				"id":         p.issue.ID,
+				"title":      p.issue.Title,
+				"score":      p.score,
+				"reasons":    p.reasons,
+				"created_at": p.issue.CreatedAt,
+			})
+		}
+
+		outputJSON(result)
+		return
+	}
+
+	// Human-readable output
+	fmt.Printf("Found %d potential test issues:\n\n", len(polluted))
+
+	if len(highConfidence) > 0 {
+		fmt.Printf("High Confidence (score ≥ 0.9):\n")
+		for _, p := range highConfidence {
+			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
+			for _, reason := range p.reasons {
+				fmt.Printf("    - %s\n", reason)
+			}
+		}
+		fmt.Printf("  (Total: %d issues)\n\n", len(highConfidence))
+	}
+
+	if len(mediumConfidence) > 0 {
+		fmt.Printf("Medium Confidence (score 0.7-0.9):\n")
+		for _, p := range mediumConfidence {
+			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
+			for _, reason := range p.reasons {
+				fmt.Printf("    - %s\n", reason)
+			}
+		}
+		fmt.Printf("  (Total: %d issues)\n\n", len(mediumConfidence))
+	}
+
+	if !clean {
+		fmt.Printf("Run 'bd doctor --check=pollution --clean' to delete these issues (with confirmation).\n")
+		return
+	}
+
+	// Confirmation prompt
+	if !yes {
+		fmt.Printf("\nDelete %d test issues? [y/N] ", len(polluted))
+		var response string
+		_, _ = fmt.Scanln(&response)
+		if strings.ToLower(response) != "y" {
+			fmt.Println("Canceled.")
+			return
+		}
+	}
+
+	// Backup to JSONL before deleting
+	backupPath := ".beads/pollution-backup.jsonl"
+	if err := backupPollutedIssues(polluted, backupPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error backing up issues: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Backed up %d issues to %s\n", len(polluted), backupPath)
+
+	// Delete issues
+	fmt.Printf("\nDeleting %d issues...\n", len(polluted))
+	deleted := 0
+	for _, p := range polluted {
+		if err := deleteIssue(ctx, p.issue.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting %s: %v\n", p.issue.ID, err)
+			continue
+		}
+		deleted++
+	}
+
+	// Schedule auto-flush
+	markDirtyAndScheduleFlush()
+
+	fmt.Printf("%s Deleted %d test issues\n", ui.RenderPass("✓"), deleted)
+	fmt.Printf("\nCleanup complete. To restore, run: bd import %s\n", backupPath)
+}
+
 func init() {
 	rootCmd.AddCommand(doctorCmd)
 	doctorCmd.Flags().BoolVar(&perfMode, "perf", false, "Run performance diagnostics and generate CPU profile")
 	doctorCmd.Flags().BoolVar(&checkHealthMode, "check-health", false, "Quick health check for git hooks (silent on success)")
 	doctorCmd.Flags().StringVarP(&doctorOutput, "output", "o", "", "Export diagnostics to JSON file (bd-9cc)")
+	doctorCmd.Flags().StringVar(&doctorCheckFlag, "check", "", "Run specific check in detail (e.g., 'pollution')")
+	doctorCmd.Flags().BoolVar(&doctorClean, "clean", false, "For pollution check: delete detected test issues")
 }

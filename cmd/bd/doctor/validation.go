@@ -304,7 +304,7 @@ func CheckTestPollution(path string) DoctorCheck {
 		Status:  "warning",
 		Message: fmt.Sprintf("%d potential test issue(s) detected", count),
 		Detail:  "Test issues may have leaked into production database",
-		Fix:     "Run 'bd detect-pollution' to review and clean test issues",
+		Fix:     "Run 'bd doctor --check=pollution' to review and clean test issues",
 	}
 }
 
