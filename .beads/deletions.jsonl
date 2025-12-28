@@ -25,3 +25,5 @@
 {"id":"bd-cbed9619.3","ts":"2025-12-14T06:43:28.985436Z","by":"stevey","reason":"batch delete"}
 {"id":"bd-cbed9619.4","ts":"2025-12-14T06:43:28.989612Z","by":"stevey","reason":"batch delete"}
 {"id":"bd-cbed9619.5","ts":"2025-12-14T06:43:28.993408Z","by":"stevey","reason":"batch delete"}
+{"id":"bd-i8z5","ts":"2025-12-28T15:54:05.7945089Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
+{"id":"bd-i8z5","ts":"2025-12-28T15:54:05.8479555Z","by":"git-history-backfill","reason":"recovered from git history (pruned from manifest)"}
