@@ -15,9 +15,8 @@ import (
 )
 
 var resetCmd = &cobra.Command{
-	Use:     "reset",
-	GroupID: "advanced",
-	Short:   "Remove all beads data and configuration",
+	Use:   "reset",
+	Short: "Remove all beads data and configuration",
 	Long: `Reset beads to an uninitialized state, removing all local data.
 
 This command removes:
@@ -37,7 +36,7 @@ Examples:
 
 func init() {
 	resetCmd.Flags().Bool("force", false, "Actually perform the reset (required)")
-	rootCmd.AddCommand(resetCmd)
+	// Note: resetCmd is added to adminCmd in admin.go
 }
 
 func runReset(cmd *cobra.Command, args []string) {

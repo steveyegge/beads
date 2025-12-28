@@ -66,7 +66,7 @@ Tombstones expire after a configurable TTL (default: 30 days). This prevents unb
 ### How Expiration Works
 
 1. Tombstones older than TTL + 1 hour grace period are eligible for pruning
-2. `bd compact` removes expired tombstones from `issues.jsonl`
+2. `bd admin compact` removes expired tombstones from `issues.jsonl`
 3. Git history fallback handles edge cases where pruned tombstones are needed
 
 ### Configuration
@@ -85,7 +85,7 @@ bd config set tombstone.ttl_days 60
 ### Manual Pruning
 
 ```bash
-bd compact                         # Prune expired tombstones (and other compaction)
+bd admin compact                   # Prune expired tombstones (and other compaction)
 ```
 
 ## Conflict Resolution
@@ -163,7 +163,7 @@ If you have many old tombstones:
 bd list --status=tombstone | wc -l
 
 # Prune expired tombstones
-bd compact
+bd admin compact
 ```
 
 ## Design Rationale

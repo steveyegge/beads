@@ -46,7 +46,7 @@ fi
 
 # Check eligible issues
 echo "Checking eligible issues (Tier $TIER)..."
-ELIGIBLE=$(bd compact --dry-run --all --tier "$TIER" --json 2>/dev/null | jq '. | length' || echo "0")
+ELIGIBLE=$(bd admin compact --dry-run --all --tier "$TIER" --json 2>/dev/null | jq '. | length' || echo "0")
 
 if [ -z "$ELIGIBLE" ] || [ "$ELIGIBLE" = "null" ]; then
   ELIGIBLE=0
@@ -61,18 +61,18 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
   echo "🔍 Dry run mode - showing candidates:"
-  bd compact --dry-run --all --tier "$TIER"
+  bd admin compact --dry-run --all --tier "$TIER"
   exit 0
 fi
 
 # Run compaction
 echo "🗜️  Compacting $ELIGIBLE issues (Tier $TIER)..."
-bd compact --all --tier "$TIER"
+bd admin compact --all --tier "$TIER"
 
 # Show stats
 echo
 echo "📊 Statistics:"
-bd compact --stats
+bd admin compact --stats
 
 echo
 echo "✅ Auto-compaction complete"

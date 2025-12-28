@@ -1195,5 +1195,5 @@ func init() {
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
 
-	rootCmd.AddCommand(compactCmd)
+	// Note: compactCmd is added to adminCmd in admin.go
 }

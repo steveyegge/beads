@@ -486,10 +486,10 @@ Check database size and consider compaction:
 bd stats
 
 # Preview compaction candidates
-bd compact --dry-run --all
+bd admin compact --dry-run --all
 
 # Compact old closed issues
-bd compact --days 90
+bd admin compact --days 90
 ```
 
 ### Large JSONL files
@@ -501,7 +501,7 @@ If `.beads/issues.jsonl` is very large:
 ls -lh .beads/issues.jsonl
 
 # Remove old closed issues
-bd compact --days 90
+bd admin compact --days 90
 
 # Or split into multiple projects
 cd ~/project/component1 && bd init --prefix comp1

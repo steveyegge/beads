@@ -434,7 +434,7 @@ Shows:
 | `bd daemon` | Background sync manager | "Start auto-sync daemon" |
 | **CLEANUP COMMANDS** | | |
 | `bd delete <id>` | Delete issues | "Delete test task" (requires --force) |
-| `bd compact` | Archive old closed tasks | "Compress database" |
+| `bd admin compact` | Archive old closed tasks | "Compress database" |
 | **REPORTING COMMANDS** | | |
 | `bd stats` | Project metrics | "Show project health" |
 | `bd audit record` | Log interactions | "Record this LLM call" |

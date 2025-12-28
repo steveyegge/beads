@@ -333,10 +333,10 @@ Use compaction to remove old closed issues:
 
 ```bash
 # Preview what would be compacted
-bd compact --dry-run --all
+bd admin compact --dry-run --all
 
 # Compact issues closed more than 90 days ago
-bd compact --days 90
+bd admin compact --days 90
 ```
 
 Or split your project into multiple databases:

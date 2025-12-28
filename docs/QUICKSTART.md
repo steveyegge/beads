@@ -178,16 +178,16 @@ As your project accumulates closed issues, the database grows. Manage size with 
 
 ```bash
 # View compaction statistics
-bd compact --stats
+bd admin compact --stats
 
 # Preview compaction candidates (30+ days closed)
-bd compact --analyze --json --no-daemon
+bd admin compact --analyze --json --no-daemon
 
 # Apply agent-generated summary
-bd compact --apply --id bd-42 --summary summary.txt --no-daemon
+bd admin compact --apply --id bd-42 --summary summary.txt --no-daemon
 
 # Immediately delete closed issues (CAUTION: permanent!)
-bd cleanup --force
+bd admin cleanup --force
 ```
 
 **When to compact:**
