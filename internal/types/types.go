@@ -69,8 +69,16 @@ type Issue struct {
 	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
 
 	// Source tracing fields (gt-8tmz.18): track where this issue came from during cooking
-	SourceFormula   string `json:"source_formula,omitempty"`   // Formula name where this step was defined
-	SourceLocation  string `json:"source_location,omitempty"`  // Path within source: "steps[0]", "advice[0].after"
+	SourceFormula  string `json:"source_formula,omitempty"`  // Formula name where this step was defined
+	SourceLocation string `json:"source_location,omitempty"` // Path within source: "steps[0]", "advice[0].after"
+
+	// Agent identity fields (gt-v2gkv): agent-as-bead support
+	HookBead     string     `json:"hook_bead,omitempty"`     // Current work attached to agent's hook (0..1)
+	RoleBead     string     `json:"role_bead,omitempty"`     // Role definition bead (required for agents)
+	AgentState   AgentState `json:"agent_state,omitempty"`   // Agent-reported state (idle|running|stuck|stopped)
+	LastActivity *time.Time `json:"last_activity,omitempty"` // Updated on each agent action (for timeout detection)
+	RoleType     string     `json:"role_type,omitempty"`     // Agent role: polecat|crew|witness|refinery|mayor|deacon
+	Rig          string     `json:"rig,omitempty"`           // Rig name (empty for town-level agents like mayor/deacon)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -165,6 +173,18 @@ func (i *Issue) ComputeContentHash() string {
 		h.Write([]byte(waiter))
 		h.Write([]byte{0})
 	}
+	// Hash agent identity fields (gt-v2gkv)
+	h.Write([]byte(i.HookBead))
+	h.Write([]byte{0})
+	h.Write([]byte(i.RoleBead))
+	h.Write([]byte{0})
+	h.Write([]byte(i.AgentState))
+	h.Write([]byte{0})
+	h.Write([]byte(i.RoleType))
+	h.Write([]byte{0})
+	h.Write([]byte(i.Rig))
+	h.Write([]byte{0})
+	// Note: LastActivity is a timestamp, excluded from hash like other timestamps
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -263,6 +283,10 @@ func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 	if i.Status != StatusTombstone && i.DeletedAt != nil {
 		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
 	}
+	// Validate agent state if set (gt-v2gkv)
+	if !i.AgentState.IsValid() {
+		return fmt.Errorf("invalid agent state: %s", i.AgentState)
+	}
 	return nil
 }
 
@@ -349,6 +373,30 @@ func (t IssueType) IsValid() bool {
 	switch t {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole:
 		return true
+	}
+	return false
+}
+
+// AgentState represents the self-reported state of an agent (gt-v2gkv)
+type AgentState string
+
+// Agent state constants
+const (
+	StateIdle     AgentState = "idle"     // Agent is waiting for work
+	StateSpawning AgentState = "spawning" // Agent is starting up
+	StateRunning  AgentState = "running"  // Agent is executing (general)
+	StateWorking  AgentState = "working"  // Agent is actively working on a task
+	StateStuck    AgentState = "stuck"    // Agent is blocked and needs help
+	StateDone     AgentState = "done"     // Agent completed its current work
+	StateStopped  AgentState = "stopped"  // Agent has cleanly shut down
+	StateDead     AgentState = "dead"     // Agent died without clean shutdown (timeout detection)
+)
+
+// IsValid checks if the agent state value is valid
+func (s AgentState) IsValid() bool {
+	switch s {
+	case StateIdle, StateSpawning, StateRunning, StateWorking, StateStuck, StateDone, StateStopped, StateDead, "":
+		return true // empty is valid (non-agent beads)
 	}
 	return false
 }
