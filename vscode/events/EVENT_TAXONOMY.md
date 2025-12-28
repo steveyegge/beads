@@ -29,6 +29,7 @@ Example:
 | `gt.*` | Git | Version control operations |
 | `hk.*` | Hook | Git hook triggers |
 | `gd.*` | Guard | Enforcement/constraint checks |
+| `rc.*` | Recovery | Failure recovery operations |
 
 ---
 
@@ -163,6 +164,32 @@ Enforcement and constraint checks.
 | `gd.scope.check` | Checking scope constraint | Guard check |
 | `gd.scope.violation` | Working outside selected issue | Guard fail |
 | `gd.landing.required` | Landing not complete, push blocked | Guard fail |
+
+---
+
+## Recovery Events (rc.*)
+
+Failure recovery operations performed by the beads-recovery skill.
+
+| Code | Description | When |
+|------|-------------|------|
+| `rc.detect.complete` | Failure state detection finished | Skill activation |
+| `rc.recover.sync` | bd sync during recovery | Recovery step |
+| `rc.recover.commit` | Recovery commit created | Recovery step |
+| `rc.recover.push` | Changes pushed during recovery | Recovery step |
+| `rc.recover.revert` | git revert executed | Destructive recovery |
+| `rc.recover.reset` | git reset executed | Destructive recovery |
+| `rc.recover.import` | bd import executed | State restoration |
+| `rc.recover.conflict` | Merge conflict resolved | Conflict recovery |
+| `rc.recover.reopen` | Issue reopened | Issue recovery |
+| `rc.recover.update` | Issue updated during recovery | Issue recovery |
+| `rc.recover.scope` | Scope violation resolved | Scope recovery |
+| `rc.recover.stash` | Changes stashed | Session abandonment |
+| `rc.recover.abandon` | Session abandoned, issues reset | Session abandonment |
+| `rc.recover.assess` | State assessment completed | Context exhaustion |
+| `rc.recover.checkpoint` | Checkpoint saved | Context exhaustion |
+| `rc.recover.complete` | Recovery finished | Recovery end |
+| `rc.recover.cancelled` | Recovery cancelled by user | Recovery abort |
 
 ---
 
