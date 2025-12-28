@@ -419,7 +419,8 @@ func CheckMergeDriver(path string) DoctorCheck {
 
 // CheckSyncBranchConfig checks if sync-branch is properly configured.
 func CheckSyncBranchConfig(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Skip if .beads doesn't exist
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -686,7 +687,8 @@ func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
 		return []OrphanIssue{}, nil // Not a git repo, return empty list
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Skip if no .beads directory
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -814,7 +816,8 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Skip if no .beads directory
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {

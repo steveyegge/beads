@@ -21,7 +21,8 @@ const DefaultCleanupAgeDays = 30
 // CheckStaleClosedIssues detects closed issues that could be cleaned up.
 // This consolidates the cleanup command into doctor checks.
 func CheckStaleClosedIssues(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -99,7 +100,8 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 
 // CheckExpiredTombstones detects tombstones that have exceeded their TTL.
 func CheckExpiredTombstones(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
@@ -241,7 +243,8 @@ func CheckStaleMolecules(path string) DoctorCheck {
 
 // CheckCompactionCandidates detects issues eligible for compaction.
 func CheckCompactionCandidates(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string

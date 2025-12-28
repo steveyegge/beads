@@ -369,7 +369,8 @@ func CheckDatabaseConfig(repoPath string) DoctorCheck {
 // A fresh clone has JSONL with issues but no database file.
 // bd-4ew: Recommend 'bd init --prefix <detected-prefix>' for fresh clones.
 func CheckFreshClone(repoPath string) DoctorCheck {
-	beadsDir := filepath.Join(repoPath, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(repoPath, ".beads"))
 
 	// Check if .beads/ exists
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {

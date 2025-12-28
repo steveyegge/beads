@@ -21,7 +21,8 @@ func RunPerformanceDiagnostics(path string) {
 	fmt.Println(strings.Repeat("=", 50))
 
 	// Check if .beads directory exists
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Error: No .beads/ directory found at %s\n", path)
 		fmt.Fprintf(os.Stderr, "Run 'bd init' to initialize beads\n")
@@ -107,7 +108,8 @@ func CollectPlatformInfo(path string) map[string]string {
 	info["go_version"] = runtime.Version()
 
 	// SQLite version - try to find database
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err == nil {
