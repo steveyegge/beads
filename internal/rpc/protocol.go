@@ -124,6 +124,8 @@ type UpdateArgs struct {
 	SupersededBy *string `json:"superseded_by,omitempty"` // Replacement issue ID if obsolete
 	// Pinned field (bd-iea)
 	Pinned *bool `json:"pinned,omitempty"` // If true, issue is a persistent context marker
+	// Reparenting field (bd-cj2e)
+	Parent *string `json:"parent,omitempty"` // New parent issue ID (reparents the issue)
 }
 
 // CloseArgs represents arguments for the close operation
