@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd prime"
+            "command": "bash .claude-plugin/hooks/session-start.sh"
           }
         ]
       }

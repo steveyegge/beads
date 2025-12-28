@@ -96,6 +96,29 @@ bd update <id> --status in_progress  # Claim ONE issue
 bd show <id> --json         # Load full context
 ```
 
+**Automatic Version Awareness** (Claude Code plugin handles this):
+
+When using the beads Claude Code plugin, session startup automatically:
+
+1. **Detects bd upgrades** — Compares current version to last-seen version
+2. **Shows changelog** — Displays `bd info --whats-new` if version changed
+3. **Updates git hooks** — Auto-installs if hooks are outdated
+4. **Injects workflow context** — Runs `bd prime` for session protocols
+
+If you see a version upgrade notification like:
+
+```text
+🔄 bd upgraded: 0.27.0 → 0.29.0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[changelog details]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 Review changes above and adapt your workflow accordingly
+```
+
+**What to do**: Read the changelog for new commands, changed behaviors, or deprecated patterns. Adapt your workflow if needed. The notification only appears once per upgrade.
+
+**Requires**: jq installed for version tracking. Without jq, shows a warning but continues normally.
+
 **Session End (NON-NEGOTIABLE)**:
 ```bash
 bd close <id> --reason "..."  # Or update with notes
