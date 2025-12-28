@@ -25,6 +25,7 @@ Common namespaces:
   - github.*     GitHub integration settings
   - custom.*     Custom integration settings
   - status.*     Issue status configuration
+  - agents.*     Agent marketplace integration settings
 
 Custom Status States:
   You can define custom status states for multi-step pipelines using the
@@ -36,10 +37,20 @@ Custom Status States:
   This enables issues to use statuses like 'awaiting_review' in addition to
   the built-in statuses (open, in_progress, blocked, deferred, closed).
 
+Agent Marketplace Integration:
+  Configure agent marketplace settings using the agents.* namespace.
+
+  Example:
+    bd config set agents.marketplace.repo "/path/to/agents"
+    bd config set agents.marketplace.enabled "beads-workflows,developer-essentials"
+    bd config set agents.default_model "sonnet"
+    bd config set agents.enforcement.description_min_length 50
+
 Examples:
   bd config set jira.url "https://company.atlassian.net"
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
+  bd config set agents.marketplace.enabled "beads-workflows"
   bd config get jira.url
   bd config list
   bd config unset jira.url`,

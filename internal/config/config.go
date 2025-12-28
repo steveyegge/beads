@@ -126,6 +126,20 @@ func Initialize() error {
 	// Maps project names to paths for resolving external: blocked_by references
 	v.SetDefault("external_projects", map[string]string{})
 
+	// Agent marketplace integration settings
+	// These configure how beads integrates with the agents marketplace
+	v.SetDefault("agents.marketplace.repo", "")           // Path to agents marketplace repo
+	v.SetDefault("agents.marketplace.enabled", "")        // Comma-separated list of enabled plugins
+	v.SetDefault("agents.default_model", "sonnet")        // Default model for agents (opus, sonnet, haiku)
+	v.SetDefault("agents.session.auto_prime", true)       // Auto-run bd prime at session start
+	v.SetDefault("agents.session.track_skills", false)    // Track skill usage in database
+	v.SetDefault("agents.enforcement.description_min_length", 50)  // Minimum description length
+	v.SetDefault("agents.enforcement.dependency_validation", true) // Validate causal dependencies
+	v.SetDefault("agents.enforcement.single_issue_max", 1)         // Max concurrent in_progress issues
+	v.SetDefault("agents.prefer_model", "")               // User preference override for model
+	v.SetDefault("agents.context_budget", 20000)          // Max context tokens for agent sessions
+	v.SetDefault("agents.skill_autoload", true)           // Automatically load relevant skills
+
 	// Read config file if it was found
 	if configFileSet {
 		if err := v.ReadInConfig(); err != nil {

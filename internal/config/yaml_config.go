@@ -54,6 +54,11 @@ var YamlOnlyKeys = map[string]bool{
 
 	// Create command settings
 	"create.require-description": true,
+
+	// Agent marketplace user preferences (stored in yaml for user-level overrides)
+	"agents.prefer_model":    true, // User's preferred model (opus, sonnet, haiku)
+	"agents.context_budget":  true, // Max context tokens for agent sessions
+	"agents.skill_autoload":  true, // Automatically load relevant skills
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
