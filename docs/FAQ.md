@@ -199,7 +199,7 @@ bd automatically:
 
 **Optional**: For immediate export (no 5-second wait) and guaranteed import after git operations, install the git hooks:
 ```bash
-cd examples/git-hooks && ./install.sh
+bd hooks install
 ```
 
 **Disable auto-sync** if needed:
@@ -333,10 +333,10 @@ Use compaction to remove old closed issues:
 
 ```bash
 # Preview what would be compacted
-bd compact --dry-run --all
+bd admin compact --dry-run --all
 
 # Compact issues closed more than 90 days ago
-bd compact --days 90
+bd admin compact --days 90
 ```
 
 Or split your project into multiple databases:

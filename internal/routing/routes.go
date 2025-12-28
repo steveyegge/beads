@@ -100,21 +100,59 @@ func LookupRigByName(rigName, beadsDir string) (Route, bool) {
 	return Route{}, false
 }
 
-// ResolveBeadsDirForRig returns the beads directory for a given rig name.
-// This is used by --rig flag to create issues in a different rig.
+// LookupRigForgiving finds a route using flexible matching.
+// Accepts any of these formats and normalizes them:
+//   - "bd-" (exact prefix)
+//   - "bd"  (prefix without hyphen, will try "bd-")
+//   - "beads" (rig name)
+//
+// This provides good agent UX - meet them where they are.
+func LookupRigForgiving(input, beadsDir string) (Route, bool) {
+	routes, err := LoadRoutes(beadsDir)
+	if err != nil || len(routes) == 0 {
+		return Route{}, false
+	}
+
+	// Normalize: remove trailing hyphen for comparison
+	normalized := strings.TrimSuffix(input, "-")
+
+	for _, route := range routes {
+		// Try exact prefix match (with or without hyphen)
+		prefixBase := strings.TrimSuffix(route.Prefix, "-")
+		if normalized == prefixBase || input == route.Prefix {
+			return route, true
+		}
+
+		// Try rig name match
+		project := ExtractProjectFromPath(route.Path)
+		if input == project {
+			return route, true
+		}
+	}
+
+	return Route{}, false
+}
+
+// ResolveBeadsDirForRig returns the beads directory for a given rig identifier.
+// This is used by --rig and --prefix flags to create issues in a different rig.
+//
+// The input is forgiving - accepts any of:
+//   - "beads", "gastown" (rig names)
+//   - "bd-", "gt-" (exact prefixes)
+//   - "bd", "gt" (prefixes without hyphen)
 //
 // Parameters:
-//   - rigName: the rig name (e.g., "beads", "gastown")
+//   - rigOrPrefix: rig name or prefix in any format
 //   - currentBeadsDir: the current .beads directory (used to find routes.jsonl)
 //
 // Returns:
 //   - beadsDir: the target .beads directory path
 //   - prefix: the issue prefix for that rig (e.g., "bd-")
 //   - err: error if rig not found or path doesn't exist
-func ResolveBeadsDirForRig(rigName, currentBeadsDir string) (beadsDir string, prefix string, err error) {
-	route, found := LookupRigByName(rigName, currentBeadsDir)
+func ResolveBeadsDirForRig(rigOrPrefix, currentBeadsDir string) (beadsDir string, prefix string, err error) {
+	route, found := LookupRigForgiving(rigOrPrefix, currentBeadsDir)
 	if !found {
-		return "", "", fmt.Errorf("rig %q not found in routes.jsonl", rigName)
+		return "", "", fmt.Errorf("rig or prefix %q not found in routes.jsonl", rigOrPrefix)
 	}
 
 	// Resolve the target beads directory
@@ -126,11 +164,11 @@ func ResolveBeadsDirForRig(rigName, currentBeadsDir string) (beadsDir string, pr
 
 	// Verify the target exists
 	if info, statErr := os.Stat(targetPath); statErr != nil || !info.IsDir() {
-		return "", "", fmt.Errorf("rig %q beads directory not found: %s", rigName, targetPath)
+		return "", "", fmt.Errorf("rig %q beads directory not found: %s", rigOrPrefix, targetPath)
 	}
 
 	if os.Getenv("BD_DEBUG_ROUTING") != "" {
-		fmt.Fprintf(os.Stderr, "[routing] Rig %q -> prefix %s, path %s\n", rigName, route.Prefix, targetPath)
+		fmt.Fprintf(os.Stderr, "[routing] Rig %q -> prefix %s, path %s\n", rigOrPrefix, route.Prefix, targetPath)
 	}
 
 	return targetPath, route.Prefix, nil

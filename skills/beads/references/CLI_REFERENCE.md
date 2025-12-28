@@ -285,10 +285,10 @@ bd --actor alice <command>
 
 ```bash
 # Clean up closed issues (bulk deletion)
-bd cleanup --force --json                                   # Delete ALL closed issues
-bd cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
-bd cleanup --dry-run --json                                 # Preview what would be deleted
-bd cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
+bd admin cleanup --force --json                                   # Delete ALL closed issues
+bd admin cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
+bd admin cleanup --dry-run --json                                 # Preview what would be deleted
+bd admin cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
 ```
 
 ### Duplicate Detection & Merging
@@ -308,15 +308,15 @@ bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
 
 ```bash
 # Agent-driven compaction
-bd compact --analyze --json                           # Get candidates for review
-bd compact --analyze --tier 1 --limit 10 --json       # Limited batch
-bd compact --apply --id bd-42 --summary summary.txt   # Apply compaction
-bd compact --apply --id bd-42 --summary - < summary.txt  # From stdin
-bd compact --stats --json                             # Show statistics
+bd admin compact --analyze --json                           # Get candidates for review
+bd admin compact --analyze --tier 1 --limit 10 --json       # Limited batch
+bd admin compact --apply --id bd-42 --summary summary.txt   # Apply compaction
+bd admin compact --apply --id bd-42 --summary - < summary.txt  # From stdin
+bd admin compact --stats --json                             # Show statistics
 
 # Legacy AI-powered compaction (requires ANTHROPIC_API_KEY)
-bd compact --auto --dry-run --all                     # Preview
-bd compact --auto --all --tier 1                      # Auto-compact tier 1
+bd admin compact --auto --dry-run --all                     # Preview
+bd admin compact --auto --all --tier 1                      # Auto-compact tier 1
 
 # Restore compacted issue from git history
 bd restore <id>  # View full history at time of compaction

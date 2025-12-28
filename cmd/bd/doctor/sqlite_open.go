@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+//nolint:unparam // readOnly is used to add mode=ro to connection string
 func sqliteConnString(path string, readOnly bool) string {
 	path = strings.TrimSpace(path)
 	if path == "" {

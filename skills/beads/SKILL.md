@@ -434,14 +434,13 @@ Shows:
 | `bd daemon` | Background sync manager | "Start auto-sync daemon" |
 | **CLEANUP COMMANDS** | | |
 | `bd delete <id>` | Delete issues | "Delete test task" (requires --force) |
-| `bd compact` | Archive old closed tasks | "Compress database" |
+| `bd admin compact` | Archive old closed tasks | "Compress database" |
 | **REPORTING COMMANDS** | | |
 | `bd stats` | Project metrics | "Show project health" |
 | `bd audit record` | Log interactions | "Record this LLM call" |
 | `bd workflow` | Show workflow guide | "How do I use beads?" |
 | **ADVANCED COMMANDS** | | |
 | `bd prime` | Refresh AI context | "Load bd workflow rules" |
-| `bd quickstart` | Interactive tutorial | "Teach me beads basics" |
 | `bd daemons` | Multi-repo daemon mgmt | "Manage all beads daemons" |
 | `bd version` | Version check | "Check bd version" |
 | `bd restore <id>` | Restore compacted issue | "Get full history from git" |

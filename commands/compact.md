@@ -12,11 +12,11 @@ Reduce database size by summarizing closed issues no longer actively referenced.
 
 ## Usage
 
-- **Preview candidates**: `bd compact --dry-run`
-- **Compact all eligible**: `bd compact --all`
-- **Compact specific issue**: `bd compact --id bd-42`
-- **Force compact**: `bd compact --id bd-42 --force` (bypass age checks)
-- **View statistics**: `bd compact --stats`
+- **Preview candidates**: `bd admin compact --dry-run`
+- **Compact all eligible**: `bd admin compact --all`
+- **Compact specific issue**: `bd admin compact --id bd-42`
+- **Force compact**: `bd admin compact --id bd-42 --force` (bypass age checks)
+- **View statistics**: `bd admin compact --stats`
 
 ## Options
 

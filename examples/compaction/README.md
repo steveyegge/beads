@@ -171,7 +171,7 @@ Track compaction costs:
 
 ```bash
 # Show stats after compaction
-bd compact --stats
+bd admin compact --stats
 
 # Estimate monthly cost
 # (issues_compacted / 1000) * $1.00

@@ -17,7 +17,8 @@ import (
 // CheckMergeArtifacts detects temporary git merge files in .beads directory.
 // These are created during git merges and should be cleaned up.
 func CheckMergeArtifacts(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return DoctorCheck{
@@ -109,7 +110,8 @@ func readMergeArtifactPatterns(beadsDir string) ([]string, error) {
 
 // CheckOrphanedDependencies detects dependencies pointing to non-existent issues.
 func CheckOrphanedDependencies(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -180,7 +182,8 @@ func CheckOrphanedDependencies(path string) DoctorCheck {
 
 // CheckDuplicateIssues detects issues with identical content.
 func CheckDuplicateIssues(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -250,7 +253,8 @@ func CheckDuplicateIssues(path string) DoctorCheck {
 
 // CheckTestPollution detects test issues that may have leaked into the database.
 func CheckTestPollution(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -304,7 +308,7 @@ func CheckTestPollution(path string) DoctorCheck {
 		Status:  "warning",
 		Message: fmt.Sprintf("%d potential test issue(s) detected", count),
 		Detail:  "Test issues may have leaked into production database",
-		Fix:     "Run 'bd detect-pollution' to review and clean test issues",
+		Fix:     "Run 'bd doctor --check=pollution' to review and clean test issues",
 	}
 }
 
@@ -312,7 +316,8 @@ func CheckTestPollution(path string) DoctorCheck {
 // These often indicate a modeling mistake (deadlock: child waits for parent, parent waits for children).
 // However, they may be intentional in some workflows, so removal requires explicit opt-in.
 func CheckChildParentDependencies(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -386,7 +391,8 @@ func CheckChildParentDependencies(path string) DoctorCheck {
 
 // CheckGitConflicts detects git conflict markers in JSONL file.
 func CheckGitConflicts(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {

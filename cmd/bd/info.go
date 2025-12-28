@@ -31,10 +31,18 @@ Examples:
   bd info --json
   bd info --schema --json
   bd info --whats-new
-  bd info --whats-new --json`,
+  bd info --whats-new --json
+  bd info --thanks`,
 	Run: func(cmd *cobra.Command, args []string) {
 		schemaFlag, _ := cmd.Flags().GetBool("schema")
 		whatsNewFlag, _ := cmd.Flags().GetBool("whats-new")
+		thanksFlag, _ := cmd.Flags().GetBool("thanks")
+
+		// Handle --thanks flag
+		if thanksFlag {
+			printThanksPage()
+			return
+		}
 
 		// Handle --whats-new flag
 		if whatsNewFlag {
@@ -288,6 +296,38 @@ type VersionChange struct {
 
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
+	{
+		Version: "0.39.1",
+		Date:    "2025-12-27",
+		Changes: []string{
+			"NEW: bd where command (bd-8x43) - Show active beads location after following redirects",
+			"NEW: --parent flag for bd update (bd-cj2e) - Reparent issues between epics",
+			"NEW: Redirect info in bd prime (bd-kblo) - Shows when database is redirected",
+			"FIX: bd doctor follows redirects (bd-tvus) - Gas Town compatibility",
+			"FIX: Remove 8-char prefix limit (GH#770) - bd rename-prefix allows longer prefixes",
+			"CHANGED: Git context consolidation (bd-qph3) - Internal refactor for efficiency",
+			"DOCS: Database Redirects section (bd-8x43) - ADVANCED.md documentation",
+			"DOCS: Community Tools update (GH#771) - Added opencode-beads to README",
+		},
+	},
+	{
+		Version: "0.39.0",
+		Date:    "2025-12-27",
+		Changes: []string{
+			"NEW: bd orphans command (GH#767) - Detect issues mentioned in commits but never closed",
+			"NEW: bd admin parent command (bd-3u8m) - Consolidated cleanup/compact/reset under bd admin",
+			"NEW: --prefix flag for bd create - Create issues in other rigs from any directory",
+			"CHANGED: bd mol catalog → bd formula list (bd-ctmg) - Aligns with formula terminology",
+			"CHANGED: bd info --thanks (bd-wb9g) - Contributors list moved under bd info",
+			"CHANGED: Removed unused bd pin/unpin/hook commands (bd-x0zl) - Use gt mol commands",
+			"CHANGED: bd doctor --check=pollution (bd-kff0) - Test pollution check integrated into doctor",
+			"FIX: macOS codesigning in bump-version.sh --install - Prevents quarantine issues",
+			"FIX: Lint errors and Nix vendorHash (GH#769) - Clean builds on all platforms",
+			"DOCS: Issue Statuses section in CLI_REFERENCE.md (bd-epww) - Comprehensive status docs",
+			"DOCS: Consolidated duplicate UI_PHILOSOPHY files (GH#745) - Single source of truth",
+			"DOCS: README and PLUGIN.md fixes (GH#763) - Corrected installation instructions",
+		},
+	},
 	{
 		Version: "0.38.0",
 		Date:    "2025-12-27",
@@ -759,6 +799,7 @@ func showWhatsNew() {
 func init() {
 	infoCmd.Flags().Bool("schema", false, "Include schema information in output")
 	infoCmd.Flags().Bool("whats-new", false, "Show agent-relevant changes from recent versions")
+	infoCmd.Flags().Bool("thanks", false, "Show thank you page for contributors")
 	infoCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.AddCommand(infoCmd)
 }

@@ -31,6 +31,7 @@ type TemplateSubgraph struct {
 	Dependencies []*types.Dependency         // All dependencies within the subgraph
 	IssueMap     map[string]*types.Issue     // ID -> Issue for quick lookup
 	VarDefs      map[string]formula.VarDef   // Variable definitions from formula (for defaults)
+	Phase        string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
 }
 
 // InstantiateResult holds the result of template instantiation
@@ -60,7 +61,7 @@ var templateCmd = &cobra.Command{
 	Use:        "template",
 	GroupID:    "setup",
 	Short:      "Manage issue templates",
-	Deprecated: "use 'bd mol' instead (mol catalog, mol show, mol bond)",
+	Deprecated: "use 'bd mol' instead (formula list, mol show, mol bond)",
 	Long: `Manage Beads templates for creating issue hierarchies.
 
 Templates are epics with the "template" label. They can have child issues
@@ -78,7 +79,7 @@ To use a template:
 var templateListCmd = &cobra.Command{
 	Use:        "list",
 	Short:      "List available templates",
-	Deprecated: "use 'bd mol catalog' instead",
+	Deprecated: "use 'bd formula list' instead",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 		var beadsTemplates []*types.Issue

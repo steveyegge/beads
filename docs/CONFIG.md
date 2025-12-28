@@ -662,7 +662,7 @@ jira_project = get_config("jira.project")
 
 Some bd commands automatically use configuration:
 
-- `bd compact` uses `compact_tier1_days`, `compact_tier1_dep_levels`, etc.
+- `bd admin compact` uses `compact_tier1_days`, `compact_tier1_dep_levels`, etc.
 - `bd init` sets `issue_prefix`
 
 External integration scripts can read configuration to sync with Jira, Linear, GitHub, etc.

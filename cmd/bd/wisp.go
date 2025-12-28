@@ -29,15 +29,28 @@ import (
 var wispCmd = &cobra.Command{
 	Use:   "wisp [proto-id]",
 	Short: "Create or manage wisps (ephemeral molecules)",
-	Long: `Create or manage wisps - ephemeral molecules for operational workflows.
+	Long: `Create or manage wisps - EPHEMERAL molecules for operational workflows.
 
 When called with a proto-id argument, creates a wisp from that proto.
 When called with a subcommand (list, gc), manages existing wisps.
 
 Wisps are issues with Ephemeral=true in the main database. They're stored
 locally but NOT exported to JSONL (and thus not synced via git).
-They're used for patrol cycles, operational loops, and other workflows
-that shouldn't accumulate in the shared issue database.
+
+WHEN TO USE WISP vs POUR:
+  wisp (vapor): Ephemeral work that auto-cleans up
+    - Release workflows (one-time execution)
+    - Patrol cycles (deacon, witness, refinery)
+    - Health checks and diagnostics
+    - Any operational workflow without audit value
+
+  pour (liquid): Persistent work that needs audit trail
+    - Feature implementations spanning multiple sessions
+    - Work you may need to reference later
+    - Anything worth preserving in git history
+
+TIP: Formulas can specify phase:"vapor" to recommend wisp usage.
+     If you use pour on a vapor-phase formula, you'll get a warning.
 
 The wisp lifecycle:
   1. Create: bd mol wisp <proto> or bd create --ephemeral
@@ -46,9 +59,10 @@ The wisp lifecycle:
   4. Or burn: bd mol burn <id> (deletes without creating digest)
 
 Examples:
-  bd mol wisp mol-patrol             # Create wisp from proto
-  bd mol wisp list                   # List all wisps
-  bd mol wisp gc                     # Garbage collect old wisps
+  bd mol wisp beads-release --var version=1.0  # Release workflow
+  bd mol wisp mol-patrol                       # Ephemeral patrol cycle
+  bd mol wisp list                             # List all wisps
+  bd mol wisp gc                               # Garbage collect old wisps
 
 Subcommands:
   list  List all wisps in current context
@@ -83,7 +97,7 @@ const OldThreshold = 24 * time.Hour
 func runWisp(cmd *cobra.Command, args []string) {
 	if len(args) == 0 {
 		// No proto-id provided, show help
-		cmd.Help()
+		_ = cmd.Help()
 		return
 	}
 	// Delegate to the create logic
@@ -125,14 +139,10 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Wisp create requires direct store access
+	// Wisp create requires direct store access (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: wisp create requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp %s ...\n", args[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
 		os.Exit(1)
 	}
 
@@ -550,14 +560,10 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Wisp gc requires direct store access for deletion
+	// Wisp gc requires direct store access for deletion (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: wisp gc requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp gc\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
 		os.Exit(1)
 	}
 

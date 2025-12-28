@@ -21,20 +21,29 @@ var pourCmd = &cobra.Command{
 	Short: "Instantiate a proto as a persistent mol (solid -> liquid)",
 	Long: `Pour a proto into a persistent mol - like pouring molten metal into a mold.
 
-This is the chemistry-inspired command for creating persistent work from templates.
+This is the chemistry-inspired command for creating PERSISTENT work from templates.
 The resulting mol lives in .beads/ (permanent storage) and is synced with git.
 
 Phase transition: Proto (solid) -> pour -> Mol (liquid)
 
-Use pour for:
-  - Feature work that spans sessions
-  - Important work needing audit trail
-  - Anything you might need to reference later
+WHEN TO USE POUR vs WISP:
+  pour (liquid): Persistent work that needs audit trail
+    - Feature implementations spanning multiple sessions
+    - Work you may need to reference later
+    - Anything worth preserving in git history
+
+  wisp (vapor): Ephemeral work that auto-cleans up
+    - Release workflows (one-time execution)
+    - Patrol cycles (deacon, witness, refinery)
+    - Health checks and diagnostics
+    - Any operational workflow without audit value
+
+TIP: Formulas can specify phase:"vapor" to recommend wisp usage.
+     If you pour a vapor-phase formula, you'll get a warning.
 
 Examples:
-  bd mol pour mol-feature --var name=auth    # Create persistent mol from proto
-  bd mol pour mol-release --var version=1.0  # Release workflow
-  bd mol pour mol-review --var pr=123        # Code review workflow`,
+  bd mol pour mol-feature --var name=auth    # Persistent feature work
+  bd mol pour mol-review --var pr=123        # Persistent code review`,
 	Args: cobra.ExactArgs(1),
 	Run:  runPour,
 }
@@ -85,6 +94,18 @@ func runPour(cmd *cobra.Command, args []string) {
 		subgraph = sg
 		protoID = sg.Root.ID
 		isFormula = true
+
+		// Warn if formula recommends vapor phase (bd-mol cleanup)
+		if sg.Phase == "vapor" {
+			fmt.Fprintf(os.Stderr, "%s Formula %q recommends vapor phase (ephemeral)\n", ui.RenderWarn("⚠"), args[0])
+			fmt.Fprintf(os.Stderr, "  Consider using: bd mol wisp %s", args[0])
+			for _, v := range varFlags {
+				fmt.Fprintf(os.Stderr, " --var %s", v)
+			}
+			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Fprintf(os.Stderr, "  Pour creates persistent issues that sync to git.\n")
+			fmt.Fprintf(os.Stderr, "  Wisp creates ephemeral issues that auto-cleanup.\n\n")
+		}
 	}
 
 	if subgraph == nil {

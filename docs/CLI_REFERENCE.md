@@ -296,10 +296,10 @@ bd --actor alice <command>
 
 ```bash
 # Clean up closed issues (bulk deletion)
-bd cleanup --force --json                                   # Delete ALL closed issues
-bd cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
-bd cleanup --dry-run --json                                 # Preview what would be deleted
-bd cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
+bd admin cleanup --force --json                                   # Delete ALL closed issues
+bd admin cleanup --older-than 30 --force --json                   # Delete closed >30 days ago
+bd admin cleanup --dry-run --json                                 # Preview what would be deleted
+bd admin cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
 ```
 
 ### Duplicate Detection & Merging
@@ -319,15 +319,15 @@ bd merge bd-42 bd-43 --into bd-41 --dry-run            # Preview merge
 
 ```bash
 # Agent-driven compaction
-bd compact --analyze --json                           # Get candidates for review
-bd compact --analyze --tier 1 --limit 10 --json       # Limited batch
-bd compact --apply --id bd-42 --summary summary.txt   # Apply compaction
-bd compact --apply --id bd-42 --summary - < summary.txt  # From stdin
-bd compact --stats --json                             # Show statistics
+bd admin compact --analyze --json                           # Get candidates for review
+bd admin compact --analyze --tier 1 --limit 10 --json       # Limited batch
+bd admin compact --apply --id bd-42 --summary summary.txt   # Apply compaction
+bd admin compact --apply --id bd-42 --summary - < summary.txt  # From stdin
+bd admin compact --stats --json                             # Show statistics
 
 # Legacy AI-powered compaction (requires ANTHROPIC_API_KEY)
-bd compact --auto --dry-run --all                     # Preview
-bd compact --auto --all --tier 1                      # Auto-compact tier 1
+bd admin compact --auto --dry-run --all                     # Preview
+bd admin compact --auto --all --tier 1                      # Auto-compact tier 1
 
 # Restore compacted issue from git history
 bd restore <id>  # View full history at time of compaction
@@ -349,15 +349,15 @@ Beads uses a chemistry metaphor for template-based workflows. See [MOLECULES.md]
 
 | Phase | State | Storage | Command |
 |-------|-------|---------|---------|
-| Solid | Proto | `.beads/` | `bd mol catalog` |
+| Solid | Proto | `.beads/` | `bd formula list` |
 | Liquid | Mol | `.beads/` | `bd mol pour` |
 | Vapor | Wisp | `.beads/` (Ephemeral=true, not exported) | `bd mol wisp` |
 
 ### Proto/Template Commands
 
 ```bash
-# List available protos (templates)
-bd mol catalog --json
+# List available formulas (templates)
+bd formula list --json
 
 # Show proto structure and variables
 bd mol show <proto-id> --json
@@ -563,6 +563,18 @@ bd sync
 - `chore` - Maintenance work (dependencies, tooling)
 
 **Hierarchical children:** Epics can have child issues with dotted IDs (e.g., `bd-a3f8e9.1`, `bd-a3f8e9.2`). Children are auto-numbered sequentially. Up to 3 levels of nesting supported.
+
+## Issue Statuses
+
+- `open` - Ready to be worked on
+- `in_progress` - Currently being worked on
+- `blocked` - Cannot proceed (waiting on dependencies)
+- `deferred` - Deliberately put on ice for later
+- `closed` - Work completed
+- `tombstone` - Deleted issue (suppresses resurrections)
+- `pinned` - Stays open indefinitely (used for hooks, anchors)
+
+**Note:** The `pinned` status is used by Gas Town for hook management and persistent work items that should never be auto-closed or cleaned up.
 
 ## Priorities
 

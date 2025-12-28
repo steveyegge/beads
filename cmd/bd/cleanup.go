@@ -26,9 +26,8 @@ func showCleanupDeprecationHint() {
 }
 
 var cleanupCmd = &cobra.Command{
-	Use:     "cleanup",
-	GroupID: "maint",
-	Short:   "Delete closed issues and prune expired tombstones",
+	Use:   "cleanup",
+	Short: "Delete closed issues and prune expired tombstones",
 	Long: `Delete closed issues and prune expired tombstones to reduce database size.
 
 This command:
@@ -271,5 +270,5 @@ func init() {
 	cleanupCmd.Flags().Int("older-than", 0, "Only delete issues closed more than N days ago (0 = all closed issues)")
 	cleanupCmd.Flags().Bool("hard", false, "Bypass tombstone TTL safety; use --older-than days as cutoff")
 	cleanupCmd.Flags().Bool("ephemeral", false, "Only delete closed wisps (transient molecules)")
-	rootCmd.AddCommand(cleanupCmd)
+	// Note: cleanupCmd is added to adminCmd in admin.go
 }

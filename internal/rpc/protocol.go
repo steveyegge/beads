@@ -124,6 +124,14 @@ type UpdateArgs struct {
 	SupersededBy *string `json:"superseded_by,omitempty"` // Replacement issue ID if obsolete
 	// Pinned field (bd-iea)
 	Pinned *bool `json:"pinned,omitempty"` // If true, issue is a persistent context marker
+	// Reparenting field (bd-cj2e)
+	Parent *string `json:"parent,omitempty"` // New parent issue ID (reparents the issue)
+	// Agent slot fields (gt-h5sza)
+	HookBead *string `json:"hook_bead,omitempty"` // Current work on agent's hook (0..1)
+	RoleBead *string `json:"role_bead,omitempty"` // Role definition bead for agent
+	// Agent state fields (bd-uxlb)
+	AgentState   *string `json:"agent_state,omitempty"`   // Agent state (idle|running|stuck|stopped|dead)
+	LastActivity *bool   `json:"last_activity,omitempty"` // If true, update last_activity to now
 }
 
 // CloseArgs represents arguments for the close operation

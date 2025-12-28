@@ -101,6 +101,20 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.Pinned != nil {
 		u["pinned"] = *a.Pinned
 	}
+	// Agent slot fields (gt-h5sza)
+	if a.HookBead != nil {
+		u["hook_bead"] = *a.HookBead
+	}
+	if a.RoleBead != nil {
+		u["role_bead"] = *a.RoleBead
+	}
+	// Agent state fields (bd-uxlb)
+	if a.AgentState != nil {
+		u["agent_state"] = *a.AgentState
+	}
+	if a.LastActivity != nil && *a.LastActivity {
+		u["last_activity"] = time.Now()
+	}
 	return u
 }
 
@@ -466,8 +480,65 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 	}
 
-	// Emit mutation event for event-driven daemon (only if any updates or label operations were performed)
-	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 {
+	// Handle reparenting (bd-cj2e)
+	if updateArgs.Parent != nil {
+		newParentID := *updateArgs.Parent
+
+		// Validate new parent exists (unless empty string to remove parent)
+		if newParentID != "" {
+			newParent, err := store.GetIssue(ctx, newParentID)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to get new parent: %v", err),
+				}
+			}
+			if newParent == nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("parent issue %s not found", newParentID),
+				}
+			}
+		}
+
+		// Find and remove existing parent-child dependency
+		deps, err := store.GetDependencyRecords(ctx, updateArgs.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to get dependencies: %v", err),
+			}
+		}
+		for _, dep := range deps {
+			if dep.Type == types.DepParentChild {
+				if err := store.RemoveDependency(ctx, updateArgs.ID, dep.DependsOnID, actor); err != nil {
+					return Response{
+						Success: false,
+						Error:   fmt.Sprintf("failed to remove old parent dependency: %v", err),
+					}
+				}
+				break // Only one parent-child dependency expected
+			}
+		}
+
+		// Add new parent-child dependency (if not removing parent)
+		if newParentID != "" {
+			newDep := &types.Dependency{
+				IssueID:     updateArgs.ID,
+				DependsOnID: newParentID,
+				Type:        types.DepParentChild,
+			}
+			if err := store.AddDependency(ctx, newDep, actor); err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("failed to add parent dependency: %v", err),
+				}
+			}
+		}
+	}
+
+	// Emit mutation event for event-driven daemon (only if any updates or label/parent operations were performed)
+	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 || updateArgs.Parent != nil {
 		// Check if this was a status change - emit rich MutationStatus event
 		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
 			s.emitRichMutation(MutationEvent{

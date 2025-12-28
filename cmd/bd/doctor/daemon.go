@@ -43,7 +43,8 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 	}
 
 	// Check for stale socket directly (catches cases where RPC failed so WorkspacePath is empty)
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 	if _, err := os.Stat(socketPath); err == nil {
 		// Socket exists - try to connect

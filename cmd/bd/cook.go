@@ -649,6 +649,8 @@ func cookFormulaToSubgraphWithVars(f *formula.Formula, protoID string, vars map[
 			}
 		}
 	}
+	// Attach recommended phase from formula (bd-mol cleanup: warn on pour of vapor formulas)
+	subgraph.Phase = f.Phase
 	return subgraph, nil
 }
 

@@ -93,6 +93,81 @@ func followRedirect(beadsDir string) string {
 	return target
 }
 
+// RedirectInfo contains information about a beads directory redirect.
+type RedirectInfo struct {
+	// IsRedirected is true if the local .beads has a redirect file
+	IsRedirected bool
+	// LocalDir is the local .beads directory (the one with the redirect file)
+	LocalDir string
+	// TargetDir is the actual .beads directory being used (after following redirect)
+	TargetDir string
+}
+
+// GetRedirectInfo checks if the current beads directory is redirected.
+// It searches for the local .beads/ directory and checks if it contains a redirect file.
+// Returns RedirectInfo with IsRedirected=true if a redirect is active.
+func GetRedirectInfo() RedirectInfo {
+	info := RedirectInfo{}
+
+	// Find the local .beads directory without following redirects
+	localBeadsDir := findLocalBeadsDir()
+	if localBeadsDir == "" {
+		return info
+	}
+	info.LocalDir = localBeadsDir
+
+	// Check if this directory has a redirect file
+	redirectFile := filepath.Join(localBeadsDir, RedirectFileName)
+	if _, err := os.Stat(redirectFile); err != nil {
+		// No redirect file
+		return info
+	}
+
+	// There's a redirect - find the target
+	targetDir := followRedirect(localBeadsDir)
+	if targetDir == localBeadsDir {
+		// Redirect file exists but failed to resolve (invalid target)
+		return info
+	}
+
+	info.IsRedirected = true
+	info.TargetDir = targetDir
+	return info
+}
+
+// findLocalBeadsDir finds the local .beads directory without following redirects.
+// This is used to detect if a redirect is configured.
+func findLocalBeadsDir() string {
+	// Check BEADS_DIR environment variable first
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		return utils.CanonicalizePath(beadsDir)
+	}
+
+	// Check for worktree - use main repo's .beads
+	mainRepoRoot, err := git.GetMainRepoRoot()
+	if err == nil && mainRepoRoot != "" {
+		beadsDir := filepath.Join(mainRepoRoot, ".beads")
+		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			return beadsDir
+		}
+	}
+
+	// Walk up directory tree
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		beadsDir := filepath.Join(dir, ".beads")
+		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+			return beadsDir
+		}
+	}
+
+	return ""
+}
+
 // findDatabaseInBeadsDir searches for a database file within a .beads directory.
 // It implements the standard search order:
 // 1. Check config.json first (single source of truth)

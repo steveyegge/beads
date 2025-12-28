@@ -14,7 +14,8 @@ import (
 )
 
 func CheckJSONLIntegrity(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Resolve JSONL path.
 	jsonlPath := ""

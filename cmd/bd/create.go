@@ -110,11 +110,20 @@ var createCmd = &cobra.Command{
 		forceCreate, _ := cmd.Flags().GetBool("force")
 		repoOverride, _ := cmd.Flags().GetString("repo")
 		rigOverride, _ := cmd.Flags().GetString("rig")
+		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
 
-		// Handle --rig flag: create issue in a different rig
-		if rigOverride != "" {
-			createInRig(cmd, rigOverride, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
+		// Handle --rig or --prefix flag: create issue in a different rig
+		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
+		targetRig := rigOverride
+		if prefixOverride != "" {
+			if targetRig != "" {
+				FatalError("cannot specify both --rig and --prefix flags")
+			}
+			targetRig = prefixOverride
+		}
+		if targetRig != "" {
+			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
 			return
 		}
 
@@ -205,6 +214,13 @@ var createCmd = &cobra.Command{
 
 			if err := validation.ValidatePrefix(requestedPrefix, dbPrefix, forceCreate); err != nil {
 				FatalError("%v", err)
+			}
+
+			// Validate agent ID pattern if type is agent (gt-hlaaf)
+			if issueType == "agent" {
+				if err := validation.ValidateAgentID(explicitID); err != nil {
+					FatalError("invalid agent ID: %v", err)
+				}
 			}
 		}
 
@@ -450,7 +466,7 @@ func init() {
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	registerPriorityFlag(createCmd, "2")
-	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate)")
+	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role)")
 	registerCommonIssueFlags(createCmd)
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
@@ -463,6 +479,7 @@ func init() {
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
 	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
 	createCmd.Flags().String("rig", "", "Create issue in a different rig (e.g., --rig beads)")
+	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
@@ -492,7 +509,11 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 	if err != nil {
 		FatalError("failed to open rig %q database: %v", rigName, err)
 	}
-	defer targetStore.Close()
+	defer func() {
+		if err := targetStore.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
+		}
+	}()
 
 	var externalRefPtr *string
 	if externalRef != "" {

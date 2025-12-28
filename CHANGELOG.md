@@ -5,6 +5,110 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.1] - 2025-12-27
+
+### Added
+
+- **`bd where` command** (bd-8x43) - Show active beads location
+  - Displays the resolved database path after following redirects
+  - Helpful for debugging multi-rig setups
+
+- **`--parent` flag for `bd update`** (bd-cj2e) - Reparent issues
+  - Move issues between epics with `bd update <id> --parent=<new-parent>`
+  - Supports clearing parent with `--parent=none`
+
+- **Redirect info in `bd prime`** (bd-kblo) - Gas Town support
+  - Shows when database is redirected to another location
+  - Improves visibility into routing behavior
+
+### Fixed
+
+- **Doctor follows redirects** (bd-tvus) - Gas Town compatibility
+  - `bd doctor` now correctly follows database redirects
+  - Prevents false negatives when running from rig roots
+
+- **Remove 8-char prefix limit** (GH#770) - `bd rename-prefix`
+  - Removed arbitrary length restriction on issue prefixes
+  - Allows longer, more descriptive prefixes
+
+### Changed
+
+- **Git context consolidation** (bd-qph3) - Internal refactor
+  - Unified git context into single cached struct
+  - Reduces redundant git operations
+
+### Documentation
+
+- **Database Redirects section** (bd-8x43) - ADVANCED.md
+  - Comprehensive documentation for redirect feature
+  - Explains Gas Town integration patterns
+
+- **Community Tools update** (GH#771) - README.md
+  - Added opencode-beads to community tools list
+
+## [0.39.0] - 2025-12-27
+
+### Added
+
+- **`bd orphans` command** (GH#767) - Detect orphaned issues
+  - Finds issues mentioned in git commits that were never closed
+  - DRY refactoring of orphan detection from `bd doctor`
+  - Helps maintain issue hygiene in larger projects
+
+- **`bd admin` parent command** (bd-3u8m) - Consolidated admin tools
+  - `bd admin cleanup` - Clean up unused data
+  - `bd admin compact` - Compact the database
+  - `bd admin reset` - Reset to initial state
+  - Reduces top-level command clutter
+
+- **`--prefix` flag for `bd create`** - Cross-rig issue creation
+  - Create issues in other rigs from any directory
+  - Accepts prefix (`bd-`), short form (`bd`), or rig name (`beads`)
+  - Works with existing routes.jsonl routing
+
+### Changed
+
+- **`bd mol catalog` → `bd formula list`** (bd-ctmg) - Command rename
+  - Aligns with formula-based terminology
+  - `bd formula list` shows available molecule templates
+
+- **`bd info --thanks`** (bd-wb9g) - Relocated thanks command
+  - Contributors list moved under `bd info`
+  - Reduces command namespace pollution
+
+- **Removed unused commands** (bd-x0zl)
+  - `bd pin`, `bd unpin`, `bd hook` removed
+  - Functionality covered by `gt mol` commands in Gas Town
+  - Cleaner separation between beads (data) and gastown (orchestration)
+
+- **`bd doctor --check=pollution`** (bd-kff0) - Integrated test pollution check
+  - Detects test artifacts left in production database
+  - Previously standalone `bd detect-pollution` command
+
+### Fixed
+
+- **macOS codesigning** - Fixed `bump-version.sh --install`
+  - Ad-hoc signing for local installations
+  - Prevents macOS from quarantining the binary
+
+- **Lint errors and Nix vendorHash** (GH#769)
+  - Resolved golangci-lint issues
+  - Updated Nix package hash for reproducible builds
+
+### Documentation
+
+- **Issue Statuses section** (bd-epww) - CLI_REFERENCE.md
+  - Comprehensive status lifecycle documentation
+  - Clear explanations of open, pinned, in_progress, blocked, deferred, closed, tombstone
+
+- **Consolidated UI_PHILOSOPHY files** (GH#745)
+  - Merged duplicate philosophy docs
+  - Single source of truth for UI design principles
+
+- **README and PLUGIN.md fixes** (GH#763)
+  - Corrected installation instructions
+  - Updated plugin documentation
+
 ## [0.38.0] - 2025-12-27
 
 ### Added
@@ -44,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Consistent code quality before commits
 
 ### Changed
+
+- **CLI consolidation** (bd-9115) - Reduced top-level command clutter
+  - `bd cleanup`, `bd compact`, `bd reset` → `bd admin cleanup|compact|reset`
+  - `bd migrate-*` → `bd migrate hash-ids|issues|sync|tombstones`
+  - `bd cook` → `bd formula cook`
+  - `bd detect-pollution` → `bd doctor --check=pollution`
+  - `bd quickstart` hidden, use docs/QUICKSTART.md instead
+  - Hidden aliases maintain backwards compatibility with deprecation notices
 
 - **Sync backoff and tips consolidation** (GH#753) - Smarter daemon
   - Daemon uses exponential backoff for sync retries

@@ -20,7 +20,8 @@ import (
 
 // CheckIDFormat checks whether issues use hash-based or sequential IDs
 func CheckIDFormat(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -108,7 +109,8 @@ func CheckIDFormat(path string) DoctorCheck {
 
 // CheckDependencyCycles checks for circular dependencies in the issue graph
 func CheckDependencyCycles(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	// If no database, skip this check
@@ -204,7 +206,8 @@ func CheckDependencyCycles(path string) DoctorCheck {
 // CheckTombstones checks the health of tombstone records
 // Reports: total tombstones, expiring soon (within 7 days), already expired
 func CheckTombstones(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 
 	// Skip if database doesn't exist
@@ -302,7 +305,8 @@ func CheckTombstones(path string) DoctorCheck {
 
 // CheckDeletionsManifest checks the status of deletions.jsonl and suggests migration to tombstones
 func CheckDeletionsManifest(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Skip if .beads doesn't exist
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -400,7 +404,8 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 // This detects when a .beads directory was copied from another repo or when
 // the git remote URL changed. A mismatch can cause data loss during sync.
 func CheckRepoFingerprint(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Get database path
 	var dbPath string

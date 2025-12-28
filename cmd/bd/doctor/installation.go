@@ -40,7 +40,8 @@ func CheckInstallation(path string) DoctorCheck {
 
 // CheckMultipleDatabases checks for multiple database files in .beads directory
 func CheckMultipleDatabases(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Find all .db files (excluding backups and vc.db)
 	files, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
@@ -88,7 +89,8 @@ func CheckMultipleDatabases(path string) DoctorCheck {
 
 // CheckPermissions verifies that .beads directory and database are readable/writable
 func CheckPermissions(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check if .beads/ is writable
 	testFile := filepath.Join(beadsDir, ".doctor-test-write")

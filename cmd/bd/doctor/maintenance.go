@@ -21,7 +21,8 @@ const DefaultCleanupAgeDays = 30
 // CheckStaleClosedIssues detects closed issues that could be cleaned up.
 // This consolidates the cleanup command into doctor checks.
 func CheckStaleClosedIssues(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -99,7 +100,8 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 
 // CheckExpiredTombstones detects tombstones that have exceeded their TTL.
 func CheckExpiredTombstones(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
@@ -241,7 +243,8 @@ func CheckStaleMolecules(path string) DoctorCheck {
 
 // CheckCompactionCandidates detects issues eligible for compaction.
 func CheckCompactionCandidates(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -346,4 +349,79 @@ func resolveBeadsDir(beadsDir string) string {
 	}
 
 	return target
+}
+
+// CheckPersistentMolIssues detects mol- prefixed issues that should have been ephemeral.
+// When users run "bd mol pour" on formulas that should use "bd mol wisp", the resulting
+// issues get the "mol-" prefix but persist in JSONL. These should be cleaned up.
+func CheckPersistentMolIssues(path string) DoctorCheck {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Persistent Mol Issues",
+			Status:   StatusOK,
+			Message:  "N/A (no JSONL file)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// Read JSONL and count mol- prefixed issues that are not ephemeral
+	file, err := os.Open(jsonlPath) // #nosec G304 - path constructed safely
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Persistent Mol Issues",
+			Status:   StatusOK,
+			Message:  "N/A (unable to read JSONL)",
+			Category: CategoryMaintenance,
+		}
+	}
+	defer file.Close()
+
+	var molCount int
+	var molIDs []string
+	decoder := json.NewDecoder(file)
+
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			break
+		}
+		// Skip deleted issues (tombstones)
+		if issue.DeletedAt != nil {
+			continue
+		}
+		// Look for mol- prefix that shouldn't be in JSONL
+		// (ephemeral issues have Ephemeral=true and don't get exported)
+		if strings.HasPrefix(issue.ID, "mol-") && !issue.Ephemeral {
+			molCount++
+			if len(molIDs) < 3 {
+				molIDs = append(molIDs, issue.ID)
+			}
+		}
+	}
+
+	if molCount == 0 {
+		return DoctorCheck{
+			Name:     "Persistent Mol Issues",
+			Status:   StatusOK,
+			Message:  "No persistent mol- issues",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	detail := fmt.Sprintf("Example: %v", molIDs)
+	if molCount > 3 {
+		detail += fmt.Sprintf(" (+%d more)", molCount-3)
+	}
+
+	return DoctorCheck{
+		Name:     "Persistent Mol Issues",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d mol- issue(s) in JSONL should be ephemeral", molCount),
+		Detail:   detail,
+		Fix:      "Run 'bd delete <id> --force' to remove, or use 'bd mol wisp' instead of 'bd mol pour'",
+		Category: CategoryMaintenance,
+	}
 }

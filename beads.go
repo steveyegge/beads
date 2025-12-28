@@ -50,6 +50,15 @@ func FindAllDatabases() []DatabaseInfo {
 	return beads.FindAllDatabases()
 }
 
+// RedirectInfo contains information about a beads directory redirect
+type RedirectInfo = beads.RedirectInfo
+
+// GetRedirectInfo checks if the current beads directory is redirected.
+// Returns RedirectInfo with IsRedirected=true if a redirect is active.
+func GetRedirectInfo() RedirectInfo {
+	return beads.GetRedirectInfo()
+}
+
 // Core types from internal/types
 type (
 	Issue              = types.Issue
