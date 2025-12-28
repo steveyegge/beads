@@ -1,0 +1,88 @@
+import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
+
+const sidebars: SidebarsConfig = {
+  docsSidebar: [
+    'intro',
+    {
+      type: 'category',
+      label: 'Getting Started',
+      items: [
+        'getting-started/installation',
+        'getting-started/quickstart',
+        'getting-started/ide-setup',
+        'getting-started/upgrading',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Core Concepts',
+      items: [
+        'core-concepts/index',
+        'core-concepts/issues',
+        'core-concepts/daemon',
+        'core-concepts/jsonl-sync',
+        'core-concepts/hash-ids',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'CLI Reference',
+      link: {
+        type: 'doc',
+        id: 'cli-reference/index',
+      },
+      items: [
+        'cli-reference/essential',
+        'cli-reference/issues',
+        'cli-reference/dependencies',
+        'cli-reference/labels',
+        'cli-reference/sync',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Workflows',
+      items: [
+        'workflows/index',
+        'workflows/molecules',
+        'workflows/formulas',
+        'workflows/gates',
+        'workflows/wisps',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Multi-Agent',
+      collapsed: true,
+      items: [
+        'multi-agent/index',
+        'multi-agent/routing',
+        'multi-agent/coordination',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Integrations',
+      collapsed: true,
+      items: [
+        'integrations/claude-code',
+        'integrations/mcp-server',
+        'integrations/aider',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Reference',
+      collapsed: true,
+      items: [
+        'reference/configuration',
+        'reference/git-integration',
+        'reference/advanced',
+        'reference/troubleshooting',
+        'reference/faq',
+      ],
+    },
+  ],
+};
+
+export default sidebars;
