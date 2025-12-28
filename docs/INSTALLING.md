@@ -29,6 +29,19 @@ The installer will:
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
 
+### Comparison of Installation Methods
+
+| Method | Best For | Updates | Prerequisites | Notes |
+|--------|----------|---------|---------------|-------|
+| **Homebrew** | macOS/Linux users | `brew upgrade bd` | Homebrew | Recommended. Handles everything automatically |
+| **npm** | JS/Node.js projects | `npm update -g @beads/bd` | Node.js | Convenient if npm is your ecosystem |
+| **Install script** | Quick setup, CI/CD | Re-run script | curl, bash | Good for automation and one-liners |
+| **go install** | Go developers | Re-run command | Go 1.24+ | Builds from source, always latest |
+| **From source** | Contributors, custom builds | `git pull && go build` | Go, git | Full control, can modify code |
+| **AUR (Arch)** | Arch Linux users | `yay -Syu` | yay/paru | Community-maintained |
+
+**TL;DR:** Use Homebrew if available. Use npm if you're in a Node.js environment. Use the script for quick one-off installs or CI.
+
 ## Platform-Specific Installation
 
 ### macOS
