@@ -26,7 +26,8 @@ type localConfig struct {
 
 // CheckDatabaseVersion checks the database version and migration status
 func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -135,7 +136,8 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 
 // CheckSchemaCompatibility checks if all required tables and columns are present
 func CheckSchemaCompatibility(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
 	var dbPath string
@@ -224,7 +226,8 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 
 // CheckDatabaseIntegrity runs SQLite's PRAGMA integrity_check (bd-2au)
 func CheckDatabaseIntegrity(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Get database path (same logic as CheckSchemaCompatibility)
 	var dbPath string
@@ -348,7 +351,8 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 
 // CheckDatabaseJSONLSync checks if database and JSONL are in sync
 func CheckDatabaseJSONLSync(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Resolve database path (respects metadata.json override).
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
@@ -702,7 +706,8 @@ func isNoDbModeConfigured(beadsDir string) bool {
 // irreversible. The user must make an explicit decision to delete their
 // closed issue history. We only provide guidance, never action.
 func CheckDatabaseSize(path string) DoctorCheck {
-	beadsDir := filepath.Join(path, ".beads")
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Get database path
 	var dbPath string
