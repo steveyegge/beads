@@ -29,15 +29,28 @@ import (
 var wispCmd = &cobra.Command{
 	Use:   "wisp [proto-id]",
 	Short: "Create or manage wisps (ephemeral molecules)",
-	Long: `Create or manage wisps - ephemeral molecules for operational workflows.
+	Long: `Create or manage wisps - EPHEMERAL molecules for operational workflows.
 
 When called with a proto-id argument, creates a wisp from that proto.
 When called with a subcommand (list, gc), manages existing wisps.
 
 Wisps are issues with Ephemeral=true in the main database. They're stored
 locally but NOT exported to JSONL (and thus not synced via git).
-They're used for patrol cycles, operational loops, and other workflows
-that shouldn't accumulate in the shared issue database.
+
+WHEN TO USE WISP vs POUR:
+  wisp (vapor): Ephemeral work that auto-cleans up
+    - Release workflows (one-time execution)
+    - Patrol cycles (deacon, witness, refinery)
+    - Health checks and diagnostics
+    - Any operational workflow without audit value
+
+  pour (liquid): Persistent work that needs audit trail
+    - Feature implementations spanning multiple sessions
+    - Work you may need to reference later
+    - Anything worth preserving in git history
+
+TIP: Formulas can specify phase:"vapor" to recommend wisp usage.
+     If you use pour on a vapor-phase formula, you'll get a warning.
 
 The wisp lifecycle:
   1. Create: bd mol wisp <proto> or bd create --ephemeral
@@ -46,9 +59,10 @@ The wisp lifecycle:
   4. Or burn: bd mol burn <id> (deletes without creating digest)
 
 Examples:
-  bd mol wisp mol-patrol             # Create wisp from proto
-  bd mol wisp list                   # List all wisps
-  bd mol wisp gc                     # Garbage collect old wisps
+  bd mol wisp beads-release --var version=1.0  # Release workflow
+  bd mol wisp mol-patrol                       # Ephemeral patrol cycle
+  bd mol wisp list                             # List all wisps
+  bd mol wisp gc                               # Garbage collect old wisps
 
 Subcommands:
   list  List all wisps in current context

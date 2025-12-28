@@ -31,6 +31,7 @@ type TemplateSubgraph struct {
 	Dependencies []*types.Dependency         // All dependencies within the subgraph
 	IssueMap     map[string]*types.Issue     // ID -> Issue for quick lookup
 	VarDefs      map[string]formula.VarDef   // Variable definitions from formula (for defaults)
+	Phase        string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
 }
 
 // InstantiateResult holds the result of template instantiation

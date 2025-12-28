@@ -99,6 +99,11 @@ type Formula struct {
 	// Used with TypeAspect to specify which steps the aspect applies to.
 	Pointcuts []*Pointcut `json:"pointcuts,omitempty"`
 
+	// Phase indicates the recommended instantiation phase: "liquid" (pour) or "vapor" (wisp).
+	// If "vapor", bd pour will warn and suggest using bd mol wisp instead.
+	// Patrol and release workflows should typically use "vapor" since they're operational.
+	Phase string `json:"phase,omitempty"`
+
 	// Source tracks where this formula was loaded from (set by parser).
 	Source string `json:"source,omitempty"`
 }

@@ -911,6 +911,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, staleMoleculesCheck)
 	// Don't fail overall check for stale molecules, just warn
 
+	// Check 26b: Persistent mol- issues (should have been ephemeral)
+	persistentMolCheck := convertDoctorCheck(doctor.CheckPersistentMolIssues(path))
+	result.Checks = append(result.Checks, persistentMolCheck)
+	// Don't fail overall check for persistent mol issues, just warn
+
 	// Check 27: Expired tombstones (maintenance, bd-bqcc)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))
 	result.Checks = append(result.Checks, tombstonesExpiredCheck)
