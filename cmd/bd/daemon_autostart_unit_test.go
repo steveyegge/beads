@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 )
 
@@ -327,5 +328,130 @@ func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 	}
 	if _, err := os.Stat(sock); !os.IsNotExist(err) {
 		t.Fatalf("expected socket removed")
+	}
+}
+
+// TestIsWispOperation tests the wisp operation detection for auto-daemon-bypass (bd-ta4r)
+func TestIsWispOperation(t *testing.T) {
+	// Helper to create a command with parent hierarchy
+	makeCmd := func(names ...string) *cobra.Command {
+		var current *cobra.Command
+		for i, name := range names {
+			cmd := &cobra.Command{Use: name}
+			if i == 0 {
+				current = cmd
+			} else {
+				current.AddCommand(cmd)
+				current = cmd
+			}
+		}
+		return current
+	}
+
+	tests := []struct {
+		name     string
+		cmdNames []string // hierarchy: root, child, grandchild...
+		args     []string
+		want     bool
+	}{
+		// Wisp subcommands
+		{
+			name:     "mol wisp (direct)",
+			cmdNames: []string{"bd", "mol", "wisp"},
+			args:     []string{},
+			want:     true,
+		},
+		{
+			name:     "mol wisp create",
+			cmdNames: []string{"bd", "mol", "wisp", "create"},
+			args:     []string{"some-proto"},
+			want:     true,
+		},
+		{
+			name:     "mol wisp list",
+			cmdNames: []string{"bd", "mol", "wisp", "list"},
+			args:     []string{},
+			want:     true,
+		},
+		{
+			name:     "mol wisp gc",
+			cmdNames: []string{"bd", "mol", "wisp", "gc"},
+			args:     []string{},
+			want:     true,
+		},
+		// mol burn and squash (wisp-only operations)
+		{
+			name:     "mol burn",
+			cmdNames: []string{"bd", "mol", "burn"},
+			args:     []string{"bd-eph-abc"},
+			want:     true,
+		},
+		{
+			name:     "mol squash",
+			cmdNames: []string{"bd", "mol", "squash"},
+			args:     []string{"bd-eph-abc"},
+			want:     true,
+		},
+		// Ephemeral issue IDs in args
+		{
+			name:     "close with bd-eph ID",
+			cmdNames: []string{"bd", "close"},
+			args:     []string{"bd-eph-abc123"},
+			want:     true,
+		},
+		{
+			name:     "show with gt-eph ID",
+			cmdNames: []string{"bd", "show"},
+			args:     []string{"gt-eph-xyz"},
+			want:     true,
+		},
+		{
+			name:     "update with eph- prefix",
+			cmdNames: []string{"bd", "update"},
+			args:     []string{"eph-test", "--status=closed"},
+			want:     true,
+		},
+		// Non-wisp operations (should NOT bypass)
+		{
+			name:     "regular show",
+			cmdNames: []string{"bd", "show"},
+			args:     []string{"bd-abc123"},
+			want:     false,
+		},
+		{
+			name:     "regular close",
+			cmdNames: []string{"bd", "close"},
+			args:     []string{"bd-xyz"},
+			want:     false,
+		},
+		{
+			name:     "mol pour (persistent)",
+			cmdNames: []string{"bd", "mol", "pour"},
+			args:     []string{"some-formula"},
+			want:     false,
+		},
+		{
+			name:     "list command",
+			cmdNames: []string{"bd", "list"},
+			args:     []string{},
+			want:     false,
+		},
+		// Edge cases
+		{
+			name:     "flag that looks like eph ID should be ignored",
+			cmdNames: []string{"bd", "show"},
+			args:     []string{"--format=bd-eph-style", "bd-regular"},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := makeCmd(tt.cmdNames...)
+			got := isWispOperation(cmd, tt.args)
+			if got != tt.want {
+				t.Errorf("isWispOperation() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

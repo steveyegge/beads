@@ -139,14 +139,10 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Wisp create requires direct store access
+	// Wisp create requires direct store access (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: wisp create requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp %s ...\n", args[0])
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
 		os.Exit(1)
 	}
 
@@ -564,14 +560,10 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Wisp gc requires direct store access for deletion
+	// Wisp gc requires direct store access for deletion (daemon auto-bypassed for wisp ops)
 	if store == nil {
-		if daemonClient != nil {
-			fmt.Fprintf(os.Stderr, "Error: wisp gc requires direct database access\n")
-			fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol wisp gc\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: no database connection\n")
-		}
+		fmt.Fprintf(os.Stderr, "Error: no database connection\n")
+		fmt.Fprintf(os.Stderr, "Hint: run 'bd init' or 'bd import' to initialize the database\n")
 		os.Exit(1)
 	}
 

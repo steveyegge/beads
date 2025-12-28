@@ -57,6 +57,7 @@ const (
 	FallbackAutoStartDisabled = "auto_start_disabled"
 	FallbackAutoStartFailed   = "auto_start_failed"
 	FallbackDaemonUnsupported = "daemon_unsupported"
+	FallbackWispOperation     = "wisp_operation"
 )
 
 var (
@@ -634,10 +635,22 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
+		// Wisp operations auto-bypass daemon (bd-ta4r)
+		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
+		// so daemon can't help anyway. This reduces friction in wisp workflows.
+		if isWispOperation(cmd, args) {
+			noDaemon = true
+			daemonStatus.FallbackReason = FallbackWispOperation
+			debug.Logf("wisp operation detected, using direct mode")
+		}
+
 		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
 		if noDaemon {
-			daemonStatus.FallbackReason = FallbackFlagNoDaemon
-			debug.Logf("--no-daemon flag set, using direct mode")
+			// Only set FallbackFlagNoDaemon if not already set by auto-bypass logic
+			if daemonStatus.FallbackReason == FallbackNone {
+				daemonStatus.FallbackReason = FallbackFlagNoDaemon
+				debug.Logf("--no-daemon flag set, using direct mode")
+			}
 		} else if shouldDisableDaemonForWorktree() {
 			// In a git worktree without sync-branch configured - daemon is unsafe
 			// because all worktrees share the same .beads directory and the daemon
@@ -1090,4 +1103,46 @@ func handleFreshCloneError(err error, beadsDir string) bool {
 
 	fmt.Fprintf(os.Stderr, "For more information: bd init --help\n")
 	return true
+}
+
+// isWispOperation returns true if the command operates on ephemeral wisps.
+// Wisp operations auto-bypass the daemon because wisps are local-only
+// (Ephemeral=true issues are never exported to JSONL).
+// Detects:
+//   - mol wisp subcommands (create, list, gc, or direct proto invocation)
+//   - mol burn (only operates on wisps)
+//   - mol squash (condenses wisps to digests)
+//   - Commands with ephemeral issue IDs in args (bd-*-eph-*, eph-*)
+func isWispOperation(cmd *cobra.Command, args []string) bool {
+	cmdName := cmd.Name()
+
+	// Check command hierarchy for wisp subcommands
+	// bd mol wisp → parent is "mol", cmd is "wisp"
+	// bd mol wisp create → parent is "wisp", cmd is "create"
+	if cmd.Parent() != nil {
+		parentName := cmd.Parent().Name()
+		// Direct wisp command or subcommands under wisp
+		if parentName == "wisp" || cmdName == "wisp" {
+			return true
+		}
+		// mol burn and mol squash are wisp-only operations
+		if parentName == "mol" && (cmdName == "burn" || cmdName == "squash") {
+			return true
+		}
+	}
+
+	// Check for ephemeral issue IDs in arguments
+	// Ephemeral IDs have "eph" segment: bd-eph-xxx, gt-eph-xxx, eph-xxx
+	for _, arg := range args {
+		// Skip flags
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		// Check for ephemeral prefix patterns
+		if strings.Contains(arg, "-eph-") || strings.HasPrefix(arg, "eph-") {
+			return true
+		}
+	}
+
+	return false
 }
