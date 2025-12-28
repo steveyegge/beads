@@ -108,6 +108,13 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.RoleBead != nil {
 		u["role_bead"] = *a.RoleBead
 	}
+	// Agent state fields (bd-uxlb)
+	if a.AgentState != nil {
+		u["agent_state"] = *a.AgentState
+	}
+	if a.LastActivity != nil && *a.LastActivity {
+		u["last_activity"] = time.Now()
+	}
 	return u
 }
 

@@ -129,6 +129,9 @@ type UpdateArgs struct {
 	// Agent slot fields (gt-h5sza)
 	HookBead *string `json:"hook_bead,omitempty"` // Current work on agent's hook (0..1)
 	RoleBead *string `json:"role_bead,omitempty"` // Role definition bead for agent
+	// Agent state fields (bd-uxlb)
+	AgentState   *string `json:"agent_state,omitempty"`   // Agent state (idle|running|stuck|stopped|dead)
+	LastActivity *bool   `json:"last_activity,omitempty"` // If true, update last_activity to now
 }
 
 // CloseArgs represents arguments for the close operation
