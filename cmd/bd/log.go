@@ -131,7 +131,7 @@ func runLog(cmd *cobra.Command, args []string) {
 	}
 
 	// Apply filters
-	events = filterEvents(events)
+	events = filterLogEvents(events)
 
 	// Handle summary mode
 	if logSummary {
@@ -155,7 +155,7 @@ func runLog(cmd *cobra.Command, args []string) {
 		outputJSON(events)
 	} else {
 		for _, event := range events {
-			printEvent(event)
+			printLogEvent(event)
 		}
 	}
 }
@@ -218,7 +218,7 @@ func parseEvent(line string) (Event, error) {
 	return event, nil
 }
 
-func filterEvents(events []Event) []Event {
+func filterLogEvents(events []Event) []Event {
 	var filtered []Event
 
 	for _, event := range events {
@@ -243,7 +243,7 @@ func filterEvents(events []Event) []Event {
 	return filtered
 }
 
-func printEvent(event Event) {
+func printLogEvent(event Event) {
 	// Color-coded output based on category
 	category := strings.Split(event.EventCode, ".")[0]
 
@@ -331,9 +331,9 @@ func followLog(logPath string) {
 		}
 
 		// Apply filters
-		filtered := filterEvents([]Event{event})
+		filtered := filterLogEvents([]Event{event})
 		if len(filtered) > 0 {
-			printEvent(filtered[0])
+			printLogEvent(filtered[0])
 		}
 	}
 }
