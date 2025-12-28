@@ -49,6 +49,7 @@ const config: Config = {
       'classic',
       {
         docs: {
+          routeBasePath: '/', // Docs as homepage
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/joyshmitz/beads/tree/docs/docusaurus-site/website/',
           showLastUpdateTime: true,
@@ -81,7 +82,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/docs/cli-reference',
+          to: '/cli-reference',
           label: 'CLI Reference',
           position: 'left',
         },
@@ -105,15 +106,15 @@ const config: Config = {
           items: [
             {
               label: 'Getting Started',
-              to: '/docs/getting-started/installation',
+              to: '/getting-started/installation',
             },
             {
               label: 'CLI Reference',
-              to: '/docs/cli-reference',
+              to: '/cli-reference',
             },
             {
               label: 'Workflows',
-              to: '/docs/workflows/molecules',
+              to: '/workflows/molecules',
             },
           ],
         },
@@ -122,11 +123,11 @@ const config: Config = {
           items: [
             {
               label: 'Claude Code',
-              to: '/docs/integrations/claude-code',
+              to: '/integrations/claude-code',
             },
             {
               label: 'MCP Server',
-              to: '/docs/integrations/mcp-server',
+              to: '/integrations/mcp-server',
             },
           ],
         },
