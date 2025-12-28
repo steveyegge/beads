@@ -59,6 +59,7 @@ var (
 	checkHealthMode      bool
 	doctorCheckFlag      string // bd-kff0: run specific check (e.g., "pollution")
 	doctorClean          bool   // bd-kff0: for pollution check, delete detected issues
+	doctorDeep           bool   // bd-cwpl: full graph integrity validation
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -105,6 +106,16 @@ Specific Check Mode (--check):
   Run a specific check in detail. Available checks:
   - pollution: Detect and optionally clean test issues from database
 
+Deep Validation Mode (--deep):
+  Validate full graph integrity. May be slow on large databases.
+  Additional checks:
+  - Parent consistency: All parent-child deps point to existing issues
+  - Dependency integrity: All deps reference valid issues
+  - Epic completeness: Find epics ready to close (all children closed)
+  - Agent bead integrity: Agent beads have valid state values
+  - Mail thread integrity: Thread IDs reference existing issues
+  - Molecule integrity: Molecules have valid parent-child structures
+
 Examples:
   bd doctor              # Check current directory
   bd doctor /path/to/repo # Check specific repository
@@ -117,7 +128,8 @@ Examples:
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
   bd doctor --check=pollution          # Show potential test issues
-  bd doctor --check=pollution --clean  # Delete test issues (with confirmation)`,
+  bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
+  bd doctor --deep             # Full graph integrity validation (bd-cwpl)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 
@@ -157,6 +169,12 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Available checks: pollution\n")
 				os.Exit(1)
 			}
+		}
+
+		// Run deep validation if --deep flag is set (bd-cwpl)
+		if doctorDeep {
+			runDeepValidation(absPath)
+			return
 		}
 
 		// Run diagnostics
@@ -590,6 +608,30 @@ func runCheckHealth(path string) {
 		printCheckHealthHint(issues)
 	}
 	// Silent exit on success
+}
+
+// runDeepValidation runs full graph integrity validation (bd-cwpl)
+func runDeepValidation(path string) {
+	// Show warning about potential slowness
+	fmt.Println("Running deep validation (may be slow on large databases)...")
+	fmt.Println()
+
+	result := doctor.RunDeepValidation(path)
+
+	if jsonOutput {
+		jsonBytes, err := doctor.DeepValidationResultJSON(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(jsonBytes))
+	} else {
+		doctor.PrintDeepValidationResult(result)
+	}
+
+	if !result.OverallOK {
+		os.Exit(1)
+	}
 }
 
 // printCheckHealthHint prints the health check hint and exits with error.
@@ -1249,4 +1291,5 @@ func init() {
 	doctorCmd.Flags().StringVarP(&doctorOutput, "output", "o", "", "Export diagnostics to JSON file (bd-9cc)")
 	doctorCmd.Flags().StringVar(&doctorCheckFlag, "check", "", "Run specific check in detail (e.g., 'pollution')")
 	doctorCmd.Flags().BoolVar(&doctorClean, "clean", false, "For pollution check: delete detected test issues")
+	doctorCmd.Flags().BoolVar(&doctorDeep, "deep", false, "Validate full graph integrity (bd-cwpl)")
 }
