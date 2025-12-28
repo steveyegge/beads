@@ -83,7 +83,7 @@ const OldThreshold = 24 * time.Hour
 func runWisp(cmd *cobra.Command, args []string) {
 	if len(args) == 0 {
 		// No proto-id provided, show help
-		cmd.Help()
+		_ = cmd.Help()
 		return
 	}
 	// Delegate to the create logic

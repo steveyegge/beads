@@ -496,7 +496,11 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 	if err != nil {
 		FatalError("failed to open rig %q database: %v", rigName, err)
 	}
-	defer targetStore.Close()
+	defer func() {
+		if err := targetStore.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
+		}
+	}()
 
 	var externalRefPtr *string
 	if externalRef != "" {
