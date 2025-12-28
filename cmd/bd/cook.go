@@ -16,6 +16,25 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+// stepTypeToIssueType converts a formula step type string to a types.IssueType.
+// Returns types.TypeTask for empty or unrecognized types.
+func stepTypeToIssueType(stepType string) types.IssueType {
+	switch stepType {
+	case "task":
+		return types.TypeTask
+	case "bug":
+		return types.TypeBug
+	case "feature":
+		return types.TypeFeature
+	case "epic":
+		return types.TypeEpic
+	case "chore":
+		return types.TypeChore
+	default:
+		return types.TypeTask
+	}
+}
+
 // cookCmd compiles a formula JSON into a proto bead.
 var cookCmd = &cobra.Command{
 	Use:   "cook <formula-file>",
@@ -419,24 +438,8 @@ func collectStepsToSubgraph(steps []*formula.Step, parentID string, issueMap map
 		// Generate issue ID (formula-name.step-id)
 		issueID := fmt.Sprintf("%s.%s", parentID, step.ID)
 
-		// Determine issue type
-		issueType := types.TypeTask
-		if step.Type != "" {
-			switch step.Type {
-			case "task":
-				issueType = types.TypeTask
-			case "bug":
-				issueType = types.TypeBug
-			case "feature":
-				issueType = types.TypeFeature
-			case "epic":
-				issueType = types.TypeEpic
-			case "chore":
-				issueType = types.TypeChore
-			}
-		}
-
-		// If step has children, it's an epic
+		// Determine issue type (children override to epic)
+		issueType := stepTypeToIssueType(step.Type)
 		if len(step.Children) > 0 {
 			issueType = types.TypeEpic
 		}
@@ -758,24 +761,8 @@ func collectStepsRecursive(steps []*formula.Step, parentID string, idMapping map
 		// Generate issue ID (formula-name.step-id)
 		issueID := fmt.Sprintf("%s.%s", parentID, step.ID)
 
-		// Determine issue type
-		issueType := types.TypeTask
-		if step.Type != "" {
-			switch step.Type {
-			case "task":
-				issueType = types.TypeTask
-			case "bug":
-				issueType = types.TypeBug
-			case "feature":
-				issueType = types.TypeFeature
-			case "epic":
-				issueType = types.TypeEpic
-			case "chore":
-				issueType = types.TypeChore
-			}
-		}
-
-		// If step has children, it's an epic
+		// Determine issue type (children override to epic)
+		issueType := stepTypeToIssueType(step.Type)
 		if len(step.Children) > 0 {
 			issueType = types.TypeEpic
 		}
