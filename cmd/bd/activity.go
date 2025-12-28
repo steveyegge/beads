@@ -287,37 +287,72 @@ func formatEvent(e rpc.MutationEvent) ActivityEvent {
 
 // getEventDisplay returns the symbol and message for an event type
 func getEventDisplay(e rpc.MutationEvent) (symbol, message string) {
+	// Build context suffix: title and/or assignee
+	context := buildEventContext(e)
+
 	switch e.Type {
 	case rpc.MutationCreate:
-		return "+", fmt.Sprintf("%s created", e.IssueID)
+		return "+", fmt.Sprintf("%s created%s", e.IssueID, context)
 	case rpc.MutationUpdate:
-		return "→", fmt.Sprintf("%s updated", e.IssueID)
+		return "→", fmt.Sprintf("%s updated%s", e.IssueID, context)
 	case rpc.MutationDelete:
-		return "⊘", fmt.Sprintf("%s deleted", e.IssueID)
+		return "⊘", fmt.Sprintf("%s deleted%s", e.IssueID, context)
 	case rpc.MutationComment:
-		return "💬", fmt.Sprintf("%s comment added", e.IssueID)
+		return "💬", fmt.Sprintf("%s comment%s", e.IssueID, context)
 	case rpc.MutationBonded:
 		if e.StepCount > 0 {
-			return "+", fmt.Sprintf("%s bonded (%d steps)", e.IssueID, e.StepCount)
+			return "+", fmt.Sprintf("%s bonded (%d steps)%s", e.IssueID, e.StepCount, context)
 		}
-		return "+", fmt.Sprintf("%s bonded", e.IssueID)
+		return "+", fmt.Sprintf("%s bonded%s", e.IssueID, context)
 	case rpc.MutationSquashed:
-		return "◉", fmt.Sprintf("%s SQUASHED", e.IssueID)
+		return "◉", fmt.Sprintf("%s SQUASHED%s", e.IssueID, context)
 	case rpc.MutationBurned:
-		return "🔥", fmt.Sprintf("%s burned", e.IssueID)
+		return "🔥", fmt.Sprintf("%s burned%s", e.IssueID, context)
 	case rpc.MutationStatus:
 		// Status change with transition info
 		if e.NewStatus == "in_progress" {
-			return "→", fmt.Sprintf("%s in_progress", e.IssueID)
+			return "→", fmt.Sprintf("%s started%s", e.IssueID, context)
 		} else if e.NewStatus == "closed" {
-			return "✓", fmt.Sprintf("%s completed", e.IssueID)
+			return "✓", fmt.Sprintf("%s completed%s", e.IssueID, context)
 		} else if e.NewStatus == "open" && e.OldStatus != "" {
-			return "↺", fmt.Sprintf("%s reopened", e.IssueID)
+			return "↺", fmt.Sprintf("%s reopened%s", e.IssueID, context)
 		}
-		return "→", fmt.Sprintf("%s %s", e.IssueID, e.NewStatus)
+		return "→", fmt.Sprintf("%s → %s%s", e.IssueID, e.NewStatus, context)
 	default:
-		return "•", fmt.Sprintf("%s %s", e.IssueID, e.Type)
+		return "•", fmt.Sprintf("%s %s%s", e.IssueID, e.Type, context)
 	}
+}
+
+// buildEventContext creates a context string from title and assignee
+func buildEventContext(e rpc.MutationEvent) string {
+	var parts []string
+
+	// Add truncated title if present
+	if e.Title != "" {
+		title := truncateString(e.Title, 40)
+		parts = append(parts, title)
+	}
+
+	// Add assignee if present
+	if e.Assignee != "" {
+		parts = append(parts, "@"+e.Assignee)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return " · " + strings.Join(parts, " ")
+}
+
+// truncateString truncates a string to maxLen, adding ellipsis if needed
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // printEvent prints a formatted event to stdout
