@@ -40,6 +40,9 @@ Tool-level settings you can configure:
 | `git.no-gpg-sign` | - | `BD_GIT_NO_GPG_SIGN` | `false` | Disable GPG signing for beads commits |
 | `directory.labels` | - | - | (none) | Map directories to labels for automatic filtering |
 | `external_projects` | - | - | (none) | Map project names to paths for cross-project deps |
+| `agents.prefer_model` | - | `BD_AGENTS_PREFER_MODEL` | (none) | User's preferred model override (opus, sonnet, haiku) |
+| `agents.context_budget` | - | `BD_AGENTS_CONTEXT_BUDGET` | `20000` | Max context tokens for agent sessions |
+| `agents.skill_autoload` | - | `BD_AGENTS_SKILL_AUTOLOAD` | `true` | Automatically load relevant skills |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
 | `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
@@ -228,6 +231,7 @@ Use these namespaces for external integrations:
 - `jira.*` - Jira integration settings
 - `linear.*` - Linear integration settings
 - `github.*` - GitHub integration settings
+- `agents.*` - Agent marketplace integration settings
 - `custom.*` - Custom integration settings
 
 ### Example: Adaptive Hash ID Configuration
@@ -522,6 +526,88 @@ bd config set github.token "YOUR_TOKEN"
 bd config set github.label_map.bug "bug"
 bd config set github.label_map.feature "enhancement"
 ```
+
+### Example: Agent Marketplace Integration
+
+The `agents.*` namespace configures integration with the Claude Code agents marketplace, enabling AI-assisted issue management and workflow automation.
+
+**Required configuration:**
+
+```bash
+# Path to the agents marketplace repository
+bd config set agents.marketplace.repo "/path/to/agents"
+
+# Enable specific plugins (comma-separated)
+bd config set agents.marketplace.enabled "beads-workflows,developer-essentials"
+```
+
+**Model settings:**
+
+```bash
+# Default model for agent operations (opus, sonnet, haiku)
+bd config set agents.default_model "sonnet"
+```
+
+**Session settings:**
+
+```bash
+# Auto-run bd prime at session start (default: true)
+bd config set agents.session.auto_prime "true"
+
+# Track skill usage in database (default: false)
+bd config set agents.session.track_skills "true"
+```
+
+**Enforcement settings:**
+
+These settings control agent discipline validation:
+
+```bash
+# Minimum description length for issues (default: 50)
+bd config set agents.enforcement.description_min_length "50"
+
+# Validate causal dependencies (default: true)
+bd config set agents.enforcement.dependency_validation "true"
+
+# Maximum concurrent in_progress issues (default: 1)
+bd config set agents.enforcement.single_issue_max "1"
+```
+
+**User preferences (config.yaml):**
+
+Some agent settings are user-specific and stored in `~/.config/bd/config.yaml`:
+
+```yaml
+# User's preferred model override
+agents:
+  prefer_model: "opus"
+  context_budget: 20000
+  skill_autoload: true
+```
+
+**Management commands:**
+
+Use `bd agents` to manage marketplace plugins:
+
+```bash
+# List available plugins from marketplace
+bd agents list
+
+# Enable a plugin
+bd agents enable beads-workflows
+
+# Disable a plugin
+bd agents disable beads-workflows
+
+# Show current agent configuration
+bd agents status
+```
+
+**When to use agent integration:**
+
+- **beads-workflows**: Session management, issue creation guidance, dependency validation
+- **developer-essentials**: Code review, testing, documentation assistance
+- **Custom plugins**: Project-specific AI assistance patterns
 
 ## Use in Scripts
 
