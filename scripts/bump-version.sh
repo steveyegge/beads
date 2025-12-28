@@ -50,7 +50,7 @@ NC='\033[0m' # No Color
 
 # Usage message
 usage() {
-    echo "Usage: $0 <version> [--commit] [--tag] [--push] [--install] [--upgrade-mcp] [--mcp-local] [--restart-daemons] [--run-chaos-tests] [--publish-npm] [--publish-pypi] [--publish-all] [--all]"
+    echo "Usage: $0 <version> [--commit] [--tag] [--push] [--install] [--upgrade-mcp] [--mcp-local] [--restart-daemons] [--run-chaos-tests] [--publish-npm] [--publish-pypi] [--publish-all] [--all] [--allow-staged]"
     echo ""
     echo "Bump version across all beads components."
     echo ""
@@ -68,6 +68,7 @@ usage() {
     echo "  --publish-pypi   Publish beads-mcp to PyPI (requires TWINE credentials)"
     echo "  --publish-all    Shorthand for --publish-npm --publish-pypi"
     echo "  --all            Shorthand for --install --mcp-local --restart-daemons"
+    echo "  --allow-staged   Allow pre-staged release files (CHANGELOG.md, info.go)"
     echo ""
     echo "Examples:"
     echo "  $0 0.9.3                            # Update versions and show diff"
@@ -81,6 +82,12 @@ usage() {
     echo "  $0 0.9.3 --commit --all             # Commit and install everything locally"
     echo "  $0 0.9.3 --run-chaos-tests          # Run chaos tests before proceeding"
     echo "  $0 0.9.3 --publish-all              # Publish to npm and PyPI"
+    echo "  $0 0.9.3 --allow-staged --commit    # With pre-staged CHANGELOG.md/info.go"
+    echo ""
+    echo "Pre-staged release notes workflow:"
+    echo "  # 1. Edit CHANGELOG.md and cmd/bd/info.go with release notes"
+    echo "  # 2. Stage them: git add CHANGELOG.md cmd/bd/info.go"
+    echo "  # 3. Run: $0 X.Y.Z --allow-staged --commit --tag --push --all"
     echo ""
     echo "Recommended release command (includes chaos testing):"
     echo "  $0 X.Y.Z --run-chaos-tests --commit --tag --push --all"
@@ -100,6 +107,35 @@ validate_version() {
 # Get current version from version.go
 get_current_version() {
     grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/'
+}
+
+# Check if all uncommitted changes are to release-related files
+# Returns 0 if all changes are release files, 1 otherwise
+check_release_files_only() {
+    local changed_files
+    changed_files=$(git diff --name-only HEAD 2>/dev/null)
+
+    if [ -z "$changed_files" ]; then
+        return 0  # No changes
+    fi
+
+    # List of expected release files
+    local release_files="CHANGELOG.md cmd/bd/info.go"
+
+    for file in $changed_files; do
+        local is_release_file=false
+        for rf in $release_files; do
+            if [ "$file" = "$rf" ]; then
+                is_release_file=true
+                break
+            fi
+        done
+        if [ "$is_release_file" = false ]; then
+            return 1  # Found a non-release file
+        fi
+    done
+
+    return 0  # All files are release files
 }
 
 # Update a file with sed (cross-platform compatible)
@@ -162,6 +198,7 @@ main() {
     AUTO_PUBLISH_NPM=false
     AUTO_PUBLISH_PYPI=false
     AUTO_RUN_CHAOS_TESTS=false
+    ALLOW_STAGED=false
 
     # Parse flags
     shift  # Remove version argument
@@ -200,6 +237,9 @@ main() {
                 ;;
             --run-chaos-tests)
                 AUTO_RUN_CHAOS_TESTS=true
+                ;;
+            --allow-staged)
+                ALLOW_STAGED=true
                 ;;
             --all)
                 AUTO_INSTALL=true
@@ -240,16 +280,30 @@ main() {
     fi
 
     # Check for uncommitted changes
+    PRE_STAGED_RELEASE_FILES=false
     if ! git diff-index --quiet HEAD --; then
-        echo -e "${YELLOW}Warning: You have uncommitted changes${NC}"
-        if [ "$AUTO_COMMIT" = true ]; then
-            echo -e "${RED}Error: Cannot auto-commit with existing uncommitted changes${NC}"
-            exit 1
-        fi
-        read -p "Continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        if [ "$ALLOW_STAGED" = true ] && check_release_files_only; then
+            # Pre-staged release files (CHANGELOG.md, info.go) - this is expected workflow
+            echo -e "${GREEN}✓ Detected pre-staged release files (CHANGELOG.md and/or info.go)${NC}"
+            PRE_STAGED_RELEASE_FILES=true
+        else
+            echo -e "${YELLOW}Warning: You have uncommitted changes${NC}"
+            if [ "$AUTO_COMMIT" = true ]; then
+                if [ "$ALLOW_STAGED" = true ]; then
+                    echo -e "${RED}Error: --allow-staged only permits CHANGELOG.md and info.go${NC}"
+                    echo "Changed files:"
+                    git diff --name-only HEAD
+                else
+                    echo -e "${RED}Error: Cannot auto-commit with existing uncommitted changes${NC}"
+                    echo -e "${YELLOW}Tip: Use --allow-staged if changes are to CHANGELOG.md/info.go${NC}"
+                fi
+                exit 1
+            fi
+            read -p "Continue anyway? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
         fi
     fi
 
@@ -686,6 +740,12 @@ main() {
         # Add CHANGELOG.md if it exists
         if [ -f "CHANGELOG.md" ]; then
             git add CHANGELOG.md
+        fi
+
+        # Add pre-staged release files (info.go with release notes)
+        if [ "$PRE_STAGED_RELEASE_FILES" = true ]; then
+            echo -e "${GREEN}  Including pre-staged release files in commit${NC}"
+            git add cmd/bd/info.go 2>/dev/null || true
         fi
 
         git commit -m "chore: Bump version to $NEW_VERSION
