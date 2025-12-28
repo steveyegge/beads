@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Beads Documentation',
   tagline: 'Git-backed issue tracker for AI-supervised coding workflows',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.svg',
 
   future: {
     v4: true,
@@ -63,7 +63,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/beads-social-card.png',
+    // No social card image - using default
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: true,
