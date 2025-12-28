@@ -68,5 +68,5 @@ bd dep add bd-42 external:other-repo/bd-100
 
 ## Navigation
 
-- [Routing](/docs/multi-agent/routing) - Auto-routing configuration
-- [Coordination](/docs/multi-agent/coordination) - Agent coordination patterns
+- [Routing](/multi-agent/routing) - Auto-routing configuration
+- [Coordination](/multi-agent/coordination) - Agent coordination patterns

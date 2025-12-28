@@ -116,5 +116,5 @@ bd export
 
 ## See Also
 
-- [Claude Code](/docs/integrations/claude-code)
-- [IDE Setup](/docs/getting-started/ide-setup)
+- [Claude Code](/integrations/claude-code)
+- [IDE Setup](/getting-started/ide-setup)

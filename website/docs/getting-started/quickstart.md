@@ -152,4 +152,4 @@ The JSONL file `.beads/issues.jsonl` is git-tracked and syncs automatically.
 - Filter ready work: `bd ready --priority 1`
 - Search issues: `bd list --status open`
 - Detect cycles: `bd dep cycles`
-- See [CLI Reference](/docs/cli-reference) for all commands
+- See [CLI Reference](/cli-reference) for all commands

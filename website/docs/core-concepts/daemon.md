@@ -162,4 +162,4 @@ bd config set daemon.auto_start false
 bd config set daemon.log_level debug
 ```
 
-See [Configuration](/docs/reference/configuration) for all options.
+See [Configuration](/reference/configuration) for all options.

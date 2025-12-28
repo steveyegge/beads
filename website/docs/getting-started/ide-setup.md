@@ -117,7 +117,7 @@ Add to Claude Desktop config:
 - Higher context overhead (10-50k tokens for tool schemas)
 - Additional latency from MCP protocol
 
-See [MCP Server](/docs/integrations/mcp-server) for detailed configuration.
+See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 

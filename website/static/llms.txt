@@ -45,9 +45,9 @@ bd sync                                   # Sync to git
 
 ## Documentation
 
-- Full docs: https://joyshmitz.github.io/beads/docs/
-- CLI reference: https://joyshmitz.github.io/beads/docs/cli-reference
-- Agent guide: https://joyshmitz.github.io/beads/docs/integrations/claude-code
+- Full docs: https://joyshmitz.github.io/beads/
+- CLI reference: https://joyshmitz.github.io/beads/cli-reference
+- Agent guide: https://joyshmitz.github.io/beads/integrations/claude-code
 - Complete LLM context: https://joyshmitz.github.io/beads/llms-full.txt
 
 ## Links

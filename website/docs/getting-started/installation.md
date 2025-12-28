@@ -205,5 +205,5 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Learn the basics**: See [Quick Start](/docs/getting-started/quickstart)
-3. **Configure your agent**: See [IDE Setup](/docs/getting-started/ide-setup)
+2. **Learn the basics**: See [Quick Start](/getting-started/quickstart)
+3. **Configure your agent**: See [IDE Setup](/getting-started/ide-setup)

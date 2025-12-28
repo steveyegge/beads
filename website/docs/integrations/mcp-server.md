@@ -145,5 +145,5 @@ bd init --quiet
 
 ## See Also
 
-- [Claude Code](/docs/integrations/claude-code) - CLI integration
-- [Installation](/docs/getting-started/installation) - Full install guide
+- [Claude Code](/integrations/claude-code) - CLI integration
+- [Installation](/getting-started/installation) - Full install guide

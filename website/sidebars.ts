@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Core Concepts',
+      collapsed: true,
       items: [
         'core-concepts/index',
         'core-concepts/issues',
@@ -27,6 +28,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'CLI Reference',
+      collapsed: true,
       link: {
         type: 'doc',
         id: 'cli-reference/index',
@@ -42,6 +44,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Workflows',
+      collapsed: true,
       items: [
         'workflows/index',
         'workflows/molecules',

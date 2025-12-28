@@ -70,7 +70,7 @@ Declarative workflow templates:
 
 ## Navigation
 
-- [Issues & Dependencies](/docs/core-concepts/issues)
-- [Daemon Architecture](/docs/core-concepts/daemon)
-- [JSONL Sync](/docs/core-concepts/jsonl-sync)
-- [Hash-based IDs](/docs/core-concepts/hash-ids)
+- [Issues & Dependencies](/core-concepts/issues)
+- [Daemon Architecture](/core-concepts/daemon)
+- [JSONL Sync](/core-concepts/jsonl-sync)
+- [Hash-based IDs](/core-concepts/hash-ids)

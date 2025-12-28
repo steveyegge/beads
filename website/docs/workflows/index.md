@@ -88,7 +88,7 @@ bd close release-1.0.0.1
 
 ## Navigation
 
-- [Molecules](/docs/workflows/molecules) - Work graphs and execution
-- [Formulas](/docs/workflows/formulas) - Declarative templates
-- [Gates](/docs/workflows/gates) - Async coordination
-- [Wisps](/docs/workflows/wisps) - Ephemeral operations
+- [Molecules](/workflows/molecules) - Work graphs and execution
+- [Formulas](/workflows/formulas) - Declarative templates
+- [Gates](/workflows/gates) - Async coordination
+- [Wisps](/workflows/wisps) - Ephemeral operations

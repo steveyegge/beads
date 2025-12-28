@@ -161,6 +161,6 @@ bd ready  # Shows next steps
 
 ## See Also
 
-- [Formulas](/docs/workflows/formulas) - Creating templates
-- [Gates](/docs/workflows/gates) - Async coordination
-- [Wisps](/docs/workflows/wisps) - Ephemeral workflows
+- [Formulas](/workflows/formulas) - Creating templates
+- [Gates](/workflows/gates) - Async coordination
+- [Wisps](/workflows/wisps) - Ephemeral workflows

@@ -79,15 +79,10 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
           position: 'left',
-          label: 'Docs',
+          label: 'Documentation',
         },
         {
-          to: '/cli-reference',
-          label: 'CLI Reference',
-          position: 'left',
-        },
-        {
-          href: '/beads/llms.txt',
+          href: 'pathname:///beads/llms.txt',
           label: 'llms.txt',
           position: 'right',
         },
@@ -140,7 +135,7 @@ const config: Config = {
             },
             {
               label: 'llms.txt',
-              href: '/beads/llms.txt',
+              href: 'pathname:///beads/llms.txt',
             },
             {
               label: 'npm Package',

@@ -65,7 +65,7 @@ bd create "Found bug in auth" --description="Details..." \
 bd sync
 ```
 
-See the [Claude Code integration](/docs/integrations/claude-code) for detailed agent instructions.
+See the [Claude Code integration](/integrations/claude-code) for detailed agent instructions.
 
 ## Architecture
 
@@ -81,7 +81,7 @@ The magic is automatic synchronization between a local SQLite database and git-t
 
 ## Next Steps
 
-- [Installation](/docs/getting-started/installation) - Get bd installed
-- [Quick Start](/docs/getting-started/quickstart) - Create your first issues
-- [CLI Reference](/docs/cli-reference) - All available commands
-- [Workflows](/docs/workflows) - Formulas, molecules, and gates
+- [Installation](/getting-started/installation) - Get bd installed
+- [Quick Start](/getting-started/quickstart) - Create your first issues
+- [CLI Reference](/cli-reference) - All available commands
+- [Workflows](/workflows) - Formulas, molecules, and gates

@@ -182,5 +182,5 @@ bd init --quiet
 
 ## See Also
 
-- [MCP Server](/docs/integrations/mcp-server) - For MCP-only environments
-- [IDE Setup](/docs/getting-started/ide-setup) - Other editors
+- [MCP Server](/integrations/mcp-server) - For MCP-only environments
+- [IDE Setup](/getting-started/ide-setup) - Other editors

@@ -178,8 +178,8 @@ bd import -i .beads/issues.jsonl
 
 ## See Also
 
-- [Essential Commands](/docs/cli-reference/essential)
-- [Issue Commands](/docs/cli-reference/issues)
-- [Dependency Commands](/docs/cli-reference/dependencies)
-- [Label Commands](/docs/cli-reference/labels)
-- [Sync Commands](/docs/cli-reference/sync)
+- [Essential Commands](/cli-reference/essential)
+- [Issue Commands](/cli-reference/issues)
+- [Dependency Commands](/cli-reference/dependencies)
+- [Label Commands](/cli-reference/labels)
+- [Sync Commands](/cli-reference/sync)
