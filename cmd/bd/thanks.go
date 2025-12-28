@@ -109,12 +109,16 @@ var beadsContributors = map[string]int{
 }
 
 var thanksCmd = &cobra.Command{
-	Use:   "thanks",
-	Short: "Thank the human contributors to beads",
+	Use:    "thanks",
+	Short:  "Thank the human contributors to beads",
+	Hidden: true, // Deprecated: use 'bd info --thanks' instead
 	Long: `Display a thank you page listing all human contributors to the beads project.
 
+DEPRECATED: Use 'bd info --thanks' instead.
+
 Examples:
-  bd thanks              # Show thank you page
+  bd info --thanks       # Show thank you page (preferred)
+  bd thanks              # Legacy command (still works)
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		printThanksPage()

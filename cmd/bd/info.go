@@ -31,10 +31,18 @@ Examples:
   bd info --json
   bd info --schema --json
   bd info --whats-new
-  bd info --whats-new --json`,
+  bd info --whats-new --json
+  bd info --thanks`,
 	Run: func(cmd *cobra.Command, args []string) {
 		schemaFlag, _ := cmd.Flags().GetBool("schema")
 		whatsNewFlag, _ := cmd.Flags().GetBool("whats-new")
+		thanksFlag, _ := cmd.Flags().GetBool("thanks")
+
+		// Handle --thanks flag
+		if thanksFlag {
+			printThanksPage()
+			return
+		}
 
 		// Handle --whats-new flag
 		if whatsNewFlag {
@@ -759,6 +767,7 @@ func showWhatsNew() {
 func init() {
 	infoCmd.Flags().Bool("schema", false, "Include schema information in output")
 	infoCmd.Flags().Bool("whats-new", false, "Show agent-relevant changes from recent versions")
+	infoCmd.Flags().Bool("thanks", false, "Show thank you page for contributors")
 	infoCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.AddCommand(infoCmd)
 }
