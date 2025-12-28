@@ -5,6 +5,69 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0] - 2025-12-27
+
+### Added
+
+- **`bd orphans` command** (GH#767) - Detect orphaned issues
+  - Finds issues mentioned in git commits that were never closed
+  - DRY refactoring of orphan detection from `bd doctor`
+  - Helps maintain issue hygiene in larger projects
+
+- **`bd admin` parent command** (bd-3u8m) - Consolidated admin tools
+  - `bd admin cleanup` - Clean up unused data
+  - `bd admin compact` - Compact the database
+  - `bd admin reset` - Reset to initial state
+  - Reduces top-level command clutter
+
+- **`--prefix` flag for `bd create`** - Cross-rig issue creation
+  - Create issues in other rigs from any directory
+  - Accepts prefix (`bd-`), short form (`bd`), or rig name (`beads`)
+  - Works with existing routes.jsonl routing
+
+### Changed
+
+- **`bd mol catalog` → `bd formula list`** (bd-ctmg) - Command rename
+  - Aligns with formula-based terminology
+  - `bd formula list` shows available molecule templates
+
+- **`bd info --thanks`** (bd-wb9g) - Relocated thanks command
+  - Contributors list moved under `bd info`
+  - Reduces command namespace pollution
+
+- **Removed unused commands** (bd-x0zl)
+  - `bd pin`, `bd unpin`, `bd hook` removed
+  - Functionality covered by `gt mol` commands in Gas Town
+  - Cleaner separation between beads (data) and gastown (orchestration)
+
+- **`bd doctor --check=pollution`** (bd-kff0) - Integrated test pollution check
+  - Detects test artifacts left in production database
+  - Previously standalone `bd detect-pollution` command
+
+### Fixed
+
+- **macOS codesigning** - Fixed `bump-version.sh --install`
+  - Ad-hoc signing for local installations
+  - Prevents macOS from quarantining the binary
+
+- **Lint errors and Nix vendorHash** (GH#769)
+  - Resolved golangci-lint issues
+  - Updated Nix package hash for reproducible builds
+
+### Documentation
+
+- **Issue Statuses section** (bd-epww) - CLI_REFERENCE.md
+  - Comprehensive status lifecycle documentation
+  - Clear explanations of open, pinned, in_progress, blocked, deferred, closed, tombstone
+
+- **Consolidated UI_PHILOSOPHY files** (GH#745)
+  - Merged duplicate philosophy docs
+  - Single source of truth for UI design principles
+
+- **README and PLUGIN.md fixes** (GH#763)
+  - Corrected installation instructions
+  - Updated plugin documentation
+
 ## [0.38.0] - 2025-12-27
 
 ### Added

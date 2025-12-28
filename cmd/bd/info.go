@@ -297,6 +297,24 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.39.0",
+		Date:    "2025-12-27",
+		Changes: []string{
+			"NEW: bd orphans command (GH#767) - Detect issues mentioned in commits but never closed",
+			"NEW: bd admin parent command (bd-3u8m) - Consolidated cleanup/compact/reset under bd admin",
+			"NEW: --prefix flag for bd create - Create issues in other rigs from any directory",
+			"CHANGED: bd mol catalog → bd formula list (bd-ctmg) - Aligns with formula terminology",
+			"CHANGED: bd info --thanks (bd-wb9g) - Contributors list moved under bd info",
+			"CHANGED: Removed unused bd pin/unpin/hook commands (bd-x0zl) - Use gt mol commands",
+			"CHANGED: bd doctor --check=pollution (bd-kff0) - Test pollution check integrated into doctor",
+			"FIX: macOS codesigning in bump-version.sh --install - Prevents quarantine issues",
+			"FIX: Lint errors and Nix vendorHash (GH#769) - Clean builds on all platforms",
+			"DOCS: Issue Statuses section in CLI_REFERENCE.md (bd-epww) - Comprehensive status docs",
+			"DOCS: Consolidated duplicate UI_PHILOSOPHY files (GH#745) - Single source of truth",
+			"DOCS: README and PLUGIN.md fixes (GH#763) - Corrected installation instructions",
+		},
+	},
+	{
 		Version: "0.38.0",
 		Date:    "2025-12-27",
 		Changes: []string{
