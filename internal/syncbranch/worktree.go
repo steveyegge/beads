@@ -656,7 +656,12 @@ func extractJSONLFromCommit(ctx context.Context, worktreePath, commit, filePath 
 
 // copyJSONLToMainRepo copies JSONL and related files from worktree to main repo.
 func copyJSONLToMainRepo(worktreePath, jsonlRelPath, jsonlPath string) error {
-	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
+	// GH#785: Handle bare repo worktrees where jsonlRelPath might include the
+	// worktree name (e.g., "main/.beads/issues.jsonl" instead of ".beads/issues.jsonl").
+	// The sync branch uses sparse checkout for .beads/* so we normalize the path
+	// to strip any leading components before .beads.
+	normalizedRelPath := normalizeBeadsRelPath(jsonlRelPath)
+	worktreeJSONLPath := filepath.Join(worktreePath, normalizedRelPath)
 
 	// Check if worktree JSONL exists
 	if _, err := os.Stat(worktreeJSONLPath); os.IsNotExist(err) {
@@ -1075,6 +1080,20 @@ func formatVanishedIssues(localIssues, mergedIssues map[string]issueSummary, loc
 	lines = append(lines, fmt.Sprintf("   Total vanished: %d\n", len(vanishedIDs)))
 
 	return lines
+}
+
+// normalizeBeadsRelPath strips any leading path components before .beads.
+// This handles bare repo worktrees where the relative path includes the worktree
+// name (e.g., "main/.beads/issues.jsonl" -> ".beads/issues.jsonl").
+// GH#785: Fix for sync failing across worktrees in bare repo setup.
+func normalizeBeadsRelPath(relPath string) string {
+	// Use filepath.ToSlash for consistent handling across platforms
+	normalized := filepath.ToSlash(relPath)
+	if idx := strings.Index(normalized, ".beads"); idx > 0 {
+		// Strip leading path components before .beads
+		return filepath.FromSlash(normalized[idx:])
+	}
+	return relPath
 }
 
 // HasGitRemote checks if any git remote exists
