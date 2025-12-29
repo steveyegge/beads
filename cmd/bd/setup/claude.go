@@ -71,21 +71,21 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 	var settingsPath string
 	if project {
 		settingsPath = projectSettingsPath(env.projectDir)
-		fmt.Fprintln(env.stdout, "Installing Claude hooks for this project...")
+		_, _ = fmt.Fprintln(env.stdout, "Installing Claude hooks for this project...")
 	} else {
 		settingsPath = globalSettingsPath(env.homeDir)
-		fmt.Fprintln(env.stdout, "Installing Claude hooks globally...")
+		_, _ = fmt.Fprintln(env.stdout, "Installing Claude hooks globally...")
 	}
 
 	if err := env.ensureDir(filepath.Dir(settingsPath), 0o755); err != nil {
-		fmt.Fprintf(env.stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: %v\n", err)
 		return err
 	}
 
 	settings := make(map[string]interface{})
 	if data, err := env.readFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
-			fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
+			_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
 			return err
 		}
 	}
@@ -102,26 +102,26 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 	}
 
 	if addHookCommand(hooks, "SessionStart", command) {
-		fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered SessionStart hook")
 	}
 	if addHookCommand(hooks, "PreCompact", command) {
-		fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
+		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
 	}
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
 		return err
 	}
 
 	if err := env.writeFile(settingsPath, data); err != nil {
-		fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
 		return err
 	}
 
-	fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
-	fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
-	fmt.Fprintln(env.stdout, "\nRestart Claude Code for changes to take effect.")
+	_, _ = fmt.Fprintln(env.stdout, "\n✓ Claude Code integration installed")
+	_, _ = fmt.Fprintf(env.stdout, "  Settings: %s\n", settingsPath)
+	_, _ = fmt.Fprintln(env.stdout, "\nRestart Claude Code for changes to take effect.")
 	return nil
 }
 
@@ -144,14 +144,14 @@ func checkClaude(env claudeEnv) error {
 
 	switch {
 	case hasBeadsHooks(globalSettings):
-		fmt.Fprintf(env.stdout, "✓ Global hooks installed: %s\n", globalSettings)
+		_, _ = fmt.Fprintf(env.stdout, "✓ Global hooks installed: %s\n", globalSettings)
 		return nil
 	case hasBeadsHooks(projectSettings):
-		fmt.Fprintf(env.stdout, "✓ Project hooks installed: %s\n", projectSettings)
+		_, _ = fmt.Fprintf(env.stdout, "✓ Project hooks installed: %s\n", projectSettings)
 		return nil
 	default:
-		fmt.Fprintln(env.stdout, "✗ No hooks installed")
-		fmt.Fprintln(env.stdout, "  Run: bd setup claude")
+		_, _ = fmt.Fprintln(env.stdout, "✗ No hooks installed")
+		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup claude")
 		return errClaudeHooksMissing
 	}
 }
@@ -173,27 +173,27 @@ func removeClaude(env claudeEnv, project bool) error {
 	var settingsPath string
 	if project {
 		settingsPath = projectSettingsPath(env.projectDir)
-		fmt.Fprintln(env.stdout, "Removing Claude hooks from project...")
+		_, _ = fmt.Fprintln(env.stdout, "Removing Claude hooks from project...")
 	} else {
 		settingsPath = globalSettingsPath(env.homeDir)
-		fmt.Fprintln(env.stdout, "Removing Claude hooks globally...")
+		_, _ = fmt.Fprintln(env.stdout, "Removing Claude hooks globally...")
 	}
 
 	data, err := env.readFile(settingsPath)
 	if err != nil {
-		fmt.Fprintln(env.stdout, "No settings file found")
+		_, _ = fmt.Fprintln(env.stdout, "No settings file found")
 		return nil
 	}
 
 	var settings map[string]interface{}
 	if err := json.Unmarshal(data, &settings); err != nil {
-		fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to parse settings.json: %v\n", err)
 		return err
 	}
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
-		fmt.Fprintln(env.stdout, "No hooks found")
+		_, _ = fmt.Fprintln(env.stdout, "No hooks found")
 		return nil
 	}
 
@@ -204,16 +204,16 @@ func removeClaude(env claudeEnv, project bool) error {
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
 		return err
 	}
 
 	if err := env.writeFile(settingsPath, data); err != nil {
-		fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
+		_, _ = fmt.Fprintf(env.stderr, "Error: write settings: %v\n", err)
 		return err
 	}
 
-	fmt.Fprintln(env.stdout, "✓ Claude hooks removed")
+	_, _ = fmt.Fprintln(env.stdout, "✓ Claude hooks removed")
 	return nil
 }
 
