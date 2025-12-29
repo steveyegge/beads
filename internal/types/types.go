@@ -97,6 +97,9 @@ type Issue struct {
 	LastActivity *time.Time `json:"last_activity,omitempty"` // Updated on each action (timeout detection)
 	RoleType     string     `json:"role_type,omitempty"`     // Role: polecat|crew|witness|refinery|mayor|deacon
 	Rig          string     `json:"rig,omitempty"`           // Rig name (empty for town-level agents)
+
+	// ===== Molecule Type Fields (swarm coordination) =====
+	MolType MolType `json:"mol_type,omitempty"` // Molecule type: swarm|patrol|work (empty = work)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -155,6 +158,9 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(string(i.AgentState))
 	w.str(i.RoleType)
 	w.str(i.Rig)
+
+	// Molecule type
+	w.str(string(i.MolType))
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -422,6 +428,25 @@ func (s AgentState) IsValid() bool {
 	return false
 }
 
+// MolType categorizes the molecule type for swarm coordination
+type MolType string
+
+// MolType constants
+const (
+	MolTypeSwarm  MolType = "swarm"  // Swarm molecule: coordinated multi-polecat work
+	MolTypePatrol MolType = "patrol" // Patrol molecule: recurring operational work (Witness, Deacon, etc.)
+	MolTypeWork   MolType = "work"   // Work molecule: regular polecat work (default)
+)
+
+// IsValid checks if the mol type value is valid
+func (m MolType) IsValid() bool {
+	switch m {
+	case MolTypeSwarm, MolTypePatrol, MolTypeWork, "":
+		return true // empty is valid (defaults to work)
+	}
+	return false
+}
+
 // Dependency represents a relationship between issues
 type Dependency struct {
 	IssueID     string         `json:"issue_id"`
@@ -680,6 +705,9 @@ type IssueFilter struct {
 
 	// Parent filtering: filter children by parent issue ID
 	ParentID *string // Filter by parent issue (via parent-child dependency)
+
+	// Molecule type filtering
+	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
 }
 
 // SortPolicy determines how ready work is ordered
@@ -724,6 +752,9 @@ type WorkFilter struct {
 
 	// Parent filtering: filter to descendants of a bead/epic (recursive)
 	ParentID *string // Show all descendants of this issue
+
+	// Molecule type filtering
+	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
 }
 
 // StaleFilter is used to filter stale issue queries

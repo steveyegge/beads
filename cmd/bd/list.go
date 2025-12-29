@@ -356,6 +356,18 @@ var listCmd = &cobra.Command{
 		// Parent filtering
 		parentID, _ := cmd.Flags().GetString("parent")
 
+		// Molecule type filtering
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType *types.MolType
+		if molTypeStr != "" {
+			mt := types.MolType(molTypeStr)
+			if !mt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
+				os.Exit(1)
+			}
+			molType = &mt
+		}
+
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		watchMode, _ := cmd.Flags().GetBool("watch")
@@ -531,6 +543,11 @@ var listCmd = &cobra.Command{
 		// Parent filtering: filter children by parent issue
 		if parentID != "" {
 			filter.ParentID = &parentID
+		}
+
+		// Molecule type filtering
+		if molType != nil {
+			filter.MolType = molType
 		}
 
 		// Check database freshness before reading
@@ -905,6 +922,9 @@ func init() {
 
 	// Parent filtering: filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
+
+	// Molecule type filtering
+	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")

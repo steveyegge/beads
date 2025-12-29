@@ -47,6 +47,7 @@ var migrationsList = []Migration{
 	{"tombstone_closed_at", migrations.MigrateTombstoneClosedAt},
 	{"created_by_column", migrations.MigrateCreatedByColumn},
 	{"agent_fields", migrations.MigrateAgentFields},
+	{"mol_type_column", migrations.MigrateMolTypeColumn},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -98,8 +99,12 @@ func getMigrationDescription(name string) string {
 		"remove_depends_on_fk":         "Removes FK constraint on depends_on_id to allow external references",
 		"additional_indexes":           "Adds performance optimization indexes for common query patterns",
 		"gate_columns":                 "Adds gate columns (await_type, await_id, timeout_ns, waiters) for async coordination",
+		"tombstone_closed_at":          "Preserves closed_at timestamp when issues become tombstones",
+		"created_by_column":            "Adds created_by column to track issue creator",
+		"agent_fields":                 "Adds agent identity fields (hook_bead, role_bead, agent_state, etc.) for agent-as-bead pattern",
+		"mol_type_column":              "Adds mol_type column for molecule type classification (swarm/patrol/work)",
 	}
-	
+
 	if desc, ok := descriptions[name]; ok {
 		return desc
 	}

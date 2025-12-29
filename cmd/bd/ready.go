@@ -40,6 +40,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		issueType, _ := cmd.Flags().GetString("type")
 		parentID, _ := cmd.Flags().GetString("parent")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType *types.MolType
+		if molTypeStr != "" {
+			mt := types.MolType(molTypeStr)
+			if !mt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
+				os.Exit(1)
+			}
+			molType = &mt
+		}
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 
 		// Normalize labels: trim, dedupe, remove empty
@@ -73,6 +83,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if parentID != "" {
 			filter.ParentID = &parentID
 		}
+		if molType != nil {
+			filter.MolType = molType
+		}
 		// Validate sort policy
 		if !filter.SortPolicy.IsValid() {
 			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
@@ -89,6 +102,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				Labels:     labels,
 				LabelsAny:  labelsAny,
 				ParentID:   parentID,
+				MolType:    molTypeStr,
 			}
 			if cmd.Flags().Changed("priority") {
 				priority, _ := cmd.Flags().GetInt("priority")
@@ -421,6 +435,7 @@ func init() {
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, merge-request)")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
+	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)

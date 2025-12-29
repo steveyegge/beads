@@ -279,6 +279,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var lastActivity sql.NullTime
 	var roleType sql.NullString
 	var rig sql.NullString
+	// Molecule type field
+	var molType sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -290,7 +292,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -302,7 +304,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 	)
 
 	if err == sql.ErrNoRows {
@@ -399,6 +401,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if rig.Valid {
 		issue.Rig = rig.String
+	}
+	// Molecule type field
+	if molType.Valid {
+		issue.MolType = types.MolType(molType.String)
 	}
 
 	// Fetch labels for this issue
@@ -652,6 +658,8 @@ var allowedUpdateFields = map[string]bool{
 	"last_activity": true,
 	"role_type":     true,
 	"rig":           true,
+	// Molecule type field
+	"mol_type": true,
 }
 
 // validatePriority validates a priority value
@@ -1717,6 +1725,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.ParentID != nil {
 		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
 		args = append(args, *filter.ParentID)
+	}
+
+	// Molecule type filtering
+	if filter.MolType != nil {
+		whereClauses = append(whereClauses, "mol_type = ?")
+		args = append(args, string(*filter.MolType))
 	}
 
 	whereSQL := ""

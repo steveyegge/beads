@@ -112,6 +112,14 @@ var createCmd = &cobra.Command{
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType types.MolType
+		if molTypeStr != "" {
+			molType = types.MolType(molTypeStr)
+			if !molType.IsValid() {
+				FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
+			}
+		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
@@ -249,6 +257,7 @@ var createCmd = &cobra.Command{
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				MolType:            string(molType),
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -295,6 +304,7 @@ var createCmd = &cobra.Command{
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
 			CreatedBy:          getActorWithGit(),
+			MolType:            molType,
 		}
 
 		ctx := rootCtx
@@ -476,6 +486,7 @@ func init() {
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
+	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

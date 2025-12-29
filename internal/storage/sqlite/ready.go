@@ -106,6 +106,12 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		args = append(args, *filter.ParentID)
 	}
 
+	// Molecule type filtering
+	if filter.MolType != nil {
+		whereClauses = append(whereClauses, "i.mol_type = ?")
+		args = append(args, string(*filter.MolType))
+	}
+
 	// Build WHERE clause properly
 	whereSQL := strings.Join(whereClauses, " AND ")
 

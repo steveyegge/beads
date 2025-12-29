@@ -502,9 +502,10 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				last_activity DATETIME,
 				role_type TEXT DEFAULT '',
 				rig TEXT DEFAULT '',
+				mol_type TEXT DEFAULT '',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, '', '', '', '', '', '', 0, '', '', '', '', NULL, '', '' FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, '', '', '', '', '', '', 0, '', '', '', '', NULL, '', '', '' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

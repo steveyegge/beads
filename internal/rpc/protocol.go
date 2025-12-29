@@ -95,6 +95,8 @@ type CreateArgs struct {
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
+	// Molecule type (for swarm coordination)
+	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -203,6 +205,9 @@ type ListArgs struct {
 
 	// Ephemeral filtering
 	Ephemeral *bool `json:"ephemeral,omitempty"`
+
+	// Molecule type filtering
+	MolType string `json:"mol_type,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation
@@ -264,6 +269,7 @@ type ReadyArgs struct {
 	Labels     []string `json:"labels,omitempty"`
 	LabelsAny  []string `json:"labels_any,omitempty"`
 	ParentID   string   `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
+	MolType    string   `json:"mol_type,omitempty"`  // Filter by molecule type: swarm, patrol, or work
 }
 
 // BlockedArgs represents arguments for the blocked operation

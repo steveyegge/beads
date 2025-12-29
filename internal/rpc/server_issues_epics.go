@@ -196,6 +196,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,
 		CreatedBy: createArgs.CreatedBy,
+		// Molecule type
+		MolType: types.MolType(createArgs.MolType),
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -918,6 +920,12 @@ func (s *Server) handleList(req *Request) Response {
 	// Ephemeral filtering
 	filter.Ephemeral = listArgs.Ephemeral
 
+	// Molecule type filtering
+	if listArgs.MolType != "" {
+		molType := types.MolType(listArgs.MolType)
+		filter.MolType = &molType
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {
@@ -1352,6 +1360,10 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 	if readyArgs.ParentID != "" {
 		wf.ParentID = &readyArgs.ParentID
+	}
+	if readyArgs.MolType != "" {
+		molType := types.MolType(readyArgs.MolType)
+		wf.MolType = &molType
 	}
 
 	ctx := s.reqCtx(req)

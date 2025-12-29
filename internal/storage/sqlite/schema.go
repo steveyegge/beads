@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS issues (
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
     is_template INTEGER DEFAULT 0,
+    -- Molecule type field (bd-oxgi)
+    mol_type TEXT DEFAULT '',
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     -- closed_at constraint: closed issues must have it, tombstones may retain it from before deletion
