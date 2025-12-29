@@ -58,7 +58,9 @@ func gitHasUpstream() bool {
 	branch := strings.TrimSpace(string(branchOutput))
 
 	// Check if remote and merge refs are configured
+	// #nosec G204 -- branch name comes from git symbolic-ref output
 	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
+	// #nosec G204 -- branch name comes from git symbolic-ref output
 	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))
 
 	remoteErr := remoteCmd.Run()
@@ -106,6 +108,7 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 	relPath, err := filepath.Rel(repoRoot, beadsDir)
 	if err != nil {
 		// Fall back to absolute path if relative path fails
+		// #nosec G204 -- beadsDir comes from beads.FindBeadsDir()
 		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir)
 		statusOutput, err := statusCmd.Output()
 		if err != nil {
@@ -115,6 +118,7 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 	}
 
 	// Run git status with relative path from repo root
+	// #nosec G204 -- repoRoot and relPath come from internal git helpers
 	statusCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", relPath)
 	statusOutput, err := statusCmd.Output()
 	if err != nil {
@@ -378,6 +382,7 @@ func gitPull(ctx context.Context) error {
 	branch := strings.TrimSpace(string(branchOutput))
 
 	// Get remote name for current branch (usually "origin")
+	// #nosec G204 -- branch name comes from git symbolic-ref output
 	remoteCmd := exec.CommandContext(ctx, "git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch))
 	remoteOutput, err := remoteCmd.Output()
 	if err != nil {

@@ -64,7 +64,7 @@ Examples:
 			fmt.Println()
 			fmt.Printf("This will close %d orphaned issue(s). Continue? (Y/n): ", len(orphans))
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			response = strings.ToLower(strings.TrimSpace(response))
 			if response != "" && response != "y" && response != "yes" {
 				fmt.Println("Canceled.")
