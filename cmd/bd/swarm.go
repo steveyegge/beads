@@ -614,7 +614,6 @@ Examples:
 
 // getSwarmStatus computes current swarm status from beads.
 func getSwarmStatus(ctx context.Context, s interface {
-	GetIssue(context.Context, string) (*types.Issue, error)
 	GetDependents(context.Context, string) ([]*types.Issue, error)
 	GetDependencyRecords(context.Context, string) ([]*types.Dependency, error)
 }, epic *types.Issue) (*SwarmStatus, error) {
@@ -659,6 +658,12 @@ func getSwarmStatus(ctx context.Context, s interface {
 		childIDSet[issue.ID] = true
 	}
 
+	// Build status map for efficient blocked checks (avoids N+1 queries)
+	statusMap := make(map[string]types.Status)
+	for _, issue := range childIssues {
+		statusMap[issue.ID] = issue.Status
+	}
+
 	// Build dependency map (within epic children only)
 	dependsOn := make(map[string][]string)
 	for _, issue := range childIssues {
@@ -700,12 +705,11 @@ func getSwarmStatus(ctx context.Context, s interface {
 			status.Active = append(status.Active, si)
 
 		default: // open or other
-			// Check if blocked by open dependencies
+			// Check if blocked by open dependencies (uses statusMap, no extra queries)
 			deps := dependsOn[issue.ID]
 			var blockers []string
 			for _, depID := range deps {
-				depIssue, _ := s.GetIssue(ctx, depID)
-				if depIssue != nil && depIssue.Status != types.StatusClosed {
+				if depStatus, ok := statusMap[depID]; ok && depStatus != types.StatusClosed {
 					blockers = append(blockers, depID)
 				}
 			}
