@@ -116,7 +116,7 @@ func MigrateTombstoneClosedAt(db *sql.DB) error {
 			break
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	var insertSQL string
 	if hasCreatedBy {

@@ -11,7 +11,7 @@ import (
 
 // runPollutionCheck runs detailed test pollution detection
 // This integrates the detect-pollution command functionality into doctor.
-func runPollutionCheck(path string, clean bool, yes bool) {
+func runPollutionCheck(_ string, clean bool, yes bool) {
 	// Ensure we have a store initialized (uses direct mode, no daemon support yet)
 	if err := ensureDirectMode("pollution check requires direct mode"); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

@@ -565,6 +565,7 @@ func addToGitignore(repoRoot, entry string) error {
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 
 	// Read existing content
+	// #nosec G304 -- gitignorePath is constructed from known repoRoot
 	content, err := os.ReadFile(gitignorePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -579,6 +580,7 @@ func addToGitignore(repoRoot, entry string) error {
 	}
 
 	// Append entry
+	// #nosec G304 -- gitignorePath is constructed from known repoRoot
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -603,6 +605,7 @@ func addToGitignore(repoRoot, entry string) error {
 func removeFromGitignore(repoRoot, entry string) error {
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
 
+	// #nosec G304 -- gitignorePath is constructed from known repoRoot
 	content, err := os.ReadFile(gitignorePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -629,6 +632,7 @@ func removeFromGitignore(repoRoot, entry string) error {
 		newLines = append(newLines, line)
 	}
 
+	// #nosec G306 -- .gitignore should be world-readable
 	return os.WriteFile(gitignorePath, []byte(strings.Join(newLines, "\n")), 0644)
 }
 
