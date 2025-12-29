@@ -60,6 +60,8 @@ func runBDSideDB(t *testing.T, exe, dir, dbPath string, args ...string) (string,
 }
 
 func TestDoctorRepair_CorruptDatabase_RebuildFromJSONL(t *testing.T) {
+	requireTestGuardDisabled(t)
+
 	if testing.Short() {
 		t.Skip("skipping slow repair test in short mode")
 	}
