@@ -1140,25 +1140,22 @@ func TestFixGitignore_SubdirectoryGitignore(t *testing.T) {
 // TestGenerateGitignoreTemplate_Modes tests conditional gitignore generation (GH#797)
 func TestGenerateGitignoreTemplate_Modes(t *testing.T) {
 	tests := []struct {
-		name                  string
-		syncBranchConfigured  bool
-		expectIssuesIgnored   bool   // issues.jsonl as ignore pattern (not negated)
-		expectIssuesNegated   bool   // !issues.jsonl as un-ignore pattern
-		expectModeInHeader    string // Mode string in header
+		name                 string
+		syncBranchConfigured bool
+		expectIssuesIgnored  bool   // issues.jsonl as ignore pattern
+		expectModeInHeader   string // Mode string in header
 	}{
 		{
-			name:                  "direct mode - JSONL tracked",
-			syncBranchConfigured:  false,
-			expectIssuesIgnored:   false,
-			expectIssuesNegated:   true,
-			expectModeInHeader:    "direct (JSONL tracked in current branch)",
+			name:                 "direct mode - JSONL tracked by default",
+			syncBranchConfigured: false,
+			expectIssuesIgnored:  false, // No pattern = tracked by default
+			expectModeInHeader:   "direct (JSONL tracked in current branch)",
 		},
 		{
-			name:                  "sync-branch mode - JSONL ignored",
-			syncBranchConfigured:  true,
-			expectIssuesIgnored:   true,
-			expectIssuesNegated:   false,
-			expectModeInHeader:    "sync-branch (JSONL ignored, committed via worktree)",
+			name:                 "sync-branch mode - JSONL ignored",
+			syncBranchConfigured: true,
+			expectIssuesIgnored:  true, // Explicit ignore, uses git add -f
+			expectModeInHeader:   "sync-branch (JSONL ignored, committed via worktree)",
 		},
 	}
 
@@ -1177,21 +1174,22 @@ func TestGenerateGitignoreTemplate_Modes(t *testing.T) {
 			}
 
 			// Check issues.jsonl handling
+			// Note: We no longer use negation patterns (!issues.jsonl) as they
+			// override fork protection in .git/info/exclude (GH#796)
 			hasIgnorePattern := strings.Contains(content, "\nissues.jsonl\n") ||
 				strings.HasSuffix(strings.TrimSpace(content), "issues.jsonl")
 			hasNegationPattern := strings.Contains(content, "!issues.jsonl")
 
+			// Negation patterns should NEVER be present (GH#796)
+			if hasNegationPattern {
+				t.Error("Negation patterns (!issues.jsonl) break fork protection (GH#796)")
+			}
+
 			if tt.expectIssuesIgnored && !hasIgnorePattern {
 				t.Error("Expected issues.jsonl to be ignored (plain pattern)")
 			}
-			if !tt.expectIssuesIgnored && hasIgnorePattern && !hasNegationPattern {
-				t.Error("Expected issues.jsonl to NOT be ignored (should have negation)")
-			}
-			if tt.expectIssuesNegated && !hasNegationPattern {
-				t.Error("Expected !issues.jsonl negation pattern")
-			}
-			if !tt.expectIssuesNegated && hasNegationPattern {
-				t.Error("Expected NO !issues.jsonl negation pattern")
+			if !tt.expectIssuesIgnored && hasIgnorePattern {
+				t.Error("Expected issues.jsonl to NOT be ignored (tracked by default)")
 			}
 
 			// All modes should have required patterns
@@ -1204,7 +1202,7 @@ func TestGenerateGitignoreTemplate_Modes(t *testing.T) {
 	}
 }
 
-// TestCheckGitignoreWithConfig_ModeMismatch tests mode mismatch detection (GH#797)
+// TestCheckGitignoreWithConfig_ModeMismatch tests mode mismatch detection (GH#797, GH#796)
 func TestCheckGitignoreWithConfig_ModeMismatch(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -1224,7 +1222,7 @@ func TestCheckGitignoreWithConfig_ModeMismatch(t *testing.T) {
 			gitignoreContent:     GenerateGitignoreTemplate(false),
 			syncBranchConfigured: true,
 			expectedStatus:       StatusWarning,
-			expectedMessage:      "sync-branch configured but JSONL tracked",
+			expectedMessage:      "sync-branch configured but JSONL not ignored",
 		},
 		{
 			name:                 "sync-branch mode gitignore with direct config - MISMATCH",
@@ -1232,6 +1230,17 @@ func TestCheckGitignoreWithConfig_ModeMismatch(t *testing.T) {
 			syncBranchConfigured: false,
 			expectedStatus:       StatusWarning,
 			expectedMessage:      "no sync-branch but JSONL ignored",
+		},
+		{
+			name: "negation patterns break fork protection - GH#796",
+			gitignoreContent: gitignoreBase + `
+# Old direct mode (pre-796)
+!issues.jsonl
+!interactions.jsonl
+`,
+			syncBranchConfigured: false,
+			expectedStatus:       StatusWarning,
+			expectedMessage:      "negation patterns that break fork protection",
 		},
 	}
 
@@ -1432,20 +1441,22 @@ func TestFixGitignoreWithConfig(t *testing.T) {
 			}
 			contentStr := string(content)
 
-			// Check if issues.jsonl is ignored or negated
+			// Check if issues.jsonl is ignored (GH#796: no negation patterns allowed)
 			hasIgnorePattern := strings.Contains(contentStr, "\nissues.jsonl\n")
 			hasNegationPattern := strings.Contains(contentStr, "!issues.jsonl")
 
+			// Negation patterns should NEVER be present (GH#796)
+			if hasNegationPattern {
+				t.Error("Negation patterns (!issues.jsonl) break fork protection (GH#796)")
+			}
+
 			if tt.expectIssuesIgnored {
 				if !hasIgnorePattern {
-					t.Error("Expected issues.jsonl to be ignored")
-				}
-				if hasNegationPattern {
-					t.Error("Expected NO !issues.jsonl negation in sync-branch mode")
+					t.Error("Expected issues.jsonl to be ignored (sync-branch mode)")
 				}
 			} else {
-				if hasNegationPattern == false {
-					t.Error("Expected !issues.jsonl negation in direct mode")
+				if hasIgnorePattern {
+					t.Error("Expected issues.jsonl NOT to be ignored (direct mode, tracked by default)")
 				}
 			}
 
@@ -1532,8 +1543,13 @@ func TestFixGitignore_BackwardCompatibility(t *testing.T) {
 		t.Error("Content doesn't match GitignoreTemplate (direct mode)")
 	}
 
-	// Verify it has the negation pattern (direct mode)
-	if !strings.Contains(string(content), "!issues.jsonl") {
-		t.Error("Expected !issues.jsonl pattern for direct mode")
+	// Verify it does NOT have negation patterns (GH#796 - fork protection)
+	if strings.Contains(string(content), "!issues.jsonl") {
+		t.Error("Negation patterns break fork protection (GH#796)")
+	}
+
+	// Verify it does NOT have ignore patterns for JSONL (direct mode = tracked by default)
+	if strings.Contains(string(content), "\nissues.jsonl\n") {
+		t.Error("Direct mode should not ignore issues.jsonl (tracked by default)")
 	}
 }

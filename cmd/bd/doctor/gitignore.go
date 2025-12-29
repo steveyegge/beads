@@ -39,26 +39,24 @@ beads.right.jsonl
 beads.right.meta.json
 `
 
-// gitignoreSyncBranchSuffix is appended when sync-branch mode is configured
+// gitignoreSyncBranchSuffix is appended when sync-branch mode is configured.
+// JSONL files are explicitly ignored here; bd sync uses git add -f to force-add
+// them to the sync branch worktree.
 const gitignoreSyncBranchSuffix = `
 # Sync-branch mode: JSONL managed via dedicated branch
 # bd sync force-adds to sync-branch worktree
 issues.jsonl
 interactions.jsonl
-
-# Config files always tracked
-!metadata.json
-!config.json
-!config.yaml
 `
 
-// gitignoreDirectSuffix is appended when no sync-branch is configured (direct commit mode)
+// gitignoreDirectSuffix is appended when no sync-branch is configured.
+// NOTE: We intentionally do NOT add negation patterns (e.g., !issues.jsonl) here.
+// They would override fork protection in .git/info/exclude, allowing contributors
+// to accidentally commit upstream issue databases (#796). JSONL files are tracked
+// by git by default since no pattern above ignores them.
 const gitignoreDirectSuffix = `
-# Keep JSONL exports and config (source of truth for git)
-!issues.jsonl
-!interactions.jsonl
-!metadata.json
-!config.json
+# Direct mode: JSONL tracked in current branch
+# Files not matching any pattern above are tracked by git by default.
 `
 
 // GenerateGitignoreTemplate generates the .beads/.gitignore content based on sync-branch configuration.
@@ -148,27 +146,42 @@ func CheckGitignoreWithConfig(syncBranchConfigured bool) DoctorCheck {
 		}
 	}
 
-	// Check for sync-branch mode mismatch (GH#797)
+	// Check for sync-branch mode mismatch (GH#797) and fork protection (GH#796)
+	// Note: We no longer use negation patterns (!issues.jsonl) as they override
+	// fork protection in .git/info/exclude. See GH#796 for details.
 	hasNegation := strings.Contains(contentStr, "!issues.jsonl")
 	hasIgnore := strings.Contains(contentStr, "\nissues.jsonl\n") ||
 		strings.Contains(contentStr, "\nissues.jsonl")
 
-	if syncBranchConfigured && hasNegation && !hasIgnore {
+	// Warn if negation patterns exist - they break fork protection (GH#796)
+	if hasNegation {
 		return DoctorCheck{
 			Name:    "Gitignore",
 			Status:  "warning",
-			Message: "Gitignore mode mismatch: sync-branch configured but JSONL tracked",
-			Detail:  "Expected: issues.jsonl ignored (sync-branch mode), Found: !issues.jsonl (direct mode)",
+			Message: "Gitignore has negation patterns that break fork protection",
+			Detail:  "Found !issues.jsonl which overrides .git/info/exclude (see GH#796)",
+			Fix:     "Run: bd doctor --fix (will remove negation patterns)",
+		}
+	}
+
+	// Sync-branch mode needs ignore patterns (uses git add -f to force-add)
+	if syncBranchConfigured && !hasIgnore {
+		return DoctorCheck{
+			Name:    "Gitignore",
+			Status:  "warning",
+			Message: "Gitignore mode mismatch: sync-branch configured but JSONL not ignored",
+			Detail:  "Expected: issues.jsonl ignored (sync-branch uses git add -f)",
 			Fix:     "Run: bd doctor --fix (will regenerate for sync-branch mode)",
 		}
 	}
 
-	if !syncBranchConfigured && hasIgnore && !hasNegation {
+	// Direct mode should NOT have ignore patterns (files tracked by default)
+	if !syncBranchConfigured && hasIgnore {
 		return DoctorCheck{
 			Name:    "Gitignore",
 			Status:  "warning",
 			Message: "Gitignore mode mismatch: no sync-branch but JSONL ignored",
-			Detail:  "Expected: !issues.jsonl (direct mode), Found: issues.jsonl ignored (sync-branch mode)",
+			Detail:  "Expected: no JSONL patterns (files tracked by default in direct mode)",
 			Fix:     "Run: bd doctor --fix (will regenerate for direct mode)",
 		}
 	}
