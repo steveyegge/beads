@@ -494,12 +494,12 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		        EXISTS (
 		            SELECT 1 FROM issues blocker
 		            WHERE blocker.id = d.depends_on_id
-		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		        )
 		        -- External refs: always included (resolution happens at query time)
 		        OR d.depends_on_id LIKE 'external:%%'
 		    )
-		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  AND i.pinned = 0
 		  AND (
 		      i.status = 'blocked'
@@ -510,7 +510,7 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		          JOIN issues blocker ON d2.depends_on_id = blocker.id
 		          WHERE d2.issue_id = i.id
 		            AND d2.type = 'blocks'
-		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		      )
 		      -- Has external blockers (always considered blocking until resolved)
 		      OR EXISTS (

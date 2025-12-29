@@ -350,12 +350,13 @@ const (
 	StatusClosed     Status = "closed"
 	StatusTombstone  Status = "tombstone" // Soft-deleted issue
 	StatusPinned     Status = "pinned"    // Persistent bead that stays open indefinitely
+	StatusHooked     Status = "hooked"    // Work attached to an agent's hook (GUPP)
 )
 
 // IsValid checks if the status value is valid (built-in statuses only)
 func (s Status) IsValid() bool {
 	switch s {
-	case StatusOpen, StatusInProgress, StatusBlocked, StatusDeferred, StatusClosed, StatusTombstone, StatusPinned:
+	case StatusOpen, StatusInProgress, StatusBlocked, StatusDeferred, StatusClosed, StatusTombstone, StatusPinned, StatusHooked:
 		return true
 	}
 	return false

@@ -146,7 +146,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		    FROM dependencies d
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.type = 'blocks'
-		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 
 		    UNION
 

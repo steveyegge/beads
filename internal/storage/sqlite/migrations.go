@@ -48,6 +48,7 @@ var migrationsList = []Migration{
 	{"created_by_column", migrations.MigrateCreatedByColumn},
 	{"agent_fields", migrations.MigrateAgentFields},
 	{"mol_type_column", migrations.MigrateMolTypeColumn},
+	{"hooked_status_migration", migrations.MigrateHookedStatus},
 }
 
 // MigrationInfo contains metadata about a migration for inspection

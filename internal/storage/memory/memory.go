@@ -1066,7 +1066,7 @@ func (m *MemoryStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	return results, nil
 }
 
-// getOpenBlockers returns the IDs of blockers that are currently open/in_progress/blocked/deferred.
+// getOpenBlockers returns the IDs of blockers that are currently open/in_progress/blocked/deferred/hooked.
 // The caller must hold at least a read lock.
 func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 	deps := m.dependencies[issueID]
@@ -1086,7 +1086,7 @@ func (m *MemoryStorage) getOpenBlockers(issueID string) []string {
 			continue
 		}
 		switch blocker.Status {
-		case types.StatusOpen, types.StatusInProgress, types.StatusBlocked, types.StatusDeferred:
+		case types.StatusOpen, types.StatusInProgress, types.StatusBlocked, types.StatusDeferred, types.StatusHooked:
 			blockers = append(blockers, blocker.ID)
 		}
 	}

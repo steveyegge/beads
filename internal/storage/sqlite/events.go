@@ -134,9 +134,9 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		JOIN issues blocker ON d.depends_on_id = blocker.id
-		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 	`).Scan(&stats.BlockedIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocked count: %w", err)
@@ -152,7 +152,7 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.issue_id = i.id
 		      AND d.type = 'blocks'
-		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  )
 	`).Scan(&stats.ReadyIssues)
 	if err != nil {

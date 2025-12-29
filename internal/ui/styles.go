@@ -58,6 +58,10 @@ var (
 		Light: "#d2a6ff", // purple - special/elevated
 		Dark:  "#d2a6ff",
 	}
+	ColorStatusHooked = lipgloss.AdaptiveColor{
+		Light: "#59c2ff", // cyan - actively worked by agent (GUPP)
+		Dark:  "#59c2ff",
+	}
 
 	// === Priority Colors ===
 	// Only P0/P1 get color - P2/P3/P4 match standard text
@@ -141,6 +145,7 @@ var (
 	StatusClosedStyle     = lipgloss.NewStyle().Foreground(ColorStatusClosed)
 	StatusBlockedStyle    = lipgloss.NewStyle().Foreground(ColorStatusBlocked)
 	StatusPinnedStyle     = lipgloss.NewStyle().Foreground(ColorStatusPinned)
+	StatusHookedStyle     = lipgloss.NewStyle().Foreground(ColorStatusHooked)
 )
 
 // Priority styles
@@ -265,6 +270,8 @@ func RenderStatus(status string) string {
 		return StatusBlockedStyle.Render(status)
 	case "pinned":
 		return StatusPinnedStyle.Render(status)
+	case "hooked":
+		return StatusHookedStyle.Render(status)
 	case "closed":
 		return StatusClosedStyle.Render(status)
 	default: // open and others
