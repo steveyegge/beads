@@ -20,6 +20,7 @@ var showCmd = &cobra.Command{
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		showThread, _ := cmd.Flags().GetBool("thread")
+		shortMode, _ := cmd.Flags().GetBool("short")
 		ctx := rootCtx
 
 		// Check database freshness before reading
@@ -97,6 +98,11 @@ var showCmd = &cobra.Command{
 				}
 				issue := result.Issue
 				issueStore := result.Store
+				if shortMode {
+					fmt.Println(formatShortIssue(issue))
+					result.Close()
+					continue
+				}
 				if jsonOutput {
 					// Get labels and deps for JSON output
 					type IssueDetails struct {
@@ -174,12 +180,8 @@ var showCmd = &cobra.Command{
 						fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
 						continue
 					}
-					if displayIdx > 0 {
-						fmt.Println("\n" + strings.Repeat("─", 60))
-					}
-					displayIdx++
 
-					// Parse response and use existing formatting code
+					// Parse response first to check shortMode before output
 					type IssueDetails struct {
 						types.Issue
 						Labels       []string                             `json:"labels,omitempty"`
@@ -193,6 +195,16 @@ var showCmd = &cobra.Command{
 						os.Exit(1)
 					}
 					issue := &details.Issue
+
+					if shortMode {
+						fmt.Println(formatShortIssue(issue))
+						continue
+					}
+
+					if displayIdx > 0 {
+						fmt.Println("\n" + strings.Repeat("─", 60))
+					}
+					displayIdx++
 
 					// Format output (same as direct mode below)
 					tierEmoji := ""
@@ -359,6 +371,12 @@ var showCmd = &cobra.Command{
 			issue := result.Issue
 			issueStore := result.Store // Use the store that contains this issue
 			// Note: result.Close() called at end of loop iteration
+
+			if shortMode {
+				fmt.Println(formatShortIssue(issue))
+				result.Close()
+				continue
+			}
 
 			if jsonOutput {
 				// Include labels, dependencies (with metadata), dependents (with metadata), and comments in JSON output
@@ -572,7 +590,15 @@ var showCmd = &cobra.Command{
 }
 
 
+// formatShortIssue returns a compact one-line representation of an issue
+// Format: <id> [<status>] P<priority> <type>: <title>
+func formatShortIssue(issue *types.Issue) string {
+	return fmt.Sprintf("%s [%s] P%d %s: %s",
+		issue.ID, issue.Status, issue.Priority, issue.IssueType, issue.Title)
+}
+
 func init() {
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
+	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
 	rootCmd.AddCommand(showCmd)
 }
