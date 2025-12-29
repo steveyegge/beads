@@ -300,7 +300,7 @@ Stops the daemon gracefully, then starts a new one.`,
 			os.Exit(1)
 		}
 		// Don't wait for daemon to exit (it will fork and continue in background)
-		// Use timeout to prevent goroutine leak if daemon never completes (bd-zqmb)
+		// Use timeout to prevent goroutine leak if daemon never completes
 		go func() {
 			done := make(chan struct{})
 			go func() {
@@ -604,14 +604,26 @@ stale sockets, version mismatches, and unresponsive daemons.`,
 	},
 }
 func init() {
-	rootCmd.AddCommand(daemonsCmd)
-	// Add subcommands
+	// Add multi-daemon subcommands to daemonCmd (primary location)
+	daemonCmd.AddCommand(daemonsListCmd)
+	daemonCmd.AddCommand(daemonsHealthCmd)
+	daemonCmd.AddCommand(daemonsStopCmd)
+	daemonCmd.AddCommand(daemonsLogsCmd)
+	daemonCmd.AddCommand(daemonsKillallCmd)
+	daemonCmd.AddCommand(daemonsRestartCmd)
+
+	// Also add to daemonsCmd for backwards compatibility
+	// Make daemonsCmd a hidden alias that shows deprecation
+	daemonsCmd.Hidden = true
+	daemonsCmd.Deprecated = "use 'bd daemon <subcommand>' instead (will be removed in v1.0.0)"
 	daemonsCmd.AddCommand(daemonsListCmd)
 	daemonsCmd.AddCommand(daemonsHealthCmd)
 	daemonsCmd.AddCommand(daemonsStopCmd)
 	daemonsCmd.AddCommand(daemonsLogsCmd)
 	daemonsCmd.AddCommand(daemonsKillallCmd)
 	daemonsCmd.AddCommand(daemonsRestartCmd)
+	rootCmd.AddCommand(daemonsCmd)
+
 	// Flags for list command
 	daemonsListCmd.Flags().StringSlice("search", nil, "Directories to search for daemons (default: home, /tmp, cwd)")
 	daemonsListCmd.Flags().Bool("no-cleanup", false, "Skip auto-cleanup of stale sockets")

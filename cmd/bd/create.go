@@ -112,6 +112,14 @@ var createCmd = &cobra.Command{
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType types.MolType
+		if molTypeStr != "" {
+			molType = types.MolType(molTypeStr)
+			if !molType.IsValid() {
+				FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
+			}
+		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
@@ -161,7 +169,7 @@ var createCmd = &cobra.Command{
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
 		
-		// TODO: Switch to target repo for multi-repo support (bd-4ms)
+		// TODO(bd-6x6g): Switch to target repo for multi-repo support
 		// For now, we just log the target repo in debug mode
 		if repoPath != "." {
 			debug.Logf("DEBUG: Target repo: %s\n", repoPath)
@@ -205,7 +213,7 @@ var createCmd = &cobra.Command{
 			// Get database prefix from config
 			var dbPrefix string
 			if daemonClient != nil {
-				// TODO(bd-g5p7): Add RPC method to get config in daemon mode
+				// TODO(bd-ag35): Add RPC method to get config in daemon mode
 				// For now, skip validation in daemon mode (needs RPC enhancement)
 			} else {
 				// Direct mode - check config
@@ -216,7 +224,7 @@ var createCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 
-			// Validate agent ID pattern if type is agent (gt-hlaaf)
+			// Validate agent ID pattern if type is agent
 			if issueType == "agent" {
 				if err := validation.ValidateAgentID(explicitID); err != nil {
 					FatalError("invalid agent ID: %v", err)
@@ -249,6 +257,7 @@ var createCmd = &cobra.Command{
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				MolType:            string(molType),
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -262,7 +271,7 @@ var createCmd = &cobra.Command{
 				FatalError("parsing response: %v", err)
 			}
 
-			// Run create hook (bd-kwro.8)
+			// Run create hook
 			if hookRunner != nil {
 				hookRunner.Run(hooks.EventCreate, &issue)
 			}
@@ -294,7 +303,8 @@ var createCmd = &cobra.Command{
 			ExternalRef:        externalRefPtr,
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
-			CreatedBy:          getActorWithGit(), // GH#748: track who created the issue
+			CreatedBy:          getActorWithGit(),
+			MolType:            molType,
 		}
 
 		ctx := rootCtx
@@ -400,7 +410,7 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// Add waits-for dependency if specified (bd-xo1o.2)
+		// Add waits-for dependency if specified
 		if waitsFor != "" {
 			// Validate gate type
 			gate := waitsForGate
@@ -434,7 +444,7 @@ var createCmd = &cobra.Command{
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
-		// Run create hook (bd-kwro.8)
+		// Run create hook
 		if hookRunner != nil {
 			hookRunner.Run(hooks.EventCreate, issue)
 		}
@@ -476,6 +486,7 @@ func init() {
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
+	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

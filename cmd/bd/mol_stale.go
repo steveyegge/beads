@@ -64,7 +64,7 @@ func runMolStale(cmd *cobra.Command, args []string) {
 
 	if daemonClient != nil {
 		// For now, stale check requires direct store access
-		// TODO: Add RPC endpoint for stale check
+		// TODO(bd-ag35): Add RPC endpoint for stale check
 		fmt.Fprintf(os.Stderr, "Error: mol stale requires direct database access\n")
 		fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon mol stale\n")
 		os.Exit(1)

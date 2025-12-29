@@ -40,6 +40,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		issueType, _ := cmd.Flags().GetString("type")
 		parentID, _ := cmd.Flags().GetString("parent")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType *types.MolType
+		if molTypeStr != "" {
+			mt := types.MolType(molTypeStr)
+			if !mt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
+				os.Exit(1)
+			}
+			molType = &mt
+		}
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 
 		// Normalize labels: trim, dedupe, remove empty
@@ -54,7 +64,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		filter := types.WorkFilter{
-			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
+			// Leave Status empty to get both 'open' and 'in_progress'
 			Type:       issueType,
 			Limit:      limit,
 			Unassigned: unassigned,
@@ -73,6 +83,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if parentID != "" {
 			filter.ParentID = &parentID
 		}
+		if molType != nil {
+			filter.MolType = molType
+		}
 		// Validate sort policy
 		if !filter.SortPolicy.IsValid() {
 			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
@@ -89,6 +102,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				Labels:     labels,
 				LabelsAny:  labelsAny,
 				ParentID:   parentID,
+				MolType:    molTypeStr,
 			}
 			if cmd.Flags().Changed("priority") {
 				priority, _ := cmd.Flags().GetInt("priority")
@@ -112,11 +126,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				return
 			}
 
-			// Show upgrade notification if needed (bd-loka)
+			// Show upgrade notification if needed
 			maybeShowUpgradeNotification()
 
 			if len(issues) == 0 {
-				// Check if there are any open issues at all (bd-r4n)
+				// Check if there are any open issues at all
 				statsResp, statsErr := daemonClient.Stats()
 				hasOpenIssues := false
 				if statsErr == nil {
@@ -152,7 +166,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// Direct mode
 		ctx := rootCtx
 
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
+		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		if daemonClient == nil {
 			if err := ensureDatabaseFresh(ctx); err != nil {
@@ -185,11 +199,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			outputJSON(issues)
 			return
 		}
-		// Show upgrade notification if needed (bd-loka)
+		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
 		if len(issues) == 0 {
-			// Check if there are any open issues at all (bd-r4n)
+			// Check if there are any open issues at all
 			hasOpenIssues := false
 			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
 				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
@@ -421,6 +435,7 @@ func init() {
 	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, merge-request)")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
+	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)

@@ -2,6 +2,32 @@
 
 Complete installation guide for all platforms.
 
+## Components Overview
+
+Beads has several components - here's what they are and when you need them:
+
+| Component | What It Is | When You Need It |
+|-----------|------------|------------------|
+| **bd CLI** | Core command-line tool | Always - this is the foundation |
+| **Claude Code Plugin** | Slash commands + enhanced UX | Optional - if you want `/bd-ready`, `/bd-create` commands |
+| **MCP Server (beads-mcp)** | Model Context Protocol interface | Only for MCP-only environments (Claude Desktop, Amp) |
+
+**How they relate:**
+- The **bd CLI** is the core - install it first via Homebrew, npm, or script
+- The **Plugin** enhances Claude Code with slash commands but *requires* the CLI installed
+- The **MCP server** is an *alternative* to the CLI for environments without shell access
+
+**Typical setups:**
+
+| Environment | What to Install |
+|-------------|-----------------|
+| Claude Code, Cursor, Windsurf | bd CLI (+ optional Plugin for Claude Code) |
+| Claude Desktop (no shell) | MCP server only |
+| Terminal / scripts | bd CLI only |
+| CI/CD pipelines | bd CLI only |
+
+**Are they mutually exclusive?** No - you can have CLI + Plugin + MCP all installed. They don't conflict. But most users only need the CLI.
+
 ## Quick Install (Recommended)
 
 ### Homebrew (macOS/Linux)
@@ -28,6 +54,19 @@ The installer will:
 - Install via `go install` if Go is available
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
+
+### Comparison of Installation Methods
+
+| Method | Best For | Updates | Prerequisites | Notes |
+|--------|----------|---------|---------------|-------|
+| **Homebrew** | macOS/Linux users | `brew upgrade bd` | Homebrew | Recommended. Handles everything automatically |
+| **npm** | JS/Node.js projects | `npm update -g @beads/bd` | Node.js | Convenient if npm is your ecosystem |
+| **Install script** | Quick setup, CI/CD | Re-run script | curl, bash | Good for automation and one-liners |
+| **go install** | Go developers | Re-run command | Go 1.24+ | Builds from source, always latest |
+| **From source** | Contributors, custom builds | `git pull && go build` | Go, git | Full control, can modify code |
+| **AUR (Arch)** | Arch Linux users | `yay -Syu` | yay/paru | Community-maintained |
+
+**TL;DR:** Use Homebrew if available. Use npm if you're in a Node.js environment. Use the script for quick one-off installs or CI.
 
 ## Platform-Specific Installation
 

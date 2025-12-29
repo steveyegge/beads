@@ -44,7 +44,7 @@ func parseTimeFlag(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse time %q (try formats: 2006-01-02, 2006-01-02T15:04:05, or RFC3339)", s)
 }
 
-// pinIndicator returns a pushpin emoji prefix for pinned issues (bd-18b, bd-7h5)
+// pinIndicator returns a pushpin emoji prefix for pinned issues
 func pinIndicator(issue *types.Issue) string {
 	if issue.Pinned {
 		return "📌 "
@@ -346,15 +346,27 @@ var listCmd = &cobra.Command{
 		priorityMinStr, _ := cmd.Flags().GetString("priority-min")
 		priorityMaxStr, _ := cmd.Flags().GetString("priority-max")
 
-		// Pinned filtering flags (bd-p8e)
+		// Pinned filtering flags
 		pinnedFlag, _ := cmd.Flags().GetBool("pinned")
 		noPinnedFlag, _ := cmd.Flags().GetBool("no-pinned")
 
-		// Template filtering (beads-1ra)
+		// Template filtering
 		includeTemplates, _ := cmd.Flags().GetBool("include-templates")
 
-		// Parent filtering (bd-yqhh)
+		// Parent filtering
 		parentID, _ := cmd.Flags().GetString("parent")
+
+		// Molecule type filtering
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType *types.MolType
+		if molTypeStr != "" {
+			mt := types.MolType(molTypeStr)
+			if !mt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
+				os.Exit(1)
+			}
+			molType = &mt
+		}
 
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
@@ -508,7 +520,7 @@ var listCmd = &cobra.Command{
 			filter.PriorityMax = &priorityMax
 		}
 
-		// Pinned filtering (bd-p8e): --pinned and --no-pinned are mutually exclusive
+		// Pinned filtering: --pinned and --no-pinned are mutually exclusive
 		if pinnedFlag && noPinnedFlag {
 			fmt.Fprintf(os.Stderr, "Error: --pinned and --no-pinned are mutually exclusive\n")
 			os.Exit(1)
@@ -521,19 +533,24 @@ var listCmd = &cobra.Command{
 			filter.Pinned = &pinned
 		}
 
-		// Template filtering (beads-1ra): exclude templates by default
+		// Template filtering: exclude templates by default
 		// Use --include-templates to show all issues including templates
 		if !includeTemplates {
 			isTemplate := false
 			filter.IsTemplate = &isTemplate
 		}
 
-		// Parent filtering (bd-yqhh): filter children by parent issue
+		// Parent filtering: filter children by parent issue
 		if parentID != "" {
 			filter.ParentID = &parentID
 		}
 
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
+		// Molecule type filtering
+		if molType != nil {
+			filter.MolType = molType
+		}
+
+		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
 		if daemonClient == nil {
@@ -608,13 +625,13 @@ var listCmd = &cobra.Command{
 			listArgs.PriorityMin = filter.PriorityMin
 			listArgs.PriorityMax = filter.PriorityMax
 
-			// Pinned filtering (bd-p8e)
+			// Pinned filtering
 			listArgs.Pinned = filter.Pinned
 
-			// Template filtering (beads-1ra)
+			// Template filtering
 			listArgs.IncludeTemplates = includeTemplates
 
-			// Parent filtering (bd-yqhh)
+			// Parent filtering
 			listArgs.ParentID = parentID
 
 			 resp, err := daemonClient.List(listArgs)
@@ -634,7 +651,7 @@ var listCmd = &cobra.Command{
 				return
 			}
 
-			// Show upgrade notification if needed (bd-loka)
+			// Show upgrade notification if needed
 			maybeShowUpgradeNotification()
 
 			var issues []*types.Issue
@@ -781,7 +798,7 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		// Show upgrade notification if needed (bd-loka)
+		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
 		// Load labels in bulk for display
@@ -896,15 +913,18 @@ func init() {
 	listCmd.Flags().String("priority-min", "", "Filter by minimum priority (inclusive, 0-4 or P0-P4)")
 	listCmd.Flags().String("priority-max", "", "Filter by maximum priority (inclusive, 0-4 or P0-P4)")
 
-	// Pinned filtering (bd-p8e)
+	// Pinned filtering
 	listCmd.Flags().Bool("pinned", false, "Show only pinned issues")
 	listCmd.Flags().Bool("no-pinned", false, "Exclude pinned issues")
 
-	// Template filtering (beads-1ra): exclude templates by default
+	// Template filtering: exclude templates by default
 	listCmd.Flags().Bool("include-templates", false, "Include template molecules in output")
 
-	// Parent filtering (bd-yqhh): filter children by parent issue
+	// Parent filtering: filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
+
+	// Molecule type filtering
+	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")

@@ -1,11 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/ui"
 )
 
 // Hidden aliases for backwards compatibility.
@@ -13,34 +9,34 @@ import (
 // They are hidden from help output but still work for scripts/muscle memory.
 
 var cleanupAliasCmd = &cobra.Command{
-	Use:    "cleanup",
-	Hidden: true,
-	Short:  "Alias for 'bd admin cleanup' (deprecated)",
-	Long:   cleanupCmd.Long,
+	Use:        "cleanup",
+	Hidden:     true,
+	Deprecated: "use 'bd admin cleanup' instead (will be removed in v1.0.0)",
+	Short:      "Alias for 'bd admin cleanup' (deprecated)",
+	Long:       cleanupCmd.Long,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(os.Stderr, ui.RenderMuted("Note: 'bd cleanup' is now 'bd admin cleanup'"))
 		cleanupCmd.Run(cmd, args)
 	},
 }
 
 var compactAliasCmd = &cobra.Command{
-	Use:    "compact",
-	Hidden: true,
-	Short:  "Alias for 'bd admin compact' (deprecated)",
-	Long:   compactCmd.Long,
+	Use:        "compact",
+	Hidden:     true,
+	Deprecated: "use 'bd admin compact' instead (will be removed in v1.0.0)",
+	Short:      "Alias for 'bd admin compact' (deprecated)",
+	Long:       compactCmd.Long,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(os.Stderr, ui.RenderMuted("Note: 'bd compact' is now 'bd admin compact'"))
 		compactCmd.Run(cmd, args)
 	},
 }
 
 var resetAliasCmd = &cobra.Command{
-	Use:    "reset",
-	Hidden: true,
-	Short:  "Alias for 'bd admin reset' (deprecated)",
-	Long:   resetCmd.Long,
+	Use:        "reset",
+	Hidden:     true,
+	Deprecated: "use 'bd admin reset' instead (will be removed in v1.0.0)",
+	Short:      "Alias for 'bd admin reset' (deprecated)",
+	Long:       resetCmd.Long,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(os.Stderr, ui.RenderMuted("Note: 'bd reset' is now 'bd admin reset'"))
 		resetCmd.Run(cmd, args)
 	},
 }

@@ -44,7 +44,7 @@ const (
 	OpDelete              = "delete"
 	OpGetWorkerStatus     = "get_worker_status"
 
-	// Gate operations (bd-likt)
+	// Gate operations
 	OpGateCreate = "gate_create"
 	OpGateList   = "gate_list"
 	OpGateShow   = "gate_show"
@@ -85,16 +85,18 @@ type CreateArgs struct {
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	Labels             []string `json:"labels,omitempty"`
 	Dependencies       []string `json:"dependencies,omitempty"`
-	// Waits-for dependencies (bd-xo1o.2)
+	// Waits-for dependencies
 	WaitsFor     string `json:"waits_for,omitempty"`      // Spawner issue ID to wait for
 	WaitsForGate string `json:"waits_for_gate,omitempty"` // Gate type: all-children or any-children
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
 	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
-	// ID generation (bd-hobo)
+	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
+	// Molecule type (for swarm coordination)
+	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -114,22 +116,22 @@ type UpdateArgs struct {
 	AddLabels          []string `json:"add_labels,omitempty"`
 	RemoveLabels       []string `json:"remove_labels,omitempty"`
 	SetLabels          []string `json:"set_labels,omitempty"`
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	Sender    *string `json:"sender,omitempty"`    // Who sent this (for messages)
 	Ephemeral *bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
 	RepliesTo *string `json:"replies_to,omitempty"` // Issue ID for conversation threading
-	// Graph link fields (bd-fu83)
+	// Graph link fields
 	RelatesTo    *string `json:"relates_to,omitempty"`    // JSON array of related issue IDs
 	DuplicateOf  *string `json:"duplicate_of,omitempty"`  // Canonical issue ID if duplicate
 	SupersededBy *string `json:"superseded_by,omitempty"` // Replacement issue ID if obsolete
-	// Pinned field (bd-iea)
+	// Pinned field
 	Pinned *bool `json:"pinned,omitempty"` // If true, issue is a persistent context marker
-	// Reparenting field (bd-cj2e)
+	// Reparenting field
 	Parent *string `json:"parent,omitempty"` // New parent issue ID (reparents the issue)
-	// Agent slot fields (gt-h5sza)
+	// Agent slot fields
 	HookBead *string `json:"hook_bead,omitempty"` // Current work on agent's hook (0..1)
 	RoleBead *string `json:"role_bead,omitempty"` // Role definition bead for agent
-	// Agent state fields (bd-uxlb)
+	// Agent state fields
 	AgentState   *string `json:"agent_state,omitempty"`   // Agent state (idle|running|stuck|stopped|dead)
 	LastActivity *bool   `json:"last_activity,omitempty"` // If true, update last_activity to now
 }
@@ -192,17 +194,20 @@ type ListArgs struct {
 	PriorityMin *int `json:"priority_min,omitempty"`
 	PriorityMax *int `json:"priority_max,omitempty"`
 
-	// Pinned filtering (bd-p8e)
+	// Pinned filtering
 	Pinned *bool `json:"pinned,omitempty"`
 
-	// Template filtering (beads-1ra)
+	// Template filtering
 	IncludeTemplates bool `json:"include_templates,omitempty"`
 
-	// Parent filtering (bd-yqhh)
+	// Parent filtering
 	ParentID string `json:"parent_id,omitempty"`
 
-	// Ephemeral filtering (bd-bkul)
+	// Ephemeral filtering
 	Ephemeral *bool `json:"ephemeral,omitempty"`
+
+	// Molecule type filtering
+	MolType string `json:"mol_type,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation
@@ -264,6 +269,7 @@ type ReadyArgs struct {
 	Labels     []string `json:"labels,omitempty"`
 	LabelsAny  []string `json:"labels_any,omitempty"`
 	ParentID   string   `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
+	MolType    string   `json:"mol_type,omitempty"`  // Filter by molecule type: swarm, patrol, or work
 }
 
 // BlockedArgs represents arguments for the blocked operation
@@ -455,7 +461,7 @@ type GetMutationsArgs struct {
 	Since int64 `json:"since"` // Unix timestamp in milliseconds (0 for all recent)
 }
 
-// Gate operations (bd-likt)
+// Gate operations
 
 // GateCreateArgs represents arguments for creating a gate
 type GateCreateArgs struct {

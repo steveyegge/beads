@@ -2,16 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,38 +23,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
-	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
-)
-
-// DaemonStatus captures daemon connection state for the current command
-type DaemonStatus struct {
-	Mode               string `json:"mode"` // "daemon" or "direct"
-	Connected          bool   `json:"connected"`
-	Degraded           bool   `json:"degraded"`
-	SocketPath         string `json:"socket_path,omitempty"`
-	AutoStartEnabled   bool   `json:"auto_start_enabled"`
-	AutoStartAttempted bool   `json:"auto_start_attempted"`
-	AutoStartSucceeded bool   `json:"auto_start_succeeded"`
-	FallbackReason     string `json:"fallback_reason,omitempty"` // "none","flag_no_daemon","connect_failed","health_failed","auto_start_disabled","auto_start_failed"
-	Detail             string `json:"detail,omitempty"`          // short diagnostic
-	Health             string `json:"health,omitempty"`          // "healthy","degraded","unhealthy"
-}
-
-// Fallback reason constants
-const (
-	FallbackNone              = "none"
-	FallbackFlagNoDaemon      = "flag_no_daemon"
-	FallbackConnectFailed     = "connect_failed"
-	FallbackHealthFailed      = "health_failed"
-	FallbackWorktreeSafety    = "worktree_safety"
-	cmdDaemon                 = "daemon"
-	cmdImport                 = "import"
-	statusHealthy             = "healthy"
-	FallbackAutoStartDisabled = "auto_start_disabled"
-	FallbackAutoStartFailed   = "auto_start_failed"
-	FallbackDaemonUnsupported = "daemon_unsupported"
-	FallbackWispOperation     = "wisp_operation"
 )
 
 var (
@@ -83,10 +49,10 @@ var (
 	flushFailureCount = 0        // Consecutive flush failures
 	lastFlushError    error      // Last flush error for debugging
 
-	// Auto-flush manager (event-driven, fixes bd-52 race condition)
+	// Auto-flush manager (event-driven, fixes race condition)
 	flushManager *FlushManager
 
-	// Hook runner for extensibility (bd-kwro.8)
+	// Hook runner for extensibility
 	hookRunner *hooks.Runner
 
 	// skipFinalFlush is set by sync command when sync.branch mode completes successfully.
@@ -96,12 +62,11 @@ var (
 	// Auto-import state
 	autoImportEnabled = true // Can be disabled with --no-auto-import
 
-	// Version upgrade tracking (bd-loka)
+	// Version upgrade tracking
 	versionUpgradeDetected = false // Set to true if bd version changed since last run
 	previousVersion        = ""    // The last bd version user had (empty = first run or unknown)
 	upgradeAcknowledged    = false // Set to true after showing upgrade notification once per session
 )
-
 var (
 	noAutoFlush    bool
 	noAutoImport   bool
@@ -115,12 +80,6 @@ var (
 	traceFile      *os.File
 	verboseFlag    bool // Enable verbose/debug output
 	quietFlag      bool // Suppress non-essential output
-)
-
-// Command group IDs for help organization
-const (
-	GroupMaintenance  = "maintenance"
-	GroupIntegrations = "integrations"
 )
 
 func init() {
@@ -169,132 +128,6 @@ func init() {
 	// Custom help function with semantic coloring (Tufte-inspired)
 	// Note: Usage output (shown on errors) is not styled to avoid recursion issues
 	rootCmd.SetHelpFunc(colorizedHelpFunc)
-}
-
-// colorizedHelpFunc wraps Cobra's default help with semantic coloring
-// Applies subtle accent color to group headers for visual hierarchy
-func colorizedHelpFunc(cmd *cobra.Command, args []string) {
-	// Build full help output: Long description + Usage
-	var output strings.Builder
-
-	// Include Long description first (like Cobra's default help)
-	if cmd.Long != "" {
-		output.WriteString(cmd.Long)
-		output.WriteString("\n\n")
-	} else if cmd.Short != "" {
-		output.WriteString(cmd.Short)
-		output.WriteString("\n\n")
-	}
-
-	// Add the usage string which contains commands, flags, etc.
-	output.WriteString(cmd.UsageString())
-
-	// Apply semantic coloring
-	result := colorizeHelpOutput(output.String())
-	fmt.Print(result)
-}
-
-// colorizeHelpOutput applies semantic colors to help text
-// - Group headers get accent color for visual hierarchy
-// - Section headers (Examples:, Flags:) get accent color
-// - Command names get subtle styling for scanability
-// - Flag names get bold styling, types get muted
-// - Default values get muted styling
-func colorizeHelpOutput(help string) string {
-	// Match group header lines (e.g., "Working With Issues:")
-	// These are standalone lines ending with ":" and followed by commands
-	groupHeaderRE := regexp.MustCompile(`(?m)^([A-Z][A-Za-z &]+:)\s*$`)
-
-	result := groupHeaderRE.ReplaceAllStringFunc(help, func(match string) string {
-		// Trim whitespace, colorize, then restore
-		trimmed := strings.TrimSpace(match)
-		return ui.RenderAccent(trimmed)
-	})
-
-	// Match section headers in subcommand help (Examples:, Flags:, etc.)
-	sectionHeaderRE := regexp.MustCompile(`(?m)^(Examples|Flags|Usage|Global Flags|Aliases|Available Commands):`)
-	result = sectionHeaderRE.ReplaceAllStringFunc(result, func(match string) string {
-		return ui.RenderAccent(match)
-	})
-
-	// Match command lines: "  command   Description text"
-	// Commands are indented with 2 spaces, followed by spaces, then description
-	// Pattern matches: indent + command-name (with hyphens) + spacing + description
-	cmdLineRE := regexp.MustCompile(`(?m)^(  )([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(\s{2,})(.*)$`)
-
-	result = cmdLineRE.ReplaceAllStringFunc(result, func(match string) string {
-		parts := cmdLineRE.FindStringSubmatch(match)
-		if len(parts) != 5 {
-			return match
-		}
-		indent := parts[1]
-		cmdName := parts[2]
-		spacing := parts[3]
-		description := parts[4]
-
-		// Colorize command references in description (e.g., 'comments add')
-		description = colorizeCommandRefs(description)
-
-		// Highlight entry point hints (e.g., "(start here)")
-		description = highlightEntryPoints(description)
-
-		// Subtle styling on command name for scanability
-		return indent + ui.RenderCommand(cmdName) + spacing + description
-	})
-
-	// Match flag lines: "  -f, --file string   Description"
-	// Pattern: indent + flags + spacing + optional type + description
-	flagLineRE := regexp.MustCompile(`(?m)^(\s+)(-\w,\s+--[\w-]+|--[\w-]+)(\s+)(string|int|duration|bool)?(\s*.*)$`)
-	result = flagLineRE.ReplaceAllStringFunc(result, func(match string) string {
-		parts := flagLineRE.FindStringSubmatch(match)
-		if len(parts) < 6 {
-			return match
-		}
-		indent := parts[1]
-		flags := parts[2]
-		spacing := parts[3]
-		typeStr := parts[4]
-		desc := parts[5]
-
-		// Mute default values in description
-		desc = muteDefaults(desc)
-
-		if typeStr != "" {
-			return indent + ui.RenderCommand(flags) + spacing + ui.RenderMuted(typeStr) + desc
-		}
-		return indent + ui.RenderCommand(flags) + spacing + desc
-	})
-
-	return result
-}
-
-// muteDefaults applies muted styling to default value annotations
-func muteDefaults(text string) string {
-	defaultRE := regexp.MustCompile(`(\(default[^)]*\))`)
-	return defaultRE.ReplaceAllStringFunc(text, func(match string) string {
-		return ui.RenderMuted(match)
-	})
-}
-
-// highlightEntryPoints applies accent styling to entry point hints like "(start here)"
-func highlightEntryPoints(text string) string {
-	entryRE := regexp.MustCompile(`(\(start here\))`)
-	return entryRE.ReplaceAllStringFunc(text, func(match string) string {
-		return ui.RenderAccent(match)
-	})
-}
-
-// colorizeCommandRefs applies command styling to references in text
-// Matches patterns like 'command name' or 'bd command'
-func colorizeCommandRefs(text string) string {
-	// Match 'command words' in single quotes (e.g., 'comments add')
-	cmdRefRE := regexp.MustCompile(`'([a-z][a-z0-9 -]+)'`)
-
-	return cmdRefRE.ReplaceAllStringFunc(text, func(match string) string {
-		// Extract the command name without quotes
-		inner := match[1 : len(match)-1]
-		return "'" + ui.RenderCommand(inner) + "'"
-	})
 }
 
 var rootCmd = &cobra.Command{
@@ -474,7 +307,7 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
-		// Auto-detect sandboxed environment (bd-u3t: Phase 2 for GH #353)
+		// Auto-detect sandboxed environment (Phase 2 for GH #353)
 		// Only auto-enable if user hasn't explicitly set --sandbox or --no-daemon
 		if !cmd.Flags().Changed("sandbox") && !cmd.Flags().Changed("no-daemon") {
 			if isSandboxed() {
@@ -534,7 +367,7 @@ var rootCmd = &cobra.Command{
 			if foundDB := beads.FindDatabasePath(); foundDB != "" {
 				dbPath = foundDB
 			} else {
-				// No database found - check if this is JSONL-only mode (bd-5kj)
+				// No database found - check if this is JSONL-only mode
 				beadsDir := beads.FindBeadsDir()
 				if beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
@@ -545,7 +378,7 @@ var rootCmd = &cobra.Command{
 						jsonlExists = true
 					}
 
-					// Use proper YAML parsing to detect no-db mode (bd-r6k2)
+					// Use proper YAML parsing to detect no-db mode
 					isNoDbMode := isNoDbModeConfigured(beadsDir)
 
 					// If JSONL-only mode is configured, auto-enable it
@@ -571,7 +404,7 @@ var rootCmd = &cobra.Command{
 				// - import: auto-initializes database if missing
 				// - setup: creates editor integration files (no DB needed)
 				if cmd.Name() != "import" && cmd.Name() != "setup" {
-					// No database found - provide context-aware error message (bd-534)
+					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 
 					// Check if JSONL exists without no-db mode configured
@@ -613,7 +446,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Track bd version changes (bd-loka)
+		// Track bd version changes
 		// Best-effort tracking - failures are silent
 		trackBdVersion()
 
@@ -635,7 +468,7 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
-		// Wisp operations auto-bypass daemon (bd-ta4r)
+		// Wisp operations auto-bypass daemon
 		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
 		// so daemon can't help anyway. This reduces friction in wisp workflows.
 		if isWispOperation(cmd, args) {
@@ -815,7 +648,7 @@ var rootCmd = &cobra.Command{
 			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
 		}
 
-		// Auto-migrate database on version bump (bd-jgxi)
+		// Auto-migrate database on version bump
 		// Do this AFTER daemon check but BEFORE opening database for main operation
 		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
 		autoMigrateOnVersionBump(dbPath)
@@ -824,7 +657,7 @@ var rootCmd = &cobra.Command{
 		var err error
 		store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
 		if err != nil {
-			// Check for fresh clone scenario (bd-dmb)
+			// Check for fresh clone scenario
 			beadsDir := filepath.Dir(dbPath)
 			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
@@ -838,9 +671,9 @@ var rootCmd = &cobra.Command{
 		storeActive = true
 		storeMutex.Unlock()
 
-		// Initialize flush manager (fixes bd-52: race condition in auto-flush)
+		// Initialize flush manager (fixes race condition in auto-flush)
 		// Skip FlushManager creation in sandbox mode - no background goroutines needed
-		// (bd-dh8a: improves Windows exit behavior and container scenarios)
+		// (improves Windows exit behavior and container scenarios)
 		// For in-process test scenarios where commands run multiple times,
 		// we create a new manager each time. Shutdown() is idempotent so
 		// PostRun can safely shutdown whichever manager is active.
@@ -848,7 +681,7 @@ var rootCmd = &cobra.Command{
 			flushManager = NewFlushManager(autoFlushEnabled, getDebounceDuration())
 		}
 
-		// Initialize hook runner (bd-kwro.8)
+		// Initialize hook runner
 		// dbPath is .beads/something.db, so workspace root is parent of .beads
 		if dbPath != "" {
 			beadsDir := filepath.Dir(dbPath)
@@ -860,8 +693,8 @@ var rootCmd = &cobra.Command{
 
 		// Auto-import if JSONL is newer than DB (e.g., after git pull)
 		// Skip for import command itself to avoid recursion
-		// Skip for delete command to prevent resurrection of deleted issues (bd-8kde)
-		// Skip if sync --dry-run to avoid modifying DB in dry-run mode (bd-191)
+		// Skip for delete command to prevent resurrection of deleted issues
+		// Skip if sync --dry-run to avoid modifying DB in dry-run mode
 		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled {
 			// Check if this is sync command with --dry-run flag
 			if cmd.Name() == "sync" {
@@ -876,7 +709,7 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Load molecule templates from hierarchical catalog locations (gt-0ei3)
+		// Load molecule templates from hierarchical catalog locations
 		// Templates are loaded after auto-import to ensure the database is up-to-date.
 		// Skip for import command to avoid conflicts during import operations.
 		if cmd.Name() != "import" && store != nil {
@@ -960,189 +793,8 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// getDebounceDuration returns the auto-flush debounce duration
-// Configurable via config file or BEADS_FLUSH_DEBOUNCE env var (e.g., "500ms", "10s")
-// Defaults to 5 seconds if not set or invalid
-
-// signalGasTownActivity writes an activity signal for Gas Town daemon.
-// This enables exponential backoff based on bd usage detection (gt-ws8ol).
-// Best-effort: silent on any failure, never affects bd operation.
-func signalGasTownActivity() {
-	// Determine town root
-	// Priority: GT_ROOT env > detect from cwd path > skip
-	townRoot := os.Getenv("GT_ROOT")
-	if townRoot == "" {
-		// Try to detect from cwd - if under ~/gt/, use that as town root
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return
-		}
-		gtRoot := filepath.Join(home, "gt")
-		cwd, err := os.Getwd()
-		if err != nil {
-			return
-		}
-		if strings.HasPrefix(cwd, gtRoot+string(os.PathSeparator)) {
-			townRoot = gtRoot
-		}
-	}
-
-	if townRoot == "" {
-		return // Not in Gas Town, skip
-	}
-
-	// Ensure daemon directory exists
-	daemonDir := filepath.Join(townRoot, "daemon")
-	if err := os.MkdirAll(daemonDir, 0755); err != nil {
-		return
-	}
-
-	// Build command line from os.Args
-	cmdLine := strings.Join(os.Args, " ")
-
-	// Determine actor (use package-level var if set, else fall back to env)
-	actorName := actor
-	if actorName == "" {
-		if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-			actorName = bdActor
-		} else if user := os.Getenv("USER"); user != "" {
-			actorName = user
-		} else {
-			actorName = "unknown"
-		}
-	}
-
-	// Build activity signal
-	activity := struct {
-		LastCommand string `json:"last_command"`
-		Actor       string `json:"actor"`
-		Timestamp   string `json:"timestamp"`
-	}{
-		LastCommand: cmdLine,
-		Actor:       actorName,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-	}
-
-	data, err := json.Marshal(activity)
-	if err != nil {
-		return
-	}
-
-	// Write atomically (write to temp, rename)
-	activityPath := filepath.Join(daemonDir, "activity.json")
-	tmpPath := activityPath + ".tmp"
-	// nolint:gosec // G306: 0644 is appropriate for a status file
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return
-	}
-	_ = os.Rename(tmpPath, activityPath)
-}
-
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
-}
-
-// isFreshCloneError checks if the error is due to a fresh clone scenario
-// where the database exists but is missing required config (like issue_prefix).
-// This happens when someone clones a repo with beads but needs to initialize.
-func isFreshCloneError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	// Check for the specific migration invariant error pattern
-	return strings.Contains(errStr, "post-migration validation failed") &&
-		strings.Contains(errStr, "required config key missing: issue_prefix")
-}
-
-// handleFreshCloneError displays a helpful message when a fresh clone is detected
-// and returns true if the error was handled (so caller should exit).
-// If not a fresh clone error, returns false and does nothing.
-func handleFreshCloneError(err error, beadsDir string) bool {
-	if !isFreshCloneError(err) {
-		return false
-	}
-
-	// Look for JSONL file in the .beads directory
-	jsonlPath := ""
-	issueCount := 0
-
-	if beadsDir != "" {
-		// Check for issues.jsonl (canonical) first, then beads.jsonl (legacy)
-		for _, name := range []string{"issues.jsonl", "beads.jsonl"} {
-			candidate := filepath.Join(beadsDir, name)
-			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-				jsonlPath = candidate
-				// Count lines (approximately = issue count)
-				// #nosec G304 -- candidate is constructed from beadsDir which is .beads/
-				if data, readErr := os.ReadFile(candidate); readErr == nil {
-					for _, line := range strings.Split(string(data), "\n") {
-						if strings.TrimSpace(line) != "" {
-							issueCount++
-						}
-					}
-				}
-				break
-			}
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "Error: Database not initialized\n\n")
-	fmt.Fprintf(os.Stderr, "This appears to be a fresh clone or the database needs initialization.\n")
-
-	if jsonlPath != "" && issueCount > 0 {
-		fmt.Fprintf(os.Stderr, "Found: %s (%d issues)\n\n", jsonlPath, issueCount)
-		fmt.Fprintf(os.Stderr, "To initialize from the JSONL file, run:\n")
-		fmt.Fprintf(os.Stderr, "  bd import -i %s\n\n", jsonlPath)
-	} else {
-		fmt.Fprintf(os.Stderr, "\nTo initialize a new database, run:\n")
-		fmt.Fprintf(os.Stderr, "  bd init --prefix <your-prefix>\n\n")
-	}
-
-	fmt.Fprintf(os.Stderr, "For more information: bd init --help\n")
-	return true
-}
-
-// isWispOperation returns true if the command operates on ephemeral wisps.
-// Wisp operations auto-bypass the daemon because wisps are local-only
-// (Ephemeral=true issues are never exported to JSONL).
-// Detects:
-//   - mol wisp subcommands (create, list, gc, or direct proto invocation)
-//   - mol burn (only operates on wisps)
-//   - mol squash (condenses wisps to digests)
-//   - Commands with ephemeral issue IDs in args (bd-*-eph-*, eph-*)
-func isWispOperation(cmd *cobra.Command, args []string) bool {
-	cmdName := cmd.Name()
-
-	// Check command hierarchy for wisp subcommands
-	// bd mol wisp → parent is "mol", cmd is "wisp"
-	// bd mol wisp create → parent is "wisp", cmd is "create"
-	if cmd.Parent() != nil {
-		parentName := cmd.Parent().Name()
-		// Direct wisp command or subcommands under wisp
-		if parentName == "wisp" || cmdName == "wisp" {
-			return true
-		}
-		// mol burn and mol squash are wisp-only operations
-		if parentName == "mol" && (cmdName == "burn" || cmdName == "squash") {
-			return true
-		}
-	}
-
-	// Check for ephemeral issue IDs in arguments
-	// Ephemeral IDs have "eph" segment: bd-eph-xxx, gt-eph-xxx, eph-xxx
-	for _, arg := range args {
-		// Skip flags
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		// Check for ephemeral prefix patterns
-		if strings.Contains(arg, "-eph-") || strings.HasPrefix(arg, "eph-") {
-			return true
-		}
-	}
-
-	return false
 }
