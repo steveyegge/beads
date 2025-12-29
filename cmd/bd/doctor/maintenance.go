@@ -313,42 +313,9 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 // resolveBeadsDir follows a redirect file if present in the beads directory.
 // This handles Gas Town's redirect mechanism where .beads/redirect points to
 // the actual beads directory location.
+// This is a wrapper around beads.FollowRedirect for use within the doctor package.
 func resolveBeadsDir(beadsDir string) string {
-	redirectFile := filepath.Join(beadsDir, "redirect")
-	data, err := os.ReadFile(redirectFile) //nolint:gosec // redirect file path is constructed from known beadsDir
-	if err != nil {
-		// No redirect file - use original path
-		return beadsDir
-	}
-
-	// Parse the redirect target
-	target := strings.TrimSpace(string(data))
-	if target == "" {
-		return beadsDir
-	}
-
-	// Skip comments
-	lines := strings.Split(target, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			target = line
-			break
-		}
-	}
-
-	// Resolve relative paths from the parent of the .beads directory
-	if !filepath.IsAbs(target) {
-		projectRoot := filepath.Dir(beadsDir)
-		target = filepath.Join(projectRoot, target)
-	}
-
-	// Verify the target exists
-	if info, err := os.Stat(target); err != nil || !info.IsDir() {
-		return beadsDir
-	}
-
-	return target
+	return beads.FollowRedirect(beadsDir)
 }
 
 // CheckPersistentMolIssues detects mol- prefixed issues that should have been ephemeral.
