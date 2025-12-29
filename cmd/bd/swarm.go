@@ -58,6 +58,75 @@ type IssueNode struct {
 	Wave         int      `json:"wave"`           // Which ready front this belongs to (-1 if blocked by cycle)
 }
 
+// EpicChildren holds the result of fetching an epic's children and their dependencies.
+type EpicChildren struct {
+	Children   []*types.Issue       // Child issues of the epic
+	ChildIDSet map[string]bool      // Set of child IDs for fast lookup
+	DependsOn  map[string][]string  // Map of issue ID -> IDs it depends on (within epic)
+}
+
+// SwarmStore defines the interface needed for swarm operations.
+type SwarmStore interface {
+	GetIssue(context.Context, string) (*types.Issue, error)
+	GetDependents(context.Context, string) ([]*types.Issue, error)
+	GetDependencyRecords(context.Context, string) ([]*types.Dependency, error)
+}
+
+// getEpicChildren fetches all children of an epic and builds dependency maps.
+// It filters to only parent-child relationships and only tracks blocking dependencies
+// within the epic's children.
+func getEpicChildren(ctx context.Context, s SwarmStore, epicID string) (*EpicChildren, error) {
+	result := &EpicChildren{
+		Children:   []*types.Issue{},
+		ChildIDSet: make(map[string]bool),
+		DependsOn:  make(map[string][]string),
+	}
+
+	// Get all issues that depend on the epic
+	allDependents, err := s.GetDependents(ctx, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get epic dependents: %w", err)
+	}
+
+	// Filter to only parent-child relationships by checking each dependent's dependency records
+	for _, dependent := range allDependents {
+		deps, err := s.GetDependencyRecords(ctx, dependent.ID)
+		if err != nil {
+			continue // Skip issues we can't query
+		}
+		for _, dep := range deps {
+			if dep.DependsOnID == epicID && dep.Type == types.DepParentChild {
+				result.Children = append(result.Children, dependent)
+				result.ChildIDSet[dependent.ID] = true
+				break
+			}
+		}
+	}
+
+	// Build dependency map (blocking dependencies within epic children only)
+	for _, issue := range result.Children {
+		deps, err := s.GetDependencyRecords(ctx, issue.ID)
+		if err != nil {
+			continue
+		}
+		for _, dep := range deps {
+			// Skip parent-child to epic itself
+			if dep.DependsOnID == epicID && dep.Type == types.DepParentChild {
+				continue
+			}
+			// Only track blocking dependencies within children
+			if !dep.Type.AffectsReadyWork() {
+				continue
+			}
+			if result.ChildIDSet[dep.DependsOnID] {
+				result.DependsOn[issue.ID] = append(result.DependsOn[issue.ID], dep.DependsOnID)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 var swarmValidateCmd = &cobra.Command{
 	Use:   "validate [epic-id]",
 	Short: "Validate epic structure for swarming",
@@ -147,11 +216,7 @@ Examples:
 }
 
 // analyzeEpicForSwarm performs structural analysis of an epic for swarm execution.
-func analyzeEpicForSwarm(ctx context.Context, s interface{
-	GetIssue(context.Context, string) (*types.Issue, error)
-	GetDependents(context.Context, string) ([]*types.Issue, error)
-	GetDependencyRecords(context.Context, string) ([]*types.Dependency, error)
-}, epic *types.Issue) (*SwarmAnalysis, error) {
+func analyzeEpicForSwarm(ctx context.Context, s SwarmStore, epic *types.Issue) (*SwarmAnalysis, error) {
 	analysis := &SwarmAnalysis{
 		EpicID:    epic.ID,
 		EpicTitle: epic.Title,
@@ -159,44 +224,32 @@ func analyzeEpicForSwarm(ctx context.Context, s interface{
 		Issues:    make(map[string]*IssueNode),
 	}
 
-	// Get all issues that depend on the epic
-	allDependents, err := s.GetDependents(ctx, epic.ID)
+	// Get children and dependency map using shared helper
+	epicChildren, err := getEpicChildren(ctx, s, epic.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get epic dependents: %w", err)
+		return nil, err
 	}
 
-	// Filter to only parent-child relationships by checking each dependent's dependency records
-	var childIssues []*types.Issue
-	for _, dependent := range allDependents {
-		deps, err := s.GetDependencyRecords(ctx, dependent.ID)
-		if err != nil {
-			continue // Skip issues we can't query
-		}
-		for _, dep := range deps {
-			if dep.DependsOnID == epic.ID && dep.Type == types.DepParentChild {
-				childIssues = append(childIssues, dependent)
-				break
-			}
-		}
-	}
-
-	if len(childIssues) == 0 {
+	if len(epicChildren.Children) == 0 {
 		analysis.Warnings = append(analysis.Warnings, "Epic has no children")
 		return analysis, nil
 	}
 
-	analysis.TotalIssues = len(childIssues)
+	analysis.TotalIssues = len(epicChildren.Children)
 
-	// Build the issue graph
-	for _, issue := range childIssues {
+	// Build the issue graph with nodes
+	for _, issue := range epicChildren.Children {
 		node := &IssueNode{
 			ID:           issue.ID,
 			Title:        issue.Title,
 			Status:       string(issue.Status),
 			Priority:     issue.Priority,
-			DependsOn:    []string{},
+			DependsOn:    epicChildren.DependsOn[issue.ID], // Use pre-computed deps
 			DependedOnBy: []string{},
 			Wave:         -1, // Will be set later
+		}
+		if node.DependsOn == nil {
+			node.DependsOn = []string{}
 		}
 		analysis.Issues[issue.ID] = node
 
@@ -205,38 +258,30 @@ func analyzeEpicForSwarm(ctx context.Context, s interface{
 		}
 	}
 
-	// Build dependency relationships (only within the epic's children)
-	childIDSet := make(map[string]bool)
-	for _, issue := range childIssues {
-		childIDSet[issue.ID] = true
-	}
-
-	for _, issue := range childIssues {
+	// Build reverse dependency map (DependedOnBy) and check for external deps
+	for _, issue := range epicChildren.Children {
 		deps, err := s.GetDependencyRecords(ctx, issue.ID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get dependencies for %s: %w", issue.ID, err)
+			continue
 		}
 
-		node := analysis.Issues[issue.ID]
 		for _, dep := range deps {
-			// Only consider dependencies within the epic (not parent-child to epic itself)
+			// Skip parent-child to epic itself
 			if dep.DependsOnID == epic.ID && dep.Type == types.DepParentChild {
-				continue // Skip the parent relationship to the epic
+				continue
 			}
 			// Only track blocking dependencies
 			if !dep.Type.AffectsReadyWork() {
 				continue
 			}
-			// Only track dependencies within the epic's children
-			if childIDSet[dep.DependsOnID] {
-				node.DependsOn = append(node.DependsOn, dep.DependsOnID)
+			// Build DependedOnBy for internal deps
+			if epicChildren.ChildIDSet[dep.DependsOnID] {
 				if targetNode, ok := analysis.Issues[dep.DependsOnID]; ok {
 					targetNode.DependedOnBy = append(targetNode.DependedOnBy, issue.ID)
 				}
 			}
-			// External dependencies to issues outside the epic
-			if !childIDSet[dep.DependsOnID] && dep.DependsOnID != epic.ID {
-				// Check if it's an external ref
+			// Warn about external dependencies
+			if !epicChildren.ChildIDSet[dep.DependsOnID] && dep.DependsOnID != epic.ID {
 				if strings.HasPrefix(dep.DependsOnID, "external:") {
 					analysis.Warnings = append(analysis.Warnings,
 						fmt.Sprintf("%s has external dependency: %s", issue.ID, dep.DependsOnID))
@@ -249,7 +294,7 @@ func analyzeEpicForSwarm(ctx context.Context, s interface{
 	}
 
 	// Detect structural issues
-	detectStructuralIssues(analysis, childIssues)
+	detectStructuralIssues(analysis, epicChildren.Children)
 
 	// Compute ready fronts (waves of parallel work)
 	computeReadyFronts(analysis)
@@ -613,10 +658,7 @@ Examples:
 }
 
 // getSwarmStatus computes current swarm status from beads.
-func getSwarmStatus(ctx context.Context, s interface {
-	GetDependents(context.Context, string) ([]*types.Issue, error)
-	GetDependencyRecords(context.Context, string) ([]*types.Dependency, error)
-}, epic *types.Issue) (*SwarmStatus, error) {
+func getSwarmStatus(ctx context.Context, s SwarmStore, epic *types.Issue) (*SwarmStatus, error) {
 	status := &SwarmStatus{
 		EpicID:    epic.ID,
 		EpicTitle: epic.Title,
@@ -626,68 +668,25 @@ func getSwarmStatus(ctx context.Context, s interface {
 		Blocked:   []StatusIssue{},
 	}
 
-	// Get all issues that depend on the epic (children)
-	allDependents, err := s.GetDependents(ctx, epic.ID)
+	// Get children and dependency map using shared helper
+	epicChildren, err := getEpicChildren(ctx, s, epic.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get epic dependents: %w", err)
+		return nil, err
 	}
 
-	// Filter to only parent-child relationships
-	var childIssues []*types.Issue
-	for _, dependent := range allDependents {
-		deps, err := s.GetDependencyRecords(ctx, dependent.ID)
-		if err != nil {
-			continue
-		}
-		for _, dep := range deps {
-			if dep.DependsOnID == epic.ID && dep.Type == types.DepParentChild {
-				childIssues = append(childIssues, dependent)
-				break
-			}
-		}
-	}
-
-	status.TotalIssues = len(childIssues)
-	if len(childIssues) == 0 {
+	status.TotalIssues = len(epicChildren.Children)
+	if len(epicChildren.Children) == 0 {
 		return status, nil
-	}
-
-	// Build set of child IDs for filtering
-	childIDSet := make(map[string]bool)
-	for _, issue := range childIssues {
-		childIDSet[issue.ID] = true
 	}
 
 	// Build status map for efficient blocked checks (avoids N+1 queries)
 	statusMap := make(map[string]types.Status)
-	for _, issue := range childIssues {
+	for _, issue := range epicChildren.Children {
 		statusMap[issue.ID] = issue.Status
 	}
 
-	// Build dependency map (within epic children only)
-	dependsOn := make(map[string][]string)
-	for _, issue := range childIssues {
-		deps, err := s.GetDependencyRecords(ctx, issue.ID)
-		if err != nil {
-			continue
-		}
-		for _, dep := range deps {
-			// Skip parent-child to epic itself
-			if dep.DependsOnID == epic.ID && dep.Type == types.DepParentChild {
-				continue
-			}
-			// Only track blocking dependencies within children
-			if !dep.Type.AffectsReadyWork() {
-				continue
-			}
-			if childIDSet[dep.DependsOnID] {
-				dependsOn[issue.ID] = append(dependsOn[issue.ID], dep.DependsOnID)
-			}
-		}
-	}
-
 	// Categorize each issue
-	for _, issue := range childIssues {
+	for _, issue := range epicChildren.Children {
 		si := StatusIssue{
 			ID:       issue.ID,
 			Title:    issue.Title,
@@ -706,7 +705,7 @@ func getSwarmStatus(ctx context.Context, s interface {
 
 		default: // open or other
 			// Check if blocked by open dependencies (uses statusMap, no extra queries)
-			deps := dependsOn[issue.ID]
+			deps := epicChildren.DependsOn[issue.ID]
 			var blockers []string
 			for _, depID := range deps {
 				if depStatus, ok := statusMap[depID]; ok && depStatus != types.StatusClosed {
