@@ -13,22 +13,23 @@ import (
 )
 
 var (
-	compactDryRun   bool
-	compactTier     int
-	compactAll      bool
-	compactID       string
-	compactForce    bool
-	compactBatch    int
-	compactWorkers  int
-	compactStats    bool
-	compactAnalyze  bool
-	compactApply    bool
-	compactAuto     bool
-	compactPrune    bool
-	compactSummary  string
-	compactActor    string
-	compactLimit    int
-	compactOlderThan int
+	compactDryRun          bool
+	compactTier            int
+	compactAll             bool
+	compactID              string
+	compactForce           bool
+	compactBatch           int
+	compactWorkers         int
+	compactStats           bool
+	compactAnalyze         bool
+	compactApply           bool
+	compactAuto            bool
+	compactPrune           bool
+	compactPurgeTombstones bool
+	compactSummary         string
+	compactActor           string
+	compactLimit           int
+	compactOlderThan       int
 )
 
 var compactCmd = &cobra.Command{
@@ -49,16 +50,25 @@ Tiers:
   - Tier 1: Semantic compression (30 days closed, 70% reduction)
   - Tier 2: Ultra compression (90 days closed, 95% reduction)
 
-Tombstone Pruning:
+Tombstone Cleanup:
   Tombstones are soft-delete markers that prevent resurrection of deleted issues.
-  The --prune mode removes expired tombstones (default 30 days) from issues.jsonl
-  to reduce file size and sync overhead. Use --older-than to customize the TTL.
+
+  --prune: Remove tombstones by AGE (default 30 days). Safe but may keep
+           tombstones that could be deleted.
+
+  --purge-tombstones: Remove tombstones by DEPENDENCY ANALYSIS. More aggressive -
+           removes any tombstone that no open issues depend on, regardless of age.
+           Also cleans stale deps from closed issues to tombstones.
 
 Examples:
-  # Prune tombstones only (recommended for reducing sync overhead)
+  # Age-based pruning
   bd compact --prune                       # Remove tombstones older than 30 days
   bd compact --prune --older-than 7        # Remove tombstones older than 7 days
   bd compact --prune --dry-run             # Preview what would be pruned
+
+  # Dependency-aware purging (more aggressive)
+  bd compact --purge-tombstones --dry-run  # Preview what would be purged
+  bd compact --purge-tombstones            # Remove tombstones with no open deps
 
   # Agent-driven workflow (recommended)
   bd compact --analyze --json              # Get candidates with full content
@@ -74,8 +84,8 @@ Examples:
   bd compact --stats                       # Show statistics
 `,
 	Run: func(_ *cobra.Command, _ []string) {
-		// Compact modifies data unless --stats or --analyze or --dry-run or --prune with --dry-run
-		if !compactStats && !compactAnalyze && !compactDryRun && !(compactPrune && compactDryRun) {
+		// Compact modifies data unless --stats or --analyze or --dry-run
+		if !compactStats && !compactAnalyze && !compactDryRun {
 			CheckReadonly("compact")
 		}
 		ctx := rootCtx
@@ -95,9 +105,15 @@ Examples:
 			return
 		}
 
-		// Handle prune mode (standalone tombstone pruning)
+		// Handle prune mode (standalone tombstone pruning by age)
 		if compactPrune {
 			runCompactPrune()
+			return
+		}
+
+		// Handle purge-tombstones mode (dependency-aware tombstone cleanup)
+		if compactPurgeTombstones {
+			runCompactPurgeTombstones()
 			return
 		}
 
@@ -115,11 +131,11 @@ Examples:
 
 		// Check for exactly one mode
 		if activeModes == 0 {
-			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --prune, --analyze, --apply, or --auto\n")
+			fmt.Fprintf(os.Stderr, "Error: must specify one mode: --prune, --purge-tombstones, --analyze, --apply, or --auto\n")
 			os.Exit(1)
 		}
 		if activeModes > 1 {
-			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--prune, --analyze, --apply, --auto are mutually exclusive)\n")
+			fmt.Fprintf(os.Stderr, "Error: cannot use multiple modes together (--prune, --purge-tombstones, --analyze, --apply, --auto are mutually exclusive)\n")
 			os.Exit(1)
 		}
 
@@ -765,8 +781,9 @@ func init() {
 	compactCmd.Flags().BoolVar(&compactAnalyze, "analyze", false, "Analyze mode: export candidates for agent review")
 	compactCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
 	compactCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
-	compactCmd.Flags().BoolVar(&compactPrune, "prune", false, "Prune mode: remove expired tombstones from issues.jsonl")
+	compactCmd.Flags().BoolVar(&compactPrune, "prune", false, "Prune mode: remove expired tombstones from issues.jsonl (by age)")
 	compactCmd.Flags().IntVar(&compactOlderThan, "older-than", 0, "Prune tombstones older than N days (default: 30)")
+	compactCmd.Flags().BoolVar(&compactPurgeTombstones, "purge-tombstones", false, "Purge mode: remove tombstones with no open deps (by dependency analysis)")
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")
 	compactCmd.Flags().IntVar(&compactLimit, "limit", 0, "Limit number of candidates (0 = no limit)")
