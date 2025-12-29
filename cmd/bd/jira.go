@@ -630,7 +630,7 @@ func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
 		// Check if updated since last sync
 		if issue.UpdatedAt.After(lastSync) {
 			// This is a potential conflict - for now, mark as conflict
-			// TODO: In a full implementation, we'd fetch the Jira issue and compare timestamps
+			// TODO(bd-0qx5): In a full implementation, we'd fetch the Jira issue and compare timestamps
 			conflicts = append(conflicts, JiraConflict{
 				IssueID:         issue.ID,
 				LocalUpdated:    issue.UpdatedAt,

@@ -441,7 +441,7 @@ func TestHasJSONLConflict_MultipleConflicts(t *testing.T) {
 func TestZFCSkipsExportAfterImport(t *testing.T) {
 	// Skip this test - it calls importFromJSONL which spawns bd import as subprocess,
 	// but os.Executable() returns the test binary during tests, not the bd binary.
-	// TODO: Refactor to use direct import logic instead of subprocess.
+	// TODO(bd-h048): Refactor to use direct import logic instead of subprocess.
 	t.Skip("Test requires subprocess spawning which doesn't work in test environment")
 	if testing.Short() {
 		t.Skip("Skipping test that spawns subprocess in short mode")

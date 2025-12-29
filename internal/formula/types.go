@@ -167,23 +167,23 @@ type Step struct {
 
 	// Expand references an expansion formula to inline here.
 	// When set, this step is replaced by the expansion's steps.
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// TODO(bd-7zka): Not yet implemented in bd cook. Filed as future work.
 	Expand string `json:"expand,omitempty"`
 
 	// ExpandVars are variable overrides for the expansion.
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// TODO(bd-7zka): Not yet implemented in bd cook. Filed as future work.
 	ExpandVars map[string]string `json:"expand_vars,omitempty"`
 
 	// Condition makes this step optional based on a variable.
 	// Format: "{{var}}" (truthy) or "{{var}} == value".
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// TODO(bd-7zka): Not yet implemented in bd cook. Filed as future work.
 	Condition string `json:"condition,omitempty"`
 
 	// Children are nested steps (for creating epic hierarchies).
 	Children []*Step `json:"children,omitempty"`
 
 	// Gate defines an async wait condition for this step.
-	// TODO(future): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
+	// TODO(bd-7zka): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
 	Gate *Gate `json:"gate,omitempty"`
 
 	// Loop defines iteration for this step.
@@ -207,7 +207,7 @@ type Step struct {
 }
 
 // Gate defines an async wait condition (integrates with bd-udsi).
-// TODO(future): Not yet implemented in bd cook. Schema defined for future use.
+// TODO(bd-7zka): Not yet implemented in bd cook. Schema defined for future use.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `json:"type"`

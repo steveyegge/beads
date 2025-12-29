@@ -19,7 +19,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
-// TODO: Consider integrating into 'bd doctor' migration detection
+// TODO(bd-7l27): Consider integrating into 'bd doctor' migration detection
 var migrateCmd = &cobra.Command{
 	Use:     "migrate",
 	GroupID: "maint",
