@@ -287,6 +287,7 @@ func setAssumeUnchangedForJSONL(enable bool) {
 
 	for _, file := range []string{".beads/issues.jsonl", ".beads/interactions.jsonl"} {
 		// Check if file is tracked before attempting to set flag
+		// #nosec G204 -- file is from hardcoded list above
 		checkCmd := exec.Command("git", "ls-files", "--error-unmatch", file)
 		if err := checkCmd.Run(); err != nil {
 			// File not tracked, skip
@@ -294,6 +295,7 @@ func setAssumeUnchangedForJSONL(enable bool) {
 		}
 
 		// Set or clear the assume-unchanged flag
+		// #nosec G204 -- flag and file are from hardcoded values
 		cmd := exec.Command("git", "update-index", flag, file)
 		_ = cmd.Run() // Best effort - may fail if not in git repo
 	}
