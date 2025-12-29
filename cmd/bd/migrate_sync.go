@@ -65,7 +65,7 @@ func init() {
 	migrateSyncAliasCmd := *migrateSyncCmd
 	migrateSyncAliasCmd.Use = "migrate-sync"
 	migrateSyncAliasCmd.Hidden = true
-	migrateSyncAliasCmd.Deprecated = "use 'bd migrate sync' instead"
+	migrateSyncAliasCmd.Deprecated = "use 'bd migrate sync' instead (will be removed in v1.0.0)"
 	rootCmd.AddCommand(&migrateSyncAliasCmd)
 }
 

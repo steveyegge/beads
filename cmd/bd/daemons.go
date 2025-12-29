@@ -615,7 +615,7 @@ func init() {
 	// Also add to daemonsCmd for backwards compatibility
 	// Make daemonsCmd a hidden alias that shows deprecation
 	daemonsCmd.Hidden = true
-	daemonsCmd.Deprecated = "use 'bd daemon <subcommand>' instead (e.g., 'bd daemon list')"
+	daemonsCmd.Deprecated = "use 'bd daemon <subcommand>' instead (will be removed in v1.0.0)"
 	daemonsCmd.AddCommand(daemonsListCmd)
 	daemonsCmd.AddCommand(daemonsHealthCmd)
 	daemonsCmd.AddCommand(daemonsStopCmd)

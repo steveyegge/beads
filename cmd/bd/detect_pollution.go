@@ -21,7 +21,7 @@ var detectPollutionCmd = &cobra.Command{
 	Use:        "detect-pollution",
 	GroupID:    "maint",
 	Hidden:     true, // deprecated, use 'bd doctor --check=pollution' instead
-	Deprecated: "use 'bd doctor --check=pollution' instead",
+	Deprecated: "use 'bd doctor --check=pollution' instead (will be removed in v1.0.0)",
 	Short:      "Detect and optionally clean test issues from database",
 	Long: `Detect test issues that leaked into production database using pattern matching.
 

@@ -52,6 +52,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update jsonl_file_hash on import operations
   - Prevents spurious hash mismatch warnings
 
+### Deprecated
+
+The following commands are deprecated and will be removed in v1.0.0:
+
+- **`bd relate`** → use `bd dep relate` instead
+- **`bd unrelate`** → use `bd dep unrelate` instead
+- **`bd daemons`** → use `bd daemon <subcommand>` instead
+- **`bd cleanup`** → use `bd admin cleanup` instead
+- **`bd compact`** → use `bd admin compact` instead
+- **`bd reset`** → use `bd admin reset` instead
+- **`bd comment`** → use `bd comments add` instead
+- **`bd template`** → use `bd mol` instead
+- **`bd templates`** → use `bd formula list` instead
+- **`bd template show`** → use `bd mol show` instead
+- **`bd template bond`** → use `bd mol bond` instead
+- **`bd detect-pollution`** → use `bd doctor --check=pollution` instead
+- **`bd migrate-hash-ids`** → use `bd migrate hash-ids` instead
+- **`bd migrate-tombstones`** → use `bd migrate tombstones` instead
+- **`bd migrate-sync`** → use `bd migrate sync` instead
+- **`bd migrate-issues`** → use `bd migrate issues` instead
+
+All deprecated commands continue to work but print a warning. Update your scripts
+and muscle memory before v1.0.0 to avoid breakage.
+
 ### Changed
 
 - **Community tools documentation** (GH#772, GH#776)

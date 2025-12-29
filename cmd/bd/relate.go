@@ -48,12 +48,12 @@ func init() {
 	// Backwards compatibility aliases at root level (hidden)
 	relateAliasCmd := *relateCmd
 	relateAliasCmd.Hidden = true
-	relateAliasCmd.Deprecated = "use 'bd dep relate' instead"
+	relateAliasCmd.Deprecated = "use 'bd dep relate' instead (will be removed in v1.0.0)"
 	rootCmd.AddCommand(&relateAliasCmd)
 
 	unrelateAliasCmd := *unrelateCmd
 	unrelateAliasCmd.Hidden = true
-	unrelateAliasCmd.Deprecated = "use 'bd dep unrelate' instead"
+	unrelateAliasCmd.Deprecated = "use 'bd dep unrelate' instead (will be removed in v1.0.0)"
 	rootCmd.AddCommand(&unrelateAliasCmd)
 }
 

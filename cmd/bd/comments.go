@@ -211,7 +211,7 @@ var commentCmd = &cobra.Command{
 	Args:       cobra.MinimumNArgs(1),
 	Run:        commentsAddCmd.Run,
 	Hidden:     true,
-	Deprecated: "use 'bd comments add' instead",
+	Deprecated: "use 'bd comments add' instead (will be removed in v1.0.0)",
 }
 
 func init() {

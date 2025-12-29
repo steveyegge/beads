@@ -61,7 +61,7 @@ var templateCmd = &cobra.Command{
 	Use:        "template",
 	GroupID:    "setup",
 	Short:      "Manage issue templates",
-	Deprecated: "use 'bd mol' instead (formula list, mol show, mol bond)",
+	Deprecated: "use 'bd mol' instead (will be removed in v1.0.0)",
 	Long: `Manage Beads templates for creating issue hierarchies.
 
 Templates are epics with the "template" label. They can have child issues
@@ -79,7 +79,7 @@ To use a template:
 var templateListCmd = &cobra.Command{
 	Use:        "list",
 	Short:      "List available templates",
-	Deprecated: "use 'bd formula list' instead",
+	Deprecated: "use 'bd formula list' instead (will be removed in v1.0.0)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 		var beadsTemplates []*types.Issue
@@ -144,7 +144,7 @@ var templateListCmd = &cobra.Command{
 var templateShowCmd = &cobra.Command{
 	Use:        "show <template-id>",
 	Short:      "Show template details",
-	Deprecated: "use 'bd mol show' instead",
+	Deprecated: "use 'bd mol show' instead (will be removed in v1.0.0)",
 	Args:       cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
@@ -223,7 +223,7 @@ func showBeadsTemplate(subgraph *TemplateSubgraph) {
 var templateInstantiateCmd = &cobra.Command{
 	Use:        "instantiate <template-id>",
 	Short:      "Create issues from a Beads template",
-	Deprecated: "use 'bd mol bond' instead",
+	Deprecated: "use 'bd mol bond' instead (will be removed in v1.0.0)",
 	Long: `Instantiate a Beads template by cloning its subgraph and substituting variables.
 
 Variables are specified with --var key=value flags. The template's {{key}}

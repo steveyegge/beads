@@ -430,6 +430,6 @@ func init() {
 	migrateHashIDsAliasCmd := *migrateHashIDsCmd
 	migrateHashIDsAliasCmd.Use = "migrate-hash-ids"
 	migrateHashIDsAliasCmd.Hidden = true
-	migrateHashIDsAliasCmd.Deprecated = "use 'bd migrate hash-ids' instead"
+	migrateHashIDsAliasCmd.Deprecated = "use 'bd migrate hash-ids' instead (will be removed in v1.0.0)"
 	rootCmd.AddCommand(&migrateHashIDsAliasCmd)
 }

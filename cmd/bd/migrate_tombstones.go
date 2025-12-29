@@ -349,6 +349,6 @@ func init() {
 	migrateTombstonesAliasCmd := *migrateTombstonesCmd
 	migrateTombstonesAliasCmd.Use = "migrate-tombstones"
 	migrateTombstonesAliasCmd.Hidden = true
-	migrateTombstonesAliasCmd.Deprecated = "use 'bd migrate tombstones' instead"
+	migrateTombstonesAliasCmd.Deprecated = "use 'bd migrate tombstones' instead (will be removed in v1.0.0)"
 	rootCmd.AddCommand(&migrateTombstonesAliasCmd)
 }
