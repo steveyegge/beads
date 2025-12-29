@@ -121,43 +121,51 @@ func runRepair(cmd *cobra.Command, args []string) {
 	// Collect repair statistics
 	stats := repairStats{}
 
+	// Helper for consistent error output
+	exitWithError := func(msg string, err error) {
+		if repairJSON {
+			outputJSONAndExit(repairResult{
+				DatabasePath: dbPath,
+				Status:       "error",
+				Error:        fmt.Sprintf("%s: %v", msg, err),
+			}, 1)
+		}
+		fmt.Fprintf(os.Stderr, "Error %s: %v\n", msg, err)
+		os.Exit(1)
+	}
+
 	// 1. Find and clean orphaned dependencies (issue_id not in issues)
 	orphanedIssueID, err := findOrphanedDepsIssueID(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking orphaned deps (issue_id): %v\n", err)
-		os.Exit(1)
+		exitWithError("checking orphaned deps (issue_id)", err)
 	}
 	stats.orphanedDepsIssueID = len(orphanedIssueID)
 
 	// 2. Find and clean orphaned dependencies (depends_on_id not in issues)
 	orphanedDependsOn, err := findOrphanedDepsDependsOn(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking orphaned deps (depends_on_id): %v\n", err)
-		os.Exit(1)
+		exitWithError("checking orphaned deps (depends_on_id)", err)
 	}
 	stats.orphanedDepsDependsOn = len(orphanedDependsOn)
 
 	// 3. Find and clean orphaned labels
 	orphanedLabels, err := findOrphanedLabels(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking orphaned labels: %v\n", err)
-		os.Exit(1)
+		exitWithError("checking orphaned labels", err)
 	}
 	stats.orphanedLabels = len(orphanedLabels)
 
 	// 4. Find and clean orphaned comments
 	orphanedCommentsList, err := findOrphanedComments(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking orphaned comments: %v\n", err)
-		os.Exit(1)
+		exitWithError("checking orphaned comments", err)
 	}
 	stats.orphanedComments = len(orphanedCommentsList)
 
 	// 5. Find and clean orphaned events
 	orphanedEventsList, err := findOrphanedEvents(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking orphaned events: %v\n", err)
-		os.Exit(1)
+		exitWithError("checking orphaned events", err)
 	}
 	stats.orphanedEvents = len(orphanedEventsList)
 
