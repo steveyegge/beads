@@ -681,6 +681,61 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
+	ctx := s.reqCtx(req)
+
+	// Use batch delete for cascade/multi-issue operations on SQLite storage
+	// This handles cascade delete properly by expanding dependents recursively
+	// For simple single-issue deletes, use the direct path to preserve custom reason
+	if sqlStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		// Use batch delete if: cascade enabled, force enabled, multiple IDs, or dry-run
+		useBatchDelete := deleteArgs.Cascade || deleteArgs.Force || len(deleteArgs.IDs) > 1 || deleteArgs.DryRun
+		if useBatchDelete {
+			result, err := sqlStore.DeleteIssues(ctx, deleteArgs.IDs, deleteArgs.Cascade, deleteArgs.Force, deleteArgs.DryRun)
+			if err != nil {
+				return Response{
+					Success: false,
+					Error:   fmt.Sprintf("delete failed: %v", err),
+				}
+			}
+
+			// Emit mutation events for deleted issues
+			if !deleteArgs.DryRun {
+				for _, issueID := range deleteArgs.IDs {
+					s.emitMutation(MutationDelete, issueID, "", "")
+				}
+			}
+
+			// Build response
+			responseData := map[string]interface{}{
+				"deleted_count": result.DeletedCount,
+				"total_count":   len(deleteArgs.IDs),
+			}
+			if deleteArgs.DryRun {
+				responseData["dry_run"] = true
+				responseData["issue_count"] = result.DeletedCount
+			}
+			if result.DependenciesCount > 0 {
+				responseData["dependencies_removed"] = result.DependenciesCount
+			}
+			if result.LabelsCount > 0 {
+				responseData["labels_removed"] = result.LabelsCount
+			}
+			if result.EventsCount > 0 {
+				responseData["events_removed"] = result.EventsCount
+			}
+			if len(result.OrphanedIssues) > 0 {
+				responseData["orphaned_issues"] = result.OrphanedIssues
+			}
+
+			data, _ := json.Marshal(responseData)
+			return Response{
+				Success: true,
+				Data:    data,
+			}
+		}
+	}
+
+	// Simple single-issue delete path (preserves custom reason)
 	// DryRun mode: just return what would be deleted
 	if deleteArgs.DryRun {
 		data, _ := json.Marshal(map[string]interface{}{
@@ -694,7 +749,6 @@ func (s *Server) handleDelete(req *Request) Response {
 		}
 	}
 
-	ctx := s.reqCtx(req)
 	deletedCount := 0
 	errors := make([]string, 0)
 

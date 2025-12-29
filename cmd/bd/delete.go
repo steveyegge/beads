@@ -167,7 +167,8 @@ the issues will not resurrect from remote branches.`,
 		}
 		
 		// Handle batch deletion in direct mode
-		if len(issueIDs) > 1 {
+		// Also use batch path for cascade (which needs to expand dependents)
+		if len(issueIDs) > 1 || cascade {
 			deleteBatch(cmd, issueIDs, force, dryRun, cascade, jsonOutput, hardDelete, reason)
 			return
 		}
