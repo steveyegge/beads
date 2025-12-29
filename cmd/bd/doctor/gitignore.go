@@ -36,11 +36,11 @@ beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
 
-# Keep JSONL exports and config (source of truth for git)
-!issues.jsonl
-!interactions.jsonl
-!metadata.json
-!config.json
+# NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
+# They would override fork protection in .git/info/exclude, allowing
+# contributors to accidentally commit upstream issue databases.
+# The JSONL files (issues.jsonl, interactions.jsonl) and config files
+# are tracked by git by default since no pattern above ignores them.
 `
 
 // requiredPatterns are patterns that MUST be in .beads/.gitignore
