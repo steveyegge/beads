@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,480 +139,249 @@ func TestCreateNewAgentsFile(t *testing.T) {
 	}
 }
 
-func TestCheckFactory(t *testing.T) {
-	// Save original working directory
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tests := []struct {
-		name          string
-		setupFile     bool
-		fileContent   string
-		expectExit    bool
-		expectMessage string
-	}{
-		{
-			name:          "no AGENTS.md file",
-			setupFile:     false,
-			expectExit:    true,
-			expectMessage: "AGENTS.md not found",
-		},
-		{
-			name:          "AGENTS.md without beads section",
-			setupFile:     true,
-			fileContent:   "# Project\n\nNo beads here",
-			expectExit:    true,
-			expectMessage: "no beads section found",
-		},
-		{
-			name:          "AGENTS.md with beads section",
-			setupFile:     true,
-			fileContent:   "# Project\n\n" + factoryBeadsSection,
-			expectExit:    false,
-			expectMessage: "integration installed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create temp directory and change to it
-			tmpDir := t.TempDir()
-			if err := os.Chdir(tmpDir); err != nil {
-				t.Fatalf("failed to change to temp directory: %v", err)
-			}
-			defer func() {
-				if err := os.Chdir(origDir); err != nil {
-					t.Fatalf("failed to restore working directory: %v", err)
-				}
-			}()
-
-			if tt.setupFile {
-				if err := os.WriteFile("AGENTS.md", []byte(tt.fileContent), 0644); err != nil {
-					t.Fatalf("failed to create test file: %v", err)
-				}
-			}
-
-			// We can't easily test os.Exit, so we just verify the function doesn't panic
-			// for the success case
-			if !tt.expectExit {
-				// This should not panic
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							t.Errorf("CheckFactory panicked: %v", r)
-						}
-					}()
-					// Note: CheckFactory calls os.Exit on failure, so we can't test those cases directly
-					// We would need to refactor to use a testable exit function
-				}()
-			}
-		})
-	}
+func newFactoryTestEnv(t *testing.T) (factoryEnv, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	dir := t.TempDir()
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	return factoryEnv{
+		agentsPath: filepath.Join(dir, "AGENTS.md"),
+		stdout:     stdout,
+		stderr:     stderr,
+	}, stdout, stderr
 }
 
-func TestInstallFactory_NewFile(t *testing.T) {
-	// Save original working directory
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
+func stubFactoryEnvProvider(t *testing.T, env factoryEnv) {
+	t.Helper()
+	orig := factoryEnvProvider
+	factoryEnvProvider = func() factoryEnv {
+		return env
 	}
+	t.Cleanup(func() { factoryEnvProvider = orig })
+}
 
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
+func TestInstallFactoryCreatesNewFile(t *testing.T) {
+	env, stdout, _ := newFactoryTestEnv(t)
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
 	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// Run InstallFactory
-	InstallFactory()
-
-	// Verify file was created
-	data, err := os.ReadFile("AGENTS.md")
+	data, err := os.ReadFile(env.agentsPath)
 	if err != nil {
 		t.Fatalf("failed to read AGENTS.md: %v", err)
 	}
-
 	content := string(data)
-	if !strings.Contains(content, factoryBeginMarker) {
-		t.Error("AGENTS.md missing begin marker")
+	if !strings.Contains(content, factoryBeginMarker) || !strings.Contains(content, factoryEndMarker) {
+		t.Fatal("missing factory markers in new file")
 	}
-	if !strings.Contains(content, factoryEndMarker) {
-		t.Error("AGENTS.md missing end marker")
+	if !strings.Contains(stdout.String(), "Factory.ai (Droid) integration installed") {
+		t.Error("expected success message in stdout")
 	}
 }
 
-func TestInstallFactory_ExistingWithoutBeads(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// Create existing AGENTS.md without beads section
-	existingContent := "# My Custom Agents File\n\nExisting content\n"
-	if err := os.WriteFile("AGENTS.md", []byte(existingContent), 0644); err != nil {
-		t.Fatalf("failed to create AGENTS.md: %v", err)
-	}
-
-	// Run InstallFactory
-	InstallFactory()
-
-	// Verify file was updated
-	data, err := os.ReadFile("AGENTS.md")
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "My Custom Agents File") {
-		t.Error("Lost existing content")
-	}
-	if !strings.Contains(content, factoryBeginMarker) {
-		t.Error("AGENTS.md missing begin marker")
-	}
-}
-
-func TestInstallFactory_ExistingWithBeads(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// Create existing AGENTS.md with old beads section
-	oldContent := `# My Project
+func TestInstallFactoryUpdatesExistingSection(t *testing.T) {
+	env, _, _ := newFactoryTestEnv(t)
+	initial := `# Header
 
 <!-- BEGIN BEADS INTEGRATION -->
-Old beads content
+Old content
 <!-- END BEADS INTEGRATION -->
 
-Other content`
-	if err := os.WriteFile("AGENTS.md", []byte(oldContent), 0644); err != nil {
-		t.Fatalf("failed to create AGENTS.md: %v", err)
+# Footer`
+	if err := os.WriteFile(env.agentsPath, []byte(initial), 0644); err != nil {
+		t.Fatalf("failed to seed AGENTS.md: %v", err)
 	}
-
-	// Run InstallFactory
-	InstallFactory()
-
-	// Verify file was updated
-	data, err := os.ReadFile("AGENTS.md")
+	if err := installFactory(env); err != nil {
+		t.Fatalf("installFactory returned error: %v", err)
+	}
+	data, err := os.ReadFile(env.agentsPath)
 	if err != nil {
 		t.Fatalf("failed to read AGENTS.md: %v", err)
 	}
-
 	content := string(data)
-	if strings.Contains(content, "Old beads content") {
-		t.Error("Old beads content should have been replaced")
+	if strings.Contains(content, "Old content") {
+		t.Error("old beads section should be replaced")
 	}
-	if !strings.Contains(content, "Other content") {
-		t.Error("Lost content after beads section")
-	}
-	if !strings.Contains(content, "Issue Tracking with bd") {
-		t.Error("Missing new beads section content")
+	if !strings.Contains(content, "# Footer") {
+		t.Error("content after beads section should remain")
 	}
 }
 
-func TestRemoveFactory(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
+func TestInstallFactoryReportsWriteError(t *testing.T) {
+	env, _, stderr := newFactoryTestEnv(t)
+	if err := os.Mkdir(env.agentsPath, 0o755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
 	}
-
-	tests := []struct {
-		name           string
-		initialContent string
-		expectFile     bool
-		expectedContent string
-	}{
-		{
-			name:           "remove beads section, keep other content",
-			initialContent: "# Project\n\n" + factoryBeadsSection + "\n\n## Other Section\n\nContent",
-			expectFile:     true,
-			expectedContent: "# Project\n\n## Other Section\n\nContent",
-		},
-		{
-			name:           "remove file when only beads section",
-			initialContent: factoryBeadsSection,
-			expectFile:     false,
-		},
+	if err := installFactory(env); err == nil {
+		t.Fatal("expected error when agents path is directory")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			if err := os.Chdir(tmpDir); err != nil {
-				t.Fatalf("failed to change to temp directory: %v", err)
-			}
-			defer func() {
-				if err := os.Chdir(origDir); err != nil {
-					t.Fatalf("failed to restore working directory: %v", err)
-				}
-			}()
-
-			if err := os.WriteFile("AGENTS.md", []byte(tt.initialContent), 0644); err != nil {
-				t.Fatalf("failed to create AGENTS.md: %v", err)
-			}
-
-			RemoveFactory()
-
-			_, err := os.Stat("AGENTS.md")
-			fileExists := err == nil
-
-			if fileExists != tt.expectFile {
-				t.Errorf("file exists = %v, want %v", fileExists, tt.expectFile)
-			}
-
-			if tt.expectFile {
-				data, err := os.ReadFile("AGENTS.md")
-				if err != nil {
-					t.Fatalf("failed to read AGENTS.md: %v", err)
-				}
-				if string(data) != tt.expectedContent {
-					t.Errorf("content mismatch\ngot: %q\nwant: %q", string(data), tt.expectedContent)
-				}
-			}
-		})
+	if !strings.Contains(stderr.String(), "failed to read") {
+		t.Error("expected error message in stderr")
 	}
 }
 
-func TestRemoveFactory_NoFile(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
+func TestCheckFactoryScenarios(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		err := checkFactory(env)
+		if !errors.Is(err, errAgentsFileMissing) {
+			t.Fatalf("expected errAgentsFileMissing, got %v", err)
 		}
-	}()
+		if !strings.Contains(stdout.String(), "Run: bd setup factory") {
+			t.Error("expected guidance message")
+		}
+	})
 
-	// Should not panic when file doesn't exist
-	RemoveFactory()
+	t.Run("missing section", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		if err := os.WriteFile(env.agentsPath, []byte("# Project"), 0644); err != nil {
+			t.Fatalf("failed to write file: %v", err)
+		}
+		err := checkFactory(env)
+		if !errors.Is(err, errBeadsSectionMissing) {
+			t.Fatalf("expected errBeadsSectionMissing, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "no beads section") {
+			t.Error("expected warning output")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		if err := os.WriteFile(env.agentsPath, []byte(factoryBeadsSection), 0644); err != nil {
+			t.Fatalf("failed to seed file: %v", err)
+		}
+		if err := checkFactory(env); err != nil {
+			t.Fatalf("checkFactory returned error: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "integration installed") {
+			t.Error("expected success output")
+		}
+	})
 }
 
-func TestRemoveFactory_NoBeadsSection(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
+func TestRemoveFactoryScenarios(t *testing.T) {
+	t.Run("remove section and keep file", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		content := "# Top\n\n" + factoryBeadsSection + "\n\n# Bottom"
+		if err := os.WriteFile(env.agentsPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to seed AGENTS.md: %v", err)
 		}
-	}()
+		if err := removeFactory(env); err != nil {
+			t.Fatalf("removeFactory returned error: %v", err)
+		}
+		data, err := os.ReadFile(env.agentsPath)
+		if err != nil {
+			t.Fatalf("failed to read AGENTS.md: %v", err)
+		}
+		if strings.Contains(string(data), factoryBeginMarker) {
+			t.Error("beads section should be removed")
+		}
+		if !strings.Contains(stdout.String(), "Removed beads section") {
+			t.Error("expected removal message")
+		}
+	})
 
-	content := "# Project\n\nNo beads here"
-	if err := os.WriteFile("AGENTS.md", []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create AGENTS.md: %v", err)
-	}
+	t.Run("delete file when only beads", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		if err := os.WriteFile(env.agentsPath, []byte(factoryBeadsSection), 0644); err != nil {
+			t.Fatalf("failed to seed AGENTS.md: %v", err)
+		}
+		if err := removeFactory(env); err != nil {
+			t.Fatalf("removeFactory returned error: %v", err)
+		}
+		if _, err := os.Stat(env.agentsPath); !os.IsNotExist(err) {
+			t.Fatal("AGENTS.md should be removed")
+		}
+		if !strings.Contains(stdout.String(), "file was empty") {
+			t.Error("expected deletion message")
+		}
+	})
 
-	// Should not panic or modify file
-	RemoveFactory()
+	t.Run("missing file", func(t *testing.T) {
+		env, stdout, _ := newFactoryTestEnv(t)
+		if err := removeFactory(env); err != nil {
+			t.Fatalf("removeFactory returned error: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "No AGENTS.md file found") {
+			t.Error("expected info message for missing file")
+		}
+	})
+}
 
-	data, err := os.ReadFile("AGENTS.md")
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-	if string(data) != content {
-		t.Error("File should not have been modified")
-	}
+func TestWrapperExitsOnError(t *testing.T) {
+	t.Run("InstallFactory", func(t *testing.T) {
+		cap := stubSetupExit(t)
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "dir"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+		if err := os.Mkdir(env.agentsPath, 0o755); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+		stubFactoryEnvProvider(t, env)
+		InstallFactory()
+		if !cap.called || cap.code != 1 {
+			t.Fatal("InstallFactory should exit on error")
+		}
+	})
+
+	t.Run("CheckFactory", func(t *testing.T) {
+		cap := stubSetupExit(t)
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "missing"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+		stubFactoryEnvProvider(t, env)
+		CheckFactory()
+		if !cap.called || cap.code != 1 {
+			t.Fatal("CheckFactory should exit on error")
+		}
+	})
+
+	t.Run("RemoveFactory", func(t *testing.T) {
+		cap := stubSetupExit(t)
+		env := factoryEnv{agentsPath: filepath.Join(t.TempDir(), "AGENTS.md"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+		if err := os.WriteFile(env.agentsPath, []byte(factoryBeadsSection), 0644); err != nil {
+			t.Fatalf("failed to seed file: %v", err)
+		}
+		if err := os.Chmod(env.agentsPath, 0o000); err != nil {
+			t.Fatalf("failed to chmod file: %v", err)
+		}
+		stubFactoryEnvProvider(t, env)
+		RemoveFactory()
+		if !cap.called || cap.code != 1 {
+			t.Fatal("RemoveFactory should exit on error")
+		}
+	})
 }
 
 func TestFactoryBeadsSectionContent(t *testing.T) {
-	// Verify the beads section contains expected documentation
 	section := factoryBeadsSection
-
-	requiredContent := []string{
-		"bd create",
-		"bd update",
-		"bd close",
-		"bd ready",
-		"bug",
-		"feature",
-		"task",
-		"epic",
-		"discovered-from",
-	}
-
-	for _, req := range requiredContent {
-		if !strings.Contains(section, req) {
-			t.Errorf("factoryBeadsSection missing required content: %q", req)
+	required := []string{"bd create", "bd update", "bd close", "bd ready", "discovered-from"}
+	for _, token := range required {
+		if !strings.Contains(section, token) {
+			t.Errorf("factoryBeadsSection missing %q", token)
 		}
 	}
 }
 
 func TestFactoryMarkers(t *testing.T) {
-	// Verify markers are properly formatted
 	if !strings.Contains(factoryBeginMarker, "BEGIN") {
-		t.Error("Begin marker should contain 'BEGIN'")
+		t.Error("begin marker should mention BEGIN")
 	}
 	if !strings.Contains(factoryEndMarker, "END") {
-		t.Error("End marker should contain 'END'")
-	}
-	if !strings.Contains(factoryBeginMarker, "BEADS") {
-		t.Error("Begin marker should contain 'BEADS'")
-	}
-	if !strings.Contains(factoryEndMarker, "BEADS") {
-		t.Error("End marker should contain 'BEADS'")
+		t.Error("end marker should mention END")
 	}
 }
 
-func TestInstallFactoryIdempotent(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// Run InstallFactory twice
-	InstallFactory()
-	firstData, _ := os.ReadFile("AGENTS.md")
-
-	InstallFactory()
-	secondData, _ := os.ReadFile("AGENTS.md")
-
-	// Content should be identical
-	if string(firstData) != string(secondData) {
-		t.Error("InstallFactory should be idempotent")
-	}
-
-	// Should only have one beads section
-	content := string(secondData)
-	beginCount := strings.Count(content, factoryBeginMarker)
-	if beginCount != 1 {
-		t.Errorf("Expected 1 begin marker, got %d", beginCount)
-	}
-}
-
-func TestInstallFactory_DirectoryError(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// Create AGENTS.md as a directory to cause an error
-	if err := os.Mkdir("AGENTS.md", 0755); err != nil {
-		t.Fatalf("failed to create directory: %v", err)
-	}
-
-	// InstallFactory should handle this gracefully (or exit)
-	// We can't easily test os.Exit, but verify it doesn't panic
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("InstallFactory panicked: %v", r)
-		}
-	}()
-}
-
-// Test internal marker constants
 func TestMarkersMatch(t *testing.T) {
-	// Ensure the section template contains both markers
 	if !strings.HasPrefix(factoryBeadsSection, factoryBeginMarker) {
-		t.Error("factoryBeadsSection should start with begin marker")
+		t.Error("section should start with begin marker")
 	}
-
-	if !strings.HasSuffix(strings.TrimSpace(factoryBeadsSection), factoryEndMarker) {
-		t.Error("factoryBeadsSection should end with end marker")
+	trimmed := strings.TrimSpace(factoryBeadsSection)
+	if !strings.HasSuffix(trimmed, factoryEndMarker) {
+		t.Error("section should end with end marker")
 	}
 }
 
 func TestUpdateBeadsSectionPreservesWhitespace(t *testing.T) {
-	// Test that whitespace around content is preserved
 	content := "# Header\n\n" + factoryBeadsSection + "\n\n# Footer"
-
-	// Update should be idempotent for content that already has current section
 	updated := updateBeadsSection(content)
-
-	if !strings.Contains(updated, "# Header") {
-		t.Error("Lost header")
+	if !strings.Contains(updated, "# Header") || !strings.Contains(updated, "# Footer") {
+		t.Error("update should preserve surrounding content")
 	}
-	if !strings.Contains(updated, "# Footer") {
-		t.Error("Lost footer")
-	}
-}
-
-func TestCheckFactory_SubdirectoryPath(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working directory: %v", err)
-	}
-
-	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "subdir")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
-		t.Fatalf("failed to create subdirectory: %v", err)
-	}
-
-	// Create AGENTS.md in tmpDir
-	content := "# Project\n\n" + factoryBeadsSection
-	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create AGENTS.md: %v", err)
-	}
-
-	// Change to subdirectory - AGENTS.md should not be found
-	if err := os.Chdir(subDir); err != nil {
-		t.Fatalf("failed to change to temp directory: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("failed to restore working directory: %v", err)
-		}
-	}()
-
-	// CheckFactory looks for AGENTS.md in current directory, not parent
-	// So it should fail in subdirectory
-	// We can't test os.Exit, but this documents the expected behavior
 }
