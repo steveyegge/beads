@@ -174,7 +174,7 @@ func TestGetEventDisplay(t *testing.T) {
 			name:           "comment event",
 			event:          rpc.MutationEvent{Type: rpc.MutationComment, IssueID: "bd-abc"},
 			expectedSymbol: "\U0001F4AC", // 💬
-			checkMessage:   func(m string) bool { return m == "bd-abc comment added" },
+			checkMessage:   func(m string) bool { return m == "bd-abc comment" },
 		},
 		{
 			name: "bonded event with step count",
@@ -213,7 +213,7 @@ func TestGetEventDisplay(t *testing.T) {
 				NewStatus: "in_progress",
 			},
 			expectedSymbol: "\u2192", // →
-			checkMessage:   func(m string) bool { return m == "bd-wip in_progress" },
+			checkMessage:   func(m string) bool { return m == "bd-wip started" },
 		},
 		{
 			name: "status event - closed",
