@@ -442,6 +442,7 @@ var rootCmd = &cobra.Command{
 			"fish",
 			"help",
 			"hooks",
+			"human",
 			"init",
 			"merge",
 			"onboard",
