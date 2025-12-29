@@ -223,7 +223,7 @@ func init() {
 func runDiagnostics(path string) doctorResult {
 	result := doctorResult{
 		Path:       path,
-		CLIVersion: Version,
+		CLIVersion: FullVersionString(), // GH#797: Use full version with commit hash
 		OverallOK:  true,
 	}
 
@@ -342,8 +342,8 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8: Daemon health
-	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
+	// Check 8: Daemon health (GH#797: use full version string for dev build detection)
+	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, FullVersionString()), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
 		result.OverallOK = false

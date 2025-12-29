@@ -12,8 +12,9 @@ import (
 
 // startRPCServer initializes and starts the RPC server
 func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, log daemonLogger) (*rpc.Server, chan error, error) {
-	// Sync daemon version with CLI version
-	rpc.ServerVersion = Version
+	// Sync daemon version with CLI version (GH#797: use full version with commit hash)
+	// This allows version mismatch detection for dev builds with same semver
+	rpc.ServerVersion = FullVersionString()
 	
 	server := rpc.NewServer(socketPath, store, workspacePath, dbPath)
 	serverErrChan := make(chan error, 1)

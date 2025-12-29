@@ -162,3 +162,32 @@ func resolveBranch() string {
 
 	return ""
 }
+
+// FullVersionString returns the complete version string including commit hash.
+// Format: "0.40.0 (dev: main@280fbcf9a253)" or "0.40.0 (release)" or "0.40.0"
+// This is used for daemon version comparison to detect dev build changes (GH#797).
+func FullVersionString() string {
+	commit := resolveCommitHash()
+	branch := resolveBranch()
+
+	if commit != "" && branch != "" {
+		return fmt.Sprintf("%s (%s: %s@%s)", Version, Build, branch, shortCommit(commit))
+	} else if commit != "" {
+		return fmt.Sprintf("%s (%s: %s)", Version, Build, shortCommit(commit))
+	}
+	return fmt.Sprintf("%s (%s)", Version, Build)
+}
+
+// ExtractSemver returns just the semver portion from a full version string.
+// For "0.40.0 (dev: main@abc123)", returns "0.40.0".
+// For "0.40.0", returns "0.40.0".
+// This is used for compatibility checking where we need valid semver (GH#797).
+func ExtractSemver(fullVersion string) string {
+	// Find the first space or parenthesis - everything before is the semver
+	for i, r := range fullVersion {
+		if r == ' ' || r == '(' {
+			return fullVersion[:i]
+		}
+	}
+	return fullVersion
+}

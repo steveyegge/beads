@@ -15,6 +15,19 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// extractSemver returns just the semver portion from a full version string.
+// For "0.40.0 (dev: main@abc123)", returns "0.40.0".
+// For "0.40.0", returns "0.40.0".
+// This is needed because full version strings with commit info aren't valid semver (GH#797).
+func extractSemver(fullVersion string) string {
+	for i, r := range fullVersion {
+		if r == ' ' || r == '(' {
+			return fullVersion[:i]
+		}
+	}
+	return fullVersion
+}
+
 // checkVersionCompatibility validates client version against server version
 // Returns error if versions are incompatible
 func (s *Server) checkVersionCompatibility(clientVersion string) error {
@@ -23,12 +36,17 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 		return nil
 	}
 
+	// GH#797: Extract semver from full version strings like "0.40.0 (dev: main@abc123)"
+	// This ensures semver.IsValid works correctly for compatibility checking.
+	serverSemver := extractSemver(ServerVersion)
+	clientSemver := extractSemver(clientVersion)
+
 	// Normalize versions to semver format (add 'v' prefix if missing)
-	serverVer := ServerVersion
+	serverVer := serverSemver
 	if !strings.HasPrefix(serverVer, "v") {
 		serverVer = "v" + serverVer
 	}
-	clientVer := clientVersion
+	clientVer := clientSemver
 	if !strings.HasPrefix(clientVer, "v") {
 		clientVer = "v" + clientVer
 	}
@@ -37,6 +55,13 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 	if !semver.IsValid(serverVer) || !semver.IsValid(clientVer) {
 		// If either version is invalid, allow connection (dev builds, etc)
 		return nil
+	}
+
+	// GH#797: For dev builds with same semver, check if full version strings differ.
+	// This detects when CLI was rebuilt with a new commit but daemon is stale.
+	if serverSemver == clientSemver && ServerVersion != clientVersion {
+		return fmt.Errorf("version mismatch: same semver (%s) but different builds. Daemon: %s, Client: %s. Restart daemon: bd daemons killall",
+			serverSemver, ServerVersion, clientVersion)
 	}
 
 	// Extract major versions

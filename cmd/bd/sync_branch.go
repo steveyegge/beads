@@ -233,6 +233,15 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 		return false, fmt.Errorf("git add failed: %w\n%s", err, output)
 	}
 
+	// Force-add JSONL files (GH#797)
+	// When sync-branch mode is configured, .gitignore may ignore JSONL files.
+	// Use git add -f to ensure they're staged even when ignored.
+	for _, file := range []string{"issues.jsonl", "interactions.jsonl"} {
+		filePath := filepath.Join(relBeadsDir, file)
+		forceAddCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", "-f", filePath) //nolint:gosec // paths from trusted sources
+		_ = forceAddCmd.Run() // Best effort - may fail if file doesn't exist
+	}
+
 	// Check if there are staged changes
 	diffCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--cached", "--quiet") //nolint:gosec // repoRoot from git
 	if diffCmd.Run() == nil {

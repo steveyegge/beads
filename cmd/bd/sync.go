@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
@@ -75,6 +76,20 @@ Use --merge to merge the sync branch back to main branch.`,
 		jsonlPath := findJSONLPath()
 		if jsonlPath == "" {
 			FatalError("not in a bd workspace (no .beads directory found)")
+		}
+
+		// GH#797: Auto-fix gitignore and assume-unchanged for sync-branch mode
+		// This ensures fresh clones and repos with reverted gitignore work correctly.
+		// Runs early in sync to fix state before any git operations.
+		if syncbranch.IsConfiguredWithDB("") {
+			// Check if gitignore matches expected sync-branch mode
+			check := doctor.CheckGitignoreWithConfig(true)
+			if check.Status != doctor.StatusOK {
+				debug.Logf("sync: auto-fixing gitignore for sync-branch mode: %s", check.Message)
+				if err := doctor.FixGitignoreWithConfig(true); err != nil {
+					debug.Logf("sync: failed to auto-fix gitignore: %v", err)
+				}
+			}
 		}
 
 		// If status mode, show diff between sync branch and main

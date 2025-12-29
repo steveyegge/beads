@@ -477,3 +477,201 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// TestExtractSemver tests the semver extraction helper function (GH#797)
+func TestExtractSemver(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain semver",
+			input:    "0.40.0",
+			expected: "0.40.0",
+		},
+		{
+			name:     "semver with dev suffix",
+			input:    "0.40.0 (dev: main@abc123)",
+			expected: "0.40.0",
+		},
+		{
+			name:     "semver with release suffix",
+			input:    "0.40.0 (release)",
+			expected: "0.40.0",
+		},
+		{
+			name:     "semver with parenthesis no space",
+			input:    "1.2.3(test)",
+			expected: "1.2.3",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "v-prefix with suffix",
+			input:    "v1.0.0 (dev)",
+			expected: "v1.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractSemver(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractSemver(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDevBuildVersionMismatch tests detection of dev builds with same semver but different commits (GH#797)
+func TestDevBuildVersionMismatch(t *testing.T) {
+	server := &Server{}
+
+	tests := []struct {
+		name          string
+		serverVersion string
+		clientVersion string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "exact match with dev suffix",
+			serverVersion: "0.40.0 (dev: main@abc123)",
+			clientVersion: "0.40.0 (dev: main@abc123)",
+			expectError:   false,
+		},
+		{
+			name:          "same semver different commits",
+			serverVersion: "0.40.0 (dev: main@abc123)",
+			clientVersion: "0.40.0 (dev: main@def456)",
+			expectError:   true,
+			errorContains: "same semver",
+		},
+		{
+			name:          "same semver different branches",
+			serverVersion: "0.40.0 (dev: main@abc123)",
+			clientVersion: "0.40.0 (dev: feature@abc123)",
+			expectError:   true,
+			errorContains: "different builds",
+		},
+		{
+			name:          "plain semver vs dev build",
+			serverVersion: "0.40.0",
+			clientVersion: "0.40.0 (dev: main@abc123)",
+			expectError:   true,
+			errorContains: "same semver",
+		},
+		{
+			name:          "dev vs release suffix",
+			serverVersion: "0.40.0 (release)",
+			clientVersion: "0.40.0 (dev: main@abc123)",
+			expectError:   true,
+			errorContains: "different builds",
+		},
+		{
+			name:          "plain semver exact match",
+			serverVersion: "0.40.0",
+			clientVersion: "0.40.0",
+			expectError:   false,
+		},
+		{
+			name:          "different semver with dev suffix (client newer)",
+			serverVersion: "0.39.0 (dev: main@abc123)",
+			clientVersion: "0.40.0 (dev: main@def456)",
+			expectError:   true,
+			errorContains: "daemon upgrade",
+		},
+		{
+			name:          "different semver with dev suffix (daemon newer)",
+			serverVersion: "0.40.0 (dev: main@abc123)",
+			clientVersion: "0.39.0 (dev: main@def456)",
+			expectError:   false, // Client older is allowed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Override server version
+			origServer := ServerVersion
+			ServerVersion = tt.serverVersion
+			defer func() { ServerVersion = origServer }()
+
+			err := server.checkVersionCompatibility(tt.clientVersion)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got nil")
+				} else if tt.errorContains != "" && !contains(err.Error(), tt.errorContains) {
+					t.Errorf("Expected error to contain '%s', got: %s", tt.errorContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestFullVersionStringCompatibility tests that full version strings work correctly for release builds (GH#797)
+func TestFullVersionStringCompatibility(t *testing.T) {
+	server := &Server{}
+
+	tests := []struct {
+		name          string
+		serverVersion string
+		clientVersion string
+		expectError   bool
+		description   string
+	}{
+		{
+			name:          "goreleaser release builds",
+			serverVersion: "0.40.0 (release)",
+			clientVersion: "0.40.0 (release)",
+			expectError:   false,
+			description:   "Release builds with same semver should be compatible",
+		},
+		{
+			name:          "goreleaser vs plain semver",
+			serverVersion: "0.40.0 (release)",
+			clientVersion: "0.40.0",
+			expectError:   true,
+			description:   "Release suffix vs no suffix = different builds",
+		},
+		{
+			name:          "semver comparison with full version (compatible)",
+			serverVersion: "0.41.0 (release)",
+			clientVersion: "0.40.0 (release)",
+			expectError:   false,
+			description:   "Newer daemon, older client = allowed",
+		},
+		{
+			name:          "semver comparison with full version (incompatible)",
+			serverVersion: "0.40.0 (release)",
+			clientVersion: "0.41.0 (release)",
+			expectError:   true,
+			description:   "Older daemon, newer client = error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origServer := ServerVersion
+			ServerVersion = tt.serverVersion
+			defer func() { ServerVersion = origServer }()
+
+			err := server.checkVersionCompatibility(tt.clientVersion)
+
+			if tt.expectError && err == nil {
+				t.Errorf("%s: expected error but got nil", tt.description)
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("%s: expected no error but got: %v", tt.description, err)
+			}
+		})
+	}
+}

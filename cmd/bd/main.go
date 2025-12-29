@@ -88,6 +88,10 @@ func init() {
 		fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
 	}
 
+	// Set RPC client version for daemon version compatibility checks (GH#797)
+	// This uses the full version string including commit hash to detect dev build changes
+	rpc.ClientVersion = FullVersionString()
+
 	// Add command groups for organized help output
 	rootCmd.AddGroup(
 		&cobra.Group{ID: GroupMaintenance, Title: "Maintenance:"},

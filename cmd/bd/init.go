@@ -240,8 +240,11 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 
 			// Create/update .gitignore in .beads directory (idempotent - always update to latest)
+			// Use config-aware template based on whether sync-branch will be configured (GH#797)
+			// Note: we check `branch` flag here, not the DB, since DB config is set later
+			syncBranchConfigured := branch != ""
 			gitignorePath := filepath.Join(beadsDir, ".gitignore")
-			if err := os.WriteFile(gitignorePath, []byte(doctor.GitignoreTemplate), 0600); err != nil {
+			if err := os.WriteFile(gitignorePath, []byte(doctor.GenerateGitignoreTemplate(syncBranchConfigured)), 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create/update .gitignore: %v\n", err)
 				// Non-fatal - continue anyway
 			}
