@@ -4,6 +4,7 @@ package types
 import (
 	"crypto/sha256"
 	"fmt"
+	"hash"
 	"strings"
 	"time"
 )
@@ -86,107 +87,110 @@ type Issue struct {
 // to ensure that identical content produces identical hashes across all clones.
 func (i *Issue) ComputeContentHash() string {
 	h := sha256.New()
-	
-	// Hash all substantive fields in a stable order
-	h.Write([]byte(i.Title))
-	h.Write([]byte{0}) // separator
-	h.Write([]byte(i.Description))
-	h.Write([]byte{0})
-	h.Write([]byte(i.Design))
-	h.Write([]byte{0})
-	h.Write([]byte(i.AcceptanceCriteria))
-	h.Write([]byte{0})
-	h.Write([]byte(i.Notes))
-	h.Write([]byte{0})
-	h.Write([]byte(i.Status))
-	h.Write([]byte{0})
-	h.Write([]byte(fmt.Sprintf("%d", i.Priority)))
-	h.Write([]byte{0})
-	h.Write([]byte(i.IssueType))
-	h.Write([]byte{0})
-	h.Write([]byte(i.Assignee))
-	h.Write([]byte{0})
-	h.Write([]byte(i.CreatedBy))
-	h.Write([]byte{0})
+	w := hashFieldWriter{h}
 
-	if i.ExternalRef != nil {
-		h.Write([]byte(*i.ExternalRef))
-	}
-	h.Write([]byte{0})
-	if i.Pinned {
-		h.Write([]byte("pinned"))
-	}
-	h.Write([]byte{0})
-	if i.IsTemplate {
-		h.Write([]byte("template"))
-	}
-	h.Write([]byte{0})
-	// Hash bonded_from for compound molecules
+	// Core fields in stable order
+	w.str(i.Title)
+	w.str(i.Description)
+	w.str(i.Design)
+	w.str(i.AcceptanceCriteria)
+	w.str(i.Notes)
+	w.str(string(i.Status))
+	w.int(i.Priority)
+	w.str(string(i.IssueType))
+	w.str(i.Assignee)
+	w.str(i.CreatedBy)
+
+	// Optional fields
+	w.strPtr(i.ExternalRef)
+	w.flag(i.Pinned, "pinned")
+	w.flag(i.IsTemplate, "template")
+
+	// Bonded molecules
 	for _, br := range i.BondedFrom {
-		h.Write([]byte(br.ProtoID))
-		h.Write([]byte{0})
-		h.Write([]byte(br.BondType))
-		h.Write([]byte{0})
-		h.Write([]byte(br.BondPoint))
-		h.Write([]byte{0})
+		w.str(br.ProtoID)
+		w.str(br.BondType)
+		w.str(br.BondPoint)
 	}
-	// Hash creator for HOP entity tracking
-	if i.Creator != nil {
-		h.Write([]byte(i.Creator.Name))
-		h.Write([]byte{0})
-		h.Write([]byte(i.Creator.Platform))
-		h.Write([]byte{0})
-		h.Write([]byte(i.Creator.Org))
-		h.Write([]byte{0})
-		h.Write([]byte(i.Creator.ID))
-		h.Write([]byte{0})
-	}
-	// Hash validations for HOP proof-of-stake
+
+	// HOP entity tracking
+	w.entityRef(i.Creator)
+
+	// HOP validations
 	for _, v := range i.Validations {
-		if v.Validator != nil {
-			h.Write([]byte(v.Validator.Name))
-			h.Write([]byte{0})
-			h.Write([]byte(v.Validator.Platform))
-			h.Write([]byte{0})
-			h.Write([]byte(v.Validator.Org))
-			h.Write([]byte{0})
-			h.Write([]byte(v.Validator.ID))
-			h.Write([]byte{0})
-		}
-		h.Write([]byte(v.Outcome))
-		h.Write([]byte{0})
-		h.Write([]byte(v.Timestamp.Format(time.RFC3339)))
-		h.Write([]byte{0})
-		if v.Score != nil {
-			h.Write([]byte(fmt.Sprintf("%f", *v.Score)))
-		}
-		h.Write([]byte{0})
+		w.entityRef(v.Validator)
+		w.str(v.Outcome)
+		w.str(v.Timestamp.Format(time.RFC3339))
+		w.float32Ptr(v.Score)
 	}
-	// Hash gate fields for async coordination
-	h.Write([]byte(i.AwaitType))
-	h.Write([]byte{0})
-	h.Write([]byte(i.AwaitID))
-	h.Write([]byte{0})
-	h.Write([]byte(fmt.Sprintf("%d", i.Timeout)))
-	h.Write([]byte{0})
+
+	// Gate fields for async coordination
+	w.str(i.AwaitType)
+	w.str(i.AwaitID)
+	w.duration(i.Timeout)
 	for _, waiter := range i.Waiters {
-		h.Write([]byte(waiter))
-		h.Write([]byte{0})
+		w.str(waiter)
 	}
-	// Hash agent identity fields
-	h.Write([]byte(i.HookBead))
-	h.Write([]byte{0})
-	h.Write([]byte(i.RoleBead))
-	h.Write([]byte{0})
-	h.Write([]byte(i.AgentState))
-	h.Write([]byte{0})
-	h.Write([]byte(i.RoleType))
-	h.Write([]byte{0})
-	h.Write([]byte(i.Rig))
-	h.Write([]byte{0})
-	// Note: LastActivity is a timestamp, excluded from hash like other timestamps
+
+	// Agent identity fields
+	w.str(i.HookBead)
+	w.str(i.RoleBead)
+	w.str(string(i.AgentState))
+	w.str(i.RoleType)
+	w.str(i.Rig)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// hashFieldWriter provides helper methods for writing fields to a hash.
+// Each method writes the value followed by a null separator for consistency.
+type hashFieldWriter struct {
+	h hash.Hash
+}
+
+func (w hashFieldWriter) str(s string) {
+	w.h.Write([]byte(s))
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) int(n int) {
+	w.h.Write([]byte(fmt.Sprintf("%d", n)))
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) strPtr(p *string) {
+	if p != nil {
+		w.h.Write([]byte(*p))
+	}
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) float32Ptr(p *float32) {
+	if p != nil {
+		w.h.Write([]byte(fmt.Sprintf("%f", *p)))
+	}
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) duration(d time.Duration) {
+	w.h.Write([]byte(fmt.Sprintf("%d", d)))
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) flag(b bool, label string) {
+	if b {
+		w.h.Write([]byte(label))
+	}
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) entityRef(e *EntityRef) {
+	if e != nil {
+		w.str(e.Name)
+		w.str(e.Platform)
+		w.str(e.Org)
+		w.str(e.ID)
+	}
 }
 
 // DefaultTombstoneTTL is the default time-to-live for tombstones (30 days)
