@@ -165,7 +165,7 @@ func CheckGitignoreWithConfig(syncBranchConfigured bool) DoctorCheck {
 			Name:    "Gitignore",
 			Status:  "warning",
 			Message: "Gitignore has negation patterns that break fork protection",
-			Detail:  "Found !issues.jsonl which overrides .git/info/exclude (see GH#796)",
+			Detail:  "Found !issues.jsonl which overrides fork protection in .git/info/exclude",
 			Fix:     "Run: bd doctor --fix (will remove negation patterns)",
 		}
 	}
