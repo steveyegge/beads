@@ -161,7 +161,7 @@ var createCmd = &cobra.Command{
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
 		
-		// TODO: Switch to target repo for multi-repo support
+		// TODO(bd-6x6g): Switch to target repo for multi-repo support
 		// For now, we just log the target repo in debug mode
 		if repoPath != "." {
 			debug.Logf("DEBUG: Target repo: %s\n", repoPath)
@@ -205,7 +205,7 @@ var createCmd = &cobra.Command{
 			// Get database prefix from config
 			var dbPrefix string
 			if daemonClient != nil {
-				// TODO: Add RPC method to get config in daemon mode
+				// TODO(bd-ag35): Add RPC method to get config in daemon mode
 				// For now, skip validation in daemon mode (needs RPC enhancement)
 			} else {
 				// Direct mode - check config

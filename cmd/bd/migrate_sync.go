@@ -13,7 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// TODO: Consider integrating into 'bd doctor' migration detection
+// TODO(bd-7l27): Consider integrating into 'bd doctor' migration detection
 var migrateSyncCmd = &cobra.Command{
 	Use:     "sync <branch-name>",
 	Short:   "Migrate to sync.branch workflow for multi-clone setups",

@@ -128,7 +128,7 @@ func setupDaemonLogger(logPath string, jsonFormat bool, level slog.Level) (*lumb
 }
 
 // setupDaemonLoggerLegacy is the old signature for backward compatibility during migration.
-// TODO: Remove this once all callers are updated to use the new signature.
+// TODO(bd-2dwo): Remove this once all callers are updated to use the new signature.
 func setupDaemonLoggerLegacy(logPath string) (*lumberjack.Logger, daemonLogger) {
 	return setupDaemonLogger(logPath, false, slog.LevelInfo)
 }
