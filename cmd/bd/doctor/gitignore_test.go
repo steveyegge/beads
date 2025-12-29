@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1133,5 +1134,406 @@ func TestFixGitignore_SubdirectoryGitignore(t *testing.T) {
 	}
 	if string(rootContent) != rootGitignoreContent {
 		t.Error("root .gitignore should not be modified")
+	}
+}
+
+// TestGenerateGitignoreTemplate_Modes tests conditional gitignore generation (GH#797)
+func TestGenerateGitignoreTemplate_Modes(t *testing.T) {
+	tests := []struct {
+		name                  string
+		syncBranchConfigured  bool
+		expectIssuesIgnored   bool   // issues.jsonl as ignore pattern (not negated)
+		expectIssuesNegated   bool   // !issues.jsonl as un-ignore pattern
+		expectModeInHeader    string // Mode string in header
+	}{
+		{
+			name:                  "direct mode - JSONL tracked",
+			syncBranchConfigured:  false,
+			expectIssuesIgnored:   false,
+			expectIssuesNegated:   true,
+			expectModeInHeader:    "direct (JSONL tracked in current branch)",
+		},
+		{
+			name:                  "sync-branch mode - JSONL ignored",
+			syncBranchConfigured:  true,
+			expectIssuesIgnored:   true,
+			expectIssuesNegated:   false,
+			expectModeInHeader:    "sync-branch (JSONL ignored, committed via worktree)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := GenerateGitignoreTemplate(tt.syncBranchConfigured)
+
+			// Check mode in header
+			if !strings.Contains(content, tt.expectModeInHeader) {
+				t.Errorf("Expected mode %q in header, not found in:\n%s", tt.expectModeInHeader, content)
+			}
+
+			// Check managed file header
+			if !strings.Contains(content, "MANAGED BY BEADS") {
+				t.Error("Expected 'MANAGED BY BEADS' header")
+			}
+
+			// Check issues.jsonl handling
+			hasIgnorePattern := strings.Contains(content, "\nissues.jsonl\n") ||
+				strings.HasSuffix(strings.TrimSpace(content), "issues.jsonl")
+			hasNegationPattern := strings.Contains(content, "!issues.jsonl")
+
+			if tt.expectIssuesIgnored && !hasIgnorePattern {
+				t.Error("Expected issues.jsonl to be ignored (plain pattern)")
+			}
+			if !tt.expectIssuesIgnored && hasIgnorePattern && !hasNegationPattern {
+				t.Error("Expected issues.jsonl to NOT be ignored (should have negation)")
+			}
+			if tt.expectIssuesNegated && !hasNegationPattern {
+				t.Error("Expected !issues.jsonl negation pattern")
+			}
+			if !tt.expectIssuesNegated && hasNegationPattern {
+				t.Error("Expected NO !issues.jsonl negation pattern")
+			}
+
+			// All modes should have required patterns
+			for _, pattern := range requiredPatterns {
+				if !strings.Contains(content, pattern) {
+					t.Errorf("Missing required pattern: %s", pattern)
+				}
+			}
+		})
+	}
+}
+
+// TestCheckGitignoreWithConfig_ModeMismatch tests mode mismatch detection (GH#797)
+func TestCheckGitignoreWithConfig_ModeMismatch(t *testing.T) {
+	tests := []struct {
+		name                 string
+		gitignoreContent     string
+		syncBranchConfigured bool
+		expectedStatus       string
+		expectedMessage      string
+	}{
+		{
+			name:                 "direct mode gitignore matches direct config",
+			gitignoreContent:     GenerateGitignoreTemplate(false),
+			syncBranchConfigured: false,
+			expectedStatus:       StatusOK,
+		},
+		{
+			name:                 "direct mode gitignore with sync-branch config - MISMATCH",
+			gitignoreContent:     GenerateGitignoreTemplate(false),
+			syncBranchConfigured: true,
+			expectedStatus:       StatusWarning,
+			expectedMessage:      "sync-branch configured but JSONL tracked",
+		},
+		{
+			name:                 "sync-branch mode gitignore with direct config - MISMATCH",
+			gitignoreContent:     GenerateGitignoreTemplate(true),
+			syncBranchConfigured: false,
+			expectedStatus:       StatusWarning,
+			expectedMessage:      "no sync-branch but JSONL ignored",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			oldDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := os.Chdir(oldDir); err != nil {
+					t.Error(err)
+				}
+			}()
+
+			// Create .beads directory and gitignore
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.Mkdir(beadsDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+			gitignorePath := filepath.Join(beadsDir, ".gitignore")
+			if err := os.WriteFile(gitignorePath, []byte(tt.gitignoreContent), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			check := CheckGitignoreWithConfig(tt.syncBranchConfigured)
+
+			if check.Status != tt.expectedStatus {
+				t.Errorf("Expected status %s, got %s (message: %s)", tt.expectedStatus, check.Status, check.Message)
+			}
+
+			if tt.expectedMessage != "" && !strings.Contains(check.Message, tt.expectedMessage) {
+				t.Errorf("Expected message containing %q, got %q", tt.expectedMessage, check.Message)
+			}
+		})
+	}
+}
+
+// TestCheckGitignoreWithConfig_AssumeUnchanged tests the assume-unchanged check for sync-branch mode (GH#797)
+// This test sets up a proper git repo to verify assume-unchanged behavior
+func TestCheckGitignoreWithConfig_AssumeUnchanged(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Initialize git repo
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Fatalf("Failed to init git repo: %v", err)
+	}
+	// Configure git user (required for commits)
+	if err := exec.Command("git", "config", "user.email", "test@test.com").Run(); err != nil {
+		t.Fatalf("Failed to configure git email: %v", err)
+	}
+	if err := exec.Command("git", "config", "user.name", "Test User").Run(); err != nil {
+		t.Fatalf("Failed to configure git name: %v", err)
+	}
+
+	// Create .beads directory with JSONL file
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+	if err := os.WriteFile(issuesPath, []byte(`{"id":"test"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create correct gitignore for sync-branch mode
+	gitignorePath := filepath.Join(beadsDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(GenerateGitignoreTemplate(true)), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and commit the JSONL file so it's tracked
+	// Use -f to force-add because sync-branch mode gitignore ignores JSONL files
+	if err := exec.Command("git", "add", "-f", ".beads/").Run(); err != nil {
+		t.Fatalf("Failed to git add: %v", err)
+	}
+	if err := exec.Command("git", "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("Failed to git commit: %v", err)
+	}
+
+	// Test 1: Without assume-unchanged, should warn
+	check := CheckGitignoreWithConfig(true)
+	if check.Status != StatusWarning {
+		t.Errorf("Without assume-unchanged, expected warning, got %s (message: %s)", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "assume-unchanged") {
+		t.Errorf("Expected assume-unchanged warning, got: %s", check.Message)
+	}
+
+	// Test 2: Set assume-unchanged flag
+	cmd := exec.Command("git", "update-index", "--assume-unchanged", ".beads/issues.jsonl")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to set assume-unchanged: %v\nOutput: %s", err, output)
+	}
+
+	// Verify flag is set
+	if !hasAssumeUnchanged(".beads/issues.jsonl") {
+		t.Error("assume-unchanged flag should be set")
+	}
+
+	// Test 3: With assume-unchanged set, should be OK
+	check = CheckGitignoreWithConfig(true)
+	if check.Status != StatusOK {
+		t.Errorf("With assume-unchanged, expected ok, got %s (message: %s)", check.Status, check.Message)
+	}
+}
+
+// TestFixGitignoreWithConfig tests conditional fix (GH#797)
+func TestFixGitignoreWithConfig(t *testing.T) {
+	tests := []struct {
+		name                 string
+		initialContent       string
+		syncBranchConfigured bool
+		expectIssuesIgnored  bool
+	}{
+		{
+			name:                 "fix to direct mode",
+			initialContent:       "old content",
+			syncBranchConfigured: false,
+			expectIssuesIgnored:  false,
+		},
+		{
+			name:                 "fix to sync-branch mode",
+			initialContent:       "old content",
+			syncBranchConfigured: true,
+			expectIssuesIgnored:  true,
+		},
+		{
+			name:                 "switch from direct to sync-branch",
+			initialContent:       GenerateGitignoreTemplate(false),
+			syncBranchConfigured: true,
+			expectIssuesIgnored:  true,
+		},
+		{
+			name:                 "switch from sync-branch to direct",
+			initialContent:       GenerateGitignoreTemplate(true),
+			syncBranchConfigured: false,
+			expectIssuesIgnored:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			oldDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := os.Chdir(oldDir); err != nil {
+					t.Error(err)
+				}
+			}()
+
+			// Create .beads directory
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			if err := os.Mkdir(beadsDir, 0750); err != nil {
+				t.Fatal(err)
+			}
+			gitignorePath := filepath.Join(beadsDir, ".gitignore")
+			if err := os.WriteFile(gitignorePath, []byte(tt.initialContent), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			// Run fix
+			err = FixGitignoreWithConfig(tt.syncBranchConfigured)
+			if err != nil {
+				t.Fatalf("FixGitignoreWithConfig failed: %v", err)
+			}
+
+			// Verify content
+			content, err := os.ReadFile(gitignorePath)
+			if err != nil {
+				t.Fatalf("Failed to read gitignore: %v", err)
+			}
+			contentStr := string(content)
+
+			// Check if issues.jsonl is ignored or negated
+			hasIgnorePattern := strings.Contains(contentStr, "\nissues.jsonl\n")
+			hasNegationPattern := strings.Contains(contentStr, "!issues.jsonl")
+
+			if tt.expectIssuesIgnored {
+				if !hasIgnorePattern {
+					t.Error("Expected issues.jsonl to be ignored")
+				}
+				if hasNegationPattern {
+					t.Error("Expected NO !issues.jsonl negation in sync-branch mode")
+				}
+			} else {
+				if hasNegationPattern == false {
+					t.Error("Expected !issues.jsonl negation in direct mode")
+				}
+			}
+
+			// Verify matches expected template
+			expectedTemplate := GenerateGitignoreTemplate(tt.syncBranchConfigured)
+			if contentStr != expectedTemplate {
+				t.Errorf("Content doesn't match expected template.\nExpected:\n%s\n\nGot:\n%s", expectedTemplate, contentStr)
+			}
+		})
+	}
+}
+
+// TestCheckGitignore_BackwardCompatibility verifies deprecated function still works
+func TestCheckGitignore_BackwardCompatibility(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Create .beads directory with direct mode gitignore
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	gitignorePath := filepath.Join(beadsDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(GitignoreTemplate), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deprecated CheckGitignore should work (defaults to direct mode)
+	check := CheckGitignore()
+	if check.Status != StatusOK {
+		t.Errorf("Expected OK status, got %s: %s", check.Status, check.Message)
+	}
+}
+
+// TestFixGitignore_BackwardCompatibility verifies deprecated function still works
+func TestFixGitignore_BackwardCompatibility(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Create .beads directory
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deprecated FixGitignore should work (defaults to direct mode)
+	err = FixGitignore()
+	if err != nil {
+		t.Fatalf("FixGitignore failed: %v", err)
+	}
+
+	// Verify it wrote direct mode template
+	gitignorePath := filepath.Join(beadsDir, ".gitignore")
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("Failed to read gitignore: %v", err)
+	}
+
+	if string(content) != GitignoreTemplate {
+		t.Error("Content doesn't match GitignoreTemplate (direct mode)")
+	}
+
+	// Verify it has the negation pattern (direct mode)
+	if !strings.Contains(string(content), "!issues.jsonl") {
+		t.Error("Expected !issues.jsonl pattern for direct mode")
 	}
 }

@@ -333,6 +333,14 @@ func commitInitialSyncState(ctx context.Context, worktreePath, jsonlRelPath stri
 		return fmt.Errorf("git add failed: %w", err)
 	}
 
+	// Force-add JSONL files to bypass gitignore (GH#797)
+	// In sync-branch mode, .beads/.gitignore ignores JSONL files to prevent noise on main branch.
+	for _, file := range []string{"issues.jsonl", "interactions.jsonl"} {
+		filePath := filepath.Join(beadsRelDir, file)
+		forceAddCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "-f", filePath)
+		_ = forceAddCmd.Run() // Best effort - file may not exist yet
+	}
+
 	// Commit
 	commitCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "commit", "--no-verify", "-m", "bd migrate-sync: initial sync branch setup")
 	output, err := commitCmd.CombinedOutput()

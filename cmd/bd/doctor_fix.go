@@ -224,7 +224,9 @@ func applyFixList(path string, fixes []doctorCheck) {
 		var err error
 		switch check.Name {
 		case "Gitignore":
-			err = doctor.FixGitignore()
+			// Use config-aware fix for GH#797 (sync-branch vs direct mode)
+			syncBranchConfigured := syncbranch.IsConfiguredWithDB("")
+			err = doctor.FixGitignoreWithConfig(syncBranchConfigured)
 		case "Git Hooks":
 			err = fix.GitHooks(path)
 		case "Daemon Health":

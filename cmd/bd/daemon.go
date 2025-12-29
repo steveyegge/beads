@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 var daemonCmd = &cobra.Command{
@@ -421,11 +422,12 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	store.EnableFreshnessChecking()
 	log.Info("database opened", "path", daemonDBPath, "freshness_checking", true)
 
-	// Auto-upgrade .beads/.gitignore if outdated
-	gitignoreCheck := doctor.CheckGitignore()
+	// Auto-upgrade .beads/.gitignore if outdated (mode-aware for GH#797)
+	syncBranchConfigured := syncbranch.IsConfiguredWithDB(daemonDBPath)
+	gitignoreCheck := doctor.CheckGitignoreWithConfig(syncBranchConfigured)
 	if gitignoreCheck.Status == "warning" || gitignoreCheck.Status == "error" {
-		log.Info("upgrading .beads/.gitignore")
-		if err := doctor.FixGitignore(); err != nil {
+		log.Info("upgrading .beads/.gitignore", "sync_branch_mode", syncBranchConfigured)
+		if err := doctor.FixGitignoreWithConfig(syncBranchConfigured); err != nil {
 			log.Warn("failed to upgrade .gitignore", "error", err)
 		} else {
 			log.Info("successfully upgraded .beads/.gitignore")

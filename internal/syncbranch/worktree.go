@@ -725,6 +725,15 @@ func commitInWorktree(ctx context.Context, worktreePath, jsonlRelPath, message s
 		return fmt.Errorf("git add failed in worktree: %w", err)
 	}
 
+	// Force-add JSONL files to bypass gitignore (GH#797)
+	// In sync-branch mode, .beads/.gitignore ignores JSONL files to prevent noise on main branch.
+	// We must force-add them here to ensure they're committed to the sync branch.
+	for _, file := range []string{"issues.jsonl", "interactions.jsonl"} {
+		filePath := filepath.Join(beadsRelDir, file)
+		forceAddCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "-f", filePath)
+		_ = forceAddCmd.Run() // Best effort - file may not exist yet
+	}
+
 	// Commit with --no-verify to skip hooks (pre-commit hook would fail in worktree context)
 	// The worktree is internal to bd sync, so we don't need to run bd's pre-commit hook
 	commitCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "commit", "--no-verify", "-m", message)

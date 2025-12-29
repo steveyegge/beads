@@ -12,6 +12,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -394,8 +395,9 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, legacyDocsCheck)
 	// Don't fail overall check for legacy docs, just warn
 
-	// Check 14: Gitignore up to date
-	gitignoreCheck := convertWithCategory(doctor.CheckGitignore(), doctor.CategoryGit)
+	// Check 14: Gitignore up to date (mode-aware for GH#797)
+	syncBranchConfigured := syncbranch.IsConfiguredWithDB("")
+	gitignoreCheck := convertWithCategory(doctor.CheckGitignoreWithConfig(syncBranchConfigured), doctor.CategoryGit)
 	result.Checks = append(result.Checks, gitignoreCheck)
 	// Don't fail overall check for gitignore, just warn
 

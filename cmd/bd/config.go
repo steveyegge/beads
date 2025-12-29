@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -82,11 +83,24 @@ var configSetCmd = &cobra.Command{
 
 		ctx := rootCtx
 
-		// Special handling for sync.branch to apply validation
+		// Special handling for sync.branch to apply validation and update gitignore
 		if strings.TrimSpace(key) == syncbranch.ConfigKey {
 			if err := syncbranch.Set(ctx, store, value); err != nil {
 				fmt.Fprintf(os.Stderr, "Error setting config: %v\n", err)
 				os.Exit(1)
+			}
+
+			// Regenerate gitignore based on new sync-branch mode (GH#797)
+			syncBranchConfigured := value != ""
+			if err := doctor.FixGitignoreWithConfig(syncBranchConfigured); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update .beads/.gitignore: %v\n", err)
+				// Non-fatal - continue anyway
+			} else if !jsonOutput {
+				if syncBranchConfigured {
+					fmt.Println("Updated .beads/.gitignore for sync-branch mode (JSONL ignored)")
+				} else {
+					fmt.Println("Updated .beads/.gitignore for direct mode (JSONL tracked)")
+				}
 			}
 		} else {
 			if err := store.SetConfig(ctx, key, value); err != nil {
