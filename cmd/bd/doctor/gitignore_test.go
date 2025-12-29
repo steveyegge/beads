@@ -1178,7 +1178,8 @@ func TestGenerateGitignoreTemplate_Modes(t *testing.T) {
 			// override fork protection in .git/info/exclude (GH#796)
 			hasIgnorePattern := strings.Contains(content, "\nissues.jsonl\n") ||
 				strings.HasSuffix(strings.TrimSpace(content), "issues.jsonl")
-			hasNegationPattern := strings.Contains(content, "!issues.jsonl")
+			// Check for actual negation pattern (at start of line), not mentions in comments
+			hasNegationPattern := strings.Contains(content, "\n!issues.jsonl")
 
 			// Negation patterns should NEVER be present (GH#796)
 			if hasNegationPattern {
@@ -1443,7 +1444,8 @@ func TestFixGitignoreWithConfig(t *testing.T) {
 
 			// Check if issues.jsonl is ignored (GH#796: no negation patterns allowed)
 			hasIgnorePattern := strings.Contains(contentStr, "\nissues.jsonl\n")
-			hasNegationPattern := strings.Contains(contentStr, "!issues.jsonl")
+			// Check for actual negation pattern (at start of line), not mentions in comments
+			hasNegationPattern := strings.Contains(contentStr, "\n!issues.jsonl")
 
 			// Negation patterns should NEVER be present (GH#796)
 			if hasNegationPattern {
@@ -1544,7 +1546,8 @@ func TestFixGitignore_BackwardCompatibility(t *testing.T) {
 	}
 
 	// Verify it does NOT have negation patterns (GH#796 - fork protection)
-	if strings.Contains(string(content), "!issues.jsonl") {
+	// Check for actual negation pattern (at start of line), not mentions in comments
+	if strings.Contains(string(content), "\n!issues.jsonl") {
 		t.Error("Negation patterns break fork protection (GH#796)")
 	}
 

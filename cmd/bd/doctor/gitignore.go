@@ -56,7 +56,12 @@ interactions.jsonl
 // by git by default since no pattern above ignores them.
 const gitignoreDirectSuffix = `
 # Direct mode: JSONL tracked in current branch
-# Files not matching any pattern above are tracked by git by default.
+#
+# NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
+# They would override fork protection in .git/info/exclude, allowing
+# contributors to accidentally commit upstream issue databases.
+# The JSONL files (issues.jsonl, interactions.jsonl) and config files
+# are tracked by git by default since no pattern above ignores them.
 `
 
 // GenerateGitignoreTemplate generates the .beads/.gitignore content based on sync-branch configuration.
@@ -149,7 +154,8 @@ func CheckGitignoreWithConfig(syncBranchConfigured bool) DoctorCheck {
 	// Check for sync-branch mode mismatch (GH#797) and fork protection (GH#796)
 	// Note: We no longer use negation patterns (!issues.jsonl) as they override
 	// fork protection in .git/info/exclude. See GH#796 for details.
-	hasNegation := strings.Contains(contentStr, "!issues.jsonl")
+	// Check for actual negation pattern (at start of line), not mentions in comments
+	hasNegation := strings.Contains(contentStr, "\n!issues.jsonl")
 	hasIgnore := strings.Contains(contentStr, "\nissues.jsonl\n") ||
 		strings.Contains(contentStr, "\nissues.jsonl")
 
