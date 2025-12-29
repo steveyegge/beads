@@ -31,7 +31,7 @@ const RedirectFileName = "redirect"
 // LegacyDatabaseNames are old names that should be migrated
 var LegacyDatabaseNames = []string{"bd.db", "issues.db", "bugs.db"}
 
-// followRedirect checks if a .beads directory contains a redirect file and follows it.
+// FollowRedirect checks if a .beads directory contains a redirect file and follows it.
 // If a redirect file exists, it returns the target .beads directory path.
 // If no redirect exists or there's an error, it returns the original path unchanged.
 //
@@ -41,7 +41,7 @@ var LegacyDatabaseNames = []string{"bd.db", "issues.db", "bugs.db"}
 //
 // Redirect chains are not followed - only one level of redirection is supported.
 // This prevents infinite loops and keeps the behavior predictable.
-func followRedirect(beadsDir string) string {
+func FollowRedirect(beadsDir string) string {
 	redirectFile := filepath.Join(beadsDir, RedirectFileName)
 	data, err := os.ReadFile(redirectFile)
 	if err != nil {
@@ -124,7 +124,7 @@ func GetRedirectInfo() RedirectInfo {
 	}
 
 	// There's a redirect - find the target
-	targetDir := followRedirect(localBeadsDir)
+	targetDir := FollowRedirect(localBeadsDir)
 	if targetDir == localBeadsDir {
 		// Redirect file exists but failed to resolve (invalid target)
 		return info
@@ -354,7 +354,7 @@ func FindDatabasePath() string {
 		absBeadsDir := utils.CanonicalizePath(beadsDir)
 
 		// Follow redirect if present
-		absBeadsDir = followRedirect(absBeadsDir)
+		absBeadsDir = FollowRedirect(absBeadsDir)
 
 		// Use helper to find database (no warnings for BEADS_DIR - user explicitly set it)
 		if dbPath := findDatabaseInBeadsDir(absBeadsDir, false); dbPath != "" {
@@ -428,7 +428,7 @@ func FindBeadsDir() string {
 		absBeadsDir := utils.CanonicalizePath(beadsDir)
 
 		// Follow redirect if present
-		absBeadsDir = followRedirect(absBeadsDir)
+		absBeadsDir = FollowRedirect(absBeadsDir)
 
 		if info, err := os.Stat(absBeadsDir); err == nil && info.IsDir() {
 			// Validate directory contains actual project files
@@ -447,7 +447,7 @@ func FindBeadsDir() string {
 			beadsDir := filepath.Join(mainRepoRoot, ".beads")
 			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 				// Follow redirect if present
-				beadsDir = followRedirect(beadsDir)
+				beadsDir = FollowRedirect(beadsDir)
 
 				// Validate directory contains actual project files
 				if hasBeadsProjectFiles(beadsDir) {
@@ -474,7 +474,7 @@ func FindBeadsDir() string {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
-			beadsDir = followRedirect(beadsDir)
+			beadsDir = FollowRedirect(beadsDir)
 
 			// Validate directory contains actual project files
 			if hasBeadsProjectFiles(beadsDir) {
@@ -551,7 +551,7 @@ func findDatabaseInTree() string {
 			beadsDir := filepath.Join(mainRepoRoot, ".beads")
 			if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 				// Follow redirect if present
-				beadsDir = followRedirect(beadsDir)
+				beadsDir = FollowRedirect(beadsDir)
 
 				// Use helper to find database (with warnings for auto-discovery)
 				if dbPath := findDatabaseInBeadsDir(beadsDir, true); dbPath != "" {
@@ -574,7 +574,7 @@ func findDatabaseInTree() string {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
-			beadsDir = followRedirect(beadsDir)
+			beadsDir = FollowRedirect(beadsDir)
 
 			// Use helper to find database (with warnings for auto-discovery)
 			if dbPath := findDatabaseInBeadsDir(beadsDir, true); dbPath != "" {
@@ -624,7 +624,7 @@ func FindAllDatabases() []DatabaseInfo {
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
-			beadsDir = followRedirect(beadsDir)
+			beadsDir = FollowRedirect(beadsDir)
 
 			// Found .beads/ directory, look for *.db files
 			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))

@@ -1,7 +1,9 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -100,127 +102,152 @@ For more details, see README.md and docs/QUICKSTART.md.
 <!-- END BEADS INTEGRATION -->
 `
 
+var (
+	errAgentsFileMissing   = errors.New("agents file not found")
+	errBeadsSectionMissing = errors.New("beads section missing")
+)
+
+type factoryEnv struct {
+	agentsPath string
+	stdout     io.Writer
+	stderr     io.Writer
+}
+
+var factoryEnvProvider = defaultFactoryEnv
+
+func defaultFactoryEnv() factoryEnv {
+	return factoryEnv{
+		agentsPath: "AGENTS.md",
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
+	}
+}
+
 // InstallFactory installs Factory.ai/Droid integration
 func InstallFactory() {
-	agentsPath := "AGENTS.md"
+	env := factoryEnvProvider()
+	if err := installFactory(env); err != nil {
+		setupExit(1)
+	}
+}
 
-	fmt.Println("Installing Factory.ai (Droid) integration...")
+func installFactory(env factoryEnv) error {
+	_, _ = fmt.Fprintln(env.stdout, "Installing Factory.ai (Droid) integration...")
 
-	// Check if AGENTS.md exists
 	var currentContent string
-	data, err := os.ReadFile(agentsPath)
+	data, err := os.ReadFile(env.agentsPath)
 	if err == nil {
 		currentContent = string(data)
 	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: failed to read AGENTS.md: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", env.agentsPath, err)
+		return err
 	}
 
-	// If file exists, check if we already have beads section
 	if currentContent != "" {
 		if strings.Contains(currentContent, factoryBeginMarker) {
-			// Update existing section
 			newContent := updateBeadsSection(currentContent)
-			if err := atomicWriteFile(agentsPath, []byte(newContent)); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: write AGENTS.md: %v\n", err)
-				os.Exit(1)
+			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+				return err
 			}
-			fmt.Println("✓ Updated existing beads section in AGENTS.md")
+			_, _ = fmt.Fprintln(env.stdout, "✓ Updated existing beads section in AGENTS.md")
 		} else {
-			// Append to existing file
 			newContent := currentContent + "\n\n" + factoryBeadsSection
-			if err := atomicWriteFile(agentsPath, []byte(newContent)); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: write AGENTS.md: %v\n", err)
-				os.Exit(1)
+			if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+				_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+				return err
 			}
-			fmt.Println("✓ Added beads section to existing AGENTS.md")
+			_, _ = fmt.Fprintln(env.stdout, "✓ Added beads section to existing AGENTS.md")
 		}
 	} else {
-		// Create new AGENTS.md with template
 		newContent := createNewAgentsFile()
-		if err := atomicWriteFile(agentsPath, []byte(newContent)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: write AGENTS.md: %v\n", err)
-			os.Exit(1)
+		if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+			return err
 		}
-		fmt.Println("✓ Created new AGENTS.md with beads integration")
+		_, _ = fmt.Fprintln(env.stdout, "✓ Created new AGENTS.md with beads integration")
 	}
 
-	fmt.Printf("\n✓ Factory.ai (Droid) integration installed\n")
-	fmt.Printf("  File: %s\n", agentsPath)
-	fmt.Println("\nFactory Droid will automatically read AGENTS.md on session start.")
-	fmt.Println("No additional configuration needed!")
+	_, _ = fmt.Fprintln(env.stdout, "\n✓ Factory.ai (Droid) integration installed")
+	_, _ = fmt.Fprintf(env.stdout, "  File: %s\n", env.agentsPath)
+	_, _ = fmt.Fprintln(env.stdout, "\nFactory Droid will automatically read AGENTS.md on session start.")
+	_, _ = fmt.Fprintln(env.stdout, "No additional configuration needed!")
+	return nil
 }
 
 // CheckFactory checks if Factory.ai integration is installed
 func CheckFactory() {
-	agentsPath := "AGENTS.md"
+	env := factoryEnvProvider()
+	if err := checkFactory(env); err != nil {
+		setupExit(1)
+	}
+}
 
-	// Check if AGENTS.md exists
-	data, err := os.ReadFile(agentsPath)
+func checkFactory(env factoryEnv) error {
+	data, err := os.ReadFile(env.agentsPath)
 	if os.IsNotExist(err) {
-		fmt.Println("✗ AGENTS.md not found")
-		fmt.Println("  Run: bd setup factory")
-		os.Exit(1)
+		_, _ = fmt.Fprintln(env.stdout, "✗ AGENTS.md not found")
+		_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup factory")
+		return errAgentsFileMissing
 	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to read AGENTS.md: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", env.agentsPath, err)
+		return err
 	}
 
-	// Check if it contains beads section
 	content := string(data)
 	if strings.Contains(content, factoryBeginMarker) {
-		fmt.Println("✓ Factory.ai integration installed:", agentsPath)
-		fmt.Println("  Beads section found in AGENTS.md")
-	} else {
-		fmt.Println("⚠ AGENTS.md exists but no beads section found")
-		fmt.Println("  Run: bd setup factory (to add beads section)")
-		os.Exit(1)
+		_, _ = fmt.Fprintf(env.stdout, "✓ Factory.ai integration installed: %s\n", env.agentsPath)
+		_, _ = fmt.Fprintln(env.stdout, "  Beads section found in AGENTS.md")
+		return nil
 	}
+
+	_, _ = fmt.Fprintln(env.stdout, "⚠ AGENTS.md exists but no beads section found")
+	_, _ = fmt.Fprintln(env.stdout, "  Run: bd setup factory (to add beads section)")
+	return errBeadsSectionMissing
 }
 
 // RemoveFactory removes Factory.ai integration
 func RemoveFactory() {
-	agentsPath := "AGENTS.md"
+	env := factoryEnvProvider()
+	if err := removeFactory(env); err != nil {
+		setupExit(1)
+	}
+}
 
-	fmt.Println("Removing Factory.ai (Droid) integration...")
-
-	// Read current content
-	data, err := os.ReadFile(agentsPath)
+func removeFactory(env factoryEnv) error {
+	_, _ = fmt.Fprintln(env.stdout, "Removing Factory.ai (Droid) integration...")
+	data, err := os.ReadFile(env.agentsPath)
 	if os.IsNotExist(err) {
-		fmt.Println("No AGENTS.md file found")
-		return
+		_, _ = fmt.Fprintln(env.stdout, "No AGENTS.md file found")
+		return nil
 	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to read AGENTS.md: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(env.stderr, "Error: failed to read %s: %v\n", env.agentsPath, err)
+		return err
 	}
 
 	content := string(data)
-
-	// Check if beads section exists
 	if !strings.Contains(content, factoryBeginMarker) {
-		fmt.Println("No beads section found in AGENTS.md")
-		return
+		_, _ = fmt.Fprintln(env.stdout, "No beads section found in AGENTS.md")
+		return nil
 	}
 
-	// Remove beads section
 	newContent := removeBeadsSection(content)
-
-	// If file would be empty after removal, delete it
 	trimmed := strings.TrimSpace(newContent)
 	if trimmed == "" {
-		if err := os.Remove(agentsPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to remove AGENTS.md: %v\n", err)
-			os.Exit(1)
+		if err := os.Remove(env.agentsPath); err != nil {
+			_, _ = fmt.Fprintf(env.stderr, "Error: failed to remove %s: %v\n", env.agentsPath, err)
+			return err
 		}
-		fmt.Println("✓ Removed AGENTS.md (file was empty after removing beads section)")
-	} else {
-		// Write back modified content
-		if err := atomicWriteFile(agentsPath, []byte(newContent)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: write AGENTS.md: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("✓ Removed beads section from AGENTS.md")
+		_, _ = fmt.Fprintf(env.stdout, "✓ Removed %s (file was empty after removing beads section)\n", env.agentsPath)
+		return nil
 	}
+
+	if err := atomicWriteFile(env.agentsPath, []byte(newContent)); err != nil {
+		_, _ = fmt.Fprintf(env.stderr, "Error: write %s: %v\n", env.agentsPath, err)
+		return err
+	}
+	_, _ = fmt.Fprintln(env.stdout, "✓ Removed beads section from AGENTS.md")
+	return nil
 }
 
 // updateBeadsSection replaces the beads section in existing content

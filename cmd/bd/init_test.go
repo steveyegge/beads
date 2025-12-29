@@ -129,7 +129,7 @@ func TestInitCommand(t *testing.T) {
 					"beads.base.jsonl",
 					"beads.left.jsonl",
 					"beads.right.jsonl",
-					"!issues.jsonl",
+					"Do NOT add negation patterns", // Comment explaining fork protection
 				}
 				for _, pattern := range expectedPatterns {
 					if !strings.Contains(gitignoreStr, pattern) {
