@@ -18,8 +18,8 @@ var repairCmd = &cobra.Command{
 	Use:     "repair",
 	GroupID: GroupMaintenance,
 	Short:   "Repair corrupted database by cleaning orphaned references",
-	// PreRun disables PersistentPreRun for this command (we open DB directly, bypassing invariants)
-	PreRun: func(cmd *cobra.Command, args []string) {},
+	// Note: This command is in noDbCommands list (main.go) to skip normal db init.
+	// We open SQLite directly, bypassing migration invariant checks.
 	Long: `Repair a database that won't open due to orphaned foreign key references.
 
 When the database has orphaned dependencies or labels, the migration invariant
@@ -139,32 +139,58 @@ func runRepair(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Apply repairs
+	// Create backup before destructive operations
+	backupPath := dbPath + ".pre-repair"
+	fmt.Printf("Creating backup: %s\n", filepath.Base(backupPath))
+	if err := copyFile(dbPath, backupPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating backup: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Aborting repair. Fix backup issue and retry.\n")
+		os.Exit(1)
+	}
+	fmt.Printf("  %s Backup created\n\n", ui.RenderPass("✓"))
+
+	// Apply repairs in a transaction
 	fmt.Println("Cleaning orphaned references...")
 
-	// Delete orphaned deps (issue_id)
-	if len(orphanedIssueID) > 0 {
-		result, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting transaction: %v\n", err)
+		os.Exit(1)
+	}
+
+	var repairErr error
+
+	// Delete orphaned deps (issue_id) and mark affected issues dirty
+	if len(orphanedIssueID) > 0 && repairErr == nil {
+		// Note: orphanedIssueID contains deps where issue_id doesn't exist,
+		// so we can't mark them dirty (the issue is gone). But for depends_on orphans,
+		// the issue_id still exists and should be marked dirty.
+		result, err := tx.Exec(`
 			DELETE FROM dependencies
 			WHERE NOT EXISTS (SELECT 1 FROM issues WHERE id = dependencies.issue_id)
 		`)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting orphaned deps (issue_id): %v\n", err)
+			repairErr = fmt.Errorf("deleting orphaned deps (issue_id): %w", err)
 		} else {
 			deleted, _ := result.RowsAffected()
 			fmt.Printf("  %s Deleted %d dependencies with missing issue_id\n", ui.RenderPass("✓"), deleted)
 		}
 	}
 
-	// Delete orphaned deps (depends_on_id)
-	if len(orphanedDependsOn) > 0 {
-		result, err := db.Exec(`
+	// Delete orphaned deps (depends_on_id) and mark parent issues dirty
+	if len(orphanedDependsOn) > 0 && repairErr == nil {
+		// Mark parent issues as dirty for export
+		for _, dep := range orphanedDependsOn {
+			_, _ = tx.Exec("INSERT OR IGNORE INTO dirty_issues (issue_id) VALUES (?)", dep.issueID)
+		}
+
+		result, err := tx.Exec(`
 			DELETE FROM dependencies
 			WHERE NOT EXISTS (SELECT 1 FROM issues WHERE id = dependencies.depends_on_id)
 			  AND dependencies.depends_on_id NOT LIKE 'external:%'
 		`)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting orphaned deps (depends_on_id): %v\n", err)
+			repairErr = fmt.Errorf("deleting orphaned deps (depends_on_id): %w", err)
 		} else {
 			deleted, _ := result.RowsAffected()
 			fmt.Printf("  %s Deleted %d dependencies with missing depends_on_id\n", ui.RenderPass("✓"), deleted)
@@ -172,17 +198,33 @@ func runRepair(cmd *cobra.Command, args []string) {
 	}
 
 	// Delete orphaned labels
-	if len(orphanedLabels) > 0 {
-		result, err := db.Exec(`
+	if len(orphanedLabels) > 0 && repairErr == nil {
+		// Labels reference non-existent issues, so no dirty marking needed
+		result, err := tx.Exec(`
 			DELETE FROM labels
 			WHERE NOT EXISTS (SELECT 1 FROM issues WHERE id = labels.issue_id)
 		`)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting orphaned labels: %v\n", err)
+			repairErr = fmt.Errorf("deleting orphaned labels: %w", err)
 		} else {
 			deleted, _ := result.RowsAffected()
 			fmt.Printf("  %s Deleted %d labels with missing issue_id\n", ui.RenderPass("✓"), deleted)
 		}
+	}
+
+	// Commit or rollback
+	if repairErr != nil {
+		_ = tx.Rollback()
+		fmt.Fprintf(os.Stderr, "\n%s Error: %v\n", ui.RenderFail("✗"), repairErr)
+		fmt.Fprintf(os.Stderr, "Transaction rolled back. Database unchanged.\n")
+		fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		os.Exit(1)
+	}
+
+	if err := tx.Commit(); err != nil {
+		fmt.Fprintf(os.Stderr, "\n%s Error committing transaction: %v\n", ui.RenderFail("✗"), err)
+		fmt.Fprintf(os.Stderr, "Backup available at: %s\n", backupPath)
+		os.Exit(1)
 	}
 
 	// Run WAL checkpoint to persist changes
@@ -195,6 +237,7 @@ func runRepair(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Printf("%s Repair complete. Try running 'bd doctor' to verify.\n", ui.RenderPass("✓"))
+	fmt.Printf("Backup preserved at: %s\n", filepath.Base(backupPath))
 }
 
 // repairStats tracks what was found/cleaned
@@ -305,3 +348,4 @@ func findOrphanedLabels(db *sql.DB) ([]orphanedLabel, error) {
 	}
 	return labels, rows.Err()
 }
+
