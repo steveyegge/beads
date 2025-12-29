@@ -9,77 +9,94 @@ import (
 	"time"
 )
 
-// Issue represents a trackable work item
+// Issue represents a trackable work item.
+// Fields are organized into logical groups for maintainability.
 type Issue struct {
-	ID                 string         `json:"id"`
-	ContentHash        string         `json:"-"` // Internal: SHA256 hash of canonical content (excludes ID, timestamps) - NOT exported to JSONL
-	Title              string         `json:"title"`
-	Description        string         `json:"description,omitempty"`
-	Design             string         `json:"design,omitempty"`
-	AcceptanceCriteria string         `json:"acceptance_criteria,omitempty"`
-	Notes              string         `json:"notes,omitempty"`
-	Status             Status         `json:"status,omitempty"`
-	Priority           int            `json:"priority"` // No omitempty: 0 is valid (P0/critical)
-	IssueType          IssueType      `json:"issue_type,omitempty"`
-	Assignee           string         `json:"assignee,omitempty"`
-	EstimatedMinutes   *int           `json:"estimated_minutes,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
-	CreatedBy          string         `json:"created_by,omitempty"` // Who created this issue (GH#748)
-	UpdatedAt          time.Time      `json:"updated_at"`
-	ClosedAt           *time.Time     `json:"closed_at,omitempty"`
-	CloseReason        string         `json:"close_reason,omitempty"` // Reason provided when closing the issue
-	ExternalRef        *string        `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
-	CompactionLevel    int            `json:"compaction_level,omitempty"`
-	CompactedAt        *time.Time     `json:"compacted_at,omitempty"`
-	CompactedAtCommit  *string        `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
-	OriginalSize       int            `json:"original_size,omitempty"`
-	SourceRepo         string         `json:"-"` // Internal: Which repo owns this issue (multi-repo support) - NOT exported to JSONL
-	IDPrefix           string         `json:"-"` // Internal: Override prefix for ID generation - NOT exported to JSONL
-	Labels             []string       `json:"labels,omitempty"` // Populated only for export/import
-	Dependencies       []*Dependency  `json:"dependencies,omitempty"` // Populated only for export/import
-	Comments           []*Comment     `json:"comments,omitempty"`     // Populated only for export/import
-	// Tombstone fields: inline soft-delete support
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When the issue was deleted
-	DeletedBy    string     `json:"deleted_by,omitempty"`    // Who deleted the issue
-	DeleteReason string     `json:"delete_reason,omitempty"` // Why the issue was deleted
-	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion (for tombstones)
+	// ===== Core Identification =====
+	ID          string `json:"id"`
+	ContentHash string `json:"-"` // Internal: SHA256 of canonical content - NOT exported to JSONL
 
-	// Messaging fields: inter-agent communication support
+	// ===== Issue Content =====
+	Title              string `json:"title"`
+	Description        string `json:"description,omitempty"`
+	Design             string `json:"design,omitempty"`
+	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
+	Notes              string `json:"notes,omitempty"`
+
+	// ===== Status & Workflow =====
+	Status    Status    `json:"status,omitempty"`
+	Priority  int       `json:"priority"` // No omitempty: 0 is valid (P0/critical)
+	IssueType IssueType `json:"issue_type,omitempty"`
+
+	// ===== Assignment =====
+	Assignee         string `json:"assignee,omitempty"`
+	EstimatedMinutes *int   `json:"estimated_minutes,omitempty"`
+
+	// ===== Timestamps =====
+	CreatedAt   time.Time  `json:"created_at"`
+	CreatedBy   string     `json:"created_by,omitempty"` // Who created this issue (GH#748)
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+	CloseReason string     `json:"close_reason,omitempty"` // Reason provided when closing
+
+	// ===== External Integration =====
+	ExternalRef *string `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
+
+	// ===== Compaction Metadata =====
+	CompactionLevel   int        `json:"compaction_level,omitempty"`
+	CompactedAt       *time.Time `json:"compacted_at,omitempty"`
+	CompactedAtCommit *string    `json:"compacted_at_commit,omitempty"` // Git commit hash when compacted
+	OriginalSize      int        `json:"original_size,omitempty"`
+
+	// ===== Internal Routing (not exported to JSONL) =====
+	SourceRepo string `json:"-"` // Which repo owns this issue (multi-repo support)
+	IDPrefix   string `json:"-"` // Override prefix for ID generation
+
+	// ===== Relational Data (populated for export/import) =====
+	Labels       []string      `json:"labels,omitempty"`
+	Dependencies []*Dependency `json:"dependencies,omitempty"`
+	Comments     []*Comment    `json:"comments,omitempty"`
+
+	// ===== Tombstone Fields (soft-delete support) =====
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When deleted
+	DeletedBy    string     `json:"deleted_by,omitempty"`    // Who deleted
+	DeleteReason string     `json:"delete_reason,omitempty"` // Why deleted
+	OriginalType string     `json:"original_type,omitempty"` // Issue type before deletion
+
+	// ===== Messaging Fields (inter-agent communication) =====
 	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
-	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
+	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL
 	// NOTE: RepliesTo, RelatesTo, DuplicateOf, SupersededBy moved to dependencies table
 	// per Decision 004 (Edge Schema Consolidation). Use dependency API instead.
 
-	// Pinned field: persistent context markers
-	Pinned bool `json:"pinned,omitempty"` // If true, issue is a persistent context marker, not a work item
+	// ===== Context Markers =====
+	Pinned     bool `json:"pinned,omitempty"`      // Persistent context marker, not a work item
+	IsTemplate bool `json:"is_template,omitempty"` // Read-only template molecule
 
-	// Template field: template molecule support
-	IsTemplate bool `json:"is_template,omitempty"` // If true, issue is a read-only template molecule
-
-	// Bonding fields: compound molecule lineage
+	// ===== Bonding Fields (compound molecule lineage) =====
 	BondedFrom []BondRef `json:"bonded_from,omitempty"` // For compounds: constituent protos
 
-	// HOP fields: entity tracking for CV chains
-	Creator     *EntityRef   `json:"creator,omitempty"`     // Who created this issue (human, agent, or org)
-	Validations []Validation `json:"validations,omitempty"` // Who validated/approved this work
+	// ===== HOP Fields (entity tracking for CV chains) =====
+	Creator     *EntityRef   `json:"creator,omitempty"`     // Who created (human, agent, or org)
+	Validations []Validation `json:"validations,omitempty"` // Who validated/approved
 
-	// Gate fields: async coordination primitives
+	// ===== Gate Fields (async coordination primitives) =====
 	AwaitType string        `json:"await_type,omitempty"` // Condition type: gh:run, gh:pr, timer, human, mail
-	AwaitID   string        `json:"await_id,omitempty"`   // Condition identifier (e.g., run ID, PR number)
+	AwaitID   string        `json:"await_id,omitempty"`   // Condition identifier (run ID, PR number, etc.)
 	Timeout   time.Duration `json:"timeout,omitempty"`    // Max wait time before escalation
 	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
 
-	// Source tracing fields: track where this issue came from during cooking
-	SourceFormula  string `json:"source_formula,omitempty"`  // Formula name where this step was defined
-	SourceLocation string `json:"source_location,omitempty"` // Path within source: "steps[0]", "advice[0].after"
+	// ===== Source Tracing Fields (formula cooking origin) =====
+	SourceFormula  string `json:"source_formula,omitempty"`  // Formula name where step was defined
+	SourceLocation string `json:"source_location,omitempty"` // Path: "steps[0]", "advice[0].after"
 
-	// Agent identity fields: agent-as-bead support
-	HookBead     string     `json:"hook_bead,omitempty"`     // Current work attached to agent's hook (0..1)
+	// ===== Agent Identity Fields (agent-as-bead support) =====
+	HookBead     string     `json:"hook_bead,omitempty"`     // Current work on agent's hook (0..1)
 	RoleBead     string     `json:"role_bead,omitempty"`     // Role definition bead (required for agents)
-	AgentState   AgentState `json:"agent_state,omitempty"`   // Agent-reported state (idle|running|stuck|stopped)
-	LastActivity *time.Time `json:"last_activity,omitempty"` // Updated on each agent action (for timeout detection)
-	RoleType     string     `json:"role_type,omitempty"`     // Agent role: polecat|crew|witness|refinery|mayor|deacon
-	Rig          string     `json:"rig,omitempty"`           // Rig name (empty for town-level agents like mayor/deacon)
+	AgentState   AgentState `json:"agent_state,omitempty"`   // Agent state: idle|running|stuck|stopped
+	LastActivity *time.Time `json:"last_activity,omitempty"` // Updated on each action (timeout detection)
+	RoleType     string     `json:"role_type,omitempty"`     // Role: polecat|crew|witness|refinery|mayor|deacon
+	Rig          string     `json:"rig,omitempty"`           // Rig name (empty for town-level agents)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
