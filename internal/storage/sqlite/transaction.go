@@ -561,6 +561,78 @@ func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason stri
 		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 	}
 
+	// Reactive convoy completion: check if any convoys tracking this issue should auto-close
+	// Find convoys that track this issue (convoy.issue_id tracks closed_issue.depends_on_id)
+	convoyRows, err := t.conn.QueryContext(ctx, `
+		SELECT DISTINCT d.issue_id
+		FROM dependencies d
+		JOIN issues i ON d.issue_id = i.id
+		WHERE d.depends_on_id = ?
+		  AND d.type = ?
+		  AND i.issue_type = ?
+		  AND i.status != ?
+	`, id, types.DepTracks, types.TypeConvoy, types.StatusClosed)
+	if err != nil {
+		return fmt.Errorf("failed to find tracking convoys: %w", err)
+	}
+	defer func() { _ = convoyRows.Close() }()
+
+	var convoyIDs []string
+	for convoyRows.Next() {
+		var convoyID string
+		if err := convoyRows.Scan(&convoyID); err != nil {
+			return fmt.Errorf("failed to scan convoy ID: %w", err)
+		}
+		convoyIDs = append(convoyIDs, convoyID)
+	}
+	if err := convoyRows.Err(); err != nil {
+		return fmt.Errorf("convoy rows iteration error: %w", err)
+	}
+
+	// For each convoy, check if all tracked issues are now closed
+	for _, convoyID := range convoyIDs {
+		// Count non-closed tracked issues for this convoy
+		var openCount int
+		err := t.conn.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM dependencies d
+			JOIN issues i ON d.depends_on_id = i.id
+			WHERE d.issue_id = ?
+			  AND d.type = ?
+			  AND i.status != ?
+			  AND i.status != ?
+		`, convoyID, types.DepTracks, types.StatusClosed, types.StatusTombstone).Scan(&openCount)
+		if err != nil {
+			return fmt.Errorf("failed to count open tracked issues for convoy %s: %w", convoyID, err)
+		}
+
+		// If all tracked issues are closed, auto-close the convoy
+		if openCount == 0 {
+			closeReason := "All tracked issues completed"
+			_, err := t.conn.ExecContext(ctx, `
+				UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
+				WHERE id = ?
+			`, types.StatusClosed, now, now, closeReason, convoyID)
+			if err != nil {
+				return fmt.Errorf("failed to auto-close convoy %s: %w", convoyID, err)
+			}
+
+			// Record the close event
+			_, err = t.conn.ExecContext(ctx, `
+				INSERT INTO events (issue_id, event_type, actor, comment)
+				VALUES (?, ?, ?, ?)
+			`, convoyID, types.EventClosed, "system:convoy-completion", closeReason)
+			if err != nil {
+				return fmt.Errorf("failed to record convoy close event: %w", err)
+			}
+
+			// Mark convoy as dirty
+			if err := markDirty(ctx, t.conn, convoyID); err != nil {
+				return fmt.Errorf("failed to mark convoy dirty: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
