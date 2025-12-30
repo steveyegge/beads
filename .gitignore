@@ -120,3 +120,11 @@ state.json
 
 # Claude Code runtime
 .runtime/
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Docusaurus website build artifacts
+website/build/
+website/node_modules/
+website/.docusaurus/

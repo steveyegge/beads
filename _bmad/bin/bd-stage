@@ -1,0 +1,29 @@
+#!/bin/bash
+# bd-stage - Exclusive BMAD stage label manager
+# Usage: bd-stage <issue-id> <stage>
+# Stages: backlog, ready-for-dev, in-progress, review, done
+#
+# Uses native bd update - removes all OTHER stages, adds new one
+
+ISSUE="$1"
+STAGE="$2"
+ALL_STAGES="backlog ready-for-dev in-progress review done"
+
+if [[ -z "$ISSUE" || -z "$STAGE" ]]; then
+  echo "Usage: bd-stage <issue-id> <stage>"
+  echo "Stages: $ALL_STAGES"
+  exit 1
+fi
+
+# Build remove args for all stages EXCEPT the target
+REMOVE_ARGS=""
+for s in $ALL_STAGES; do
+  if [[ "$s" != "$STAGE" ]]; then
+    REMOVE_ARGS="$REMOVE_ARGS --remove-label bmad:stage:$s"
+  fi
+done
+
+# One atomic bd update command
+bd update "$ISSUE" --add-label "bmad:stage:$STAGE" $REMOVE_ARGS
+
+echo "✓ $ISSUE → bmad:stage:$STAGE"
