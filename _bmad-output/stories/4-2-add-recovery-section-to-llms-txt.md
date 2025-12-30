@@ -1,0 +1,217 @@
+# Story 4.2: Add Recovery Section to llms.txt
+
+Status: ready-for-dev
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- BEADS TRACKING -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- Beads is the source of truth for task status. Update via bd commands. -->
+
+**Beads IDs:**
+
+- Epic: `bd-907`
+- Story: `bd-907.2`
+
+**Quick Commands:**
+
+- View tasks: `bd list --parent bd-907.2`
+- Find ready work: `bd ready --parent bd-907.2`
+- Mark task done: `bd close <task_id>`
+
+<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+
+## Story
+
+As a **AI agent troubleshooting beads issues**,
+I want **a Recovery section in llms.txt**,
+So that **I can help users resolve common problems**.
+
+## Acceptance Criteria
+
+1. **Given** llms.txt has no Recovery section
+   **When** I update `website/static/llms.txt`
+   **Then** Recovery section lists common issues with quick solutions
+
+2. **And** links to full recovery runbooks included
+
+3. **And** SESSION CLOSE PROTOCOL reference included for AI agent session management (FR12)
+
+4. **And** follows llmstxt.org specification structure
+
+5. **And** llms.txt remains under 10KB (NFR3) - **Current: 1.8KB, budget: ~8KB available**
+
+## Tasks / Subtasks
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- BEADS IS AUTHORITATIVE: Task status is tracked in Beads, not checkboxes.   -->
+<!-- The checkboxes below are for reference only. Use bd commands to update.    -->
+<!-- To view current status: bd list --parent bd-907.2                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+
+- [ ] **Task 1: Analyze current llms.txt structure and recovery docs** (AC: 1, 4) `bd-907.2.1`
+  - [ ] Subtask 1.1: Read current llms.txt file (website/static/llms.txt)
+  - [ ] Subtask 1.2: Review recovery documentation index (website/docs/recovery/index.md)
+  - [ ] Subtask 1.3: Identify llmstxt.org structure sections to add (## Recovery, ## Session Close)
+
+- [ ] **Task 2: Add Recovery section to llms.txt** (AC: 1, 2) `bd-907.2.2`
+  - [ ] Subtask 2.1: Add `## Recovery` section after `## Key Concepts`
+  - [ ] Subtask 2.2: Include 4 common issues with 1-line descriptions
+  - [ ] Subtask 2.3: Add links to full runbooks at steveyegge.github.io/beads/recovery/*
+
+- [ ] **Task 3: Add SESSION CLOSE PROTOCOL** (AC: 3) `bd-907.2.3`
+  - [ ] Subtask 3.1: Add `## Session Close Protocol` section
+  - [ ] Subtask 3.2: Include mandatory `bd sync` instruction
+  - [ ] Subtask 3.3: Add best practices for AI agent session management
+
+- [ ] **Task 4: Validate and test** (AC: 4, 5) `bd-907.2.4`
+  - [ ] Subtask 4.1: Verify file size under 10KB (`wc -c website/static/llms.txt`)
+  - [ ] Subtask 4.2: Verify llmstxt.org structure compliance (# → > → ## sections)
+  - [ ] Subtask 4.3: Test links are valid URLs
+
+## Dev Notes
+
+### File to Modify
+
+**File:** `website/static/llms.txt`
+**Current Size:** 1794 bytes (1.8KB) - **well under 10KB limit**
+**Budget Available:** ~8KB for new content
+
+### llmstxt.org Structure Compliance
+
+Current structure follows spec:
+```
+# Beads (bd)
+> Description
+## Quick Start
+## Essential Commands
+## For AI Agents
+## Key Concepts
+## Documentation
+## Links
+```
+
+Required additions (insert between `## Key Concepts` and `## Documentation`):
+```
+## Recovery
+## Session Close Protocol
+```
+
+### Recovery Section Content
+
+Based on `website/docs/recovery/index.md`, include these 4 issues:
+
+| Issue | Quick Solution | Full Runbook |
+|-------|----------------|--------------|
+| Database Corruption | `git checkout HEAD~1 -- .beads/` | /recovery/database-corruption |
+| Merge Conflicts | `git mergetool .beads/issues.jsonl` | /recovery/merge-conflicts |
+| Circular Dependencies | `bd doctor` (diagnose only!) | /recovery/circular-dependencies |
+| Sync Failures | `bd sync --import-only` | /recovery/sync-failures |
+
+### SESSION CLOSE PROTOCOL (FR12)
+
+**CRITICAL:** This is a PRD requirement (FR12) for AI agent session management.
+
+Content to include:
+```markdown
+## Session Close Protocol
+
+Before ending any session:
+1. Run `bd sync` to push all changes to git
+2. Verify with `bd status` - should show "Clean"
+3. If conflicts exist, resolve before closing
+
+:::warning
+Failing to sync can cause data loss in multi-agent workflows.
+:::
+```
+
+### Expected Final llms.txt Structure
+
+```
+# Beads (bd)
+> Git-backed issue tracker for AI-supervised coding workflows.
+> Daemon-based CLI with formulas, molecules, and multi-agent coordination.
+
+## Quick Start
+[existing content]
+
+## Essential Commands
+[existing content]
+
+## For AI Agents
+[existing content]
+
+## Key Concepts
+[existing content]
+
+## Recovery                          ← NEW SECTION
+
+Quick fixes for common issues:
+
+| Issue | Quick Fix |
+|-------|-----------|
+| Database Corruption | `git checkout HEAD~1 -- .beads/` |
+| Merge Conflicts | Resolve JSONL conflicts, then `bd sync` |
+| Circular Dependencies | `bd doctor` (diagnose only, NEVER --fix) |
+| Sync Failures | `bd sync --import-only` |
+
+Full runbooks: https://steveyegge.github.io/beads/recovery
+
+## Session Close Protocol            ← NEW SECTION
+
+Before ending any AI session:
+1. `bd sync` - push changes to git
+2. `bd status` - verify clean state
+3. Resolve any conflicts before closing
+
+## Documentation
+[existing content]
+
+## Links
+[existing content]
+```
+
+### CRITICAL: bd doctor --fix Warning
+
+From project-context.md and Epic 2 research findings:
+
+> **DANGER: Never Use `bd doctor --fix`** - Analysis of 54 GitHub issues revealed that `bd doctor --fix` frequently causes MORE damage than the original problem.
+
+**In Recovery section, MUST include warning:** "diagnose only, NEVER --fix"
+
+### Testing Requirements
+
+```bash
+# Size validation (must be < 10240 bytes)
+wc -c website/static/llms.txt
+
+# Structure validation (visual)
+cat website/static/llms.txt | head -80
+
+# Link validation
+grep -E "https://" website/static/llms.txt
+```
+
+### References
+
+- [epic-4-ai-agent-documentation-bd-907.md#Story 4.2] - Acceptance criteria
+- [project-context.md#llms.txt Structure] - llmstxt.org spec
+- [project-context.md#DANGER: Never Use bd doctor --fix] - Critical warning
+- [website/docs/recovery/index.md] - Recovery overview
+- [architecture.md#llms.txt Content Structure] - Structure specification
+
+## Dev Agent Record
+
+### Agent Model Used
+
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### Debug Log References
+
+N/A
+
+### Completion Notes List
+
+### File List
+
+- `website/static/llms.txt` - Add Recovery and Session Close Protocol sections

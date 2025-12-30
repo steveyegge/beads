@@ -151,10 +151,11 @@ development_status:
     story_file: stories/4-1-add-bmad-style-ai-meta-tags.md
 
   4-2-add-recovery-section-to-llms-txt:
-    status: backlog
+    status: ready-for-dev
     beads_id: bd-907.2
     assignee: TechWriter
     title: "Add Recovery Section to llms.txt"
+    story_file: stories/4-2-add-recovery-section-to-llms-txt.md
 
   4-3-regenerate-llms-full-txt:
     status: backlog
