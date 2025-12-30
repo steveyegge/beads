@@ -143,6 +143,38 @@ bd label list <id> --json
 bd label list-all --json
 ```
 
+### State (Labels as Cache)
+
+For operational state tracking on role beads. Uses `<dimension>:<value>` label convention.
+See [LABELS.md](LABELS.md#operational-state-pattern-labels-as-cache) for full pattern documentation.
+
+```bash
+# Query current state value
+bd state <id> <dimension>                    # Output: value
+bd state witness-abc patrol                  # Output: active
+bd state --json witness-abc patrol           # {"issue_id": "...", "dimension": "patrol", "value": "active"}
+
+# List all state dimensions on an issue
+bd state list <id> --json
+bd state list witness-abc                    # patrol: active, mode: normal, health: healthy
+
+# Set state (creates event + updates label atomically)
+bd set-state <id> <dimension>=<value> --reason "explanation" --json
+bd set-state witness-abc patrol=muted --reason "Investigating stuck polecat"
+bd set-state witness-abc mode=degraded --reason "High error rate"
+```
+
+**Common dimensions:**
+- `patrol`: active, muted, suspended
+- `mode`: normal, degraded, maintenance
+- `health`: healthy, warning, failing
+- `status`: idle, working, blocked
+
+**What `set-state` does:**
+1. Creates event bead with reason (source of truth)
+2. Removes old `<dimension>:*` label if exists
+3. Adds new `<dimension>:<value>` label (cache)
+
 ## Filtering & Search
 
 ### Basic Filters

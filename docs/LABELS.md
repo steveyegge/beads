@@ -714,20 +714,32 @@ bd label list witness-alpha
 # Output: patrol:active, mode:normal, health:healthy
 ```
 
-### Future: Helper Commands
+### Helper Commands
 
-For convenience, these helpers are planned:
+For convenience, use these helpers:
 
 ```bash
 # Query a specific dimension
 bd state witness-alpha patrol
 # Output: active
 
+# List all state dimensions
+bd state list witness-alpha
+# Output:
+#   patrol: active
+#   mode: normal
+#   health: healthy
+
 # Set state (creates event + updates label atomically)
 bd set-state witness-alpha patrol=muted --reason "Investigating issue"
 ```
 
-Until then, use the manual event + label pattern above.
+The `set-state` command atomically:
+1. Creates an event bead with the reason (source of truth)
+2. Removes the old dimension label if present
+3. Adds the new dimension:value label (cache)
+
+See [CLI_REFERENCE.md](CLI_REFERENCE.md#state-labels-as-cache) for full command reference.
 
 ## Troubleshooting
 
