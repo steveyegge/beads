@@ -488,6 +488,120 @@ bd list --label breaking-change,v2.0
 bd list --label breaking-change --label needs-docs
 ```
 
+## Operational State Pattern (Labels as Cache)
+
+For orchestration systems like Gas Town, labels can cache the current operational state of "role beads" (issues representing agents or system components). This enables fast state queries without scanning event history.
+
+### Convention: `<dimension>:<value>`
+
+Use colon-separated labels with a dimension prefix and value suffix:
+
+```
+patrol:muted      patrol:active
+mode:degraded     mode:normal
+status:idle       status:working
+health:healthy    health:failing
+```
+
+### The Pattern
+
+1. **Create an event bead** with full context (immutable, audit trail)
+2. **Update the role bead's labels** to reflect current state (fast lookup)
+
+```bash
+# 1. Record the event (source of truth)
+bd create "Muted patrol for witness-abc" -t event \
+  --parent witness-abc \
+  -d "Reason: investigating stuck polecat. Expected duration: 30m"
+
+# 2. Update the cached state label
+bd label remove witness-abc patrol:active
+bd label add witness-abc patrol:muted
+```
+
+### Why This Pattern?
+
+**Events are source of truth. Labels are cache.**
+
+| Approach | Events Only | Labels as Cache |
+|----------|-------------|-----------------|
+| Query current state | Scan all events, find latest | `bd list --label patrol:muted` |
+| Query state history | Natural (all events exist) | Query events |
+| Audit trail | Complete | Complete (events still exist) |
+| Performance | O(n) events | O(1) label lookup |
+
+The pattern gives you both: complete history via events, fast queries via labels.
+
+### Example: Agent Role States
+
+```bash
+# Create a role bead for an agent
+bd create "witness-alpha" -t role -l patrol:active,mode:normal,health:healthy
+
+# Agent enters degraded mode
+bd create "Degraded: high error rate" -t event --parent witness-alpha \
+  -d "Error rate exceeded 5%. Reducing poll frequency."
+bd label remove witness-alpha mode:normal
+bd label add witness-alpha mode:degraded
+
+# Query current state
+bd list --label mode:degraded --type role  # All degraded roles
+
+# Agent recovers
+bd create "Recovered: error rate normal" -t event --parent witness-alpha
+bd label remove witness-alpha mode:degraded
+bd label add witness-alpha mode:normal
+```
+
+### Common Dimensions
+
+| Dimension | Values | Use Case |
+|-----------|--------|----------|
+| `patrol` | `active`, `muted`, `suspended` | Agent patrol cycles |
+| `mode` | `normal`, `degraded`, `maintenance` | Operational modes |
+| `status` | `idle`, `working`, `blocked` | Work state |
+| `health` | `healthy`, `warning`, `failing` | Health checks |
+| `sync` | `current`, `stale`, `syncing` | Sync state |
+
+### Best Practices
+
+1. **Always create the event first** - Labels are cache; events are truth
+2. **Remove old value before adding new** - Prevents dimension:value1 + dimension:value2 conflicts
+3. **Use consistent dimension names** - Establish team conventions early
+4. **Keep dimensions orthogonal** - patrol and mode are independent concerns
+
+### Querying State
+
+```bash
+# Find all muted patrols
+bd list --label patrol:muted
+
+# Find healthy agents in normal mode
+bd list --label health:healthy,mode:normal
+
+# Find any non-healthy agents
+bd list --label-any health:warning,health:failing
+
+# Get state for a specific role
+bd label list witness-alpha
+# Output: patrol:active, mode:normal, health:healthy
+```
+
+### Future: Helper Commands
+
+For convenience, these helpers are planned:
+
+```bash
+# Query a specific dimension
+bd state witness-alpha patrol
+# Output: active
+
+# Set state (creates event + updates label atomically)
+bd set-state witness-alpha patrol=muted --reason "Investigating issue"
+```
+
+Until then, use the manual event + label pattern above.
+
 ## Troubleshooting
 
 ### Labels Not Showing in List
