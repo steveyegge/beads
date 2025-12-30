@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -119,4 +120,49 @@ func FixGitignore() error {
 	}
 
 	return nil
+}
+
+// CheckIssuesTracking verifies that issues.jsonl is tracked by git.
+// This catches cases where global gitignore patterns (e.g., *.jsonl) would
+// cause issues.jsonl to be ignored, breaking bd sync.
+func CheckIssuesTracking() DoctorCheck {
+	issuesPath := filepath.Join(".beads", "issues.jsonl")
+
+	// First check if the file exists
+	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
+		// File doesn't exist yet - not an error, bd init may not have been run
+		return DoctorCheck{
+			Name:   "Issues Tracking",
+			Status: "ok",
+			Message: "No issues.jsonl yet (will be created on first issue)",
+		}
+	}
+
+	// Check if git considers this file ignored
+	// git check-ignore exits 0 if ignored, 1 if not ignored, 128 if error
+	cmd := exec.Command("git", "check-ignore", "-q", issuesPath)
+	err := cmd.Run()
+
+	if err == nil {
+		// Exit code 0 means the file IS ignored - this is bad
+		// Get details about what's ignoring it
+		detailCmd := exec.Command("git", "check-ignore", "-v", issuesPath)
+		output, _ := detailCmd.Output()
+		detail := strings.TrimSpace(string(output))
+
+		return DoctorCheck{
+			Name:    "Issues Tracking",
+			Status:  "warning",
+			Message: "issues.jsonl is ignored by git (bd sync will fail)",
+			Detail:  detail,
+			Fix:     "Check global gitignore: git config --global core.excludesfile",
+		}
+	}
+
+	// Exit code 1 means not ignored (good), any other error we ignore
+	return DoctorCheck{
+		Name:    "Issues Tracking",
+		Status:  "ok",
+		Message: "issues.jsonl is tracked by git",
+	}
 }
