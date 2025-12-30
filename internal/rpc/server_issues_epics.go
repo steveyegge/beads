@@ -613,18 +613,31 @@ func (s *Server) handleUpdate(req *Request) Response {
 
 	// Emit mutation event for event-driven daemon (only if any updates or label/parent operations were performed)
 	if len(updates) > 0 || len(updateArgs.SetLabels) > 0 || len(updateArgs.AddLabels) > 0 || len(updateArgs.RemoveLabels) > 0 || updateArgs.Parent != nil {
+		// Determine effective assignee: use new assignee from update if provided, otherwise use existing
+		effectiveAssignee := issue.Assignee
+		if updateArgs.Assignee != nil && *updateArgs.Assignee != "" {
+			effectiveAssignee = *updateArgs.Assignee
+		}
+
 		// Check if this was a status change - emit rich MutationStatus event
 		if updateArgs.Status != nil && *updateArgs.Status != string(issue.Status) {
 			s.emitRichMutation(MutationEvent{
 				Type:      MutationStatus,
 				IssueID:   updateArgs.ID,
 				Title:     issue.Title,
-				Assignee:  issue.Assignee,
+				Assignee:  effectiveAssignee,
+				Actor:     actor,
 				OldStatus: string(issue.Status),
 				NewStatus: *updateArgs.Status,
 			})
 		} else {
-			s.emitMutation(MutationUpdate, updateArgs.ID, issue.Title, issue.Assignee)
+			s.emitRichMutation(MutationEvent{
+				Type:     MutationUpdate,
+				IssueID:  updateArgs.ID,
+				Title:    issue.Title,
+				Assignee: effectiveAssignee,
+				Actor:    actor,
+			})
 		}
 	}
 

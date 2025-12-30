@@ -39,6 +39,7 @@ type ActivityEvent struct {
 	NewStatus string `json:"new_status,omitempty"`
 	ParentID  string `json:"parent_id,omitempty"`
 	StepCount int    `json:"step_count,omitempty"`
+	Actor     string `json:"actor,omitempty"`
 }
 
 var activityCmd = &cobra.Command{
@@ -299,6 +300,7 @@ func formatEvent(e rpc.MutationEvent) ActivityEvent {
 		NewStatus: e.NewStatus,
 		ParentID:  e.ParentID,
 		StepCount: e.StepCount,
+		Actor:     e.Actor,
 	}
 }
 
@@ -340,7 +342,7 @@ func getEventDisplay(e rpc.MutationEvent) (symbol, message string) {
 	}
 }
 
-// buildEventContext creates a context string from title and assignee
+// buildEventContext creates a context string from title and actor/assignee
 func buildEventContext(e rpc.MutationEvent) string {
 	var parts []string
 
@@ -350,8 +352,11 @@ func buildEventContext(e rpc.MutationEvent) string {
 		parts = append(parts, title)
 	}
 
-	// Add assignee if present
-	if e.Assignee != "" {
+	// For status changes, prefer showing actor (who performed the action)
+	// For other events, show assignee
+	if e.Actor != "" {
+		parts = append(parts, "@"+e.Actor)
+	} else if e.Assignee != "" {
 		parts = append(parts, "@"+e.Assignee)
 	}
 
