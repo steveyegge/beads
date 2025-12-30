@@ -35,9 +35,9 @@ const config: Config = {
   },
   themes: ['@docusaurus/theme-mermaid'],
 
-  future: {
-    v4: true,
-  },
+  // future: {
+  //   v4: true,
+  // },
 
   // GitHub Pages deployment (environment-configurable)
   url: siteUrl,
