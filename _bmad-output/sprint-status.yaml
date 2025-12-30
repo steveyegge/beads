@@ -138,16 +138,17 @@ development_status:
   # Epic 4: AI Agent Documentation [P2] ⏳ BLOCKED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-4:
-    status: backlog
+    status: in-progress
     beads_id: bd-907
     title: "AI Agent Documentation"
     blocked_by: bd-gg5
 
   4-1-bmad-style-ai-meta-tags:
-    status: backlog
+    status: done
     beads_id: bd-907.1
     assignee: Dev
     title: "Add BMAD-Style AI Meta Tags"
+    story_file: stories/4-1-add-bmad-style-ai-meta-tags.md
 
   4-2-add-recovery-section-to-llms-txt:
     status: backlog
