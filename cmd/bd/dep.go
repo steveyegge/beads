@@ -222,9 +222,10 @@ Examples:
 }
 
 var depRemoveCmd = &cobra.Command{
-	Use:   "remove [issue-id] [depends-on-id]",
-	Short: "Remove a dependency",
-	Args:  cobra.ExactArgs(2),
+	Use:     "remove [issue-id] [depends-on-id]",
+	Aliases: []string{"rm"},
+	Short:   "Remove a dependency",
+	Args:    cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("dep remove")
 		ctx := rootCtx

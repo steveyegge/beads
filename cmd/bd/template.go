@@ -237,7 +237,7 @@ Example:
 
 		ctx := rootCtx
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		varFlags, _ := cmd.Flags().GetStringSlice("var")
+		varFlags, _ := cmd.Flags().GetStringArray("var")
 		assignee, _ := cmd.Flags().GetString("assignee")
 
 		// Parse variables
@@ -355,7 +355,7 @@ Example:
 }
 
 func init() {
-	templateInstantiateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	templateInstantiateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	templateInstantiateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	templateInstantiateCmd.Flags().String("assignee", "", "Assign the root epic to this agent/user")
 

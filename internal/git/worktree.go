@@ -181,11 +181,15 @@ func (wm *WorktreeManager) SyncJSONLToWorktree(worktreePath, jsonlRelPath string
 // If ForceOverwrite is false (default), the function uses merge logic to prevent
 // data loss when a fresh clone syncs with fewer issues than the remote.
 func (wm *WorktreeManager) SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRelPath string, opts SyncOptions) error {
-	// Source: main repo JSONL
+	// Source: main repo JSONL (use the full path as provided)
 	srcPath := filepath.Join(wm.repoPath, jsonlRelPath)
 
 	// Destination: worktree JSONL
-	dstPath := filepath.Join(worktreePath, jsonlRelPath)
+	// GH#785: Handle bare repo worktrees where jsonlRelPath might include the
+	// worktree name (e.g., "main/.beads/issues.jsonl"). The sync branch uses
+	// sparse checkout for .beads/* so we normalize to strip leading components.
+	normalizedRelPath := normalizeBeadsRelPath(jsonlRelPath)
+	dstPath := filepath.Join(worktreePath, normalizedRelPath)
 
 	// Ensure destination directory exists
 	dstDir := filepath.Dir(dstPath)
@@ -316,6 +320,21 @@ func (wm *WorktreeManager) mergeJSONLFiles(srcData, dstData []byte) ([]byte, err
 	return mergedData, nil
 }
 
+
+// normalizeBeadsRelPath strips any leading path components before .beads/.
+// This handles bare repo worktrees where the relative path includes the worktree
+// name (e.g., "main/.beads/issues.jsonl" -> ".beads/issues.jsonl").
+// GH#785: Fix for sync failing across worktrees in bare repo setup.
+func normalizeBeadsRelPath(relPath string) string {
+	// Use filepath.ToSlash for consistent handling across platforms
+	normalized := filepath.ToSlash(relPath)
+	// Look for ".beads/" to ensure we match the directory, not a prefix like ".beads-backup"
+	if idx := strings.Index(normalized, ".beads/"); idx > 0 {
+		// Strip leading path components before .beads
+		return filepath.FromSlash(normalized[idx:])
+	}
+	return relPath
+}
 
 // isValidWorktree checks if the path is a valid git worktree
 func (wm *WorktreeManager) isValidWorktree(worktreePath string) (bool, error) {

@@ -118,7 +118,7 @@ func parseCookFlags(cmd *cobra.Command, args []string) (*cookFlags, error) {
 	force, _ := cmd.Flags().GetBool("force")
 	searchPaths, _ := cmd.Flags().GetStringSlice("search-path")
 	prefix, _ := cmd.Flags().GetString("prefix")
-	varFlags, _ := cmd.Flags().GetStringSlice("var")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
 	mode, _ := cmd.Flags().GetString("mode")
 
 	// Parse variables
@@ -917,7 +917,7 @@ func init() {
 	cookCmd.Flags().Bool("force", false, "Replace existing proto if it exists (requires --persist)")
 	cookCmd.Flags().StringSlice("search-path", []string{}, "Additional paths to search for formula inheritance")
 	cookCmd.Flags().String("prefix", "", "Prefix to prepend to proto ID (e.g., 'gt-' creates 'gt-mol-feature')")
-	cookCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value), enables runtime mode")
+	cookCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value), enables runtime mode")
 	cookCmd.Flags().String("mode", "", "Cooking mode: compile (keep placeholders) or runtime (substitute vars)")
 
 	rootCmd.AddCommand(cookCmd)

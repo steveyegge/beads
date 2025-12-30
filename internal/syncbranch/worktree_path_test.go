@@ -179,3 +179,66 @@ func runGitCmd(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
 }
+
+// TestNormalizeBeadsRelPath tests path normalization for bare repo worktrees.
+// This is the regression test for GH#785.
+func TestNormalizeBeadsRelPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "normal repo path unchanged",
+			input:    ".beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "bare repo worktree strips leading component",
+			input:    "main/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "bare repo worktree with deeper path",
+			input:    "worktrees/feature-branch/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "metadata file also works",
+			input:    "main/.beads/metadata.json",
+			expected: ".beads/metadata.json",
+		},
+		{
+			name:     "path with no .beads unchanged",
+			input:    "some/other/path.txt",
+			expected: "some/other/path.txt",
+		},
+		{
+			name:     ".beads at start unchanged",
+			input:    ".beads/subdir/file.jsonl",
+			expected: ".beads/subdir/file.jsonl",
+		},
+		{
+			name:     "similar prefix like .beads-backup not matched",
+			input:    "foo/.beads-backup/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "only .beads-backup no real .beads unchanged",
+			input:    "foo/.beads-backup/file.txt",
+			expected: "foo/.beads-backup/file.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Normalize to forward slashes for comparison
+			result := normalizeBeadsRelPath(tt.input)
+			// Convert expected to platform path for comparison
+			expectedPlatform := filepath.FromSlash(tt.expected)
+			if result != expectedPlatform {
+				t.Errorf("normalizeBeadsRelPath(%q) = %q, want %q", tt.input, result, expectedPlatform)
+			}
+		})
+	}
+}

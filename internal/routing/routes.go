@@ -116,7 +116,7 @@ func LookupRigForgiving(input, beadsDir string) (Route, bool) {
 // lookupRigForgivingWithTown finds a route with flexible matching and returns the town root.
 // Returns (route, townRoot, found).
 func lookupRigForgivingWithTown(input, beadsDir string) (Route, string, bool) {
-	routes, townRoot, _ := findTownRoutes(beadsDir)
+	routes, townRoot := findTownRoutes(beadsDir)
 	if len(routes) == 0 {
 		return Route{}, "", false
 	}
@@ -235,7 +235,7 @@ func ResolveToExternalRef(id, beadsDir string) string {
 func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (string, bool, error) {
 	// Step 1: Check for routes.jsonl based on ID prefix
 	// First try local, then walk up to find town-level routes
-	routes, townRoot, _ := findTownRoutes(currentBeadsDir)
+	routes, townRoot := findTownRoutes(currentBeadsDir)
 	if len(routes) > 0 {
 		prefix := ExtractPrefix(id)
 		if prefix != "" {
@@ -294,29 +294,29 @@ func findTownRoot(startDir string) string {
 // findTownRoutes searches for routes.jsonl at the town level.
 // It walks up from currentBeadsDir to find the town root, then loads routes
 // from <townRoot>/.beads/routes.jsonl.
-// Returns (routes, townRoot, error).
-func findTownRoutes(currentBeadsDir string) ([]Route, string, error) {
+// Returns (routes, townRoot). Returns nil routes if not in a Gas Town or no routes found.
+func findTownRoutes(currentBeadsDir string) ([]Route, string) {
 	// First try the current beads dir (works if we're already at town level)
 	routes, err := LoadRoutes(currentBeadsDir)
 	if err == nil && len(routes) > 0 {
 		// Return the parent of the beads dir as "town root" for path resolution
-		return routes, filepath.Dir(currentBeadsDir), nil
+		return routes, filepath.Dir(currentBeadsDir)
 	}
 
 	// Walk up to find town root
 	townRoot := findTownRoot(currentBeadsDir)
 	if townRoot == "" {
-		return nil, "", nil // Not in a Gas Town
+		return nil, "" // Not in a Gas Town
 	}
 
 	// Load routes from town beads
 	townBeadsDir := filepath.Join(townRoot, ".beads")
 	routes, err = LoadRoutes(townBeadsDir)
 	if err != nil || len(routes) == 0 {
-		return nil, "", nil // No town routes
+		return nil, "" // No town routes
 	}
 
-	return routes, townRoot, nil
+	return routes, townRoot
 }
 
 // resolveRedirect checks for a redirect file in the beads directory
