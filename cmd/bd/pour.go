@@ -65,7 +65,7 @@ func runPour(cmd *cobra.Command, args []string) {
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	varFlags, _ := cmd.Flags().GetStringSlice("var")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
 	assignee, _ := cmd.Flags().GetString("assignee")
 	attachFlags, _ := cmd.Flags().GetStringSlice("attach")
 	attachType, _ := cmd.Flags().GetString("attach-type")
@@ -275,7 +275,7 @@ func runPour(cmd *cobra.Command, args []string) {
 
 func init() {
 	// Pour command flags
-	pourCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	pourCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	pourCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	pourCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
 	pourCmd.Flags().StringSlice("attach", []string{}, "Proto to attach after spawning (repeatable)")
