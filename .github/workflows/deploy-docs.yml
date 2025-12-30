@@ -45,6 +45,38 @@ jobs:
         working-directory: website
         run: npm run build
 
+      - name: Check internal links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: |
+            --verbose
+            --no-progress
+            --offline
+            --include-fragments
+            --timeout 30
+            --exclude-path 'website/build/search/**'
+            website/build
+          fail: true
+
+      - name: Check external links (non-blocking)
+        uses: lycheeverse/lychee-action@v2
+        continue-on-error: true
+        with:
+          cache: true
+          args: |
+            --verbose
+            --no-progress
+            --timeout 30
+            --scheme https
+            --scheme http
+            --exclude 'localhost'
+            --exclude '127.0.0.1'
+            --exclude 'tree/docs/docusaurus-site'
+            --exclude 'example.com'
+            --exclude 'mailto:'
+            --exclude-path 'website/build/search/**'
+            website/build
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

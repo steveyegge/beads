@@ -245,6 +245,48 @@ All contributions go through code review:
 3. Address review feedback
 4. Maintainer will merge when ready
 
+## CI Quality Gates (Documentation)
+
+The documentation site (`website/`) has additional CI checks in `deploy-docs.yml`:
+
+### Link Checker (lychee)
+
+Broken links are validated on every push to `docs/docusaurus-site`:
+
+- **Internal links**: Must be valid (workflow fails on broken internal links)
+- **External links**: Warnings only (external sites may be temporarily unavailable)
+
+**Excluded patterns:**
+- `localhost`, `127.0.0.1` - Local development URLs
+- `tree/docs/docusaurus-site` - GitHub edit links
+- `example.com` - Placeholder URLs in examples
+- `mailto:` - Email links
+
+### Running Link Checker Locally
+
+Install lychee and run before pushing documentation changes:
+
+```bash
+# Install lychee
+cargo install lychee  # via Rust
+# or
+brew install lychee   # via Homebrew (macOS)
+
+# Build the docs first
+cd website && npm run build
+
+# Check internal links (will fail on broken links)
+lychee --offline --include-fragments --timeout 30 \
+  --exclude-path 'website/build/search/**' website/build
+
+# Check all links including external (may have false positives)
+lychee --timeout 30 \
+  --exclude 'localhost' --exclude '127.0.0.1' \
+  --exclude 'tree/docs/docusaurus-site' --exclude 'example.com' \
+  --exclude 'mailto:' --exclude-path 'website/build/search/**' \
+  website/build
+```
+
 ## Development Tips
 
 ### Testing Locally
