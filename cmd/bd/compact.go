@@ -782,7 +782,7 @@ func init() {
 	compactCmd.Flags().BoolVar(&compactApply, "apply", false, "Apply mode: accept agent-provided summary")
 	compactCmd.Flags().BoolVar(&compactAuto, "auto", false, "Auto mode: AI-powered compaction (legacy)")
 	compactCmd.Flags().BoolVar(&compactPrune, "prune", false, "Prune mode: remove expired tombstones from issues.jsonl (by age)")
-	compactCmd.Flags().IntVar(&compactOlderThan, "older-than", 0, "Prune tombstones older than N days (default: 30)")
+	compactCmd.Flags().IntVar(&compactOlderThan, "older-than", -1, "Prune tombstones older than N days (0=all, default: 30)")
 	compactCmd.Flags().BoolVar(&compactPurgeTombstones, "purge-tombstones", false, "Purge mode: remove tombstones with no open deps (by dependency analysis)")
 	compactCmd.Flags().StringVar(&compactSummary, "summary", "", "Path to summary file (use '-' for stdin)")
 	compactCmd.Flags().StringVar(&compactActor, "actor", "agent", "Actor name for audit trail")

@@ -175,10 +175,16 @@ func previewPruneTombstones(customTTL time.Duration) (*TombstonePruneResult, err
 func runCompactPrune() {
 	start := time.Now()
 
-	// Calculate TTL from --older-than flag (0 means use default 30 days)
+	// Calculate TTL from --older-than flag
+	// -1 (default) = use 30 day default, 0 = expire all, >0 = N days
 	var customTTL time.Duration
-	if compactOlderThan > 0 {
-		customTTL = time.Duration(compactOlderThan) * 24 * time.Hour
+	if compactOlderThan >= 0 {
+		if compactOlderThan == 0 {
+			// --older-than=0 means "expire all tombstones"
+			customTTL = 1 * time.Nanosecond
+		} else {
+			customTTL = time.Duration(compactOlderThan) * 24 * time.Hour
+		}
 	}
 
 	if compactDryRun {
