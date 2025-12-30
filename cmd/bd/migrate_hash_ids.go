@@ -21,7 +21,6 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
-// TODO(bd-7l27): Consider integrating into 'bd doctor' migration detection
 var migrateHashIDsCmd = &cobra.Command{
 	Use:     "hash-ids",
 	Short:   "Migrate sequential IDs to hash-based IDs (legacy)",

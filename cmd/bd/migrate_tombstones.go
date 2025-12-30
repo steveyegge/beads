@@ -69,7 +69,6 @@ func loadLegacyDeletionsCmd(path string) (map[string]legacyDeletionRecordCmd, []
 	return records, warnings, nil
 }
 
-// TODO(bd-7l27): Consider integrating into 'bd doctor' migration detection
 var migrateTombstonesCmd = &cobra.Command{
 	Use:     "tombstones",
 	Short:   "Convert deletions.jsonl entries to inline tombstones",

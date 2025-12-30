@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
-// TODO(bd-7l27): Consider integrating into 'bd doctor' migration detection
 var migrateIssuesCmd = &cobra.Command{
 	Use:     "issues",
 	Short:   "Move issues between repositories",

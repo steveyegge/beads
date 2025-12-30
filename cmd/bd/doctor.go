@@ -519,6 +519,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, sizeCheck)
 	// Don't fail overall check for size warning, just inform
 
+	// Check 30: Pending migrations (summarizes all available migrations)
+	migrationsCheck := convertDoctorCheck(doctor.CheckPendingMigrations(path))
+	result.Checks = append(result.Checks, migrationsCheck)
+	// Status is determined by the check itself based on migration priorities
+
 	return result
 }
 

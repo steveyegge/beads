@@ -103,7 +103,7 @@ func CheckIDFormat(path string) DoctorCheck {
 		Name:    "Issue IDs",
 		Status:  StatusWarning,
 		Message: "sequential (e.g., bd-1, bd-2, ...)",
-		Fix:     "Run 'bd migrate --to-hash-ids' to upgrade (prevents ID collisions in multi-worker scenarios)",
+		Fix:     "Run 'bd migrate hash-ids' to upgrade (prevents ID collisions in multi-worker scenarios)",
 	}
 }
 
@@ -357,7 +357,7 @@ func CheckDeletionsManifest(path string) DoctorCheck {
 					Status:  StatusWarning,
 					Message: fmt.Sprintf("Legacy format (%d entries)", count),
 					Detail:  "deletions.jsonl is deprecated in favor of inline tombstones",
-					Fix:     "Run 'bd migrate-tombstones' to convert to inline tombstones",
+					Fix:     "Run 'bd migrate tombstones' to convert to inline tombstones",
 				}
 			}
 			return DoctorCheck{

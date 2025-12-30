@@ -476,8 +476,8 @@ func CheckSyncBranchConfig(path string) DoctorCheck {
 			Name:    "Sync Branch Config",
 			Status:  StatusWarning,
 			Message: "sync-branch not configured",
-			Detail:  "Multi-clone setups should configure sync-branch in config.yaml",
-			Fix:     "Add 'sync-branch: beads-sync' to .beads/config.yaml",
+			Detail:  "Multi-clone setups should configure sync-branch for safe data synchronization",
+			Fix:     "Run 'bd migrate sync beads-sync' to set up sync branch workflow",
 		}
 	}
 
