@@ -75,10 +75,10 @@ echo "Description text" | bd create "Issue title" --body-file=- --json
 cat description.md | bd create "Issue title" --body-file - -p 1 --json
 
 # Create epic with hierarchical child tasks
-bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
-bd create "Login UI" -p 1 --json                     # Auto-assigned: bd-a3f8e9.1
-bd create "Backend validation" -p 1 --json           # Auto-assigned: bd-a3f8e9.2
-bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.3
+bd create "Auth System" -t epic -p 1 --json                     # Returns: bd-a3f8e9
+bd create "Login UI" -p 1 --parent bd-a3f8e9 --json             # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1 --parent bd-a3f8e9 --json   # Auto-assigned: bd-a3f8e9.2
+bd create "Tests" -p 1 --parent bd-a3f8e9 --json                # Auto-assigned: bd-a3f8e9.3
 
 # Create and link discovered work (one command)
 bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
