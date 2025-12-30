@@ -108,6 +108,11 @@ func DatabaseCorruptionRecoveryWithOptions(path string, force bool, source strin
 	jsonlPath := findJSONLPath(beadsDir)
 	jsonlExists := jsonlPath != ""
 
+	// Check for contradictory flags early
+	if force && source == "db" {
+		return fmt.Errorf("--force and --source=db are contradictory: --force implies the database is broken and recovery should use JSONL. Use --source=jsonl or --source=auto with --force")
+	}
+
 	// Determine source of truth based on --source flag and availability
 	var useJSONL bool
 	switch source {
@@ -117,17 +122,28 @@ func DatabaseCorruptionRecoveryWithOptions(path string, force bool, source strin
 			return fmt.Errorf("--source=jsonl specified but no JSONL file found")
 		}
 		useJSONL = true
-		fmt.Println("  Using JSONL as source of truth (--source=jsonl)")
+		if force {
+			fmt.Println("  Using JSONL as source of truth (--force --source=jsonl)")
+		} else {
+			fmt.Println("  Using JSONL as source of truth (--source=jsonl)")
+		}
 	case "db":
-		// Explicit database preference
+		// Explicit database preference (already checked for force+db contradiction above)
 		if !dbExists {
 			return fmt.Errorf("--source=db specified but no database found")
 		}
 		useJSONL = false
 		fmt.Println("  Using database as source of truth (--source=db)")
 	case "auto":
-		// Auto-detect: prefer JSONL if database is corrupted, otherwise prefer database
-		if !dbExists && jsonlExists {
+		// Auto-detect: prefer JSONL if database is corrupted or force is set
+		if force {
+			// Force mode implies database is broken - use JSONL
+			if !jsonlExists {
+				return fmt.Errorf("--force requires JSONL for recovery but no JSONL file found")
+			}
+			useJSONL = true
+			fmt.Println("  Using JSONL as source of truth (--force mode)")
+		} else if !dbExists && jsonlExists {
 			useJSONL = true
 			fmt.Println("  Using JSONL as source of truth (database missing)")
 		} else if dbExists && !jsonlExists {
@@ -142,12 +158,6 @@ func DatabaseCorruptionRecoveryWithOptions(path string, force bool, source strin
 		}
 	default:
 		return fmt.Errorf("invalid --source value: %s (valid values: auto, jsonl, db)", source)
-	}
-
-	// If force mode is enabled, always use JSONL recovery (bypass database validation)
-	if force {
-		useJSONL = true
-		fmt.Println("  Force mode enabled: bypassing database validation, using JSONL recovery")
 	}
 
 	// If using database as source, just run migration (no recovery needed)
