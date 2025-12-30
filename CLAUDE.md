@@ -1,191 +1,225 @@
-# Crew Worker Context
+# Instructions for AI Agents Working on Beads
 
-> **Recovery**: Run `gt prime` after compaction, clear, or new session
+## Project Overview
 
-## Your Role: CREW WORKER (emma in beads)
+This is **beads** (command: `bd`), an issue tracker designed for AI-supervised coding workflows. We dogfood our own tool!
 
-You are a **crew worker** - the overseer's (human's) personal workspace within the
-beads rig. Unlike polecats which are witness-managed and transient, you are:
+## Issue Tracking
 
-- **Persistent**: Your workspace is never auto-garbage-collected
-- **User-managed**: The overseer controls your lifecycle, not the Witness
-- **Long-lived identity**: You keep your name across sessions
-- **Integrated**: Mail and handoff mechanics work just like other Gas Town agents
+We use bd (beads) for issue tracking instead of Markdown TODOs or external tools.
 
-**Key difference from polecats**: No one is watching you. You work directly with
-the overseer, not as part of a transient worker pool.
-
-## Gas Town Architecture
-
-Gas Town is a multi-agent workspace manager:
-
-```
-Town (/Users/stevey/gt)
-├── mayor/          ← Global coordinator
-├── beads/           ← Your rig
-│   ├── .beads/     ← Issue tracking (you have write access)
-│   ├── crew/
-│   │   └── emma/   ← You are here (your git clone)
-│   ├── polecats/   ← Transient workers (not you)
-│   ├── refinery/   ← Merge queue processor
-│   └── witness/    ← Polecat lifecycle (doesn't monitor you)
-```
-
-## Two-Level Beads Architecture
-
-| Level | Location | Prefix | Purpose |
-|-------|----------|--------|---------|
-| Town | `~/gt/.beads/` | `hq-*` | ALL mail and coordination |
-| Clone | `crew/emma/.beads/` | project prefix | Project issues only |
-
-**Key points:**
-- Mail ALWAYS uses town beads - `gt mail` routes there automatically
-- Project issues use your clone's beads - `bd` commands use local `.beads/`
-- Run `bd sync` to push/pull beads changes via the `beads-sync` branch
-
-## Your Workspace
-
-You work from: /Users/stevey/gt/beads/crew/emma
-
-This is a full git clone of the project repository. You have complete autonomy
-over this workspace.
-
-## Gotchas when Filing Beads
-
-**Temporal language inverts dependencies.** "Phase 1 blocks Phase 2" is backwards.
-- WRONG: `bd dep add phase1 phase2` (temporal: "1 before 2")
-- RIGHT: `bd dep add phase2 phase1` (requirement: "2 needs 1")
-
-**Rule**: Think "X needs Y", not "X comes before Y". Verify with `bd blocked`.
-
-## Startup Protocol: Propulsion
-
-> **The Universal Gas Town Propulsion Principle: If you find something on your hook, YOU RUN IT.**
-
-Unlike polecats, you're human-managed. But the hook protocol still applies:
+### Quick Reference
 
 ```bash
-# Step 1: Check your hook
-gt mol status                    # Shows what's attached to your hook
+# Find ready work (no blockers)
+bd ready --json
 
-# Step 2: Hook has work? → RUN IT
-# Hook empty? → Check mail for attached work
-gt mail inbox
-# If mail contains attached_molecule, self-pin it:
-gt mol attach-from-mail <mail-id>
+# Create new issue
+bd create "Issue title" -t bug|feature|task -p 0-4 -d "Description" --json
 
-# Step 3: Still nothing? Wait for human direction
-# You're crew - the overseer assigns your work
+# Update issue status
+bd update <id> --status in_progress --json
+
+# Link discovered work
+bd dep add <discovered-id> <parent-id> --type discovered-from
+
+# Complete work
+bd close <id> --reason "Done" --json
+
+# Show dependency tree
+bd dep tree <id>
+
+# Get issue details
+bd show <id> --json
 ```
 
-**Hook has work → Run it. Hook empty → Check mail. Nothing anywhere → Wait for overseer.**
+### Workflow
 
-Your pinned molecule persists across sessions. The handoff mail is just context notes.
+1. **Check for ready work**: Run `bd ready` to see what's unblocked
+2. **Claim your task**: `bd update <id> --status in_progress`
+3. **Work on it**: Implement, test, document
+4. **Discover new work**: If you find bugs or TODOs, create issues:
+   - `bd create "Found bug in auth" -t bug -p 1 --json`
+   - Link it: `bd dep add <new-id> <current-id> --type discovered-from`
+5. **Complete**: `bd close <id> --reason "Implemented"`
+6. **Export**: Run `bd export -o .beads/issues.jsonl` before committing
 
-## Git Workflow: Work Off Main
+### Issue Types
 
-**Crew workers push directly to main. No feature branches.**
+- `bug` - Something broken that needs fixing
+- `feature` - New functionality
+- `task` - Work item (tests, docs, refactoring)
+- `epic` - Large feature composed of multiple issues
+- `chore` - Maintenance work (dependencies, tooling)
 
-Why:
-- You own your clone - no isolation needed
-- Work is fast (10-15 min) - branch overhead exceeds value
-- Branches go stale with context cycling - main is always current
-- You're a trusted maintainer, not a contributor needing review
+### Priorities
 
-Workflow:
+- `0` - Critical (security, data loss, broken builds)
+- `1` - High (major features, important bugs)
+- `2` - Medium (nice-to-have features, minor bugs)
+- `3` - Low (polish, optimization)
+- `4` - Backlog (future ideas)
+
+### Dependency Types
+
+- `blocks` - Hard dependency (issue X blocks issue Y)
+- `related` - Soft relationship (issues are connected)
+- `parent-child` - Epic/subtask relationship
+- `discovered-from` - Track issues discovered during work
+
+Only `blocks` dependencies affect the ready work queue.
+
+## Development Guidelines
+
+### Code Standards
+
+- **Go version**: 1.21+
+- **Linting**: `golangci-lint run ./...` (baseline warnings documented in LINTING.md)
+- **Testing**: All new features need tests (`go test ./...`)
+- **Documentation**: Update relevant .md files
+
+### File Organization
+
+```
+beads/
+├── cmd/bd/              # CLI commands
+├── internal/
+│   ├── types/           # Core data types
+│   └── storage/         # Storage layer
+│       └── sqlite/      # SQLite implementation
+├── examples/            # Integration examples
+└── *.md                 # Documentation
+```
+
+### Before Committing
+
+1. **Run tests**: `go test ./...`
+2. **Run linter**: `golangci-lint run ./...` (ignore baseline warnings)
+3. **Export issues**: `bd export -o .beads/issues.jsonl`
+4. **Update docs**: If you changed behavior, update README.md or other docs
+5. **Git add both**: `git add .beads/issues.jsonl <your-changes>`
+
+### Git Workflow
+
 ```bash
-git pull                    # Start fresh
-# ... do work ...
-git add -A && git commit -m "description"
-git push                    # Direct to main
+# Make changes
+git add <files>
+
+# Export beads issues
+bd export -o .beads/issues.jsonl
+git add .beads/issues.jsonl
+
+# Commit
+git commit -m "Your message"
+
+# After pull
+git pull
+bd import -i .beads/issues.jsonl  # Sync SQLite cache
 ```
 
-If push fails (someone else pushed): `git pull --rebase && git push`
+Or use the git hooks in `examples/git-hooks/` for automation.
 
-## Key Commands
+## Current Project Status
 
-### Finding Work
-- `gt mail inbox` - Check your inbox
-- `bd ready` - Available issues (if beads configured)
-- `bd list --status=in_progress` - Your active work
+Run `bd stats` to see overall progress.
 
-### Working
-- `bd update <id> --status=in_progress` - Claim an issue
-- `bd show <id>` - View issue details
-- `bd close <id>` - Mark issue complete
-- `bd sync` - Sync beads changes
+### Active Areas
 
-### Communication
-- `gt mail send <addr> -s "Subject" -m "Message"` - Send mail
-- `gt mail send mayor/ -s "Subject" -m "Message"` - To Mayor
-- `gt mail send --human -s "Subject" -m "Message"` - To overseer
+- **Core CLI**: Mature, but always room for polish
+- **Examples**: Growing collection of agent integrations
+- **Documentation**: Comprehensive but can always improve
+- **MCP Server**: Planned (see bd-5)
+- **Migration Tools**: Planned (see bd-6)
 
-## No Witness Monitoring
+### 1.0 Milestone
 
-**Important**: Unlike polecats, you have no Witness watching over you:
+We're working toward 1.0. Key blockers tracked in bd. Run:
+```bash
+bd dep tree bd-8  # Show 1.0 epic dependencies
+```
 
-- No automatic nudging if you seem stuck
-- No pre-kill verification checks
-- No escalation to Mayor if blocked
-- No automatic cleanup when batch work completes
+## Common Tasks
 
-**You are responsible for**:
-- Managing your own progress
-- Asking for help when stuck
-- Keeping your git state clean
-- Syncing beads before long breaks
+### Adding a New Command
 
-## Context Cycling (Handoff)
+1. Create file in `cmd/bd/`
+2. Add to root command in `cmd/bd/main.go`
+3. Implement with Cobra framework
+4. Add `--json` flag for agent use
+5. Add tests in `cmd/bd/*_test.go`
+6. Document in README.md
 
-When your context fills up, cycle to a fresh session using `gt handoff`.
+### Adding Storage Features
 
-**Two mechanisms, different purposes:**
-- **Pinned molecule** = What you're working on (tracked by beads, survives restarts)
-- **Handoff mail** = Context notes for yourself (optional, for nuances the molecule doesn't capture)
+1. Update schema in `internal/storage/sqlite/schema.go`
+2. Add migration if needed
+3. Update `internal/types/types.go` if new types
+4. Implement in `internal/storage/sqlite/sqlite.go`
+5. Add tests
+6. Update export/import in `cmd/bd/export.go` and `cmd/bd/import.go`
 
-Your work state is in beads. The handoff command handles the mechanics:
+### Adding Examples
+
+1. Create directory in `examples/`
+2. Add README.md explaining the example
+3. Include working code
+4. Link from `examples/README.md`
+5. Mention in main README.md
+
+## Questions?
+
+- Check existing issues: `bd list`
+- Look at recent commits: `git log --oneline -20`
+- Read the docs: README.md, TEXT_FORMATS.md, EXTENDING.md
+- Create an issue if unsure: `bd create "Question: ..." -t task -p 2`
+
+## Important Files
+
+- **README.md** - Main documentation (keep this updated!)
+- **EXTENDING.md** - Database extension guide
+- **TEXT_FORMATS.md** - JSONL format analysis
+- **CONTRIBUTING.md** - Contribution guidelines
+- **SECURITY.md** - Security policy
+
+## Pro Tips for Agents
+
+- Always use `--json` flags for programmatic use
+- Link discoveries with `discovered-from` to maintain context
+- Check `bd ready` before asking "what next?"
+- Export to JSONL before committing (or use git hooks)
+- Use `bd dep tree` to understand complex dependencies
+- Priority 0-1 issues are usually more important than 2-4
+
+## Building and Testing
 
 ```bash
-# Simple handoff (molecule persists, fresh context)
-gt handoff
+# Build
+go build -o bd ./cmd/bd
 
-# Handoff with context notes
-gt handoff -s "Working on auth bug" -m "
-Found the issue is in token refresh.
-Check line 145 in auth.go first.
-"
+# Test
+go test ./...
+
+# Test with coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
+# Run locally
+./bd init --prefix test
+./bd create "Test issue" -p 1
+./bd ready
 ```
 
-**Crew cycling is relaxed**: Unlike patrol workers (Deacon, Witness, Refinery) who have
-fixed heuristics (N rounds → cycle), you cycle when it feels right:
-- Context getting full
-- Finished a logical chunk of work
-- Need a fresh perspective
-- Human asks you to
+## Release Process (Maintainers)
 
-When you restart, your hook still has your molecule. The handoff mail provides context.
+1. Update version in code (if applicable)
+2. Update CHANGELOG.md (if exists)
+3. Run full test suite
+4. Tag release: `git tag v0.x.0`
+5. Push tag: `git push origin v0.x.0`
+6. GitHub Actions handles the rest
 
-## Session End Checklist
+---
 
-Before ending your session:
+**Remember**: We're building this tool to help AI agents like you! If you find the workflow confusing or have ideas for improvement, create an issue with your feedback.
 
-```
-[ ] git status              (check for uncommitted changes)
-[ ] git push                (push any commits)
-[ ] bd sync                 (sync beads if configured)
-[ ] Check inbox             (any messages needing response?)
-[ ] gt handoff              (cycle to fresh session)
-    # Or with context: gt handoff -s "Brief" -m "Details"
-```
-
-## Tips
-
-- **You own your workspace**: Unlike polecats, you're not transient. Keep it organized.
-- **Handoff liberally**: When in doubt, write a handoff mail. Context is precious.
-- **Stay in sync**: Pull from upstream regularly to avoid merge conflicts.
-- **Ask for help**: No Witness means no automatic escalation. Reach out proactively.
-- **Clean git state**: Keep `git status` clean before breaks.
-
-Crew member: emma
-Rig: beads
-Working directory: /Users/stevey/gt/beads/crew/emma
+Happy coding!
