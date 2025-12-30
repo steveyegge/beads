@@ -34,131 +34,166 @@
 
 development_status:
   # ═══════════════════════════════════════════════════════════════════════════
-  # Epic 1: Foundation & Deployment [P1]
+  # Epic 1: Foundation & Deployment [P1] ✅ CLOSED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-1:
-    status: in-progress
+    status: done
     beads_id: bd-fyy
-    assignee: null
+    title: "Foundation & Deployment"
 
   1-1-fix-deployment-urls:
     status: done
     beads_id: bd-fyy.1
     assignee: Dev
+    title: "Fix Deployment URLs"
 
   1-2-environment-based-url-config:
-    status: review
+    status: done
     beads_id: bd-fyy.2
     assignee: Dev
+    title: "Environment-Based URL Configuration"
 
   1-3-update-sidebar-navigation:
-    status: review
+    status: done
     beads_id: bd-fyy.3
     assignee: Dev
+    title: "Update Sidebar Navigation"
+    story_file: stories/1-3-update-sidebar-navigation.md
 
   epic-1-retrospective:
     status: optional
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # Epic 2: Recovery Documentation [P1]
+  # Epic 2: Recovery Documentation Analysis & Knowledge Gathering [P1] ✅ DONE
   # ═══════════════════════════════════════════════════════════════════════════
   epic-2:
-    status: backlog
+    status: done
     beads_id: bd-9g9
-    assignee: null
+    title: "Recovery Documentation Analysis & Knowledge Gathering"
 
-  2-1-recovery-overview-page:
-    status: backlog
+  2-1-database-corruption-patterns:
+    status: done
     beads_id: bd-9g9.1
     assignee: TechWriter
+    title: "GitHub Issues Mining - Database Corruption Patterns"
+    story_file: stories/2-1-github-issues-mining-database-corruption.md
 
-  2-2-database-corruption-recovery:
-    status: backlog
+  2-2-merge-conflicts-patterns:
+    status: done
     beads_id: bd-9g9.2
     assignee: TechWriter
+    title: "GitHub Issues Mining - Merge Conflicts Patterns"
+    story_file: stories/2-2-github-issues-mining-merge-conflicts.md
 
-  2-3-merge-conflicts-recovery:
-    status: backlog
+  2-3-circular-dependencies-patterns:
+    status: done
     beads_id: bd-9g9.3
     assignee: TechWriter
+    title: "GitHub Issues Mining - Circular Dependencies Patterns"
+    story_file: stories/2-3-github-issues-mining-circular-dependencies.md
 
-  2-4-circular-dependencies-recovery:
-    status: backlog
+  2-4-sync-failures-patterns:
+    status: done
     beads_id: bd-9g9.4
     assignee: TechWriter
+    title: "GitHub Issues Mining - Sync Failures Patterns"
+    story_file: stories/2-4-github-issues-mining-sync-failures.md
 
-  2-5-sync-failures-recovery:
-    status: backlog
+  2-5-analysis-synthesis-recovery-framework:
+    status: done
     beads_id: bd-9g9.5
     assignee: TechWriter
+    title: "Analysis Synthesis + Recovery Framework Design"
+    story_file: stories/2-5-analysis-synthesis-recovery-framework.md
 
   epic-2-retrospective:
-    status: optional
+    status: done
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # Epic 3: Architecture Documentation [P2]
+  # Epic 3: Architecture Documentation [P2] ✅ DONE
   # ═══════════════════════════════════════════════════════════════════════════
   epic-3:
-    status: backlog
+    status: done
     beads_id: bd-gg5
-    assignee: null
+    title: "Architecture Documentation"
 
   3-1-architecture-overview-document:
-    status: backlog
+    status: done
     beads_id: bd-gg5.1
     assignee: Architect
+    title: "Architecture Overview Document"
+    story_file: stories/3-1-architecture-overview-document.md
+
+  3-2-architecture-doc-refinements:
+    status: done
+    beads_id: bd-gg5.2
+    assignee: TechWriter
+    title: "Architecture Documentation Refinements"
+    story_file: stories/3-2-architecture-doc-refinements.md
 
   epic-3-retrospective:
     status: optional
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # Epic 4: AI Agent Documentation [P2]
+  # Epic 4: AI Agent Documentation [P2] ⏳ BLOCKED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-4:
-    status: backlog
+    status: done
     beads_id: bd-907
-    assignee: null
+    title: "AI Agent Documentation"
+    blocked_by: bd-gg5
 
   4-1-bmad-style-ai-meta-tags:
-    status: backlog
+    status: done
     beads_id: bd-907.1
     assignee: Dev
+    title: "Add BMAD-Style AI Meta Tags"
+    story_file: stories/4-1-add-bmad-style-ai-meta-tags.md
 
   4-2-add-recovery-section-to-llms-txt:
-    status: backlog
+    status: done
     beads_id: bd-907.2
     assignee: TechWriter
+    title: "Add Recovery Section to llms.txt"
+    story_file: stories/4-2-add-recovery-section-to-llms-txt.md
 
   4-3-regenerate-llms-full-txt:
-    status: backlog
+    status: done
     beads_id: bd-907.3
     assignee: Dev
+    title: "Regenerate llms-full.txt"
+    story_file: stories/4-3-regenerate-llms-full-txt.md
 
   epic-4-retrospective:
-    status: optional
+    status: done
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # Epic 5: Quality Assurance Pipeline [P2]
+  # Epic 5: Quality Assurance Pipeline [P2] ⏳ BLOCKED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-5:
-    status: backlog
+    status: in-progress
     beads_id: bd-yip
-    assignee: null
+    title: "Quality Assurance Pipeline"
+    blocked_by: bd-907
 
   5-1-add-link-checker-to-ci:
-    status: backlog
+    status: ready-for-dev
     beads_id: bd-yip.1
     assignee: DevOps
+    title: "Add Link Checker to CI"
+    story_file: stories/5-1-add-link-checker-to-ci.md
 
   5-2-add-token-count-validation:
     status: backlog
     beads_id: bd-yip.2
     assignee: DevOps
+    title: "Add Token Count Validation"
 
   5-3-add-llms-txt-lint-check:
     status: backlog
     beads_id: bd-yip.3
     assignee: DevOps
+    title: "Add llms.txt Lint Check"
 
   epic-5-retrospective:
     status: optional

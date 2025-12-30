@@ -1470,6 +1470,293 @@ bd duplicates --auto-merge
 
 </document>
 
+<document path="docs/architecture/index.md">
+
+
+# Architecture Overview
+
+This document explains how Beads' three-layer architecture works: Git, JSONL, and SQLite.
+
+## The Three Layers
+
+Beads uses a layered architecture where each layer serves a specific purpose:
+
+```mermaid
+flowchart TD
+    subgraph GIT["🗂️ Layer 1: Git Repository"]
+        G[(".beads/*.jsonl<br/><i>Historical Source of Truth</i>")]
+    end
+
+    subgraph JSONL["📄 Layer 2: JSONL Files"]
+        J[("issues.jsonl<br/><i>Operational Source of Truth</i>")]
+    end
+
+    subgraph SQL["⚡ Layer 3: SQLite"]
+        D[("beads.db<br/><i>Fast Queries / Derived State</i>")]
+    end
+
+    G <-->|"bd sync"| J
+    J -->|"rebuild"| D
+    D -->|"append"| J
+
+    U((👤 User)) -->|"bd create<br/>bd update"| D
+    D -->|"bd list<br/>bd show"| U
+
+    style GIT fill:#2d5a27,stroke:#4a9c3e,color:#fff
+    style JSONL fill:#1a4a6e,stroke:#3a8ac4,color:#fff
+    style SQL fill:#6b3a6b,stroke:#a45ea4,color:#fff
+```
+
+:::info Historical vs Operational Truth
+**Git** is the *historical* source of truth—commits preserve the full history of your issues and can be recovered from any point in time.
+
+**JSONL** is the *operational* source of truth—when recovering from database corruption, Beads rebuilds SQLite from JSONL files, not directly from Git commits.
+
+This layered model enables recovery: if SQLite is corrupted but JSONL is intact, run `bd sync --import-only` to rebuild. If JSONL is corrupted, recover it from Git history first.
+:::
+
+### Layer 1: Git Repository
+
+Git is the *historical* source of truth. All issue data lives in the repository alongside your code, with full history preserved in commits.
+
+**Why Git?**
+- Issues travel with the code
+- No external service dependency
+- Full history via Git log (recover any point in time)
+- Works offline
+- Enables multi-machine and multi-agent workflows
+
+### Layer 2: JSONL Files
+
+JSONL (JSON Lines) files store issue data in an append-only format. This is the *operational* source of truth—SQLite databases are rebuilt from JSONL.
+
+**Location:** `.beads/*.jsonl`
+
+**Why JSONL?**
+- Human-readable and inspectable
+- Git-mergeable (append-only reduces conflicts)
+- Portable across systems
+- Can be recovered from Git history
+- **Recovery source**: `bd sync --import-only` rebuilds SQLite from JSONL
+
+### Layer 3: SQLite Database
+
+SQLite provides fast local queries without network latency. This is *derived state*—it can always be rebuilt from JSONL.
+
+**Location:** `.beads/beads.db`
+
+**Why SQLite?**
+- Instant queries (no network)
+- Complex filtering and sorting
+- Derived from JSONL (always rebuildable)
+- Safe to delete and rebuild: `rm .beads/beads.db* && bd sync --import-only`
+
+## Data Flow
+
+### Write Path
+```text
+User runs bd create
+    → SQLite updated
+    → JSONL appended
+    → Git commit (on sync)
+```
+
+### Read Path
+```text
+User runs bd list
+    → SQLite queried
+    → Results returned immediately
+```
+
+### Sync Path
+```text
+User runs bd sync
+    → Git pull
+    → JSONL merged
+    → SQLite rebuilt if needed
+    → Git push
+```
+
+### Sync Modes
+
+Beads provides specialized sync modes for different recovery scenarios:
+
+#### Standard Sync
+```bash
+bd sync
+```
+Normal bidirectional sync: pulls remote changes, merges JSONL, rebuilds SQLite if needed, pushes local changes.
+
+#### Import-Only Mode
+```bash
+bd sync --import-only
+```
+Rebuilds the SQLite database from JSONL without pushing changes. Use this when:
+- SQLite is corrupted or missing
+- Recovering from a fresh clone
+- Rebuilding after database migration issues
+
+This is the safest recovery option when JSONL is intact.
+
+#### Force Rebuild Mode
+```bash
+bd sync --force-rebuild
+```
+Forces complete SQLite rebuild from JSONL, discarding any SQLite-only state. Use with caution:
+- More aggressive than `--import-only`
+- May lose any uncommitted database state
+- Recommended when standard sync fails repeatedly
+
+### Multi-Machine Sync Considerations
+
+When working across multiple machines or clones:
+
+1. **Always sync before switching machines**
+   ```bash
+   bd sync  # Push changes before leaving
+   ```
+
+2. **Pull before creating new issues**
+   ```bash
+   bd sync  # Pull changes first on new machine
+   bd create "New issue"
+   ```
+
+3. **Avoid parallel edits** - If two machines create issues simultaneously without syncing, conflicts may occur
+
+See [Sync Failures Recovery](/recovery/sync-failures) for data loss prevention in multi-machine workflows (Pattern A5/C3).
+
+## The Daemon
+
+The Beads daemon (`bd daemon`) handles background synchronization:
+
+- Watches for file changes
+- Triggers sync on changes
+- Keeps SQLite in sync with JSONL
+- Manages lock files
+
+:::tip
+The daemon is optional but recommended for multi-agent workflows.
+:::
+
+### Running Without the Daemon
+
+For CI/CD pipelines, containers, and single-use scenarios, run commands without spawning a daemon:
+
+```bash
+bd --no-daemon create "CI-generated issue"
+bd --no-daemon sync
+```
+
+**When to use `--no-daemon`:**
+- CI/CD pipelines (Jenkins, GitHub Actions)
+- Docker containers
+- Ephemeral environments
+- Scripts that should not leave background processes
+- Debugging daemon-related issues
+
+### Daemon in Multi-Clone Scenarios
+
+:::warning Race Conditions in Multi-Clone Workflows
+When multiple git clones of the same repository run daemons simultaneously, race conditions can occur during push/pull operations. This is particularly common in:
+- Multi-agent AI workflows (multiple Claude/GPT instances)
+- Developer workstations with multiple checkouts
+- Worktree-based development workflows
+
+**Prevention:**
+1. Use `bd daemons killall` before switching between clones
+2. Ensure only one clone's daemon is active at a time
+3. Consider `--no-daemon` mode for automated workflows
+:::
+
+See [Sync Failures Recovery](/recovery/sync-failures) for daemon race condition troubleshooting (Pattern B2).
+
+## Recovery Model
+
+The three-layer architecture makes recovery straightforward because each layer can rebuild from the one above it:
+
+1. **Lost SQLite?** → Rebuild from JSONL: `bd sync --import-only`
+2. **Lost JSONL?** → Recover from Git history: `git checkout HEAD~1 -- .beads/issues.jsonl`
+3. **Conflicts?** → Git merge, then rebuild
+
+### Universal Recovery Sequence
+
+The following sequence demonstrates how the architecture enables quick recovery. For detailed procedures, see [Recovery Runbooks](/recovery).
+
+This sequence resolves the majority of reported issues:
+
+```bash
+bd daemons killall           # Stop daemons (prevents race conditions)
+git worktree prune           # Clean orphaned worktrees
+rm .beads/beads.db*          # Remove potentially corrupted database
+bd sync --import-only        # Rebuild from JSONL source of truth
+```
+
+:::danger Never Use `bd doctor --fix`
+Analysis of 54 GitHub issues revealed that `bd doctor --fix` frequently causes **more damage** than the original problem:
+
+- Deletes "circular" dependencies that are actually valid parent-child relationships
+- False positive detection removes legitimate issue links
+- Recovery after `--fix` is harder than recovery from the original issue
+
+**Safe alternatives:**
+- `bd doctor` — Diagnostic only, no changes made
+- `bd blocked` — Check which issues are blocked and why
+- `bd show <issue-id>` — Inspect a specific issue's state
+
+If `bd doctor` reports problems, investigate each one manually before taking any action.
+:::
+
+See [Recovery](/recovery) for specific procedures and [Database Corruption Recovery](/recovery/database-corruption) for `bd doctor --fix` recovery (Pattern D4).
+
+## Design Decisions
+
+### Why not just SQLite?
+
+SQLite alone doesn't travel with Git or merge well across branches. Binary database files create merge conflicts that are nearly impossible to resolve.
+
+### Why not just JSONL?
+
+JSONL is slow for complex queries. Scanning thousands of lines for filtering and sorting is inefficient. SQLite provides indexed lookups in milliseconds.
+
+### Why append-only JSONL?
+
+Append-only format minimizes Git merge conflicts. When two branches add issues, Git can cleanly merge by concatenating the additions. Edit operations append new records rather than modifying existing lines.
+
+### Why not a server?
+
+Beads is designed for offline-first, local-first development. No server means no downtime, no latency, no vendor lock-in, and full functionality on airplanes or in restricted networks.
+
+### Trade-offs
+
+| Benefit | Trade-off |
+|---------|-----------|
+| Works offline | No real-time collaboration |
+| Git-native history | Requires Git knowledge |
+| No server dependency | No web UI or mobile app |
+| Local-first speed | Manual sync required |
+| Append-only merging | JSONL files grow over time |
+
+### When NOT to use Beads
+
+Beads is not suitable for:
+
+- **Large teams (10+)** — Git-based sync doesn't scale well for high-frequency concurrent edits
+- **Non-developers** — Requires Git and command-line familiarity
+- **Real-time collaboration** — No live updates; requires explicit sync
+- **Cross-repository tracking** — Issues are scoped to a single repository
+- **Rich media attachments** — Designed for text-based issue tracking
+
+For these use cases, consider GitHub Issues, Linear, or Jira.
+
+## Related Documentation
+
+- [Recovery Runbooks](/recovery) — Step-by-step procedures for common issues
+- [CLI Reference](/cli-reference) — Complete command documentation
+- [Getting Started](/) — Installation and first steps
+
+</document>
+
 <document path="docs/cli-reference/index.md">
 
 
@@ -4327,6 +4614,318 @@ bd init --quiet
 
 - [Claude Code](/integrations/claude-code) - CLI integration
 - [Installation](/getting-started/installation) - Full install guide
+
+</document>
+
+<document path="docs/recovery/index.md">
+
+
+# Recovery Overview
+
+This section provides step-by-step recovery procedures for common Beads issues. Each runbook follows a consistent format: Symptoms, Diagnosis, Solution (5 steps max), and Prevention.
+
+## Common Issues
+
+| Issue | Symptoms | Runbook |
+|-------|----------|---------|
+| Database Corruption | SQLite errors, missing data | [Database Corruption](/recovery/database-corruption) |
+| Merge Conflicts | JSONL conflicts during sync | [Merge Conflicts](/recovery/merge-conflicts) |
+| Circular Dependencies | Cycle detection errors | [Circular Dependencies](/recovery/circular-dependencies) |
+| Sync Failures | `bd sync` errors | [Sync Failures](/recovery/sync-failures) |
+
+## Quick Diagnostic
+
+Before diving into specific runbooks, try these quick checks:
+
+```bash
+# Check Beads status
+bd status
+
+# Verify daemon is running
+bd daemon status
+
+# Check for blocked issues
+bd blocked
+```
+
+:::tip
+Most issues can be diagnosed with `bd status`. Start there before following specific runbooks.
+:::
+
+## Getting Help
+
+If these runbooks don't resolve your issue:
+
+1. Check the [FAQ](/reference/faq)
+2. Search [existing issues](https://github.com/steveyegge/beads/issues)
+3. Open a new issue with diagnostic output
+
+</document>
+
+<document path="docs/recovery/circular-dependencies.md">
+
+
+# Circular Dependencies Recovery
+
+This runbook helps you detect and break circular dependency cycles in your issues.
+
+## Symptoms
+
+- "circular dependency detected" errors
+- `bd blocked` shows unexpected results
+- Issues that should be ready appear blocked
+
+## Diagnosis
+
+```bash
+# Check for blocked issues
+bd blocked
+
+# View dependencies for a specific issue
+bd show <issue-id>
+
+# List all dependencies
+bd dep tree
+```
+
+## Solution
+
+**Step 1:** Identify the cycle
+```bash
+bd blocked --verbose
+```
+
+**Step 2:** Map the dependency chain
+```bash
+bd show <issue-a>
+bd show <issue-b>
+# Follow the chain until you return to <issue-a>
+```
+
+**Step 3:** Determine which dependency to remove
+Consider: Which dependency is least critical to the workflow?
+
+**Step 4:** Remove the problematic dependency
+```bash
+bd dep remove <dependent-issue> <blocking-issue>
+```
+
+**Step 5:** Verify the cycle is broken
+```bash
+bd blocked
+bd ready
+```
+
+## Prevention
+
+- Think "X needs Y" not "X before Y" when adding dependencies
+- Use `bd blocked` after adding dependencies to check for cycles
+- Keep dependency chains shallow when possible
+
+</document>
+
+<document path="docs/recovery/database-corruption.md">
+
+
+# Database Corruption Recovery
+
+This runbook helps you recover from SQLite database corruption in Beads.
+
+## Symptoms
+
+- SQLite error messages during `bd` commands
+- "database is locked" errors that persist
+- Missing issues that should exist
+- Inconsistent state between JSONL and database
+
+## Diagnosis
+
+```bash
+# Check database integrity
+bd status
+
+# Look for corruption indicators
+ls -la .beads/beads.db*
+```
+
+If you see `-wal` or `-shm` files alongside `beads.db`, a transaction may have been interrupted.
+
+## Solution
+
+:::warning
+Back up your `.beads/` directory before proceeding.
+:::
+
+**Step 1:** Stop the daemon
+```bash
+bd daemon stop
+```
+
+**Step 2:** Back up current state
+```bash
+cp -r .beads .beads.backup
+```
+
+**Step 3:** Rebuild from JSONL (source of truth)
+```bash
+bd doctor --fix
+```
+
+**Step 4:** Verify recovery
+```bash
+bd status
+bd list
+```
+
+**Step 5:** Restart daemon
+```bash
+bd daemon start
+```
+
+## Prevention
+
+- Avoid interrupting `bd sync` operations
+- Let the daemon handle synchronization
+- Use `bd daemon stop` before system shutdown
+
+</document>
+
+<document path="docs/recovery/merge-conflicts.md">
+
+
+# Merge Conflicts Recovery
+
+This runbook helps you resolve JSONL merge conflicts that occur during Git operations.
+
+## Symptoms
+
+- Git merge conflicts in `.beads/*.jsonl` files
+- `bd sync` fails with conflict errors
+- Different issue states between clones
+
+## Diagnosis
+
+```bash
+# Check for conflicted files
+git status
+
+# Look for conflict markers
+grep -l "<<<<<<" .beads/*.jsonl
+```
+
+## Solution
+
+:::warning
+JSONL files are append-only logs. Manual editing requires care.
+:::
+
+**Step 1:** Identify conflicted files
+```bash
+git diff --name-only --diff-filter=U
+```
+
+**Step 2:** For each conflicted JSONL file, keep both versions
+```bash
+# Accept both changes (append-only is safe)
+git checkout --ours .beads/issues.jsonl
+git add .beads/issues.jsonl
+```
+
+**Step 3:** Force rebuild to reconcile
+```bash
+bd doctor --fix
+```
+
+**Step 4:** Verify state
+```bash
+bd list
+bd status
+```
+
+**Step 5:** Complete the merge
+```bash
+git commit -m "Resolved beads merge conflicts"
+```
+
+## Prevention
+
+- Sync before and after Git operations
+- Use `bd sync` regularly
+- Avoid concurrent modifications from multiple clones
+
+</document>
+
+<document path="docs/recovery/sync-failures.md">
+
+
+# Sync Failures Recovery
+
+This runbook helps you recover from `bd sync` failures.
+
+## Symptoms
+
+- `bd sync` hangs or times out
+- Network-related error messages
+- "failed to push" or "failed to pull" errors
+- Daemon not responding
+
+## Diagnosis
+
+```bash
+# Check daemon status
+bd daemon status
+
+# Check sync state
+bd status
+
+# View daemon logs
+cat .beads/daemon.log | tail -50
+```
+
+## Solution
+
+**Step 1:** Stop the daemon
+```bash
+bd daemon stop
+```
+
+**Step 2:** Check for lock files
+```bash
+ls -la .beads/*.lock
+# Remove stale locks if daemon is definitely stopped
+rm -f .beads/*.lock
+```
+
+**Step 3:** Force a fresh sync
+```bash
+bd doctor --fix
+```
+
+**Step 4:** Restart daemon
+```bash
+bd daemon start
+```
+
+**Step 5:** Verify sync works
+```bash
+bd sync
+bd status
+```
+
+## Common Causes
+
+| Cause | Solution |
+|-------|----------|
+| Network timeout | Retry with better connection |
+| Stale lock file | Remove lock after stopping daemon |
+| Corrupted state | Use `bd doctor --fix` |
+| Git conflicts | See [Merge Conflicts](/recovery/merge-conflicts) |
+
+## Prevention
+
+- Ensure stable network before sync
+- Let sync complete before closing terminal
+- Use `bd daemon stop` before system shutdown
 
 </document>
 

@@ -4,7 +4,7 @@ user_name: 'Ubuntu'
 date: '2025-12-30'
 sections_completed: ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'code_quality', 'workflow_rules', 'critical_rules']
 status: 'complete'
-rule_count: 47
+rule_count: 48
 optimized_for_llm: true
 ---
 
@@ -304,6 +304,33 @@ cd website && npm run build
 - `node_modules/` — dependencies
 
 ## Critical Don't-Miss Rules
+
+### DANGER: Never Use `bd doctor --fix` (Priority 0)
+
+**Epic 2 Research Finding:** Analysis of 54 GitHub issues revealed that `bd doctor --fix` frequently causes MORE damage than the original problem.
+
+**What happens:**
+- Automated fixes delete "circular" dependencies that are actually valid
+- False positive detection removes legitimate parent-child relationships
+- Recovery after `--fix` is harder than recovery from original issue
+
+**Safe alternatives:**
+```bash
+# SAFE: Diagnose only (no changes)
+bd doctor
+
+# SAFE: Check blocked issues
+bd blocked
+
+# SAFE: Inspect specific issue
+bd show <issue-id>
+
+# RECOVERY: If bd doctor --fix damaged data
+git checkout HEAD~1 -- .beads/issues.jsonl
+bd sync --import-only
+```
+
+**Rule:** Always diagnose manually, never auto-fix. If `bd doctor` reports issues, investigate each one before taking action.
 
 ### URL Fix Required (Priority 1)
 
