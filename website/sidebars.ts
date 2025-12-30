@@ -27,6 +27,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Architecture',
+      collapsed: true,
+      items: [
+        'architecture/index',
+      ],
+    },
+    {
+      type: 'category',
       label: 'CLI Reference',
       collapsed: true,
       link: {
@@ -51,6 +59,18 @@ const sidebars: SidebarsConfig = {
         'workflows/formulas',
         'workflows/gates',
         'workflows/wisps',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Recovery',
+      collapsed: true,
+      items: [
+        'recovery/index',
+        'recovery/database-corruption',
+        'recovery/merge-conflicts',
+        'recovery/circular-dependencies',
+        'recovery/sync-failures',
       ],
     },
     {
