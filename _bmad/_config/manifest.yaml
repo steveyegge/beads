@@ -1,0 +1,15 @@
+installation:
+  version: 6.0.0-alpha.19
+  installDate: 2025-12-30T01:00:25.331Z
+  lastUpdated: 2025-12-30T01:00:25.331Z
+modules:
+  - core
+  - bmm
+  - bmb
+  - cis
+  - bmad-beads
+ides:
+  - claude-code
+  - codex
+  - antigravity
+  - gemini

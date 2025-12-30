@@ -1,0 +1,164 @@
+# Sprint Status - Beads Documentation Strategy
+# generated: 2025-12-30
+# project: Beads Documentation Strategy
+# tracking_system: beads
+# story_location: _bmad-output/stories
+# beads_prefix: bd
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BEADS INTEGRATION NOTE
+# ═══════════════════════════════════════════════════════════════════════════
+# This file is a DERIVED VIEW of Beads issue state.
+# Beads is the authoritative source of truth for task status.
+# To update status, use: bd update <beads_id> --status <status>
+# To query ready work: bd ready
+# ═══════════════════════════════════════════════════════════════════════════
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+development_status:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Epic 1: Foundation & Deployment [P1]
+  # ═══════════════════════════════════════════════════════════════════════════
+  epic-1:
+    status: in-progress
+    beads_id: bd-fyy
+    assignee: null
+
+  1-1-fix-deployment-urls:
+    status: done
+    beads_id: bd-fyy.1
+    assignee: Dev
+
+  1-2-environment-based-url-config:
+    status: review
+    beads_id: bd-fyy.2
+    assignee: Dev
+
+  1-3-update-sidebar-navigation:
+    status: review
+    beads_id: bd-fyy.3
+    assignee: Dev
+
+  epic-1-retrospective:
+    status: optional
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Epic 2: Recovery Documentation [P1]
+  # ═══════════════════════════════════════════════════════════════════════════
+  epic-2:
+    status: backlog
+    beads_id: bd-9g9
+    assignee: null
+
+  2-1-recovery-overview-page:
+    status: backlog
+    beads_id: bd-9g9.1
+    assignee: TechWriter
+
+  2-2-database-corruption-recovery:
+    status: backlog
+    beads_id: bd-9g9.2
+    assignee: TechWriter
+
+  2-3-merge-conflicts-recovery:
+    status: backlog
+    beads_id: bd-9g9.3
+    assignee: TechWriter
+
+  2-4-circular-dependencies-recovery:
+    status: backlog
+    beads_id: bd-9g9.4
+    assignee: TechWriter
+
+  2-5-sync-failures-recovery:
+    status: backlog
+    beads_id: bd-9g9.5
+    assignee: TechWriter
+
+  epic-2-retrospective:
+    status: optional
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Epic 3: Architecture Documentation [P2]
+  # ═══════════════════════════════════════════════════════════════════════════
+  epic-3:
+    status: backlog
+    beads_id: bd-gg5
+    assignee: null
+
+  3-1-architecture-overview-document:
+    status: backlog
+    beads_id: bd-gg5.1
+    assignee: Architect
+
+  epic-3-retrospective:
+    status: optional
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Epic 4: AI Agent Documentation [P2]
+  # ═══════════════════════════════════════════════════════════════════════════
+  epic-4:
+    status: backlog
+    beads_id: bd-907
+    assignee: null
+
+  4-1-bmad-style-ai-meta-tags:
+    status: backlog
+    beads_id: bd-907.1
+    assignee: Dev
+
+  4-2-add-recovery-section-to-llms-txt:
+    status: backlog
+    beads_id: bd-907.2
+    assignee: TechWriter
+
+  4-3-regenerate-llms-full-txt:
+    status: backlog
+    beads_id: bd-907.3
+    assignee: Dev
+
+  epic-4-retrospective:
+    status: optional
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Epic 5: Quality Assurance Pipeline [P2]
+  # ═══════════════════════════════════════════════════════════════════════════
+  epic-5:
+    status: backlog
+    beads_id: bd-yip
+    assignee: null
+
+  5-1-add-link-checker-to-ci:
+    status: backlog
+    beads_id: bd-yip.1
+    assignee: DevOps
+
+  5-2-add-token-count-validation:
+    status: backlog
+    beads_id: bd-yip.2
+    assignee: DevOps
+
+  5-3-add-llms-txt-lint-check:
+    status: backlog
+    beads_id: bd-yip.3
+    assignee: DevOps
+
+  epic-5-retrospective:
+    status: optional

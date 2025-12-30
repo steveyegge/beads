@@ -1,0 +1,96 @@
+# BMad Method - Greenfield
+# Full product + architecture planning for greenfield projects (10-50+ stories typically)
+
+method_name: "BMad Method"
+track: "bmad-method"
+field_type: "greenfield"
+description: "Complete product and system design methodology for greenfield projects"
+
+phases:
+  - phase: 0
+    name: "Discovery (Optional)"
+    optional: true
+    note: "User-selected during workflow-init"
+    workflows:
+      - id: "brainstorm-project"
+        optional: true
+        agent: "analyst"
+        command: "brainstorm-project"
+        included_by: "user_choice"
+        note: "Uses core brainstorming workflow with project context template"
+
+      - id: "research"
+        optional: true
+        agent: "analyst"
+        command: "research"
+        included_by: "user_choice"
+        note: "Can have multiple research workflows"
+
+      - id: "product-brief"
+        optional: true
+        agent: "analyst"
+        command: "product-brief"
+        included_by: "user_choice"
+        note: "Recommended for greenfield Method projects"
+
+  - phase: 1
+    name: "Planning"
+    required: true
+    workflows:
+      - id: "prd"
+        required: true
+        agent: "pm"
+        command: "prd"
+        output: "Product Requirements Document with FRs and NFRs"
+
+      - id: "create-ux-design"
+        conditional: "if_has_ui"
+        agent: "ux-designer"
+        command: "create-ux-design"
+        note: "Determined after PRD - user/agent decides if needed"
+
+  - phase: 2
+    name: "Solutioning"
+    required: true
+    workflows:
+      - id: "create-architecture"
+        required: true
+        agent: "architect"
+        command: "create-architecture"
+        output: "System architecture document"
+        note: "Complete system design for greenfield projects"
+
+      - id: "create-epics-and-stories"
+        required: true
+        agent: "pm"
+        command: "create-epics-and-stories"
+        note: "Required: Break down PRD into implementable epics and stories with full context (PRD + UX + Architecture)"
+
+      - id: "test-design"
+        recommended: true
+        agent: "tea"
+        command: "test-design"
+        output: "System-level testability review"
+        note: "Testability assessment before gate check - auto-detects system-level mode"
+
+      - id: "validate-architecture"
+        optional: true
+        agent: "architect"
+        command: "validate-architecture"
+        note: "Quality check for architecture completeness"
+
+      - id: "implementation-readiness"
+        required: true
+        agent: "architect"
+        command: "implementation-readiness"
+        note: "Validates PRD + Architecture + Epics + UX (optional)"
+
+  - phase: 3
+    name: "Implementation"
+    required: true
+    workflows:
+      - id: "sprint-planning"
+        required: true
+        agent: "sm"
+        command: "sprint-planning"
+        note: "Creates sprint plan - subsequent work tracked there"

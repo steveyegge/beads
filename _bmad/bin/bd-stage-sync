@@ -1,0 +1,62 @@
+#!/bin/bash
+# bd-stage-sync - Change stage AND sync everything
+# Usage: bd-stage-sync <issue-id> <new-stage>
+#
+# Does 3 things:
+# 1. Updates bmad:stage:* label (exclusive)
+# 2. Runs bd sync
+# 3. Updates sprint-status.yaml (if issue has story mapping)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SPRINT_STATUS="$PROJECT_ROOT/_bmad-output/sprint-status.yaml"
+
+ISSUE="$1"
+NEW_STAGE="$2"
+
+if [[ -z "$ISSUE" || -z "$NEW_STAGE" ]]; then
+  echo "Usage: bd-stage-sync <issue-id> <stage>"
+  echo "Stages: backlog ready-for-dev in-progress review done"
+  exit 1
+fi
+
+# Step 1: Update stage label
+echo "→ Updating stage label..."
+"$SCRIPT_DIR/bd-stage" "$ISSUE" "$NEW_STAGE"
+
+# Step 2: Sync beads
+echo "→ Syncing beads..."
+bd sync 2>&1 | grep -E "^(✓|→|Error)" || true
+
+# Step 3: Update sprint-status.yaml if it exists
+if [[ -f "$SPRINT_STATUS" ]]; then
+  echo "→ Updating sprint-status.yaml..."
+
+  # Find the story key by beads_id (need -B2 because: key → status → beads_id)
+  STORY_KEY=$(grep -B2 "beads_id: $ISSUE" "$SPRINT_STATUS" 2>/dev/null | head -1 | sed 's/:.*//' | xargs || true)
+
+  if [[ -n "$STORY_KEY" && "$STORY_KEY" != "beads_id" ]]; then
+    # Map bmad stage to sprint-status status
+    case "$NEW_STAGE" in
+      backlog)       STATUS="backlog" ;;
+      ready-for-dev) STATUS="ready-for-dev" ;;
+      in-progress)   STATUS="in-progress" ;;
+      review)        STATUS="review" ;;
+      done)          STATUS="done" ;;
+      *)             STATUS="$NEW_STAGE" ;;
+    esac
+
+    # Update the status in sprint-status.yaml
+    sed -i "/$STORY_KEY:/,/beads_id:/{s/status: .*/status: $STATUS/}" "$SPRINT_STATUS"
+    echo "✓ Updated $STORY_KEY → status: $STATUS"
+  else
+    echo "⚠ Issue $ISSUE not found in sprint-status.yaml (skipped)"
+  fi
+else
+  echo "⚠ sprint-status.yaml not found (skipped)"
+fi
+
+echo ""
+echo "✓ Complete: $ISSUE → $NEW_STAGE"

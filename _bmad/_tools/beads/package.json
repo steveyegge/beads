@@ -1,0 +1,9 @@
+{
+  "name": "bmad-beads-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BMAD Beads CLI provisioning",
+  "dependencies": {
+    "@beads/bd": "latest"
+  }
+}
