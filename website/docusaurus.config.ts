@@ -33,6 +33,12 @@ const config: Config = {
     v4: true,
   },
 
+  // Enable Mermaid diagrams in markdown
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
+
   // GitHub Pages deployment (environment-configurable)
   url: siteUrl,
   baseUrl: baseUrl,

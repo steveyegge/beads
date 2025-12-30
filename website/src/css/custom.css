@@ -28,3 +28,21 @@
   --ifm-color-primary-lightest: #4fddbf;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
+
+/* Center Mermaid diagrams */
+.docusaurus-mermaid-container,
+pre[class*="mermaid"],
+.mermaid,
+[data-theme] .mermaid {
+  display: flex !important;
+  justify-content: center !important;
+  margin: 2rem auto !important;
+  text-align: center;
+}
+
+/* Target the SVG inside mermaid */
+.mermaid svg,
+pre.mermaid svg {
+  max-width: 100%;
+  margin: 0 auto;
+}
