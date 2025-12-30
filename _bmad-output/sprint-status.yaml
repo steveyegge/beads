@@ -138,7 +138,7 @@ development_status:
   # Epic 4: AI Agent Documentation [P2] ⏳ BLOCKED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-4:
-    status: in-progress
+    status: done
     beads_id: bd-907
     title: "AI Agent Documentation"
     blocked_by: bd-gg5
@@ -165,22 +165,23 @@ development_status:
     story_file: stories/4-3-regenerate-llms-full-txt.md
 
   epic-4-retrospective:
-    status: optional
+    status: done
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Epic 5: Quality Assurance Pipeline [P2] ⏳ BLOCKED
   # ═══════════════════════════════════════════════════════════════════════════
   epic-5:
-    status: backlog
+    status: in-progress
     beads_id: bd-yip
     title: "Quality Assurance Pipeline"
     blocked_by: bd-907
 
   5-1-add-link-checker-to-ci:
-    status: backlog
+    status: ready-for-dev
     beads_id: bd-yip.1
     assignee: DevOps
     title: "Add Link Checker to CI"
+    story_file: stories/5-1-add-link-checker-to-ci.md
 
   5-2-add-token-count-validation:
     status: backlog
