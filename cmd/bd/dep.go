@@ -974,7 +974,7 @@ func ParseExternalRef(ref string) (project, capability string) {
 }
 
 func init() {
-	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from)")
+	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here

@@ -523,6 +523,11 @@ const (
 
 	// Convoy tracking (non-blocking cross-project references)
 	DepTracks DependencyType = "tracks" // Convoy → issue tracking (non-blocking)
+
+	// Reference types (cross-referencing without blocking)
+	DepUntil     DependencyType = "until"     // Active until target closes (e.g., muted until issue resolved)
+	DepCausedBy  DependencyType = "caused-by" // Triggered by target (audit trail)
+	DepValidates DependencyType = "validates" // Approval/validation relationship
 )
 
 // IsValid checks if the dependency type value is valid.
@@ -538,7 +543,8 @@ func (d DependencyType) IsWellKnown() bool {
 	switch d {
 	case DepBlocks, DepParentChild, DepConditionalBlocks, DepWaitsFor, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
-		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepTracks:
+		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepTracks,
+		DepUntil, DepCausedBy, DepValidates:
 		return true
 	}
 	return false

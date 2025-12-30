@@ -522,6 +522,10 @@ func TestDependencyTypeIsWellKnown(t *testing.T) {
 		{DepAuthoredBy, true},
 		{DepAssignedTo, true},
 		{DepApprovedBy, true},
+		{DepTracks, true},
+		{DepUntil, true},
+		{DepCausedBy, true},
+		{DepValidates, true},
 		{DependencyType("custom-type"), false},
 		{DependencyType("unknown"), false},
 	}
@@ -553,6 +557,10 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 		{DepAuthoredBy, false},
 		{DepAssignedTo, false},
 		{DepApprovedBy, false},
+		{DepTracks, false},
+		{DepUntil, false},
+		{DepCausedBy, false},
+		{DepValidates, false},
 		{DependencyType("custom-type"), false},
 	}
 
