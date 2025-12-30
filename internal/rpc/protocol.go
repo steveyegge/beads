@@ -208,6 +208,9 @@ type ListArgs struct {
 
 	// Molecule type filtering
 	MolType string `json:"mol_type,omitempty"`
+
+	// Status exclusion (for default non-closed behavior, GH#788)
+	ExcludeStatus []string `json:"exclude_status,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation

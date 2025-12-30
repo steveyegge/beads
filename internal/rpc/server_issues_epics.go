@@ -980,6 +980,13 @@ func (s *Server) handleList(req *Request) Response {
 		filter.MolType = &molType
 	}
 
+	// Status exclusion (for default non-closed behavior, GH#788)
+	if len(listArgs.ExcludeStatus) > 0 {
+		for _, s := range listArgs.ExcludeStatus {
+			filter.ExcludeStatus = append(filter.ExcludeStatus, types.Status(s))
+		}
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {

@@ -315,6 +315,7 @@ var listCmd = &cobra.Command{
 		assignee, _ := cmd.Flags().GetString("assignee")
 		issueType, _ := cmd.Flags().GetString("type")
 		limit, _ := cmd.Flags().GetInt("limit")
+		allFlag, _ := cmd.Flags().GetBool("all")
 		formatStr, _ := cmd.Flags().GetString("format")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
@@ -403,6 +404,11 @@ var listCmd = &cobra.Command{
 		if status != "" && status != "all" {
 			s := types.Status(status)
 			filter.Status = &s
+		}
+
+		// Default to non-closed issues unless --all or explicit --status (GH#788)
+		if status == "" && !allFlag {
+			filter.ExcludeStatus = []types.Status{types.StatusClosed}
 		}
 		// Use Changed() to properly handle P0 (priority=0)
 		if cmd.Flags().Changed("priority") {
@@ -573,7 +579,7 @@ var listCmd = &cobra.Command{
 				Status:    status,
 				IssueType: issueType,
 				Assignee:  assignee,
-				Limit:     limit,
+				Limit:     effectiveLimit,
 			}
 			if cmd.Flags().Changed("priority") {
 				priorityStr, _ := cmd.Flags().GetString("priority")
@@ -640,6 +646,13 @@ var listCmd = &cobra.Command{
 
 			// Parent filtering
 			listArgs.ParentID = parentID
+
+			// Status exclusion (GH#788)
+			if len(filter.ExcludeStatus) > 0 {
+				for _, s := range filter.ExcludeStatus {
+					listArgs.ExcludeStatus = append(listArgs.ExcludeStatus, string(s))
+				}
+			}
 
 			 resp, err := daemonClient.List(listArgs)
 			if err != nil {
@@ -906,7 +919,7 @@ func init() {
 	listCmd.Flags().String("id", "", "Filter by specific issue IDs (comma-separated, e.g., bd-1,bd-5,bd-10)")
 	listCmd.Flags().IntP("limit", "n", 50, "Limit results (default 50, use 0 for unlimited)")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
-	listCmd.Flags().Bool("all", false, "Show all issues (default behavior; flag provided for CLI familiarity)")
+	listCmd.Flags().Bool("all", false, "Show all issues including closed (overrides default filter)")
 	listCmd.Flags().Bool("long", false, "Show detailed multi-line output for each issue")
 	listCmd.Flags().String("sort", "", "Sort by field: priority, created, updated, closed, status, id, title, type, assignee")
 	listCmd.Flags().BoolP("reverse", "r", false, "Reverse sort order")

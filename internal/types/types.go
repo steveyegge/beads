@@ -720,6 +720,9 @@ type IssueFilter struct {
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
+
+	// Status exclusion (for default non-closed behavior)
+	ExcludeStatus []Status // Exclude issues with these statuses
 }
 
 // SortPolicy determines how ready work is ordered

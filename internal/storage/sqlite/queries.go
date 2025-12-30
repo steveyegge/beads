@@ -1604,6 +1604,16 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, types.StatusTombstone)
 	}
 
+	// Status exclusion (for default non-closed behavior, GH#788)
+	if len(filter.ExcludeStatus) > 0 {
+		placeholders := make([]string, len(filter.ExcludeStatus))
+		for i, s := range filter.ExcludeStatus {
+			placeholders[i] = "?"
+			args = append(args, string(s))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
 	if filter.Priority != nil {
 		whereClauses = append(whereClauses, "priority = ?")
 		args = append(args, *filter.Priority)
