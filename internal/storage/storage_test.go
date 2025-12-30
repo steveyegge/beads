@@ -56,6 +56,12 @@ func (m *mockStorage) GetDependencies(ctx context.Context, issueID string) ([]*t
 func (m *mockStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
 	return nil, nil
 }
