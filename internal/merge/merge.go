@@ -241,7 +241,10 @@ func makeKey(issue Issue) IssueKey {
 }
 
 // Use constants from types package to avoid duplication
-const StatusTombstone = string(types.StatusTombstone)
+const (
+	StatusTombstone = string(types.StatusTombstone)
+	StatusClosed    = string(types.StatusClosed)
+)
 
 // Alias TTL constants from types package for local use
 var (
@@ -571,7 +574,7 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 
 	// Merge closed_at - only if status is closed
 	// This prevents invalid state (status=open with closed_at set)
-	if result.Status == "closed" {
+	if result.Status == StatusClosed {
 		result.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
 	} else {
 		result.ClosedAt = ""
@@ -622,8 +625,8 @@ func mergeStatus(base, left, right string) string {
 
 	// RULE 1: closed always wins over open
 	// This prevents the insane situation where issues never die
-	if left == "closed" || right == "closed" {
-		return "closed"
+	if left == StatusClosed || right == StatusClosed {
+		return StatusClosed
 	}
 
 	// Otherwise use standard 3-way merge
