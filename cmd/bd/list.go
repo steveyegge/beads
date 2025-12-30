@@ -306,6 +306,61 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 	})
 }
 
+// formatIssueLong formats a single issue in long format to a buffer
+func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) {
+	status := string(issue.Status)
+	if status == "closed" {
+		line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
+			pinIndicator(issue), issue.ID, issue.Priority,
+			issue.IssueType, status, issue.Title)
+		buf.WriteString(ui.RenderClosedLine(line))
+		buf.WriteString("\n")
+	} else {
+		buf.WriteString(fmt.Sprintf("%s%s [%s] [%s] %s\n",
+			pinIndicator(issue),
+			ui.RenderID(issue.ID),
+			ui.RenderPriority(issue.Priority),
+			ui.RenderType(string(issue.IssueType)),
+			ui.RenderStatus(status)))
+		buf.WriteString(fmt.Sprintf("  %s\n", issue.Title))
+	}
+	if issue.Assignee != "" {
+		buf.WriteString(fmt.Sprintf("  Assignee: %s\n", issue.Assignee))
+	}
+	if len(labels) > 0 {
+		buf.WriteString(fmt.Sprintf("  Labels: %v\n", labels))
+	}
+	buf.WriteString("\n")
+}
+
+// formatIssueCompact formats a single issue in compact format to a buffer
+func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string) {
+	labelsStr := ""
+	if len(labels) > 0 {
+		labelsStr = fmt.Sprintf(" %v", labels)
+	}
+	assigneeStr := ""
+	if issue.Assignee != "" {
+		assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
+	}
+	status := string(issue.Status)
+	if status == "closed" {
+		line := fmt.Sprintf("%s%s [P%d] [%s] %s%s%s - %s",
+			pinIndicator(issue), issue.ID, issue.Priority,
+			issue.IssueType, status, assigneeStr, labelsStr, issue.Title)
+		buf.WriteString(ui.RenderClosedLine(line))
+		buf.WriteString("\n")
+	} else {
+		buf.WriteString(fmt.Sprintf("%s%s [%s] [%s] %s%s%s - %s\n",
+			pinIndicator(issue),
+			ui.RenderID(issue.ID),
+			ui.RenderPriority(issue.Priority),
+			ui.RenderType(string(issue.IssueType)),
+			ui.RenderStatus(status),
+			assigneeStr, labelsStr, issue.Title))
+	}
+}
+
 var listCmd = &cobra.Command{
 	Use:     "list",
 	GroupID: "issues",
@@ -372,6 +427,9 @@ var listCmd = &cobra.Command{
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		watchMode, _ := cmd.Flags().GetBool("watch")
+
+		// Pager control (bd-jdz3)
+		noPager, _ := cmd.Flags().GetBool("no-pager")
 
 		// Watch mode implies pretty format
 		if watchMode {
@@ -683,63 +741,26 @@ var listCmd = &cobra.Command{
 			// Apply sorting
 			sortIssues(issues, sortBy, reverse)
 
+			// Build output in buffer for pager support (bd-jdz3)
+			var buf strings.Builder
 			if longFormat {
 				// Long format: multi-line with details
-				fmt.Printf("\nFound %d issues:\n\n", len(issues))
+				buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
 				for _, issue := range issues {
-					status := string(issue.Status)
-					if status == "closed" {
-						// Entire closed issue is dimmed
-						line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
-							pinIndicator(issue), issue.ID, issue.Priority,
-							issue.IssueType, status, issue.Title)
-						fmt.Println(ui.RenderClosedLine(line))
-					} else {
-						fmt.Printf("%s%s [%s] [%s] %s\n",
-							pinIndicator(issue),
-							ui.RenderID(issue.ID),
-							ui.RenderPriority(issue.Priority),
-							ui.RenderType(string(issue.IssueType)),
-							ui.RenderStatus(status))
-						fmt.Printf("  %s\n", issue.Title)
-					}
-					if issue.Assignee != "" {
-						fmt.Printf("  Assignee: %s\n", issue.Assignee)
-					}
-					if len(issue.Labels) > 0 {
-						fmt.Printf("  Labels: %v\n", issue.Labels)
-					}
-					fmt.Println()
+					formatIssueLong(&buf, issue, issue.Labels)
 				}
 			} else {
 				// Compact format: one line per issue
 				for _, issue := range issues {
-					labelsStr := ""
-					if len(issue.Labels) > 0 {
-						labelsStr = fmt.Sprintf(" %v", issue.Labels)
-					}
-					assigneeStr := ""
-					if issue.Assignee != "" {
-						assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
-					}
-					status := string(issue.Status)
-					if status == "closed" {
-						// Entire closed line is dimmed
-						line := fmt.Sprintf("%s%s [P%d] [%s] %s%s%s - %s",
-							pinIndicator(issue), issue.ID, issue.Priority,
-							issue.IssueType, status, assigneeStr, labelsStr, issue.Title)
-						fmt.Println(ui.RenderClosedLine(line))
-					} else {
-						fmt.Printf("%s%s [%s] [%s] %s%s%s - %s\n",
-							pinIndicator(issue),
-							ui.RenderID(issue.ID),
-							ui.RenderPriority(issue.Priority),
-							ui.RenderType(string(issue.IssueType)),
-							ui.RenderStatus(status),
-							assigneeStr, labelsStr, issue.Title)
-					}
+					formatIssueCompact(&buf, issue, issue.Labels)
 				}
 			}
+
+			// Output with pager support
+			if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
+				fmt.Fprint(os.Stdout, buf.String())
+			}
+
 			// Show truncation hint if we hit the limit (GH#788)
 			if effectiveLimit > 0 && len(issues) == effectiveLimit {
 				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
@@ -836,66 +857,26 @@ var listCmd = &cobra.Command{
 		}
 		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 
+		// Build output in buffer for pager support (bd-jdz3)
+		var buf strings.Builder
 		if longFormat {
 			// Long format: multi-line with details
-			fmt.Printf("\nFound %d issues:\n\n", len(issues))
+			buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				status := string(issue.Status)
-
-				if status == "closed" {
-					// Entire closed issue is dimmed
-					line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
-						pinIndicator(issue), issue.ID, issue.Priority,
-						issue.IssueType, status, issue.Title)
-					fmt.Println(ui.RenderClosedLine(line))
-				} else {
-					fmt.Printf("%s%s [%s] [%s] %s\n",
-						pinIndicator(issue),
-						ui.RenderID(issue.ID),
-						ui.RenderPriority(issue.Priority),
-						ui.RenderType(string(issue.IssueType)),
-						ui.RenderStatus(status))
-					fmt.Printf("  %s\n", issue.Title)
-				}
-				if issue.Assignee != "" {
-					fmt.Printf("  Assignee: %s\n", issue.Assignee)
-				}
-				if len(labels) > 0 {
-					fmt.Printf("  Labels: %v\n", labels)
-				}
-				fmt.Println()
+				formatIssueLong(&buf, issue, labels)
 			}
 		} else {
 			// Compact format: one line per issue
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-
-				labelsStr := ""
-				if len(labels) > 0 {
-					labelsStr = fmt.Sprintf(" %v", labels)
-				}
-				assigneeStr := ""
-				if issue.Assignee != "" {
-					assigneeStr = fmt.Sprintf(" @%s", issue.Assignee)
-				}
-				status := string(issue.Status)
-				if status == "closed" {
-					// Entire closed line is dimmed
-					line := fmt.Sprintf("%s%s [P%d] [%s] %s%s%s - %s",
-						pinIndicator(issue), issue.ID, issue.Priority,
-						issue.IssueType, status, assigneeStr, labelsStr, issue.Title)
-					fmt.Println(ui.RenderClosedLine(line))
-				} else {
-					fmt.Printf("%s%s [%s] [%s] %s%s%s - %s\n",
-						pinIndicator(issue),
-						ui.RenderID(issue.ID),
-						ui.RenderPriority(issue.Priority),
-						ui.RenderType(string(issue.IssueType)),
-						ui.RenderStatus(status),
-						assigneeStr, labelsStr, issue.Title)
-				}
+				formatIssueCompact(&buf, issue, labels)
 			}
+		}
+
+		// Output with pager support
+		if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
+			fmt.Fprint(os.Stdout, buf.String())
 		}
 
 		// Show truncation hint if we hit the limit (GH#788)
@@ -962,6 +943,9 @@ func init() {
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	listCmd.Flags().BoolP("watch", "w", false, "Watch for changes and auto-update display (implies --pretty)")
+
+	// Pager control (bd-jdz3)
+	listCmd.Flags().Bool("no-pager", false, "Disable pager output")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
