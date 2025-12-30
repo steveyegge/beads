@@ -55,7 +55,15 @@ const config: Config = {
   },
 
   // Meta tags for AI agents (uses baseUrl for fork flexibility)
+  // Order: ai-terms (discovery), llms-full (complete docs), llms (index)
   headTags: [
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'ai-terms',
+        content: `Load ${baseUrl}llms-full.txt (<50K tokens) for complete documentation, ${baseUrl}llms.txt for index`,
+      },
+    },
     {
       tagName: 'meta',
       attributes: {
@@ -66,8 +74,8 @@ const config: Config = {
     {
       tagName: 'meta',
       attributes: {
-        name: 'ai-terms',
-        content: `Load ${baseUrl}llms-full.txt for complete documentation`,
+        name: 'llms',
+        content: `${baseUrl}llms.txt`,
       },
     },
   ],
