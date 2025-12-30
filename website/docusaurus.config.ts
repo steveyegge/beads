@@ -29,15 +29,15 @@ const config: Config = {
   tagline: 'Git-backed issue tracker for AI-supervised coding workflows',
   favicon: 'img/favicon.svg',
 
-  future: {
-    v4: true,
-  },
-
   // Enable Mermaid diagrams in markdown
   markdown: {
     mermaid: true,
   },
   themes: ['@docusaurus/theme-mermaid'],
+
+  future: {
+    v4: true,
+  },
 
   // GitHub Pages deployment (environment-configurable)
   url: siteUrl,
