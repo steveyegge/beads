@@ -100,6 +100,12 @@ type Issue struct {
 
 	// ===== Molecule Type Fields (swarm coordination) =====
 	MolType MolType `json:"mol_type,omitempty"` // Molecule type: swarm|patrol|work (empty = work)
+
+	// ===== Event Fields (operational state changes) =====
+	EventKind string `json:"event_kind,omitempty"` // Namespaced event type: patrol.muted, agent.started
+	Actor     string `json:"actor,omitempty"`      // Entity URI who caused this event
+	Target    string `json:"target,omitempty"`     // Entity URI or bead ID affected
+	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -161,6 +167,12 @@ func (i *Issue) ComputeContentHash() string {
 
 	// Molecule type
 	w.str(string(i.MolType))
+
+	// Event fields
+	w.str(i.EventKind)
+	w.str(i.Actor)
+	w.str(i.Target)
+	w.str(i.Payload)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -395,12 +407,13 @@ const (
 	TypeAgent        IssueType = "agent"         // Agent identity bead
 	TypeRole         IssueType = "role"          // Agent role definition
 	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
+	TypeEvent        IssueType = "event"         // Operational state change record
 )
 
 // IsValid checks if the issue type value is valid
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeConvoy:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeConvoy, TypeEvent:
 		return true
 	}
 	return false

@@ -47,8 +47,9 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			created_at, created_by, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
 			sender, ephemeral, pinned, is_template,
-			await_type, await_id, timeout_ns, waiters, mol_type
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			await_type, await_id, timeout_ns, waiters, mol_type,
+			event_kind, actor, target, payload
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -59,6 +60,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		issue.Sender, wisp, pinned, isTemplate,
 		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		string(issue.MolType),
+		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 	)
 	if err != nil {
 		// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -80,8 +82,9 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			created_at, created_by, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
 			sender, ephemeral, pinned, is_template,
-			await_type, await_id, timeout_ns, waiters, mol_type
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			await_type, await_id, timeout_ns, waiters, mol_type,
+			event_kind, actor, target, payload
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -117,6 +120,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.Sender, wisp, pinned, isTemplate,
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
+			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error
