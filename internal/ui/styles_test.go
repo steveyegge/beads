@@ -152,3 +152,26 @@ func TestRenderCommandAndCategoryAreUppercaseSafe(t *testing.T) {
 		t.Fatalf("command output missing text: %q", cmd)
 	}
 }
+
+func TestIsAgentMode(t *testing.T) {
+	// Test default (no env vars) - t.Setenv automatically restores after test
+	t.Setenv("BD_AGENT_MODE", "")
+	t.Setenv("CLAUDE_CODE", "")
+	if IsAgentMode() {
+		t.Fatal("expected false with no env vars")
+	}
+
+	// Test BD_AGENT_MODE=1
+	t.Setenv("BD_AGENT_MODE", "1")
+	t.Setenv("CLAUDE_CODE", "")
+	if !IsAgentMode() {
+		t.Fatal("expected true with BD_AGENT_MODE=1")
+	}
+
+	// Test CLAUDE_CODE auto-detection
+	t.Setenv("BD_AGENT_MODE", "")
+	t.Setenv("CLAUDE_CODE", "something")
+	if !IsAgentMode() {
+		t.Fatal("expected true with CLAUDE_CODE set")
+	}
+}

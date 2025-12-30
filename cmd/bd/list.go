@@ -333,6 +333,12 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) 
 	buf.WriteString("\n")
 }
 
+// formatAgentIssue formats a single issue in ultra-compact agent mode format
+// Output: just "ID: Title" - no colors, no emojis, no brackets
+func formatAgentIssue(buf *strings.Builder, issue *types.Issue) {
+	buf.WriteString(fmt.Sprintf("%s: %s\n", issue.ID, issue.Title))
+}
+
 // formatIssueCompact formats a single issue in compact format to a buffer
 func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string) {
 	labelsStr := ""
@@ -451,9 +457,12 @@ var listCmd = &cobra.Command{
 
 		// Handle limit: --limit 0 means unlimited (explicit override)
 		// Otherwise use the value (default 50 or user-specified)
+		// Agent mode uses lower default (20) for context efficiency
 		effectiveLimit := limit
 		if cmd.Flags().Changed("limit") && limit == 0 {
 			effectiveLimit = 0 // Explicit unlimited
+		} else if !cmd.Flags().Changed("limit") && ui.IsAgentMode() {
+			effectiveLimit = 20 // Agent mode default
 		}
 
 		filter := types.IssueFilter{
@@ -743,7 +752,14 @@ var listCmd = &cobra.Command{
 
 			// Build output in buffer for pager support (bd-jdz3)
 			var buf strings.Builder
-			if longFormat {
+			if ui.IsAgentMode() {
+				// Agent mode: ultra-compact, no colors, no pager
+				for _, issue := range issues {
+					formatAgentIssue(&buf, issue)
+				}
+				fmt.Print(buf.String())
+				return
+			} else if longFormat {
 				// Long format: multi-line with details
 				buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
 				for _, issue := range issues {
@@ -859,7 +875,14 @@ var listCmd = &cobra.Command{
 
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
-		if longFormat {
+		if ui.IsAgentMode() {
+			// Agent mode: ultra-compact, no colors, no pager
+			for _, issue := range issues {
+				formatAgentIssue(&buf, issue)
+			}
+			fmt.Print(buf.String())
+			return
+		} else if longFormat {
 			// Long format: multi-line with details
 			buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
 			for _, issue := range issues {

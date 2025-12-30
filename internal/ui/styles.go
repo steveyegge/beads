@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -15,6 +16,23 @@ func init() {
 	if !ShouldUseColor() {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
+}
+
+// IsAgentMode returns true if the CLI is running in agent-optimized mode.
+// This is triggered by:
+//   - BD_AGENT_MODE=1 environment variable (explicit)
+//   - CLAUDE_CODE environment variable (auto-detect Claude Code)
+//
+// Agent mode provides ultra-compact output optimized for LLM context windows.
+func IsAgentMode() bool {
+	if os.Getenv("BD_AGENT_MODE") == "1" {
+		return true
+	}
+	// Auto-detect Claude Code environment
+	if os.Getenv("CLAUDE_CODE") != "" {
+		return true
+	}
+	return false
 }
 
 // Ayu theme color palette
