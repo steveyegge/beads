@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -614,6 +617,8 @@ type JiraConflict struct {
 }
 
 // detectJiraConflicts finds issues that have been modified both locally and in Jira.
+// It fetches each potentially conflicting issue from Jira to compare timestamps,
+// only reporting a conflict if both sides have been modified since the last sync.
 func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
 	// Get last sync time
 	lastSyncStr, _ := store.GetConfig(ctx, "jira.last_sync")
@@ -642,13 +647,42 @@ func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
 			continue
 		}
 
-		// Check if updated since last sync
-		if issue.UpdatedAt.After(lastSync) {
-			// This is a potential conflict - for now, mark as conflict
-			// TODO(bd-0qx5): In a full implementation, we'd fetch the Jira issue and compare timestamps
+		// Check if local issue was updated since last sync
+		if !issue.UpdatedAt.After(lastSync) {
+			continue
+		}
+
+		// Local was updated - now check if Jira was also updated
+		jiraKey := extractJiraKey(*issue.ExternalRef)
+		if jiraKey == "" {
+			// Can't extract key - treat as potential conflict for safety
 			conflicts = append(conflicts, JiraConflict{
 				IssueID:         issue.ID,
 				LocalUpdated:    issue.UpdatedAt,
+				JiraExternalRef: *issue.ExternalRef,
+			})
+			continue
+		}
+
+		// Fetch Jira issue timestamp
+		jiraUpdated, err := fetchJiraIssueTimestamp(ctx, jiraKey)
+		if err != nil {
+			// Can't fetch from Jira - log warning and treat as potential conflict
+			fmt.Fprintf(os.Stderr, "Warning: couldn't fetch Jira issue %s: %v\n", jiraKey, err)
+			conflicts = append(conflicts, JiraConflict{
+				IssueID:         issue.ID,
+				LocalUpdated:    issue.UpdatedAt,
+				JiraExternalRef: *issue.ExternalRef,
+			})
+			continue
+		}
+
+		// Only a conflict if Jira was ALSO updated since last sync
+		if jiraUpdated.After(lastSync) {
+			conflicts = append(conflicts, JiraConflict{
+				IssueID:         issue.ID,
+				LocalUpdated:    issue.UpdatedAt,
+				JiraUpdated:     jiraUpdated,
 				JiraExternalRef: *issue.ExternalRef,
 			})
 		}
@@ -658,32 +692,77 @@ func detectJiraConflicts(ctx context.Context) ([]JiraConflict, error) {
 }
 
 // reimportConflicts re-imports conflicting issues from Jira (Jira wins).
-// NOTE: This is a placeholder - full implementation requires fetching individual
-// issues from Jira API and updating local copies.
+// NOTE: Full implementation would fetch the complete Jira issue and update local copy.
+// Currently shows detailed conflict info for manual review.
 func reimportConflicts(_ context.Context, conflicts []JiraConflict) error {
 	if len(conflicts) == 0 {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "Warning: conflict resolution (--prefer-jira) not fully implemented\n")
-	fmt.Fprintf(os.Stderr, "  %d issue(s) may have conflicts that need manual review:\n", len(conflicts))
+	fmt.Fprintf(os.Stderr, "  %d issue(s) have conflicts - Jira version would win:\n", len(conflicts))
 	for _, c := range conflicts {
-		fmt.Fprintf(os.Stderr, "    - %s (local updated: %s)\n", c.IssueID, c.LocalUpdated.Format(time.RFC3339))
+		if !c.JiraUpdated.IsZero() {
+			fmt.Fprintf(os.Stderr, "    - %s (local: %s, jira: %s)\n",
+				c.IssueID,
+				c.LocalUpdated.Format(time.RFC3339),
+				c.JiraUpdated.Format(time.RFC3339))
+		} else {
+			fmt.Fprintf(os.Stderr, "    - %s (local: %s, jira: unknown)\n",
+				c.IssueID,
+				c.LocalUpdated.Format(time.RFC3339))
+		}
 	}
 	return nil
 }
 
 // resolveConflictsByTimestamp resolves conflicts by keeping the newer version.
-// NOTE: This is a placeholder - full implementation requires fetching Jira
-// timestamps and comparing with local timestamps.
+// Uses the actual Jira timestamps fetched during conflict detection to determine
+// which version (local or Jira) should be preserved.
 func resolveConflictsByTimestamp(_ context.Context, conflicts []JiraConflict) error {
 	if len(conflicts) == 0 {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "Warning: timestamp-based conflict resolution not fully implemented\n")
-	fmt.Fprintf(os.Stderr, "  %d issue(s) may have conflicts - local version will be pushed:\n", len(conflicts))
+
+	var localWins, jiraWins, unknown int
 	for _, c := range conflicts {
-		fmt.Fprintf(os.Stderr, "    - %s\n", c.IssueID)
+		if c.JiraUpdated.IsZero() {
+			unknown++
+		} else if c.LocalUpdated.After(c.JiraUpdated) {
+			localWins++
+		} else {
+			jiraWins++
+		}
 	}
+
+	fmt.Fprintf(os.Stderr, "Conflict resolution by timestamp:\n")
+	fmt.Fprintf(os.Stderr, "  Local wins (newer): %d\n", localWins)
+	fmt.Fprintf(os.Stderr, "  Jira wins (newer):  %d\n", jiraWins)
+	if unknown > 0 {
+		fmt.Fprintf(os.Stderr, "  Unknown (couldn't fetch): %d\n", unknown)
+	}
+
+	// Show details
+	for _, c := range conflicts {
+		if c.JiraUpdated.IsZero() {
+			fmt.Fprintf(os.Stderr, "    - %s: local version kept (couldn't fetch Jira timestamp)\n", c.IssueID)
+		} else if c.LocalUpdated.After(c.JiraUpdated) {
+			fmt.Fprintf(os.Stderr, "    - %s: local wins (local: %s > jira: %s)\n",
+				c.IssueID,
+				c.LocalUpdated.Format(time.RFC3339),
+				c.JiraUpdated.Format(time.RFC3339))
+		} else {
+			fmt.Fprintf(os.Stderr, "    - %s: jira wins (jira: %s >= local: %s)\n",
+				c.IssueID,
+				c.JiraUpdated.Format(time.RFC3339),
+				c.LocalUpdated.Format(time.RFC3339))
+		}
+	}
+
+	// NOTE: Full implementation would actually re-import the Jira version for jiraWins issues
+	if jiraWins > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: %d issue(s) should be re-imported from Jira (not yet implemented)\n", jiraWins)
+	}
+
 	return nil
 }
 
@@ -704,4 +783,126 @@ func isJiraExternalRef(externalRef, jiraURL string) bool {
 	}
 
 	return true
+}
+
+// extractJiraKey extracts the Jira issue key from an external_ref URL.
+// For example, "https://company.atlassian.net/browse/PROJ-123" returns "PROJ-123".
+func extractJiraKey(externalRef string) string {
+	idx := strings.LastIndex(externalRef, "/browse/")
+	if idx == -1 {
+		return ""
+	}
+	return externalRef[idx+len("/browse/"):]
+}
+
+// fetchJiraIssueTimestamp fetches the updated timestamp for a single Jira issue.
+// It returns the Jira issue's updated timestamp, or an error if the fetch fails.
+func fetchJiraIssueTimestamp(ctx context.Context, jiraKey string) (time.Time, error) {
+	var zero time.Time
+
+	// Get Jira configuration
+	jiraURL, _ := store.GetConfig(ctx, "jira.url")
+	if jiraURL == "" {
+		return zero, fmt.Errorf("jira.url not configured")
+	}
+	jiraURL = strings.TrimSuffix(jiraURL, "/")
+
+	// Get credentials (config takes precedence over env)
+	apiToken, _ := store.GetConfig(ctx, "jira.api_token")
+	if apiToken == "" {
+		apiToken = os.Getenv("JIRA_API_TOKEN")
+	}
+	if apiToken == "" {
+		return zero, fmt.Errorf("jira API token not configured")
+	}
+
+	username, _ := store.GetConfig(ctx, "jira.username")
+	if username == "" {
+		username = os.Getenv("JIRA_USERNAME")
+	}
+
+	// Build API URL - use v3 for Jira Cloud (v2 is deprecated)
+	// Only fetch the 'updated' field to minimize response size
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=updated", jiraURL, jiraKey)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return zero, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set authentication header
+	isCloud := strings.Contains(jiraURL, "atlassian.net")
+	if isCloud && username != "" {
+		// Jira Cloud: Basic auth with email:api_token
+		auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + apiToken))
+		req.Header.Set("Authorization", "Basic "+auth)
+	} else if username != "" {
+		// Jira Server with username: Basic auth
+		auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + apiToken))
+		req.Header.Set("Authorization", "Basic "+auth)
+	} else {
+		// Jira Server without username: Bearer token (PAT)
+		req.Header.Set("Authorization", "Bearer "+apiToken)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "bd-jira-sync/1.0")
+
+	// Execute request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return zero, fmt.Errorf("failed to fetch issue %s: %w", jiraKey, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return zero, fmt.Errorf("jira API returned %d for issue %s: %s", resp.StatusCode, jiraKey, string(body))
+	}
+
+	// Parse response
+	var result struct {
+		Fields struct {
+			Updated string `json:"updated"`
+		} `json:"fields"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return zero, fmt.Errorf("failed to parse Jira response: %w", err)
+	}
+
+	// Parse Jira timestamp (ISO 8601 format: 2024-01-15T10:30:00.000+0000)
+	updated, err := parseJiraTimestamp(result.Fields.Updated)
+	if err != nil {
+		return zero, fmt.Errorf("failed to parse Jira timestamp: %w", err)
+	}
+
+	return updated, nil
+}
+
+// parseJiraTimestamp parses Jira's timestamp format into a time.Time.
+// Jira uses ISO 8601 with timezone: 2024-01-15T10:30:00.000+0000 or 2024-01-15T10:30:00.000Z
+func parseJiraTimestamp(ts string) (time.Time, error) {
+	if ts == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+
+	// Try common formats
+	formats := []string{
+		"2006-01-02T15:04:05.000-0700",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02T15:04:05Z",
+		time.RFC3339,
+		time.RFC3339Nano,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, ts); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unrecognized timestamp format: %s", ts)
 }
