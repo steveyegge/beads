@@ -2,7 +2,7 @@
 
 > This file contains the complete beads documentation for LLM consumption.
 > Generated automatically from the documentation source files.
-> For the web version, visit: https://joyshmitz.github.io/beads/
+> For the web version, visit: https://steveyegge.github.io/beads/
 
 ---
 
@@ -69,7 +69,7 @@ bd create "Found bug in auth" --description="Details..." \
 bd sync
 ```
 
-See the [Claude Code integration](/docs/integrations/claude-code) for detailed agent instructions.
+See the [Claude Code integration](/integrations/claude-code) for detailed agent instructions.
 
 ## Architecture
 
@@ -85,10 +85,10 @@ The magic is automatic synchronization between a local SQLite database and git-t
 
 ## Next Steps
 
-- [Installation](/docs/getting-started/installation) - Get bd installed
-- [Quick Start](/docs/getting-started/quickstart) - Create your first issues
-- [CLI Reference](/docs/cli-reference) - All available commands
-- [Workflows](/docs/workflows) - Formulas, molecules, and gates
+- [Installation](/getting-started/installation) - Get bd installed
+- [Quick Start](/getting-started/quickstart) - Create your first issues
+- [CLI Reference](/cli-reference) - All available commands
+- [Workflows](/workflows) - Formulas, molecules, and gates
 
 </document>
 
@@ -208,7 +208,7 @@ Add to Claude Desktop config:
 - Higher context overhead (10-50k tokens for tool schemas)
 - Additional latency from MCP protocol
 
-See [MCP Server](/docs/integrations/mcp-server) for detailed configuration.
+See [MCP Server](/integrations/mcp-server) for detailed configuration.
 
 ## Git Hooks
 
@@ -452,8 +452,8 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 After installation:
 
 1. **Initialize a project**: `cd your-project && bd init`
-2. **Learn the basics**: See [Quick Start](/docs/getting-started/quickstart)
-3. **Configure your agent**: See [IDE Setup](/docs/getting-started/ide-setup)
+2. **Learn the basics**: See [Quick Start](/getting-started/quickstart)
+3. **Configure your agent**: See [IDE Setup](/getting-started/ide-setup)
 
 </document>
 
@@ -608,7 +608,7 @@ The JSONL file `.beads/issues.jsonl` is git-tracked and syncs automatically.
 - Filter ready work: `bd ready --priority 1`
 - Search issues: `bd list --status open`
 - Detect cycles: `bd dep cycles`
-- See [CLI Reference](/docs/cli-reference) for all commands
+- See [CLI Reference](/cli-reference) for all commands
 
 </document>
 
@@ -807,10 +807,10 @@ Declarative workflow templates:
 
 ## Navigation
 
-- [Issues & Dependencies](/docs/core-concepts/issues)
-- [Daemon Architecture](/docs/core-concepts/daemon)
-- [JSONL Sync](/docs/core-concepts/jsonl-sync)
-- [Hash-based IDs](/docs/core-concepts/hash-ids)
+- [Issues & Dependencies](/core-concepts/issues)
+- [Daemon Architecture](/core-concepts/daemon)
+- [JSONL Sync](/core-concepts/jsonl-sync)
+- [Hash-based IDs](/core-concepts/hash-ids)
 
 </document>
 
@@ -975,7 +975,7 @@ bd config set daemon.auto_start false
 bd config set daemon.log_level debug
 ```
 
-See [Configuration](/docs/reference/configuration) for all options.
+See [Configuration](/reference/configuration) for all options.
 
 </document>
 
@@ -1647,11 +1647,11 @@ bd import -i .beads/issues.jsonl
 
 ## See Also
 
-- [Essential Commands](/docs/cli-reference/essential)
-- [Issue Commands](/docs/cli-reference/issues)
-- [Dependency Commands](/docs/cli-reference/dependencies)
-- [Label Commands](/docs/cli-reference/labels)
-- [Sync Commands](/docs/cli-reference/sync)
+- [Essential Commands](/cli-reference/essential)
+- [Issue Commands](/cli-reference/issues)
+- [Dependency Commands](/cli-reference/dependencies)
+- [Label Commands](/cli-reference/labels)
+- [Sync Commands](/cli-reference/sync)
 
 </document>
 
@@ -2760,10 +2760,10 @@ bd close release-1.0.0.1
 
 ## Navigation
 
-- [Molecules](/docs/workflows/molecules) - Work graphs and execution
-- [Formulas](/docs/workflows/formulas) - Declarative templates
-- [Gates](/docs/workflows/gates) - Async coordination
-- [Wisps](/docs/workflows/wisps) - Ephemeral operations
+- [Molecules](/workflows/molecules) - Work graphs and execution
+- [Formulas](/workflows/formulas) - Declarative templates
+- [Gates](/workflows/gates) - Async coordination
+- [Wisps](/workflows/wisps) - Ephemeral operations
 
 </document>
 
@@ -3395,9 +3395,9 @@ bd ready  # Shows next steps
 
 ## See Also
 
-- [Formulas](/docs/workflows/formulas) - Creating templates
-- [Gates](/docs/workflows/gates) - Async coordination
-- [Wisps](/docs/workflows/wisps) - Ephemeral workflows
+- [Formulas](/workflows/formulas) - Creating templates
+- [Gates](/workflows/gates) - Async coordination
+- [Wisps](/workflows/wisps) - Ephemeral workflows
 
 </document>
 
@@ -3597,8 +3597,8 @@ bd dep add bd-42 external:other-repo/bd-100
 
 ## Navigation
 
-- [Routing](/docs/multi-agent/routing) - Auto-routing configuration
-- [Coordination](/docs/multi-agent/coordination) - Agent coordination patterns
+- [Routing](/multi-agent/routing) - Auto-routing configuration
+- [Coordination](/multi-agent/coordination) - Agent coordination patterns
 
 </document>
 
@@ -3990,8 +3990,8 @@ bd export
 
 ## See Also
 
-- [Claude Code](/docs/integrations/claude-code)
-- [IDE Setup](/docs/getting-started/ide-setup)
+- [Claude Code](/integrations/claude-code)
+- [IDE Setup](/getting-started/ide-setup)
 
 </document>
 
@@ -4176,8 +4176,8 @@ bd init --quiet
 
 ## See Also
 
-- [MCP Server](/docs/integrations/mcp-server) - For MCP-only environments
-- [IDE Setup](/docs/getting-started/ide-setup) - Other editors
+- [MCP Server](/integrations/mcp-server) - For MCP-only environments
+- [IDE Setup](/getting-started/ide-setup) - Other editors
 
 </document>
 
@@ -4325,8 +4325,8 @@ bd init --quiet
 
 ## See Also
 
-- [Claude Code](/docs/integrations/claude-code) - CLI integration
-- [Installation](/docs/getting-started/installation) - Full install guide
+- [Claude Code](/integrations/claude-code) - CLI integration
+- [Installation](/getting-started/installation) - Full install guide
 
 </document>
 

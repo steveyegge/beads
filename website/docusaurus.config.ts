@@ -12,9 +12,9 @@ const config: Config = {
   },
 
   // GitHub Pages deployment
-  url: 'https://joyshmitz.github.io',
+  url: 'https://steveyegge.github.io',
   baseUrl: '/beads/',
-  organizationName: 'joyshmitz',
+  organizationName: 'steveyegge',
   projectName: 'beads',
   trailingSlash: false,
 
@@ -51,7 +51,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/', // Docs as homepage
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/joyshmitz/beads/tree/docs/docusaurus-site/website/',
+          editUrl: 'https://github.com/steveyegge/beads/tree/docs/docusaurus-site/website/',
           showLastUpdateTime: true,
         },
         blog: false, // Disable blog
