@@ -417,9 +417,11 @@ var rootCmd = &cobra.Command{
 							fmt.Fprintf(os.Stderr, "Error initializing JSONL-only mode: %v\n", err)
 							os.Exit(1)
 						}
-						// Set actor from flag, viper, or env
+						// Set actor for audit trail
 						if actor == "" {
-							if user := os.Getenv("USER"); user != "" {
+							if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
+								actor = bdActor
+							} else if user := os.Getenv("USER"); user != "" {
 								actor = user
 							} else {
 								actor = "unknown"
@@ -462,13 +464,12 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Set actor from flag, viper (env), or default
-		// Priority: --actor flag > viper (config + BD_ACTOR env) > USER env > "unknown"
-		// Note: Viper handles BD_ACTOR automatically via AutomaticEnv()
+		// Set actor for audit trail
+		// Priority: --actor flag > BD_ACTOR env > USER env > "unknown"
 		if actor == "" {
-			// Viper already populated from config file or BD_ACTOR env
-			// Fall back to USER env if still empty
-			if user := os.Getenv("USER"); user != "" {
+			if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
+				actor = bdActor
+			} else if user := os.Getenv("USER"); user != "" {
 				actor = user
 			} else {
 				actor = "unknown"
