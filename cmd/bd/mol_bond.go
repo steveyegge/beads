@@ -208,12 +208,13 @@ func runMolBond(cmd *cobra.Command, args []string) {
 
 	// Resolve both operands - can be issue IDs or formula names
 	// Formula names are cooked inline to in-memory subgraphs
-	subgraphA, cookedA, err := resolveOrCookToSubgraph(ctx, store, args[0])
+	// Pass vars for step condition filtering (bd-7zka.1)
+	subgraphA, cookedA, err := resolveOrCookToSubgraph(ctx, store, args[0], vars)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	subgraphB, cookedB, err := resolveOrCookToSubgraph(ctx, store, args[1])
+	subgraphB, cookedB, err := resolveOrCookToSubgraph(ctx, store, args[1], vars)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -569,8 +570,9 @@ func resolveOrDescribe(ctx context.Context, s storage.Storage, operand string) (
 // If it's an issue, loads the subgraph from DB. If it's a formula, cooks inline to subgraph.
 // Returns the subgraph, whether it was cooked from formula, and any error.
 //
+// The vars parameter is used for step condition filtering (bd-7zka.1).
 // This implements gt-4v1eo: formulas are cooked to in-memory subgraphs (no DB storage).
-func resolveOrCookToSubgraph(ctx context.Context, s storage.Storage, operand string) (*TemplateSubgraph, bool, error) {
+func resolveOrCookToSubgraph(ctx context.Context, s storage.Storage, operand string, vars map[string]string) (*TemplateSubgraph, bool, error) {
 	// First, try to resolve as an existing issue
 	id, err := utils.ResolvePartialID(ctx, s, operand)
 	if err == nil {
@@ -599,7 +601,8 @@ func resolveOrCookToSubgraph(ctx context.Context, s storage.Storage, operand str
 	}
 
 	// Try to cook formula inline to in-memory subgraph
-	subgraph, err := resolveAndCookFormula(operand, nil)
+	// Pass vars for step condition filtering (bd-7zka.1)
+	subgraph, err := resolveAndCookFormulaWithVars(operand, nil, vars)
 	if err != nil {
 		return nil, false, fmt.Errorf("'%s' not found as issue or formula: %w", operand, err)
 	}

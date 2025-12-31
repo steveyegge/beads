@@ -574,6 +574,13 @@ func collectSteps(steps []*formula.Step, parentID string,
 // and returns an in-memory TemplateSubgraph ready for instantiation.
 // This is the main entry point for ephemeral proto cooking.
 func resolveAndCookFormula(formulaName string, searchPaths []string) (*TemplateSubgraph, error) {
+	return resolveAndCookFormulaWithVars(formulaName, searchPaths, nil)
+}
+
+// resolveAndCookFormulaWithVars loads a formula and optionally filters steps by condition.
+// If conditionVars is provided, steps with conditions that evaluate to false are excluded.
+// Pass nil for conditionVars to include all steps (condition filtering skipped).
+func resolveAndCookFormulaWithVars(formulaName string, searchPaths []string, conditionVars map[string]string) (*TemplateSubgraph, error) {
 	// Create parser with search paths
 	parser := formula.NewParser(searchPaths...)
 
@@ -631,6 +638,27 @@ func resolveAndCookFormula(formulaName string, searchPaths []string) (*TemplateS
 				resolved.Steps = formula.ApplyAdvice(resolved.Steps, aspectFormula.Advice)
 			}
 		}
+	}
+
+	// Apply step condition filtering if vars provided (bd-7zka.1)
+	// This filters out steps whose conditions evaluate to false
+	if conditionVars != nil {
+		// Merge with formula defaults for complete evaluation
+		mergedVars := make(map[string]string)
+		for name, def := range resolved.Vars {
+			if def != nil && def.Default != "" {
+				mergedVars[name] = def.Default
+			}
+		}
+		for k, v := range conditionVars {
+			mergedVars[k] = v
+		}
+
+		filteredSteps, err := formula.FilterStepsByCondition(resolved.Steps, mergedVars)
+		if err != nil {
+			return nil, fmt.Errorf("filtering steps by condition: %w", err)
+		}
+		resolved.Steps = filteredSteps
 	}
 
 	// Cook to in-memory subgraph, including variable definitions for default handling
