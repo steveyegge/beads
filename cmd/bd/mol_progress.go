@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -53,9 +55,9 @@ Example:
 			}
 			moleculeID = resolved
 		} else {
-			// Infer from in_progress work
-			molecules := findInProgressMolecules(ctx, store, actor)
-			if len(molecules) == 0 {
+			// Infer from in_progress work - use lightweight discovery
+			moleculeIDs := findInProgressMoleculeIDs(ctx, store, actor)
+			if len(moleculeIDs) == 0 {
 				if jsonOutput {
 					outputJSON([]interface{}{})
 					return
@@ -65,7 +67,7 @@ Example:
 				return
 			}
 			// Show progress for first molecule
-			moleculeID = molecules[0].MoleculeID
+			moleculeID = moleculeIDs[0]
 		}
 
 		stats, err := store.GetMoleculeProgress(ctx, moleculeID)
@@ -106,6 +108,34 @@ Example:
 		// Human-readable output
 		printMoleculeProgressStats(stats)
 	},
+}
+
+// findInProgressMoleculeIDs finds molecule IDs with in_progress steps for an agent.
+// This is a lightweight version that only returns IDs without loading subgraphs.
+func findInProgressMoleculeIDs(ctx context.Context, s storage.Storage, agent string) []string {
+	// Query for in_progress issues
+	status := types.StatusInProgress
+	filter := types.IssueFilter{Status: &status}
+	if agent != "" {
+		filter.Assignee = &agent
+	}
+	inProgressIssues, err := s.SearchIssues(ctx, "", filter)
+	if err != nil || len(inProgressIssues) == 0 {
+		return nil
+	}
+
+	// For each in_progress issue, find its parent molecule
+	seen := make(map[string]bool)
+	var moleculeIDs []string
+	for _, issue := range inProgressIssues {
+		moleculeID := findParentMolecule(ctx, s, issue.ID)
+		if moleculeID != "" && !seen[moleculeID] {
+			seen[moleculeID] = true
+			moleculeIDs = append(moleculeIDs, moleculeID)
+		}
+	}
+
+	return moleculeIDs
 }
 
 // printMoleculeProgressStats prints molecule progress in human-readable format
