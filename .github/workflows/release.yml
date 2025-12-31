@@ -29,7 +29,7 @@ jobs:
       - name: Install cross-compilation toolchains and signing tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode zig
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
