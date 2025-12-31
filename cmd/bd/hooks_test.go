@@ -282,3 +282,120 @@ func TestInstallHooksShared(t *testing.T) {
 		}
 	})
 }
+
+func TestFormatHookWarnings(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses []HookStatus
+		want     string
+	}{
+		{
+			name:     "no issues",
+			statuses: []HookStatus{{Name: "pre-commit", Installed: true}},
+			want:     "",
+		},
+		{
+			name:     "one missing",
+			statuses: []HookStatus{{Name: "pre-commit", Installed: false}},
+			want:     "⚠️  Git hooks not installed (1 missing)",
+		},
+		{
+			name: "multiple missing",
+			statuses: []HookStatus{
+				{Name: "pre-commit", Installed: false},
+				{Name: "post-merge", Installed: false},
+			},
+			want: "⚠️  Git hooks not installed (2 missing)",
+		},
+		{
+			name:     "one outdated",
+			statuses: []HookStatus{{Name: "pre-commit", Installed: true, Outdated: true}},
+			want:     "⚠️  Git hooks are outdated (1 hooks)",
+		},
+		{
+			name: "mixed missing and outdated",
+			statuses: []HookStatus{
+				{Name: "pre-commit", Installed: false},
+				{Name: "post-merge", Installed: true, Outdated: true},
+			},
+			want: "⚠️  Git hooks not installed (1 missing)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatHookWarnings(tt.statuses)
+			if tt.want == "" && got != "" {
+				t.Errorf("FormatHookWarnings() = %q, want empty", got)
+			} else if tt.want != "" && !strContains(got, tt.want) {
+				t.Errorf("FormatHookWarnings() = %q, want to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func strContains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || strContains(s[1:], substr)))
+}
+
+func TestIsRebaseInProgress(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create .git directory
+	if err := os.MkdirAll(".git", 0755); err != nil {
+		t.Fatalf("Failed to create .git: %v", err)
+	}
+
+	// Should be false initially
+	if isRebaseInProgress() {
+		t.Error("isRebaseInProgress() = true, want false (no rebase marker)")
+	}
+
+	// Create rebase-merge marker
+	if err := os.MkdirAll(".git/rebase-merge", 0755); err != nil {
+		t.Fatalf("Failed to create rebase-merge: %v", err)
+	}
+	if !isRebaseInProgress() {
+		t.Error("isRebaseInProgress() = false, want true (rebase-merge exists)")
+	}
+
+	// Remove rebase-merge
+	if err := os.RemoveAll(".git/rebase-merge"); err != nil {
+		t.Fatalf("Failed to remove rebase-merge: %v", err)
+	}
+
+	// Create rebase-apply marker
+	if err := os.MkdirAll(".git/rebase-apply", 0755); err != nil {
+		t.Fatalf("Failed to create rebase-apply: %v", err)
+	}
+	if !isRebaseInProgress() {
+		t.Error("isRebaseInProgress() = false, want true (rebase-apply exists)")
+	}
+}
+
+func TestHasBeadsJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Should be false initially (no .beads directory)
+	if hasBeadsJSONL() {
+		t.Error("hasBeadsJSONL() = true, want false (no .beads)")
+	}
+
+	// Create .beads directory without any JSONL files
+	if err := os.MkdirAll(".beads", 0755); err != nil {
+		t.Fatalf("Failed to create .beads: %v", err)
+	}
+	if hasBeadsJSONL() {
+		t.Error("hasBeadsJSONL() = true, want false (no JSONL files)")
+	}
+
+	// Create issues.jsonl
+	if err := os.WriteFile(".beads/issues.jsonl", []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create issues.jsonl: %v", err)
+	}
+	if !hasBeadsJSONL() {
+		t.Error("hasBeadsJSONL() = false, want true (issues.jsonl exists)")
+	}
+}

@@ -134,6 +134,10 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 		t.Fatalf("Failed to create db file: %v", err)
 	}
 
+	// Set BEADS_DIR to force FindBeadsDir to use our temp directory
+	// This prevents finding the actual .beads in a git worktree
+	t.Setenv("BEADS_DIR", beadsDir)
+
 	// Change to temp directory
 	t.Chdir(tmpDir)
 
@@ -175,6 +179,10 @@ func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create .beads: %v", err)
 	}
+
+	// Set BEADS_DIR to force FindBeadsDir to use our temp directory
+	// This prevents finding the actual .beads in a git worktree
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	// Change to temp directory
 	t.Chdir(tmpDir)
