@@ -185,10 +185,10 @@ func (wm *WorktreeManager) SyncJSONLToWorktreeWithOptions(worktreePath, jsonlRel
 	srcPath := filepath.Join(wm.repoPath, jsonlRelPath)
 
 	// Destination: worktree JSONL
-	// GH#785: Handle bare repo worktrees where jsonlRelPath might include the
+	// GH#785, GH#810: Handle bare repo worktrees where jsonlRelPath might include the
 	// worktree name (e.g., "main/.beads/issues.jsonl"). The sync branch uses
 	// sparse checkout for .beads/* so we normalize to strip leading components.
-	normalizedRelPath := normalizeBeadsRelPath(jsonlRelPath)
+	normalizedRelPath := NormalizeBeadsRelPath(jsonlRelPath)
 	dstPath := filepath.Join(worktreePath, normalizedRelPath)
 
 	// Ensure destination directory exists
@@ -320,22 +320,6 @@ func (wm *WorktreeManager) mergeJSONLFiles(srcData, dstData []byte) ([]byte, err
 	return mergedData, nil
 }
 
-
-// normalizeBeadsRelPath strips any leading path components before .beads/.
-// This handles bare repo worktrees where the relative path includes the worktree
-// name (e.g., "main/.beads/issues.jsonl" -> ".beads/issues.jsonl").
-// GH#785: Fix for sync failing across worktrees in bare repo setup.
-func normalizeBeadsRelPath(relPath string) string {
-	// Use filepath.ToSlash for consistent handling across platforms
-	normalized := filepath.ToSlash(relPath)
-	// Look for ".beads/" to ensure we match the directory, not a prefix like ".beads-backup"
-	if idx := strings.Index(normalized, ".beads/"); idx > 0 {
-		// Strip leading path components before .beads
-		return filepath.FromSlash(normalized[idx:])
-	}
-	return relPath
-}
-
 // isValidWorktree checks if the path is a valid git worktree
 func (wm *WorktreeManager) isValidWorktree(worktreePath string) (bool, error) {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
@@ -435,6 +419,21 @@ func (wm *WorktreeManager) configureSparseCheckout(worktreePath string) error {
 	}
 
 	return nil
+}
+
+// NormalizeBeadsRelPath strips any leading path components before .beads/.
+// This handles bare repo worktrees where the relative path includes the worktree
+// name (e.g., "main/.beads/issues.jsonl" -> ".beads/issues.jsonl").
+// GH#785, GH#810: Fix for sync failing across worktrees in bare repo setup.
+func NormalizeBeadsRelPath(relPath string) string {
+	// Use filepath.ToSlash for consistent handling across platforms
+	normalized := filepath.ToSlash(relPath)
+	// Look for ".beads/" to ensure we match the directory, not a prefix like ".beads-backup"
+	if idx := strings.Index(normalized, ".beads/"); idx > 0 {
+		// Strip leading path components before .beads
+		return filepath.FromSlash(normalized[idx:])
+	}
+	return relPath
 }
 
 // verifySparseCheckout checks if sparse checkout is configured correctly
