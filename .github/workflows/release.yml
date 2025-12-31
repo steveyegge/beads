@@ -41,6 +41,7 @@ jobs:
           sudo rm -rf /opt/zig
           sudo mv zig-linux-x86_64-${ZIG_VERSION} /opt/zig
           sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+          rm -f zig.tar.xz
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
