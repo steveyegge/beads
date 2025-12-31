@@ -117,25 +117,6 @@ builds:
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
 
-  - id: bd-freebsd-arm
-    main: ./cmd/bd
-    binary: bd
-    env:
-      - CGO_ENABLED=1
-      - CC=zig cc -target armv7-freebsd-gnueabihf
-      - CXX=zig c++ -target armv7-freebsd-gnueabihf
-    goos:
-      - freebsd
-    goarch:
-      - arm
-    goarm:
-      - 7
-    ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.Build={{.ShortCommit}}
-      - -X main.Commit={{.Commit}}
-      - -X main.Branch={{.Branch}}
 
 archives:
   - id: bd-archive
