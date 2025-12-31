@@ -1,3 +1,17 @@
+---
+name: beads-init-app
+description: |
+  Orchestrates the Application Initialization Ceremony for new beads-first repos.
+  Creates the InitApp epic and all child tasks that must complete before other
+  work can proceed. Establishes the Epoch - the foundational commit from which
+  all work flows. Trigger with "initialize application", "init app", "bootstrap repo",
+  "beads-first setup", or "create epoch".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Init-App Skill
 
 > **STATUS: ACTIVE - This skill creates the InitApp structure**

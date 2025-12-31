@@ -1,3 +1,17 @@
+---
+name: beads-initializer
+description: |
+  Transforms vague goals into structured backlogs with epic and child task
+  hierarchies. Guides through goal capture, task decomposition, dependency
+  establishment, and git sync. Use for any new feature or project that spans
+  multiple sessions. Trigger with "create backlog", "plan feature", "break down",
+  "initialize epic", "structure this work", or "create task hierarchy".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Initializer Skill
 
 > **STATUS: ACTIVE - This skill creates epic + backlog structures**

@@ -1,3 +1,17 @@
+---
+name: beads-handoff
+description: |
+  Generates structured handoff prompts at session end for seamless continuity.
+  Captures current issue context, git history, blockers, and next steps into
+  a formatted prompt that can be used to resume work in the next session.
+  Trigger with "generate handoff", "end session", "create handoff prompt",
+  "session handoff", or "prepare for next session".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(cat:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Handoff Skill
 
 > **STATUS: GREEN FIELD - LOGGING ONLY**

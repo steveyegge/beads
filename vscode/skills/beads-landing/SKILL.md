@@ -1,3 +1,17 @@
+---
+name: beads-landing
+description: |
+  Executes the mandatory session end ritual. Files discovered work, runs quality
+  gates (tests), updates beads state, syncs to git, and generates handoff prompt.
+  The landing ritual is NON-NEGOTIABLE - session has not ended until git push
+  completes. Trigger with "end session", "landing", "session end", "wrap up",
+  "finish work", or "close session".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(mkdir:*),Bash(cat:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Landing Skill
 
 > **STATUS: GREEN FIELD - LOGGING ONLY**

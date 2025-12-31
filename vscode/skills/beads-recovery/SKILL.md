@@ -1,3 +1,18 @@
+---
+name: beads-recovery
+description: |
+  Detects common failure states and provides step-by-step guided recovery.
+  Handles scenarios like session ended without landing, destructive changes,
+  merge conflicts, issues closed without testing, multiple in-progress issues,
+  abandoned sessions, and context exhaustion. Trigger with "recover session",
+  "fix beads state", "something went wrong", "session crashed", "recover from",
+  "beads broken", or "need recovery help".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Recovery Skill
 
 > **STATUS: ACTIVE**

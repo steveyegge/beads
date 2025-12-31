@@ -1,3 +1,17 @@
+---
+name: beads-circuit-breaker
+description: |
+  Prevents wasted time on minor issues with no functional impact. After 3 failed
+  attempts to fix a non-critical issue, documents the situation in BLOCKED_N.md,
+  creates a low-priority beads issue, and resumes primary work. Trigger with
+  "I've tried this multiple times", "this keeps failing", "should I move on",
+  "stuck on minor issue", or "circuit breaker".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(mkdir:*),Bash(cat:*),Bash(ls:*),Bash(sed:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Circuit Breaker Skill
 
 > **STATUS: ACTIVE**

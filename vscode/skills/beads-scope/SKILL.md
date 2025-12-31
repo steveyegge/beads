@@ -1,3 +1,16 @@
+---
+name: beads-scope
+description: |
+  Enforces the ONE ISSUE AT A TIME discipline. Monitors work to ensure agent
+  stays focused on the selected issue and properly files discovered work instead
+  of implementing it. Trigger with "scope check", "am I on track", "scope violation",
+  "discovered work", "file this for later", or "stay focused".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Scope Skill
 
 > **STATUS: GREEN FIELD - LOGGING ONLY**

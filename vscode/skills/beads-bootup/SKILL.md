@@ -1,3 +1,17 @@
+---
+name: beads-bootup
+description: |
+  Executes the mandatory session start ritual. Grounds agent in current state,
+  syncs with remote, orients via bd ready, and selects ONE issue to work on.
+  Enforces InitApp guard - if InitApp is open, only InitApp children are workable.
+  Trigger with "start session", "begin work", "bootup", "session start",
+  "what should I work on", or "initialize session".
+allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(pwd:*),Bash(mkdir:*)"
+version: "0.1.0"
+author: "justSteve <https://github.com/justSteve>"
+license: "MIT"
+---
+
 # Beads Bootup Skill
 
 > **STATUS: GREEN FIELD - LOGGING ONLY**
