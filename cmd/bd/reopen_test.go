@@ -30,7 +30,7 @@ func (h *reopenTestHelper) createIssue(title string, issueType types.IssueType, 
 }
 
 func (h *reopenTestHelper) closeIssue(issueID, reason string) {
-	if err := h.s.CloseIssue(h.ctx, issueID, "test-user", reason); err != nil {
+	if err := h.s.CloseIssue(h.ctx, issueID, "test-user", reason, ""); err != nil {
 		h.t.Fatalf("Failed to close issue: %v", err)
 	}
 }

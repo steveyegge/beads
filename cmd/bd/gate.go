@@ -425,7 +425,7 @@ var gateCloseCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			if err := store.CloseIssue(ctx, gateID, reason, actor); err != nil {
+			if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
 				os.Exit(1)
 			}
@@ -543,7 +543,7 @@ Example:
 				reason = fmt.Sprintf("Human approval granted: %s (%s)", gate.AwaitID, comment)
 			}
 
-			if err := store.CloseIssue(ctx, gateID, reason, actor); err != nil {
+			if err := store.CloseIssue(ctx, gateID, reason, actor, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
 				os.Exit(1)
 			}
@@ -807,7 +807,7 @@ This command is idempotent and safe to run repeatedly.`,
 					continue
 				}
 			} else if store != nil {
-				if err := store.CloseIssue(ctx, gate.ID, reason, actor); err != nil {
+				if err := store.CloseIssue(ctx, gate.ID, reason, actor, ""); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to close gate %s: %v\n", gate.ID, err)
 					continue
 				}

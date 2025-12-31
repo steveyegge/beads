@@ -385,7 +385,7 @@ func TestCloseReasonRoundTrip(t *testing.T) {
 
 	// Close the issue with a reason
 	closeReason := "Completed: all tests passing"
-	if err := store.CloseIssue(ctx, issue.ID, closeReason, "test-actor"); err != nil {
+	if err := store.CloseIssue(ctx, issue.ID, closeReason, "test-actor", ""); err != nil {
 		t.Fatalf("Failed to close issue: %v", err)
 	}
 

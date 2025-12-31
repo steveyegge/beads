@@ -737,7 +737,7 @@ func (s *Server) handleClose(req *Request) Response {
 		oldStatus = string(issue.Status)
 	}
 
-	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req)); err != nil {
+	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req), closeArgs.Session); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to close issue: %v", err),
@@ -2069,7 +2069,7 @@ func (s *Server) handleGateClose(req *Request) Response {
 
 	oldStatus := string(gate.Status)
 
-	if err := store.CloseIssue(ctx, gateID, reason, s.reqActor(req)); err != nil {
+	if err := store.CloseIssue(ctx, gateID, reason, s.reqActor(req), ""); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to close gate: %v", err),

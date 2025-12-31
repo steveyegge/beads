@@ -36,8 +36,9 @@ type Issue struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	CreatedBy   string     `json:"created_by,omitempty"` // Who created this issue (GH#748)
 	UpdatedAt   time.Time  `json:"updated_at"`
-	ClosedAt    *time.Time `json:"closed_at,omitempty"`
-	CloseReason string     `json:"close_reason,omitempty"` // Reason provided when closing
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	CloseReason     string     `json:"close_reason,omitempty"`      // Reason provided when closing
+	ClosedBySession string     `json:"closed_by_session,omitempty"` // Claude Code session that closed this issue
 
 	// ===== External Integration =====
 	ExternalRef *string `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"

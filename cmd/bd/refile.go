@@ -133,7 +133,7 @@ Examples:
 		// Step 7: Close the source issue (unless --keep-open)
 		if !keepOpen {
 			closeReason := fmt.Sprintf("Refiled to %s", newIssue.ID)
-			if err := result.Store.CloseIssue(ctx, resolvedSourceID, closeReason, actor); err != nil {
+			if err := result.Store.CloseIssue(ctx, resolvedSourceID, closeReason, actor, ""); err != nil {
 				WarnError("failed to close source issue: %v", err)
 			}
 			// Schedule auto-flush if source was local store

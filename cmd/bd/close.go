@@ -46,6 +46,12 @@ create, update, show, or close operation).`,
 		noAuto, _ := cmd.Flags().GetBool("no-auto")
 		suggestNext, _ := cmd.Flags().GetBool("suggest-next")
 
+		// Get session ID from flag or environment variable
+		session, _ := cmd.Flags().GetString("session")
+		if session == "" {
+			session = os.Getenv("CLAUDE_SESSION_ID")
+		}
+
 		ctx := rootCtx
 
 		// --continue only works with a single issue
@@ -101,6 +107,7 @@ create, update, show, or close operation).`,
 				closeArgs := &rpc.CloseArgs{
 					ID:          id,
 					Reason:      reason,
+					Session:     session,
 					SuggestNext: suggestNext,
 				}
 				resp, err := daemonClient.CloseIssue(closeArgs)
@@ -175,7 +182,7 @@ create, update, show, or close operation).`,
 				continue
 			}
 
-			if err := store.CloseIssue(ctx, id, reason, actor); err != nil {
+			if err := store.CloseIssue(ctx, id, reason, actor, session); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
 			}
@@ -253,5 +260,6 @@ func init() {
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
+	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	rootCmd.AddCommand(closeCmd)
 }

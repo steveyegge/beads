@@ -118,7 +118,7 @@ func TestDaemonAutoImportAfterGitPull(t *testing.T) {
 	// NOW THE CRITICAL TEST: Agent A closes the issue and pushes
 	t.Run("DaemonAutoImportsAfterGitPull", func(t *testing.T) {
 		// Agent A closes the issue
-		if err := clone1Store.CloseIssue(ctx, issueID, "Completed", "agent-a"); err != nil {
+		if err := clone1Store.CloseIssue(ctx, issueID, "Completed", "agent-a", ""); err != nil {
 			t.Fatalf("Failed to close issue: %v", err)
 		}
 
@@ -331,7 +331,7 @@ func TestDaemonAutoImportDataCorruption(t *testing.T) {
 
 	// THE CORRUPTION SCENARIO:
 	// 1. Agent A closes the issue and pushes
-	clone1Store.CloseIssue(ctx, issueID, "Done", "agent-a")
+	clone1Store.CloseIssue(ctx, issueID, "Done", "agent-a", "")
 	exportIssuesToJSONL(ctx, clone1Store, clone1JSONLPath)
 	runGitCmd(t, clone1Dir, "add", ".beads/issues.jsonl")
 	runGitCmd(t, clone1Dir, "commit", "-m", "Close issue")

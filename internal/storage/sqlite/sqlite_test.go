@@ -640,7 +640,7 @@ func TestCloseIssue(t *testing.T) {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
 
-	err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+	err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 	if err != nil {
 		t.Fatalf("CloseIssue failed: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestClosedAtInvariant(t *testing.T) {
 		}
 
 		// Close the issue
-		err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+		err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 		if err != nil {
 			t.Fatalf("CloseIssue failed: %v", err)
 		}
@@ -812,7 +812,7 @@ func TestSearchIssues(t *testing.T) {
 		}
 		// Close the third issue
 		if issue.Title == "Another bug" {
-			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 			if err != nil {
 				t.Fatalf("CloseIssue failed: %v", err)
 			}
@@ -977,7 +977,7 @@ func TestGetStatistics(t *testing.T) {
 		}
 		// Close the one that should be closed
 		if issue.Title == "Closed task" {
-			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 			if err != nil {
 				t.Fatalf("CloseIssue failed: %v", err)
 			}
@@ -1532,7 +1532,7 @@ func TestConvoyReactiveCompletion(t *testing.T) {
 	}
 
 	// Close first issue - convoy should still be open
-	err = store.CloseIssue(ctx, issue1.ID, "Done", "test-user")
+	err = store.CloseIssue(ctx, issue1.ID, "Done", "test-user", "")
 	if err != nil {
 		t.Fatalf("CloseIssue issue1 failed: %v", err)
 	}
@@ -1546,7 +1546,7 @@ func TestConvoyReactiveCompletion(t *testing.T) {
 	}
 
 	// Close second issue - convoy should auto-close now
-	err = store.CloseIssue(ctx, issue2.ID, "Done", "test-user")
+	err = store.CloseIssue(ctx, issue2.ID, "Done", "test-user", "")
 	if err != nil {
 		t.Fatalf("CloseIssue issue2 failed: %v", err)
 	}

@@ -35,7 +35,7 @@ func (m *mockStorage) GetIssueByExternalRef(ctx context.Context, externalRef str
 func (m *mockStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	return nil
 }
-func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return nil
 }
 func (m *mockStorage) DeleteIssue(ctx context.Context, id string) error {
@@ -213,7 +213,7 @@ func (m *mockTransaction) CreateIssues(ctx context.Context, issues []*types.Issu
 func (m *mockTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	return nil
 }
-func (m *mockTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+func (m *mockTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return nil
 }
 func (m *mockTransaction) DeleteIssue(ctx context.Context, id string) error {

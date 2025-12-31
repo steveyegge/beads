@@ -443,6 +443,14 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 				}
 				issue.ExternalRef = nil
 			}
+		case "close_reason":
+			if v, ok := value.(string); ok {
+				issue.CloseReason = v
+			}
+		case "closed_by_session":
+			if v, ok := value.(string); ok {
+				issue.ClosedBySession = v
+			}
 		}
 	}
 
@@ -467,11 +475,17 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	return nil
 }
 
-// CloseIssue closes an issue with a reason
-func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
-	return m.UpdateIssue(ctx, id, map[string]interface{}{
-		"status": string(types.StatusClosed),
-	}, actor)
+// CloseIssue closes an issue with a reason.
+// The session parameter tracks which Claude Code session closed the issue (can be empty).
+func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
+	updates := map[string]interface{}{
+		"status":       string(types.StatusClosed),
+		"close_reason": reason,
+	}
+	if session != "" {
+		updates["closed_by_session"] = session
+	}
+	return m.UpdateIssue(ctx, id, updates, actor)
 }
 
 // CreateTombstone converts an existing issue to a tombstone record.

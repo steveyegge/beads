@@ -515,7 +515,7 @@ func TestMemoryStorage_GetStaleIssues_FilteringAndLimit(t *testing.T) {
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, closed.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, closed.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 
@@ -555,10 +555,10 @@ func TestMemoryStorage_Statistics_EpicsEligibleForClosure_Counting(t *testing.T)
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, c1.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c1.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue c1: %v", err)
 	}
-	if err := store.CloseIssue(ctx, c2.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c2.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue c2: %v", err)
 	}
 	// Parent-child deps: child -> epic.
@@ -851,7 +851,7 @@ func TestMemoryStorage_UpdateIssue_CoversMoreFields(t *testing.T) {
 	}
 
 	// Status closed when already closed should not clear ClosedAt.
-	if err := store.CloseIssue(ctx, iss.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, iss.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 	closedOnce, _ := store.GetIssue(ctx, iss.ID)
@@ -881,7 +881,7 @@ func TestMemoryStorage_CountEpicsEligibleForClosure_CoversBranches(t *testing.T)
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, epClosed.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, epClosed.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 	// Child -> ep1 (eligible once child is closed).
@@ -898,7 +898,7 @@ func TestMemoryStorage_CountEpicsEligibleForClosure_CoversBranches(t *testing.T)
 	store.mu.Unlock()
 
 	// Close child to make ep1 eligible.
-	if err := store.CloseIssue(ctx, c.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue child: %v", err)
 	}
 

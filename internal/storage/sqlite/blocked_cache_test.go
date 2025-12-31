@@ -126,7 +126,7 @@ func TestCacheInvalidationOnStatusChange(t *testing.T) {
 	}
 
 	// Close the blocker
-	if err := store.CloseIssue(ctx, blocker.ID, "Done", "test-user"); err != nil {
+	if err := store.CloseIssue(ctx, blocker.ID, "Done", "test-user", ""); err != nil {
 		t.Fatalf("CloseIssue failed: %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestCacheConsistencyAcrossOperations(t *testing.T) {
 	}
 
 	// Operation 3: Close blocker1
-	store.CloseIssue(ctx, blocker1.ID, "Done", "test-user")
+	store.CloseIssue(ctx, blocker1.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[blocked1.ID] || !cached[blocked2.ID] {
@@ -322,7 +322,7 @@ func TestDeepHierarchyCacheCorrectness(t *testing.T) {
 	}
 
 	// Close the blocker and verify all become unblocked
-	store.CloseIssue(ctx, blocker.ID, "Done", "test-user")
+	store.CloseIssue(ctx, blocker.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if len(cached) != 0 {
@@ -359,7 +359,7 @@ func TestMultipleBlockersInCache(t *testing.T) {
 	}
 
 	// Close one blocker - should still be blocked
-	store.CloseIssue(ctx, blocker1.ID, "Done", "test-user")
+	store.CloseIssue(ctx, blocker1.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if !cached[blocked.ID] {
@@ -367,7 +367,7 @@ func TestMultipleBlockersInCache(t *testing.T) {
 	}
 
 	// Close the second blocker - should be unblocked
-	store.CloseIssue(ctx, blocker2.ID, "Done", "test-user")
+	store.CloseIssue(ctx, blocker2.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[blocked.ID] {
@@ -400,7 +400,7 @@ func TestConditionalBlocksCache(t *testing.T) {
 	}
 
 	// Close A with SUCCESS (no failure keywords) - B should STILL be blocked
-	store.CloseIssue(ctx, issueA.ID, "Completed successfully", "test-user")
+	store.CloseIssue(ctx, issueA.ID, "Completed successfully", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if !cached[issueB.ID] {
@@ -411,7 +411,7 @@ func TestConditionalBlocksCache(t *testing.T) {
 	store.UpdateIssue(ctx, issueA.ID, map[string]interface{}{"status": types.StatusOpen}, "test-user")
 
 	// Close A with FAILURE - B should now be UNBLOCKED
-	store.CloseIssue(ctx, issueA.ID, "Task failed due to timeout", "test-user")
+	store.CloseIssue(ctx, issueA.ID, "Task failed due to timeout", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[issueB.ID] {
@@ -451,7 +451,7 @@ func TestConditionalBlocksVariousFailureKeywords(t *testing.T) {
 			store.AddDependency(ctx, dep, "test-user")
 
 			// Close A with failure reason
-			store.CloseIssue(ctx, issueA.ID, "Closed: "+reason, "test-user")
+			store.CloseIssue(ctx, issueA.ID, "Closed: "+reason, "test-user", "")
 
 			cached := getCachedBlockedIssues(t, store)
 			if cached[issueB.ID] {
@@ -501,7 +501,7 @@ func TestWaitsForAllChildren(t *testing.T) {
 	}
 
 	// Close first child - waiter should still be blocked (second child still open)
-	store.CloseIssue(ctx, child1.ID, "Done", "test-user")
+	store.CloseIssue(ctx, child1.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if !cached[waiter.ID] {
@@ -509,7 +509,7 @@ func TestWaitsForAllChildren(t *testing.T) {
 	}
 
 	// Close second child - waiter should now be unblocked
-	store.CloseIssue(ctx, child2.ID, "Done", "test-user")
+	store.CloseIssue(ctx, child2.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[waiter.ID] {
@@ -557,7 +557,7 @@ func TestWaitsForAnyChildren(t *testing.T) {
 	}
 
 	// Close first child - waiter should now be unblocked (any-children gate satisfied)
-	store.CloseIssue(ctx, child1.ID, "Done", "test-user")
+	store.CloseIssue(ctx, child1.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[waiter.ID] {
@@ -636,7 +636,7 @@ func TestWaitsForDynamicChildrenAdded(t *testing.T) {
 	}
 
 	// Close the child - waiter should be unblocked again
-	store.CloseIssue(ctx, child.ID, "Done", "test-user")
+	store.CloseIssue(ctx, child.ID, "Done", "test-user", "")
 
 	cached = getCachedBlockedIssues(t, store)
 	if cached[waiter.ID] {

@@ -71,7 +71,7 @@ func TestGitPullSyncIntegration(t *testing.T) {
 	issueID := issue.ID
 
 	// Close the issue
-	if err := clone1Store.CloseIssue(ctx, issueID, "Test completed", "test-user"); err != nil {
+	if err := clone1Store.CloseIssue(ctx, issueID, "Test completed", "test-user", ""); err != nil {
 		t.Fatalf("Failed to close issue: %v", err)
 	}
 

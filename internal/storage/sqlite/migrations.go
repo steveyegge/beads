@@ -50,6 +50,7 @@ var migrationsList = []Migration{
 	{"mol_type_column", migrations.MigrateMolTypeColumn},
 	{"hooked_status_migration", migrations.MigrateHookedStatus},
 	{"event_fields", migrations.MigrateEventFields},
+	{"closed_by_session_column", migrations.MigrateClosedBySessionColumn},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -107,6 +108,7 @@ func getMigrationDescription(name string) string {
 		"mol_type_column":              "Adds mol_type column for molecule type classification (swarm/patrol/work)",
 		"hooked_status_migration":      "Migrates blocked hooked issues to in_progress status",
 		"event_fields":                 "Adds event fields (event_kind, actor, target, payload) for operational state change beads",
+		"closed_by_session_column":     "Adds closed_by_session column for tracking which Claude Code session closed an issue",
 	}
 
 	if desc, ok := descriptions[name]; ok {

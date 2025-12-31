@@ -209,6 +209,9 @@ var showCmd = &cobra.Command{
 					if issue.CloseReason != "" {
 						fmt.Printf("Close reason: %s\n", issue.CloseReason)
 					}
+					if issue.ClosedBySession != "" {
+						fmt.Printf("Closed by session: %s\n", issue.ClosedBySession)
+					}
 					fmt.Printf("Priority: P%d\n", issue.Priority)
 					fmt.Printf("Type: %s\n", issue.IssueType)
 					if issue.Assignee != "" {
@@ -425,6 +428,9 @@ var showCmd = &cobra.Command{
 			fmt.Printf("Status: %s%s\n", issue.Status, statusSuffix)
 			if issue.CloseReason != "" {
 				fmt.Printf("Close reason: %s\n", issue.CloseReason)
+			}
+			if issue.ClosedBySession != "" {
+				fmt.Printf("Closed by session: %s\n", issue.ClosedBySession)
 			}
 			fmt.Printf("Priority: P%d\n", issue.Priority)
 			fmt.Printf("Type: %s\n", issue.IssueType)
