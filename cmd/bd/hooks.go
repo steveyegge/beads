@@ -464,9 +464,7 @@ func runChainedHook(hookName string, args []string) int {
 }
 
 // runPreCommitHook flushes pending changes to JSONL before commit.
-// Returns 0 on success (or if not applicable), non-zero on error.
-//
-//nolint:unparam // Always returns 0 by design - warnings don't block commits
+// Returns 0 on success (or if not applicable), 1 if unstaged beads changes detected.
 func runPreCommitHook() int {
 	// Run chained hook first (if exists)
 	if exitCode := runChainedHook("pre-commit", nil); exitCode != 0 {
@@ -492,12 +490,40 @@ func runPreCommitHook() int {
 		// Don't block the commit - user may have removed beads or have other issues
 	}
 
-	// Stage all tracked JSONL files
-	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"} {
-		if _, err := os.Stat(f); err == nil {
-			// #nosec G204 - f is from hardcoded list above, not user input
-			gitAdd := exec.Command("git", "add", f)
-			_ = gitAdd.Run() // Ignore errors - file may not exist
+	// Stage JSONL files for commit
+	// By default, we auto-stage for convenience. Users with conflicting git hooks
+	// (e.g., hooks that read the staging area) can set BEADS_NO_AUTO_STAGE=1 to
+	// disable this and stage manually. See: https://github.com/steveyegge/beads/issues/826
+	jsonlFiles := []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"}
+
+	if os.Getenv("BEADS_NO_AUTO_STAGE") != "" {
+		// Safe mode: check for unstaged changes and block if found
+		var unstaged []string
+		for _, f := range jsonlFiles {
+			if _, err := os.Stat(f); err == nil {
+				if hasUnstagedChanges(f) {
+					unstaged = append(unstaged, f)
+				}
+			}
+		}
+
+		if len(unstaged) > 0 {
+			fmt.Fprintln(os.Stderr, "❌ Unstaged beads changes detected:")
+			for _, f := range unstaged {
+				fmt.Fprintf(os.Stderr, "   %s\n", f)
+			}
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Run: git add .beads/")
+			return 1
+		}
+	} else {
+		// Default: auto-stage JSONL files
+		for _, f := range jsonlFiles {
+			if _, err := os.Stat(f); err == nil {
+				// #nosec G204 - f is from hardcoded list above, not user input
+				gitAdd := exec.Command("git", "add", f)
+				_ = gitAdd.Run() // Ignore errors - file may not exist
+			}
 		}
 	}
 
@@ -1000,6 +1026,44 @@ func hasBeadsJSONL() bool {
 			return true
 		}
 	}
+	return false
+}
+
+// hasUnstagedChanges checks if a file has uncommitted changes (modified or untracked).
+// Returns true if the file needs to be staged before commit.
+func hasUnstagedChanges(path string) bool {
+	// Check git status for this specific file
+	// #nosec G204 - path is from hardcoded list in caller
+	cmd := exec.Command("git", "status", "--porcelain", "--", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return false // If git fails, assume no changes
+	}
+
+	// Parse porcelain output: XY filename
+	// X = staged status, Y = unstaged status
+	// We care about Y (unstaged) being non-space, OR the file being untracked (??)
+	status := strings.TrimSpace(string(output))
+	if status == "" {
+		return false // No changes
+	}
+
+	// Check each line (usually just one for a single file)
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		x, y := line[0], line[1]
+		// Untracked file
+		if x == '?' && y == '?' {
+			return true
+		}
+		// Modified but not staged (Y is M, D, etc.)
+		if y != ' ' {
+			return true
+		}
+	}
+
 	return false
 }
 
