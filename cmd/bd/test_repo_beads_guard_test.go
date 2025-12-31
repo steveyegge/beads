@@ -11,6 +11,10 @@ import (
 // Guardrail: ensure the cmd/bd test suite does not touch the real repo .beads state.
 // Disable with BEADS_TEST_GUARD_DISABLE=1 (useful when running tests while actively using beads).
 func TestMain(m *testing.M) {
+	// Enable test mode that forces accessor functions to use legacy globals.
+	// This ensures backward compatibility with tests that manipulate globals directly.
+	enableTestModeGlobals()
+
 	if os.Getenv("BEADS_TEST_GUARD_DISABLE") != "" {
 		os.Exit(m.Run())
 	}

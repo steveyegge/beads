@@ -219,6 +219,9 @@ func TestInitializeNoDbMode_SetsStoreActive(t *testing.T) {
 	// The bug was that initializeNoDbMode() set `store` but not `storeActive`,
 	// so ensureStoreActive() would try to find a SQLite database.
 
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	tempDir := t.TempDir()
 	beadsDir := filepath.Join(tempDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {

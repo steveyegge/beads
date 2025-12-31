@@ -118,6 +118,9 @@ func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
 }
 
 func TestTrackBdVersion_FirstRun(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Create temp .beads directory with a project file (bd-420)
 	// FindBeadsDir now requires actual project files, not just directory existence
 	tmpDir := t.TempDir()
@@ -163,6 +166,9 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 }
 
 func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Create temp .beads directory
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")

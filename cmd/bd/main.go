@@ -144,6 +144,9 @@ var rootCmd = &cobra.Command{
 		_ = cmd.Help()
 	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Initialize CommandContext to hold runtime state (replaces scattered globals)
+		initCommandContext()
+
 		// Set up signal-aware context for graceful cancellation
 		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
@@ -729,6 +732,9 @@ var rootCmd = &cobra.Command{
 
 		// Tips (including sync conflict proactive checks) are shown via maybeShowTip()
 		// after successful command execution, not in PreRun
+
+		// Sync all state to CommandContext for unified access
+		syncCommandContext()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
 		// Handle --no-db mode: write memory storage back to JSONL
