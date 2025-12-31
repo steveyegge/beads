@@ -122,8 +122,8 @@ builds:
     binary: bd
     env:
       - CGO_ENABLED=1
-      - CC=zig cc -target armv7a-freebsd
-      - CXX=zig c++ -target armv7a-freebsd
+      - CC=zig cc -target armv7-freebsd-gnueabihf
+      - CXX=zig c++ -target armv7-freebsd-gnueabihf
     goos:
       - freebsd
     goarch:
