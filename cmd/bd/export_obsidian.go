@@ -90,8 +90,9 @@ func formatObsidianTask(issue *types.Issue) string {
 	}
 
 	// Dependencies with ⛔ emoji (official Obsidian Tasks "blocked by" format)
+	// Include both blocks and parent-child relationships
 	for _, dep := range issue.Dependencies {
-		if dep.Type == types.DepBlocks {
+		if dep.Type == types.DepBlocks || dep.Type == types.DepParentChild {
 			parts = append(parts, fmt.Sprintf("⛔ %s", dep.DependsOnID))
 		}
 	}
@@ -116,6 +117,31 @@ func groupIssuesByDate(issues []*types.Issue) map[string][]*types.Issue {
 	return grouped
 }
 
+// buildParentChildMap builds a map of parent ID -> child issues from parent-child dependencies
+func buildParentChildMap(issues []*types.Issue) (map[string][]*types.Issue, map[string]bool) {
+	parentToChildren := make(map[string][]*types.Issue)
+	isChild := make(map[string]bool)
+
+	// Build lookup map
+	issueByID := make(map[string]*types.Issue)
+	for _, issue := range issues {
+		issueByID[issue.ID] = issue
+	}
+
+	// Find parent-child relationships
+	for _, issue := range issues {
+		for _, dep := range issue.Dependencies {
+			if dep.Type == types.DepParentChild {
+				parentID := dep.DependsOnID
+				parentToChildren[parentID] = append(parentToChildren[parentID], issue)
+				isChild[issue.ID] = true
+			}
+		}
+	}
+
+	return parentToChildren, isChild
+}
+
 // writeObsidianExport writes issues in Obsidian Tasks markdown format
 func writeObsidianExport(w io.Writer, issues []*types.Issue) error {
 	// Write header
@@ -125,6 +151,9 @@ func writeObsidianExport(w io.Writer, issues []*types.Issue) error {
 	if _, err := fmt.Fprintln(w); err != nil {
 		return err
 	}
+
+	// Build parent-child hierarchy
+	parentToChildren, isChild := buildParentChildMap(issues)
 
 	// Group by date
 	grouped := groupIssuesByDate(issues)
@@ -149,9 +178,25 @@ func writeObsidianExport(w io.Writer, issues []*types.Issue) error {
 			return err
 		}
 		for _, issue := range grouped[date] {
+			// Skip children - they'll be written under their parent
+			if isChild[issue.ID] {
+				continue
+			}
+
+			// Write parent issue
 			line := formatObsidianTask(issue)
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				return err
+			}
+
+			// Write children indented
+			if children, ok := parentToChildren[issue.ID]; ok {
+				for _, child := range children {
+					childLine := "  " + formatObsidianTask(child)
+					if _, err := fmt.Fprintln(w, childLine); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		if _, err := fmt.Fprintln(w); err != nil {

@@ -287,3 +287,142 @@ func TestWriteObsidianExport_Empty(t *testing.T) {
 		t.Error("expected output to start with '# Changes Log' even when empty")
 	}
 }
+
+func TestFormatObsidianTask_ParentChildDependency(t *testing.T) {
+	issue := &types.Issue{
+		ID:        "test-1.1",
+		Title:     "Child Task",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		CreatedAt: time.Now(),
+		Dependencies: []*types.Dependency{
+			{IssueID: "test-1.1", DependsOnID: "test-1", Type: types.DepParentChild},
+		},
+	}
+	result := formatObsidianTask(issue)
+
+	// Parent-child deps should also show as ⛔ (blocked by parent)
+	if !strings.Contains(result, "⛔ test-1") {
+		t.Errorf("expected '⛔ test-1' for parent-child dep in result %q", result)
+	}
+}
+
+func TestBuildParentChildMap(t *testing.T) {
+	date := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	issues := []*types.Issue{
+		{
+			ID:        "parent-1",
+			Title:     "Parent Epic",
+			IssueType: types.TypeEpic,
+			CreatedAt: date,
+			UpdatedAt: date,
+		},
+		{
+			ID:        "parent-1.1",
+			Title:     "Child Task 1",
+			IssueType: types.TypeTask,
+			CreatedAt: date,
+			UpdatedAt: date,
+			Dependencies: []*types.Dependency{
+				{IssueID: "parent-1.1", DependsOnID: "parent-1", Type: types.DepParentChild},
+			},
+		},
+		{
+			ID:        "parent-1.2",
+			Title:     "Child Task 2",
+			IssueType: types.TypeTask,
+			CreatedAt: date,
+			UpdatedAt: date,
+			Dependencies: []*types.Dependency{
+				{IssueID: "parent-1.2", DependsOnID: "parent-1", Type: types.DepParentChild},
+			},
+		},
+	}
+
+	parentToChildren, isChild := buildParentChildMap(issues)
+
+	// Check parent has 2 children
+	if len(parentToChildren["parent-1"]) != 2 {
+		t.Errorf("expected 2 children for parent-1, got %d", len(parentToChildren["parent-1"]))
+	}
+
+	// Check children are marked
+	if !isChild["parent-1.1"] {
+		t.Error("expected parent-1.1 to be marked as child")
+	}
+	if !isChild["parent-1.2"] {
+		t.Error("expected parent-1.2 to be marked as child")
+	}
+
+	// Parent should not be marked as child
+	if isChild["parent-1"] {
+		t.Error("parent-1 should not be marked as child")
+	}
+}
+
+func TestWriteObsidianExport_ParentChildHierarchy(t *testing.T) {
+	date := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	issues := []*types.Issue{
+		{
+			ID:        "epic-1",
+			Title:     "Auth System",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeEpic,
+			CreatedAt: date,
+			UpdatedAt: date,
+		},
+		{
+			ID:        "epic-1.1",
+			Title:     "Login Page",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: date,
+			UpdatedAt: date,
+			Dependencies: []*types.Dependency{
+				{IssueID: "epic-1.1", DependsOnID: "epic-1", Type: types.DepParentChild},
+			},
+		},
+		{
+			ID:        "epic-1.2",
+			Title:     "Logout Button",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: date,
+			UpdatedAt: date,
+			Dependencies: []*types.Dependency{
+				{IssueID: "epic-1.2", DependsOnID: "epic-1", Type: types.DepParentChild},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := writeObsidianExport(&buf, issues)
+	if err != nil {
+		t.Fatalf("writeObsidianExport failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Check parent is present (not indented)
+	if !strings.Contains(output, "- [ ] Auth System") {
+		t.Error("expected parent 'Auth System' in output")
+	}
+
+	// Check children are indented (2 spaces)
+	if !strings.Contains(output, "  - [ ] Login Page") {
+		t.Errorf("expected indented child 'Login Page' in output:\n%s", output)
+	}
+	if !strings.Contains(output, "  - [ ] Logout Button") {
+		t.Errorf("expected indented child 'Logout Button' in output:\n%s", output)
+	}
+
+	// Children should have ⛔ dependency on parent
+	if !strings.Contains(output, "⛔ epic-1") {
+		t.Errorf("expected children to have '⛔ epic-1' dependency in output:\n%s", output)
+	}
+}
