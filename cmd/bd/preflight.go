@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -98,6 +99,10 @@ func runChecks(jsonOutput bool) {
 	// Run nix hash check
 	nixResult := runNixHashCheck()
 	results = append(results, nixResult)
+
+	// Run version sync check
+	versionResult := runVersionSyncCheck()
+	results = append(results, versionResult)
 
 	// Calculate overall result
 	allPassed := true
@@ -240,6 +245,82 @@ func runNixHashCheck() CheckResult {
 		Name:    "Nix hash current",
 		Passed:  true,
 		Output:  "",
+		Command: command,
+	}
+}
+
+// runVersionSyncCheck checks that version.go matches default.nix.
+func runVersionSyncCheck() CheckResult {
+	command := "Compare cmd/bd/version.go and default.nix"
+
+	// Read version.go
+	versionGoContent, err := os.ReadFile("cmd/bd/version.go")
+	if err != nil {
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  false,
+			Skipped: true,
+			Output:  fmt.Sprintf("Cannot read cmd/bd/version.go: %v", err),
+			Command: command,
+		}
+	}
+
+	// Extract version from version.go
+	// Pattern: Version = "X.Y.Z"
+	versionGoRe := regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
+	versionGoMatch := versionGoRe.FindSubmatch(versionGoContent)
+	if versionGoMatch == nil {
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  false,
+			Skipped: true,
+			Output:  "Cannot parse version from version.go",
+			Command: command,
+		}
+	}
+	goVersion := string(versionGoMatch[1])
+
+	// Read default.nix
+	nixContent, err := os.ReadFile("default.nix")
+	if err != nil {
+		// No nix file = skip version check (not an error)
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  true,
+			Skipped: true,
+			Output:  "default.nix not found (skipping nix version check)",
+			Command: command,
+		}
+	}
+
+	// Extract version from default.nix
+	// Pattern: version = "X.Y.Z";
+	nixRe := regexp.MustCompile(`version\s*=\s*"([^"]+)"`)
+	nixMatch := nixRe.FindSubmatch(nixContent)
+	if nixMatch == nil {
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  false,
+			Skipped: true,
+			Output:  "Cannot parse version from default.nix",
+			Command: command,
+		}
+	}
+	nixVersion := string(nixMatch[1])
+
+	if goVersion != nixVersion {
+		return CheckResult{
+			Name:    "Version sync",
+			Passed:  false,
+			Output:  fmt.Sprintf("Version mismatch: version.go=%s, default.nix=%s", goVersion, nixVersion),
+			Command: command,
+		}
+	}
+
+	return CheckResult{
+		Name:    "Version sync",
+		Passed:  true,
+		Output:  fmt.Sprintf("Versions match: %s", goVersion),
 		Command: command,
 	}
 }
