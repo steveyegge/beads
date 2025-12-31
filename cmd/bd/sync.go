@@ -380,7 +380,13 @@ Use --merge to merge the sync branch back to main branch.`,
 		if err := ensureStoreActive(); err == nil && store != nil {
 			syncBranchName, _ = syncbranch.Get(ctx, store)
 			if syncBranchName != "" && syncbranch.HasGitRemote(ctx) {
-				repoRoot, err = syncbranch.GetRepoRoot(ctx)
+				// GH#829/bd-e2q9/bd-kvus: Get repo root from beads location, not cwd.
+				// When .beads/redirect exists, jsonlPath points to the redirected location
+				// (e.g., mayor/rig/.beads/issues.jsonl), but cwd is in a different repo
+				// (e.g., crew/gus). The worktree for sync-branch must be in the same
+				// repo as the beads directory.
+				beadsDir := filepath.Dir(jsonlPath)
+				repoRoot, err = getRepoRootFromPath(ctx, beadsDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: sync.branch configured but failed to get repo root: %v\n", err)
 					fmt.Fprintf(os.Stderr, "Falling back to current branch commits\n")
