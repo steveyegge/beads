@@ -41,6 +41,7 @@ create, update, show, or close operation).`,
 		if reason == "" {
 			reason = "Closed"
 		}
+		body, _ := cmd.Flags().GetString("body")
 		force, _ := cmd.Flags().GetBool("force")
 		continueFlag, _ := cmd.Flags().GetBool("continue")
 		noAuto, _ := cmd.Flags().GetBool("no-auto")
@@ -107,6 +108,17 @@ create, update, show, or close operation).`,
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 					continue
+				}
+
+				// If body provided, update the issue description
+				if body != "" {
+					updateArgs := &rpc.UpdateArgs{
+						ID:          id,
+						Description: &body,
+					}
+					if _, err := daemonClient.Update(updateArgs); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: closed but failed to update body for %s: %v\n", id, err)
+					}
 				}
 
 				// Handle response based on whether SuggestNext was requested
@@ -180,6 +192,16 @@ create, update, show, or close operation).`,
 				continue
 			}
 
+			// If body provided, update the issue description
+			if body != "" {
+				updates := map[string]interface{}{
+					"description": body,
+				}
+				if err := store.UpdateIssue(ctx, id, updates, actor); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: closed but failed to update body for %s: %v\n", id, err)
+				}
+			}
+
 			closedCount++
 
 			// Run close hook
@@ -249,6 +271,7 @@ func init() {
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
 	closeCmd.Flags().String("resolution", "", "Alias for --reason (Jira CLI convention)")
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
+	closeCmd.Flags().StringP("body", "b", "", "Set issue description/body when closing")
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
