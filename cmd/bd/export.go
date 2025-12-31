@@ -114,14 +114,21 @@ func validateExportPath(path string) error {
 var exportCmd = &cobra.Command{
 	Use:     "export",
 	GroupID: "sync",
-	Short:   "Export issues to JSONL format",
-	Long: `Export all issues to JSON Lines format (one JSON object per line).
+	Short:   "Export issues to JSONL or Obsidian format",
+	Long: `Export all issues to JSON Lines or Obsidian Tasks markdown format.
 Issues are sorted by ID for consistent diffs.
 
 Output to stdout by default, or use -o flag for file output.
+For obsidian format, defaults to ai_docs/changes-log.md
+
+Formats:
+  jsonl     - JSON Lines format (one JSON object per line) [default]
+  obsidian  - Obsidian Tasks markdown format with checkboxes, priorities, dates
 
 Examples:
   bd export --status open -o open-issues.jsonl
+  bd export --format obsidian                    # outputs to ai_docs/changes-log.md
+  bd export --format obsidian -o custom.md       # outputs to custom.md
   bd export --type bug --priority-max 1
   bd export --created-after 2025-01-01 --assignee alice`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -144,9 +151,14 @@ Examples:
 
 		debug.Logf("Debug: export flags - output=%q, force=%v\n", output, force)
 
-		if format != "jsonl" {
-			fmt.Fprintf(os.Stderr, "Error: only 'jsonl' format is currently supported\n")
+		if format != "jsonl" && format != "obsidian" {
+			fmt.Fprintf(os.Stderr, "Error: format must be 'jsonl' or 'obsidian'\n")
 			os.Exit(1)
+		}
+
+		// Default output path for obsidian format
+		if format == "obsidian" && output == "" {
+			output = "ai_docs/changes-log.md"
 		}
 
 		// Export command requires direct database access for consistent snapshot
@@ -408,6 +420,13 @@ Examples:
 			// Create temporary file in same directory for atomic rename
 			dir := filepath.Dir(output)
 			base := filepath.Base(output)
+
+			// Ensure output directory exists
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
+				os.Exit(1)
+			}
+
 			var err error
 			tempFile, err = os.CreateTemp(dir, base+".tmp.*")
 			if err != nil {
@@ -428,17 +447,29 @@ Examples:
 			out = tempFile
 		}
 
-		// Write JSONL (timestamp-only deduplication DISABLED due to bd-160)
-		encoder := json.NewEncoder(out)
+		// Write output based on format
 		exportedIDs := make([]string, 0, len(issues))
 		skippedCount := 0
-		for _, issue := range issues {
-			if err := encoder.Encode(issue); err != nil {
-				fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
+
+		if format == "obsidian" {
+			// Write Obsidian Tasks markdown format
+			if err := writeObsidianExport(out, issues); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing Obsidian export: %v\n", err)
 				os.Exit(1)
 			}
-
-			exportedIDs = append(exportedIDs, issue.ID)
+			for _, issue := range issues {
+				exportedIDs = append(exportedIDs, issue.ID)
+			}
+		} else {
+			// Write JSONL (timestamp-only deduplication DISABLED due to bd-160)
+			encoder := json.NewEncoder(out)
+			for _, issue := range issues {
+				if err := encoder.Encode(issue); err != nil {
+					fmt.Fprintf(os.Stderr, "Error encoding issue %s: %v\n", issue.ID, err)
+					os.Exit(1)
+				}
+				exportedIDs = append(exportedIDs, issue.ID)
+			}
 		}
 
 		// Report skipped issues if any (helps debugging bd-159)
@@ -495,18 +526,20 @@ Examples:
 				}
 			}
 
-			// Verify JSONL file integrity after export
-			actualCount, err := countIssuesInJSONL(finalPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Export verification failed: %v\n", err)
-				os.Exit(1)
-			}
-			if actualCount != len(exportedIDs) {
-				fmt.Fprintf(os.Stderr, "Error: Export verification failed\n")
-				fmt.Fprintf(os.Stderr, "  Expected: %d issues\n", len(exportedIDs))
-				fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
-				fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
-				os.Exit(1)
+			// Verify JSONL file integrity after export (skip for other formats)
+			if format == "jsonl" {
+				actualCount, err := countIssuesInJSONL(finalPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Export verification failed: %v\n", err)
+					os.Exit(1)
+				}
+				if actualCount != len(exportedIDs) {
+					fmt.Fprintf(os.Stderr, "Error: Export verification failed\n")
+					fmt.Fprintf(os.Stderr, "  Expected: %d issues\n", len(exportedIDs))
+					fmt.Fprintf(os.Stderr, "  JSONL file: %d lines\n", actualCount)
+					fmt.Fprintf(os.Stderr, "  Mismatch indicates export failed to write all issues\n")
+					os.Exit(1)
+				}
 			}
 
 			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
@@ -540,7 +573,7 @@ Examples:
 }
 
 func init() {
-	exportCmd.Flags().StringP("format", "f", "jsonl", "Export format (jsonl)")
+	exportCmd.Flags().StringP("format", "f", "jsonl", "Export format: jsonl, obsidian")
 	exportCmd.Flags().StringP("output", "o", "", "Output file (default: stdout)")
 	exportCmd.Flags().StringP("status", "s", "", "Filter by status")
 	exportCmd.Flags().Bool("force", false, "Force export even if database is empty")
