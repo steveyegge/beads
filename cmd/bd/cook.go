@@ -151,14 +151,20 @@ func parseCookFlags(cmd *cobra.Command, args []string) (*cookFlags, error) {
 	}, nil
 }
 
-// loadAndResolveFormula parses a formula file and applies all transformations
+// loadAndResolveFormula parses a formula file and applies all transformations.
+// It first tries to load by name from the formula registry (.beads/formulas/),
+// and falls back to parsing as a file path if that fails.
 func loadAndResolveFormula(formulaPath string, searchPaths []string) (*formula.Formula, error) {
 	parser := formula.NewParser(searchPaths...)
 
-	// Parse the formula file
-	f, err := parser.ParseFile(formulaPath)
+	// Try to load by name first (from .beads/formulas/ registry)
+	f, err := parser.LoadByName(formulaPath)
 	if err != nil {
-		return nil, fmt.Errorf("parsing formula: %w", err)
+		// Fall back to parsing as a file path
+		f, err = parser.ParseFile(formulaPath)
+		if err != nil {
+			return nil, fmt.Errorf("parsing formula: %w", err)
+		}
 	}
 
 	// Resolve inheritance
