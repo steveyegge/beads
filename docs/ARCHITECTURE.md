@@ -241,6 +241,76 @@ open ──▶ in_progress ──▶ closed
          (reopen)
 ```
 
+### JSONL Issue Schema
+
+Each issue in `.beads/issues.jsonl` is a JSON object with the following fields. Fields marked with `(optional)` use `omitempty` and are excluded when empty/zero.
+
+**Core Identification:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier (e.g., `bd-a1b2`) |
+
+**Issue Content:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | string | Issue title (required) |
+| `description` | string | Detailed description (optional) |
+| `design` | string | Design notes (optional) |
+| `acceptance_criteria` | string | Acceptance criteria (optional) |
+| `notes` | string | Additional notes (optional) |
+
+**Status & Workflow:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Current status: `open`, `in_progress`, `blocked`, `deferred`, `closed`, `tombstone`, `pinned`, `hooked` (optional, defaults to `open`) |
+| `priority` | int | Priority 0-4 where 0=critical, 4=backlog |
+| `issue_type` | string | Type: `bug`, `feature`, `task`, `epic`, `chore`, `message`, `merge-request`, `molecule`, `gate`, `agent`, `role`, `convoy` (optional, defaults to `task`) |
+
+**Assignment:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `assignee` | string | Assigned user/agent (optional) |
+| `estimated_minutes` | int | Time estimate in minutes (optional) |
+
+**Timestamps:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `created_at` | RFC3339 | When issue was created |
+| `created_by` | string | Who created the issue (optional) |
+| `updated_at` | RFC3339 | Last modification time |
+| `closed_at` | RFC3339 | When issue was closed (optional, set when status=closed) |
+| `close_reason` | string | Reason provided when closing (optional) |
+
+**External Integration:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `external_ref` | string | External reference (e.g., `gh-9`, `jira-ABC`) (optional) |
+
+**Relational Data:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `labels` | []string | Tags attached to the issue (optional) |
+| `dependencies` | []Dependency | Relationships to other issues (optional) |
+| `comments` | []Comment | Discussion comments (optional) |
+
+**Tombstone Fields (soft-delete):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deleted_at` | RFC3339 | When deleted (optional, set when status=tombstone) |
+| `deleted_by` | string | Who deleted (optional) |
+| `delete_reason` | string | Why deleted (optional) |
+| `original_type` | string | Issue type before deletion (optional) |
+
+**Note:** Fields with `json:"-"` tags (like `content_hash`, `source_repo`, `id_prefix`) are internal and never exported to JSONL.
+
 ## Directory Structure
 
 ```
