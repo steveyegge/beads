@@ -50,6 +50,7 @@ Use --merge to merge the sync branch back to main branch.`,
 		noGitHistory, _ := cmd.Flags().GetBool("no-git-history")
 		squash, _ := cmd.Flags().GetBool("squash")
 		checkIntegrity, _ := cmd.Flags().GetBool("check")
+		acceptRebase, _ := cmd.Flags().GetBool("accept-rebase")
 
 		// If --no-push not explicitly set, check no-push config
 		if !cmd.Flags().Changed("no-push") {
@@ -393,6 +394,86 @@ Use --merge to merge the sync branch back to main branch.`,
 			}
 		}
 
+		// Force-push detection for sync branch (bd-hlsw.4)
+		// Check if the remote sync branch was force-pushed since last sync
+		if useSyncBranch && !noPull && !dryRun {
+			forcePushStatus, err := syncbranch.CheckForcePush(ctx, store, repoRoot, syncBranchName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not check for force-push: %v\n", err)
+			} else if forcePushStatus.Detected {
+				fmt.Fprintf(os.Stderr, "\n⚠️  %s\n\n", forcePushStatus.Message)
+
+				if acceptRebase {
+					// User explicitly accepted the rebase via --accept-rebase flag
+					fmt.Println("→ --accept-rebase specified, resetting to remote state...")
+					if err := syncbranch.ResetToRemote(ctx, repoRoot, syncBranchName, jsonlPath); err != nil {
+						FatalError("failed to reset to remote: %v", err)
+					}
+					// Clear the stored SHA since we're resetting
+					if err := syncbranch.ClearStoredRemoteSHA(ctx, store); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to clear stored remote SHA: %v\n", err)
+					}
+					fmt.Println("✓ Reset to remote sync branch state")
+					fmt.Println("→ Re-importing JSONL after reset...")
+					if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+						FatalError("importing after reset: %v", err)
+					}
+					fmt.Println("✓ Import complete after reset")
+
+					// Update stored SHA to current remote
+					if err := syncbranch.UpdateStoredRemoteSHA(ctx, store, repoRoot, syncBranchName); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to update stored remote SHA: %v\n", err)
+					}
+
+					fmt.Println("\n✓ Sync complete (reset to remote after force-push)")
+					return
+				}
+
+				// Prompt for confirmation
+				fmt.Fprintln(os.Stderr, "Options:")
+				fmt.Fprintln(os.Stderr, "  1. Reset to remote (discard local sync branch changes)")
+				fmt.Fprintln(os.Stderr, "  2. Abort sync (investigate manually)")
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprintln(os.Stderr, "To reset automatically, run: bd sync --accept-rebase")
+				fmt.Fprintln(os.Stderr, "")
+				fmt.Fprint(os.Stderr, "Reset to remote state? [y/N]: ")
+
+				var response string
+				reader := bufio.NewReader(os.Stdin)
+				response, _ = reader.ReadString('\n')
+				response = strings.TrimSpace(strings.ToLower(response))
+
+				if response == "y" || response == "yes" {
+					fmt.Println("→ Resetting to remote state...")
+					if err := syncbranch.ResetToRemote(ctx, repoRoot, syncBranchName, jsonlPath); err != nil {
+						FatalError("failed to reset to remote: %v", err)
+					}
+					// Clear the stored SHA since we're resetting
+					if err := syncbranch.ClearStoredRemoteSHA(ctx, store); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to clear stored remote SHA: %v\n", err)
+					}
+					fmt.Println("✓ Reset to remote sync branch state")
+					fmt.Println("→ Re-importing JSONL after reset...")
+					if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+						FatalError("importing after reset: %v", err)
+					}
+					fmt.Println("✓ Import complete after reset")
+
+					// Update stored SHA to current remote
+					if err := syncbranch.UpdateStoredRemoteSHA(ctx, store, repoRoot, syncBranchName); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to update stored remote SHA: %v\n", err)
+					}
+
+					fmt.Println("\n✓ Sync complete (reset to remote after force-push)")
+					return
+				}
+
+				// User chose to abort
+				FatalErrorWithHint("sync aborted due to force-push detection",
+					"investigate the sync branch history, then run 'bd sync --accept-rebase' to reset to remote")
+			}
+		}
+
 		// Step 2: Check if there are changes to commit (check entire .beads/ directory)
 		hasChanges, err := gitHasBeadsChanges(ctx)
 		if err != nil {
@@ -716,6 +797,14 @@ Use --merge to merge the sync branch back to main branch.`,
 				_ = ClearSyncState(bd)
 			}
 
+			// Update stored remote SHA after successful sync (bd-hlsw.4)
+			// This enables force-push detection on subsequent syncs
+			if useSyncBranch && !noPush {
+				if err := syncbranch.UpdateStoredRemoteSHA(ctx, store, repoRoot, syncBranchName); err != nil {
+					debug.Logf("sync: failed to update stored remote SHA: %v", err)
+				}
+			}
+
 			fmt.Println("\n✓ Sync complete")
 		}
 	},
@@ -736,6 +825,7 @@ func init() {
 	syncCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (use during JSONL filename migrations)")
 	syncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output sync statistics in JSON format")
 	syncCmd.Flags().Bool("check", false, "Pre-sync integrity check: detect forced pushes, prefix mismatches, and orphaned issues")
+	syncCmd.Flags().Bool("accept-rebase", false, "Accept remote sync branch history (use when force-push detected)")
 	rootCmd.AddCommand(syncCmd)
 }
 
