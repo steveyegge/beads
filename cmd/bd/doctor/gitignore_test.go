@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1133,5 +1134,345 @@ func TestFixGitignore_SubdirectoryGitignore(t *testing.T) {
 	}
 	if string(rootContent) != rootGitignoreContent {
 		t.Error("root .gitignore should not be modified")
+	}
+}
+
+func TestGitignoreTemplate_ContainsRedirect(t *testing.T) {
+	// Worktree redirect files should be gitignored to prevent accidental commits.
+	// When bd worktree create runs, it creates .beads/redirect in the worktree.
+	// If this file is accidentally committed, it causes "redirect target does not exist"
+	// warnings in other clones/worktrees.
+	if !strings.Contains(GitignoreTemplate, "redirect") {
+		t.Error("GitignoreTemplate should contain 'redirect' pattern for worktree support")
+	}
+}
+
+func TestRequiredPatterns_ContainsRedirect(t *testing.T) {
+	// The redirect pattern should be in requiredPatterns so that bd doctor
+	// can detect outdated .gitignore files missing this pattern.
+	found := false
+	for _, pattern := range requiredPatterns {
+		if pattern == "redirect" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("requiredPatterns should include 'redirect'")
+	}
+}
+
+func TestCheckGitignore_DetectsMissingRedirect(t *testing.T) {
+	// Verify that CheckGitignore flags gitignore files missing the redirect pattern
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create gitignore with all required patterns EXCEPT redirect
+	oldStyleContent := `# SQLite databases
+*.db
+*.db?*
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Daemon runtime files
+daemon.lock
+daemon.log
+daemon.pid
+bd.sock
+sync-state.json
+last-touched
+
+# Local version tracking
+.local_version
+
+# Legacy database files
+db.sqlite
+bd.db
+
+# Merge artifacts
+beads.base.jsonl
+beads.base.meta.json
+beads.left.jsonl
+beads.left.meta.json
+beads.right.jsonl
+beads.right.meta.json
+`
+	gitignorePath := filepath.Join(beadsDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(oldStyleContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckGitignore()
+
+	if check.Status != StatusWarning {
+		t.Errorf("Expected warning status for missing redirect, got %s", check.Status)
+	}
+	if !strings.Contains(check.Detail, "redirect") {
+		t.Errorf("Expected detail to mention 'redirect', got: %s", check.Detail)
+	}
+}
+
+func TestCheckRedirectNotTracked_NoFile(t *testing.T) {
+	// When no redirect file exists, check should pass
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Create .beads but no redirect file
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckRedirectNotTracked()
+
+	if check.Status != StatusOK {
+		t.Errorf("Expected OK status when no redirect file, got %s", check.Status)
+	}
+}
+
+func TestCheckRedirectNotTracked_UntrackedFile(t *testing.T) {
+	// When redirect file exists but is not tracked, check should pass
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Initialize git repo
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.email", "test@test.com").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.name", "Test").Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .beads with redirect file (but don't commit it)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	redirectPath := filepath.Join(beadsDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte("../../../.beads\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckRedirectNotTracked()
+
+	if check.Status != StatusOK {
+		t.Errorf("Expected OK status for untracked redirect, got %s: %s", check.Status, check.Message)
+	}
+}
+
+func TestCheckRedirectNotTracked_TrackedFile(t *testing.T) {
+	// When redirect file is tracked by git, check should warn
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Initialize git repo
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.email", "test@test.com").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.name", "Test").Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .beads with redirect file AND commit it (simulating accidental commit)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	redirectPath := filepath.Join(beadsDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte("../../../.beads\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage and commit
+	if err := exec.Command("git", "add", redirectPath).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "commit", "-m", "accidentally commit redirect").Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	check := CheckRedirectNotTracked()
+
+	if check.Status != StatusWarning {
+		t.Errorf("Expected Warning status for tracked redirect, got %s: %s", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Fix, "git rm --cached") {
+		t.Errorf("Expected fix to mention 'git rm --cached', got: %s", check.Fix)
+	}
+}
+
+func TestFixRedirectTracking(t *testing.T) {
+	// Verify that FixRedirectTracking untracks accidentally committed redirect files
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// Initialize git repo
+	if err := exec.Command("git", "init").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.email", "test@test.com").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "config", "user.name", "Test").Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create and commit redirect file
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	redirectPath := filepath.Join(beadsDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte("../../../.beads\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "add", redirectPath).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "commit", "-m", "accidentally commit redirect").Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify it's tracked before fix
+	cmd := exec.Command("git", "ls-files", redirectPath)
+	output, _ := cmd.Output()
+	if strings.TrimSpace(string(output)) == "" {
+		t.Fatal("Redirect file should be tracked before fix")
+	}
+
+	// Run fix
+	if err := FixRedirectTracking(); err != nil {
+		t.Fatalf("FixRedirectTracking failed: %v", err)
+	}
+
+	// Verify it's no longer tracked
+	cmd = exec.Command("git", "ls-files", redirectPath)
+	output, _ = cmd.Output()
+	if strings.TrimSpace(string(output)) != "" {
+		t.Error("Redirect file should not be tracked after fix")
+	}
+
+	// Verify file still exists on disk
+	if _, err := os.Stat(redirectPath); os.IsNotExist(err) {
+		t.Error("Redirect file should still exist on disk after fix")
+	}
+}
+
+func TestFixGitignore_AddsRedirect(t *testing.T) {
+	// Verify that FixGitignore adds the redirect pattern to old-style gitignore files
+	tmpDir := t.TempDir()
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create old-style gitignore without redirect
+	oldContent := `*.db
+daemon.log
+`
+	gitignorePath := filepath.Join(".beads", ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(oldContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run fix
+	if err := FixGitignore(); err != nil {
+		t.Fatalf("FixGitignore failed: %v", err)
+	}
+
+	// Verify redirect is now present
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("Failed to read .gitignore: %v", err)
+	}
+
+	if !strings.Contains(string(content), "redirect") {
+		t.Error("Fixed .gitignore should contain 'redirect' pattern")
 	}
 }
