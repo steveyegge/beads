@@ -103,9 +103,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=zig cc -target x86_64-freebsd
-      - CXX=zig c++ -target x86_64-freebsd
+      - CGO_ENABLED=0
     goos:
       - freebsd
     goarch:

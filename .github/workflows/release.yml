@@ -30,18 +30,7 @@ jobs:
       - name: Install cross-compilation toolchains and signing tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode xz-utils
-
-      - name: Install Zig
-        env:
-          ZIG_VERSION: 0.13.0
-        run: |
-          curl -sSL https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz -o zig.tar.xz
-          tar -xJf zig.tar.xz
-          sudo rm -rf /opt/zig
-          sudo mv zig-linux-x86_64-${ZIG_VERSION} /opt/zig
-          sudo ln -sf /opt/zig/zig /usr/local/bin/zig
-          rm -f zig.tar.xz
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu osslsigncode
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
