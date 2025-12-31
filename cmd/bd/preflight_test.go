@@ -126,6 +126,32 @@ func TestPreflightResult_WithSkipped(t *testing.T) {
 	}
 }
 
+func TestPreflightResult_WithWarning(t *testing.T) {
+	results := PreflightResult{
+		Checks: []CheckResult{
+			{Name: "Tests pass", Passed: true, Command: "go test ./..."},
+			{Name: "Nix hash current", Passed: false, Warning: true, Command: "git diff HEAD -- go.sum", Output: "go.sum changed"},
+		},
+		Passed:  true, // Warnings don't fail the overall result
+		Summary: "1/2 checks passed, 1 warning(s)",
+	}
+
+	// Warnings don't count as failures
+	if !results.Passed {
+		t.Error("Expected result to pass (warning doesn't count as failure)")
+	}
+
+	warnCount := 0
+	for _, c := range results.Checks {
+		if c.Warning {
+			warnCount++
+		}
+	}
+	if warnCount != 1 {
+		t.Errorf("Expected 1 warning, got %d", warnCount)
+	}
+}
+
 func TestTruncateOutput(t *testing.T) {
 	tests := []struct {
 		name     string

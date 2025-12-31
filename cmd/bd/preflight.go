@@ -15,6 +15,7 @@ type CheckResult struct {
 	Name    string `json:"name"`
 	Passed  bool   `json:"passed"`
 	Skipped bool   `json:"skipped,omitempty"`
+	Warning bool   `json:"warning,omitempty"`
 	Output  string `json:"output,omitempty"`
 	Command string `json:"command"`
 }
@@ -94,13 +95,21 @@ func runChecks(jsonOutput bool) {
 	lintResult := runLintCheck()
 	results = append(results, lintResult)
 
+	// Run nix hash check
+	nixResult := runNixHashCheck()
+	results = append(results, nixResult)
+
 	// Calculate overall result
 	allPassed := true
 	passCount := 0
 	skipCount := 0
+	warnCount := 0
 	for _, r := range results {
 		if r.Skipped {
 			skipCount++
+		} else if r.Warning {
+			warnCount++
+			// Warnings don't fail the overall result but count as "not passed"
 		} else if r.Passed {
 			passCount++
 		} else {
@@ -110,6 +119,9 @@ func runChecks(jsonOutput bool) {
 
 	runCount := len(results) - skipCount
 	summary := fmt.Sprintf("%d/%d checks passed", passCount, runCount)
+	if warnCount > 0 {
+		summary += fmt.Sprintf(", %d warning(s)", warnCount)
+	}
 	if skipCount > 0 {
 		summary += fmt.Sprintf(" (%d skipped)", skipCount)
 	}
@@ -128,6 +140,8 @@ func runChecks(jsonOutput bool) {
 		for _, r := range results {
 			if r.Skipped {
 				fmt.Printf("⚠ %s (skipped)\n", r.Name)
+			} else if r.Warning {
+				fmt.Printf("⚠ %s\n", r.Name)
 			} else if r.Passed {
 				fmt.Printf("✓ %s\n", r.Name)
 			} else {
@@ -137,6 +151,9 @@ func runChecks(jsonOutput bool) {
 			if r.Skipped && r.Output != "" {
 				// Show skip reason
 				fmt.Printf("  Reason: %s\n", r.Output)
+			} else if r.Warning && r.Output != "" {
+				// Show warning message
+				fmt.Printf("  Warning: %s\n", r.Output)
 			} else if !r.Passed && r.Output != "" {
 				// Truncate output for terminal display
 				output := truncateOutput(r.Output, 500)
@@ -191,6 +208,38 @@ func runLintCheck() CheckResult {
 		Name:    "Lint passes",
 		Passed:  err == nil,
 		Output:  string(output),
+		Command: command,
+	}
+}
+
+// runNixHashCheck checks if go.sum has uncommitted changes that may require vendorHash update.
+func runNixHashCheck() CheckResult {
+	command := "git diff HEAD -- go.sum"
+
+	// Check for unstaged changes to go.sum
+	cmd := exec.Command("git", "diff", "--name-only", "HEAD", "--", "go.sum")
+	output, _ := cmd.Output()
+
+	// Check for staged changes to go.sum
+	stagedCmd := exec.Command("git", "diff", "--name-only", "--cached", "--", "go.sum")
+	stagedOutput, _ := stagedCmd.Output()
+
+	hasChanges := len(strings.TrimSpace(string(output))) > 0 || len(strings.TrimSpace(string(stagedOutput))) > 0
+
+	if hasChanges {
+		return CheckResult{
+			Name:    "Nix hash current",
+			Passed:  false,
+			Warning: true,
+			Output:  "go.sum has uncommitted changes - vendorHash in default.nix may need updating",
+			Command: command,
+		}
+	}
+
+	return CheckResult{
+		Name:    "Nix hash current",
+		Passed:  true,
+		Output:  "",
 		Command: command,
 	}
 }
