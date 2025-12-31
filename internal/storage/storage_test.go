@@ -125,6 +125,9 @@ func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []strin
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetDirtyIssues(ctx context.Context) ([]string, error) {
 	return nil, nil
 }

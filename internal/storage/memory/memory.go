@@ -1663,6 +1663,55 @@ func (m *MemoryStorage) Path() string {
 	return m.jsonlPath
 }
 
+// GetMoleculeProgress returns progress stats for a molecule.
+// For memory storage, this iterates through dependencies.
+func (m *MemoryStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	issue, exists := m.issues[moleculeID]
+	if !exists {
+		return nil, fmt.Errorf("molecule not found: %s", moleculeID)
+	}
+
+	stats := &types.MoleculeProgressStats{
+		MoleculeID:    moleculeID,
+		MoleculeTitle: issue.Title,
+	}
+
+	// Find all parent-child dependencies where moleculeID is the parent
+	for _, deps := range m.dependencies {
+		for _, dep := range deps {
+			if dep.Type == types.DepParentChild && dep.DependsOnID == moleculeID {
+				child, exists := m.issues[dep.IssueID]
+				if !exists {
+					continue
+				}
+				stats.Total++
+				switch child.Status {
+				case types.StatusClosed:
+					stats.Completed++
+					if child.ClosedAt != nil {
+						if stats.FirstClosed == nil || child.ClosedAt.Before(*stats.FirstClosed) {
+							stats.FirstClosed = child.ClosedAt
+						}
+						if stats.LastClosed == nil || child.ClosedAt.After(*stats.LastClosed) {
+							stats.LastClosed = child.ClosedAt
+						}
+					}
+				case types.StatusInProgress:
+					stats.InProgress++
+					if stats.CurrentStepID == "" {
+						stats.CurrentStepID = child.ID
+					}
+				}
+			}
+		}
+	}
+
+	return stats, nil
+}
+
 // UnderlyingDB returns nil for memory storage (no SQL database)
 func (m *MemoryStorage) UnderlyingDB() *sql.DB {
 	return nil

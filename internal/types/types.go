@@ -677,6 +677,19 @@ type TreeNode struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// MoleculeProgressStats provides efficient progress info for large molecules.
+// This uses indexed queries instead of loading all steps into memory.
+type MoleculeProgressStats struct {
+	MoleculeID    string     `json:"molecule_id"`
+	MoleculeTitle string     `json:"molecule_title"`
+	Total         int        `json:"total"`           // Total steps (direct children)
+	Completed     int        `json:"completed"`       // Closed steps
+	InProgress    int        `json:"in_progress"`     // Steps currently in progress
+	CurrentStepID string     `json:"current_step_id"` // First in_progress step ID (if any)
+	FirstClosed   *time.Time `json:"first_closed,omitempty"`
+	LastClosed    *time.Time `json:"last_closed,omitempty"`
+}
+
 // Statistics provides aggregate metrics
 type Statistics struct {
 	TotalIssues              int     `json:"total_issues"`

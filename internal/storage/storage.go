@@ -126,6 +126,9 @@ type Storage interface {
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
 
+	// Molecule progress (efficient for large molecules)
+	GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error)
+
 	// Dirty tracking (for incremental JSONL export)
 	GetDirtyIssues(ctx context.Context) ([]string, error)
 	GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) // For timestamp-only dedup (bd-164)
