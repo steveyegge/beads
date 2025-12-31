@@ -58,11 +58,11 @@ func formatObsidianTask(issue *types.Issue) string {
 	}
 	parts = append(parts, checkbox)
 
-	// Issue ID
-	parts = append(parts, issue.ID)
-
-	// Title
+	// Title first
 	parts = append(parts, issue.Title)
+
+	// Task ID with 🆔 emoji (official Obsidian Tasks format)
+	parts = append(parts, fmt.Sprintf("🆔 %s", issue.ID))
 
 	// Priority emoji
 	if issue.Priority >= 0 && issue.Priority < len(obsidianPriority) {
@@ -89,10 +89,10 @@ func formatObsidianTask(issue *types.Issue) string {
 		parts = append(parts, fmt.Sprintf("✅ %s", issue.ClosedAt.Format("2006-01-02")))
 	}
 
-	// Blockers as tags (from dependencies)
+	// Dependencies with ⛔ emoji (official Obsidian Tasks "blocked by" format)
 	for _, dep := range issue.Dependencies {
 		if dep.Type == types.DepBlocks {
-			parts = append(parts, fmt.Sprintf("#Blocker/%s", dep.DependsOnID))
+			parts = append(parts, fmt.Sprintf("⛔ %s", dep.DependsOnID))
 		}
 	}
 

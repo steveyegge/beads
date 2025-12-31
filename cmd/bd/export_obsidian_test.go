@@ -142,7 +142,23 @@ func TestFormatObsidianTask_Dates(t *testing.T) {
 	}
 }
 
-func TestFormatObsidianTask_Blockers(t *testing.T) {
+func TestFormatObsidianTask_TaskID(t *testing.T) {
+	issue := &types.Issue{
+		ID:        "bd-123",
+		Title:     "Test Issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		CreatedAt: time.Now(),
+	}
+	result := formatObsidianTask(issue)
+
+	// Check for official Obsidian Tasks ID format: 🆔 id
+	if !strings.Contains(result, "🆔 bd-123") {
+		t.Errorf("expected '🆔 bd-123' in result %q", result)
+	}
+}
+
+func TestFormatObsidianTask_Dependencies(t *testing.T) {
 	issue := &types.Issue{
 		ID:        "test-1",
 		Title:     "Test Issue",
@@ -155,8 +171,9 @@ func TestFormatObsidianTask_Blockers(t *testing.T) {
 	}
 	result := formatObsidianTask(issue)
 
-	if !strings.Contains(result, "#Blocker/test-2") {
-		t.Errorf("expected #Blocker/test-2 in result %q", result)
+	// Check for official Obsidian Tasks "blocked by" format: ⛔ id
+	if !strings.Contains(result, "⛔ test-2") {
+		t.Errorf("expected '⛔ test-2' in result %q", result)
 	}
 }
 
