@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -173,6 +174,7 @@ func isNoDbModeConfigured(beadsDir string) bool {
 
 	var cfg localConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		debug.Logf("Warning: failed to parse config.yaml for no-db check: %v", err)
 		return false
 	}
 
@@ -198,6 +200,7 @@ func getLocalSyncBranch(beadsDir string) string {
 	// Parse YAML properly to handle edge cases (comments, indentation, special chars)
 	var cfg localConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		debug.Logf("Warning: failed to parse config.yaml for sync-branch: %v", err)
 		return ""
 	}
 
