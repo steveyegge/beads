@@ -475,9 +475,21 @@ Use --merge to merge the sync branch back to main branch.`,
 		}
 
 		// Step 2: Check if there are changes to commit (check entire .beads/ directory)
-		hasChanges, err := gitHasBeadsChanges(ctx)
-		if err != nil {
-			FatalError("checking git status: %v", err)
+		// GH#812: When using sync-branch, skip this check - CommitToSyncBranch handles it internally.
+		// The main repo's .beads may be gitignored on code branches (valid per #797/#801).
+		// In that case, gitHasBeadsChanges returns false even when JSONL has changes,
+		// because git doesn't track the files. CommitToSyncBranch copies files to the
+		// worktree where they ARE tracked (different gitignore) and checks there.
+		var hasChanges bool
+		var err error
+		if !useSyncBranch {
+			hasChanges, err = gitHasBeadsChanges(ctx)
+			if err != nil {
+				FatalError("checking git status: %v", err)
+			}
+		} else {
+			// Let CommitToSyncBranch determine if there are actual changes in the worktree
+			hasChanges = true
 		}
 
 		// Track if we already pushed via worktree (to skip Step 5)
