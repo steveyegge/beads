@@ -6,107 +6,16 @@ description: |
   a formatted prompt that can be used to resume work in the next session.
   Trigger with "generate handoff", "end session", "create handoff prompt",
   "session handoff", or "prepare for next session".
-allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(cat:*)"
-version: "0.1.0"
+allowed-tools: "Read,Bash(bd:*),Bash(git:*),Bash(cat:*),Bash(echo:*)"
+version: "0.2.0"
 author: "justSteve <https://github.com/justSteve>"
 license: "MIT"
 ---
 
 # Beads Handoff Skill
 
-> **STATUS: GREEN FIELD - LOGGING ONLY**
-> This skill announces its activation but performs no processing yet.
-
-<!--
-## IMPLEMENTATION PLAN
-
-### Phase 1: Issue Context Loading
-- [ ] Read `.beads/current-issue` to get current issue ID
-- [ ] Fallback: Query `bd list --status=in_progress` for first match
-- [ ] If no issue found, log error and exit gracefully
-- [ ] Run `bd show <id> --json` to get full issue details
-- [ ] Extract: title, description, status, notes
-- [ ] Log `sk.handoff.issue` event
-
-### Phase 2: Git History Gathering
-- [ ] Run `git log -1 --oneline` for last commit
-- [ ] Run `git log --oneline -5` for recent context
-- [ ] Run `git status --short` for uncommitted changes (first 10 lines)
-- [ ] Log `sk.handoff.git` event
-
-### Phase 3: Dependency Analysis
-- [ ] Extract `blocked_by` from issue JSON
-- [ ] Extract `blocking` from issue JSON
-- [ ] Format as bullet lists or "None"
-- [ ] Log `sk.handoff.deps` event
-
-### Phase 4: Prompt Generation
-- [ ] Assemble handoff template with gathered data
-- [ ] Include: Issue ID, Title, Context, Status, Notes, Blockers, Last Commit, Next Step
-- [ ] Output to console
-- [ ] Write to `.beads/last-handoff.txt`
-- [ ] Log `sk.handoff.generate` event
-
-### Phase 5: Clipboard Integration (Platform-Aware)
-- [ ] Windows: Use `Set-Clipboard` (PowerShell) or `clip` (cmd)
-- [ ] macOS: Use `pbcopy`
-- [ ] Linux: Try `xclip -selection clipboard` or `xsel --clipboard`
-- [ ] Log success/failure, don't fail skill if clipboard unavailable
-- [ ] Log `sk.handoff.complete` event
-
-### Output Format
-```
-═══════════════════════════════════════════════════════════════
-HANDOFF GENERATED
-═══════════════════════════════════════════════════════════════
-
-Continue work on bd-XXXX: <title>
-
-Context: <issue description>
-
-Status: <current status>
-Notes: <progress notes>
-
-Blockers: <blocking issues or "None">
-
-Last commit: <git log -1 --oneline>
-
-Next step: Review the issue and continue implementation.
-
-═══════════════════════════════════════════════════════════════
-Saved to: .beads/last-handoff.txt
-Clipboard: Copied (or "Not available")
-═══════════════════════════════════════════════════════════════
-```
-
-### Error Handling
-- [ ] No current issue: Output error message, suggest `bd ready`
-- [ ] Issue not found: Output error message, suggest `bd list`
-- [ ] Git errors: Include "Git info unavailable" in handoff
-- [ ] Clipboard failure: Log warning, continue with file output
-
-### Dependencies
-- Requires: Event logging infrastructure
-- Requires: `.beads/current-issue` (from bootup/scope)
-- Requires: `bd` CLI with show command and JSON output
-- Called by: beads-landing (Step 5)
-
-### Verification Criteria
-- [ ] Issue context loaded correctly
-- [ ] Git history included in handoff
-- [ ] Dependencies formatted correctly
-- [ ] Handoff written to `.beads/last-handoff.txt`
-- [ ] Clipboard copy attempted on supported platforms
-- [ ] All events logged to `.beads/events.log`
-
-### Standalone vs. Integrated Usage
-This skill can be invoked:
-1. **Standalone**: Agent/user loads skill directly for ad-hoc handoff
-2. **Integrated**: Called by beads-landing as part of session close ritual
-
-Both modes use the same logic; the difference is triggering context.
--->
-
+> **STATUS: ACTIVE - FULL PROCESSING** (bd-x2wv)
+> This skill executes the complete 5-phase handoff generation.
 
 ## Purpose
 
@@ -122,215 +31,374 @@ It captures context for the next session to continue work seamlessly.
 
 ## Activation
 
-When this skill is loaded, IMMEDIATELY execute:
+When this skill is loaded, execute the **5-phase handoff generation** below.
+
+---
+
+### Phase 1: Issue Context Loading
 
 ```bash
-# Bash
+# Bash - Load current issue context
 ./scripts/beads-log-event.sh sk.handoff.activated
 
-# Or PowerShell
+echo "==============================================================="
+echo "HANDOFF GENERATION"
+echo "==============================================================="
+
+# Get current issue
+CURRENT_ISSUE=$(cat .beads/current-issue 2>/dev/null || echo "")
+if [ -z "$CURRENT_ISSUE" ]; then
+    # Fall back to in_progress issues
+    CURRENT_ISSUE=$(bd list --status=in_progress 2>/dev/null | head -1 | awk '{print $2}' | tr -d '[]')
+fi
+
+if [ -z "$CURRENT_ISSUE" ]; then
+    ./scripts/beads-log-event.sh sk.handoff.error none "No current issue found"
+    echo "ERROR: No current issue found."
+    echo "Run 'bd ready' to see available work, or 'bd list --status=in_progress'"
+    exit 1
+fi
+
+echo "Current issue: $CURRENT_ISSUE"
+
+# Get issue details (bd show outputs human-readable format)
+ISSUE_OUTPUT=$(bd show "$CURRENT_ISSUE" 2>/dev/null)
+ISSUE_TITLE=$(echo "$ISSUE_OUTPUT" | head -1 | sed "s/^$CURRENT_ISSUE: //")
+ISSUE_STATUS=$(echo "$ISSUE_OUTPUT" | grep "^Status:" | cut -d: -f2 | tr -d ' ')
+ISSUE_DESC=$(echo "$ISSUE_OUTPUT" | sed -n '/^Description:/,/^$/p' | tail -n +2 | head -5)
+
+if [ -z "$ISSUE_DESC" ]; then
+    ISSUE_DESC="No description"
+fi
+
+./scripts/beads-log-event.sh sk.handoff.issue "$CURRENT_ISSUE" "Context loaded"
+```
+
+```powershell
+# PowerShell - Load current issue context
 .\scripts\beads-log-event.ps1 -EventCode sk.handoff.activated
-```
 
-Then output exactly:
+Write-Host "==============================================================="
+Write-Host "HANDOFF GENERATION"
+Write-Host "==============================================================="
 
-```
-===================================================================
-SKILL ACTIVATED: beads-handoff
-STATUS: Logging only - no processing implemented
-EVENT: sk.handoff.activated logged to .beads/events.log
-===================================================================
+# Get current issue
+$CurrentIssue = $null
+if (Test-Path ".beads\current-issue") {
+    $CurrentIssue = (Get-Content ".beads\current-issue" -Raw).Trim()
+}
 
-Handoff generation steps (NOT YET ACTIVE):
-1. [ ] Read current issue context
-2. [ ] Get recent git history
-3. [ ] Gather blockers and dependencies
-4. [ ] Generate formatted handoff prompt
-5. [ ] Optionally copy to clipboard
+if (-not $CurrentIssue) {
+    # Fall back to in_progress issues
+    $InProgress = bd list --status=in_progress 2>$null
+    if ($InProgress) {
+        $FirstLine = $InProgress | Select-Object -First 1
+        if ($FirstLine -match '\[([^\]]+)\]') {
+            $CurrentIssue = $Matches[1]
+        }
+    }
+}
 
-Output format:
-  Continue work on bd-{id}: {title}
-  Context: {issue description}
-  Status: {current status and notes}
-  Blockers: {any blocking issues}
-  Last commit: {git log -1 --oneline}
-  Next step: {what to do next}
+if (-not $CurrentIssue) {
+    .\scripts\beads-log-event.ps1 -EventCode sk.handoff.error -Description "No current issue found"
+    Write-Host "ERROR: No current issue found."
+    Write-Host "Run 'bd ready' to see available work, or 'bd list --status=in_progress'"
+    exit 1
+}
 
-NEXT: Verify event appears in .beads/events.log
+Write-Host "Current issue: $CurrentIssue"
+
+# Get issue details
+$IssueOutput = bd show $CurrentIssue 2>$null
+$IssueLines = $IssueOutput -split "`n"
+$IssueTitle = ($IssueLines[0] -replace "^${CurrentIssue}: ", "").Trim()
+$IssueStatus = ($IssueLines | Where-Object { $_ -match "^Status:" }) -replace "Status:\s*", ""
+$IssueDesc = "No description"
+
+# Find description section
+$DescStart = $false
+$DescLines = @()
+foreach ($line in $IssueLines) {
+    if ($line -match "^Description:") { $DescStart = $true; continue }
+    if ($DescStart -and $line -match "^\S+:") { break }
+    if ($DescStart) { $DescLines += $line }
+}
+if ($DescLines.Count -gt 0) {
+    $IssueDesc = ($DescLines | Select-Object -First 5) -join "`n"
+}
+
+.\scripts\beads-log-event.ps1 -EventCode sk.handoff.issue -IssueId $CurrentIssue -Description "Context loaded"
 ```
 
 ---
 
-## Processing Steps (DEFINED BUT NOT ACTIVE)
-
-These steps will be implemented after green field validation:
-
-### Step 1: Read Current Issue Context
+### Phase 2: Git History Gathering
 
 ```bash
-# Bash
-CURRENT_ISSUE=$(cat .beads/current-issue 2>/dev/null || echo "")
-if [ -z "$CURRENT_ISSUE" ]; then
-  # Fall back to in_progress issues
-  CURRENT_ISSUE=$(bd list --status=in_progress --json 2>/dev/null | jq -r '.[0].id // empty')
-fi
+# Bash - Gather git history
+echo ""
+echo "Gathering git history..."
 
-if [ -z "$CURRENT_ISSUE" ]; then
-  ./scripts/beads-log-event.sh sk.handoff.error none "No current issue found"
-  echo "ERROR: No current issue found. Cannot generate handoff."
-  exit 1
-fi
-
-ISSUE_JSON=$(bd show "$CURRENT_ISSUE" --json)
-ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
-ISSUE_DESC=$(echo "$ISSUE_JSON" | jq -r '.description // "No description"')
-ISSUE_STATUS=$(echo "$ISSUE_JSON" | jq -r '.status')
-ISSUE_NOTES=$(echo "$ISSUE_JSON" | jq -r '.notes // "No notes"')
-
-./scripts/beads-log-event.sh sk.handoff.issue "$CURRENT_ISSUE" "Context loaded"
-
-# Or PowerShell
-$currentIssue = if (Test-Path .beads/current-issue) {
-    Get-Content .beads/current-issue
-} else {
-    $null
-}
-if (-not $currentIssue) {
-    $inProgress = bd list --status=in_progress --json 2>$null | ConvertFrom-Json
-    $currentIssue = $inProgress[0].id
-}
-
-if (-not $currentIssue) {
-    .\scripts\beads-log-event.ps1 -EventCode sk.handoff.error -Details "No current issue found"
-    Write-Host "ERROR: No current issue found. Cannot generate handoff."
-    exit 1
-}
-
-$issueJson = bd show $currentIssue --json | ConvertFrom-Json
-$issueTitle = $issueJson.title
-$issueDesc = if ($issueJson.description) { $issueJson.description } else { "No description" }
-$issueStatus = $issueJson.status
-$issueNotes = if ($issueJson.notes) { $issueJson.notes } else { "No notes" }
-
-.\scripts\beads-log-event.ps1 -EventCode sk.handoff.issue -IssueId $currentIssue -Details "Context loaded"
-```
-
-### Step 2: Get Recent Git History
-
-```bash
-# Bash
 LAST_COMMIT=$(git log -1 --oneline 2>/dev/null || echo "No commits")
 RECENT_COMMITS=$(git log --oneline -5 2>/dev/null || echo "No commits")
 UNCOMMITTED=$(git status --short 2>/dev/null | head -10)
 
-./scripts/beads-log-event.sh sk.handoff.git none "Git history gathered"
-
-# Or PowerShell
-$lastCommit = git log -1 --oneline 2>$null
-if (-not $lastCommit) { $lastCommit = "No commits" }
-$recentCommits = git log --oneline -5 2>$null
-$uncommitted = git status --short 2>$null | Select-Object -First 10
-
-.\scripts\beads-log-event.ps1 -EventCode sk.handoff.git -Details "Git history gathered"
-```
-
-### Step 3: Gather Blockers and Dependencies
-
-```bash
-# Bash
-BLOCKERS=$(bd show "$CURRENT_ISSUE" --json | jq -r '.blocked_by // [] | .[] | "- \(.)"' 2>/dev/null)
-if [ -z "$BLOCKERS" ]; then
-  BLOCKERS="None"
+if [ -z "$UNCOMMITTED" ]; then
+    UNCOMMITTED="None"
 fi
 
-BLOCKING=$(bd show "$CURRENT_ISSUE" --json | jq -r '.blocking // [] | .[] | "- \(.)"' 2>/dev/null)
+./scripts/beads-log-event.sh sk.handoff.git "$CURRENT_ISSUE" "Git history gathered"
+```
+
+```powershell
+# PowerShell - Gather git history
+Write-Host ""
+Write-Host "Gathering git history..."
+
+$LastCommit = git log -1 --oneline 2>$null
+if (-not $LastCommit) { $LastCommit = "No commits" }
+
+$RecentCommits = git log --oneline -5 2>$null
+if (-not $RecentCommits) { $RecentCommits = "No commits" }
+
+$Uncommitted = git status --short 2>$null | Select-Object -First 10
+if (-not $Uncommitted) { $Uncommitted = "None" }
+
+.\scripts\beads-log-event.ps1 -EventCode sk.handoff.git -IssueId $CurrentIssue -Description "Git history gathered"
+```
+
+---
+
+### Phase 3: Dependency Analysis
+
+```bash
+# Bash - Analyze dependencies
+echo "Analyzing dependencies..."
+
+# Get blockers (issues blocking this one)
+BLOCKERS=$(bd show "$CURRENT_ISSUE" 2>/dev/null | grep -A 100 "^Blocked by:" | grep "^  -" | head -5)
+if [ -z "$BLOCKERS" ]; then
+    BLOCKERS="None"
+fi
+
+# Get issues this one is blocking
+BLOCKING=$(bd show "$CURRENT_ISSUE" 2>/dev/null | grep -A 100 "^Blocking:" | grep "^  -" | head -5)
 if [ -z "$BLOCKING" ]; then
-  BLOCKING="None"
+    BLOCKING="None"
 fi
 
 ./scripts/beads-log-event.sh sk.handoff.deps "$CURRENT_ISSUE" "Dependencies gathered"
-
-# Or PowerShell
-$blockers = $issueJson.blocked_by | ForEach-Object { "- $_" }
-if (-not $blockers) { $blockers = "None" }
-
-$blocking = $issueJson.blocking | ForEach-Object { "- $_" }
-if (-not $blocking) { $blocking = "None" }
-
-.\scripts\beads-log-event.ps1 -EventCode sk.handoff.deps -IssueId $currentIssue -Details "Dependencies gathered"
 ```
 
-### Step 4: Generate Formatted Handoff Prompt
+```powershell
+# PowerShell - Analyze dependencies
+Write-Host "Analyzing dependencies..."
+
+$IssueOutput = bd show $CurrentIssue 2>$null
+$Blockers = "None"
+$Blocking = "None"
+
+# Parse blockers from output
+$InBlockedBy = $false
+$BlockerLines = @()
+foreach ($line in ($IssueOutput -split "`n")) {
+    if ($line -match "^Blocked by:") { $InBlockedBy = $true; continue }
+    if ($InBlockedBy -and $line -match "^\S" -and $line -notmatch "^  -") { break }
+    if ($InBlockedBy -and $line -match "^  -") { $BlockerLines += $line.Trim() }
+}
+if ($BlockerLines.Count -gt 0) {
+    $Blockers = ($BlockerLines | Select-Object -First 5) -join "`n"
+}
+
+# Parse blocking from output
+$InBlocking = $false
+$BlockingLines = @()
+foreach ($line in ($IssueOutput -split "`n")) {
+    if ($line -match "^Blocking:") { $InBlocking = $true; continue }
+    if ($InBlocking -and $line -match "^\S" -and $line -notmatch "^  -") { break }
+    if ($InBlocking -and $line -match "^  -") { $BlockingLines += $line.Trim() }
+}
+if ($BlockingLines.Count -gt 0) {
+    $Blocking = ($BlockingLines | Select-Object -First 5) -join "`n"
+}
+
+.\scripts\beads-log-event.ps1 -EventCode sk.handoff.deps -IssueId $CurrentIssue -Description "Dependencies gathered"
+```
+
+---
+
+### Phase 4: Prompt Generation
 
 ```bash
-# Bash
+# Bash - Generate handoff prompt
+echo "Generating handoff prompt..."
+
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
 HANDOFF=$(cat << EOF
-Continue work on ${CURRENT_ISSUE}: ${ISSUE_TITLE}
+# Session Handoff
 
-Context: ${ISSUE_DESC}
+**Generated:** $TIMESTAMP
 
-Status: ${ISSUE_STATUS}
-Notes: ${ISSUE_NOTES}
+---
 
-Blockers: ${BLOCKERS}
+## Continue work on $CURRENT_ISSUE: $ISSUE_TITLE
 
-Last commit: ${LAST_COMMIT}
+### Context
+$ISSUE_DESC
 
-Next step: Review the issue and continue implementation.
+### Status
+$ISSUE_STATUS
+
+### Blockers
+$BLOCKERS
+
+### Blocking (issues waiting on this)
+$BLOCKING
+
+### Last Commit
+$LAST_COMMIT
+
+### Recent Activity
+$RECENT_COMMITS
+
+### Uncommitted Changes
+$UNCOMMITTED
+
+---
+
+## Next Step
+Review the issue context above and continue implementation.
+
+## Quick Start
+\`\`\`bash
+git pull && bd sync && bd show $CURRENT_ISSUE
+\`\`\`
 EOF
 )
 
+# Output to console
+echo ""
 echo "$HANDOFF"
-echo "$HANDOFF" > .beads/last-handoff.txt
+
+# Write to file
+echo "$HANDOFF" > .beads/last-handoff.md
 
 ./scripts/beads-log-event.sh sk.handoff.generate "$CURRENT_ISSUE" "Handoff prompt generated"
-
-# Or PowerShell
-$handoff = @"
-Continue work on ${currentIssue}: ${issueTitle}
-
-Context: ${issueDesc}
-
-Status: ${issueStatus}
-Notes: ${issueNotes}
-
-Blockers: $($blockers -join "`n")
-
-Last commit: ${lastCommit}
-
-Next step: Review the issue and continue implementation.
-"@
-
-Write-Host $handoff
-$handoff | Out-File -FilePath .beads/last-handoff.txt -Encoding UTF8
-
-.\scripts\beads-log-event.ps1 -EventCode sk.handoff.generate -IssueId $currentIssue -Details "Handoff prompt generated"
 ```
 
-### Step 5: Optionally Copy to Clipboard
+```powershell
+# PowerShell - Generate handoff prompt
+Write-Host "Generating handoff prompt..."
+
+$Timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+
+$Handoff = @"
+# Session Handoff
+
+**Generated:** $Timestamp
+
+---
+
+## Continue work on ${CurrentIssue}: $IssueTitle
+
+### Context
+$IssueDesc
+
+### Status
+$IssueStatus
+
+### Blockers
+$Blockers
+
+### Blocking (issues waiting on this)
+$Blocking
+
+### Last Commit
+$LastCommit
+
+### Recent Activity
+$($RecentCommits -join "`n")
+
+### Uncommitted Changes
+$($Uncommitted -join "`n")
+
+---
+
+## Next Step
+Review the issue context above and continue implementation.
+
+## Quick Start
+``````bash
+git pull && bd sync && bd show $CurrentIssue
+``````
+"@
+
+# Output to console
+Write-Host ""
+Write-Host $Handoff
+
+# Write to file
+$Handoff | Out-File -FilePath ".beads\last-handoff.md" -Encoding utf8
+
+.\scripts\beads-log-event.ps1 -EventCode sk.handoff.generate -IssueId $CurrentIssue -Description "Handoff prompt generated"
+```
+
+---
+
+### Phase 5: Clipboard Integration
 
 ```bash
-# Bash (requires xclip or xsel on Linux, pbcopy on macOS)
+# Bash - Copy to clipboard (platform-aware)
+CLIPBOARD_STATUS="Not available"
+
 if command -v pbcopy &> /dev/null; then
-  echo "$HANDOFF" | pbcopy
-  echo "Copied to clipboard (macOS)"
+    echo "$HANDOFF" | pbcopy
+    CLIPBOARD_STATUS="Copied (macOS)"
 elif command -v xclip &> /dev/null; then
-  echo "$HANDOFF" | xclip -selection clipboard
-  echo "Copied to clipboard (Linux/xclip)"
+    echo "$HANDOFF" | xclip -selection clipboard
+    CLIPBOARD_STATUS="Copied (Linux/xclip)"
 elif command -v xsel &> /dev/null; then
-  echo "$HANDOFF" | xsel --clipboard
-  echo "Copied to clipboard (Linux/xsel)"
-else
-  echo "Clipboard not available. Handoff saved to .beads/last-handoff.txt"
+    echo "$HANDOFF" | xsel --clipboard
+    CLIPBOARD_STATUS="Copied (Linux/xsel)"
+elif command -v clip.exe &> /dev/null; then
+    echo "$HANDOFF" | clip.exe
+    CLIPBOARD_STATUS="Copied (Windows/WSL)"
 fi
 
-./scripts/beads-log-event.sh sk.handoff.complete "$CURRENT_ISSUE" "Handoff complete"
+./scripts/beads-log-event.sh sk.handoff.complete "$CURRENT_ISSUE" "$CLIPBOARD_STATUS"
 
-# Or PowerShell
-$handoff | Set-Clipboard
-Write-Host "Copied to clipboard (Windows)"
+echo ""
+echo "==============================================================="
+echo "HANDOFF COMPLETE"
+echo "==============================================================="
+echo "Issue: $CURRENT_ISSUE - $ISSUE_TITLE"
+echo "Saved to: .beads/last-handoff.md"
+echo "Clipboard: $CLIPBOARD_STATUS"
+echo "==============================================================="
+```
 
-.\scripts\beads-log-event.ps1 -EventCode sk.handoff.complete -IssueId $currentIssue -Details "Handoff complete"
+```powershell
+# PowerShell - Copy to clipboard (Windows)
+$ClipboardStatus = "Not available"
+
+try {
+    $Handoff | Set-Clipboard
+    $ClipboardStatus = "Copied (Windows)"
+} catch {
+    $ClipboardStatus = "Failed: $_"
+}
+
+.\scripts\beads-log-event.ps1 -EventCode sk.handoff.complete -IssueId $CurrentIssue -Description $ClipboardStatus
+
+Write-Host ""
+Write-Host "==============================================================="
+Write-Host "HANDOFF COMPLETE"
+Write-Host "==============================================================="
+Write-Host "Issue: $CurrentIssue - $IssueTitle"
+Write-Host "Saved to: .beads\last-handoff.md"
+Write-Host "Clipboard: $ClipboardStatus"
+Write-Host "==============================================================="
 ```
 
 ---
@@ -339,19 +407,45 @@ Write-Host "Copied to clipboard (Windows)"
 
 The generated handoff prompt follows this structure:
 
+```markdown
+# Session Handoff
+
+**Generated:** <timestamp>
+
+---
+
+## Continue work on bd-{id}: {title}
+
+### Context
+{issue description}
+
+### Status
+{current status}
+
+### Blockers
+{blocking issues or "None"}
+
+### Blocking (issues waiting on this)
+{issues blocked by this or "None"}
+
+### Last Commit
+{git log -1 --oneline}
+
+### Recent Activity
+{git log --oneline -5}
+
+### Uncommitted Changes
+{git status --short or "None"}
+
+---
+
+## Next Step
+Review the issue context above and continue implementation.
+
+## Quick Start
+```bash
+git pull && bd sync && bd show {issue-id}
 ```
-Continue work on bd-{id}: {title}
-
-Context: {issue description}
-
-Status: {current status}
-Notes: {progress notes}
-
-Blockers: {blocking issues or "None"}
-
-Last commit: {git log -1 --oneline}
-
-Next step: Review the issue and continue implementation.
 ```
 
 ---
@@ -360,39 +454,65 @@ Next step: Review the issue and continue implementation.
 
 | Event Code | When | Details |
 |------------|------|---------|
-| `sk.handoff.activated` | Skill loads | Always |
-| `sk.handoff.issue` | Issue context loaded | Future |
-| `sk.handoff.git` | Git history gathered | Future |
-| `sk.handoff.deps` | Dependencies gathered | Future |
-| `sk.handoff.generate` | Prompt generated | Future |
-| `sk.handoff.complete` | Handoff finished | Future |
-| `sk.handoff.error` | Error occurred | Future |
+| `sk.handoff.activated` | Skill loads | Handoff starting |
+| `sk.handoff.issue` | Issue context loaded | Issue details retrieved |
+| `sk.handoff.git` | Git history gathered | Commits and status captured |
+| `sk.handoff.deps` | Dependencies gathered | Blockers analyzed |
+| `sk.handoff.generate` | Prompt generated | Written to file |
+| `sk.handoff.complete` | Handoff finished | Clipboard status |
+| `sk.handoff.error` | Error occurred | No issue found, etc. |
+
+---
+
+## Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| No current issue | Error message, suggest `bd ready` |
+| Issue not found | Error message, suggest `bd list` |
+| Git errors | Include "No commits" in handoff |
+| Clipboard failure | Log warning, continue with file output |
 
 ---
 
 ## Integration with Other Skills
 
-**beads-bootup:** Starts the session, sets current issue
-**beads-scope:** Monitors adherence to selected issue
-**beads-landing:** Calls handoff as Step 5 of landing ritual
-**beads-handoff:** Generates the handoff prompt for next session
+- **beads-bootup**: Starts the session, sets current issue
+- **beads-scope**: Monitors adherence to selected issue
+- **beads-landing**: Calls handoff as Phase 6 of landing ritual
+- **beads-handoff**: Generates the handoff prompt (this skill)
+
+---
+
+## Standalone vs. Integrated Usage
+
+This skill can be invoked:
+1. **Standalone**: Load skill directly for ad-hoc handoff generation
+2. **Integrated**: Called by beads-landing as part of session close ritual
+
+Both modes use the same logic; the difference is triggering context.
 
 ---
 
 ## Quick Usage
 
-When you need a handoff prompt:
+```bash
+# Generate handoff for current issue
+cat .beads/current-issue              # Verify current issue
+# (load this skill)                   # Generates handoff
 
-1. Invoke in VS Code chat: "Load beads-handoff skill"
-2. The skill reads current issue context
-3. Gathers git history and blockers
-4. Outputs formatted handoff prompt
-5. Copies to clipboard if available
+# View last handoff
+cat .beads/last-handoff.md
+
+# Copy handoff to clipboard manually (if auto-copy failed)
+cat .beads/last-handoff.md | clip     # Windows
+cat .beads/last-handoff.md | pbcopy   # macOS
+cat .beads/last-handoff.md | xclip -selection clipboard  # Linux
+```
 
 ---
 
-**GREEN FIELD STATUS:** This skill only logs activation.
-Processing will be enabled once event logging is verified working.
+**STATUS: ACTIVE** (bd-x2wv) - Full 5-phase handoff generation implemented.
 
 **PURPOSE:** Ensure seamless continuity between sessions by capturing
 exactly what the next session needs to know to resume work.
