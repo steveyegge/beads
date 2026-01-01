@@ -22,6 +22,7 @@ daemon.log
 daemon.pid
 bd.sock
 sync-state.json
+last-touched
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -59,6 +60,7 @@ var requiredPatterns = []string{
 	"beads.right.meta.json",
 	"*.db?*",
 	"redirect",
+	"last-touched",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
