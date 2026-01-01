@@ -498,6 +498,11 @@ func runPrePushHook() int {
 		return 0 // Skip - changes synced to separate branch
 	}
 
+	// bd-uo2u: Check if landing ritual was completed with passing tests
+	if !verifyLandingMarker() {
+		return 1 // Block push - landing verification failed
+	}
+
 	// Flush pending bd changes
 	flushCmd := exec.Command("bd", "sync", "--flush-only")
 	_ = flushCmd.Run() // Ignore errors
@@ -660,6 +665,53 @@ func hasBeadsJSONL() bool {
 		}
 	}
 	return false
+}
+
+// verifyLandingMarker checks if landing ritual completed with passing tests.
+// The marker file (.beads/.landing-complete) must contain "PASSED:" prefix.
+// Returns true if marker is valid or doesn't exist (backwards compatibility).
+// Returns false (blocks push) if marker exists but tests failed. (bd-uo2u)
+func verifyLandingMarker() bool {
+	markerPath := ".beads/.landing-complete"
+	content, err := os.ReadFile(markerPath) // #nosec G304 -- path is hardcoded
+	if err != nil {
+		// Marker doesn't exist - allow push (backwards compatibility with
+		// workflows that don't use landing ritual)
+		return true
+	}
+
+	// Parse marker content
+	markerStr := strings.TrimSpace(string(content))
+
+	// Check for test result prefix (bd-uo2u)
+	if strings.HasPrefix(markerStr, "PASSED:") {
+		return true
+	}
+
+	if strings.HasPrefix(markerStr, "FAILED:") {
+		fmt.Fprintln(os.Stderr, "❌ Landing ritual completed but tests FAILED")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Push blocked because the landing marker indicates test failure.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "To proceed:")
+		fmt.Fprintln(os.Stderr, "  1. Fix failing tests")
+		fmt.Fprintln(os.Stderr, "  2. Re-run landing ritual (tests must pass)")
+		fmt.Fprintln(os.Stderr, "  3. Try push again")
+		fmt.Fprintln(os.Stderr, "")
+		return false
+	}
+
+	// Legacy marker format (just timestamp like "2025-12-31T19:00:00Z")
+	// Allow for backwards compatibility without warning (too noisy)
+	// Timestamps start with a digit and contain 'T' for ISO format
+	if len(markerStr) > 0 && markerStr[0] >= '0' && markerStr[0] <= '9' {
+		return true
+	}
+
+	// Unknown format - allow but warn
+	fmt.Fprintln(os.Stderr, "⚠️  Warning: Unrecognized landing marker format")
+	fmt.Fprintln(os.Stderr, "   Expected: PASSED:<timestamp> or FAILED:<timestamp>")
+	return true
 }
 
 var hooksRunCmd = &cobra.Command{

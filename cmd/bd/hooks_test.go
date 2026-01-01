@@ -338,3 +338,72 @@ func TestInstallHooksShared(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyLandingMarker tests the landing marker verification (bd-uo2u)
+func TestVerifyLandingMarker(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		expectAllow bool
+		description string
+	}{
+		{
+			name:        "no marker file",
+			content:     "", // will not create file
+			expectAllow: true,
+			description: "backwards compatibility - no marker means allow",
+		},
+		{
+			name:        "PASSED marker",
+			content:     "PASSED:2025-12-31T19:00:00Z",
+			expectAllow: true,
+			description: "tests passed, allow push",
+		},
+		{
+			name:        "FAILED marker",
+			content:     "FAILED:2025-12-31T19:00:00Z",
+			expectAllow: false,
+			description: "tests failed, block push",
+		},
+		{
+			name:        "legacy timestamp format",
+			content:     "2025-12-31T19:00:00Z",
+			expectAllow: true,
+			description: "backwards compatibility with old marker format",
+		},
+		{
+			name:        "legacy timestamp with date only",
+			content:     "2025-12-31",
+			expectAllow: true,
+			description: "backwards compatibility with date-only format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp directory
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+
+			// Create .beads directory
+			beadsDir := ".beads"
+			if err := os.MkdirAll(beadsDir, 0755); err != nil {
+				t.Fatalf("Failed to create .beads dir: %v", err)
+			}
+
+			// Create marker file if content is provided
+			if tt.content != "" {
+				markerPath := filepath.Join(beadsDir, ".landing-complete")
+				if err := os.WriteFile(markerPath, []byte(tt.content), 0644); err != nil {
+					t.Fatalf("Failed to write marker file: %v", err)
+				}
+			}
+
+			// Test the function
+			result := verifyLandingMarker()
+			if result != tt.expectAllow {
+				t.Errorf("verifyLandingMarker() = %v, want %v (%s)", result, tt.expectAllow, tt.description)
+			}
+		})
+	}
+}

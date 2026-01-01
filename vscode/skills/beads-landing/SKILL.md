@@ -122,41 +122,85 @@ It ensures clean state and enables session continuity.
 
 ## Activation
 
-When this skill is loaded, IMMEDIATELY execute:
+When this skill is loaded, IMMEDIATELY execute the following steps:
+
+### Step 1: Run Tests (MANDATORY)
+
+Run the project's test suite and capture the result:
 
 ```bash
-# Bash
-# Create landing marker
+# Bash - detect and run tests
 mkdir -p .beads
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .beads/.landing-complete
-./scripts/beads-log-event.sh sk.landing.activated
+if [ -f "go.mod" ]; then
+    go test ./... && TEST_RESULT="PASSED" || TEST_RESULT="FAILED"
+elif [ -f "package.json" ]; then
+    npm test && TEST_RESULT="PASSED" || TEST_RESULT="FAILED"
+elif [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
+    pytest && TEST_RESULT="PASSED" || TEST_RESULT="FAILED"
+else
+    echo "⚠️  No test framework detected - marking as PASSED"
+    TEST_RESULT="PASSED"
+fi
 
-# Or PowerShell
-# Create landing marker
+# Write test result to landing marker (bd-uo2u)
+echo "${TEST_RESULT}:$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .beads/.landing-complete
+./scripts/beads-log-event.sh sk.landing.activated
+```
+
+```powershell
+# PowerShell - detect and run tests
 New-Item -ItemType Directory -Force -Path .beads | Out-Null
-Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" | Out-File -FilePath .beads\.landing-complete -NoNewline
+$TestResult = "PASSED"
+if (Test-Path "go.mod") {
+    go test ./...
+    if ($LASTEXITCODE -ne 0) { $TestResult = "FAILED" }
+} elseif (Test-Path "package.json") {
+    npm test
+    if ($LASTEXITCODE -ne 0) { $TestResult = "FAILED" }
+} elseif ((Test-Path "pytest.ini") -or (Test-Path "setup.py")) {
+    pytest
+    if ($LASTEXITCODE -ne 0) { $TestResult = "FAILED" }
+} else {
+    Write-Host "⚠️  No test framework detected - marking as PASSED"
+}
+
+# Write test result to landing marker (bd-uo2u)
+$Timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+"${TestResult}:${Timestamp}" | Out-File -FilePath .beads\.landing-complete -NoNewline
 .\scripts\beads-log-event.ps1 -EventCode sk.landing.activated
 ```
 
-Then output exactly:
+**IMPORTANT (bd-uo2u)**: The landing marker MUST contain the test result prefix.
+- `PASSED:2025-12-31T19:00:00Z` - Tests passed, push will be allowed
+- `FAILED:2025-12-31T19:00:00Z` - Tests failed, push will be BLOCKED
+
+If tests fail, you MUST fix them before pushing. The pre-push hook enforces this.
+
+### Step 2: Report Results
+
+After running tests, output:
 
 ```
 ═══════════════════════════════════════════════════════════════
 SKILL ACTIVATED: beads-landing
-STATUS: Logging only - no processing implemented
+TESTS: [PASSED/FAILED]
 EVENT: sk.landing.activated logged to .beads/events.log
 ═══════════════════════════════════════════════════════════════
 
-Landing ritual steps (NOT YET ACTIVE):
-1. [ ] File discovered work
-2. [ ] Run quality gates
+Landing ritual checklist:
+1. [x] Run quality gates (tests)
+2. [ ] File discovered work
 3. [ ] Update beads state
 4. [ ] Sync and push (MUST SUCCEED)
 5. [ ] Generate handoff
 
 ⚠️  DO NOT END SESSION WITHOUT COMPLETING LANDING
+```
 
-NEXT: Verify event appears in .beads/events.log
+If tests FAILED, add:
+```
+🚨 TESTS FAILED - PUSH WILL BE BLOCKED 🚨
+Fix failing tests before proceeding with push.
 ```
 
 ---

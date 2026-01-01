@@ -105,9 +105,14 @@ func TestRegistryBasics(t *testing.T) {
 
 func TestRegistryMultipleDaemons(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	// bd-1bac: Use platform-specific home env var
+	homeEnv := "HOME"
+	if runtime.GOOS == "windows" {
+		homeEnv = "USERPROFILE"
+	}
+	oldHome := os.Getenv(homeEnv)
+	os.Setenv(homeEnv, tmpDir)
+	defer os.Setenv(homeEnv, oldHome)
 
 	registry, err := NewRegistry()
 	if err != nil {
@@ -140,9 +145,14 @@ func TestRegistryMultipleDaemons(t *testing.T) {
 
 func TestRegistryStaleCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	// bd-1bac: Use platform-specific home env var
+	homeEnv := "HOME"
+	if runtime.GOOS == "windows" {
+		homeEnv = "USERPROFILE"
+	}
+	oldHome := os.Getenv(homeEnv)
+	os.Setenv(homeEnv, tmpDir)
+	defer os.Setenv(homeEnv, oldHome)
 
 	registry, err := NewRegistry()
 	if err != nil {
@@ -285,9 +295,14 @@ func TestRegistryNullBytesFile(t *testing.T) {
 
 func TestRegistryUnregisterNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	// bd-1bac: Use platform-specific home env var
+	homeEnv := "HOME"
+	if runtime.GOOS == "windows" {
+		homeEnv = "USERPROFILE"
+	}
+	oldHome := os.Getenv(homeEnv)
+	os.Setenv(homeEnv, tmpDir)
+	defer os.Setenv(homeEnv, oldHome)
 
 	registry, err := NewRegistry()
 	if err != nil {

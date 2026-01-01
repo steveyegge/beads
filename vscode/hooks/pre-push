@@ -33,6 +33,24 @@ if [ ! -f ".beads/.landing-complete" ]; then
     exit 1
 fi
 
+# ENFORCEMENT: Check if tests passed (bd-uo2u)
+MARKER_CONTENT=$(cat ".beads/.landing-complete")
+if echo "$MARKER_CONTENT" | grep -q "^FAILED:"; then
+    echo "ERROR: Landing ritual completed but tests FAILED"
+    echo ""
+    echo "Push blocked because the landing marker indicates test failure."
+    echo ""
+    echo "To proceed:"
+    echo "  1. Fix failing tests"
+    echo "  2. Re-run landing ritual (tests must pass)"
+    echo "  3. Try push again"
+    echo ""
+    if [ -x "$LOG_SCRIPT" ]; then
+        "$LOG_SCRIPT" "hk.pre-push.fail" "none" "tests failed"
+    fi
+    exit 1
+fi
+
 # ENFORCEMENT: Check if beads are synced (no uncommitted changes in .beads/)
 if ! git diff --quiet .beads/ 2>/dev/null; then
     echo "ERROR: Uncommitted changes in .beads/"

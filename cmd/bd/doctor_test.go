@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -892,10 +893,14 @@ func TestGetClaudePluginVersion(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Temporarily override home directory
-			origHome := os.Getenv("HOME")
-			os.Setenv("HOME", tmpHome)
-			defer os.Setenv("HOME", origHome)
+			// Temporarily override home directory (bd-1bac: use platform-specific var)
+			homeEnv := "HOME"
+			if runtime.GOOS == "windows" {
+				homeEnv = "USERPROFILE"
+			}
+			origHome := os.Getenv(homeEnv)
+			os.Setenv(homeEnv, tmpHome)
+			defer os.Setenv(homeEnv, origHome)
 
 			version, installed, err := doctor.GetClaudePluginVersion()
 
