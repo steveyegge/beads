@@ -7,6 +7,7 @@ This directory contains examples of how to integrate bd with AI agents and workf
 ### Agent Integration
 - **[python-agent/](python-agent/)** - Simple Python agent that discovers ready work and completes tasks
 - **[bash-agent/](bash-agent/)** - Bash script showing the full agent workflow
+- **[ts-agent/](ts-agent/)** - TypeScript agent with full type safety for Node.js environments
 - **[startup-hooks/](startup-hooks/)** - Session startup scripts for automatic bd upgrade detection
 - **[claude-desktop-mcp/](claude-desktop-mcp/)** - MCP server for Claude Desktop integration
 
@@ -35,11 +36,13 @@ python agent.py
 cd bash-agent
 ./agent.sh
 
+# Try the TypeScript agent example
+cd ts-agent
+npm install && npm start
+
 # Install git hooks
 cd git-hooks
 ./install.sh
-
-# REMOVED (bd-4c74): branch-merge demo - hash IDs eliminate collision resolution
 ```
 
 ## Creating Your Own Agent

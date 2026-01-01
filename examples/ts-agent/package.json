@@ -1,0 +1,26 @@
+{
+  "name": "beads-ts-agent",
+  "version": "1.0.0",
+  "description": "Simple TypeScript agent workflow using bd (Beads issue tracker)",
+  "main": "agent.js",
+  "scripts": {
+    "start": "npx ts-node agent.ts",
+    "build": "tsc",
+    "run": "node agent.js",
+    "test": "npx ts-node agent.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "beads",
+    "agent",
+    "task-management",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
