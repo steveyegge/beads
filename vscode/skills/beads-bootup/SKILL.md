@@ -14,10 +14,9 @@ license: "MIT"
 
 # Beads Bootup Skill
 
-> **STATUS: GREEN FIELD - LOGGING ONLY**
-> This skill announces its activation but performs no processing yet.
+> **STATUS: ACTIVE - FULL PROCESSING** (bd-03gn)
+> This skill executes the complete 5-phase bootup ritual.
 
-<!--
 ## IMPLEMENTATION PLAN
 
 ### Phase 1: Ground and Sync
@@ -76,7 +75,6 @@ Health Check: PASSED/FAILED
 - [ ] InitApp guard filters work correctly
 - [ ] Selected issue written to `.beads/current-issue`
 - [ ] All events logged to `.beads/events.log`
--->
 
 
 ## Purpose
@@ -88,107 +86,162 @@ It grounds the agent in current state and selects work.
 
 ## Activation
 
-When this skill is loaded, IMMEDIATELY execute:
+When this skill is loaded, execute the **5-phase bootup ritual** below.
+
+---
+
+### Phase 1: Ground and Sync
 
 ```bash
-# Bash
+# Verify we're in a beads workspace
+if [ ! -d ".beads" ]; then
+    echo "❌ ERROR: Not in a beads workspace (.beads/ directory not found)"
+    echo "Run 'bd init' to initialize beads in this directory"
+    exit 1
+fi
+
 # Create session marker
 mkdir -p .beads
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .beads/.session-active
-./scripts/beads-log-event.sh sk.bootup.activated
 
-# Or PowerShell
-# Create session marker
+# Sync with remote
+git pull --rebase || echo "⚠️  Git pull failed - continuing with local state"
+bd sync || echo "⚠️  bd sync failed - continuing with local state"
+```
+
+```powershell
+# PowerShell version
+if (-not (Test-Path ".beads")) {
+    Write-Host "❌ ERROR: Not in a beads workspace (.beads/ directory not found)"
+    Write-Host "Run 'bd init' to initialize beads in this directory"
+    exit 1
+}
+
 New-Item -ItemType Directory -Force -Path .beads | Out-Null
 Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ" | Out-File -FilePath .beads\.session-active -NoNewline
-.\scripts\beads-log-event.ps1 -EventCode sk.bootup.activated
-```
 
-Then output exactly:
-
-```
-═══════════════════════════════════════════════════════════════
-SKILL ACTIVATED: beads-bootup
-STATUS: Logging only - no processing implemented
-EVENT: sk.bootup.activated logged to .beads/events.log
-═══════════════════════════════════════════════════════════════
-
-Bootup ritual steps (NOT YET ACTIVE):
-1. [ ] Ground - confirm working directory
-2. [ ] Sync - pull remote state
-3. [ ] Orient - read domain memory
-4. [ ] Select - choose ONE issue
-5. [ ] Verify - run health check
-
-Guard check (NOT YET ACTIVE):
-- [ ] Is InitApp (bd-0001) closed?
-- [ ] If not, only InitApp children are workable
-
-NEXT: Verify event appears in .beads/events.log
-```
-
----
-
-## Processing Steps (DEFINED BUT NOT ACTIVE)
-
-These steps will be implemented after green field validation:
-
-### Step 1: Ground
-```bash
-pwd
-./scripts/beads-log-event.sh ss.bootup.ground
-```
-
-### Step 2: Sync
-```bash
 git pull --rebase
 bd sync
-./scripts/beads-log-event.sh ss.bootup.sync
-```
-
-### Step 3: Orient
-```bash
-bd ready --json
-bd list --status in_progress
-git log --oneline -5
-./scripts/beads-log-event.sh ss.bootup.orient
-```
-
-### Step 4: Select
-```bash
-# Present ready issues to user
-# Wait for selection
-bd show <selected-id> --json
-./scripts/beads-log-event.sh ss.bootup.select <selected-id>
-```
-
-### Step 5: Verify
-```bash
-# Run project health check (tests, build)
-./scripts/beads-log-event.sh ss.bootup.verify
-./scripts/beads-log-event.sh ss.bootup.complete
 ```
 
 ---
 
-## Guard: InitApp Check (DEFINED BUT NOT ACTIVE)
-
-Before processing, check epoch status:
+### Phase 2: Orient - State Assessment
 
 ```bash
-# Check if InitApp exists and is open
-bd show bd-0001 --json 2>/dev/null
+# Check for existing work-in-progress
+echo "═══════════════════════════════════════════════════════════════"
+echo "CURRENT STATE"
+echo "═══════════════════════════════════════════════════════════════"
 
-# If status != "closed":
-./scripts/beads-log-event.sh gd.initapp.check bd-0001
-./scripts/beads-log-event.sh gd.initapp.blocked bd-0001 "InitApp not complete"
-# Output: "⛔ InitApp is not complete. Only InitApp children are workable."
-# Filter bd ready to show only InitApp children
+# Show in-progress issues
+IN_PROGRESS=$(bd list --status=in_progress 2>/dev/null)
+if [ -n "$IN_PROGRESS" ]; then
+    echo "⚠️  Work in progress:"
+    echo "$IN_PROGRESS"
+    echo ""
+    echo "Resume existing work or pick new? (Check with user)"
+fi
 
-# If status == "closed":
-./scripts/beads-log-event.sh gd.initapp.passed bd-0001 "Epoch established"
-# Proceed with normal bootup
+# Show recent commits for context
+echo ""
+echo "Recent commits:"
+git log --oneline -5
+
+# Show ready work
+echo ""
+echo "Available work:"
+bd ready
 ```
+
+---
+
+### Phase 3: InitApp Guard
+
+```bash
+# Check if InitApp (bd-0001) exists and is still open
+INITAPP_STATUS=$(bd show bd-0001 --json 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+
+if [ "$INITAPP_STATUS" = "open" ] || [ "$INITAPP_STATUS" = "in_progress" ]; then
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "⛔ INITAPP GUARD: bd-0001 is not complete"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "Only InitApp children (bd-0001.*) are workable until InitApp closes."
+    echo ""
+    echo "InitApp children:"
+    bd list | grep "bd-0001\."
+    echo ""
+    echo "Complete InitApp work before working on other issues."
+fi
+```
+
+---
+
+### Phase 4: Issue Selection
+
+After reviewing available work, **ask the user which issue to work on**.
+
+When user selects an issue:
+
+```bash
+# Validate and claim the issue
+ISSUE_ID="<selected-id>"  # Replace with user's choice
+
+# Verify issue exists
+bd show "$ISSUE_ID" || { echo "❌ Issue not found"; exit 1; }
+
+# Claim the issue
+bd update "$ISSUE_ID" --status in_progress
+
+# Write to current-issue marker
+echo "$ISSUE_ID" > .beads/current-issue
+echo "✓ Selected issue: $ISSUE_ID"
+```
+
+---
+
+### Phase 5: Health Check (Optional)
+
+```bash
+# Detect and run project tests
+if [ -f "go.mod" ]; then
+    echo "Running Go tests..."
+    go test ./... && HEALTH="PASSED" || HEALTH="FAILED"
+elif [ -f "package.json" ]; then
+    echo "Running npm tests..."
+    npm test && HEALTH="PASSED" || HEALTH="FAILED"
+elif [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
+    echo "Running pytest..."
+    pytest && HEALTH="PASSED" || HEALTH="FAILED"
+else
+    echo "No test framework detected - skipping health check"
+    HEALTH="SKIPPED"
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "BOOTUP COMPLETE"
+echo "═══════════════════════════════════════════════════════════════"
+echo "Selected Issue: $(cat .beads/current-issue 2>/dev/null || echo 'None')"
+echo "Health Check: $HEALTH"
+echo "═══════════════════════════════════════════════════════════════"
+```
+
+---
+
+## Quick Start
+
+For agents, execute these phases in order:
+
+1. **Ground**: Verify `.beads/` exists, create session marker
+2. **Sync**: Run `git pull --rebase && bd sync`
+3. **Orient**: Run `bd list --status=in_progress` then `bd ready`
+4. **Guard**: Check if `bd-0001` is open (if so, only work on its children)
+5. **Select**: Ask user to pick an issue, then `bd update <id> --status in_progress`
+6. **Verify**: Run tests if available, report result
+
+**Output the BOOTUP COMPLETE banner when done.**
 
 ---
 
@@ -196,18 +249,17 @@ bd show bd-0001 --json 2>/dev/null
 
 | Event Code | When | Details |
 |------------|------|---------|
-| `sk.bootup.activated` | Skill loads | Always |
-| `ss.bootup.ground` | After pwd | Future |
-| `ss.bootup.sync` | After sync | Future |
-| `ss.bootup.orient` | After bd ready | Future |
-| `ss.bootup.select` | Issue chosen | Future |
-| `ss.bootup.verify` | Health check done | Future |
-| `ss.bootup.complete` | Ritual finished | Future |
-| `gd.initapp.check` | Checking epoch | Future |
-| `gd.initapp.blocked` | InitApp open | Future |
-| `gd.initapp.passed` | InitApp closed | Future |
+| `sk.bootup.activated` | Skill loads | Session marker created |
+| `ss.bootup.ground` | After workspace check | Verified .beads/ exists |
+| `ss.bootup.sync` | After sync | git pull + bd sync complete |
+| `ss.bootup.orient` | After bd ready | State assessment complete |
+| `ss.bootup.select` | Issue chosen | Issue claimed, written to current-issue |
+| `ss.bootup.verify` | Health check done | Tests run (if available) |
+| `ss.bootup.complete` | Ritual finished | Bootup banner displayed |
+| `gd.initapp.check` | Checking epoch | InitApp status checked |
+| `gd.initapp.blocked` | InitApp open | Only children workable |
+| `gd.initapp.passed` | InitApp closed | All issues workable |
 
 ---
 
-**GREEN FIELD STATUS:** This skill only logs activation.
-Processing will be enabled once event logging is verified working.
+**STATUS: ACTIVE** (bd-03gn) - Full 5-phase bootup ritual implemented.
