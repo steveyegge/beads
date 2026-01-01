@@ -99,6 +99,30 @@ builds:
         # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
         - ./scripts/sign-windows.sh "{{ .Path }}"
 
+  - id: bd-windows-arm64
+    main: ./cmd/bd
+    binary: bd
+    env:
+      - CGO_ENABLED=1
+      - CC=aarch64-w64-mingw32-gcc
+      - CXX=aarch64-w64-mingw32-g++
+    goos:
+      - windows
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Build={{.ShortCommit}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Branch={{.Branch}}
+      - -buildmode=exe
+    hooks:
+      post:
+        # Sign Windows executable with Authenticode certificate
+        # Requires WINDOWS_SIGNING_CERT_PFX_BASE64 and WINDOWS_SIGNING_CERT_PASSWORD secrets
+        - ./scripts/sign-windows.sh "{{ .Path }}"
+
 archives:
   - id: bd-archive
     format: tar.gz
@@ -147,7 +171,7 @@ release:
   header: |
     ## beads v{{.Version}}
     
-    Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), and Windows.
+    Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), and Windows (AMD64 & ARM64).
     
     ### Installation
     
