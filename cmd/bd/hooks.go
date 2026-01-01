@@ -125,6 +125,27 @@ func getHookVersion(path string) (hookVersionInfo, error) {
 	return hookVersionInfo{}, nil
 }
 
+// isBdShim checks if a hook file is a bd shim by looking for the marker comment.
+// This is used to prevent infinite loops when chaining hooks.
+func isBdShim(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	for scanner.Scan() && lineCount < 5 {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "# bd-shim") {
+			return true
+		}
+		lineCount++
+	}
+	return false
+}
+
 // FormatHookWarnings returns a formatted warning message if hooks are outdated
 func FormatHookWarnings(statuses []HookStatus) string {
 	var warnings []string
@@ -345,10 +366,15 @@ func installHooks(embeddedHooks map[string]string, force bool, shared bool, chai
 		if _, err := os.Stat(hookPath); err == nil {
 			if chain {
 				// Chain mode - rename to .old so bd hooks run can call it
-				oldPath := hookPath + ".old"
-				if err := os.Rename(hookPath, oldPath); err != nil {
-					return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
+				// BUT skip if existing hook is already a bd shim (prevents infinite loop)
+				// See: https://github.com/steveyegge/beads/issues/843
+				if !isBdShim(hookPath) {
+					oldPath := hookPath + ".old"
+					if err := os.Rename(hookPath, oldPath); err != nil {
+						return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
+					}
 				}
+				// If it's a bd shim, we just overwrite it (no need to chain to ourselves)
 			} else if !force {
 				// Default mode - back it up
 				backupPath := hookPath + ".backup"
@@ -442,6 +468,12 @@ func runChainedHook(hookName string, args []string) int {
 	}
 	if info.Mode().Perm()&0111 == 0 {
 		return 0 // Not executable
+	}
+
+	// Check if .old file is a bd shim - if so, skip to prevent infinite loop
+	// See: https://github.com/steveyegge/beads/issues/843
+	if isBdShim(oldHookPath) {
+		return 0 // Skip execution - chaining to a bd shim would cause infinite recursion
 	}
 
 	// Run the chained hook
