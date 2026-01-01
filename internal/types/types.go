@@ -40,6 +40,10 @@ type Issue struct {
 	CloseReason     string     `json:"close_reason,omitempty"`      // Reason provided when closing
 	ClosedBySession string     `json:"closed_by_session,omitempty"` // Claude Code session that closed this issue
 
+	// ===== Time-Based Scheduling (GH#820) =====
+	DueAt      *time.Time `json:"due_at,omitempty"`      // When this issue should be completed
+	DeferUntil *time.Time `json:"defer_until,omitempty"` // Hide from bd ready until this time
+
 	// ===== External Integration =====
 	ExternalRef *string `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
 

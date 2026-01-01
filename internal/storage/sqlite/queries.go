@@ -286,6 +286,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var actor sql.NullString
 	var target sql.NullString
 	var payload sql.NullString
+	// Time-based scheduling fields (GH#820)
+	var dueAt sql.NullTime
+	var deferUntil sql.NullTime
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -298,7 +301,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       sender, ephemeral, pinned, is_template,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       event_kind, actor, target, payload
+		       event_kind, actor, target, payload,
+		       due_at, defer_until
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -312,6 +316,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
+		&dueAt, &deferUntil,
 	)
 
 	if err == sql.ErrNoRows {
@@ -425,6 +430,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if payload.Valid {
 		issue.Payload = payload.String
+	}
+	// Time-based scheduling fields (GH#820)
+	if dueAt.Valid {
+		issue.DueAt = &dueAt.Time
+	}
+	if deferUntil.Valid {
+		issue.DeferUntil = &deferUntil.Time
 	}
 
 	// Fetch labels for this issue
@@ -687,6 +699,9 @@ var allowedUpdateFields = map[string]bool{
 	"event_actor":    true,
 	"event_target":   true,
 	"event_payload":  true,
+	// Time-based scheduling fields (GH#820)
+	"due_at":      true,
+	"defer_until": true,
 }
 
 // validatePriority validates a priority value

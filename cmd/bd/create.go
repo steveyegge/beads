@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
+	"time"
 )
 
 var createCmd = &cobra.Command{
@@ -140,6 +141,23 @@ var createCmd = &cobra.Command{
 		// Validate event-specific flags require --type=event
 		if (eventCategory != "" || eventActor != "" || eventTarget != "" || eventPayload != "") && issueType != "event" {
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
+		}
+
+		// Parse --due flag (GH#820)
+		// Phase 1 supports ISO format only (YYYY-MM-DD or RFC3339)
+		// Later phases will add relative date parsing
+		var dueAt *time.Time
+		dueStr, _ := cmd.Flags().GetString("due")
+		if dueStr != "" {
+			// Try date-only format first (YYYY-MM-DD)
+			if t, err := time.ParseInLocation("2006-01-02", dueStr, time.Local); err == nil {
+				dueAt = &t
+			} else if t, err := time.Parse(time.RFC3339, dueStr); err == nil {
+				// Try RFC3339 format (2025-01-15T10:00:00Z)
+				dueAt = &t
+			} else {
+				FatalError("invalid --due format %q. Examples: 2025-01-15, 2025-01-15T10:00:00Z", dueStr)
+			}
 		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
@@ -299,6 +317,7 @@ var createCmd = &cobra.Command{
 				EventActor:         eventActor,
 				EventTarget:        eventTarget,
 				EventPayload:       eventPayload,
+				DueAt:              dueStr,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -356,6 +375,7 @@ var createCmd = &cobra.Command{
 			Actor:              eventActor,
 			Target:             eventTarget,
 			Payload:            eventPayload,
+			DueAt:              dueAt,
 		}
 
 		ctx := rootCtx
@@ -566,6 +586,8 @@ func init() {
 	createCmd.Flags().String("event-actor", "", "Entity URI who caused this event (requires --type=event)")
 	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
+	// Time-based scheduling flags (GH#820)
+	createCmd.Flags().String("due", "", "Due date (ISO format: 2025-01-15 or 2025-01-15T10:00:00Z)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

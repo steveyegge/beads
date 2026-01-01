@@ -200,6 +200,23 @@ func (s *Server) handleCreate(req *Request) Response {
 		externalRef = &createArgs.ExternalRef
 	}
 
+	// Parse DueAt if provided (GH#820)
+	var dueAt *time.Time
+	if createArgs.DueAt != "" {
+		// Try date-only format first (YYYY-MM-DD)
+		if t, err := time.ParseInLocation("2006-01-02", createArgs.DueAt, time.Local); err == nil {
+			dueAt = &t
+		} else if t, err := time.Parse(time.RFC3339, createArgs.DueAt); err == nil {
+			// Try RFC3339 format (2025-01-15T10:00:00Z)
+			dueAt = &t
+		} else {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid due_at format %q. Examples: 2025-01-15, 2025-01-15T10:00:00Z", createArgs.DueAt),
+			}
+		}
+	}
+
 	issue := &types.Issue{
 		ID:                 issueID,
 		Title:              createArgs.Title,
@@ -230,6 +247,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		Actor:     createArgs.EventActor,
 		Target:    createArgs.EventTarget,
 		Payload:   createArgs.EventPayload,
+		// Time-based scheduling (GH#820)
+		DueAt: dueAt,
 	}
 	
 	// Check if any dependencies are discovered-from type

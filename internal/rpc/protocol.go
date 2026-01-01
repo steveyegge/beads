@@ -108,6 +108,8 @@ type CreateArgs struct {
 	EventActor    string `json:"event_actor,omitempty"`    // Entity URI who caused this event
 	EventTarget   string `json:"event_target,omitempty"`   // Entity URI or bead ID affected
 	EventPayload  string `json:"event_payload,omitempty"`  // Event-specific JSON data
+	// Time-based scheduling fields (GH#820)
+	DueAt string `json:"due_at,omitempty"` // ISO format due date (2025-01-15 or RFC3339)
 }
 
 // UpdateArgs represents arguments for the update operation
