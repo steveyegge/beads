@@ -183,12 +183,15 @@ func (s *Server) handleCreate(req *Request) Response {
 		issueID = childID
 	}
 
-	var design, acceptance, assignee, externalRef *string
+	var design, acceptance, notes, assignee, externalRef *string
 	if createArgs.Design != "" {
 		design = &createArgs.Design
 	}
 	if createArgs.AcceptanceCriteria != "" {
 		acceptance = &createArgs.AcceptanceCriteria
+	}
+	if createArgs.Notes != "" {
+		notes = &createArgs.Notes
 	}
 	if createArgs.Assignee != "" {
 		assignee = &createArgs.Assignee
@@ -205,6 +208,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		Priority:           createArgs.Priority,
 		Design:             strValue(design),
 		AcceptanceCriteria: strValue(acceptance),
+		Notes:              strValue(notes),
 		Assignee:           strValue(assignee),
 		ExternalRef:        externalRef,
 		EstimatedMinutes:   createArgs.EstimatedMinutes,

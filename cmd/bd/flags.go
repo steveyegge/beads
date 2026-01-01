@@ -19,6 +19,7 @@ func registerCommonIssueFlags(cmd *cobra.Command) {
 	_ = cmd.Flags().MarkHidden("description-file") // Hidden alias
 	cmd.Flags().String("design", "", "Design notes")
 	cmd.Flags().String("acceptance", "", "Acceptance criteria")
+	cmd.Flags().String("notes", "", "Additional notes")
 	cmd.Flags().String("external-ref", "", "External reference (e.g., 'gh-9', 'jira-ABC')")
 }
 
