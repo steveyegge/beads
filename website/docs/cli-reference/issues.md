@@ -21,6 +21,9 @@ bd create <title> [flags]
 --type, -t        Issue type (bug|feature|task|epic|chore)
 --priority, -p    Priority 0-4
 --description, -d Detailed description
+--design          Design notes
+--acceptance      Acceptance criteria
+--notes           Additional notes
 --labels, -l      Comma-separated labels
 --parent          Parent issue ID
 --deps            Dependencies (type:id format)
@@ -36,6 +39,13 @@ bd create "Login fails with special chars" -t bug -p 1
 # Feature with description
 bd create "Add export to PDF" -t feature -p 2 \
   --description="Users want to export reports as PDF files"
+
+# Feature with design, acceptance, and notes
+bd create "Implement user authentication" -t feature -p 1 \
+  --description="Add JWT-based authentication" \
+  --design="Use bcrypt for password hashing, JWT for sessions" \
+  --acceptance="All tests pass, security audit complete" \
+  --notes="Consider rate limiting for login attempts"
 
 # Task with labels
 bd create "Update CI config" -t task -l "ci,infrastructure"
