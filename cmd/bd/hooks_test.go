@@ -508,7 +508,6 @@ exit 0
 		}
 
 		// The shim should NOT have been executed (marker file should not exist)
-		// This is the key assertion - currently FAILS because the bug exists
 		if _, err := os.Stat(markerFile); err == nil {
 			t.Errorf("runChainedHook() executed a bd shim .old file - this causes infinite loop in real usage")
 		}
@@ -551,7 +550,6 @@ func TestInstallHooksChaining_SkipsExistingBdShim(t *testing.T) {
 				t.Fatalf("Failed to read .old file: %v", err)
 			}
 
-			// This is the key assertion - currently FAILS because the bug exists
 			if strings.Contains(string(content), "# bd-shim") {
 				t.Errorf("installHooks(chain=true) renamed a bd shim to .old - this causes infinite loop when hooks run")
 			}

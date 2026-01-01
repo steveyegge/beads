@@ -374,7 +374,6 @@ func installHooks(embeddedHooks map[string]string, force bool, shared bool, chai
 						return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
 					}
 				}
-				// If it's a bd shim, we just overwrite it (no need to chain to ourselves)
 			} else if !force {
 				// Default mode - back it up
 				backupPath := hookPath + ".backup"
@@ -473,7 +472,7 @@ func runChainedHook(hookName string, args []string) int {
 	// Check if .old file is a bd shim - if so, skip to prevent infinite loop
 	// See: https://github.com/steveyegge/beads/issues/843
 	if isBdShim(oldHookPath) {
-		return 0 // Skip execution - chaining to a bd shim would cause infinite recursion
+		return 0
 	}
 
 	// Run the chained hook
