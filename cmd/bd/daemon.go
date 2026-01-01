@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 var daemonCmd = &cobra.Command{
@@ -108,8 +109,10 @@ Run 'bd daemon' with no flags to see available options.`,
 								autoPull = false
 							}
 						} else {
-							// Default: auto_pull is true when sync.branch is configured
-							if syncBranch, err := store.GetConfig(ctx, "sync.branch"); err == nil && syncBranch != "" {
+							// Default: auto_pull is true when sync-branch is configured
+							// Use syncbranch.IsConfigured() which checks env var and config.yaml
+							// (the common case), not just SQLite (legacy)
+							if syncbranch.IsConfigured() {
 								autoPull = true
 							}
 						}

@@ -120,3 +120,8 @@ state.json
 
 # Claude Code runtime
 .runtime/
+
+# Augment AI configuration (user-specific)
+.augment/
+.agents/
+output

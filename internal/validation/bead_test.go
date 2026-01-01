@@ -215,9 +215,13 @@ func TestValidateAgentID(t *testing.T) {
 		{"valid crew", "gt-beads-crew-dave", false, ""},
 		{"valid polecat with complex name", "gt-gastown-polecat-war-boy-1", false, ""},
 
-		// Invalid: wrong prefix
-		{"wrong prefix bd", "bd-mayor", true, "must start with 'gt-'"},
-		{"wrong prefix empty", "mayor", true, "must start with 'gt-'"},
+		// Valid: alternative prefixes (beads uses bd-)
+		{"valid bd-mayor", "bd-mayor", false, ""},
+		{"valid bd-beads-polecat-pearl", "bd-beads-polecat-pearl", false, ""},
+		{"valid bd-beads-witness", "bd-beads-witness", false, ""},
+
+		// Invalid: no prefix (missing hyphen)
+		{"no prefix", "mayor", true, "must have a prefix followed by '-'"},
 
 		// Invalid: empty
 		{"empty id", "", true, "agent ID is required"},
@@ -242,7 +246,7 @@ func TestValidateAgentID(t *testing.T) {
 		{"refinery with name", "gt-beads-refinery-extra", true, "cannot have name suffix"},
 
 		// Invalid: empty components
-		{"empty after gt", "gt-", true, "must include content after"},
+		{"empty after prefix", "gt-", true, "must include content after prefix"},
 	}
 
 	for _, tt := range tests {

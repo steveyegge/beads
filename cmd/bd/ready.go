@@ -41,6 +41,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		issueType, _ := cmd.Flags().GetString("type")
 		parentID, _ := cmd.Flags().GetString("parent")
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		var molType *types.MolType
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
@@ -147,20 +148,24 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				}
 				return
 			}
-			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-			for i, issue := range issues {
-				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-					ui.RenderPriority(issue.Priority),
-					ui.RenderType(string(issue.IssueType)),
-					ui.RenderID(issue.ID), issue.Title)
-				if issue.EstimatedMinutes != nil {
-					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+			if prettyFormat {
+				displayPrettyList(issues, false)
+			} else {
+				fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+				for i, issue := range issues {
+					fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
+						ui.RenderPriority(issue.Priority),
+						ui.RenderType(string(issue.IssueType)),
+						ui.RenderID(issue.ID), issue.Title)
+					if issue.EstimatedMinutes != nil {
+						fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+					}
+					if issue.Assignee != "" {
+						fmt.Printf("   Assignee: %s\n", issue.Assignee)
+					}
 				}
-				if issue.Assignee != "" {
-					fmt.Printf("   Assignee: %s\n", issue.Assignee)
-				}
+				fmt.Println()
 			}
-			fmt.Println()
 			return
 		}
 		// Direct mode
@@ -218,20 +223,24 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			maybeShowTip(store)
 			return
 		}
-		fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-		for i, issue := range issues {
-			fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-				ui.RenderPriority(issue.Priority),
-				ui.RenderType(string(issue.IssueType)),
-				ui.RenderID(issue.ID), issue.Title)
-			if issue.EstimatedMinutes != nil {
-				fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+		if prettyFormat {
+			displayPrettyList(issues, false)
+		} else {
+			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+			for i, issue := range issues {
+				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
+					ui.RenderPriority(issue.Priority),
+					ui.RenderType(string(issue.IssueType)),
+					ui.RenderID(issue.ID), issue.Title)
+				if issue.EstimatedMinutes != nil {
+					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+				}
+				if issue.Assignee != "" {
+					fmt.Printf("   Assignee: %s\n", issue.Assignee)
+				}
 			}
-			if issue.Assignee != "" {
-				fmt.Printf("   Assignee: %s\n", issue.Assignee)
-			}
+			fmt.Println()
 		}
-		fmt.Println()
 
 		// Show tip after successful ready (direct mode only)
 		maybeShowTip(store)
@@ -436,6 +445,7 @@ func init() {
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
+	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)
