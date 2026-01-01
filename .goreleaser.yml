@@ -103,7 +103,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=0  # No CGO needed - go-sqlite3 is WASM-based
+      - CGO_ENABLED=0
     goos:
       - windows
     goarch:
