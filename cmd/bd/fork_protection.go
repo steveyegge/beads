@@ -43,8 +43,15 @@ func ensureForkProtection() {
 		return // Not a fork of beads, user's own project
 	}
 
+	// Get actual git directory (handles worktrees where .git is a file) (GH#827)
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		debug.Printf("fork protection: failed to get git dir: %v", err)
+		return
+	}
+
 	// Check if already excluded
-	excludePath := filepath.Join(gitRoot, ".git", "info", "exclude")
+	excludePath := filepath.Join(gitDir, "info", "exclude")
 	if isAlreadyExcluded(excludePath) {
 		return
 	}

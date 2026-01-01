@@ -89,6 +89,7 @@ func getRepoRootForWorktree(_ context.Context) string {
 }
 
 // gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes
+// This function is worktree-aware and handles bare repo worktree setups (GH#827).
 func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 	// Get the absolute path to .beads directory
 	beadsDir := beads.FindBeadsDir()
@@ -96,26 +97,12 @@ func gitHasBeadsChanges(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("no .beads directory found")
 	}
 
-	// Get the repository root (handles worktrees properly)
-	repoRoot := getRepoRootForWorktree(ctx)
-	if repoRoot == "" {
-		return false, fmt.Errorf("cannot determine repository root")
-	}
-
-	// Compute relative path from repo root to .beads
-	relPath, err := filepath.Rel(repoRoot, beadsDir)
-	if err != nil {
-		// Fall back to absolute path if relative path fails
-		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir) //nolint:gosec // G204: beadsDir from beads.FindBeadsDir()
-		statusOutput, err := statusCmd.Output()
-		if err != nil {
-			return false, fmt.Errorf("git status failed: %w", err)
-		}
-		return len(strings.TrimSpace(string(statusOutput))) > 0, nil
-	}
-
-	// Run git status with relative path from repo root
-	statusCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", relPath) //nolint:gosec // G204: paths from internal git helpers
+	// Run git status with absolute path from current directory.
+	// This is more robust than using -C with a repo root, because:
+	// 1. In bare repo worktree setups, GetMainRepoRoot() returns the parent
+	//    of the bare repo, which isn't a valid working tree (GH#827)
+	// 2. Git will find the repository from cwd, which is always valid
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir) //nolint:gosec // G204: beadsDir from beads.FindBeadsDir()
 	statusOutput, err := statusCmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
