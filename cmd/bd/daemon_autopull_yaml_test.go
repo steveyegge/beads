@@ -11,26 +11,16 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// TestAutoPullDefaultFromYamlConfig is a tracer bullet test that proves the bug:
-// When sync-branch is configured in config.yaml (not SQLite), autoPull defaulting
-// should be true, but the current implementation returns false.
+// TestAutoPullDefaultFromYamlConfig verifies that autoPull defaults to true
+// when sync-branch is configured in config.yaml (not just SQLite).
 //
-// Root cause: daemon.go:111-114 checks store.GetConfig("sync.branch") which only
-// reads from SQLite, but sync-branch is typically set in config.yaml which is
-// read via the config package (viper).
+// This test validates the fix for the bug where daemon.go:111-114 only checked
+// store.GetConfig("sync.branch") (SQLite), but sync-branch is typically set
+// in config.yaml (read via viper).
 //
-// The fix should use syncbranch.IsConfigured() or syncbranch.IsConfiguredWithDB()
-// instead of store.GetConfig().
-//
-// TRACER BULLET (Phase 1): This test is expected to FAIL before the fix is applied.
-// Test failure proves the bug exists. Remove t.Skip() after fix is implemented.
-//
-// Bug report: The daemon's autoPull defaults to false even when sync-branch is
-// configured in config.yaml, because the code only checks SQLite.
+// Fix: daemon.go now uses syncbranch.IsConfigured() which checks env var and
+// config.yaml (the common case), providing correct autoPull behavior.
 func TestAutoPullDefaultFromYamlConfig(t *testing.T) {
-	// PHASE 1 TRACER BULLET: Skip this test to document expected failure
-	// Remove this Skip() in Phase 2 when implementing the fix
-	t.Skip("TRACER BULLET: This test proves the bug exists. autoPull reads from SQLite but sync-branch is in config.yaml. See daemon.go:111-114")
 	// Create temp directory structure
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -73,52 +63,17 @@ issue-prefix: test
 		t.Fatalf("Failed to initialize config: %v", err)
 	}
 
-	// === THE BUG: Current implementation (what daemon.go does) ===
-	// This simulates lines 111-114 in daemon.go:
-	//   if syncBranch, err := store.GetConfig(ctx, "sync.branch"); err == nil && syncBranch != "" {
-	//       autoPull = true
-	//   }
-	var autoPullFromDB bool
-	if syncBranch, err := testStore.GetConfig(ctx, "sync.branch"); err == nil && syncBranch != "" {
-		autoPullFromDB = true
-	}
-
-	// === THE FIX: What daemon.go SHOULD do ===
-	// Use syncbranch.IsConfigured() which checks env var, config.yaml, AND SQLite
-	autoPullFromYAML := syncbranch.IsConfigured()
-
-	// Log the current state for debugging
+	// Verify: sync.branch is NOT set in SQLite (the scenario we're testing)
 	t.Logf("sync-branch in config.yaml: beads-sync")
-	t.Logf("sync.branch in SQLite: %q (empty)", dbSyncBranch)
-	t.Logf("autoPullFromDB (current bug): %v", autoPullFromDB)
-	t.Logf("autoPullFromYAML (correct): %v", autoPullFromYAML)
+	t.Logf("sync.branch in SQLite: %q (expected empty)", dbSyncBranch)
 
-	// === ASSERTIONS ===
+	// The fix: daemon.go uses syncbranch.IsConfigured() which checks env var and
+	// config.yaml, not just SQLite. This should return true.
+	autoPull := syncbranch.IsConfigured()
+	t.Logf("syncbranch.IsConfigured() = %v", autoPull)
 
-	// Current behavior (the bug): autoPull is false because SQLite has no sync.branch
-	// This assertion documents the bug - it PASSES because the bug exists
-	if autoPullFromDB != false {
-		t.Errorf("BUG VERIFICATION FAILED: Expected autoPullFromDB=false (bug behavior), got %v", autoPullFromDB)
-	}
-
-	// Expected behavior: autoPull should be true because config.yaml has sync-branch
-	// This assertion SHOULD pass (and does with syncbranch.IsConfigured)
-	if autoPullFromYAML != true {
-		t.Errorf("Expected autoPullFromYAML=true (config.yaml has sync-branch), got %v", autoPullFromYAML)
-	}
-
-	// === THE PROOF: These should be equal, but they're not ===
-	// This is the core assertion that proves the bug exists.
-	// After the fix, both should be true and equal.
-	if autoPullFromDB != autoPullFromYAML {
-		t.Logf("BUG PROVEN: autoPullFromDB=%v but autoPullFromYAML=%v", autoPullFromDB, autoPullFromYAML)
-		t.Log("The daemon uses store.GetConfig('sync.branch') which only checks SQLite,")
-		t.Log("but sync-branch is configured in config.yaml which is read by viper.")
-		t.Log("FIX: daemon.go:111-114 should use syncbranch.IsConfigured() or syncbranch.IsConfiguredWithDB()")
-
-		// This makes the test FAIL to prove the bug exists
-		t.Errorf("TRACER BULLET: autoPull determination differs between SQLite (%v) and config.yaml (%v)",
-			autoPullFromDB, autoPullFromYAML)
+	if !autoPull {
+		t.Errorf("Expected syncbranch.IsConfigured()=true when sync-branch is in config.yaml, got false")
 	}
 }
 
