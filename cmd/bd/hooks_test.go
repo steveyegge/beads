@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
@@ -458,4 +460,102 @@ func TestHasBeadsJSONL(t *testing.T) {
 	if !hasBeadsJSONL() {
 		t.Error("hasBeadsJSONL() = false, want true (issues.jsonl exists)")
 	}
+}
+
+// TestRunChainedHook_DetectsBdShim tests that runChainedHook detects and skips
+// .old files that are bd shims to prevent infinite recursion.
+//
+// Regression test for: https://github.com/steveyegge/beads/issues/843
+func TestRunChainedHook_DetectsBdShim(t *testing.T) {
+	tmpDir := t.TempDir()
+	runInDir(t, tmpDir, func() {
+		if err := exec.Command("git", "init").Run(); err != nil {
+			t.Skipf("Skipping test: git init failed: %v", err)
+		}
+
+		gitDirPath, err := git.GetGitDir()
+		if err != nil {
+			t.Fatalf("git.GetGitDir() failed: %v", err)
+		}
+		hooksDir := filepath.Join(gitDirPath, "hooks")
+		if err := os.MkdirAll(hooksDir, 0750); err != nil {
+			t.Fatalf("Failed to create hooks directory: %v", err)
+		}
+
+		// Create a marker file that the shim would create if executed
+		markerFile := filepath.Join(tmpDir, "shim-was-executed")
+
+		// Create a .old file that IS a bd shim (the problematic scenario)
+		// Instead of actually calling bd, we create a marker file to detect execution
+		oldHook := filepath.Join(hooksDir, "pre-commit.old")
+		shimContent := fmt.Sprintf(`#!/bin/sh
+# bd-shim v1
+# bd-hooks-version: 0.42.0
+# Test shim - creates marker file instead of calling bd
+touch "%s"
+exit 0
+`, markerFile)
+		if err := os.WriteFile(oldHook, []byte(shimContent), 0755); err != nil {
+			t.Fatalf("Failed to create .old hook: %v", err)
+		}
+
+		// Run the chained hook
+		exitCode := runChainedHook("pre-commit", nil)
+
+		// Should return 0 (success)
+		if exitCode != 0 {
+			t.Errorf("runChainedHook() = %d, want 0", exitCode)
+		}
+
+		// The shim should NOT have been executed (marker file should not exist)
+		// This is the key assertion - currently FAILS because the bug exists
+		if _, err := os.Stat(markerFile); err == nil {
+			t.Errorf("runChainedHook() executed a bd shim .old file - this causes infinite loop in real usage")
+		}
+	})
+}
+
+// TestInstallHooksChaining_SkipsExistingBdShim tests that installing hooks with
+// --chain does NOT rename an existing bd shim to .old (which would cause loops).
+//
+// Regression test for: https://github.com/steveyegge/beads/issues/843
+func TestInstallHooksChaining_SkipsExistingBdShim(t *testing.T) {
+	tmpDir := t.TempDir()
+	runInDir(t, tmpDir, func() {
+		if err := exec.Command("git", "init").Run(); err != nil {
+			t.Skipf("Skipping test: git init failed: %v", err)
+		}
+
+		// Install hooks first time (creates bd shims)
+		hooks, err := getEmbeddedHooks()
+		if err != nil {
+			t.Fatalf("getEmbeddedHooks() failed: %v", err)
+		}
+		if err := installHooks(hooks, false, false, false); err != nil {
+			t.Fatalf("First installHooks() failed: %v", err)
+		}
+
+		// Install again with --chain (chain=true is the 4th parameter)
+		if err := installHooks(hooks, false, false, true); err != nil {
+			t.Fatalf("Second installHooks() with chain=true failed: %v", err)
+		}
+
+		gitDirPath, _ := git.GetGitDir()
+		oldPath := filepath.Join(gitDirPath, "hooks", "pre-commit.old")
+
+		// Check if .old file exists
+		if _, err := os.Stat(oldPath); err == nil {
+			// .old file exists - check if it's a bd shim
+			content, err := os.ReadFile(oldPath)
+			if err != nil {
+				t.Fatalf("Failed to read .old file: %v", err)
+			}
+
+			// This is the key assertion - currently FAILS because the bug exists
+			if strings.Contains(string(content), "# bd-shim") {
+				t.Errorf("installHooks(chain=true) renamed a bd shim to .old - this causes infinite loop when hooks run")
+			}
+		}
+		// If .old doesn't exist, that's fine - means the fix is working
+	})
 }
