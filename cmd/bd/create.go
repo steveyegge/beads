@@ -165,6 +165,15 @@ var createCmd = &cobra.Command{
 			}
 			estimatedMinutes = &est
 		}
+
+		// Validate template if --validate flag is set
+		validateTemplate, _ := cmd.Flags().GetBool("validate")
+		if validateTemplate {
+			if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Determine target repository using routing logic
@@ -548,6 +557,7 @@ func init() {
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
+	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
 	createCmd.Flags().String("role-type", "", "Agent role type: polecat|crew|witness|refinery|mayor|deacon (requires --type=agent)")
 	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
