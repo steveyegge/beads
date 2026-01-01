@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
@@ -132,8 +133,8 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		return writeErr
 	}
 
-	// Atomic rename
-	if writeErr = os.Rename(tempPath, jsonlPath); writeErr != nil {
+	// Atomic rename with retry for Windows file locking (bd-71jj)
+	if writeErr = utils.DefaultRenameRetry(tempPath, jsonlPath); writeErr != nil {
 		writeErr = fmt.Errorf("failed to rename temp file: %w", writeErr)
 		return writeErr
 	}

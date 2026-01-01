@@ -185,8 +185,8 @@ func (s *Server) handleExport(req *Request) Response {
 	// Close temp file before rename
 	_ = tempFile.Close()
 
-	// Atomic replace
-	if err := os.Rename(tempPath, exportArgs.JSONLPath); err != nil {
+	// Atomic replace with retry for Windows file locking (bd-71jj)
+	if err := utils.DefaultRenameRetry(tempPath, exportArgs.JSONLPath); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to replace JSONL file: %v", err),
@@ -556,8 +556,8 @@ func (s *Server) triggerExport(ctx context.Context, store storage.Storage, dbPat
 	// Close temp file before rename
 	_ = tempFile.Close()
 
-	// Atomic replace
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
+	// Atomic replace with retry for Windows file locking (bd-71jj)
+	if err := utils.DefaultRenameRetry(tempPath, jsonlPath); err != nil {
 		return fmt.Errorf("failed to replace JSONL file: %w", err)
 	}
 

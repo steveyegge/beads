@@ -446,8 +446,8 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	}
 	f = nil // Prevent defer cleanup
 
-	// Atomic rename
-	if err := os.Rename(tempPath, jsonlPath); err != nil {
+	// Atomic rename with retry for Windows file locking (bd-71jj)
+	if err := utils.DefaultRenameRetry(tempPath, jsonlPath); err != nil {
 		_ = os.Remove(tempPath) // Clean up on rename failure
 		return nil, fmt.Errorf("failed to rename file: %w", err)
 	}
