@@ -933,9 +933,10 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	// Stage only the specific sync-related files (bd-guc)
 	// This avoids staging gitignored snapshot files (beads.*.jsonl, *.meta.json)
 	// that may still be tracked from before they were added to .gitignore
+	// Note: deletions.jsonl is deprecated - included for backwards compatibility only
 	syncFiles := []string{
 		filepath.Join(beadsDir, "issues.jsonl"),
-		filepath.Join(beadsDir, "deletions.jsonl"),
+		filepath.Join(beadsDir, "deletions.jsonl"), // Legacy - kept for repos that haven't migrated
 		filepath.Join(beadsDir, "interactions.jsonl"),
 		filepath.Join(beadsDir, "metadata.json"),
 	}

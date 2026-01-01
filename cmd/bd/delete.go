@@ -304,7 +304,7 @@ the issues will not resurrect from remote branches.`,
 			}
 		}
 		// 4. Create tombstone (instead of deleting from database)
-		// Phase 1 dual-write: still writes to deletions.jsonl (step 0), now also creates tombstone
+		// Note: deletions.jsonl is deprecated - tombstones are now exported directly to issues.jsonl
 		if err := createTombstone(ctx, issueID, deleteActor, "manual delete"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating tombstone: %v\n", err)
 			os.Exit(1)
