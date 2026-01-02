@@ -612,6 +612,11 @@ func runPrePushHook() int {
 		return 0 // Skip - changes synced to separate branch
 	}
 
+	// bd-uo2u: Check if landing ritual was completed with passing tests
+	if !verifyLandingMarker() {
+		return 1 // Block push - landing verification failed
+	}
+
 	// Flush pending bd changes
 	flushCmd := exec.Command("bd", "sync", "--flush-only")
 	_ = flushCmd.Run() // Ignore errors
@@ -1122,6 +1127,42 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 
 		os.Exit(exitCode)
 	},
+}
+
+// verifyLandingMarker checks if landing ritual completed with passing tests.
+// The marker file (.beads/.landing-complete) must contain "PASSED:" prefix.
+// Returns true if marker is valid or doesn't exist (backwards compatibility).
+// Returns false (blocks push) if marker exists but tests failed. (bd-uo2u)
+func verifyLandingMarker() bool {
+	markerPath := ".beads/.landing-complete"
+	content, err := os.ReadFile(markerPath) // #nosec G304 -- path is hardcoded
+	if err != nil {
+		// Marker doesn't exist - allow push (backwards compatibility with
+		// workflows that don't use landing ritual)
+		return true
+	}
+
+	// Parse marker content
+	markerStr := strings.TrimSpace(string(content))
+
+	// Check for test result prefix (bd-uo2u)
+	if strings.HasPrefix(markerStr, "PASSED:") {
+		return true
+	}
+
+	if strings.HasPrefix(markerStr, "FAILED:") {
+		fmt.Fprintln(os.Stderr, "❌ Landing ritual completed but tests FAILED")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Push blocked because the landing marker indicates test failure.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  1. Fix the failing tests and re-run landing ritual")
+		fmt.Fprintln(os.Stderr, "  2. Remove marker to bypass: rm .beads/.landing-complete")
+		return false
+	}
+
+	// Unknown format - allow for backwards compatibility
+	return true
 }
 
 func init() {
