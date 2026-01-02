@@ -108,6 +108,9 @@ type CreateArgs struct {
 	EventActor    string `json:"event_actor,omitempty"`    // Entity URI who caused this event
 	EventTarget   string `json:"event_target,omitempty"`   // Entity URI or bead ID affected
 	EventPayload  string `json:"event_payload,omitempty"`  // Event-specific JSON data
+	// Time-based scheduling fields (GH#820)
+	DueAt      string `json:"due_at,omitempty"`      // Relative or ISO format due date
+	DeferUntil string `json:"defer_until,omitempty"` // Relative or ISO format defer date
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -155,6 +158,9 @@ type UpdateArgs struct {
 	EventPayload  *string `json:"event_payload,omitempty"`  // Event-specific JSON data
 	// Work queue claim operation
 	Claim bool `json:"claim,omitempty"` // If true, atomically claim issue (set assignee+status, fail if already claimed)
+	// Time-based scheduling fields (GH#820)
+	DueAt      *string `json:"due_at,omitempty"`      // Relative or ISO format due date
+	DeferUntil *string `json:"defer_until,omitempty"` // Relative or ISO format defer date
 }
 
 // CloseArgs represents arguments for the close operation
@@ -236,6 +242,14 @@ type ListArgs struct {
 
 	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
 	ExcludeTypes []string `json:"exclude_types,omitempty"`
+
+	// Time-based scheduling filters (GH#820)
+	Deferred    bool   `json:"deferred,omitempty"`     // Filter issues with defer_until set
+	DeferAfter  string `json:"defer_after,omitempty"`  // ISO 8601 format
+	DeferBefore string `json:"defer_before,omitempty"` // ISO 8601 format
+	DueAfter    string `json:"due_after,omitempty"`    // ISO 8601 format
+	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
+	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
 }
 
 // CountArgs represents arguments for the count operation
@@ -296,8 +310,9 @@ type ReadyArgs struct {
 	SortPolicy string   `json:"sort_policy,omitempty"`
 	Labels     []string `json:"labels,omitempty"`
 	LabelsAny  []string `json:"labels_any,omitempty"`
-	ParentID   string   `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
-	MolType    string   `json:"mol_type,omitempty"`  // Filter by molecule type: swarm, patrol, or work
+	ParentID        string   `json:"parent_id,omitempty"`        // Filter to descendants of this bead/epic
+	MolType         string   `json:"mol_type,omitempty"`         // Filter by molecule type: swarm, patrol, or work
+	IncludeDeferred bool     `json:"include_deferred,omitempty"` // Include issues with future defer_until (GH#820)
 }
 
 // BlockedArgs represents arguments for the blocked operation

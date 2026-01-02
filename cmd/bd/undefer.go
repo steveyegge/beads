@@ -61,9 +61,11 @@ Examples:
 		if daemonClient != nil {
 			for _, id := range resolvedIDs {
 				status := string(types.StatusOpen)
+				emptyStr := "" // Clear defer_until by sending empty string (GH#820)
 				updateArgs := &rpc.UpdateArgs{
-					ID:     id,
-					Status: &status,
+					ID:         id,
+					Status:     &status,
+					DeferUntil: &emptyStr, // Clear defer_until timestamp
 				}
 
 				resp, err := daemonClient.Update(updateArgs)
@@ -102,7 +104,8 @@ Examples:
 			}
 
 			updates := map[string]interface{}{
-				"status": string(types.StatusOpen),
+				"status":      string(types.StatusOpen),
+				"defer_until": nil, // Clear defer_until timestamp (GH#820)
 			}
 
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
