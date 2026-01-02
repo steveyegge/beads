@@ -791,6 +791,9 @@ type IssueFilter struct {
 
 	// Status exclusion (for default non-closed behavior)
 	ExcludeStatus []Status // Exclude issues with these statuses
+
+	// Type exclusion (for hiding internal types like gates)
+	ExcludeTypes []IssueType // Exclude issues with these types
 }
 
 // SortPolicy determines how ready work is ordered

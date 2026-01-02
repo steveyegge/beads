@@ -233,6 +233,9 @@ type ListArgs struct {
 
 	// Status exclusion (for default non-closed behavior, GH#788)
 	ExcludeStatus []string `json:"exclude_status,omitempty"`
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	ExcludeTypes []string `json:"exclude_types,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation

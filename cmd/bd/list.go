@@ -415,6 +415,9 @@ var listCmd = &cobra.Command{
 		// Template filtering
 		includeTemplates, _ := cmd.Flags().GetBool("include-templates")
 
+		// Gate filtering (bd-7zka.2)
+		includeGates, _ := cmd.Flags().GetBool("include-gates")
+
 		// Parent filtering
 		parentID, _ := cmd.Flags().GetString("parent")
 
@@ -620,6 +623,12 @@ var listCmd = &cobra.Command{
 			filter.IsTemplate = &isTemplate
 		}
 
+		// Gate filtering: exclude gate issues by default (bd-7zka.2)
+		// Use --include-gates or --type gate to show gate issues
+		if !includeGates && issueType != "gate" {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.TypeGate)
+		}
+
 		// Parent filtering: filter children by parent issue
 		if parentID != "" {
 			filter.ParentID = &parentID
@@ -718,6 +727,13 @@ var listCmd = &cobra.Command{
 			if len(filter.ExcludeStatus) > 0 {
 				for _, s := range filter.ExcludeStatus {
 					listArgs.ExcludeStatus = append(listArgs.ExcludeStatus, string(s))
+				}
+			}
+
+			// Type exclusion (bd-7zka.2)
+			if len(filter.ExcludeTypes) > 0 {
+				for _, t := range filter.ExcludeTypes {
+					listArgs.ExcludeTypes = append(listArgs.ExcludeTypes, string(t))
 				}
 			}
 
@@ -960,6 +976,9 @@ func init() {
 
 	// Template filtering: exclude templates by default
 	listCmd.Flags().Bool("include-templates", false, "Include template molecules in output")
+
+	// Gate filtering: exclude gate issues by default (bd-7zka.2)
+	listCmd.Flags().Bool("include-gates", false, "Include gate issues in output (normally hidden)")
 
 	// Parent filtering: filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")

@@ -1117,6 +1117,13 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	if len(listArgs.ExcludeTypes) > 0 {
+		for _, t := range listArgs.ExcludeTypes {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
+		}
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {

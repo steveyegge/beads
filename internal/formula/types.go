@@ -183,7 +183,8 @@ type Step struct {
 	Children []*Step `json:"children,omitempty"`
 
 	// Gate defines an async wait condition for this step.
-	// TODO(bd-7zka): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
+	// When set, bd cook creates a gate issue that blocks this step.
+	// Close the gate issue (bd close bd-xxx.gate-stepid) to unblock.
 	Gate *Gate `json:"gate,omitempty"`
 
 	// Loop defines iteration for this step.
@@ -206,8 +207,9 @@ type Step struct {
 	SourceLocation string `json:"-"` // Internal only, not serialized to JSON
 }
 
-// Gate defines an async wait condition (integrates with bd-udsi).
-// TODO(bd-7zka): Not yet implemented in bd cook. Schema defined for future use.
+// Gate defines an async wait condition for formula steps.
+// When a step has a Gate, bd cook creates a gate issue that blocks the step.
+// The gate must be closed (manually or via watchers) to unblock the step.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `json:"type"`

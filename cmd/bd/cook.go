@@ -476,6 +476,47 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	}, nil
 }
 
+// createGateIssue creates a gate issue for a step with a Gate field.
+// Gate issues have type=gate and block the step they guard.
+// Returns the gate issue and its ID.
+func createGateIssue(step *formula.Step, parentID string) *types.Issue {
+	if step.Gate == nil {
+		return nil
+	}
+
+	// Generate gate issue ID: {parentID}.gate-{step.ID}
+	gateID := fmt.Sprintf("%s.gate-%s", parentID, step.ID)
+
+	// Build title from gate type and ID
+	title := fmt.Sprintf("Gate: %s", step.Gate.Type)
+	if step.Gate.ID != "" {
+		title = fmt.Sprintf("Gate: %s %s", step.Gate.Type, step.Gate.ID)
+	}
+
+	// Parse timeout if specified
+	var timeout time.Duration
+	if step.Gate.Timeout != "" {
+		if parsed, err := time.ParseDuration(step.Gate.Timeout); err == nil {
+			timeout = parsed
+		}
+	}
+
+	return &types.Issue{
+		ID:          gateID,
+		Title:       title,
+		Description: fmt.Sprintf("Async gate for step %s", step.ID),
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeGate,
+		AwaitType:   step.Gate.Type,
+		AwaitID:     step.Gate.ID,
+		Timeout:     timeout,
+		IsTemplate:  true,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+}
+
 // processStepToIssue converts a formula.Step to a types.Issue.
 // The issue includes all fields including Labels populated from step.Labels and waits_for.
 // This is the shared core logic used by both DB-persisted and in-memory cooking.
@@ -561,6 +602,41 @@ func collectSteps(steps []*formula.Step, parentID string,
 			DependsOnID: parentID,
 			Type:        types.DepParentChild,
 		})
+
+		// Create gate issue if step has a Gate (bd-7zka.2)
+		if step.Gate != nil {
+			gateIssue := createGateIssue(step, parentID)
+			*issues = append(*issues, gateIssue)
+
+			// Add gate to mapping (use gate-{step.ID} as key)
+			gateKey := fmt.Sprintf("gate-%s", step.ID)
+			idMapping[gateKey] = gateIssue.ID
+			if issueMap != nil {
+				issueMap[gateIssue.ID] = gateIssue
+			}
+
+			// Handle gate labels if needed
+			if labelHandler != nil && len(gateIssue.Labels) > 0 {
+				for _, label := range gateIssue.Labels {
+					labelHandler(gateIssue.ID, label)
+				}
+				gateIssue.Labels = nil
+			}
+
+			// Gate is a child of the parent (same level as the step)
+			*deps = append(*deps, &types.Dependency{
+				IssueID:     gateIssue.ID,
+				DependsOnID: parentID,
+				Type:        types.DepParentChild,
+			})
+
+			// Step depends on gate (gate blocks the step)
+			*deps = append(*deps, &types.Dependency{
+				IssueID:     issue.ID,
+				DependsOnID: gateIssue.ID,
+				Type:        types.DepBlocks,
+			})
+		}
 
 		// Recursively collect children
 		if len(step.Children) > 0 {
