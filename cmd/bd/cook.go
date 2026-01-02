@@ -443,11 +443,25 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	var issues []*types.Issue
 	var deps []*types.Dependency
 
+	// Determine root title: use {{title}} placeholder if the variable is defined,
+	// otherwise fall back to formula name (GH#852)
+	rootTitle := f.Formula
+	if _, hasTitle := f.Vars["title"]; hasTitle {
+		rootTitle = "{{title}}"
+	}
+
+	// Determine root description: use {{desc}} placeholder if the variable is defined,
+	// otherwise fall back to formula description (GH#852)
+	rootDesc := f.Description
+	if _, hasDesc := f.Vars["desc"]; hasDesc {
+		rootDesc = "{{desc}}"
+	}
+
 	// Create root proto epic
 	rootIssue := &types.Issue{
 		ID:          protoID,
-		Title:       f.Formula, // Title is the original formula name
-		Description: f.Description,
+		Title:       rootTitle,
+		Description: rootDesc,
 		Status:      types.StatusOpen,
 		Priority:    2,
 		IssueType:   types.TypeEpic,
@@ -783,11 +797,25 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 	var deps []*types.Dependency
 	var labels []struct{ issueID, label string }
 
+	// Determine root title: use {{title}} placeholder if the variable is defined,
+	// otherwise fall back to formula name (GH#852)
+	rootTitle := f.Formula
+	if _, hasTitle := f.Vars["title"]; hasTitle {
+		rootTitle = "{{title}}"
+	}
+
+	// Determine root description: use {{desc}} placeholder if the variable is defined,
+	// otherwise fall back to formula description (GH#852)
+	rootDesc := f.Description
+	if _, hasDesc := f.Vars["desc"]; hasDesc {
+		rootDesc = "{{desc}}"
+	}
+
 	// Create root proto epic using provided protoID (may include prefix)
 	rootIssue := &types.Issue{
 		ID:          protoID,
-		Title:       f.Formula, // Title is the original formula name
-		Description: f.Description,
+		Title:       rootTitle,
+		Description: rootDesc,
 		Status:      types.StatusOpen,
 		Priority:    2,
 		IssueType:   types.TypeEpic,
