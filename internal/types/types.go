@@ -845,6 +845,9 @@ type WorkFilter struct {
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
+
+	// Time-based deferral filtering (GH#820)
+	IncludeDeferred bool // If true, include issues with future defer_until timestamps
 }
 
 // StaleFilter is used to filter stale issue queries

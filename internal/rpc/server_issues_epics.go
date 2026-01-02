@@ -1555,14 +1555,15 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	wf := types.WorkFilter{
-		Status:     types.StatusOpen,
-		Type:       readyArgs.Type,
-		Priority:   readyArgs.Priority,
-		Unassigned: readyArgs.Unassigned,
-		Limit:      readyArgs.Limit,
-		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
-		Labels:     util.NormalizeLabels(readyArgs.Labels),
-		LabelsAny:  util.NormalizeLabels(readyArgs.LabelsAny),
+		Status:          types.StatusOpen,
+		Type:            readyArgs.Type,
+		Priority:        readyArgs.Priority,
+		Unassigned:      readyArgs.Unassigned,
+		Limit:           readyArgs.Limit,
+		SortPolicy:      types.SortPolicy(readyArgs.SortPolicy),
+		Labels:          util.NormalizeLabels(readyArgs.Labels),
+		LabelsAny:       util.NormalizeLabels(readyArgs.LabelsAny),
+		IncludeDeferred: readyArgs.IncludeDeferred, // GH#820
 	}
 	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
 		wf.Assignee = &readyArgs.Assignee

@@ -302,8 +302,9 @@ type ReadyArgs struct {
 	SortPolicy string   `json:"sort_policy,omitempty"`
 	Labels     []string `json:"labels,omitempty"`
 	LabelsAny  []string `json:"labels_any,omitempty"`
-	ParentID   string   `json:"parent_id,omitempty"` // Filter to descendants of this bead/epic
-	MolType    string   `json:"mol_type,omitempty"`  // Filter by molecule type: swarm, patrol, or work
+	ParentID        string   `json:"parent_id,omitempty"`        // Filter to descendants of this bead/epic
+	MolType         string   `json:"mol_type,omitempty"`         // Filter by molecule type: swarm, patrol, or work
+	IncludeDeferred bool     `json:"include_deferred,omitempty"` // Include issues with future defer_until (GH#820)
 }
 
 // BlockedArgs represents arguments for the blocked operation

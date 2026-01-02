@@ -42,6 +42,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		parentID, _ := cmd.Flags().GetString("parent")
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
+		includeDeferred, _ := cmd.Flags().GetBool("include-deferred")
 		var molType *types.MolType
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
@@ -66,12 +67,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		filter := types.WorkFilter{
 			// Leave Status empty to get both 'open' and 'in_progress'
-			Type:       issueType,
-			Limit:      limit,
-			Unassigned: unassigned,
-			SortPolicy: types.SortPolicy(sortPolicy),
-			Labels:     labels,
-			LabelsAny:  labelsAny,
+			Type:            issueType,
+			Limit:           limit,
+			Unassigned:      unassigned,
+			SortPolicy:      types.SortPolicy(sortPolicy),
+			Labels:          labels,
+			LabelsAny:       labelsAny,
+			IncludeDeferred: includeDeferred, // GH#820: respect --include-deferred flag
 		}
 		// Use Changed() to properly handle P0 (priority=0)
 		if cmd.Flags().Changed("priority") {
@@ -95,15 +97,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
-				Assignee:   assignee,
-				Unassigned: unassigned,
-				Type:       issueType,
-				Limit:      limit,
-				SortPolicy: sortPolicy,
-				Labels:     labels,
-				LabelsAny:  labelsAny,
-				ParentID:   parentID,
-				MolType:    molTypeStr,
+				Assignee:        assignee,
+				Unassigned:      unassigned,
+				Type:            issueType,
+				Limit:           limit,
+				SortPolicy:      sortPolicy,
+				Labels:          labels,
+				LabelsAny:       labelsAny,
+				ParentID:        parentID,
+				MolType:         molTypeStr,
+				IncludeDeferred: includeDeferred, // GH#820
 			}
 			if cmd.Flags().Changed("priority") {
 				priority, _ := cmd.Flags().GetInt("priority")
@@ -446,6 +449,7 @@ func init() {
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
+	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)
