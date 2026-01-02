@@ -72,7 +72,7 @@ func TestCreateTombstone(t *testing.T) {
 		}
 
 		// Close the issue to set closed_at
-		if err := store.CloseIssue(ctx, "bd-closed-1", "closing for test", "tester"); err != nil {
+		if err := store.CloseIssue(ctx, "bd-closed-1", "closing for test", "tester", ""); err != nil {
 			t.Fatalf("Failed to close issue: %v", err)
 		}
 

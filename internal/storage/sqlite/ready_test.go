@@ -515,7 +515,7 @@ func TestDeepHierarchyBlocking(t *testing.T) {
 	}
 
 	// Now close the blocker and verify all levels become ready
-	store.CloseIssue(ctx, blocker.ID, "Done", "test-user")
+	store.CloseIssue(ctx, blocker.ID, "Done", "test-user", "")
 
 	ready, err = store.GetReadyWork(ctx, types.WorkFilter{Status: types.StatusOpen})
 	if err != nil {
@@ -564,7 +564,7 @@ func TestGetReadyWorkIncludesInProgress(t *testing.T) {
 	store.UpdateIssue(ctx, issue3.ID, map[string]interface{}{"status": types.StatusInProgress}, "test-user")
 	store.CreateIssue(ctx, issue4, "test-user")
 	store.CreateIssue(ctx, issue5, "test-user")
-	store.CloseIssue(ctx, issue5.ID, "Done", "test-user")
+	store.CloseIssue(ctx, issue5.ID, "Done", "test-user", "")
 
 	// Add dependency: issue3 blocks on issue4
 	store.AddDependency(ctx, &types.Dependency{IssueID: issue3.ID, DependsOnID: issue4.ID, Type: types.DepBlocks}, "test-user")
@@ -1018,7 +1018,7 @@ func TestGetReadyWorkExternalDeps(t *testing.T) {
 	}
 
 	// Close the capability issue
-	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user"); err != nil {
+	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user", ""); err != nil {
 		t.Fatalf("failed to close capability issue: %v", err)
 	}
 
@@ -1246,7 +1246,7 @@ func TestGetBlockedIssuesFiltersExternalDeps(t *testing.T) {
 	}
 
 	// Close the capability issue
-	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user"); err != nil {
+	if err := externalStore.CloseIssue(ctx, capabilityIssue.ID, "Shipped", "test-user", ""); err != nil {
 		t.Fatalf("failed to close capability issue: %v", err)
 	}
 
@@ -1371,7 +1371,7 @@ func TestGetBlockedIssuesPartialExternalDeps(t *testing.T) {
 	if err := externalStore.AddLabel(ctx, cap1Issue.ID, "provides:cap1", "test-user"); err != nil {
 		t.Fatalf("failed to add provides label: %v", err)
 	}
-	if err := externalStore.CloseIssue(ctx, cap1Issue.ID, "Shipped", "test-user"); err != nil {
+	if err := externalStore.CloseIssue(ctx, cap1Issue.ID, "Shipped", "test-user", ""); err != nil {
 		t.Fatalf("failed to close cap1 issue: %v", err)
 	}
 

@@ -84,6 +84,7 @@ var createCmd = &cobra.Command{
 
 		design, _ := cmd.Flags().GetString("design")
 		acceptance, _ := cmd.Flags().GetString("acceptance")
+		notes, _ := cmd.Flags().GetString("notes")
 
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
@@ -151,7 +152,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
 			return
 		}
 
@@ -164,6 +165,15 @@ var createCmd = &cobra.Command{
 			}
 			estimatedMinutes = &est
 		}
+
+		// Validate template if --validate flag is set
+		validateTemplate, _ := cmd.Flags().GetBool("validate")
+		if validateTemplate {
+			if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Determine target repository using routing logic
@@ -177,7 +187,7 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				debug.Logf("Warning: failed to detect user role: %v\n", err)
 			}
-			
+
 			routingConfig := &routing.RoutingConfig{
 				Mode:             config.GetString("routing.mode"),
 				DefaultRepo:      config.GetString("routing.default"),
@@ -185,10 +195,10 @@ var createCmd = &cobra.Command{
 				ContributorRepo:  config.GetString("routing.contributor"),
 				ExplicitOverride: repoOverride,
 			}
-			
+
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
-		
+
 		// TODO(bd-6x6g): Switch to target repo for multi-repo support
 		// For now, we just log the target repo in debug mode
 		if repoPath != "." {
@@ -272,6 +282,7 @@ var createCmd = &cobra.Command{
 				Priority:           priority,
 				Design:             design,
 				AcceptanceCriteria: acceptance,
+				Notes:              notes,
 				Assignee:           assignee,
 				ExternalRef:        externalRef,
 				EstimatedMinutes:   estimatedMinutes,
@@ -329,6 +340,7 @@ var createCmd = &cobra.Command{
 			Description:        description,
 			Design:             design,
 			AcceptanceCriteria: acceptance,
+			Notes:              notes,
 			Status:             types.StatusOpen,
 			Priority:           priority,
 			IssueType:          types.IssueType(issueType),
@@ -347,7 +359,7 @@ var createCmd = &cobra.Command{
 		}
 
 		ctx := rootCtx
-		
+
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
 		var discoveredFromParentID string
@@ -356,16 +368,16 @@ var createCmd = &cobra.Command{
 			if depSpec == "" {
 				continue
 			}
-			
+
 			var depType types.DependencyType
 			var dependsOnID string
-			
+
 			if strings.Contains(depSpec, ":") {
 				parts := strings.SplitN(depSpec, ":", 2)
 				if len(parts) == 2 {
 					depType = types.DependencyType(strings.TrimSpace(parts[0]))
 					dependsOnID = strings.TrimSpace(parts[1])
-					
+
 					if depType == types.DepDiscoveredFrom && dependsOnID != "" {
 						discoveredFromParentID = dependsOnID
 						break
@@ -373,7 +385,7 @@ var createCmd = &cobra.Command{
 				}
 			}
 		}
-		
+
 		// If we found a discovered-from dependency, inherit source_repo from parent
 		if discoveredFromParentID != "" {
 			parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
@@ -382,7 +394,7 @@ var createCmd = &cobra.Command{
 			}
 			// If error getting parent or parent has no source_repo, continue with default
 		}
-		
+
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			FatalError("%v", err)
 		}
@@ -545,6 +557,7 @@ func init() {
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
+	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
 	createCmd.Flags().String("role-type", "", "Agent role type: polecat|crew|witness|refinery|mayor|deacon (requires --type=agent)")
 	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
@@ -559,7 +572,7 @@ func init() {
 
 // createInRig creates an issue in a different rig using --rig flag.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -597,6 +610,7 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		Description:        description,
 		Design:             design,
 		AcceptanceCriteria: acceptance,
+		Notes:              notes,
 		Status:             types.StatusOpen,
 		Priority:           priority,
 		IssueType:          types.IssueType(issueType),

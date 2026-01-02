@@ -305,7 +305,12 @@ Use --merge to merge the sync branch back to main branch.`,
 		beadsDir := filepath.Dir(jsonlPath)
 		isExternal := isExternalBeadsDir(ctx, beadsDir)
 
-		if isExternal {
+		// GH#812/bd-n663: When sync.branch is configured, skip external direct-commit mode.
+		// The redirect may point to another clone/worktree in the same repo, but cross
+		// directory boundaries that trigger isExternalBeadsDir=true. When sync.branch is
+		// configured, we should use the sync.branch workflow which properly handles copying
+		// JSONL files to the sync branch worktree, regardless of where the source .beads lives.
+		if isExternal && !hasSyncBranchConfig {
 			// External BEADS_DIR: commit/pull directly to the beads repo
 			fmt.Println("→ External BEADS_DIR detected, using direct commit...")
 
@@ -375,7 +380,13 @@ Use --merge to merge the sync branch back to main branch.`,
 		if err := ensureStoreActive(); err == nil && store != nil {
 			syncBranchName, _ = syncbranch.Get(ctx, store)
 			if syncBranchName != "" && syncbranch.HasGitRemote(ctx) {
-				repoRoot, err = syncbranch.GetRepoRoot(ctx)
+				// GH#829/bd-e2q9/bd-kvus: Get repo root from beads location, not cwd.
+				// When .beads/redirect exists, jsonlPath points to the redirected location
+				// (e.g., mayor/rig/.beads/issues.jsonl), but cwd is in a different repo
+				// (e.g., crew/gus). The worktree for sync-branch must be in the same
+				// repo as the beads directory.
+				beadsDir := filepath.Dir(jsonlPath)
+				repoRoot, err = getRepoRootFromPath(ctx, beadsDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: sync.branch configured but failed to get repo root: %v\n", err)
 					fmt.Fprintf(os.Stderr, "Falling back to current branch commits\n")

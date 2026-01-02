@@ -65,7 +65,7 @@ func main() {
 
 	// Complete
 	db.Exec(`UPDATE example_executions SET status='completed', completed_at=? WHERE id=?`, time.Now(), execID)
-	store.CloseIssue(ctx, issue.ID, "Done", "demo-agent")
+	store.CloseIssue(ctx, issue.ID, "Done", "demo-agent", "")
 
 	// Show status
 	fmt.Println("\nStatus:")

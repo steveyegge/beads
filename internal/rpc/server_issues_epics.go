@@ -183,12 +183,15 @@ func (s *Server) handleCreate(req *Request) Response {
 		issueID = childID
 	}
 
-	var design, acceptance, assignee, externalRef *string
+	var design, acceptance, notes, assignee, externalRef *string
 	if createArgs.Design != "" {
 		design = &createArgs.Design
 	}
 	if createArgs.AcceptanceCriteria != "" {
 		acceptance = &createArgs.AcceptanceCriteria
+	}
+	if createArgs.Notes != "" {
+		notes = &createArgs.Notes
 	}
 	if createArgs.Assignee != "" {
 		assignee = &createArgs.Assignee
@@ -205,6 +208,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		Priority:           createArgs.Priority,
 		Design:             strValue(design),
 		AcceptanceCriteria: strValue(acceptance),
+		Notes:              strValue(notes),
 		Assignee:           strValue(assignee),
 		ExternalRef:        externalRef,
 		EstimatedMinutes:   createArgs.EstimatedMinutes,
@@ -737,7 +741,7 @@ func (s *Server) handleClose(req *Request) Response {
 		oldStatus = string(issue.Status)
 	}
 
-	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req)); err != nil {
+	if err := store.CloseIssue(ctx, closeArgs.ID, closeArgs.Reason, s.reqActor(req), closeArgs.Session); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to close issue: %v", err),
@@ -1110,6 +1114,13 @@ func (s *Server) handleList(req *Request) Response {
 	if len(listArgs.ExcludeStatus) > 0 {
 		for _, s := range listArgs.ExcludeStatus {
 			filter.ExcludeStatus = append(filter.ExcludeStatus, types.Status(s))
+		}
+	}
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	if len(listArgs.ExcludeTypes) > 0 {
+		for _, t := range listArgs.ExcludeTypes {
+			filter.ExcludeTypes = append(filter.ExcludeTypes, types.IssueType(t))
 		}
 	}
 
@@ -2069,7 +2080,7 @@ func (s *Server) handleGateClose(req *Request) Response {
 
 	oldStatus := string(gate.Status)
 
-	if err := store.CloseIssue(ctx, gateID, reason, s.reqActor(req)); err != nil {
+	if err := store.CloseIssue(ctx, gateID, reason, s.reqActor(req), ""); err != nil {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("failed to close gate: %v", err),

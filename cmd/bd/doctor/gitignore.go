@@ -22,6 +22,7 @@ daemon.log
 daemon.pid
 bd.sock
 sync-state.json
+last-touched
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -59,6 +60,7 @@ var requiredPatterns = []string{
 	"beads.right.meta.json",
 	"*.db?*",
 	"redirect",
+	"last-touched",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
@@ -146,13 +148,13 @@ func CheckIssuesTracking() DoctorCheck {
 
 	// Check if git considers this file ignored
 	// git check-ignore exits 0 if ignored, 1 if not ignored, 128 if error
-	cmd := exec.Command("git", "check-ignore", "-q", issuesPath)
+	cmd := exec.Command("git", "check-ignore", "-q", issuesPath) // #nosec G204 - args are hardcoded paths
 	err := cmd.Run()
 
 	if err == nil {
 		// Exit code 0 means the file IS ignored - this is bad
 		// Get details about what's ignoring it
-		detailCmd := exec.Command("git", "check-ignore", "-v", issuesPath)
+		detailCmd := exec.Command("git", "check-ignore", "-v", issuesPath) // #nosec G204 - args are hardcoded paths
 		output, _ := detailCmd.Output()
 		detail := strings.TrimSpace(string(output))
 
@@ -191,7 +193,7 @@ func CheckRedirectNotTracked() DoctorCheck {
 
 	// Check if git considers this file tracked
 	// git ls-files exits 0 and outputs the filename if tracked, empty if untracked
-	cmd := exec.Command("git", "ls-files", redirectPath)
+	cmd := exec.Command("git", "ls-files", redirectPath) // #nosec G204 - args are hardcoded paths
 	output, err := cmd.Output()
 	if err != nil {
 		// Not in a git repo or git error - skip check
@@ -227,7 +229,7 @@ func FixRedirectTracking() error {
 	redirectPath := filepath.Join(".beads", "redirect")
 
 	// Check if file is actually tracked first
-	cmd := exec.Command("git", "ls-files", redirectPath)
+	cmd := exec.Command("git", "ls-files", redirectPath) // #nosec G204 - args are hardcoded paths
 	output, err := cmd.Output()
 	if err != nil {
 		return nil // Not a git repo, nothing to do
@@ -239,7 +241,7 @@ func FixRedirectTracking() error {
 	}
 
 	// Untrack the file (keeps the local copy)
-	cmd = exec.Command("git", "rm", "--cached", redirectPath)
+	cmd = exec.Command("git", "rm", "--cached", redirectPath) // #nosec G204 - args are hardcoded paths
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to untrack redirect file: %w", err)
 	}

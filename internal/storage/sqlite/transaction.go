@@ -523,13 +523,14 @@ func applyUpdatesToIssue(issue *types.Issue, updates map[string]interface{}) {
 
 // CloseIssue closes an issue within the transaction.
 // NOTE: close_reason is stored in both issues table and events table - see SQLiteStorage.CloseIssue.
-func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+// The session parameter tracks which Claude Code session closed the issue (can be empty).
+func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now()
 
 	result, err := t.conn.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?
-	`, types.StatusClosed, now, now, reason, id)
+	`, types.StatusClosed, now, now, reason, session, id)
 	if err != nil {
 		return fmt.Errorf("failed to close issue: %w", err)
 	}
@@ -1078,6 +1079,16 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 			args = append(args, string(s))
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	if len(filter.ExcludeTypes) > 0 {
+		placeholders := make([]string, len(filter.ExcludeTypes))
+		for i, t := range filter.ExcludeTypes {
+			placeholders[i] = "?"
+			args = append(args, string(t))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	if filter.Priority != nil {

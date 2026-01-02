@@ -734,7 +734,7 @@ func TestSyncBranchIntegration_EndToEnd(t *testing.T) {
 	}
 
 	// Agent B closes the issue
-	store2.CloseIssue(ctx, issueID, "Done by Agent B", "agent-b")
+	store2.CloseIssue(ctx, issueID, "Done by Agent B", "agent-b", "")
 	exportToJSONLWithStore(ctx, store2, clone2JSONLPath)
 
 	// Agent B commits to sync branch

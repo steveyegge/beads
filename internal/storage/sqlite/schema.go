@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS issues (
     created_by TEXT DEFAULT '',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     closed_at DATETIME,
+    closed_by_session TEXT DEFAULT '',
     external_ref TEXT,
     compaction_level INTEGER DEFAULT 0,
     compacted_at DATETIME,

@@ -120,7 +120,7 @@ func main() {
 
 	// Example 8: Close the issue
 	fmt.Println("\n=== Closing Issue ===")
-	if err := store.CloseIssue(ctx, newIssue.ID, "Completed demo", "library-example"); err != nil {
+	if err := store.CloseIssue(ctx, newIssue.ID, "Completed demo", "library-example", ""); err != nil {
 		log.Fatalf("Failed to close issue: %v", err)
 	}
 	fmt.Printf("Closed issue %s\n", newIssue.ID)

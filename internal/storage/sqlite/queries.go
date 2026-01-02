@@ -664,6 +664,8 @@ var allowedUpdateFields = map[string]bool{
 	"estimated_minutes":   true,
 	"external_ref":        true,
 	"closed_at":           true,
+	"close_reason":        true,
+	"closed_by_session":   true,
 	// Messaging fields
 	"sender": true,
 	"wisp":   true, // Database column is 'ephemeral', mapped in UpdateIssue
@@ -1070,8 +1072,9 @@ func (s *SQLiteStorage) ResetCounter(ctx context.Context, prefix string) error {
 	return nil
 }
 
-// CloseIssue closes an issue with a reason
-func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+// CloseIssue closes an issue with a reason.
+// The session parameter tracks which Claude Code session closed the issue (can be empty).
+func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now()
 
 	// Update with special event handling
@@ -1086,9 +1089,9 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	// 2. events.comment - for audit history (when was it closed, by whom)
 	// Keep both in sync. If refactoring, consider deriving one from the other.
 	result, err := tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?
-	`, types.StatusClosed, now, now, reason, id)
+	`, types.StatusClosed, now, now, reason, session, id)
 	if err != nil {
 		return fmt.Errorf("failed to close issue: %w", err)
 	}
@@ -1714,6 +1717,16 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 			args = append(args, string(s))
 		}
 		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	if len(filter.ExcludeTypes) > 0 {
+		placeholders := make([]string, len(filter.ExcludeTypes))
+		for i, t := range filter.ExcludeTypes {
+			placeholders[i] = "?"
+			args = append(args, string(t))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	if filter.Priority != nil {

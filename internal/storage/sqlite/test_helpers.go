@@ -105,7 +105,7 @@ func (e *testEnv) AddParentChild(child, parent *types.Issue) {
 // Close closes the issue with the given reason.
 func (e *testEnv) Close(issue *types.Issue, reason string) {
 	e.t.Helper()
-	if err := e.Store.CloseIssue(e.Ctx, issue.ID, reason, "test-user"); err != nil {
+	if err := e.Store.CloseIssue(e.Ctx, issue.ID, reason, "test-user", ""); err != nil {
 		e.t.Fatalf("CloseIssue(%s) failed: %v", issue.ID, err)
 	}
 }

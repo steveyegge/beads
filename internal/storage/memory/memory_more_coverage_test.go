@@ -223,8 +223,12 @@ func TestMemoryStorage_DependencyCounts_Records_Tree_Cycles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDependencyTree: %v", err)
 	}
-	if len(nodes) != 2 || nodes[0].Depth != 1 {
-		t.Fatalf("unexpected tree: %+v", nodes)
+	// Expect 3 nodes: root (A) at depth 0, plus 2 dependencies (B, C) at depth 1
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes (root + 2 deps), got %d", len(nodes))
+	}
+	if nodes[0].ID != a.ID || nodes[0].Depth != 0 {
+		t.Fatalf("expected root node %s at depth 0, got %s at depth %d", a.ID, nodes[0].ID, nodes[0].Depth)
 	}
 
 	cycles, err := store.DetectCycles(ctx)
@@ -515,7 +519,7 @@ func TestMemoryStorage_GetStaleIssues_FilteringAndLimit(t *testing.T) {
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, closed.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, closed.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 
@@ -555,10 +559,10 @@ func TestMemoryStorage_Statistics_EpicsEligibleForClosure_Counting(t *testing.T)
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, c1.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c1.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue c1: %v", err)
 	}
-	if err := store.CloseIssue(ctx, c2.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c2.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue c2: %v", err)
 	}
 	// Parent-child deps: child -> epic.
@@ -851,7 +855,7 @@ func TestMemoryStorage_UpdateIssue_CoversMoreFields(t *testing.T) {
 	}
 
 	// Status closed when already closed should not clear ClosedAt.
-	if err := store.CloseIssue(ctx, iss.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, iss.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 	closedOnce, _ := store.GetIssue(ctx, iss.ID)
@@ -881,7 +885,7 @@ func TestMemoryStorage_CountEpicsEligibleForClosure_CoversBranches(t *testing.T)
 			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
 		}
 	}
-	if err := store.CloseIssue(ctx, epClosed.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, epClosed.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
 	// Child -> ep1 (eligible once child is closed).
@@ -898,7 +902,7 @@ func TestMemoryStorage_CountEpicsEligibleForClosure_CoversBranches(t *testing.T)
 	store.mu.Unlock()
 
 	// Close child to make ep1 eligible.
-	if err := store.CloseIssue(ctx, c.ID, "done", "actor"); err != nil {
+	if err := store.CloseIssue(ctx, c.ID, "done", "actor", ""); err != nil {
 		t.Fatalf("CloseIssue child: %v", err)
 	}
 

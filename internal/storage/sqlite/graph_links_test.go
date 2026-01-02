@@ -179,7 +179,7 @@ func TestDuplicateOf(t *testing.T) {
 	}
 
 	// Close the duplicate
-	if err := store.CloseIssue(ctx, duplicate.ID, "Closed as duplicate", "test"); err != nil {
+	if err := store.CloseIssue(ctx, duplicate.ID, "Closed as duplicate", "test", ""); err != nil {
 		t.Fatalf("Failed to close duplicate: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func TestSupersededBy(t *testing.T) {
 	}
 
 	// Close old version
-	if err := store.CloseIssue(ctx, oldVersion.ID, "Superseded by v2", "test"); err != nil {
+	if err := store.CloseIssue(ctx, oldVersion.ID, "Superseded by v2", "test", ""); err != nil {
 		t.Fatalf("Failed to close old version: %v", err)
 	}
 

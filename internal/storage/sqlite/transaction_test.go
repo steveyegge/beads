@@ -254,7 +254,7 @@ func TestTransactionCloseIssue(t *testing.T) {
 
 	// Close in transaction
 	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
-		return tx.CloseIssue(ctx, issue.ID, "Done", "test-actor")
+		return tx.CloseIssue(ctx, issue.ID, "Done", "test-actor", "")
 	})
 
 	if err != nil {

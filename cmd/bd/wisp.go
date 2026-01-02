@@ -167,7 +167,8 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 
 	// Try to cook formula inline (ephemeral protos)
 	// This works for any valid formula name, not just "mol-" prefixed ones
-	sg, err := resolveAndCookFormula(args[0], nil)
+	// Pass vars for step condition filtering (bd-7zka.1)
+	sg, err := resolveAndCookFormulaWithVars(args[0], nil, vars)
 	if err == nil {
 		subgraph = sg
 		protoID = sg.Root.ID

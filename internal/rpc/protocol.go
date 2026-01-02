@@ -82,6 +82,7 @@ type CreateArgs struct {
 	Priority           int      `json:"priority"`
 	Design             string   `json:"design,omitempty"`
 	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
+	Notes              string   `json:"notes,omitempty"`
 	Assignee           string   `json:"assignee,omitempty"`
 	ExternalRef        string   `json:"external_ref,omitempty"`  // Link to external issue trackers
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
@@ -160,6 +161,7 @@ type UpdateArgs struct {
 type CloseArgs struct {
 	ID          string `json:"id"`
 	Reason      string `json:"reason,omitempty"`
+	Session     string `json:"session,omitempty"`      // Claude Code session ID that closed this issue
 	SuggestNext bool   `json:"suggest_next,omitempty"` // Return newly unblocked issues (GH#679)
 }
 
@@ -231,6 +233,9 @@ type ListArgs struct {
 
 	// Status exclusion (for default non-closed behavior, GH#788)
 	ExcludeStatus []string `json:"exclude_status,omitempty"`
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	ExcludeTypes []string `json:"exclude_types,omitempty"`
 }
 
 // CountArgs represents arguments for the count operation

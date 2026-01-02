@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "gt prime"
+            "command": "bash ~/.claude/hooks/session-start.sh"
           }
         ]
       }
