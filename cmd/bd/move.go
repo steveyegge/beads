@@ -18,11 +18,11 @@ var moveCmd = &cobra.Command{
 	Use:     "move <issue-id> --to <rig|prefix>",
 	GroupID: "issues",
 	Short:   "Move an issue to a different rig with dependency remapping",
-	Long: `Move an issue from one rig to another, updating all dependencies.
+	Long: `Move an issue from one rig to another, updating dependencies.
 
 This command:
 1. Creates a new issue in the target rig with the same content
-2. Remaps all dependencies that reference the old ID
+2. Updates dependencies that reference the old ID (see below)
 3. Closes the source issue with a redirect note
 
 The target rig can be specified as:
@@ -30,9 +30,11 @@ The target rig can be specified as:
   - A prefix: bd-, gt-
   - A prefix without hyphen: bd, gt
 
-Dependencies are remapped in both directions:
-  - Issues that depend ON the moved issue are updated
-  - Issues that the moved issue DEPENDS ON are updated
+Dependency handling for cross-rig moves:
+  - Issues that depend ON the moved issue: updated to external refs
+  - Issues that the moved issue DEPENDS ON: removed (recreate manually in target)
+
+Note: Labels are copied. Comments and event history are not transferred.
 
 Examples:
   bd move hq-c21fj --to beads     # Move to beads by rig name
@@ -196,54 +198,28 @@ Examples:
 }
 
 // remapDependencies updates all dependencies in the store that reference oldID to use newID.
-// For cross-rig moves, dependencies TO the old ID are converted to external references.
-// Dependencies FROM the old ID (where oldID is the dependent) are removed with a warning.
+// For cross-rig moves (which is the only supported case), dependencies TO the old ID are
+// converted to external references. Dependencies FROM the old ID are removed since they
+// can't be recreated in the source store.
 // Returns the number of dependencies remapped.
 func remapDependencies(ctx context.Context, s storage.Storage, oldID, newID, targetRig, actor string) (int, error) {
 	count := 0
 
-	// Determine if this is a cross-rig move by comparing prefixes
-	oldPrefix := routing.ExtractPrefix(oldID)
-	newPrefix := routing.ExtractPrefix(newID)
-	isCrossRig := oldPrefix != newPrefix
-
 	// Get dependencies where oldID is the issue (oldID depends on something)
+	// These must be removed since the new issue is in a different rig's store
 	depsFrom, err := s.GetDependencyRecords(ctx, oldID)
 	if err != nil {
 		return count, fmt.Errorf("getting dependencies from %s: %w", oldID, err)
 	}
 
-	// Handle deps FROM the old ID (where oldID is the dependent)
+	// Remove deps FROM the old ID (user needs to recreate in target rig)
 	for _, dep := range depsFrom {
-		// Remove old dependency
 		if err := s.RemoveDependency(ctx, oldID, dep.DependsOnID, actor); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: failed to remove dep %s->%s: %v\n", oldID, dep.DependsOnID, err)
-			continue
 		}
-
-		if isCrossRig {
-			// For cross-rig moves, these deps can't be recreated in source store
-			// User needs to recreate them in target rig
-			continue
-		}
-
-		// Same-rig move: recreate with newID as dependent
-		newDep := &types.Dependency{
-			IssueID:     newID,
-			DependsOnID: dep.DependsOnID,
-			Type:        dep.Type,
-			CreatedBy:   actor,
-			Metadata:    dep.Metadata,
-			ThreadID:    dep.ThreadID,
-		}
-		if err := s.AddDependency(ctx, newDep, actor); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: failed to add dep %s->%s: %v\n", newID, dep.DependsOnID, err)
-			continue
-		}
-		count++
 	}
 
-	if len(depsFrom) > 0 && isCrossRig {
+	if len(depsFrom) > 0 {
 		fmt.Fprintf(os.Stderr, "  note: %d dependencies FROM %s were removed (recreate in target rig if needed)\n", len(depsFrom), oldID)
 	}
 
@@ -253,7 +229,7 @@ func remapDependencies(ctx context.Context, s storage.Storage, oldID, newID, tar
 		return count, fmt.Errorf("getting dependents of %s: %w", oldID, err)
 	}
 
-	// For each issue that depends on oldID, update to depend on newID
+	// For each issue that depends on oldID, update to use external ref to newID
 	for _, dependent := range dependents {
 		// Get the dependency record to preserve type/metadata
 		depRecords, err := s.GetDependencyRecords(ctx, dependent.ID)
@@ -273,27 +249,20 @@ func remapDependencies(ctx context.Context, s storage.Storage, oldID, newID, tar
 				continue
 			}
 
-			// Determine what to point to:
-			// - Same rig: point directly to newID
-			// - Cross-rig: point to external reference
-			var targetID string
-			if isCrossRig {
-				targetID = fmt.Sprintf("external:%s:%s", targetRig, newID)
-			} else {
-				targetID = newID
-			}
+			// Point to external reference in target rig
+			externalRef := fmt.Sprintf("external:%s:%s", targetRig, newID)
 
-			// Add new dependency
+			// Add new dependency with external ref
 			newDep := &types.Dependency{
 				IssueID:     dependent.ID,
-				DependsOnID: targetID,
+				DependsOnID: externalRef,
 				Type:        dep.Type,
 				CreatedBy:   actor,
 				Metadata:    dep.Metadata,
 				ThreadID:    dep.ThreadID,
 			}
 			if err := s.AddDependency(ctx, newDep, actor); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: failed to add dep %s->%s: %v\n", dependent.ID, targetID, err)
+				fmt.Fprintf(os.Stderr, "  warning: failed to add dep %s->%s: %v\n", dependent.ID, externalRef, err)
 				continue
 			}
 			count++
