@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -25,11 +27,24 @@ be revisited.
 Deferred issues don't show in 'bd ready' but remain visible in 'bd list'.
 
 Examples:
-  bd defer bd-abc        # Defer a single issue
-  bd defer bd-abc bd-def # Defer multiple issues`,
+  bd defer bd-abc                  # Defer a single issue (status-based)
+  bd defer bd-abc --until=tomorrow # Defer until specific time
+  bd defer bd-abc bd-def           # Defer multiple issues`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("defer")
+
+		// Parse --until flag (GH#820)
+		var deferUntil *time.Time
+		untilStr, _ := cmd.Flags().GetString("until")
+		if untilStr != "" {
+			t, err := timeparsing.ParseRelativeTime(untilStr, time.Now())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid --until format %q. Examples: +1h, tomorrow, next monday, 2025-01-15\n", untilStr)
+				os.Exit(1)
+			}
+			deferUntil = &t
+		}
 
 		ctx := rootCtx
 
@@ -68,6 +83,11 @@ Examples:
 				updateArgs := &rpc.UpdateArgs{
 					ID:     id,
 					Status: &status,
+				}
+				// Add defer_until if --until specified (GH#820)
+				if deferUntil != nil {
+					s := deferUntil.Format(time.RFC3339)
+					updateArgs.DeferUntil = &s
 				}
 
 				resp, err := daemonClient.Update(updateArgs)
@@ -108,6 +128,10 @@ Examples:
 			updates := map[string]interface{}{
 				"status": string(types.StatusDeferred),
 			}
+			// Add defer_until if --until specified (GH#820)
+			if deferUntil != nil {
+				updates["defer_until"] = *deferUntil
+			}
 
 			if err := store.UpdateIssue(ctx, fullID, updates, actor); err != nil {
 				fmt.Fprintf(os.Stderr, "Error deferring %s: %v\n", fullID, err)
@@ -136,5 +160,7 @@ Examples:
 }
 
 func init() {
+	// Time-based scheduling flag (GH#820)
+	deferCmd.Flags().String("until", "", "Defer until specific time (e.g., +1h, tomorrow, next monday)")
 	rootCmd.AddCommand(deferCmd)
 }

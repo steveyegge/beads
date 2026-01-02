@@ -156,6 +156,17 @@ var createCmd = &cobra.Command{
 			dueAt = &t
 		}
 
+		// Parse --defer flag (GH#820)
+		var deferUntil *time.Time
+		deferStr, _ := cmd.Flags().GetString("defer")
+		if deferStr != "" {
+			t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+			if err != nil {
+				FatalError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+			}
+			deferUntil = &t
+		}
+
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
 		targetRig := rigOverride
@@ -314,6 +325,7 @@ var createCmd = &cobra.Command{
 				EventTarget:        eventTarget,
 				EventPayload:       eventPayload,
 				DueAt:              dueStr,
+				DeferUntil:         deferStr,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -372,6 +384,7 @@ var createCmd = &cobra.Command{
 			Target:             eventTarget,
 			Payload:            eventPayload,
 			DueAt:              dueAt,
+			DeferUntil:         deferUntil,
 		}
 
 		ctx := rootCtx
@@ -584,6 +597,7 @@ func init() {
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
 	// Time-based scheduling flags (GH#820)
 	createCmd.Flags().String("due", "", "Due date (e.g., +6h, tomorrow, next monday, 2025-01-15)")
+	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

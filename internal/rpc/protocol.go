@@ -109,7 +109,8 @@ type CreateArgs struct {
 	EventTarget   string `json:"event_target,omitempty"`   // Entity URI or bead ID affected
 	EventPayload  string `json:"event_payload,omitempty"`  // Event-specific JSON data
 	// Time-based scheduling fields (GH#820)
-	DueAt string `json:"due_at,omitempty"` // ISO format due date (2025-01-15 or RFC3339)
+	DueAt      string `json:"due_at,omitempty"`      // Relative or ISO format due date
+	DeferUntil string `json:"defer_until,omitempty"` // Relative or ISO format defer date
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -157,6 +158,9 @@ type UpdateArgs struct {
 	EventPayload  *string `json:"event_payload,omitempty"`  // Event-specific JSON data
 	// Work queue claim operation
 	Claim bool `json:"claim,omitempty"` // If true, atomically claim issue (set assignee+status, fail if already claimed)
+	// Time-based scheduling fields (GH#820)
+	DueAt      *string `json:"due_at,omitempty"`      // Relative or ISO format due date
+	DeferUntil *string `json:"defer_until,omitempty"` // Relative or ISO format defer date
 }
 
 // CloseArgs represents arguments for the close operation
