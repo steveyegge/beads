@@ -5,6 +5,29 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.0] - 2026-01-02
+
+### Added
+
+- **Step.Gate evaluation** - Phase 1: Human Gates
+  - Gate steps that require human approval before proceeding
+  - Foundation for workflow control points
+
+- **`bd lint` command** - Template validation
+  - Validate issue templates against schema
+  - `--validate` flag also added to `bd create`
+
+- **`bd ready --pretty`** - Formatted output
+  - Human-friendly display of ready work
+
+### Fixed
+
+- **Cross-rig routing** - `bd close` and `bd update` now support cross-rig operations via prefix routing
+- **Agent ID validation** - Now accepts any rig prefix (GH#827)
+- **`bd sync` in bare repo worktrees** - Fixed exit 128 error (GH#827)
+- **`bd --no-db dep tree`** - Now shows complete tree (GH#836)
+- **`.beads/last-touched`** - Restored to gitignore template (GH#838)
+
 ## [0.42.0] - 2025-12-30
 
 ### Added

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -96,6 +97,9 @@ func TestGetVersionsSinceOrder(t *testing.T) {
 }
 
 func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
 	origPreviousVersion := previousVersion
@@ -104,9 +108,20 @@ func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
 		previousVersion = origPreviousVersion
 	}()
 
+	// Reset state to ensure clean starting point
+	versionUpgradeDetected = false
+	previousVersion = ""
+
 	// Change to temp directory with no .beads
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+
+	// Reset git caches so IsWorktree() returns fresh results for the temp dir
+	git.ResetCaches()
+
+	// Set BEADS_DIR to temp directory to prevent FindBeadsDir from walking up
+	// or finding the worktree's main repository .beads directory
+	t.Setenv("BEADS_DIR", tmpDir)
 
 	// trackBdVersion should silently succeed
 	trackBdVersion()
