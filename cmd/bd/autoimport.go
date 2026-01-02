@@ -12,11 +12,13 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"gopkg.in/yaml.v3"
 )
 
 // readFromGitRef reads file content from a git ref (branch or commit).
@@ -121,7 +123,7 @@ func checkGitForIssues() (int, string, string) {
 	// We read sync-branch directly from local config file rather than using cached global config
 	// to handle cases where CWD has changed since config initialization (e.g., in tests)
 	gitRef := "HEAD"
-	syncBranch := config.GetLocalSyncBranch(beadsDir)
+	syncBranch := getLocalSyncBranch(beadsDir)
 	if syncBranch != "" {
 		// Check if the sync branch exists (locally or on remote)
 		// Try origin/<branch> first (more likely to exist in fresh clones),
@@ -154,19 +156,63 @@ func checkGitForIssues() (int, string, string) {
 	return 0, "", ""
 }
 
-// NOTE: localConfig struct and parsing functions have been consolidated into
-// internal/config/local_config.go. Use config.LoadLocalConfig(), config.IsNoDbModeConfigured(),
-// and config.GetLocalSyncBranch() instead of duplicating YAML parsing logic here.
+// localConfig represents the subset of config.yaml we need for auto-import and no-db detection.
+// Using proper YAML parsing handles edge cases like comments, indentation, and special characters.
+type localConfig struct {
+	SyncBranch string `yaml:"sync-branch"`
+	NoDb       bool   `yaml:"no-db"`
+}
 
-
-
-// importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
-func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath, gitRef string) error {
-	jsonlData, err := readFromGitRef(jsonlPath, gitRef)
+// isNoDbModeConfigured checks if no-db: true is set in config.yaml.
+// Uses proper YAML parsing to avoid false matches in comments or nested keys.
+func isNoDbModeConfigured(beadsDir string) bool {
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from beadsDir
 	if err != nil {
-		return err
+		return false
 	}
 
+	var cfg localConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		debug.Logf("Warning: failed to parse config.yaml for no-db check: %v", err)
+		return false
+	}
+
+	return cfg.NoDb
+}
+
+// getLocalSyncBranch reads sync-branch from the local config.yaml file.
+// This reads directly from the file rather than using cached config to handle
+// cases where CWD has changed since config initialization.
+func getLocalSyncBranch(beadsDir string) string {
+	// First check environment variable (highest priority)
+	if envBranch := os.Getenv(syncbranch.EnvVar); envBranch != "" {
+		return envBranch
+	}
+
+	// Read config.yaml directly from the .beads directory
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from findBeadsDir
+	if err != nil {
+		return ""
+	}
+
+	// Parse YAML properly to handle edge cases (comments, indentation, special chars)
+	var cfg localConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		debug.Logf("Warning: failed to parse config.yaml for sync-branch: %v", err)
+		return ""
+	}
+
+	return cfg.SyncBranch
+}
+
+
+
+// importFromJSONLData imports issues from raw JSONL bytes.
+// This is the shared implementation used by both importFromGit and importFromLocalJSONL.
+// Returns the number of issues imported and any error.
+func importFromJSONLData(ctx context.Context, dbFilePath string, store storage.Storage, jsonlData []byte) (int, error) {
 	// Parse JSONL data
 	scanner := bufio.NewScanner(bytes.NewReader(jsonlData))
 	// Increase buffer size to handle large JSONL lines (e.g., big descriptions)
@@ -181,26 +227,25 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 
 		var issue types.Issue
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			return fmt.Errorf("failed to parse issue: %w", err)
+			return 0, fmt.Errorf("failed to parse issue: %w", err)
 		}
-		issue.SetDefaults() // Apply defaults for omitted fields (beads-399)
+		issue.SetDefaults() // Apply defaults for omitted fields
 		issues = append(issues, &issue)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to scan JSONL: %w", err)
+		return 0, fmt.Errorf("failed to scan JSONL: %w", err)
 	}
 
-	// CRITICAL (bd-166): Set issue_prefix from first imported issue if missing
+	// CRITICAL: Set issue_prefix from first imported issue if missing
 	// This prevents derivePrefixFromPath fallback which caused duplicate issues
 	if len(issues) > 0 {
 		configuredPrefix, err := store.GetConfig(ctx, "issue_prefix")
 		if err == nil && strings.TrimSpace(configuredPrefix) == "" {
-			// Database has no prefix configured - derive from first issue
 			firstPrefix := utils.ExtractIssuePrefix(issues[0].ID)
 			if firstPrefix != "" {
 				if err := store.SetConfig(ctx, "issue_prefix", firstPrefix); err != nil {
-					return fmt.Errorf("failed to set issue_prefix from imported issues: %w", err)
+					return 0, fmt.Errorf("failed to set issue_prefix from imported issues: %w", err)
 				}
 			}
 		}
@@ -208,13 +253,39 @@ func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage
 
 	// Use existing import logic with auto-resolve collisions
 	// Note: SkipPrefixValidation allows mixed prefixes during auto-import
-	// (but now we set the prefix first, so CreateIssue won't use filename fallback)
 	opts := ImportOptions{
 		DryRun:               false,
 		SkipUpdate:           false,
-		SkipPrefixValidation: true,  // Auto-import is lenient about prefixes
+		SkipPrefixValidation: true,
 	}
 
-	_, err = importIssuesCore(ctx, dbFilePath, store, issues, opts)
+	_, err := importIssuesCore(ctx, dbFilePath, store, issues, opts)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(issues), nil
+}
+
+// importFromLocalJSONL imports issues from a local JSONL file on disk.
+// Unlike importFromGit, this reads from the current working tree, preserving
+// any manual cleanup done to the JSONL file (e.g., via bd compact --purge-tombstones).
+// Returns the number of issues imported and any error.
+func importFromLocalJSONL(ctx context.Context, dbFilePath string, store storage.Storage, localPath string) (int, error) {
+	// #nosec G304 -- path provided by bd init command
+	jsonlData, err := os.ReadFile(localPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read local JSONL file: %w", err)
+	}
+	return importFromJSONLData(ctx, dbFilePath, store, jsonlData)
+}
+
+// importFromGit imports issues from git at the specified ref (bd-0is: supports sync-branch)
+func importFromGit(ctx context.Context, dbFilePath string, store storage.Storage, jsonlPath, gitRef string) error {
+	jsonlData, err := readFromGitRef(jsonlPath, gitRef)
+	if err != nil {
+		return err
+	}
+	_, err = importFromJSONLData(ctx, dbFilePath, store, jsonlData)
 	return err
 }

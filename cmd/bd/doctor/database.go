@@ -14,16 +14,19 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"gopkg.in/yaml.v3"
 )
 
-// NOTE: localConfig struct has been consolidated into internal/config/local_config.go.
-// Use config.LoadLocalConfig() and config.IsNoDbModeConfigured() instead.
+// localConfig represents the config.yaml structure for no-db mode detection
+type localConfig struct {
+	SyncBranch string `yaml:"sync-branch"`
+	NoDb       bool   `yaml:"no-db"`
+}
 
 // CheckDatabaseVersion checks the database version and migration status
 func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
@@ -51,8 +54,8 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 
 		if jsonlPath != "" {
 			// JSONL exists but no database - check if this is no-db mode or fresh clone
-			// Use proper YAML parsing to detect no-db mode (bd-r6k2)
-			if config.IsNoDbModeConfigured(beadsDir) {
+			// Use proper YAML parsing to detect no-db mode
+			if isNoDbModeConfigured(beadsDir) {
 				return DoctorCheck{
 					Name:    "Database",
 					Status:  StatusOK,
@@ -133,7 +136,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 
 // CheckSchemaCompatibility checks if all required tables and columns are present
 func CheckSchemaCompatibility(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
@@ -154,7 +157,7 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 		}
 	}
 
-	// Open database (bd-ckvw: schema probe)
+	// Open database for schema probe
 	// Note: We can't use the global 'store' because doctor can check arbitrary paths
 	db, err := sql.Open("sqlite3", sqliteConnString(dbPath, true))
 	if err != nil {
@@ -221,9 +224,9 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 	}
 }
 
-// CheckDatabaseIntegrity runs SQLite's PRAGMA integrity_check (bd-2au)
+// CheckDatabaseIntegrity runs SQLite's PRAGMA integrity_check
 func CheckDatabaseIntegrity(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Get database path (same logic as CheckSchemaCompatibility)
@@ -251,23 +254,15 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		if jsonlErr != nil {
 			jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
 		}
+		jsonlAvailable := jsonlErr == nil && jsonlCount > 0
 
-		if jsonlErr == nil && jsonlCount > 0 {
-			return DoctorCheck{
-				Name:    "Database Integrity",
-				Status:  StatusError,
-				Message: fmt.Sprintf("Failed to open database (JSONL has %d issues for recovery)", jsonlCount),
-				Detail:  err.Error(),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup",
-			}
-		}
-
+		errorType, recoverySteps := classifyDatabaseError(err.Error(), jsonlCount, jsonlAvailable)
 		return DoctorCheck{
 			Name:    "Database Integrity",
 			Status:  StatusError,
-			Message: "Failed to open database for integrity check",
-			Detail:  err.Error(),
-			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
+			Message: errorType,
+			Detail:  fmt.Sprintf("%s\n\nError: %s", recoverySteps, err.Error()),
+			Fix:     "See recovery steps above",
 		}
 	}
 	defer db.Close()
@@ -281,23 +276,19 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 		if jsonlErr != nil {
 			jsonlCount, _, jsonlErr = CountJSONLIssues(filepath.Join(beadsDir, "beads.jsonl"))
 		}
+		jsonlAvailable := jsonlErr == nil && jsonlCount > 0
 
-		if jsonlErr == nil && jsonlCount > 0 {
-			return DoctorCheck{
-				Name:    "Database Integrity",
-				Status:  StatusError,
-				Message: fmt.Sprintf("Failed to run integrity check (JSONL has %d issues for recovery)", jsonlCount),
-				Detail:  err.Error(),
-				Fix:     "Run 'bd doctor --fix' to recover from JSONL backup",
-			}
+		errorType, recoverySteps := classifyDatabaseError(err.Error(), jsonlCount, jsonlAvailable)
+		// Override default error type for this specific case
+		if errorType == "Failed to open database" {
+			errorType = "Failed to run integrity check"
 		}
-
 		return DoctorCheck{
 			Name:    "Database Integrity",
 			Status:  StatusError,
-			Message: "Failed to run integrity check",
-			Detail:  err.Error(),
-			Fix:     "Run 'bd doctor --fix' to back up the corrupt DB and rebuild from JSONL (if available), or restore from backup",
+			Message: errorType,
+			Detail:  fmt.Sprintf("%s\n\nError: %s", recoverySteps, err.Error()),
+			Fix:     "See recovery steps above",
 		}
 	}
 	defer rows.Close()
@@ -348,7 +339,7 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 
 // CheckDatabaseJSONLSync checks if database and JSONL are in sync
 func CheckDatabaseJSONLSync(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Resolve database path (respects metadata.json override).
@@ -489,8 +480,21 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 		}
 
 		// Only warn if majority of issues have wrong prefix
+		// BUT: recognize that <prefix>-mol and <prefix>-wisp are valid variants
+		// created by molecule/wisp workflows (see internal/storage/sqlite/queries.go:166-170)
 		if mostCommonPrefix != dbPrefix && maxCount > jsonlCount/2 {
-			issues = append(issues, fmt.Sprintf("Prefix mismatch: database uses %q but most JSONL issues use %q", dbPrefix, mostCommonPrefix))
+			// Check if the common prefix is a known workflow variant of the db prefix
+			isValidVariant := false
+			for _, suffix := range []string{"-mol", "-wisp", "-eph"} {
+				if mostCommonPrefix == dbPrefix+suffix {
+					isValidVariant = true
+					break
+				}
+			}
+
+			if !isValidVariant {
+				issues = append(issues, fmt.Sprintf("Prefix mismatch: database uses %q but most JSONL issues use %q", dbPrefix, mostCommonPrefix))
+			}
 		}
 	}
 
@@ -569,6 +573,57 @@ func FixDBJSONLSync(path string) error {
 }
 
 // Helper functions
+
+// classifyDatabaseError classifies a database error and returns appropriate recovery guidance.
+// Returns the error type description and recovery steps based on error message and JSONL availability.
+func classifyDatabaseError(errMsg string, jsonlCount int, jsonlAvailable bool) (errorType, recoverySteps string) {
+	switch {
+	case strings.Contains(errMsg, "database is locked"):
+		errorType = "Database is locked"
+		recoverySteps = "1. Check for running bd processes: ps aux | grep bd\n" +
+			"2. Kill any stale processes\n" +
+			"3. Remove stale locks: rm .beads/beads.db-shm .beads/beads.db-wal .beads/daemon.lock\n" +
+			"4. Retry: bd doctor --fix"
+
+	case strings.Contains(errMsg, "not a database") || strings.Contains(errMsg, "file is not a database"):
+		errorType = "File is not a valid SQLite database"
+		if jsonlAvailable {
+			recoverySteps = fmt.Sprintf("Database file is corrupted beyond repair.\n\n"+
+				"Recovery steps:\n"+
+				"1. Backup corrupt database: mv .beads/beads.db .beads/beads.db.broken\n"+
+				"2. Rebuild from JSONL (%d issues): bd doctor --fix --force --source=jsonl\n"+
+				"3. Verify: bd stats", jsonlCount)
+		} else {
+			recoverySteps = "Database file is corrupted and no JSONL backup found.\n" +
+				"Manual recovery required:\n" +
+				"1. Restore from git: git checkout HEAD -- .beads/issues.jsonl\n" +
+				"2. Rebuild database: bd doctor --fix --force"
+		}
+
+	case strings.Contains(errMsg, "migration") || strings.Contains(errMsg, "validation failed"):
+		errorType = "Database migration or validation failed"
+		if jsonlAvailable {
+			recoverySteps = fmt.Sprintf("Database has validation errors (possibly orphaned dependencies).\n\n"+
+				"Recovery steps:\n"+
+				"1. Backup database: mv .beads/beads.db .beads/beads.db.broken\n"+
+				"2. Rebuild from JSONL (%d issues): bd doctor --fix --force --source=jsonl\n"+
+				"3. Verify: bd stats\n\n"+
+				"Alternative: bd doctor --fix --force (attempts to repair in-place)", jsonlCount)
+		} else {
+			recoverySteps = "Database validation failed and no JSONL backup available.\n" +
+				"Try: bd doctor --fix --force"
+		}
+
+	default:
+		errorType = "Failed to open database"
+		if jsonlAvailable {
+			recoverySteps = fmt.Sprintf("Run 'bd doctor --fix --source=jsonl' to rebuild from JSONL (%d issues)", jsonlCount)
+		} else {
+			recoverySteps = "Run 'bd doctor --fix --force' to attempt recovery"
+		}
+	}
+	return
+}
 
 // getDatabaseVersionFromPath reads the database version from the given path
 func getDatabaseVersionFromPath(dbPath string) string {
@@ -675,8 +730,22 @@ func detectPrefixFromJSONL(jsonlPath string) string {
 	return mostCommonPrefix
 }
 
-// NOTE: isNoDbModeConfigured has been consolidated into internal/config/local_config.go.
-// Use config.IsNoDbModeConfigured(beadsDir) instead.
+// isNoDbModeConfigured checks if no-db: true is set in config.yaml
+// Uses proper YAML parsing to avoid false matches in comments or nested keys
+func isNoDbModeConfigured(beadsDir string) bool {
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from beadsDir
+	if err != nil {
+		return false
+	}
+
+	var cfg localConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.NoDb
+}
 
 // CheckDatabaseSize warns when the database has accumulated many closed issues.
 // This is purely informational - pruning is NEVER auto-fixed because it
@@ -689,7 +758,7 @@ func detectPrefixFromJSONL(jsonlPath string) string {
 // irreversible. The user must make an explicit decision to delete their
 // closed issue history. We only provide guidance, never action.
 func CheckDatabaseSize(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Get database path

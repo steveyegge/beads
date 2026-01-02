@@ -502,6 +502,102 @@ func TestIssueTypeIsValid(t *testing.T) {
 	}
 }
 
+func TestIssueTypeRequiredSections(t *testing.T) {
+	tests := []struct {
+		issueType     IssueType
+		expectCount   int
+		expectHeading string // First heading if any
+	}{
+		{TypeBug, 2, "## Steps to Reproduce"},
+		{TypeFeature, 1, "## Acceptance Criteria"},
+		{TypeTask, 1, "## Acceptance Criteria"},
+		{TypeEpic, 1, "## Success Criteria"},
+		{TypeChore, 0, ""},
+		{TypeMessage, 0, ""},
+		{TypeMolecule, 0, ""},
+		{TypeGate, 0, ""},
+		{TypeAgent, 0, ""},
+		{TypeRole, 0, ""},
+		{TypeConvoy, 0, ""},
+		{TypeEvent, 0, ""},
+		{TypeMergeRequest, 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.issueType), func(t *testing.T) {
+			sections := tt.issueType.RequiredSections()
+			if len(sections) != tt.expectCount {
+				t.Errorf("IssueType(%q).RequiredSections() returned %d sections, want %d",
+					tt.issueType, len(sections), tt.expectCount)
+			}
+			if tt.expectCount > 0 && sections[0].Heading != tt.expectHeading {
+				t.Errorf("IssueType(%q).RequiredSections()[0].Heading = %q, want %q",
+					tt.issueType, sections[0].Heading, tt.expectHeading)
+			}
+		})
+	}
+}
+
+func TestAgentStateIsValid(t *testing.T) {
+	cases := []struct {
+		name  string
+		state AgentState
+		want  bool
+	}{
+		{"idle", StateIdle, true},
+		{"running", StateRunning, true},
+		{"empty", AgentState(""), true}, // empty allowed for non-agent beads
+		{"invalid", AgentState("dormant"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.IsValid(); got != tc.want {
+				t.Fatalf("AgentState(%q).IsValid() = %v, want %v", tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMolTypeIsValid(t *testing.T) {
+	cases := []struct {
+		name  string
+		type_ MolType
+		want  bool
+	}{
+		{"swarm", MolTypeSwarm, true},
+		{"patrol", MolTypePatrol, true},
+		{"work", MolTypeWork, true},
+		{"empty", MolType(""), true},
+		{"unknown", MolType("custom"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.type_.IsValid(); got != tc.want {
+				t.Fatalf("MolType(%q).IsValid() = %v, want %v", tc.type_, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIssueCompoundHelpers(t *testing.T) {
+	issue := &Issue{}
+	if issue.IsCompound() {
+		t.Fatalf("issue with no bonded refs should not be compound")
+	}
+	if constituents := issue.GetConstituents(); constituents != nil {
+		t.Fatalf("expected nil constituents for non-compound issue")
+	}
+
+	bonded := &Issue{BondedFrom: []BondRef{{SourceID: "proto-1", BondType: BondTypeSequential}}}
+	if !bonded.IsCompound() {
+		t.Fatalf("issue with bonded refs should be compound")
+	}
+	refs := bonded.GetConstituents()
+	if len(refs) != 1 || refs[0].SourceID != "proto-1" {
+		t.Fatalf("unexpected constituents: %#v", refs)
+	}
+}
+
 func TestDependencyTypeIsValid(t *testing.T) {
 	// IsValid now accepts any non-empty string up to 50 chars (Decision 004)
 	tests := []struct {
@@ -519,9 +615,9 @@ func TestDependencyTypeIsValid(t *testing.T) {
 		{DepAuthoredBy, true},
 		{DepAssignedTo, true},
 		{DepApprovedBy, true},
-		{DependencyType("custom-type"), true},  // Custom types are now valid
-		{DependencyType("any-string"), true},   // Any non-empty string is valid
-		{DependencyType(""), false},            // Empty is still invalid
+		{DependencyType("custom-type"), true}, // Custom types are now valid
+		{DependencyType("any-string"), true},  // Any non-empty string is valid
+		{DependencyType(""), false},           // Empty is still invalid
 		{DependencyType("this-is-a-very-long-dependency-type-that-exceeds-fifty-characters"), false}, // Too long
 	}
 
@@ -550,6 +646,10 @@ func TestDependencyTypeIsWellKnown(t *testing.T) {
 		{DepAuthoredBy, true},
 		{DepAssignedTo, true},
 		{DepApprovedBy, true},
+		{DepTracks, true},
+		{DepUntil, true},
+		{DepCausedBy, true},
+		{DepValidates, true},
 		{DependencyType("custom-type"), false},
 		{DependencyType("unknown"), false},
 	}
@@ -581,6 +681,10 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 		{DepAuthoredBy, false},
 		{DepAssignedTo, false},
 		{DepApprovedBy, false},
+		{DepTracks, false},
+		{DepUntil, false},
+		{DepCausedBy, false},
+		{DepValidates, false},
 		{DependencyType("custom-type"), false},
 	}
 
@@ -712,25 +816,25 @@ func TestTreeNodeEmbedding(t *testing.T) {
 
 func TestComputeContentHash(t *testing.T) {
 	issue1 := Issue{
-		ID:                "test-1",
-		Title:             "Test Issue",
-		Description:       "Description",
-		Status:            StatusOpen,
-		Priority:          2,
-		IssueType:         TypeFeature,
-		EstimatedMinutes:  intPtr(60),
+		ID:               "test-1",
+		Title:            "Test Issue",
+		Description:      "Description",
+		Status:           StatusOpen,
+		Priority:         2,
+		IssueType:        TypeFeature,
+		EstimatedMinutes: intPtr(60),
 	}
 
 	// Same content should produce same hash
 	issue2 := Issue{
-		ID:                "test-2", // Different ID
-		Title:             "Test Issue",
-		Description:       "Description",
-		Status:            StatusOpen,
-		Priority:          2,
-		IssueType:         TypeFeature,
-		EstimatedMinutes:  intPtr(60),
-		CreatedAt:         time.Now(), // Different timestamp
+		ID:               "test-2", // Different ID
+		Title:            "Test Issue",
+		Description:      "Description",
+		Status:           StatusOpen,
+		Priority:         2,
+		IssueType:        TypeFeature,
+		EstimatedMinutes: intPtr(60),
+		CreatedAt:        time.Now(), // Different timestamp
 	}
 
 	hash1 := issue1.ComputeContentHash()

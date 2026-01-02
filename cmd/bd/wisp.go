@@ -147,7 +147,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	varFlags, _ := cmd.Flags().GetStringSlice("var")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
 
 	// Parse variables
 	vars := make(map[string]string)
@@ -160,14 +160,15 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		vars[parts[0]] = parts[1]
 	}
 
-	// Try to load as formula first (ephemeral proto - gt-4v1eo)
+	// Try to load as formula first (ephemeral proto)
 	// If that fails, fall back to loading from DB (legacy proto beads)
 	var subgraph *TemplateSubgraph
 	var protoID string
 
-	// Try to cook formula inline (gt-4v1eo: ephemeral protos)
+	// Try to cook formula inline (ephemeral protos)
 	// This works for any valid formula name, not just "mol-" prefixed ones
-	sg, err := resolveAndCookFormula(args[0], nil)
+	// Pass vars for step condition filtering (bd-7zka.1)
+	sg, err := resolveAndCookFormulaWithVars(args[0], nil, vars)
 	if err == nil {
 		subgraph = sg
 		protoID = sg.Root.ID
@@ -228,7 +229,7 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Apply variable defaults from formula (gt-4v1eo)
+	// Apply variable defaults from formula
 	vars = applyVariableDefaults(vars, subgraph)
 
 	// Check for missing required variables (those without defaults)
@@ -256,8 +257,8 @@ func runWispCreate(cmd *cobra.Command, args []string) {
 	}
 
 	// Spawn as ephemeral in main database (Ephemeral=true, skips JSONL export)
-	// bd-hobo: Use "eph" prefix for distinct visual recognition
-	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, "eph")
+	// Use "wisp" prefix for distinct visual recognition
+	result, err := spawnMolecule(ctx, store, subgraph, vars, "", actor, true, "wisp")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating wisp: %v\n", err)
 		os.Exit(1)
@@ -663,11 +664,11 @@ func runWispGC(cmd *cobra.Command, args []string) {
 
 func init() {
 	// Wisp command flags (for direct create: bd mol wisp <proto>)
-	wispCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	wispCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	wispCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 
 	// Wisp create command flags (kept for backwards compat: bd mol wisp create <proto>)
-	wispCreateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	wispCreateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	wispCreateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 
 	wispListCmd.Flags().Bool("all", false, "Include closed wisps")

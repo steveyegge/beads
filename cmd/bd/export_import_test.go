@@ -360,3 +360,88 @@ func TestExportIncludesTombstones(t *testing.T) {
 		t.Error("Tombstone not found in JSONL output")
 	}
 }
+
+// TestCloseReasonRoundTrip verifies that close_reason is preserved through JSONL export/import (bd-lxzx)
+func TestCloseReasonRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store := newTestStoreWithPrefix(t, dbPath, "test")
+
+	// Create an issue and close it with a reason
+	issue := &types.Issue{
+		ID:        "test-close-reason",
+		Title:     "Issue to close",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Close the issue with a reason
+	closeReason := "Completed: all tests passing"
+	if err := store.CloseIssue(ctx, issue.ID, closeReason, "test-actor", ""); err != nil {
+		t.Fatalf("Failed to close issue: %v", err)
+	}
+
+	// Verify close_reason was stored
+	closed, err := store.GetIssue(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("Failed to get closed issue: %v", err)
+	}
+	if closed.CloseReason != closeReason {
+		t.Fatalf("CloseReason not stored: got %q, want %q", closed.CloseReason, closeReason)
+	}
+
+	// Export to JSONL
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		t.Fatalf("Failed to search issues: %v", err)
+	}
+
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	for _, i := range issues {
+		if err := encoder.Encode(i); err != nil {
+			t.Fatalf("Failed to encode issue: %v", err)
+		}
+	}
+
+	// Parse the JSONL and verify close_reason is present
+	var decoded types.Issue
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("Failed to decode JSONL: %v", err)
+	}
+
+	if decoded.CloseReason != closeReason {
+		t.Errorf("close_reason not preserved in JSONL: got %q, want %q", decoded.CloseReason, closeReason)
+	}
+
+	// Import into a new database and verify close_reason is preserved
+	newDBPath := filepath.Join(tmpDir, "import-test.db")
+	newStore := newTestStoreWithPrefix(t, newDBPath, "test")
+
+	// Re-create the issue in new database (simulating import)
+	decoded.ContentHash = "" // Clear so it gets recomputed
+	if err := newStore.CreateIssue(ctx, &decoded, "test"); err != nil {
+		t.Fatalf("Failed to import issue: %v", err)
+	}
+
+	// Verify the imported issue has close_reason
+	imported, err := newStore.GetIssue(ctx, decoded.ID)
+	if err != nil {
+		t.Fatalf("Failed to get imported issue: %v", err)
+	}
+
+	if imported.CloseReason != closeReason {
+		t.Errorf("close_reason not preserved after import: got %q, want %q", imported.CloseReason, closeReason)
+	}
+	if imported.Status != types.StatusClosed {
+		t.Errorf("Status not preserved: got %q, want %q", imported.Status, types.StatusClosed)
+	}
+}

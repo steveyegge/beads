@@ -1,0 +1,77 @@
+# Beads (bd)
+
+> Git-backed issue tracker for AI-supervised coding workflows.
+> Daemon-based CLI with formulas, molecules, and multi-agent coordination.
+
+## Quick Start
+
+Install:
+```bash
+brew tap steveyegge/beads && brew install bd
+```
+
+Initialize:
+```bash
+cd your-project && bd init --quiet
+```
+
+## Essential Commands
+
+```bash
+bd create "Title" -t bug -p 1 --json      # Create issue
+bd list --status open --json              # List issues
+bd show bd-42 --json                      # Show details
+bd update bd-42 --status in_progress      # Update status
+bd close bd-42 --reason "Done"            # Close issue
+bd ready --json                           # Show unblocked work
+bd sync                                   # Sync to git
+```
+
+## For AI Agents
+
+- Always use `--json` for programmatic access
+- Always include `--description` when creating issues
+- Use `--deps discovered-from:<id>` to link found issues
+- Run `bd sync` at end of every session
+
+## Key Concepts
+
+- **Issues**: Work items with priorities (0-4), types (bug/feature/task/epic/chore)
+- **Dependencies**: `blocks` (affects ready queue), `parent-child`, `discovered-from`, `related`
+- **Formulas**: Declarative workflow templates (TOML/JSON)
+- **Molecules**: Work graphs from formulas
+- **Gates**: Async coordination (human/timer/github)
+- **Wisps**: Ephemeral workflows (don't sync to git)
+
+## Recovery
+
+Quick fixes for common issues:
+
+- Database Corruption: `git checkout HEAD~1 -- .beads/`
+- Merge Conflicts: Resolve JSONL conflicts, then `bd sync`
+- Circular Dependencies: `bd doctor` (diagnose only, NEVER --fix)
+- Sync Failures: `bd sync --import-only`
+
+Full runbooks: https://steveyegge.github.io/beads/recovery/
+
+## Session Close Protocol
+
+Before ending any AI session:
+1. `bd sync` - push changes to git
+2. `bd status` - verify clean state
+3. Resolve conflicts before closing
+
+WARNING: Skipping sync causes data loss in multi-agent workflows.
+
+## Documentation
+
+- Full docs: https://steveyegge.github.io/beads/
+- CLI reference: https://steveyegge.github.io/beads/cli-reference
+- Agent guide: https://steveyegge.github.io/beads/integrations/claude-code
+- Complete LLM context: https://steveyegge.github.io/beads/llms-full.txt
+
+## Links
+
+- GitHub: https://github.com/steveyegge/beads
+- npm: https://www.npmjs.com/package/@beads/bd
+- PyPI (MCP): https://pypi.org/project/beads-mcp/

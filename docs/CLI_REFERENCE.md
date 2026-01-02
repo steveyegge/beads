@@ -75,10 +75,10 @@ echo "Description text" | bd create "Issue title" --body-file=- --json
 cat description.md | bd create "Issue title" --body-file - -p 1 --json
 
 # Create epic with hierarchical child tasks
-bd create "Auth System" -t epic -p 1 --json         # Returns: bd-a3f8e9
-bd create "Login UI" -p 1 --json                     # Auto-assigned: bd-a3f8e9.1
-bd create "Backend validation" -p 1 --json           # Auto-assigned: bd-a3f8e9.2
-bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.3
+bd create "Auth System" -t epic -p 1 --json                     # Returns: bd-a3f8e9
+bd create "Login UI" -p 1 --parent bd-a3f8e9 --json             # Auto-assigned: bd-a3f8e9.1
+bd create "Backend validation" -p 1 --parent bd-a3f8e9 --json   # Auto-assigned: bd-a3f8e9.2
+bd create "Tests" -p 1 --parent bd-a3f8e9 --json                # Auto-assigned: bd-a3f8e9.3
 
 # Create and link discovered work (one command)
 bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
@@ -142,6 +142,38 @@ bd label remove <id> [<id>...] <label> --json
 bd label list <id> --json
 bd label list-all --json
 ```
+
+### State (Labels as Cache)
+
+For operational state tracking on role beads. Uses `<dimension>:<value>` label convention.
+See [LABELS.md](LABELS.md#operational-state-pattern-labels-as-cache) for full pattern documentation.
+
+```bash
+# Query current state value
+bd state <id> <dimension>                    # Output: value
+bd state witness-abc patrol                  # Output: active
+bd state --json witness-abc patrol           # {"issue_id": "...", "dimension": "patrol", "value": "active"}
+
+# List all state dimensions on an issue
+bd state list <id> --json
+bd state list witness-abc                    # patrol: active, mode: normal, health: healthy
+
+# Set state (creates event + updates label atomically)
+bd set-state <id> <dimension>=<value> --reason "explanation" --json
+bd set-state witness-abc patrol=muted --reason "Investigating stuck polecat"
+bd set-state witness-abc mode=degraded --reason "High error rate"
+```
+
+**Common dimensions:**
+- `patrol`: active, muted, suspended
+- `mode`: normal, degraded, maintenance
+- `health`: healthy, warning, failing
+- `status`: idle, working, blocked
+
+**What `set-state` does:**
+1. Creates event bead with reason (source of truth)
+2. Removes old `<dimension>:*` label if exists
+3. Adds new `<dimension>:<value>` label (cache)
 
 ## Filtering & Search
 
@@ -574,7 +606,7 @@ bd sync
 - `tombstone` - Deleted issue (suppresses resurrections)
 - `pinned` - Stays open indefinitely (used for hooks, anchors)
 
-**Note:** The `pinned` status is used by Gas Town for hook management and persistent work items that should never be auto-closed or cleaned up.
+**Note:** The `pinned` status is used by orchestrators for hook management and persistent work items that should never be auto-closed or cleaned up.
 
 ## Priorities
 

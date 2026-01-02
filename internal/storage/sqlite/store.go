@@ -27,6 +27,7 @@ type SQLiteStorage struct {
 	closed      atomic.Bool // Tracks whether Close() has been called
 	connStr     string      // Connection string for reconnection
 	busyTimeout time.Duration
+	readOnly    bool              // True if opened in read-only mode (GH#804)
 	freshness   *FreshnessChecker // Optional freshness checker for daemon mode
 	reconnectMu sync.RWMutex      // Protects reconnection and db access (GH#607)
 }
@@ -120,7 +121,7 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 
 	// For all in-memory databases (including file::memory:), force single connection.
 	// SQLite's in-memory databases are isolated per connection by default.
-	// Without this, different connections in the pool can't see each other's writes (bd-b121, bd-yvlc).
+	// Without this, different connections in the pool can't see each other's writes.
 	isInMemory := path == ":memory:" ||
 		(strings.HasPrefix(path, "file:") && strings.Contains(path, "mode=memory"))
 	if isInMemory {
@@ -130,7 +131,7 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 		// For file-based databases in daemon mode, limit connection pool to prevent
 		// connection exhaustion under concurrent load. SQLite WAL mode supports
 		// 1 writer + unlimited readers, but we limit to prevent goroutine pile-up
-		// on write lock contention (bd-qhws).
+		// on write lock contention.
 		maxConns := runtime.NumCPU() + 1 // 1 writer + N readers
 		db.SetMaxOpenConns(maxConns)
 		db.SetMaxIdleConns(2)
@@ -159,7 +160,7 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 		return nil, err
 	}
 
-	// Verify schema compatibility after migrations (bd-ckvw)
+	// Verify schema compatibility after migrations
 	// First attempt
 	if err := verifySchemaCompatibility(db); err != nil {
 		// Schema probe failed - retry migrations once
@@ -191,7 +192,7 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 		busyTimeout: busyTimeout,
 	}
 
-	// Hydrate from multi-repo config if configured (bd-307)
+	// Hydrate from multi-repo config if configured
 	// Skip for in-memory databases (used in tests)
 	if path != ":memory:" {
 		_, err := storage.HydrateFromMultiRepo(ctx)
@@ -203,16 +204,88 @@ func NewWithTimeout(ctx context.Context, path string, busyTimeout time.Duration)
 	return storage, nil
 }
 
+// NewReadOnly opens an existing database in read-only mode.
+// This prevents any modification to the database file, including:
+// - WAL journal mode changes
+// - Schema/migration updates
+// - WAL checkpointing on close
+//
+// Use this for read-only commands (list, ready, show, stats, etc.) to avoid
+// triggering file watchers. See GH#804.
+//
+// Returns an error if the database doesn't exist (unlike New which creates it).
+func NewReadOnly(ctx context.Context, path string) (*SQLiteStorage, error) {
+	return NewReadOnlyWithTimeout(ctx, path, 30*time.Second)
+}
+
+// NewReadOnlyWithTimeout opens an existing database in read-only mode with configurable timeout.
+func NewReadOnlyWithTimeout(ctx context.Context, path string, busyTimeout time.Duration) (*SQLiteStorage, error) {
+	// Read-only mode doesn't make sense for in-memory databases
+	if path == ":memory:" || (strings.HasPrefix(path, "file:") && strings.Contains(path, "mode=memory")) {
+		return nil, fmt.Errorf("read-only mode not supported for in-memory databases")
+	}
+
+	// Check that the database file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("database does not exist: %s", path)
+	}
+
+	// Convert timeout to milliseconds for SQLite pragma
+	timeoutMs := int64(busyTimeout / time.Millisecond)
+
+	// Build read-only connection string with mode=ro
+	// This prevents any writes to the database file
+	connStr := fmt.Sprintf("file:%s?mode=ro&_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_time_format=sqlite", path, timeoutMs)
+
+	db, err := sql.Open("sqlite3", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database read-only: %w", err)
+	}
+
+	// Read-only connections don't need a large pool
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Skip schema initialization and migrations - we're read-only
+	// The database must already be properly initialized
+
+	// Convert to absolute path for consistency
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	return &SQLiteStorage{
+		db:          db,
+		dbPath:      absPath,
+		connStr:     connStr,
+		busyTimeout: busyTimeout,
+		readOnly:    true,
+	}, nil
+}
+
 // Close closes the database connection.
-// It checkpoints the WAL to ensure all writes are flushed to the main database file.
+// For read-write connections, it checkpoints the WAL to ensure all writes
+// are flushed to the main database file.
+// For read-only connections (GH#804), it skips checkpointing to avoid file modifications.
 func (s *SQLiteStorage) Close() error {
 	s.closed.Store(true)
 	// Acquire write lock to prevent racing with reconnect() (GH#607)
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
-	// Checkpoint WAL to ensure all writes are persisted to the main database file.
-	// Without this, writes may be stranded in the WAL and lost between CLI invocations.
-	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	// Only checkpoint for read-write connections (GH#804)
+	// Read-only connections should not modify the database file at all.
+	if !s.readOnly {
+		// Checkpoint WAL to ensure all writes are persisted to the main database file.
+		// Without this, writes may be stranded in the WAL and lost between CLI invocations.
+		_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	}
 	return s.db.Close()
 }
 

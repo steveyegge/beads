@@ -640,7 +640,7 @@ func TestCloseIssue(t *testing.T) {
 		t.Fatalf("CreateIssue failed: %v", err)
 	}
 
-	err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+	err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 	if err != nil {
 		t.Fatalf("CloseIssue failed: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestClosedAtInvariant(t *testing.T) {
 		}
 
 		// Close the issue
-		err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+		err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 		if err != nil {
 			t.Fatalf("CloseIssue failed: %v", err)
 		}
@@ -812,7 +812,7 @@ func TestSearchIssues(t *testing.T) {
 		}
 		// Close the third issue
 		if issue.Title == "Another bug" {
-			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 			if err != nil {
 				t.Fatalf("CloseIssue failed: %v", err)
 			}
@@ -977,7 +977,7 @@ func TestGetStatistics(t *testing.T) {
 		}
 		// Close the one that should be closed
 		if issue.Title == "Closed task" {
-			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user")
+			err = store.CloseIssue(ctx, issue.ID, "Done", "test-user", "")
 			if err != nil {
 				t.Fatalf("CloseIssue failed: %v", err)
 			}
@@ -1466,6 +1466,100 @@ func TestDeleteConfig(t *testing.T) {
 	}
 	if value != "" {
 		t.Errorf("Expected empty value after deletion, got: %s", value)
+	}
+}
+
+func TestConvoyReactiveCompletion(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a convoy
+	convoy := &types.Issue{
+		Title:     "Test Convoy",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeConvoy,
+	}
+	err := store.CreateIssue(ctx, convoy, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue convoy failed: %v", err)
+	}
+
+	// Create two issues to track
+	issue1 := &types.Issue{
+		Title:     "Tracked Issue 1",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	err = store.CreateIssue(ctx, issue1, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue issue1 failed: %v", err)
+	}
+
+	issue2 := &types.Issue{
+		Title:     "Tracked Issue 2",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	err = store.CreateIssue(ctx, issue2, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue issue2 failed: %v", err)
+	}
+
+	// Add tracking dependencies: convoy tracks issue1 and issue2
+	dep1 := &types.Dependency{
+		IssueID:     convoy.ID,
+		DependsOnID: issue1.ID,
+		Type:        types.DepTracks,
+	}
+	err = store.AddDependency(ctx, dep1, "test-user")
+	if err != nil {
+		t.Fatalf("AddDependency for issue1 failed: %v", err)
+	}
+
+	dep2 := &types.Dependency{
+		IssueID:     convoy.ID,
+		DependsOnID: issue2.ID,
+		Type:        types.DepTracks,
+	}
+	err = store.AddDependency(ctx, dep2, "test-user")
+	if err != nil {
+		t.Fatalf("AddDependency for issue2 failed: %v", err)
+	}
+
+	// Close first issue - convoy should still be open
+	err = store.CloseIssue(ctx, issue1.ID, "Done", "test-user", "")
+	if err != nil {
+		t.Fatalf("CloseIssue issue1 failed: %v", err)
+	}
+
+	convoyAfter1, err := store.GetIssue(ctx, convoy.ID)
+	if err != nil {
+		t.Fatalf("GetIssue convoy after issue1 closed failed: %v", err)
+	}
+	if convoyAfter1.Status == types.StatusClosed {
+		t.Error("Convoy should NOT be closed after only first tracked issue is closed")
+	}
+
+	// Close second issue - convoy should auto-close now
+	err = store.CloseIssue(ctx, issue2.ID, "Done", "test-user", "")
+	if err != nil {
+		t.Fatalf("CloseIssue issue2 failed: %v", err)
+	}
+
+	convoyAfter2, err := store.GetIssue(ctx, convoy.ID)
+	if err != nil {
+		t.Fatalf("GetIssue convoy after issue2 closed failed: %v", err)
+	}
+	if convoyAfter2.Status != types.StatusClosed {
+		t.Errorf("Convoy should be auto-closed when all tracked issues are closed, got status: %v", convoyAfter2.Status)
+	}
+	if convoyAfter2.CloseReason != "All tracked issues completed" {
+		t.Errorf("Convoy close reason should be 'All tracked issues completed', got: %q", convoyAfter2.CloseReason)
 	}
 }
 

@@ -1130,3 +1130,62 @@ func TestCreateBeadsWorktree_MissingButRegistered(t *testing.T) {
 		t.Errorf("Recreated worktree should be valid: valid=%v, err=%v", valid, err)
 	}
 }
+
+// TestNormalizeBeadsRelPath tests path normalization for bare repo worktrees (GH#785, GH#810)
+func TestNormalizeBeadsRelPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "already normalized path",
+			input:    ".beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "worktree prefix - main",
+			input:    "main/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "worktree prefix - feature branch",
+			input:    "feat-tts-config/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "nested worktree prefix",
+			input:    "worktrees/feature/.beads/issues.jsonl",
+			expected: ".beads/issues.jsonl",
+		},
+		{
+			name:     "metadata file",
+			input:    "main/.beads/metadata.json",
+			expected: ".beads/metadata.json",
+		},
+		{
+			name:     "no .beads in path",
+			input:    "some/other/path.jsonl",
+			expected: "some/other/path.jsonl",
+		},
+		{
+			name:     "only .beads dir (no trailing slash - not normalized)",
+			input:    ".beads",
+			expected: ".beads",
+		},
+		{
+			name:     "empty path",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NormalizeBeadsRelPath(tt.input)
+			if result != tt.expected {
+				t.Errorf("NormalizeBeadsRelPath(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

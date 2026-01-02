@@ -486,6 +486,103 @@ func TestCreateSuite(t *testing.T) {
 		}
 	})
 
+	// GH#820: Tests for DueAt and DeferUntil fields
+	t.Run("WithDueAt", func(t *testing.T) {
+		// Create issue with due date
+		dueTime := time.Now().Add(24 * time.Hour) // Due in 24 hours
+		issue := &types.Issue{
+			Title:     "Issue with due date",
+			Priority:  1,
+			Status:    types.StatusOpen,
+			IssueType: types.TypeTask,
+			DueAt:     &dueTime,
+			CreatedAt: time.Now(),
+		}
+
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue with due date: %v", err)
+		}
+
+		// Retrieve and verify
+		retrieved, err := s.GetIssue(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("failed to get issue: %v", err)
+		}
+
+		if retrieved.DueAt == nil {
+			t.Fatal("expected DueAt to be set")
+		}
+		// Compare with 1-second tolerance for database round-trip
+		diff := retrieved.DueAt.Sub(dueTime)
+		if diff < -time.Second || diff > time.Second {
+			t.Errorf("DueAt mismatch: got %v, want %v", retrieved.DueAt, dueTime)
+		}
+	})
+
+	t.Run("WithDeferUntil", func(t *testing.T) {
+		// Create issue with defer_until
+		deferTime := time.Now().Add(2 * time.Hour) // Defer for 2 hours
+		issue := &types.Issue{
+			Title:      "Issue with defer",
+			Priority:   1,
+			Status:     types.StatusOpen,
+			IssueType:  types.TypeTask,
+			DeferUntil: &deferTime,
+			CreatedAt:  time.Now(),
+		}
+
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue with defer: %v", err)
+		}
+
+		// Retrieve and verify
+		retrieved, err := s.GetIssue(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("failed to get issue: %v", err)
+		}
+
+		if retrieved.DeferUntil == nil {
+			t.Fatal("expected DeferUntil to be set")
+		}
+		// Compare with 1-second tolerance for database round-trip
+		diff := retrieved.DeferUntil.Sub(deferTime)
+		if diff < -time.Second || diff > time.Second {
+			t.Errorf("DeferUntil mismatch: got %v, want %v", retrieved.DeferUntil, deferTime)
+		}
+	})
+
+	t.Run("WithBothDueAndDefer", func(t *testing.T) {
+		// Create issue with both due and defer
+		dueTime := time.Now().Add(48 * time.Hour)  // Due in 48 hours
+		deferTime := time.Now().Add(24 * time.Hour) // Defer for 24 hours
+		issue := &types.Issue{
+			Title:      "Issue with both due and defer",
+			Priority:   1,
+			Status:     types.StatusOpen,
+			IssueType:  types.TypeTask,
+			DueAt:      &dueTime,
+			DeferUntil: &deferTime,
+			CreatedAt:  time.Now(),
+		}
+
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		// Retrieve and verify both fields
+		retrieved, err := s.GetIssue(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("failed to get issue: %v", err)
+		}
+
+		if retrieved.DueAt == nil {
+			t.Fatal("expected DueAt to be set")
+		}
+		if retrieved.DeferUntil == nil {
+			t.Fatal("expected DeferUntil to be set")
+		}
+	})
+
 	t.Run("DiscoveredFromInheritsSourceRepo", func(t *testing.T) {
 		// Create a parent issue with a custom source_repo
 		parent := &types.Issue{

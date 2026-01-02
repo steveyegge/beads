@@ -57,7 +57,7 @@ func (h *epicTestHelper) addParentChildDependency(childID, parentID string) {
 }
 
 func (h *epicTestHelper) closeIssue(id, reason string) {
-	if err := h.store.CloseIssue(h.ctx, id, reason, "test-user"); err != nil {
+	if err := h.store.CloseIssue(h.ctx, id, reason, "test-user", ""); err != nil {
 		h.t.Fatalf("CloseIssue (%s) failed: %v", id, err)
 	}
 }

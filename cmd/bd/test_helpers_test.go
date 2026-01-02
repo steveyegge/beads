@@ -23,6 +23,14 @@ func ensureTestMode(t *testing.T) {
 	})
 }
 
+// ensureCleanGlobalState resets global state that may have been modified by other tests.
+// Call this at the start of tests that manipulate globals directly.
+func ensureCleanGlobalState(t *testing.T) {
+	t.Helper()
+	// Reset CommandContext so accessor functions fall back to globals
+	resetCommandContext()
+}
+
 // failIfProductionDatabase checks if the database path is in a production directory
 // and fails the test to prevent test pollution (bd-2c5a)
 func failIfProductionDatabase(t *testing.T, dbPath string) {

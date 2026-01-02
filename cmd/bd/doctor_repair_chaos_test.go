@@ -18,6 +18,7 @@ import (
 )
 
 func TestDoctorRepair_CorruptDatabase_NotADatabase_RebuildFromJSONL(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -48,6 +49,7 @@ func TestDoctorRepair_CorruptDatabase_NotADatabase_RebuildFromJSONL(t *testing.T
 }
 
 func TestDoctorRepair_CorruptDatabase_NoJSONL_FixFails(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-nojsonl-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -86,6 +88,7 @@ func TestDoctorRepair_CorruptDatabase_NoJSONL_FixFails(t *testing.T) {
 }
 
 func TestDoctorRepair_CorruptDatabase_BacksUpSidecars(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-sidecars-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -141,6 +144,7 @@ func TestDoctorRepair_CorruptDatabase_BacksUpSidecars(t *testing.T) {
 }
 
 func TestDoctorRepair_CorruptDatabase_WithRunningDaemon_FixSucceeds(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-daemon-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -188,6 +192,7 @@ func TestDoctorRepair_CorruptDatabase_WithRunningDaemon_FixSucceeds(t *testing.T
 }
 
 func TestDoctorRepair_JSONLIntegrity_MalformedLine_ReexportFromDB(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-jsonl-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -228,6 +233,7 @@ func TestDoctorRepair_JSONLIntegrity_MalformedLine_ReexportFromDB(t *testing.T) 
 }
 
 func TestDoctorRepair_DatabaseIntegrity_DBWriteLocked_ImportFailsFast(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-db-locked-*")
 	dbPath := filepath.Join(ws, ".beads", "beads.db")
@@ -277,6 +283,7 @@ func TestDoctorRepair_DatabaseIntegrity_DBWriteLocked_ImportFailsFast(t *testing
 }
 
 func TestDoctorRepair_CorruptDatabase_ReadOnlyBeadsDir_PermissionsFixMakesWritable(t *testing.T) {
+	requireTestGuardDisabled(t)
 	bdExe := buildBDForTest(t)
 	ws := mkTmpDirInTmp(t, "bd-doctor-chaos-readonly-*")
 	beadsDir := filepath.Join(ws, ".beads")

@@ -36,6 +36,8 @@ Tool-level settings you can configure:
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
+| `validation.on-create` | - | `BD_VALIDATION_ON_CREATE` | `none` | Template validation on create: `none`, `warn`, `error` |
+| `validation.on-sync` | - | `BD_VALIDATION_ON_SYNC` | `none` | Template validation before sync: `none`, `warn`, `error` |
 | `git.author` | - | `BD_GIT_AUTHOR` | (none) | Override commit author for beads commits |
 | `git.no-gpg-sign` | - | `BD_GIT_NO_GPG_SIGN` | `false` | Disable GPG signing for beads commits |
 | `directory.labels` | - | - | (none) | Map directories to labels for automatic filtering |
@@ -83,6 +85,13 @@ flush-debounce: 15s
 # Require descriptions on all issues (enforces context for future work)
 create:
   require-description: true
+
+# Template validation settings (bd-t7jq)
+# Validates that issues include required sections based on issue type
+# Values: none (default), warn (print warning), error (block operation)
+validation:
+  on-create: warn   # Warn when creating issues missing sections
+  on-sync: none     # No validation on sync (backwards compatible)
 
 # Git commit signing options (GH#600)
 # Useful when you have Touch ID commit signing that prompts for each commit

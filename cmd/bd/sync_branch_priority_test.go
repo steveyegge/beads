@@ -146,3 +146,106 @@ func TestSyncBranchConfigPriorityOverUpstream(t *testing.T) {
 		}
 	})
 }
+
+// TestSyncBranchBypassesGitHasBeadsChanges tests that when sync.branch is configured,
+// bd sync bypasses gitHasBeadsChanges and always calls CommitToSyncBranch.
+// This is the regression test for GH#812: when .beads/ is gitignored on code branches
+// (but tracked on the sync branch), gitHasBeadsChanges would return false, causing
+// sync to skip CommitToSyncBranch entirely - even though CommitToSyncBranch has its
+// own internal change detection that checks the worktree where gitignore is different.
+func TestSyncBranchBypassesGitHasBeadsChanges(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+
+	t.Run("CommitToSyncBranch detects changes even when main repo has gitignored beads", func(t *testing.T) {
+		// Setup: Create a git repo with sync-branch configured
+		tmpDir, cleanup := setupGitRepo(t)
+		defer cleanup()
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatalf("Failed to create .beads dir: %v", err)
+		}
+
+		// Create a sync branch with initial content
+		syncBranch := "beads-sync"
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+		// Write initial content
+		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Initial"}`+"\n"), 0600); err != nil {
+			t.Fatalf("Failed to write initial JSONL: %v", err)
+		}
+
+		// Create sync branch and commit the initial content
+		if err := exec.Command("git", "checkout", "-b", syncBranch).Run(); err != nil {
+			t.Fatalf("Failed to create sync branch: %v", err)
+		}
+		if err := exec.Command("git", "add", ".").Run(); err != nil {
+			t.Fatalf("Failed to add files: %v", err)
+		}
+		if err := exec.Command("git", "commit", "-m", "initial sync").Run(); err != nil {
+			t.Fatalf("Failed to commit: %v", err)
+		}
+		if err := exec.Command("git", "checkout", "main").Run(); err != nil {
+			t.Fatalf("Failed to checkout main: %v", err)
+		}
+
+		// Recreate .beads directory on main branch (it may not exist after checkout)
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatalf("Failed to recreate .beads dir: %v", err)
+		}
+
+		// Now add a gitignore that ignores all beads files on the code branch
+		// (simulating the pattern from GH#812)
+		gitignorePath := filepath.Join(beadsDir, ".gitignore")
+		gitignoreContent := `# On code branches, ignore all data files.
+# The beads-sync branch tracks issues.jsonl, etc.
+*
+!.gitignore
+`
+		if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0600); err != nil {
+			t.Fatalf("Failed to write .gitignore: %v", err)
+		}
+		if err := exec.Command("git", "add", gitignorePath).Run(); err != nil {
+			t.Fatalf("Failed to add .gitignore: %v", err)
+		}
+		if err := exec.Command("git", "commit", "-m", "add gitignore").Run(); err != nil {
+			t.Fatalf("Failed to commit .gitignore: %v", err)
+		}
+
+		// Now update the JSONL file (this change is gitignored on main branch)
+		newContent := `{"id":"test-1","title":"Initial"}` + "\n" + `{"id":"test-2","title":"New issue"}` + "\n"
+		if err := os.WriteFile(jsonlPath, []byte(newContent), 0600); err != nil {
+			t.Fatalf("Failed to update JSONL: %v", err)
+		}
+
+		// Verify gitHasBeadsChanges returns false (file is gitignored)
+		hasChanges, err := gitHasBeadsChanges(ctx)
+		if err != nil {
+			t.Fatalf("gitHasBeadsChanges error: %v", err)
+		}
+		if hasChanges {
+			t.Log("Note: gitHasBeadsChanges returned true (gitignore may not be working as expected in test env)")
+			// Continue test anyway - the key assertion is that CommitToSyncBranch works
+		} else {
+			t.Log("gitHasBeadsChanges correctly returned false (file is gitignored)")
+		}
+
+		// The key assertion: CommitToSyncBranch should still detect and commit changes
+		// because it checks the worktree where the gitignore is different
+		result, err := syncbranch.CommitToSyncBranch(ctx, tmpDir, syncBranch, jsonlPath, false)
+		if err != nil {
+			t.Fatalf("CommitToSyncBranch error: %v", err)
+		}
+
+		if !result.Committed {
+			t.Error("CommitToSyncBranch() Committed = false, want true")
+			t.Error("This indicates the GH#812 fix regression: sync branch worktree should detect changes even when main repo has files gitignored")
+		} else {
+			t.Log("CommitToSyncBranch correctly detected and committed changes to worktree")
+		}
+	})
+}

@@ -13,17 +13,15 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// TODO: Consider integrating into 'bd doctor' migration detection
 var migrateSyncCmd = &cobra.Command{
-	Use:     "migrate-sync <branch-name>",
-	GroupID: "maint",
+	Use:     "sync <branch-name>",
 	Short:   "Migrate to sync.branch workflow for multi-clone setups",
 	Long: `Migrate to using a dedicated sync branch for beads data.
 
 This command configures the repository to commit .beads changes to a separate
 branch (e.g., "beads-sync") instead of the current working branch. This is
-essential for multi-clone setups like Gas Town where multiple clones work
-independently but need to sync beads data.
+essential for multi-clone setups where multiple clones work independently
+but need to sync beads data.
 
 The command will:
   1. Validate the current state (not already configured, not on sync branch)
@@ -60,7 +58,14 @@ Examples:
 func init() {
 	migrateSyncCmd.Flags().Bool("dry-run", false, "Preview migration without making changes")
 	migrateSyncCmd.Flags().Bool("force", false, "Force migration even if already configured")
-	rootCmd.AddCommand(migrateSyncCmd)
+	migrateCmd.AddCommand(migrateSyncCmd)
+
+	// Backwards compatibility alias at root level (hidden)
+	migrateSyncAliasCmd := *migrateSyncCmd
+	migrateSyncAliasCmd.Use = "migrate-sync"
+	migrateSyncAliasCmd.Hidden = true
+	migrateSyncAliasCmd.Deprecated = "use 'bd migrate sync' instead (will be removed in v1.0.0)"
+	rootCmd.AddCommand(&migrateSyncAliasCmd)
 }
 
 func runMigrateSync(ctx context.Context, branchName string, dryRun, force bool) error {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -96,6 +97,9 @@ func TestGetVersionsSinceOrder(t *testing.T) {
 }
 
 func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
 	origPreviousVersion := previousVersion
@@ -104,9 +108,20 @@ func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
 		previousVersion = origPreviousVersion
 	}()
 
+	// Reset state to ensure clean starting point
+	versionUpgradeDetected = false
+	previousVersion = ""
+
 	// Change to temp directory with no .beads
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+
+	// Reset git caches so IsWorktree() returns fresh results for the temp dir
+	git.ResetCaches()
+
+	// Set BEADS_DIR to temp directory to prevent FindBeadsDir from walking up
+	// or finding the worktree's main repository .beads directory
+	t.Setenv("BEADS_DIR", tmpDir)
 
 	// trackBdVersion should silently succeed
 	trackBdVersion()
@@ -118,6 +133,9 @@ func TestTrackBdVersion_NoBeadsDir(t *testing.T) {
 }
 
 func TestTrackBdVersion_FirstRun(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Create temp .beads directory with a project file (bd-420)
 	// FindBeadsDir now requires actual project files, not just directory existence
 	tmpDir := t.TempDir()
@@ -130,6 +148,10 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
 		t.Fatalf("Failed to create db file: %v", err)
 	}
+
+	// Set BEADS_DIR to force FindBeadsDir to use our temp directory
+	// This prevents finding the actual .beads in a git worktree
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	// Change to temp directory
 	t.Chdir(tmpDir)
@@ -163,12 +185,19 @@ func TestTrackBdVersion_FirstRun(t *testing.T) {
 }
 
 func TestTrackBdVersion_UpgradeDetection(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
 	// Create temp .beads directory
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create .beads: %v", err)
 	}
+
+	// Set BEADS_DIR to force FindBeadsDir to use our temp directory
+	// This prevents finding the actual .beads in a git worktree
+	t.Setenv("BEADS_DIR", beadsDir)
 
 	// Change to temp directory
 	t.Chdir(tmpDir)

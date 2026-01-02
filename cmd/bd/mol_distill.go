@@ -113,7 +113,7 @@ func runMolDistill(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	varFlags, _ := cmd.Flags().GetStringSlice("var")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	outputDir, _ := cmd.Flags().GetString("output")
 
@@ -363,7 +363,7 @@ func subgraphToFormula(subgraph *TemplateSubgraph, name string, replacements map
 }
 
 func init() {
-	molDistillCmd.Flags().StringSlice("var", []string{}, "Replace value with {{variable}} placeholder (variable=value)")
+	molDistillCmd.Flags().StringArray("var", []string{}, "Replace value with {{variable}} placeholder (variable=value)")
 	molDistillCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	molDistillCmd.Flags().String("output", "", "Output directory for formula file")
 

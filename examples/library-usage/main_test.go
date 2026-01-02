@@ -93,7 +93,7 @@ func TestExampleCompiles(t *testing.T) {
 	}
 
 	// Close issue (from example code)
-	if err := store.CloseIssue(ctx, newIssue.ID, "Test complete", "test"); err != nil {
+	if err := store.CloseIssue(ctx, newIssue.ID, "Test complete", "test", ""); err != nil {
 		t.Fatalf("Failed to close issue: %v", err)
 	}
 

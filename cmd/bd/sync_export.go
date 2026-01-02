@@ -10,8 +10,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // exportToJSONL exports the database to JSONL format
@@ -60,7 +63,7 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 		}
 	}
 
-	// Filter out wisps - they should never be exported to JSONL (bd-687g)
+	// Filter out wisps - they should never be exported to JSONL
 	// Wisps exist only in SQLite and are shared via .beads/redirect, not JSONL.
 	// This prevents "zombie" issues that resurrect after mol squash deletes them.
 	filteredIssues := make([]*types.Issue, 0, len(issues))
@@ -150,9 +153,8 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	// Clear auto-flush state
 	clearAutoFlushState()
 
-	// Update jsonl_content_hash metadata to enable content-based staleness detection (bd-khnb fix)
+	// Update jsonl_content_hash metadata to enable content-based staleness detection
 	// After export, database and JSONL are in sync, so update hash to prevent unnecessary auto-import
-	// Renamed from last_import_hash (bd-39o) - more accurate since updated on both import AND export
 	if currentHash, err := computeJSONLHash(jsonlPath); err == nil {
 		if err := store.SetMetadata(ctx, "jsonl_content_hash", currentHash); err != nil {
 			// Non-fatal warning: Metadata update failures are intentionally non-fatal to prevent blocking
@@ -166,7 +168,7 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 			// Non-fatal warning (see above comment about graceful degradation)
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_import_time: %v\n", err)
 		}
-		// Note: mtime tracking removed in bd-v0y fix (git doesn't preserve mtime)
+		// Note: mtime tracking removed because git doesn't preserve mtime
 	}
 
 	// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
@@ -176,6 +178,66 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 		// Non-fatal warning
 		fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
+	}
+
+	return nil
+}
+
+// validateOpenIssuesForSync validates all open issues against their templates
+// before export, based on the validation.on-sync config setting.
+// Returns an error if validation.on-sync is "error" and issues fail validation.
+// Prints warnings if validation.on-sync is "warn".
+// Does nothing if validation.on-sync is "none" (default).
+func validateOpenIssuesForSync(ctx context.Context) error {
+	validationMode := config.GetString("validation.on-sync")
+	if validationMode == "none" || validationMode == "" {
+		return nil
+	}
+
+	// Ensure store is active
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("failed to initialize store for validation: %w", err)
+	}
+
+	// Get all issues (excluding tombstones) and filter to open ones
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return fmt.Errorf("failed to get issues for validation: %w", err)
+	}
+
+	// Filter to only open issues (not closed, not tombstones)
+	var issues []*types.Issue
+	for _, issue := range allIssues {
+		if issue.Status != types.StatusClosed && issue.Status != types.StatusTombstone {
+			issues = append(issues, issue)
+		}
+	}
+
+	// Validate each issue
+	var warnings []string
+	for _, issue := range issues {
+		if err := validation.LintIssue(issue); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", issue.ID, err))
+		}
+	}
+
+	if len(warnings) == 0 {
+		return nil
+	}
+
+	// Report based on mode
+	if validationMode == "error" {
+		fmt.Fprintf(os.Stderr, "%s Validation failed for %d issue(s):\n", ui.RenderFail("✗"), len(warnings))
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  - %s\n", w)
+		}
+		return fmt.Errorf("template validation failed: %d issues missing required sections (set validation.on-sync: none or warn to proceed)", len(warnings))
+	}
+
+	// warn mode: print warnings but proceed
+	fmt.Fprintf(os.Stderr, "%s Validation warnings for %d issue(s):\n", ui.RenderWarn("⚠"), len(warnings))
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "  - %s\n", w)
 	}
 
 	return nil

@@ -1,7 +1,7 @@
 {
   "formula": "beads-release",
   "type": "workflow",
-  "description": "Beads release workflow - from version bump to verified release.\n\nThis formula orchestrates a complete release cycle:\n1. Preflight checks (clean git, up to date)\n2. Documentation updates (CHANGELOG, info.go)\n3. Version bump (all components)\n4. Git operations (commit, tag, push)\n5. CI verification (GitHub Actions)\n6. Artifact verification (GitHub, npm, PyPI)\n7. Local installation update\n8. Daemon restart\n\n## Usage\n\n```bash\nbd wisp create beads-release --var version=0.37.0\n```\n\nOr assign to a polecat:\n```bash\ngt sling beads/polecats/p1 --formula beads-release --var version=0.37.0\n```",
+  "description": "Beads release workflow - from version bump to verified release.\n\nThis formula orchestrates a complete release cycle:\n1. Preflight checks (clean git, synced beads, up to date)\n2. Documentation updates (CHANGELOG, info.go)\n3. Version bump (all components)\n4. Git operations (commit, tag, push)\n5. CI verification (GitHub Actions)\n6. Artifact verification (GitHub, npm, PyPI)\n7. Local installation update (with verification gate)\n8. Daemon restart (with version verification)\n9. Post-release cleanup\n\n## Usage\n\n```bash\nbd wisp create beads-release --var version=0.37.0\n```\n\nOr assign to a polecat:\n```bash\ngt sling beads/polecats/p1 --formula beads-release --var version=0.37.0\n```",
   "version": 1,
   "vars": {
     "version": {
@@ -16,10 +16,16 @@
       "description": "Ensure working tree is clean before starting release.\n\n```bash\ngit status\n```\n\nIf there are uncommitted changes, either:\n- Commit them first\n- Stash them: `git stash`\n- Abort and resolve"
     },
     {
+      "id": "preflight-sync",
+      "title": "Preflight: Sync beads",
+      "description": "Ensure beads are synced before starting release.\n\n```bash\nbd sync\n```\n\nThis catches:\n- Stale worktrees that need repair\n- Uncommitted beads changes in other clones\n- Divergence issues that would block later syncs\n\nIf sync fails, resolve the issue before proceeding.",
+      "needs": ["preflight-git"]
+    },
+    {
       "id": "preflight-pull",
       "title": "Preflight: Pull latest",
       "description": "Ensure we're up to date with origin.\n\n```bash\ngit pull --rebase\n```\n\nResolve any conflicts before proceeding.",
-      "needs": ["preflight-git"]
+      "needs": ["preflight-sync"]
     },
     {
       "id": "review-changes",
@@ -54,7 +60,7 @@
     {
       "id": "commit-release",
       "title": "Commit release",
-      "description": "Stage and commit all version changes.\n\n```bash\ngit add -A\ngit commit -m \"chore: Bump version to {{version}}\"\n```\n\nReview the commit to ensure all expected files are included.",
+      "description": "Stage and commit all version changes.\n\n```bash\ngit add -A\ngit commit -m \"chore: bump version to {{version}}\"\n```\n\nReview the commit to ensure all expected files are included.",
       "needs": ["verify-versions"]
     },
     {
@@ -102,20 +108,32 @@
     {
       "id": "local-install",
       "title": "Update local installation",
-      "description": "Update local bd to the new version.\n\nOption 1 - Homebrew:\n```bash\nbrew upgrade bd\n```\n\nOption 2 - Install script:\n```bash\ncurl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash\n```\n\nVerify:\n```bash\nbd --version\n```\n\nShould show {{version}}.",
+      "description": "Update local bd to the new version.\n\n**Detect install method:**\n```bash\nwhich bd\n```\n\n**Option 1 - Dev build** (if bd is in ~/.local/bin or project dir):\n```bash\ngo build -o bd ./cmd/bd\ncp ./bd ~/.local/bin/bd\n```\n\n**Option 2 - Homebrew** (if bd is in /opt/homebrew or /usr/local):\n```bash\nbrew upgrade bd\n```\n\n**Option 3 - Install script:**\n```bash\ncurl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash\n```",
       "needs": ["verify-npm", "verify-pypi"]
+    },
+    {
+      "id": "verify-local-install",
+      "title": "Verify local installation",
+      "description": "**GATE: This step must pass before proceeding.**\n\nVerify the installed version matches the release:\n\n```bash\nbd --version\n```\n\n**Expected output:** `bd version {{version}}`\n\n**If version mismatch:**\n1. Check which bd is in PATH: `which bd`\n2. Rebuild if dev install: `go build -o bd ./cmd/bd && cp ./bd ~/.local/bin/bd`\n3. Verify again: `bd --version`\n\n**Do not proceed until `bd --version` shows {{version}}.**",
+      "needs": ["local-install"]
     },
     {
       "id": "restart-daemons",
       "title": "Restart daemons",
-      "description": "Restart bd daemons to pick up new version.\n\n```bash\nbd daemons killall\n```\n\nDaemons will auto-restart with new version on next bd command.\n\nVerify:\n```bash\nbd daemons list\n```",
-      "needs": ["local-install"]
+      "description": "Restart bd daemons to pick up new version.\n\n```bash\nbd daemons killall\n```\n\nTrigger daemon restart:\n```bash\nbd list >/dev/null 2>&1\n```\n\nVerify daemon version:\n```bash\nbd daemons list\n```\n\n**Expected:** All daemons should show version {{version}}.\n\nIf daemons show old version, they may be running from a different bd binary.\nCheck with: `ps aux | grep bd.*daemon`",
+      "needs": ["verify-local-install"]
+    },
+    {
+      "id": "post-release-sync",
+      "title": "Post-release: Sync beads",
+      "description": "Sync beads to capture any changes made during release.\n\n```bash\nbd sync\n```\n\nThis ensures:\n- Molecule progress is committed\n- Any beads updates are pushed\n- Clean state for next session",
+      "needs": ["restart-daemons"]
     },
     {
       "id": "release-complete",
       "title": "Release complete",
-      "description": "Release v{{version}} is complete!\n\nSummary:\n- All version files updated\n- Git tag pushed\n- CI artifacts built\n- npm and PyPI packages published\n- Local installation updated\n- Daemons restarted\n\nOptional next steps:\n- Announce on social media\n- Update documentation site\n- Close related milestone",
-      "needs": ["restart-daemons"]
+      "description": "Release v{{version}} is complete!\n\n**Verification checklist:**\n- [ ] `bd --version` shows {{version}}\n- [ ] `bd daemons list` shows {{version}}\n- [ ] GitHub release has all artifacts\n- [ ] npm package is {{version}}\n- [ ] PyPI package is {{version}}\n- [ ] `bd sync` succeeded\n\n**Summary:**\n- All version files updated\n- Git tag pushed\n- CI artifacts built\n- npm and PyPI packages published\n- Local installation verified\n- Daemons restarted with new version\n- Beads synced\n\n**Note:** If this was a wisp, it will be squashed to a digest.\nThe hook should clear automatically after squash.",
+      "needs": ["post-release-sync"]
     }
   ]
 }

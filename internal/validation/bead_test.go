@@ -206,47 +206,47 @@ func TestValidateAgentID(t *testing.T) {
 		{"valid mayor", "gt-mayor", false, ""},
 		{"valid deacon", "gt-deacon", false, ""},
 
-		// Per-rig agents (witness, refinery)
-		{"valid witness gastown", "gt-witness-gastown", false, ""},
-		{"valid refinery beads", "gt-refinery-beads", false, ""},
-		// Note: hyphenated rig names like "my-rig" are ambiguous and not supported
-		// for witness/refinery. Use simple rig names.
+		// Per-rig agents (canonical format: gt-<rig>-<role>)
+		{"valid witness gastown", "gt-gastown-witness", false, ""},
+		{"valid refinery beads", "gt-beads-refinery", false, ""},
 
-		// Named agents (crew, polecat)
-		{"valid polecat", "gt-polecat-gastown-nux", false, ""},
-		{"valid crew", "gt-crew-beads-dave", false, ""},
-		{"valid polecat with complex name", "gt-polecat-gastown-war-boy-1", false, ""},
+		// Named agents (canonical format: gt-<rig>-<role>-<name>)
+		{"valid polecat", "gt-gastown-polecat-nux", false, ""},
+		{"valid crew", "gt-beads-crew-dave", false, ""},
+		{"valid polecat with complex name", "gt-gastown-polecat-war-boy-1", false, ""},
 
-		// Invalid: wrong prefix
-		{"wrong prefix bd", "bd-mayor", true, "must start with 'gt-'"},
-		{"wrong prefix empty", "mayor", true, "must start with 'gt-'"},
+		// Valid: alternative prefixes (beads uses bd-)
+		{"valid bd-mayor", "bd-mayor", false, ""},
+		{"valid bd-beads-polecat-pearl", "bd-beads-polecat-pearl", false, ""},
+		{"valid bd-beads-witness", "bd-beads-witness", false, ""},
+
+		// Invalid: no prefix (missing hyphen)
+		{"no prefix", "mayor", true, "must have a prefix followed by '-'"},
 
 		// Invalid: empty
 		{"empty id", "", true, "agent ID is required"},
 
-		// Invalid: unknown role
-		{"unknown role", "gt-admin-gastown", true, "invalid agent role"},
-		{"unknown role foo", "gt-foo", true, "invalid agent role"},
+		// Invalid: unknown role in position 2
+		{"unknown role", "gt-gastown-admin", true, "invalid agent format"},
 
-		// Invalid: town-level with rig
-		{"mayor with rig", "gt-mayor-gastown", true, "cannot have rig suffix"},
-		{"deacon with rig", "gt-deacon-beads", true, "cannot have rig suffix"},
+		// Invalid: town-level with rig (put role first)
+		{"mayor with rig suffix", "gt-gastown-mayor", true, "cannot have rig suffix"},
+		{"deacon with rig suffix", "gt-beads-deacon", true, "cannot have rig suffix"},
 
-		// Invalid: per-rig without rig
-		{"witness no rig", "gt-witness", true, "requires rig"},
-		{"refinery no rig", "gt-refinery", true, "requires rig"},
+		// Invalid: per-rig role without rig
+		{"witness alone", "gt-witness", true, "requires rig"},
+		{"refinery alone", "gt-refinery", true, "requires rig"},
 
 		// Invalid: named agent without name
-		{"polecat no name", "gt-polecat-gastown", true, "requires name"},
-		{"crew no name", "gt-crew-beads", true, "requires name"},
+		{"crew no name", "gt-beads-crew", true, "requires name"},
+		{"polecat no name", "gt-gastown-polecat", true, "requires name"},
 
 		// Invalid: witness/refinery with extra parts
-		{"witness with name", "gt-witness-gastown-extra", true, "takes only rig"},
-		{"refinery with name", "gt-refinery-beads-extra", true, "takes only rig"},
+		{"witness with name", "gt-gastown-witness-extra", true, "cannot have name suffix"},
+		{"refinery with name", "gt-beads-refinery-extra", true, "cannot have name suffix"},
 
 		// Invalid: empty components
-		{"empty rig", "gt-witness-", true, "rig name cannot be empty"},
-		{"just gt", "gt-", true, "must include role type"},
+		{"empty after prefix", "gt-", true, "must include content after prefix"},
 	}
 
 	for _, tt := range tests {

@@ -166,7 +166,7 @@ var closeEligibleEpicsCmd = &cobra.Command{
 				}
 			} else {
 				ctx := rootCtx
-				err := store.CloseIssue(ctx, epicStatus.Epic.ID, "All children completed", "system")
+				err := store.CloseIssue(ctx, epicStatus.Epic.ID, "All children completed", "system", "")
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", epicStatus.Epic.ID, err)
 					continue

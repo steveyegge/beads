@@ -92,7 +92,9 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	}
 	
 	// Check for changes in worktree
-	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
+	// GH#810: Normalize path for bare repo worktrees
+	normalizedRelPath := git.NormalizeBeadsRelPath(jsonlRelPath)
+	worktreeJSONLPath := filepath.Join(worktreePath, normalizedRelPath)
 	hasChanges, err := gitHasChangesInWorktree(ctx, worktreePath, worktreeJSONLPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to check for changes in worktree: %w", err)
@@ -304,7 +306,9 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	}
 	
 	// Copy JSONL back to main repo
-	worktreeJSONLPath := filepath.Join(worktreePath, jsonlRelPath)
+	// GH#810: Normalize path for bare repo worktrees
+	normalizedRelPath := git.NormalizeBeadsRelPath(jsonlRelPath)
+	worktreeJSONLPath := filepath.Join(worktreePath, normalizedRelPath)
 	mainJSONLPath := jsonlPath
 	
 	// Check if worktree JSONL exists

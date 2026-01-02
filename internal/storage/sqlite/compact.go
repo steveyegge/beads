@@ -78,7 +78,7 @@ func (s *SQLiteStorage) GetTier1Candidates(ctx context.Context) ([]*CompactionCa
 		  COUNT(DISTINCT dt.dependent_id) as dependent_count
 		FROM issues i
 		LEFT JOIN dependent_tree dt ON i.id = dt.issue_id
-		  AND dt.dependent_status IN ('open', 'in_progress', 'blocked', 'deferred')
+		  AND dt.dependent_status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  AND dt.depth <= ?
 		WHERE i.status = 'closed'
 		  AND i.closed_at IS NOT NULL
@@ -163,7 +163,7 @@ func (s *SQLiteStorage) GetTier2Candidates(ctx context.Context) ([]*CompactionCa
 		    JOIN issues dep ON d.issue_id = dep.id
 		    WHERE d.depends_on_id = i.id
 		      AND d.type = 'blocks'
-		      AND dep.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		      AND dep.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  )
 		ORDER BY i.closed_at ASC
 	`

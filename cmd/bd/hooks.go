@@ -19,7 +19,7 @@ var hooksFS embed.FS
 
 func getEmbeddedHooks() (map[string]string, error) {
 	hooks := make(map[string]string)
-	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
+	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 
 	for _, name := range hookNames {
 		content, err := hooksFS.ReadFile("templates/hooks/" + name)
@@ -46,7 +46,7 @@ type HookStatus struct {
 
 // CheckGitHooks checks the status of bd git hooks in .git/hooks/
 func CheckGitHooks() []HookStatus {
-	hooks := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
+	hooks := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 	statuses := make([]HookStatus, 0, len(hooks))
 
 	// Get actual git directory (handles worktrees)
@@ -169,7 +169,8 @@ The hooks ensure that:
 - pre-commit: Flushes pending changes to JSONL before commit
 - post-merge: Imports updated JSONL after pull/merge
 - pre-push: Prevents pushing stale JSONL
-- post-checkout: Imports JSONL after branch checkout`,
+- post-checkout: Imports JSONL after branch checkout
+- prepare-commit-msg: Adds agent identity trailers for forensics`,
 }
 
 var hooksInstallCmd = &cobra.Command{
@@ -181,14 +182,19 @@ By default, hooks are installed to .git/hooks/ in the current repository.
 Use --shared to install to a versioned directory (.beads-hooks/) that can be
 committed to git and shared with team members.
 
+Use --chain to preserve existing hooks and run them before bd hooks. This is
+useful if you have pre-commit framework hooks or other custom hooks.
+
 Installed hooks:
   - pre-commit: Flush changes to JSONL before commit
   - post-merge: Import JSONL after pull/merge
   - pre-push: Prevent pushing stale JSONL
-  - post-checkout: Import JSONL after branch checkout`,
+  - post-checkout: Import JSONL after branch checkout
+  - prepare-commit-msg: Add agent identity trailers (for orchestrator agents)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")
 		shared, _ := cmd.Flags().GetBool("shared")
+		chain, _ := cmd.Flags().GetBool("chain")
 
 		embeddedHooks, err := getEmbeddedHooks()
 		if err != nil {
@@ -204,7 +210,7 @@ Installed hooks:
 			os.Exit(1)
 		}
 
-		if err := installHooks(embeddedHooks, force, shared); err != nil {
+		if err := installHooks(embeddedHooks, force, shared, chain); err != nil {
 			if jsonOutput {
 				output := map[string]interface{}{
 					"error": err.Error(),
@@ -222,12 +228,17 @@ Installed hooks:
 				"success": true,
 				"message": "Git hooks installed successfully",
 				"shared":  shared,
+				"chained": chain,
 			}
 			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
 			fmt.Println(string(jsonBytes))
 		} else {
 			fmt.Println("✓ Git hooks installed successfully")
 			fmt.Println()
+			if chain {
+				fmt.Println("Mode: chained (existing hooks renamed to .old and will run first)")
+				fmt.Println()
+			}
 			if shared {
 				fmt.Println("Hooks installed to: .beads-hooks/")
 				fmt.Println("Git config set: core.hooksPath=.beads-hooks")
@@ -305,7 +316,7 @@ var hooksListCmd = &cobra.Command{
 	},
 }
 
-func installHooks(embeddedHooks map[string]string, force bool, shared bool) error {
+func installHooks(embeddedHooks map[string]string, force bool, shared bool, chain bool) error {
 	// Get actual git directory (handles worktrees where .git is a file)
 	gitDir, err := git.GetGitDir()
 	if err != nil {
@@ -332,13 +343,27 @@ func installHooks(embeddedHooks map[string]string, force bool, shared bool) erro
 
 		// Check if hook already exists
 		if _, err := os.Stat(hookPath); err == nil {
-			// Hook exists - back it up unless force is set
-			if !force {
+			if chain {
+				// Chain mode - rename to .old so bd hooks run can call it
+				// But skip if existing hook is already a bd shim - renaming it would
+				// cause infinite recursion. See: https://github.com/steveyegge/beads/issues/843
+				versionInfo, verr := getHookVersion(hookPath)
+				if verr != nil || !versionInfo.IsShim {
+					// Not a bd shim - safe to rename for chaining
+					oldPath := hookPath + ".old"
+					if err := os.Rename(hookPath, oldPath); err != nil {
+						return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
+					}
+				}
+				// If it IS a bd shim, just overwrite it (no rename needed)
+			} else if !force {
+				// Default mode - back it up
 				backupPath := hookPath + ".backup"
 				if err := os.Rename(hookPath, backupPath); err != nil {
 					return fmt.Errorf("failed to backup %s: %w", hookName, err)
 				}
 			}
+			// If force is set and not chaining, we just overwrite
 		}
 
 		// Write hook file
@@ -374,7 +399,7 @@ func uninstallHooks() error {
 		return err
 	}
 	hooksDir := filepath.Join(gitDir, "hooks")
-	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout"}
+	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 
 	for _, hookName := range hookNames {
 		hookPath := filepath.Join(hooksDir, hookName)
@@ -406,11 +431,62 @@ func uninstallHooks() error {
 // Hook Implementation Functions (called by thin shims via 'bd hooks run')
 // =============================================================================
 
+// runChainedHook runs a .old hook if it exists. Returns the exit code.
+// If the hook doesn't exist, returns 0 (success).
+func runChainedHook(hookName string, args []string) int {
+	// Get the hooks directory
+	gitDir, err := git.GetGitDir()
+	if err != nil {
+		return 0 // Not a git repo, nothing to chain
+	}
+
+	oldHookPath := filepath.Join(gitDir, "hooks", hookName+".old")
+
+	// Check if the .old hook exists and is executable
+	info, err := os.Stat(oldHookPath)
+	if err != nil {
+		return 0 // No chained hook
+	}
+	if info.Mode().Perm()&0111 == 0 {
+		return 0 // Not executable
+	}
+
+	// Check if .old is itself a bd shim - skip to prevent infinite recursion
+	// This can happen if user runs `bd hooks install --chain` multiple times,
+	// renaming an existing bd shim to .old. See: https://github.com/steveyegge/beads/issues/843
+	versionInfo, err := getHookVersion(oldHookPath)
+	if err == nil && versionInfo.IsShim {
+		// Skip execution - .old is a bd shim which would call us again
+		return 0
+	}
+
+	// Run the chained hook
+	// #nosec G204 -- hookName is from controlled list, path is from git directory
+	cmd := exec.Command(oldHookPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		// Other error - treat as failure
+		fmt.Fprintf(os.Stderr, "Warning: chained hook %s failed: %v\n", hookName, err)
+		return 1
+	}
+
+	return 0
+}
+
 // runPreCommitHook flushes pending changes to JSONL before commit.
-// Returns 0 on success (or if not applicable), non-zero on error.
-//
-//nolint:unparam // Always returns 0 by design - warnings don't block commits
+// Returns 0 on success (or if not applicable), 1 if unstaged beads changes detected.
 func runPreCommitHook() int {
+	// Run chained hook first (if exists)
+	if exitCode := runChainedHook("pre-commit", nil); exitCode != 0 {
+		return exitCode
+	}
+
 	// Check if we're in a bd workspace
 	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
 		return 0 // Not a bd workspace, nothing to do
@@ -430,12 +506,40 @@ func runPreCommitHook() int {
 		// Don't block the commit - user may have removed beads or have other issues
 	}
 
-	// Stage all tracked JSONL files
-	for _, f := range []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"} {
-		if _, err := os.Stat(f); err == nil {
-			// #nosec G204 - f is from hardcoded list above, not user input
-			gitAdd := exec.Command("git", "add", f)
-			_ = gitAdd.Run() // Ignore errors - file may not exist
+	// Stage JSONL files for commit
+	// By default, we auto-stage for convenience. Users with conflicting git hooks
+	// (e.g., hooks that read the staging area) can set BEADS_NO_AUTO_STAGE=1 to
+	// disable this and stage manually. See: https://github.com/steveyegge/beads/issues/826
+	jsonlFiles := []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"}
+
+	if os.Getenv("BEADS_NO_AUTO_STAGE") != "" {
+		// Safe mode: check for unstaged changes and block if found
+		var unstaged []string
+		for _, f := range jsonlFiles {
+			if _, err := os.Stat(f); err == nil {
+				if hasUnstagedChanges(f) {
+					unstaged = append(unstaged, f)
+				}
+			}
+		}
+
+		if len(unstaged) > 0 {
+			fmt.Fprintln(os.Stderr, "❌ Unstaged beads changes detected:")
+			for _, f := range unstaged {
+				fmt.Fprintf(os.Stderr, "   %s\n", f)
+			}
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Run: git add .beads/")
+			return 1
+		}
+	} else {
+		// Default: auto-stage JSONL files
+		for _, f := range jsonlFiles {
+			if _, err := os.Stat(f); err == nil {
+				// #nosec G204 - f is from hardcoded list above, not user input
+				gitAdd := exec.Command("git", "add", f)
+				_ = gitAdd.Run() // Ignore errors - file may not exist
+			}
 		}
 	}
 
@@ -447,6 +551,11 @@ func runPreCommitHook() int {
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block merges
 func runPostMergeHook() int {
+	// Run chained hook first (if exists)
+	if exitCode := runChainedHook("post-merge", nil); exitCode != 0 {
+		return exitCode
+	}
+
 	// Skip during rebase
 	if isRebaseInProgress() {
 		return 0
@@ -483,6 +592,11 @@ func runPostMergeHook() int {
 // runPrePushHook prevents pushing stale JSONL.
 // Returns 0 to allow push, non-zero to block.
 func runPrePushHook() int {
+	// Run chained hook first (if exists)
+	if exitCode := runChainedHook("pre-push", nil); exitCode != 0 {
+		return exitCode
+	}
+
 	// Check if we're in a bd workspace
 	if _, err := os.Stat(".beads"); os.IsNotExist(err) {
 		return 0
@@ -496,11 +610,6 @@ func runPrePushHook() int {
 	// Check if sync-branch is configured
 	if hookGetSyncBranch() != "" {
 		return 0 // Skip - changes synced to separate branch
-	}
-
-	// bd-uo2u: Check if landing ritual was completed with passing tests
-	if !verifyLandingMarker() {
-		return 1 // Block push - landing verification failed
 	}
 
 	// Flush pending bd changes
@@ -555,6 +664,11 @@ func runPrePushHook() int {
 //
 //nolint:unparam // Always returns 0 by design - warnings don't block checkouts
 func runPostCheckoutHook(args []string) int {
+	// Run chained hook first (if exists)
+	if exitCode := runChainedHook("post-checkout", args); exitCode != 0 {
+		return exitCode
+	}
+
 	// Only run on branch checkouts (flag=1)
 	if len(args) >= 3 && args[2] != "1" {
 		return 0
@@ -613,6 +727,270 @@ func runPostCheckoutHook(args []string) int {
 	return 0
 }
 
+// runPrepareCommitMsgHook adds agent identity trailers to commit messages.
+// args: [commit-msg-file, source, sha1]
+// Returns 0 on success (or if not applicable), non-zero on error.
+//
+//nolint:unparam // Always returns 0 by design - we don't block commits
+func runPrepareCommitMsgHook(args []string) int {
+	// Run chained hook first (if exists)
+	if exitCode := runChainedHook("prepare-commit-msg", args); exitCode != 0 {
+		return exitCode
+	}
+
+	if len(args) < 1 {
+		return 0 // No message file provided
+	}
+
+	msgFile := args[0]
+	source := ""
+	if len(args) >= 2 {
+		source = args[1]
+	}
+
+	// Skip for merge commits (they already have their own format)
+	if source == "merge" {
+		return 0
+	}
+
+	// Detect agent context
+	identity := detectAgentIdentity()
+	if identity == nil {
+		return 0 // Not in agent context, nothing to add
+	}
+
+	// Read current message
+	content, err := os.ReadFile(msgFile) // #nosec G304 -- path from git
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read commit message: %v\n", err)
+		return 0
+	}
+
+	// Check if trailers already present (avoid duplicates on amend)
+	// Look for "Executed-By:" at the start of a line (actual trailer format)
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(line, "Executed-By:") {
+			return 0
+		}
+	}
+
+	// Build trailers
+	var trailers []string
+	trailers = append(trailers, fmt.Sprintf("Executed-By: %s", identity.FullIdentity))
+	if identity.Rig != "" {
+		trailers = append(trailers, fmt.Sprintf("Rig: %s", identity.Rig))
+	}
+	if identity.Role != "" {
+		trailers = append(trailers, fmt.Sprintf("Role: %s", identity.Role))
+	}
+	if identity.Molecule != "" {
+		trailers = append(trailers, fmt.Sprintf("Molecule: %s", identity.Molecule))
+	}
+
+	// Append trailers to message
+	msg := strings.TrimRight(string(content), "\n\r\t ")
+	var sb strings.Builder
+	sb.WriteString(msg)
+	sb.WriteString("\n\n")
+	for _, trailer := range trailers {
+		sb.WriteString(trailer)
+		sb.WriteString("\n")
+	}
+
+	// Write back
+	if err := os.WriteFile(msgFile, []byte(sb.String()), 0600); err != nil { // Restrict permissions per gosec G306
+		fmt.Fprintf(os.Stderr, "Warning: could not write commit message: %v\n", err)
+	}
+
+	return 0
+}
+
+// agentIdentity holds detected agent context information.
+type agentIdentity struct {
+	FullIdentity string // e.g., "beads/crew/dave"
+	Rig          string // e.g., "beads"
+	Role         string // e.g., "crew"
+	Molecule     string // e.g., "bd-xyz" (if attached)
+}
+
+// detectAgentIdentity returns agent identity if running in agent context.
+// Returns nil if not in an agent context (human commit).
+func detectAgentIdentity() *agentIdentity {
+	// Check GT_ROLE environment variable first (set by orchestrator sessions)
+	gtRole := os.Getenv("GT_ROLE")
+	if gtRole != "" {
+		return parseAgentIdentity(gtRole)
+	}
+
+	// Fall back to cwd-based detection
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+
+	// Detect from path patterns
+	return detectAgentFromPath(cwd)
+}
+
+// parseAgentIdentity parses a GT_ROLE value into agent identity.
+func parseAgentIdentity(role string) *agentIdentity {
+	// GT_ROLE can be:
+	// - Simple: "crew", "polecat", "witness", "refinery", "mayor"
+	// - Compound: "beads/crew/dave", "gastown/polecat/Nux-123"
+
+	if strings.Contains(role, "/") {
+		// Compound format
+		parts := strings.Split(role, "/")
+		identity := &agentIdentity{FullIdentity: role}
+
+		if len(parts) >= 1 {
+			identity.Rig = parts[0]
+		}
+		if len(parts) >= 2 {
+			identity.Role = parts[1]
+		}
+
+		// Check for molecule
+		identity.Molecule = getPinnedMolecule()
+
+		return identity
+	}
+
+	// Simple format - need to combine with env vars
+	rig := os.Getenv("GT_RIG")
+	identity := &agentIdentity{Role: role, Rig: rig}
+
+	switch role {
+	case "crew":
+		crew := os.Getenv("GT_CREW")
+		if rig != "" && crew != "" {
+			identity.FullIdentity = fmt.Sprintf("%s/crew/%s", rig, crew)
+		}
+	case "polecat":
+		polecat := os.Getenv("GT_POLECAT")
+		if rig != "" && polecat != "" {
+			identity.FullIdentity = fmt.Sprintf("%s/%s", rig, polecat)
+		}
+	case "witness":
+		if rig != "" {
+			identity.FullIdentity = fmt.Sprintf("%s/witness", rig)
+		}
+	case "refinery":
+		if rig != "" {
+			identity.FullIdentity = fmt.Sprintf("%s/refinery", rig)
+		}
+	case "mayor":
+		identity.FullIdentity = "mayor"
+		identity.Rig = "" // Mayor is rig-agnostic
+	case "deacon":
+		identity.FullIdentity = "deacon"
+		identity.Rig = "" // Deacon is rig-agnostic
+	}
+
+	if identity.FullIdentity == "" {
+		return nil
+	}
+
+	identity.Molecule = getPinnedMolecule()
+	return identity
+}
+
+// detectAgentFromPath detects agent identity from cwd path patterns.
+func detectAgentFromPath(cwd string) *agentIdentity {
+	// Match patterns like:
+	// - /Users/.../gt/<rig>/crew/<name>/...
+	// - /Users/.../gt/<rig>/polecats/<name>/...
+	// - /Users/.../gt/<rig>/witness/...
+	// - /Users/.../gt/<rig>/refinery/...
+
+	// Crew pattern
+	if strings.Contains(cwd, "/crew/") {
+		parts := strings.Split(cwd, "/crew/")
+		if len(parts) >= 2 {
+			rigPath := parts[0]
+			crewPath := parts[1]
+			rig := filepath.Base(rigPath)
+			crew := strings.Split(crewPath, "/")[0]
+			return &agentIdentity{
+				FullIdentity: fmt.Sprintf("%s/crew/%s", rig, crew),
+				Rig:          rig,
+				Role:         "crew",
+				Molecule:     getPinnedMolecule(),
+			}
+		}
+	}
+
+	// Polecat pattern
+	if strings.Contains(cwd, "/polecats/") {
+		parts := strings.Split(cwd, "/polecats/")
+		if len(parts) >= 2 {
+			rigPath := parts[0]
+			polecatPath := parts[1]
+			rig := filepath.Base(rigPath)
+			polecat := strings.Split(polecatPath, "/")[0]
+			return &agentIdentity{
+				FullIdentity: fmt.Sprintf("%s/%s", rig, polecat),
+				Rig:          rig,
+				Role:         "polecat",
+				Molecule:     getPinnedMolecule(),
+			}
+		}
+	}
+
+	// Witness pattern
+	if strings.Contains(cwd, "/witness/") || strings.HasSuffix(cwd, "/witness") {
+		parts := strings.Split(cwd, "/witness")
+		if len(parts) >= 1 {
+			rig := filepath.Base(parts[0])
+			return &agentIdentity{
+				FullIdentity: fmt.Sprintf("%s/witness", rig),
+				Rig:          rig,
+				Role:         "witness",
+			}
+		}
+	}
+
+	// Refinery pattern
+	if strings.Contains(cwd, "/refinery/") || strings.HasSuffix(cwd, "/refinery") {
+		parts := strings.Split(cwd, "/refinery")
+		if len(parts) >= 1 {
+			rig := filepath.Base(parts[0])
+			return &agentIdentity{
+				FullIdentity: fmt.Sprintf("%s/refinery", rig),
+				Rig:          rig,
+				Role:         "refinery",
+			}
+		}
+	}
+
+	return nil
+}
+
+// getPinnedMolecule checks if there's a molecule attached via gt mol status.
+func getPinnedMolecule() string {
+	// Try gt mol status --json
+	cmd := exec.Command("gt", "mol", "status", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	// Parse JSON response
+	var status struct {
+		HasMolecule bool   `json:"has_molecule"`
+		MoleculeID  string `json:"molecule_id"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return ""
+	}
+
+	if status.HasMolecule && status.MoleculeID != "" {
+		return status.MoleculeID
+	}
+
+	return ""
+}
+
 // =============================================================================
 // Hook Helper Functions
 // =============================================================================
@@ -667,51 +1045,42 @@ func hasBeadsJSONL() bool {
 	return false
 }
 
-// verifyLandingMarker checks if landing ritual completed with passing tests.
-// The marker file (.beads/.landing-complete) must contain "PASSED:" prefix.
-// Returns true if marker is valid or doesn't exist (backwards compatibility).
-// Returns false (blocks push) if marker exists but tests failed. (bd-uo2u)
-func verifyLandingMarker() bool {
-	markerPath := ".beads/.landing-complete"
-	content, err := os.ReadFile(markerPath) // #nosec G304 -- path is hardcoded
+// hasUnstagedChanges checks if a file has uncommitted changes (modified or untracked).
+// Returns true if the file needs to be staged before commit.
+func hasUnstagedChanges(path string) bool {
+	// Check git status for this specific file
+	// #nosec G204 - path is from hardcoded list in caller
+	cmd := exec.Command("git", "status", "--porcelain", "--", path)
+	output, err := cmd.Output()
 	if err != nil {
-		// Marker doesn't exist - allow push (backwards compatibility with
-		// workflows that don't use landing ritual)
-		return true
+		return false // If git fails, assume no changes
 	}
 
-	// Parse marker content
-	markerStr := strings.TrimSpace(string(content))
-
-	// Check for test result prefix (bd-uo2u)
-	if strings.HasPrefix(markerStr, "PASSED:") {
-		return true
+	// Parse porcelain output: XY filename
+	// X = staged status, Y = unstaged status
+	// We care about Y (unstaged) being non-space, OR the file being untracked (??)
+	status := strings.TrimSpace(string(output))
+	if status == "" {
+		return false // No changes
 	}
 
-	if strings.HasPrefix(markerStr, "FAILED:") {
-		fmt.Fprintln(os.Stderr, "❌ Landing ritual completed but tests FAILED")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Push blocked because the landing marker indicates test failure.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "To proceed:")
-		fmt.Fprintln(os.Stderr, "  1. Fix failing tests")
-		fmt.Fprintln(os.Stderr, "  2. Re-run landing ritual (tests must pass)")
-		fmt.Fprintln(os.Stderr, "  3. Try push again")
-		fmt.Fprintln(os.Stderr, "")
-		return false
+	// Check each line (usually just one for a single file)
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		x, y := line[0], line[1]
+		// Untracked file
+		if x == '?' && y == '?' {
+			return true
+		}
+		// Modified but not staged (Y is M, D, etc.)
+		if y != ' ' {
+			return true
+		}
 	}
 
-	// Legacy marker format (just timestamp like "2025-12-31T19:00:00Z")
-	// Allow for backwards compatibility without warning (too noisy)
-	// Timestamps start with a digit and contain 'T' for ISO format
-	if len(markerStr) > 0 && markerStr[0] >= '0' && markerStr[0] <= '9' {
-		return true
-	}
-
-	// Unknown format - allow but warn
-	fmt.Fprintln(os.Stderr, "⚠️  Warning: Unrecognized landing marker format")
-	fmt.Fprintln(os.Stderr, "   Expected: PASSED:<timestamp> or FAILED:<timestamp>")
-	return true
+	return false
 }
 
 var hooksRunCmd = &cobra.Command{
@@ -725,6 +1094,7 @@ Supported hooks:
   - post-merge: Import JSONL after pull/merge
   - pre-push: Prevent pushing stale JSONL
   - post-checkout: Import JSONL after branch checkout
+  - prepare-commit-msg: Add agent identity trailers for forensics
 
 The thin shim pattern ensures hook logic is always in sync with the
 installed bd version - upgrading bd automatically updates hook behavior.`,
@@ -743,6 +1113,8 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 			exitCode = runPrePushHook()
 		case "post-checkout":
 			exitCode = runPostCheckoutHook(hookArgs)
+		case "prepare-commit-msg":
+			exitCode = runPrepareCommitMsgHook(hookArgs)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown hook: %s\n", hookName)
 			os.Exit(1)
@@ -755,6 +1127,7 @@ installed bd version - upgrading bd automatically updates hook behavior.`,
 func init() {
 	hooksInstallCmd.Flags().Bool("force", false, "Overwrite existing hooks without backup")
 	hooksInstallCmd.Flags().Bool("shared", false, "Install hooks to .beads-hooks/ (versioned) instead of .git/hooks/")
+	hooksInstallCmd.Flags().Bool("chain", false, "Chain with existing hooks (run them before bd hooks)")
 
 	hooksCmd.AddCommand(hooksInstallCmd)
 	hooksCmd.AddCommand(hooksUninstallCmd)

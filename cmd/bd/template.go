@@ -61,7 +61,7 @@ var templateCmd = &cobra.Command{
 	Use:        "template",
 	GroupID:    "setup",
 	Short:      "Manage issue templates",
-	Deprecated: "use 'bd mol' instead (formula list, mol show, mol bond)",
+	Deprecated: "use 'bd mol' instead (will be removed in v1.0.0)",
 	Long: `Manage Beads templates for creating issue hierarchies.
 
 Templates are epics with the "template" label. They can have child issues
@@ -79,7 +79,7 @@ To use a template:
 var templateListCmd = &cobra.Command{
 	Use:        "list",
 	Short:      "List available templates",
-	Deprecated: "use 'bd formula list' instead",
+	Deprecated: "use 'bd formula list' instead (will be removed in v1.0.0)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 		var beadsTemplates []*types.Issue
@@ -144,7 +144,7 @@ var templateListCmd = &cobra.Command{
 var templateShowCmd = &cobra.Command{
 	Use:        "show <template-id>",
 	Short:      "Show template details",
-	Deprecated: "use 'bd mol show' instead",
+	Deprecated: "use 'bd mol show' instead (will be removed in v1.0.0)",
 	Args:       cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
@@ -223,7 +223,7 @@ func showBeadsTemplate(subgraph *TemplateSubgraph) {
 var templateInstantiateCmd = &cobra.Command{
 	Use:        "instantiate <template-id>",
 	Short:      "Create issues from a Beads template",
-	Deprecated: "use 'bd mol bond' instead",
+	Deprecated: "use 'bd mol bond' instead (will be removed in v1.0.0)",
 	Long: `Instantiate a Beads template by cloning its subgraph and substituting variables.
 
 Variables are specified with --var key=value flags. The template's {{key}}
@@ -237,7 +237,7 @@ Example:
 
 		ctx := rootCtx
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		varFlags, _ := cmd.Flags().GetStringSlice("var")
+		varFlags, _ := cmd.Flags().GetStringArray("var")
 		assignee, _ := cmd.Flags().GetString("assignee")
 
 		// Parse variables
@@ -355,7 +355,7 @@ Example:
 }
 
 func init() {
-	templateInstantiateCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	templateInstantiateCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	templateInstantiateCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	templateInstantiateCmd.Flags().String("assignee", "", "Assign the root epic to this agent/user")
 
@@ -415,7 +415,7 @@ func loadTemplateSubgraph(ctx context.Context, s storage.Storage, templateID str
 // loadDescendants recursively loads all child issues
 // It uses two strategies to find children:
 // 1. Check dependency records for parent-child relationships
-// 2. Check for hierarchical IDs (parent.N) to catch children with missing/wrong deps (bd-c8d5)
+// 2. Check for hierarchical IDs (parent.N) to catch children with missing/wrong deps
 func loadDescendants(ctx context.Context, s storage.Storage, subgraph *TemplateSubgraph, parentID string) error {
 	// Track children we've already added to avoid duplicates
 	addedChildren := make(map[string]bool)
@@ -461,7 +461,7 @@ func loadDescendants(ctx context.Context, s storage.Storage, subgraph *TemplateS
 		}
 	}
 
-	// Strategy 2: Find hierarchical children by ID pattern (bd-c8d5)
+	// Strategy 2: Find hierarchical children by ID pattern
 	// This catches children that have missing or incorrect dependency types.
 	// Hierarchical IDs follow the pattern: parentID.N (e.g., "gt-abc.1", "gt-abc.2")
 	hierarchicalChildren, err := findHierarchicalChildren(ctx, s, parentID)
@@ -522,7 +522,7 @@ func findHierarchicalChildren(ctx context.Context, s storage.Storage, parentID s
 }
 
 // =============================================================================
-// Proto Lookup Functions (bd-drcx)
+// Proto Lookup Functions
 // =============================================================================
 
 // resolveProtoIDOrTitle resolves a proto by ID or title.
@@ -715,7 +715,7 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 			Assignee:           issueAssignee,
 			EstimatedMinutes:   oldIssue.EstimatedMinutes,
 			Ephemeral:               opts.Ephemeral,
-			IDPrefix:           opts.Prefix, // bd-hobo: distinct prefixes for mols/wisps
+			IDPrefix:           opts.Prefix, // distinct prefixes for mols/wisps
 		}
 
 		// Generate custom ID for dynamic bonding if ParentID is set
@@ -961,8 +961,8 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 				IssueType:          oldIssue.IssueType,
 				Assignee:           issueAssignee,
 				EstimatedMinutes:   oldIssue.EstimatedMinutes,
-				Ephemeral:               opts.Ephemeral,   // bd-2vh3: mark for cleanup when closed
-				IDPrefix:           opts.Prefix, // bd-hobo: distinct prefixes for mols/wisps
+				Ephemeral:               opts.Ephemeral,   // mark for cleanup when closed
+				IDPrefix:           opts.Prefix, // distinct prefixes for mols/wisps
 				CreatedAt:          time.Now(),
 				UpdatedAt:          time.Now(),
 			}

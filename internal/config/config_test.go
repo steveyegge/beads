@@ -3,9 +3,38 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// envSnapshot saves and clears BD_/BEADS_ environment variables.
+// Returns a restore function that should be deferred.
+func envSnapshot(t *testing.T) func() {
+	t.Helper()
+	saved := make(map[string]string)
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "BD_") || strings.HasPrefix(env, "BEADS_") {
+			parts := strings.SplitN(env, "=", 2)
+			key := parts[0]
+			saved[key] = os.Getenv(key)
+			os.Unsetenv(key)
+		}
+	}
+	return func() {
+		// Clear any test-set variables first
+		for _, env := range os.Environ() {
+			if strings.HasPrefix(env, "BD_") || strings.HasPrefix(env, "BEADS_") {
+				parts := strings.SplitN(env, "=", 2)
+				os.Unsetenv(parts[0])
+			}
+		}
+		// Restore original values
+		for key, val := range saved {
+			os.Setenv(key, val)
+		}
+	}
+}
 
 func TestInitialize(t *testing.T) {
 	// Test that initialization doesn't error
@@ -20,6 +49,10 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
 	// Reset viper for test isolation
 	err := Initialize()
 	if err != nil {
@@ -90,6 +123,10 @@ func TestEnvironmentBinding(t *testing.T) {
 }
 
 func TestConfigFile(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
 	// Create a temporary directory for config file
 	tmpDir := t.TempDir()
 	
@@ -747,5 +784,63 @@ func TestConfigSourceConstants(t *testing.T) {
 	}
 	if SourceFlag != "flag" {
 		t.Errorf("SourceFlag = %q, want \"flag\"", SourceFlag)
+	}
+}
+
+func TestValidationConfigDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test validation.on-create default is "none"
+	if got := GetString("validation.on-create"); got != "none" {
+		t.Errorf("GetString(validation.on-create) = %q, want \"none\"", got)
+	}
+
+	// Test validation.on-sync default is "none"
+	if got := GetString("validation.on-sync"); got != "none" {
+		t.Errorf("GetString(validation.on-sync) = %q, want \"none\"", got)
+	}
+}
+
+func TestValidationConfigFromFile(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with validation settings
+	configContent := `
+validation:
+  on-create: error
+  on-sync: warn
+`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that validation settings are loaded correctly
+	if got := GetString("validation.on-create"); got != "error" {
+		t.Errorf("GetString(validation.on-create) = %q, want \"error\"", got)
+	}
+	if got := GetString("validation.on-sync"); got != "warn" {
+		t.Errorf("GetString(validation.on-sync) = %q, want \"warn\"", got)
 	}
 }

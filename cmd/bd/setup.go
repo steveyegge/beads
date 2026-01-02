@@ -117,6 +117,31 @@ agents from forgetting bd workflow after context compaction.`,
 	},
 }
 
+var setupGeminiCmd = &cobra.Command{
+	Use:   "gemini",
+	Short: "Setup Gemini CLI integration",
+	Long: `Install Gemini CLI hooks that auto-inject bd workflow context.
+
+By default, installs hooks globally (~/.gemini/settings.json).
+Use --project flag to install only for this project.
+
+Hooks call 'bd prime' on SessionStart and PreCompress events to prevent
+agents from forgetting bd workflow after context compaction.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if setupCheck {
+			setup.CheckGemini()
+			return
+		}
+
+		if setupRemove {
+			setup.RemoveGemini(setupProject)
+			return
+		}
+
+		setup.InstallGemini(setupProject, setupStealth)
+	},
+}
+
 func init() {
 	setupFactoryCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Factory.ai integration is installed")
 	setupFactoryCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd section from AGENTS.md")
@@ -132,9 +157,15 @@ func init() {
 	setupAiderCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Aider integration is installed")
 	setupAiderCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd config from Aider")
 
+	setupGeminiCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (not globally)")
+	setupGeminiCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Gemini CLI integration is installed")
+	setupGeminiCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd hooks from Gemini CLI settings")
+	setupGeminiCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use 'bd prime --stealth' (flush only, no git operations)")
+
 	setupCmd.AddCommand(setupFactoryCmd)
 	setupCmd.AddCommand(setupClaudeCmd)
 	setupCmd.AddCommand(setupCursorCmd)
 	setupCmd.AddCommand(setupAiderCmd)
+	setupCmd.AddCommand(setupGeminiCmd)
 	rootCmd.AddCommand(setupCmd)
 }

@@ -14,7 +14,7 @@ import (
 
 var (
 	// Version is the current version of bd (overridden by ldflags at build time)
-	Version = "0.39.1"
+    Version = "0.43.0"
 	// Build can be set via ldflags at compile time
 	Build = "dev"
 	// Commit and branch the git revision the binary was built from (optional ldflag)
@@ -151,7 +151,7 @@ func resolveBranch() string {
 	}
 
 	// Fallback: try to get branch from git at runtime
-	// Use symbolic-ref to work in fresh repos without commits (bd-flil)
+	// Use symbolic-ref to work in fresh repos without commits
 	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	cmd.Dir = "."
 	if output, err := cmd.Output(); err == nil {

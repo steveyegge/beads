@@ -651,7 +651,7 @@ func TestFollowRedirect(t *testing.T) {
 
 			stubDir, targetDir := tt.setupFunc(t, tmpDir)
 
-			result := followRedirect(stubDir)
+			result := FollowRedirect(stubDir)
 
 			// Resolve symlinks for comparison (macOS uses /private/var)
 			resultResolved, _ := filepath.EvalSymlinks(result)
@@ -660,11 +660,11 @@ func TestFollowRedirect(t *testing.T) {
 			if tt.expectRedirect {
 				targetResolved, _ := filepath.EvalSymlinks(targetDir)
 				if resultResolved != targetResolved {
-					t.Errorf("followRedirect() = %q, want %q", result, targetDir)
+					t.Errorf("FollowRedirect() = %q, want %q", result, targetDir)
 				}
 			} else {
 				if resultResolved != stubResolved {
-					t.Errorf("followRedirect() = %q, want original %q", result, stubDir)
+					t.Errorf("FollowRedirect() = %q, want original %q", result, stubDir)
 				}
 			}
 		})

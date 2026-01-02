@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS issues (
     created_by TEXT DEFAULT '',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     closed_at DATETIME,
+    closed_by_session TEXT DEFAULT '',
     external_ref TEXT,
     compaction_level INTEGER DEFAULT 0,
     compacted_at DATETIME,
@@ -35,6 +36,13 @@ CREATE TABLE IF NOT EXISTS issues (
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
     is_template INTEGER DEFAULT 0,
+    -- Molecule type field (bd-oxgi)
+    mol_type TEXT DEFAULT '',
+    -- Event fields (bd-ecmd)
+    event_kind TEXT DEFAULT '',
+    actor TEXT DEFAULT '',
+    target TEXT DEFAULT '',
+    payload TEXT DEFAULT '',
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     -- closed_at constraint: closed issues must have it, tombstones may retain it from before deletion
@@ -212,7 +220,7 @@ WITH RECURSIVE
     FROM dependencies d
     JOIN issues blocker ON d.depends_on_id = blocker.id
     WHERE d.type = 'blocks'
-      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
   ),
   -- Propagate blockage to all descendants via parent-child
   blocked_transitively AS (
@@ -243,8 +251,8 @@ SELECT
 FROM issues i
 JOIN dependencies d ON i.id = d.issue_id
 JOIN issues blocker ON d.depends_on_id = blocker.id
-WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
+WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
   AND d.type = 'blocks'
-  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 GROUP BY i.id;
 `

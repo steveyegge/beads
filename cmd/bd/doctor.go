@@ -1,25 +1,17 @@
 package main
 
 import (
-	"bufio"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
-	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
-	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/syncbranch"
-	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -44,22 +36,25 @@ type doctorResult struct {
 	Checks     []doctorCheck     `json:"checks"`
 	OverallOK  bool              `json:"overall_ok"`
 	CLIVersion string            `json:"cli_version"`
-	Timestamp  string            `json:"timestamp,omitempty"` // bd-9cc: ISO8601 timestamp for historical tracking
-	Platform   map[string]string `json:"platform,omitempty"`  // bd-9cc: platform info for debugging
+	Timestamp  string            `json:"timestamp,omitempty"` // ISO8601 timestamp for historical tracking
+	Platform   map[string]string `json:"platform,omitempty"`  // platform info for debugging
 }
 
 var (
 	doctorFix            bool
 	doctorYes            bool
-	doctorInteractive    bool   // bd-3xl: per-fix confirmation mode
-	doctorDryRun         bool   // bd-a5z: preview fixes without applying
-	doctorOutput         string // bd-9cc: export diagnostics to file
-	doctorFixChildParent bool   // bd-cuek: opt-in fix for child→parent deps
+	doctorInteractive    bool   // per-fix confirmation mode
+	doctorDryRun         bool   // preview fixes without applying
+	doctorOutput         string // export diagnostics to file
+	doctorFixChildParent bool   // opt-in fix for child→parent deps
+	doctorVerbose        bool   // show detailed output during fixes
+	doctorForce          bool   // force repair mode, bypass validation where safe
+	doctorSource         string // source of truth selection: auto, jsonl, db
 	perfMode             bool
 	checkHealthMode      bool
-	doctorCheckFlag      string // bd-kff0: run specific check (e.g., "pollution")
-	doctorClean          bool   // bd-kff0: for pollution check, delete detected issues
-	doctorDeep           bool   // bd-cwpl: full graph integrity validation
+	doctorCheckFlag      string // run specific check (e.g., "pollution")
+	doctorClean          bool   // for pollution check, delete detected issues
+	doctorDeep           bool   // full graph integrity validation
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -122,14 +117,16 @@ Examples:
   bd doctor --json       # Machine-readable output
   bd doctor --fix        # Automatically fix issues (with confirmation)
   bd doctor --fix --yes  # Automatically fix issues (no confirmation)
-  bd doctor --fix -i     # Confirm each fix individually (bd-3xl)
+  bd doctor --fix -i     # Confirm each fix individually
   bd doctor --fix --fix-child-parent  # Also fix child→parent deps (opt-in)
+  bd doctor --fix --force # Force repair even when database can't be opened
+  bd doctor --fix --source=jsonl # Rebuild database from JSONL (source of truth)
   bd doctor --dry-run    # Preview what --fix would do without making changes
   bd doctor --perf       # Performance diagnostics
   bd doctor --output diagnostics.json  # Export diagnostics to file
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
-  bd doctor --deep             # Full graph integrity validation (bd-cwpl)`,
+  bd doctor --deep             # Full graph integrity validation`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 
@@ -158,7 +155,7 @@ Examples:
 			return
 		}
 
-		// Run specific check if --check flag is set (bd-kff0)
+		// Run specific check if --check flag is set
 		if doctorCheckFlag != "" {
 			switch doctorCheckFlag {
 			case "pollution":
@@ -171,7 +168,7 @@ Examples:
 			}
 		}
 
-		// Run deep validation if --deep flag is set (bd-cwpl)
+		// Run deep validation if --deep flag is set
 		if doctorDeep {
 			runDeepValidation(absPath)
 			return
@@ -180,7 +177,7 @@ Examples:
 		// Run diagnostics
 		result := runDiagnostics(absPath)
 
-		// bd-a5z: Preview fixes (dry-run) or apply fixes if requested
+		// Preview fixes (dry-run) or apply fixes if requested
 		if doctorDryRun {
 			previewFixes(result)
 		} else if doctorFix {
@@ -189,13 +186,13 @@ Examples:
 			result = runDiagnostics(absPath)
 		}
 
-		// bd-9cc: Add timestamp and platform info for export
+		// Add timestamp and platform info for export
 		if doctorOutput != "" || jsonOutput {
 			result.Timestamp = time.Now().UTC().Format(time.RFC3339)
 			result.Platform = doctor.CollectPlatformInfo(absPath)
 		}
 
-		// bd-9cc: Export to file if --output specified
+		// Export to file if --output specified
 		if doctorOutput != "" {
 			if err := exportDiagnostics(result, doctorOutput); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to export diagnostics: %v\n", err)
@@ -222,463 +219,12 @@ Examples:
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Automatically fix issues where possible")
 	doctorCmd.Flags().BoolVarP(&doctorYes, "yes", "y", false, "Skip confirmation prompt (for non-interactive use)")
-	doctorCmd.Flags().BoolVarP(&doctorInteractive, "interactive", "i", false, "Confirm each fix individually (bd-3xl)")
-	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes (bd-a5z)")
-	doctorCmd.Flags().BoolVar(&doctorFixChildParent, "fix-child-parent", false, "Remove child→parent dependencies (opt-in, bd-cuek)")
-}
-
-// previewFixes shows what would be fixed without applying changes (bd-a5z)
-func previewFixes(result doctorResult) {
-	// Collect all fixable issues
-	var fixableIssues []doctorCheck
-	for _, check := range result.Checks {
-		if (check.Status == statusWarning || check.Status == statusError) && check.Fix != "" {
-			fixableIssues = append(fixableIssues, check)
-		}
-	}
-
-	if len(fixableIssues) == 0 {
-		fmt.Println("\n✓ No fixable issues found (dry-run)")
-		return
-	}
-
-	fmt.Println("\n[DRY-RUN] The following issues would be fixed with --fix:")
-	fmt.Println()
-
-	for i, issue := range fixableIssues {
-		// Show the issue details
-		fmt.Printf("  %d. %s\n", i+1, issue.Name)
-		if issue.Status == statusError {
-			fmt.Printf("     Status: %s\n", ui.RenderFail("ERROR"))
-		} else {
-			fmt.Printf("     Status: %s\n", ui.RenderWarn("WARNING"))
-		}
-		fmt.Printf("     Issue:  %s\n", issue.Message)
-		if issue.Detail != "" {
-			fmt.Printf("     Detail: %s\n", issue.Detail)
-		}
-		fmt.Printf("     Fix:    %s\n", issue.Fix)
-		fmt.Println()
-	}
-
-	fmt.Printf("[DRY-RUN] Would attempt to fix %d issue(s)\n", len(fixableIssues))
-	fmt.Println("Run 'bd doctor --fix' to apply these fixes")
-}
-
-func applyFixes(result doctorResult) {
-	// Collect all fixable issues
-	var fixableIssues []doctorCheck
-	for _, check := range result.Checks {
-		if (check.Status == statusWarning || check.Status == statusError) && check.Fix != "" {
-			fixableIssues = append(fixableIssues, check)
-		}
-	}
-
-	if len(fixableIssues) == 0 {
-		fmt.Println("\nNo fixable issues found.")
-		return
-	}
-
-	// Show what will be fixed
-	fmt.Println("\nFixable issues:")
-	for i, issue := range fixableIssues {
-		fmt.Printf("  %d. %s: %s\n", i+1, issue.Name, issue.Message)
-	}
-
-	// bd-3xl: Interactive mode - confirm each fix individually
-	if doctorInteractive {
-		applyFixesInteractive(result.Path, fixableIssues)
-		return
-	}
-
-	// Ask for confirmation (skip if --yes flag is set)
-	if !doctorYes {
-		fmt.Printf("\nThis will attempt to fix %d issue(s). Continue? (Y/n): ", len(fixableIssues))
-		reader := bufio.NewReader(os.Stdin)
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
-			return
-		}
-
-		response = strings.TrimSpace(strings.ToLower(response))
-		if response != "" && response != "y" && response != "yes" {
-			fmt.Println("Fix canceled.")
-			return
-		}
-	}
-
-	// Apply fixes
-	fmt.Println("\nApplying fixes...")
-	applyFixList(result.Path, fixableIssues)
-}
-
-// applyFixesInteractive prompts for each fix individually (bd-3xl)
-func applyFixesInteractive(path string, issues []doctorCheck) {
-	reader := bufio.NewReader(os.Stdin)
-	applyAll := false
-	var approvedFixes []doctorCheck
-
-	fmt.Println("\nReview each fix:")
-	fmt.Println("  [y]es - apply this fix")
-	fmt.Println("  [n]o  - skip this fix")
-	fmt.Println("  [a]ll - apply all remaining fixes")
-	fmt.Println("  [q]uit - stop without applying more fixes")
-	fmt.Println()
-
-	for i, issue := range issues {
-		// Show issue details
-		fmt.Printf("(%d/%d) %s\n", i+1, len(issues), issue.Name)
-		if issue.Status == statusError {
-			fmt.Printf("  Status: %s\n", ui.RenderFail("ERROR"))
-		} else {
-			fmt.Printf("  Status: %s\n", ui.RenderWarn("WARNING"))
-		}
-		fmt.Printf("  Issue:  %s\n", issue.Message)
-		if issue.Detail != "" {
-			fmt.Printf("  Detail: %s\n", issue.Detail)
-		}
-		fmt.Printf("  Fix:    %s\n", issue.Fix)
-
-		// Check if we should apply all remaining
-		if applyAll {
-			fmt.Println("  → Auto-approved (apply all)")
-			approvedFixes = append(approvedFixes, issue)
-			continue
-		}
-
-		// Prompt for this fix
-		fmt.Print("\n  Apply this fix? [y/n/a/q]: ")
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
-			return
-		}
-
-		response = strings.TrimSpace(strings.ToLower(response))
-		switch response {
-		case "y", "yes":
-			approvedFixes = append(approvedFixes, issue)
-			fmt.Println("  → Approved")
-		case "n", "no", "":
-			fmt.Println("  → Skipped")
-		case "a", "all":
-			applyAll = true
-			approvedFixes = append(approvedFixes, issue)
-			fmt.Println("  → Approved (applying all remaining)")
-		case "q", "quit":
-			fmt.Println("  → Quit")
-			if len(approvedFixes) > 0 {
-				fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
-				applyFixList(path, approvedFixes)
-			} else {
-				fmt.Println("\nNo fixes applied.")
-			}
-			return
-		default:
-			// Treat unknown input as skip
-			fmt.Println("  → Skipped (unrecognized input)")
-		}
-		fmt.Println()
-	}
-
-	// Apply all approved fixes
-	if len(approvedFixes) > 0 {
-		fmt.Printf("\nApplying %d approved fix(es)...\n", len(approvedFixes))
-		applyFixList(path, approvedFixes)
-	} else {
-		fmt.Println("\nNo fixes approved.")
-	}
-}
-
-// applyFixList applies a list of fixes and reports results
-func applyFixList(path string, fixes []doctorCheck) {
-	// Apply fixes in a dependency-aware order.
-	// Rough dependency chain:
-	// permissions/daemon cleanup → config sanity → DB integrity/migrations → DB↔JSONL sync.
-	order := []string{
-		"Permissions",
-		"Daemon Health",
-		"Database Config",
-		"JSONL Config",
-		"Database Integrity",
-		"Database",
-		"Schema Compatibility",
-		"JSONL Integrity",
-		"DB-JSONL Sync",
-	}
-	priority := make(map[string]int, len(order))
-	for i, name := range order {
-		priority[name] = i
-	}
-	slices.SortStableFunc(fixes, func(a, b doctorCheck) int {
-		pa, oka := priority[a.Name]
-		if !oka {
-			pa = 1000
-		}
-		pb, okb := priority[b.Name]
-		if !okb {
-			pb = 1000
-		}
-		if pa < pb {
-			return -1
-		}
-		if pa > pb {
-			return 1
-		}
-		return 0
-	})
-
-	fixedCount := 0
-	errorCount := 0
-
-	for _, check := range fixes {
-		fmt.Printf("\nFixing %s...\n", check.Name)
-
-		var err error
-		switch check.Name {
-		case "Gitignore":
-			err = doctor.FixGitignore()
-		case "Git Hooks":
-			err = fix.GitHooks(path)
-		case "Daemon Health":
-			err = fix.Daemon(path)
-		case "DB-JSONL Sync":
-			err = fix.DBJSONLSync(path)
-		case "Permissions":
-			err = fix.Permissions(path)
-		case "Database":
-			err = fix.DatabaseVersion(path)
-		case "Database Integrity":
-			// Corruption detected - try recovery from JSONL
-			err = fix.DatabaseCorruptionRecovery(path)
-		case "Schema Compatibility":
-			err = fix.SchemaCompatibility(path)
-		case "Repo Fingerprint":
-			err = fix.RepoFingerprint(path)
-		case "Git Merge Driver":
-			err = fix.MergeDriver(path)
-		case "Sync Branch Config":
-			// No auto-fix: sync-branch should be added to config.yaml (version controlled)
-			fmt.Printf("  ⚠ Add 'sync-branch: beads-sync' to .beads/config.yaml\n")
-			continue
-		case "Database Config":
-			err = fix.DatabaseConfig(path)
-		case "JSONL Config":
-			err = fix.LegacyJSONLConfig(path)
-		case "JSONL Integrity":
-			err = fix.JSONLIntegrity(path)
-		case "Deletions Manifest":
-			err = fix.MigrateTombstones(path)
-		case "Untracked Files":
-			err = fix.UntrackedJSONL(path)
-		case "Sync Branch Health":
-			// Get sync branch from config
-			syncBranch := syncbranch.GetFromYAML()
-			if syncBranch == "" {
-				fmt.Printf("  ⚠ No sync branch configured in config.yaml\n")
-				continue
-			}
-			err = fix.SyncBranchHealth(path, syncBranch)
-		case "Merge Artifacts":
-			err = fix.MergeArtifacts(path)
-		case "Orphaned Dependencies":
-			err = fix.OrphanedDependencies(path)
-		case "Child-Parent Dependencies":
-			// bd-cuek: Requires explicit opt-in flag (destructive, may remove intentional deps)
-			if !doctorFixChildParent {
-				fmt.Printf("  ⚠ Child→parent deps require explicit opt-in: bd doctor --fix --fix-child-parent\n")
-				continue
-			}
-			err = fix.ChildParentDependencies(path)
-		case "Duplicate Issues":
-			// No auto-fix: duplicates require user review
-			fmt.Printf("  ⚠ Run 'bd duplicates' to review and merge duplicates\n")
-			continue
-		case "Test Pollution":
-			// No auto-fix: test cleanup requires user review
-			fmt.Printf("  ⚠ Run 'bd doctor --check=pollution' to review and clean test issues\n")
-			continue
-		case "Git Conflicts":
-			// No auto-fix: git conflicts require manual resolution
-			fmt.Printf("  ⚠ Resolve conflicts manually: git checkout --ours or --theirs .beads/issues.jsonl\n")
-			continue
-		case "Stale Closed Issues":
-			// bd-bqcc: consolidate cleanup into doctor --fix
-			err = fix.StaleClosedIssues(path)
-		case "Expired Tombstones":
-			// bd-bqcc: consolidate cleanup into doctor --fix
-			err = fix.ExpiredTombstones(path)
-		case "Compaction Candidates":
-			// No auto-fix: compaction requires agent review
-			fmt.Printf("  ⚠ Run 'bd compact --analyze' to review candidates\n")
-			continue
-		case "Large Database":
-			// No auto-fix: pruning deletes data, must be user-controlled
-			fmt.Printf("  ⚠ Run 'bd cleanup --older-than 90' to prune old closed issues\n")
-			continue
-		default:
-			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
-			fmt.Printf("  Manual fix: %s\n", check.Fix)
-			continue
-		}
-
-		if err != nil {
-			errorCount++
-			fmt.Printf("  %s Error: %v\n", ui.RenderFail("✗"), err)
-			fmt.Printf("  Manual fix: %s\n", check.Fix)
-		} else {
-			fixedCount++
-			fmt.Printf("  %s Fixed\n", ui.RenderPass("✓"))
-		}
-	}
-
-	// Summary
-	fmt.Printf("\nFix summary: %d fixed, %d errors\n", fixedCount, errorCount)
-	if errorCount > 0 {
-		fmt.Println("\nSome fixes failed. Please review the errors above and apply manual fixes as needed.")
-	}
-}
-
-// runCheckHealth runs lightweight health checks for git hooks.
-// Silent on success, prints a hint if issues detected.
-// Respects hints.doctor config setting.
-func runCheckHealth(path string) {
-	beadsDir := filepath.Join(path, ".beads")
-
-	// Check if .beads/ exists
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		// No .beads directory - nothing to check
-		return
-	}
-
-	// Get database path once (bd-b8h: centralized path resolution)
-	dbPath := getCheckHealthDBPath(beadsDir)
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database - only check hooks
-		if issue := doctor.CheckHooksQuick(Version); issue != "" {
-			printCheckHealthHint([]string{issue})
-		}
-		return
-	}
-
-	// Open database once for all checks (bd-xyc: single DB connection)
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		// Can't open DB - only check hooks
-		if issue := doctor.CheckHooksQuick(Version); issue != "" {
-			printCheckHealthHint([]string{issue})
-		}
-		return
-	}
-	defer db.Close()
-
-	// Check if hints.doctor is disabled in config
-	if hintsDisabledDB(db) {
-		return
-	}
-
-	// Run lightweight checks
-	var issues []string
-
-	// Check 1: Database version mismatch (CLI vs database bd_version)
-	if issue := checkVersionMismatchDB(db); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 2: Sync branch not configured (now reads from config.yaml, not DB)
-	if issue := doctor.CheckSyncBranchQuick(); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 3: Outdated git hooks
-	if issue := doctor.CheckHooksQuick(Version); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// Check 3: Sync-branch hook compatibility (issue #532)
-	if issue := doctor.CheckSyncBranchHookQuick(path); issue != "" {
-		issues = append(issues, issue)
-	}
-
-	// If any issues found, print hint
-	if len(issues) > 0 {
-		printCheckHealthHint(issues)
-	}
-	// Silent exit on success
-}
-
-// runDeepValidation runs full graph integrity validation (bd-cwpl)
-func runDeepValidation(path string) {
-	// Show warning about potential slowness
-	fmt.Println("Running deep validation (may be slow on large databases)...")
-	fmt.Println()
-
-	result := doctor.RunDeepValidation(path)
-
-	if jsonOutput {
-		jsonBytes, err := doctor.DeepValidationResultJSON(result)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(string(jsonBytes))
-	} else {
-		doctor.PrintDeepValidationResult(result)
-	}
-
-	if !result.OverallOK {
-		os.Exit(1)
-	}
-}
-
-// printCheckHealthHint prints the health check hint and exits with error.
-func printCheckHealthHint(issues []string) {
-	fmt.Fprintf(os.Stderr, "💡 bd doctor recommends a health check:\n")
-	for _, issue := range issues {
-		fmt.Fprintf(os.Stderr, "   • %s\n", issue)
-	}
-	fmt.Fprintf(os.Stderr, "   Run 'bd doctor' for details, or 'bd doctor --fix' to auto-repair\n")
-	fmt.Fprintf(os.Stderr, "   (Suppress with: bd config set %s false)\n", ConfigKeyHintsDoctor)
-	os.Exit(1)
-}
-
-// getCheckHealthDBPath returns the database path for check-health operations.
-// This centralizes the path resolution logic (bd-b8h).
-func getCheckHealthDBPath(beadsDir string) string {
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		return cfg.DatabasePath(beadsDir)
-	}
-	return filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-}
-
-// hintsDisabledDB checks if hints.doctor is set to "false" using an existing DB connection.
-// Used by runCheckHealth to avoid multiple DB opens (bd-xyc).
-func hintsDisabledDB(db *sql.DB) bool {
-	var value string
-	err := db.QueryRow("SELECT value FROM config WHERE key = ?", ConfigKeyHintsDoctor).Scan(&value)
-	if err != nil {
-		return false // Key not set, assume hints enabled
-	}
-	return strings.ToLower(value) == "false"
-}
-
-// checkVersionMismatchDB checks if CLI version differs from database bd_version.
-// Uses an existing DB connection (bd-xyc).
-func checkVersionMismatchDB(db *sql.DB) string {
-	var dbVersion string
-	err := db.QueryRow("SELECT value FROM metadata WHERE key = 'bd_version'").Scan(&dbVersion)
-	if err != nil {
-		return "" // Can't read version, skip
-	}
-
-	if dbVersion != "" && dbVersion != Version {
-		return fmt.Sprintf("Version mismatch (CLI: %s, database: %s)", Version, dbVersion)
-	}
-
-	return ""
+	doctorCmd.Flags().BoolVarP(&doctorInteractive, "interactive", "i", false, "Confirm each fix individually")
+	doctorCmd.Flags().BoolVar(&doctorDryRun, "dry-run", false, "Preview fixes without making changes")
+	doctorCmd.Flags().BoolVar(&doctorFixChildParent, "fix-child-parent", false, "Remove child→parent dependencies (opt-in)")
+	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show detailed output during fixes (e.g., list each removed dependency)")
+	doctorCmd.Flags().BoolVar(&doctorForce, "force", false, "Force repair mode: attempt recovery even when database cannot be opened")
+	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
 }
 
 func runDiagnostics(path string) doctorResult {
@@ -712,7 +258,7 @@ func runDiagnostics(path string) doctorResult {
 		return result
 	}
 
-	// Check 1a: Fresh clone detection (bd-4ew)
+	// Check 1a: Fresh clone detection
 	// Must come early - if this is a fresh clone, other checks may be misleading
 	freshCloneCheck := convertWithCategory(doctor.CheckFreshClone(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, freshCloneCheck)
@@ -727,7 +273,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 2a: Schema compatibility (bd-ckvw)
+	// Check 2a: Schema compatibility
 	schemaCheck := convertWithCategory(doctor.CheckSchemaCompatibility(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, schemaCheck)
 	if schemaCheck.Status == statusError {
@@ -741,7 +287,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 2c: Database integrity (bd-2au)
+	// Check 2c: Database integrity
 	integrityCheck := convertWithCategory(doctor.CheckDatabaseIntegrity(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, integrityCheck)
 	if integrityCheck.Status == statusError {
@@ -779,7 +325,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 6a: Legacy JSONL config (bd-6xd: migrate beads.jsonl to issues.jsonl)
+	// Check 6a: Legacy JSONL config (migrate beads.jsonl to issues.jsonl)
 	legacyConfigCheck := convertWithCategory(doctor.CheckLegacyJSONLConfig(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, legacyConfigCheck)
 	// Don't fail overall check for legacy config, just warn
@@ -791,7 +337,7 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 7a: Configuration value validation (bd-alz)
+	// Check 7a: Configuration value validation
 	configValuesCheck := convertWithCategory(doctor.CheckConfigValues(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, configValuesCheck)
 	// Don't fail overall check for config value warnings, just warn
@@ -836,6 +382,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, claudeCheck)
 	// Don't fail overall check for missing Claude integration, just warn
 
+	// Check 11b: Gemini CLI integration
+	geminiCheck := convertWithCategory(doctor.CheckGemini(), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, geminiCheck)
+	// Don't fail overall check for missing Gemini integration, just info
+
 	// Check 11a: bd in PATH (needed for Claude hooks to work)
 	bdPathCheck := convertWithCategory(doctor.CheckBdInPath(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPathCheck)
@@ -861,6 +412,16 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, gitignoreCheck)
 	// Don't fail overall check for gitignore, just warn
 
+	// Check 14a: issues.jsonl tracking (catches global gitignore conflicts)
+	issuesTrackingCheck := convertWithCategory(doctor.CheckIssuesTracking(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, issuesTrackingCheck)
+	// Don't fail overall check for tracking issues, just warn
+
+	// Check 14b: redirect file tracking (worktree redirect files shouldn't be committed)
+	redirectTrackingCheck := convertWithCategory(doctor.CheckRedirectNotTracked(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, redirectTrackingCheck)
+	// Don't fail overall check for redirect tracking, just warn
+
 	// Check 15: Git merge driver configuration
 	mergeDriverCheck := convertWithCategory(doctor.CheckMergeDriver(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, mergeDriverCheck)
@@ -876,22 +437,22 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, gitUpstreamCheck)
 	// Don't fail overall check for upstream drift, just warn
 
-	// Check 16: Metadata.json version tracking (bd-u4sb)
+	// Check 16: Metadata.json version tracking
 	metadataCheck := convertWithCategory(doctor.CheckMetadataVersionTracking(path, Version), doctor.CategoryMetadata)
 	result.Checks = append(result.Checks, metadataCheck)
 	// Don't fail overall check for metadata, just warn
 
-	// Check 17: Sync branch configuration (bd-rsua)
+	// Check 17: Sync branch configuration
 	syncBranchCheck := convertWithCategory(doctor.CheckSyncBranchConfig(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, syncBranchCheck)
 	// Don't fail overall check for missing sync.branch, just warn
 
-	// Check 17a: Sync branch health (bd-6rf)
+	// Check 17a: Sync branch health
 	syncBranchHealthCheck := convertWithCategory(doctor.CheckSyncBranchHealth(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, syncBranchHealthCheck)
 	// Don't fail overall check for sync branch health, just warn
 
-	// Check 17b: Orphaned issues - referenced in commits but still open (bd-5hrq)
+	// Check 17b: Orphaned issues - referenced in commits but still open
 	orphanedIssuesCheck := convertWithCategory(doctor.CheckOrphanedIssues(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, orphanedIssuesCheck)
 	// Don't fail overall check for orphaned issues, just warn
@@ -901,12 +462,12 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, deletionsCheck)
 	// Don't fail overall check for missing deletions manifest, just warn
 
-	// Check 19: Tombstones health (bd-s3v)
+	// Check 19: Tombstones health
 	tombstonesCheck := convertWithCategory(doctor.CheckTombstones(path), doctor.CategoryMetadata)
 	result.Checks = append(result.Checks, tombstonesCheck)
 	// Don't fail overall check for tombstone issues, just warn
 
-	// Check 20: Untracked .beads/*.jsonl files (bd-pbj)
+	// Check 20: Untracked .beads/*.jsonl files
 	untrackedCheck := convertWithCategory(doctor.CheckUntrackedBeadsFiles(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, untrackedCheck)
 	// Don't fail overall check for untracked files, just warn
@@ -921,7 +482,7 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, orphanedDepsCheck)
 	// Don't fail overall check for orphaned deps, just warn
 
-	// Check 22a: Child→parent dependencies (anti-pattern, bd-nim5)
+	// Check 22a: Child→parent dependencies (anti-pattern)
 	childParentDepsCheck := convertDoctorCheck(doctor.CheckChildParentDependencies(path))
 	result.Checks = append(result.Checks, childParentDepsCheck)
 	// Don't fail overall check for child→parent deps, just warn
@@ -943,12 +504,12 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 26: Stale closed issues (maintenance, bd-bqcc)
+	// Check 26: Stale closed issues (maintenance)
 	staleClosedCheck := convertDoctorCheck(doctor.CheckStaleClosedIssues(path))
 	result.Checks = append(result.Checks, staleClosedCheck)
 	// Don't fail overall check for stale issues, just warn
 
-	// Check 26a: Stale molecules (complete but unclosed, bd-6a5z)
+	// Check 26a: Stale molecules (complete but unclosed)
 	staleMoleculesCheck := convertDoctorCheck(doctor.CheckStaleMolecules(path))
 	result.Checks = append(result.Checks, staleMoleculesCheck)
 	// Don't fail overall check for stale molecules, just warn
@@ -958,12 +519,12 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, persistentMolCheck)
 	// Don't fail overall check for persistent mol issues, just warn
 
-	// Check 27: Expired tombstones (maintenance, bd-bqcc)
+	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))
 	result.Checks = append(result.Checks, tombstonesExpiredCheck)
 	// Don't fail overall check for expired tombstones, just warn
 
-	// Check 28: Compaction candidates (maintenance, bd-bqcc)
+	// Check 28: Compaction candidates (maintenance)
 	compactionCheck := convertDoctorCheck(doctor.CheckCompactionCandidates(path))
 	result.Checks = append(result.Checks, compactionCheck)
 	// Info only, not a warning - compaction requires human review
@@ -973,6 +534,11 @@ func runDiagnostics(path string) doctorResult {
 	sizeCheck := convertDoctorCheck(doctor.CheckDatabaseSize(path))
 	result.Checks = append(result.Checks, sizeCheck)
 	// Don't fail overall check for size warning, just inform
+
+	// Check 30: Pending migrations (summarizes all available migrations)
+	migrationsCheck := convertDoctorCheck(doctor.CheckPendingMigrations(path))
+	result.Checks = append(result.Checks, migrationsCheck)
+	// Status is determined by the check itself based on migration priorities
 
 	return result
 }
@@ -996,7 +562,7 @@ func convertWithCategory(dc doctor.DoctorCheck, category string) doctorCheck {
 	return check
 }
 
-// exportDiagnostics writes the doctor result to a JSON file (bd-9cc)
+// exportDiagnostics writes the doctor result to a JSON file
 func exportDiagnostics(result doctorResult, outputPath string) error {
 	// #nosec G304 - outputPath is a user-provided flag value for file generation
 	f, err := os.Create(outputPath)
@@ -1150,146 +716,3 @@ func printDiagnostics(result doctorResult) {
 	}
 }
 
-// runPollutionCheck runs detailed test pollution detection (bd-kff0)
-// This integrates the detect-pollution command functionality into doctor.
-func runPollutionCheck(path string, clean bool, yes bool) {
-	// Ensure we have a store initialized (uses direct mode, no daemon support yet)
-	if err := ensureDirectMode("pollution check requires direct mode"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := rootCtx
-
-	// Get all issues
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching issues: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Detect pollution (reuse detectTestPollution from detect_pollution.go)
-	polluted := detectTestPollution(allIssues)
-
-	if len(polluted) == 0 {
-		if !jsonOutput {
-			fmt.Println("No test pollution detected!")
-		} else {
-			outputJSON(map[string]interface{}{
-				"polluted_count": 0,
-				"issues":         []interface{}{},
-			})
-		}
-		return
-	}
-
-	// Categorize by confidence
-	highConfidence := []pollutionResult{}
-	mediumConfidence := []pollutionResult{}
-
-	for _, p := range polluted {
-		if p.score >= 0.9 {
-			highConfidence = append(highConfidence, p)
-		} else {
-			mediumConfidence = append(mediumConfidence, p)
-		}
-	}
-
-	if jsonOutput {
-		result := map[string]interface{}{
-			"polluted_count":    len(polluted),
-			"high_confidence":   len(highConfidence),
-			"medium_confidence": len(mediumConfidence),
-			"issues":            []map[string]interface{}{},
-		}
-
-		for _, p := range polluted {
-			result["issues"] = append(result["issues"].([]map[string]interface{}), map[string]interface{}{
-				"id":         p.issue.ID,
-				"title":      p.issue.Title,
-				"score":      p.score,
-				"reasons":    p.reasons,
-				"created_at": p.issue.CreatedAt,
-			})
-		}
-
-		outputJSON(result)
-		return
-	}
-
-	// Human-readable output
-	fmt.Printf("Found %d potential test issues:\n\n", len(polluted))
-
-	if len(highConfidence) > 0 {
-		fmt.Printf("High Confidence (score ≥ 0.9):\n")
-		for _, p := range highConfidence {
-			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
-			for _, reason := range p.reasons {
-				fmt.Printf("    - %s\n", reason)
-			}
-		}
-		fmt.Printf("  (Total: %d issues)\n\n", len(highConfidence))
-	}
-
-	if len(mediumConfidence) > 0 {
-		fmt.Printf("Medium Confidence (score 0.7-0.9):\n")
-		for _, p := range mediumConfidence {
-			fmt.Printf("  %s: %q (score: %.2f)\n", p.issue.ID, p.issue.Title, p.score)
-			for _, reason := range p.reasons {
-				fmt.Printf("    - %s\n", reason)
-			}
-		}
-		fmt.Printf("  (Total: %d issues)\n\n", len(mediumConfidence))
-	}
-
-	if !clean {
-		fmt.Printf("Run 'bd doctor --check=pollution --clean' to delete these issues (with confirmation).\n")
-		return
-	}
-
-	// Confirmation prompt
-	if !yes {
-		fmt.Printf("\nDelete %d test issues? [y/N] ", len(polluted))
-		var response string
-		_, _ = fmt.Scanln(&response)
-		if strings.ToLower(response) != "y" {
-			fmt.Println("Canceled.")
-			return
-		}
-	}
-
-	// Backup to JSONL before deleting
-	backupPath := ".beads/pollution-backup.jsonl"
-	if err := backupPollutedIssues(polluted, backupPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error backing up issues: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Backed up %d issues to %s\n", len(polluted), backupPath)
-
-	// Delete issues
-	fmt.Printf("\nDeleting %d issues...\n", len(polluted))
-	deleted := 0
-	for _, p := range polluted {
-		if err := deleteIssue(ctx, p.issue.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Error deleting %s: %v\n", p.issue.ID, err)
-			continue
-		}
-		deleted++
-	}
-
-	// Schedule auto-flush
-	markDirtyAndScheduleFlush()
-
-	fmt.Printf("%s Deleted %d test issues\n", ui.RenderPass("✓"), deleted)
-	fmt.Printf("\nCleanup complete. To restore, run: bd import %s\n", backupPath)
-}
-
-func init() {
-	rootCmd.AddCommand(doctorCmd)
-	doctorCmd.Flags().BoolVar(&perfMode, "perf", false, "Run performance diagnostics and generate CPU profile")
-	doctorCmd.Flags().BoolVar(&checkHealthMode, "check-health", false, "Quick health check for git hooks (silent on success)")
-	doctorCmd.Flags().StringVarP(&doctorOutput, "output", "o", "", "Export diagnostics to JSON file (bd-9cc)")
-	doctorCmd.Flags().StringVar(&doctorCheckFlag, "check", "", "Run specific check in detail (e.g., 'pollution')")
-	doctorCmd.Flags().BoolVar(&doctorClean, "clean", false, "For pollution check: delete detected test issues")
-	doctorCmd.Flags().BoolVar(&doctorDeep, "deep", false, "Validate full graph integrity (bd-cwpl)")
-}

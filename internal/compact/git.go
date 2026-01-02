@@ -1,21 +1,20 @@
 package compact
 
 import (
-	"bytes"
 	"os/exec"
 	"strings"
 )
 
+var gitExec = func(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).Output()
+}
+
 // GetCurrentCommitHash returns the current git HEAD commit hash.
 // Returns empty string if not in a git repository or if git command fails.
 func GetCurrentCommitHash() string {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	
-	if err := cmd.Run(); err != nil {
+	output, err := gitExec("git", "rev-parse", "HEAD")
+	if err != nil {
 		return ""
 	}
-	
-	return strings.TrimSpace(out.String())
+	return strings.TrimSpace(string(output))
 }

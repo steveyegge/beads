@@ -65,7 +65,7 @@ func runPour(cmd *cobra.Command, args []string) {
 	}
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	varFlags, _ := cmd.Flags().GetStringSlice("var")
+	varFlags, _ := cmd.Flags().GetStringArray("var")
 	assignee, _ := cmd.Flags().GetString("assignee")
 	attachFlags, _ := cmd.Flags().GetStringSlice("attach")
 	attachType, _ := cmd.Flags().GetString("attach-type")
@@ -89,7 +89,8 @@ func runPour(cmd *cobra.Command, args []string) {
 
 	// Try to cook formula inline (gt-4v1eo: ephemeral protos)
 	// This works for any valid formula name, not just "mol-" prefixed ones
-	sg, err := resolveAndCookFormula(args[0], nil)
+	// Pass vars for step condition filtering (bd-7zka.1)
+	sg, err := resolveAndCookFormulaWithVars(args[0], nil, vars)
 	if err == nil {
 		subgraph = sg
 		protoID = sg.Root.ID
@@ -172,7 +173,7 @@ func runPour(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Apply variable defaults from formula (gt-4v1eo)
+	// Apply variable defaults from formula
 	vars = applyVariableDefaults(vars, subgraph)
 
 	// Check for missing required variables (those without defaults)
@@ -225,7 +226,7 @@ func runPour(cmd *cobra.Command, args []string) {
 	}
 
 	// Spawn as persistent mol (ephemeral=false)
-	// bd-hobo: Use "mol" prefix for distinct visual recognition
+	// Use "mol" prefix for distinct visual recognition
 	result, err := spawnMolecule(ctx, store, subgraph, vars, assignee, actor, false, "mol")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error pouring proto: %v\n", err)
@@ -275,7 +276,7 @@ func runPour(cmd *cobra.Command, args []string) {
 
 func init() {
 	// Pour command flags
-	pourCmd.Flags().StringSlice("var", []string{}, "Variable substitution (key=value)")
+	pourCmd.Flags().StringArray("var", []string{}, "Variable substitution (key=value)")
 	pourCmd.Flags().Bool("dry-run", false, "Preview what would be created")
 	pourCmd.Flags().String("assignee", "", "Assign the root issue to this agent/user")
 	pourCmd.Flags().StringSlice("attach", []string{}, "Proto to attach after spawning (repeatable)")

@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // ErrTestBinary is returned when getBdBinary detects it's running as a test binary.
@@ -107,4 +109,11 @@ func isWithinWorkspace(root, candidate string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
+// resolveBeadsDir follows .beads/redirect files to find the actual beads directory.
+// If no redirect exists, returns the original path unchanged.
+// This is a wrapper around beads.FollowRedirect for use within the fix package.
+func resolveBeadsDir(beadsDir string) string {
+	return beads.FollowRedirect(beadsDir)
 }

@@ -199,6 +199,14 @@ func TestVersionOutputWithCommitAndBranch(t *testing.T) {
 }
 
 func TestVersionFlag(t *testing.T) {
+	// Reset global state for test isolation
+	ensureCleanGlobalState(t)
+
+	// Ensure cleanup after running cobra commands
+	t.Cleanup(func() {
+		resetCommandContext()
+	})
+
 	// Save original stdout
 	oldStdout := os.Stdout
 	defer func() { os.Stdout = oldStdout }()

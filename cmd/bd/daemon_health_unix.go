@@ -1,4 +1,4 @@
-//go:build !windows && !wasm && !freebsd
+//go:build !windows && !wasm && !freebsd && !illumos && !solaris
 
 package main
 

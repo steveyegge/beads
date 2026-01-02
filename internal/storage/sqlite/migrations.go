@@ -47,6 +47,11 @@ var migrationsList = []Migration{
 	{"tombstone_closed_at", migrations.MigrateTombstoneClosedAt},
 	{"created_by_column", migrations.MigrateCreatedByColumn},
 	{"agent_fields", migrations.MigrateAgentFields},
+	{"mol_type_column", migrations.MigrateMolTypeColumn},
+	{"hooked_status_migration", migrations.MigrateHookedStatus},
+	{"event_fields", migrations.MigrateEventFields},
+	{"closed_by_session_column", migrations.MigrateClosedBySessionColumn},
+	{"due_defer_columns", migrations.MigrateDueDeferColumns},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -85,21 +90,29 @@ func getMigrationDescription(name string) string {
 		"source_repo_column":           "Adds source_repo column for multi-repo support",
 		"repo_mtimes_table":            "Adds repo_mtimes table for multi-repo hydration caching",
 		"child_counters_table":         "Adds child_counters table for hierarchical ID generation with ON DELETE CASCADE",
-		"blocked_issues_cache":         "Adds blocked_issues_cache table for GetReadyWork performance optimization (bd-5qim)",
-		"orphan_detection":             "Detects orphaned child issues and logs them for user action (bd-3852)",
-		"close_reason_column":          "Adds close_reason column to issues table for storing closure explanations (bd-uyu)",
-		"tombstone_columns":            "Adds tombstone columns (deleted_at, deleted_by, delete_reason, original_type) for inline soft-delete (bd-vw8)",
-		"messaging_fields":             "Adds messaging fields (sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by) for inter-agent communication (bd-kwro)",
+		"blocked_issues_cache":         "Adds blocked_issues_cache table for GetReadyWork performance optimization",
+		"orphan_detection":             "Detects orphaned child issues and logs them for user action",
+		"close_reason_column":          "Adds close_reason column to issues table for storing closure explanations",
+		"tombstone_columns":            "Adds tombstone columns (deleted_at, deleted_by, delete_reason, original_type) for inline soft-delete",
+		"messaging_fields":             "Adds messaging fields (sender, ephemeral, replies_to, relates_to, duplicate_of, superseded_by) for inter-agent communication",
 		"edge_consolidation":           "Adds metadata and thread_id columns to dependencies table for edge schema consolidation (Decision 004)",
 		"migrate_edge_fields":          "Migrates existing issue fields (replies_to, relates_to, duplicate_of, superseded_by) to dependency edges (Decision 004 Phase 3)",
 		"drop_edge_columns":            "Drops deprecated edge columns (replies_to, relates_to, duplicate_of, superseded_by) from issues table (Decision 004 Phase 4)",
-		"pinned_column":                "Adds pinned column for persistent context markers (bd-7h5)",
-		"is_template_column":           "Adds is_template column for template molecules (beads-1ra)",
-		"remove_depends_on_fk":         "Removes FK constraint on depends_on_id to allow external references (bd-zmmy)",
-		"additional_indexes":           "Adds performance optimization indexes for common query patterns (bd-h0we)",
-		"gate_columns":                 "Adds gate columns (await_type, await_id, timeout_ns, waiters) for async coordination (bd-udsi)",
+		"pinned_column":                "Adds pinned column for persistent context markers",
+		"is_template_column":           "Adds is_template column for template molecules",
+		"remove_depends_on_fk":         "Removes FK constraint on depends_on_id to allow external references",
+		"additional_indexes":           "Adds performance optimization indexes for common query patterns",
+		"gate_columns":                 "Adds gate columns (await_type, await_id, timeout_ns, waiters) for async coordination",
+		"tombstone_closed_at":          "Preserves closed_at timestamp when issues become tombstones",
+		"created_by_column":            "Adds created_by column to track issue creator",
+		"agent_fields":                 "Adds agent identity fields (hook_bead, role_bead, agent_state, etc.) for agent-as-bead pattern",
+		"mol_type_column":              "Adds mol_type column for molecule type classification (swarm/patrol/work)",
+		"hooked_status_migration":      "Migrates blocked hooked issues to in_progress status",
+		"event_fields":                 "Adds event fields (event_kind, actor, target, payload) for operational state change beads",
+		"closed_by_session_column":     "Adds closed_by_session column for tracking which Claude Code session closed an issue",
+		"due_defer_columns":            "Adds due_at and defer_until columns for time-based task scheduling (GH#820)",
 	}
-	
+
 	if desc, ok := descriptions[name]; ok {
 		return desc
 	}
@@ -135,6 +148,13 @@ func RunMigrations(db *sql.DB) error {
 			_, _ = db.Exec("ROLLBACK")
 		}
 	}()
+
+	// Pre-migration cleanup: remove orphaned refs that would fail invariant checks.
+	// This prevents the chicken-and-egg problem where the database can't open
+	// due to orphans left behind by tombstone deletion (see bd-eko4).
+	if _, _, err := CleanOrphanedRefs(db); err != nil {
+		return fmt.Errorf("pre-migration orphan cleanup failed: %w", err)
+	}
 
 	snapshot, err := captureSnapshot(db)
 	if err != nil {

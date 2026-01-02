@@ -444,7 +444,7 @@ func TestMerge3Way_SimpleUpdates(t *testing.T) {
 		}
 		right := base
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -471,7 +471,7 @@ func TestMerge3Way_SimpleUpdates(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -509,7 +509,7 @@ func TestMerge3Way_SimpleUpdates(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -681,7 +681,7 @@ func TestMerge3Way_AutoResolve(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts with auto-resolution, got %d", len(conflicts))
 		}
@@ -723,7 +723,7 @@ func TestMerge3Way_AutoResolve(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts with auto-resolution, got %d", len(conflicts))
 		}
@@ -765,7 +765,7 @@ func TestMerge3Way_AutoResolve(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts with auto-resolution, got %d", len(conflicts))
 		}
@@ -808,7 +808,7 @@ func TestMerge3Way_AutoResolve(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts with auto-resolution, got %d", len(conflicts))
 		}
@@ -837,7 +837,7 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		left := []Issue{} // Deleted in left
 		right := base     // Unchanged in right
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -859,7 +859,7 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		left := base     // Unchanged in left
 		right := []Issue{} // Deleted in right
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -891,7 +891,7 @@ func TestMerge3Way_Deletions(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts, got %d", len(conflicts))
 		}
@@ -923,7 +923,7 @@ func TestMerge3Way_Deletions(t *testing.T) {
 		}
 		right := []Issue{} // Deleted in right
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts, got %d", len(conflicts))
 		}
@@ -948,7 +948,7 @@ func TestMerge3Way_Additions(t *testing.T) {
 		}
 		right := []Issue{}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -973,7 +973,7 @@ func TestMerge3Way_Additions(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -999,7 +999,7 @@ func TestMerge3Way_Additions(t *testing.T) {
 		left := []Issue{issueData}
 		right := []Issue{issueData}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1031,7 +1031,7 @@ func TestMerge3Way_Additions(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("expected no conflicts with auto-resolution, got %d", len(conflicts))
 		}
@@ -1078,7 +1078,7 @@ func TestMerge3Way_ResurrectionPrevention(t *testing.T) {
 			},
 		}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1132,7 +1132,7 @@ func TestMerge3Way_ResurrectionPrevention(t *testing.T) {
 		// Right: issue is still open (stale)
 		right := base
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1416,7 +1416,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		left := []Issue{recentTombstone}
 		right := []Issue{modifiedLive}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1433,7 +1433,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		left := []Issue{modifiedLive}
 		right := []Issue{recentTombstone}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1450,7 +1450,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		left := []Issue{expiredTombstone}
 		right := []Issue{modifiedLive}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1470,7 +1470,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		left := []Issue{modifiedLive}
 		right := []Issue{expiredTombstone}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1519,7 +1519,7 @@ func TestMerge3Way_TombstoneVsTombstone(t *testing.T) {
 		left := []Issue{leftTombstone}
 		right := []Issue{rightTombstone}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1551,7 +1551,7 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 			DeletedBy: "user1",
 		}
 
-		result, conflicts := merge3Way([]Issue{}, []Issue{tombstone}, []Issue{})
+		result, conflicts := merge3Way([]Issue{}, []Issue{tombstone}, []Issue{}, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1574,7 +1574,7 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 			DeletedBy: "user1",
 		}
 
-		result, conflicts := merge3Way([]Issue{}, []Issue{}, []Issue{tombstone})
+		result, conflicts := merge3Way([]Issue{}, []Issue{}, []Issue{tombstone}, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1604,7 +1604,7 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 			CreatedBy: "user1",
 		}
 
-		result, conflicts := merge3Way([]Issue{}, []Issue{recentTombstone}, []Issue{live})
+		result, conflicts := merge3Way([]Issue{}, []Issue{recentTombstone}, []Issue{live}, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1657,7 +1657,7 @@ func TestMerge3WayWithTTL(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{liveIssue}
 
-		result, _ := Merge3WayWithTTL(base, left, right, shortTTL)
+		result, _ := Merge3WayWithTTL(base, left, right, shortTTL, false)
 		if len(result) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(result))
 		}
@@ -1674,7 +1674,7 @@ func TestMerge3WayWithTTL(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{liveIssue}
 
-		result, _ := Merge3WayWithTTL(base, left, right, longTTL)
+		result, _ := Merge3WayWithTTL(base, left, right, longTTL, false)
 		if len(result) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(result))
 		}
@@ -1765,7 +1765,7 @@ func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{} // Implicitly deleted in right
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1785,7 +1785,7 @@ func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
 		left := []Issue{} // Implicitly deleted in left
 		right := []Issue{tombstone}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -1809,7 +1809,7 @@ func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
 		left := []Issue{modifiedLive}
 		right := []Issue{} // Implicitly deleted in right
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
 		}
@@ -2164,7 +2164,7 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 		left := []Issue{leftLive}
 		right := []Issue{rightLive}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		// Should not have conflicts - merge rules apply
 		if len(conflicts) != 0 {
@@ -2217,7 +2217,7 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 		left := []Issue{leftOpen}
 		right := []Issue{rightOpen}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
@@ -2244,7 +2244,7 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 		left := []Issue{leftOpen}
 		right := []Issue{rightClosed}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
@@ -2311,7 +2311,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{closedIssue}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
@@ -2358,7 +2358,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 		left := []Issue{tombstone}
 		right := []Issue{closedIssue}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)
@@ -2397,7 +2397,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 		left := []Issue{liveLeft}
 		right := []Issue{liveRight}
 
-		result, conflicts := merge3Way(base, left, right)
+		result, conflicts := merge3Way(base, left, right, false)
 
 		if len(conflicts) != 0 {
 			t.Errorf("unexpected conflicts: %v", conflicts)

@@ -220,7 +220,34 @@ var configListCmd = &cobra.Command{
 		for _, k := range keys {
 			fmt.Printf("  %s = %s\n", k, config[k])
 		}
+
+		// Check for config.yaml overrides that take precedence (bd-20j)
+		// This helps diagnose when effective config differs from database config
+		showConfigYAMLOverrides(config)
 	},
+}
+
+// showConfigYAMLOverrides warns when config.yaml or env vars override database settings.
+// This addresses the confusion when `bd config list` shows one value but the effective
+// value used by commands is different due to higher-priority config sources.
+func showConfigYAMLOverrides(dbConfig map[string]string) {
+	var overrides []string
+
+	// Check sync.branch - can be overridden by BEADS_SYNC_BRANCH env var or config.yaml sync-branch
+	if dbSyncBranch, ok := dbConfig[syncbranch.ConfigKey]; ok && dbSyncBranch != "" {
+		effectiveBranch := syncbranch.GetFromYAML()
+		if effectiveBranch != "" && effectiveBranch != dbSyncBranch {
+			overrides = append(overrides, fmt.Sprintf("  sync.branch: database has '%s' but effective value is '%s' (from config.yaml or env)", dbSyncBranch, effectiveBranch))
+		}
+	}
+
+	if len(overrides) > 0 {
+		fmt.Println("\n⚠️  Config overrides (higher priority sources):")
+		for _, o := range overrides {
+			fmt.Println(o)
+		}
+		fmt.Println("\nNote: config.yaml and environment variables take precedence over database config.")
+	}
 }
 
 var configUnsetCmd = &cobra.Command{

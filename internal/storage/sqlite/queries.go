@@ -59,23 +59,23 @@ func formatJSONStringArray(arr []string) string {
 	return string(data)
 }
 
-// REMOVED (bd-8e05): getNextIDForPrefix and AllocateNextID - sequential ID generation
+// REMOVED: getNextIDForPrefix and AllocateNextID - sequential ID generation
 // no longer needed with hash-based IDs
-// Migration functions moved to migrations.go (bd-fc2d, bd-b245)
+// Migration functions moved to migrations.go
 
 // getNextChildNumber atomically generates the next child number for a parent ID
 // Uses the child_counters table for atomic, cross-process child ID generation
-// Hash ID generation functions moved to hash_ids.go (bd-90a5)
+// Hash ID generation functions moved to hash_ids.go
 
-// REMOVED (bd-c7af): SyncAllCounters - no longer needed with hash IDs
+// REMOVED: SyncAllCounters - no longer needed with hash IDs
 
-// REMOVED (bd-166): derivePrefixFromPath was causing duplicate issues with wrong prefix
+// REMOVED: derivePrefixFromPath was causing duplicate issues with wrong prefix
 // The database should ALWAYS have issue_prefix config set explicitly (by 'bd init' or auto-import)
 // Never derive prefix from filename - it leads to silent data corruption
 
 // CreateIssue creates a new issue
 func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Fetch custom statuses for validation (bd-1pj6)
+	// Fetch custom statuses for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
@@ -116,7 +116,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Compute content hash (bd-95)
+	// Compute content hash
 	if issue.ContentHash == "" {
 		issue.ContentHash = issue.ComputeContentHash()
 	}
@@ -138,7 +138,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	// We use raw Exec instead of BeginTx because database/sql doesn't support transaction
 	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
 	//
-	// Use retry logic with exponential backoff to handle SQLITE_BUSY under concurrent load (bd-ola6)
+	// Use retry logic with exponential backoff to handle SQLITE_BUSY under concurrent load
 	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
@@ -156,14 +156,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	var configPrefix string
 	err = conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
-		// CRITICAL: Reject operation if issue_prefix config is missing (bd-166)
+		// CRITICAL: Reject operation if issue_prefix config is missing
 		// This prevents duplicate issues with wrong prefix
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Use IDPrefix override if set, combined with config prefix (bd-hobo)
+	// Use IDPrefix override if set, combined with config prefix
 	// e.g., configPrefix="bd" + IDPrefix="wisp" → "bd-wisp"
 	prefix := configPrefix
 	if issue.IDPrefix != "" {
@@ -172,14 +172,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Generate or validate ID
 	if issue.ID == "" {
-		// Generate hash-based ID with adaptive length based on database size (bd-ea2a13)
+		// Generate hash-based ID with adaptive length based on database size
 		generatedID, err := GenerateIssueID(ctx, conn, prefix, issue, actor)
 		if err != nil {
 			return wrapDBError("generate issue ID", err)
 		}
 		issue.ID = generatedID
 	} else {
-		// Validate that explicitly provided ID matches the configured prefix (bd-177)
+		// Validate that explicitly provided ID matches the configured prefix
 		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
 			return wrapDBError("validate issue ID prefix", err)
 		}
@@ -235,7 +235,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 }
 
 // validateBatchIssues validates all issues in a batch and sets timestamps
-// Batch operation functions moved to batch_ops.go (bd-c796)
+// Batch operation functions moved to batch_ops.go
 
 // GetIssue retrieves an issue by ID
 func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
@@ -260,25 +260,35 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	var sender sql.NullString
 	var wisp sql.NullInt64
-	// Pinned field (bd-7h5)
+	// Pinned field
 	var pinned sql.NullInt64
-	// Template field (beads-1ra)
+	// Template field
 	var isTemplate sql.NullInt64
-	// Gate fields (bd-udsi)
+	// Gate fields
 	var awaitType sql.NullString
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
-	// Agent fields (gt-h5sza)
+	// Agent fields
 	var hookBead sql.NullString
 	var roleBead sql.NullString
 	var agentState sql.NullString
 	var lastActivity sql.NullTime
 	var roleType sql.NullString
 	var rig sql.NullString
+	// Molecule type field
+	var molType sql.NullString
+	// Event fields
+	var eventKind sql.NullString
+	var actor sql.NullString
+	var target sql.NullString
+	var payload sql.NullString
+	// Time-based scheduling fields (GH#820)
+	var dueAt sql.NullTime
+	var deferUntil sql.NullTime
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -290,7 +300,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template,
 		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       event_kind, actor, target, payload,
+		       due_at, defer_until
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -302,7 +314,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig,
+		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+		&eventKind, &actor, &target, &payload,
+		&dueAt, &deferUntil,
 	)
 
 	if err == sql.ErrNoRows {
@@ -353,22 +367,22 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
 	}
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	if sender.Valid {
 		issue.Sender = sender.String
 	}
 	if wisp.Valid && wisp.Int64 != 0 {
 		issue.Ephemeral = true
 	}
-	// Pinned field (bd-7h5)
+	// Pinned field
 	if pinned.Valid && pinned.Int64 != 0 {
 		issue.Pinned = true
 	}
-	// Template field (beads-1ra)
+	// Template field
 	if isTemplate.Valid && isTemplate.Int64 != 0 {
 		issue.IsTemplate = true
 	}
-	// Gate fields (bd-udsi)
+	// Gate fields
 	if awaitType.Valid {
 		issue.AwaitType = awaitType.String
 	}
@@ -381,7 +395,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
-	// Agent fields (gt-h5sza)
+	// Agent fields
 	if hookBead.Valid {
 		issue.HookBead = hookBead.String
 	}
@@ -399,6 +413,30 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if rig.Valid {
 		issue.Rig = rig.String
+	}
+	// Molecule type field
+	if molType.Valid {
+		issue.MolType = types.MolType(molType.String)
+	}
+	// Event fields
+	if eventKind.Valid {
+		issue.EventKind = eventKind.String
+	}
+	if actor.Valid {
+		issue.Actor = actor.String
+	}
+	if target.Valid {
+		issue.Target = target.String
+	}
+	if payload.Valid {
+		issue.Payload = payload.String
+	}
+	// Time-based scheduling fields (GH#820)
+	if dueAt.Valid {
+		issue.DueAt = &dueAt.Time
+	}
+	if deferUntil.Valid {
+		issue.DeferUntil = &deferUntil.Time
 	}
 
 	// Fetch labels for this issue
@@ -503,14 +541,14 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var deletedBy sql.NullString
 	var deleteReason sql.NullString
 	var originalType sql.NullString
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	var sender sql.NullString
 	var wisp sql.NullInt64
-	// Pinned field (bd-7h5)
+	// Pinned field
 	var pinned sql.NullInt64
-	// Template field (beads-1ra)
+	// Template field
 	var isTemplate sql.NullInt64
-	// Gate fields (bd-udsi)
+	// Gate fields
 	var awaitType sql.NullString
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
@@ -585,22 +623,22 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if originalType.Valid {
 		issue.OriginalType = originalType.String
 	}
-	// Messaging fields (bd-kwro)
+	// Messaging fields
 	if sender.Valid {
 		issue.Sender = sender.String
 	}
 	if wisp.Valid && wisp.Int64 != 0 {
 		issue.Ephemeral = true
 	}
-	// Pinned field (bd-7h5)
+	// Pinned field
 	if pinned.Valid && pinned.Int64 != 0 {
 		issue.Pinned = true
 	}
-	// Template field (beads-1ra)
+	// Template field
 	if isTemplate.Valid && isTemplate.Int64 != 0 {
 		issue.IsTemplate = true
 	}
-	// Gate fields (bd-udsi)
+	// Gate fields
 	if awaitType.Valid {
 		issue.AwaitType = awaitType.String
 	}
@@ -638,24 +676,36 @@ var allowedUpdateFields = map[string]bool{
 	"estimated_minutes":   true,
 	"external_ref":        true,
 	"closed_at":           true,
-	// Messaging fields (bd-kwro)
+	"close_reason":        true,
+	"closed_by_session":   true,
+	// Messaging fields
 	"sender": true,
 	"wisp":   true, // Database column is 'ephemeral', mapped in UpdateIssue
-	// Pinned field (bd-7h5)
+	// Pinned field
 	"pinned": true,
 	// NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
 	// Use AddDependency() to create graph edges instead
-	// Agent slot fields (gt-h5sza)
+	// Agent slot fields
 	"hook_bead":     true,
 	"role_bead":     true,
 	"agent_state":   true,
 	"last_activity": true,
 	"role_type":     true,
 	"rig":           true,
+	// Molecule type field
+	"mol_type": true,
+	// Event fields
+	"event_category": true,
+	"event_actor":    true,
+	"event_target":   true,
+	"event_payload":  true,
+	// Time-based scheduling fields (GH#820)
+	"due_at":      true,
+	"defer_until": true,
 }
 
 // validatePriority validates a priority value
-// Validation functions moved to validators.go (bd-d9e0)
+// Validation functions moved to validators.go
 
 // determineEventType determines the event type for an update based on old and new status
 func determineEventType(oldIssue *types.Issue, updates map[string]interface{}) types.EventType {
@@ -734,7 +784,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		return fmt.Errorf("issue %s not found", id)
 	}
 
-	// Fetch custom statuses for validation (bd-1pj6)
+	// Fetch custom statuses for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return wrapDBError("get custom statuses", err)
@@ -767,7 +817,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 	// Auto-manage closed_at when status changes (enforce invariant)
 	setClauses, args = manageClosedAt(oldIssue, updates, setClauses, args)
 
-	// Recompute content_hash if any content fields changed (bd-95)
+	// Recompute content_hash if any content fields changed
 	contentChanged := false
 	contentFields := []string{"title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "external_ref"}
 	for _, field := range contentFields {
@@ -886,7 +936,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
-	// Invalidate blocked issues cache if status changed (bd-5qim)
+	// Invalidate blocked issues cache if status changed
 	// Status changes affect which issues are blocked (blockers must be open/in_progress/blocked)
 	if _, statusChanged := updates["status"]; statusChanged {
 		if err := s.invalidateBlockedCache(ctx, tx); err != nil {
@@ -1023,22 +1073,23 @@ func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, n
 	return nil
 }
 
-// RenameCounterPrefix is a no-op with hash-based IDs (bd-8e05)
+// RenameCounterPrefix is a no-op with hash-based IDs
 // Kept for backward compatibility with rename-prefix command
 func (s *SQLiteStorage) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
 	// Hash-based IDs don't use counters, so nothing to update
 	return nil
 }
 
-// ResetCounter is a no-op with hash-based IDs (bd-8e05)
+// ResetCounter is a no-op with hash-based IDs
 // Kept for backward compatibility
 func (s *SQLiteStorage) ResetCounter(ctx context.Context, prefix string) error {
 	// Hash-based IDs don't use counters, so nothing to reset
 	return nil
 }
 
-// CloseIssue closes an issue with a reason
-func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+// CloseIssue closes an issue with a reason.
+// The session parameter tracks which Claude Code session closed the issue (can be empty).
+func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now()
 
 	// Update with special event handling
@@ -1053,9 +1104,9 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 	// 2. events.comment - for audit history (when was it closed, by whom)
 	// Keep both in sync. If refactoring, consider deriving one from the other.
 	result, err := tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?
-	`, types.StatusClosed, now, now, reason, id)
+	`, types.StatusClosed, now, now, reason, session, id)
 	if err != nil {
 		return fmt.Errorf("failed to close issue: %w", err)
 	}
@@ -1086,10 +1137,87 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
-	// Invalidate blocked issues cache since status changed to closed (bd-5qim)
+	// Invalidate blocked issues cache since status changed to closed
 	// Closed issues don't block others, so this affects blocking calculations
 	if err := s.invalidateBlockedCache(ctx, tx); err != nil {
 		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
+	}
+
+	// Reactive convoy completion: check if any convoys tracking this issue should auto-close
+	// Find convoys that track this issue (convoy.issue_id tracks closed_issue.depends_on_id)
+	convoyRows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT d.issue_id
+		FROM dependencies d
+		JOIN issues i ON d.issue_id = i.id
+		WHERE d.depends_on_id = ?
+		  AND d.type = ?
+		  AND i.issue_type = ?
+		  AND i.status != ?
+	`, id, types.DepTracks, types.TypeConvoy, types.StatusClosed)
+	if err != nil {
+		return fmt.Errorf("failed to find tracking convoys: %w", err)
+	}
+	defer func() { _ = convoyRows.Close() }()
+
+	var convoyIDs []string
+	for convoyRows.Next() {
+		var convoyID string
+		if err := convoyRows.Scan(&convoyID); err != nil {
+			return fmt.Errorf("failed to scan convoy ID: %w", err)
+		}
+		convoyIDs = append(convoyIDs, convoyID)
+	}
+	if err := convoyRows.Err(); err != nil {
+		return fmt.Errorf("convoy rows iteration error: %w", err)
+	}
+
+	// For each convoy, check if all tracked issues are now closed
+	for _, convoyID := range convoyIDs {
+		// Count non-closed tracked issues for this convoy
+		var openCount int
+		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM dependencies d
+			JOIN issues i ON d.depends_on_id = i.id
+			WHERE d.issue_id = ?
+			  AND d.type = ?
+			  AND i.status != ?
+			  AND i.status != ?
+		`, convoyID, types.DepTracks, types.StatusClosed, types.StatusTombstone).Scan(&openCount)
+		if err != nil {
+			return fmt.Errorf("failed to count open tracked issues for convoy %s: %w", convoyID, err)
+		}
+
+		// If all tracked issues are closed, auto-close the convoy
+		if openCount == 0 {
+			closeReason := "All tracked issues completed"
+			_, err := tx.ExecContext(ctx, `
+				UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?
+				WHERE id = ?
+			`, types.StatusClosed, now, now, closeReason, convoyID)
+			if err != nil {
+				return fmt.Errorf("failed to auto-close convoy %s: %w", convoyID, err)
+			}
+
+			// Record the close event
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO events (issue_id, event_type, actor, comment)
+				VALUES (?, ?, ?, ?)
+			`, convoyID, types.EventClosed, "system:convoy-completion", closeReason)
+			if err != nil {
+				return fmt.Errorf("failed to record convoy close event: %w", err)
+			}
+
+			// Mark convoy as dirty
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO dirty_issues (issue_id, marked_at)
+				VALUES (?, ?)
+				ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
+			`, convoyID, now)
+			if err != nil {
+				return fmt.Errorf("failed to mark convoy dirty: %w", err)
+			}
+		}
 	}
 
 	return tx.Commit()
@@ -1155,7 +1283,7 @@ func (s *SQLiteStorage) CreateTombstone(ctx context.Context, id string, actor st
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
 
-	// Invalidate blocked issues cache since status changed (bd-5qim)
+	// Invalidate blocked issues cache since status changed
 	// Tombstone issues don't block others, so this affects blocking calculations
 	if err := s.invalidateBlockedCache(ctx, tx); err != nil {
 		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
@@ -1188,7 +1316,7 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to delete events: %w", err)
 	}
 
-	// Delete comments (no FK cascade on this table) (bd-687g)
+	// Delete comments (no FK cascade on this table)
 	_, err = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete comments: %w", err)
@@ -1218,7 +1346,7 @@ func (s *SQLiteStorage) DeleteIssue(ctx context.Context, id string) error {
 		return wrapDBError("commit delete transaction", err)
 	}
 
-	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
+	// REMOVED: Counter sync after deletion - no longer needed with hash IDs
 	return nil
 }
 
@@ -1272,7 +1400,7 @@ func (s *SQLiteStorage) DeleteIssues(ctx context.Context, ids []string, cascade 
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// REMOVED (bd-c7af): Counter sync after deletion - no longer needed with hash IDs
+	// REMOVED: Counter sync after deletion - no longer needed with hash IDs
 
 	return result, nil
 }
@@ -1424,7 +1552,7 @@ func (s *SQLiteStorage) populateDeleteStats(ctx context.Context, tx *sql.Tx, inC
 }
 
 func (s *SQLiteStorage) executeDelete(ctx context.Context, tx *sql.Tx, inClause string, args []interface{}, result *DeleteIssuesResult) error {
-	// Note: This method now creates tombstones instead of hard-deleting (bd-3b4)
+	// Note: This method now creates tombstones instead of hard-deleting
 	// Only dependencies are deleted - issues are converted to tombstones
 
 	// 1. Delete dependencies - tombstones don't block other issues
@@ -1500,7 +1628,7 @@ func (s *SQLiteStorage) executeDelete(ctx context.Context, tx *sql.Tx, inClause 
 		}
 	}
 
-	// 4. Invalidate blocked issues cache since statuses changed (bd-5qim)
+	// 4. Invalidate blocked issues cache since statuses changed
 	if err := s.invalidateBlockedCache(ctx, tx); err != nil {
 		return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 	}
@@ -1591,9 +1719,29 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, "status = ?")
 		args = append(args, *filter.Status)
 	} else if !filter.IncludeTombstones {
-		// Exclude tombstones by default unless explicitly filtering for them (bd-1bu)
+		// Exclude tombstones by default unless explicitly filtering for them
 		whereClauses = append(whereClauses, "status != ?")
 		args = append(args, types.StatusTombstone)
+	}
+
+	// Status exclusion (for default non-closed behavior, GH#788)
+	if len(filter.ExcludeStatus) > 0 {
+		placeholders := make([]string, len(filter.ExcludeStatus))
+		for i, s := range filter.ExcludeStatus {
+			placeholders[i] = "?"
+			args = append(args, string(s))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
+	if len(filter.ExcludeTypes) > 0 {
+		placeholders := make([]string, len(filter.ExcludeTypes))
+		for i, t := range filter.ExcludeTypes {
+			placeholders[i] = "?"
+			args = append(args, string(t))
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("issue_type NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	if filter.Priority != nil {
@@ -1686,7 +1834,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
-	// Wisp filtering (bd-kwro.9)
+	// Wisp filtering
 	if filter.Ephemeral != nil {
 		if *filter.Ephemeral {
 			whereClauses = append(whereClauses, "ephemeral = 1") // SQL column is still 'ephemeral'
@@ -1695,7 +1843,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		}
 	}
 
-	// Pinned filtering (bd-7h5)
+	// Pinned filtering
 	if filter.Pinned != nil {
 		if *filter.Pinned {
 			whereClauses = append(whereClauses, "pinned = 1")
@@ -1704,7 +1852,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		}
 	}
 
-	// Template filtering (beads-1ra)
+	// Template filtering
 	if filter.IsTemplate != nil {
 		if *filter.IsTemplate {
 			whereClauses = append(whereClauses, "is_template = 1")
@@ -1713,10 +1861,41 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		}
 	}
 
-	// Parent filtering (bd-yqhh): filter children by parent issue
+	// Parent filtering: filter children by parent issue
 	if filter.ParentID != nil {
 		whereClauses = append(whereClauses, "id IN (SELECT issue_id FROM dependencies WHERE type = 'parent-child' AND depends_on_id = ?)")
 		args = append(args, *filter.ParentID)
+	}
+
+	// Molecule type filtering
+	if filter.MolType != nil {
+		whereClauses = append(whereClauses, "mol_type = ?")
+		args = append(args, string(*filter.MolType))
+	}
+
+	// Time-based scheduling filters (GH#820)
+	if filter.Deferred {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL")
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
+	}
+	if filter.Overdue {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
+		args = append(args, time.Now().Format(time.RFC3339), types.StatusClosed)
 	}
 
 	whereSQL := ""

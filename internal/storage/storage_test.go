@@ -35,7 +35,7 @@ func (m *mockStorage) GetIssueByExternalRef(ctx context.Context, externalRef str
 func (m *mockStorage) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	return nil
 }
-func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+func (m *mockStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return nil
 }
 func (m *mockStorage) DeleteIssue(ctx context.Context, id string) error {
@@ -54,6 +54,12 @@ func (m *mockStorage) GetDependencies(ctx context.Context, issueID string) ([]*t
 	return nil, nil
 }
 func (m *mockStorage) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
@@ -117,6 +123,9 @@ func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []strin
 	return nil, nil
 }
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetDirtyIssues(ctx context.Context) ([]string, error) {
@@ -204,7 +213,7 @@ func (m *mockTransaction) CreateIssues(ctx context.Context, issues []*types.Issu
 func (m *mockTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	return nil
 }
-func (m *mockTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string) error {
+func (m *mockTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	return nil
 }
 func (m *mockTransaction) DeleteIssue(ctx context.Context, id string) error {

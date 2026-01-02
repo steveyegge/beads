@@ -119,9 +119,14 @@ beads_viewer/
 # AI planning documents (ephemeral)
 history/
 
-# Gas Town agent state
+# Orchestrator agent state
 state.json
 .beads/redirect
 
 # Claude Code runtime
 .runtime/
+
+# Augment AI configuration (user-specific)
+.augment/
+.agents/
+output

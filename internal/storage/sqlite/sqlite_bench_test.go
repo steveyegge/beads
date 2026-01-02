@@ -180,7 +180,7 @@ func BenchmarkBulkCloseIssues(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		for j, issue := range issues {
-			if err := store.CloseIssue(ctx, issue.ID, "Bulk closed", "bench"); err != nil {
+			if err := store.CloseIssue(ctx, issue.ID, "Bulk closed", "bench", ""); err != nil {
 				b.Fatalf("CloseIssue failed: %v", err)
 			}
 			// Re-open for next iteration (except last one)

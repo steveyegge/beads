@@ -204,7 +204,7 @@ func TestSearchWithDateAndPriorityFilters(t *testing.T) {
 	}
 
 	// Close issue3 to set closed_at timestamp
-	if err := s.CloseIssue(ctx, issue3.ID, "test-user", "Testing"); err != nil {
+	if err := s.CloseIssue(ctx, issue3.ID, "test-user", "Testing", ""); err != nil {
 		t.Fatalf("Failed to close issue3: %v", err)
 	}
 

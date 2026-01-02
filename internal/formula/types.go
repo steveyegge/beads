@@ -166,35 +166,36 @@ type Step struct {
 	Assignee string `json:"assignee,omitempty"`
 
 	// Expand references an expansion formula to inline here.
-	// When set, this step is replaced by the expansion's steps.
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// When set, this step is replaced by the expansion's template steps.
+	// See ApplyInlineExpansions in expand.go for implementation.
 	Expand string `json:"expand,omitempty"`
 
 	// ExpandVars are variable overrides for the expansion.
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// Merged with the expansion formula's default vars during inline expansion.
 	ExpandVars map[string]string `json:"expand_vars,omitempty"`
 
 	// Condition makes this step optional based on a variable.
-	// Format: "{{var}}" (truthy) or "{{var}} == value".
-	// TODO(future): Not yet implemented in bd cook. Filed as future work.
+	// Format: "{{var}}" (truthy), "!{{var}}" (negated), "{{var}} == value", "{{var}} != value".
+	// Evaluated at cook/pour time via FilterStepsByCondition.
 	Condition string `json:"condition,omitempty"`
 
 	// Children are nested steps (for creating epic hierarchies).
 	Children []*Step `json:"children,omitempty"`
 
 	// Gate defines an async wait condition for this step.
-	// TODO(future): Not yet implemented in bd cook. Will integrate with bd-udsi gates.
+	// When set, bd cook creates a gate issue that blocks this step.
+	// Close the gate issue (bd close bd-xxx.gate-stepid) to unblock.
 	Gate *Gate `json:"gate,omitempty"`
 
-	// Loop defines iteration for this step (gt-8tmz.4).
+	// Loop defines iteration for this step.
 	// When set, the step becomes a container that expands its body.
 	Loop *LoopSpec `json:"loop,omitempty"`
 
-	// OnComplete defines actions triggered when this step completes (gt-8tmz.8).
+	// OnComplete defines actions triggered when this step completes.
 	// Used for runtime expansion over step output (the for-each construct).
 	OnComplete *OnCompleteSpec `json:"on_complete,omitempty"`
 
-	// Source tracing fields (gt-8tmz.18): track where this step came from.
+	// Source tracing fields: track where this step came from.
 	// These are set during parsing/transformation and copied to Issues during cooking.
 
 	// SourceFormula is the formula name where this step was defined.
@@ -206,8 +207,9 @@ type Step struct {
 	SourceLocation string `json:"-"` // Internal only, not serialized to JSON
 }
 
-// Gate defines an async wait condition (integrates with bd-udsi).
-// TODO(future): Not yet implemented in bd cook. Schema defined for future use.
+// Gate defines an async wait condition for formula steps.
+// When a step has a Gate, bd cook creates a gate issue that blocks the step.
+// The gate must be closed (manually or via watchers) to unblock the step.
 type Gate struct {
 	// Type is the condition type: gh:run, gh:pr, timer, human, mail.
 	Type string `json:"type"`
@@ -219,7 +221,7 @@ type Gate struct {
 	Timeout string `json:"timeout,omitempty"`
 }
 
-// LoopSpec defines iteration over a body of steps (gt-8tmz.4).
+// LoopSpec defines iteration over a body of steps.
 // One of Count, Until, or Range must be specified.
 type LoopSpec struct {
 	// Count is the fixed number of iterations.
@@ -234,7 +236,7 @@ type LoopSpec struct {
 	// Required when Until is set, to prevent unbounded loops.
 	Max int `json:"max,omitempty"`
 
-	// Range specifies a computed range for iteration (gt-8tmz.27).
+	// Range specifies a computed range for iteration.
 	// Format: "start..end" where start and end can be:
 	//   - Integers: "1..10"
 	//   - Expressions: "1..2^{disks}" (evaluated at cook time)
@@ -242,7 +244,7 @@ type LoopSpec struct {
 	// Supports: + - * / ^ (power) and parentheses.
 	Range string `json:"range,omitempty"`
 
-	// Var is the variable name exposed to body steps (gt-8tmz.27).
+	// Var is the variable name exposed to body steps.
 	// For Range loops, this is set to the current iteration value.
 	// Example: var: "move_num" with range: "1..7" exposes {move_num}=1,2,...,7
 	Var string `json:"var,omitempty"`
@@ -251,7 +253,7 @@ type LoopSpec struct {
 	Body []*Step `json:"body"`
 }
 
-// OnCompleteSpec defines actions triggered when a step completes (gt-8tmz.8).
+// OnCompleteSpec defines actions triggered when a step completes.
 // Used for runtime expansion over step output (the for-each construct).
 //
 // Example YAML:
@@ -291,7 +293,7 @@ type OnCompleteSpec struct {
 	Sequential bool `json:"sequential,omitempty"`
 }
 
-// BranchRule defines parallel execution paths that rejoin (gt-8tmz.4).
+// BranchRule defines parallel execution paths that rejoin.
 // Creates a fork-join pattern: from -> [parallel steps] -> join.
 type BranchRule struct {
 	// From is the step ID that precedes the parallel paths.
@@ -307,7 +309,7 @@ type BranchRule struct {
 	Join string `json:"join"`
 }
 
-// GateRule defines a condition that must be satisfied before a step proceeds (gt-8tmz.4).
+// GateRule defines a condition that must be satisfied before a step proceeds.
 // Gates are evaluated at runtime by the patrol executor.
 type GateRule struct {
 	// Before is the step ID that the gate applies to.
@@ -335,11 +337,11 @@ type ComposeRules struct {
 	// Each matching step is replaced by the expanded template steps.
 	Map []*MapRule `json:"map,omitempty"`
 
-	// Branch defines fork-join parallel execution patterns (gt-8tmz.4).
+	// Branch defines fork-join parallel execution patterns.
 	// Each rule creates dependencies for parallel paths that rejoin.
 	Branch []*BranchRule `json:"branch,omitempty"`
 
-	// Gate defines conditional waits before steps (gt-8tmz.4).
+	// Gate defines conditional waits before steps.
 	// Each rule adds a condition that must be satisfied at runtime.
 	Gate []*GateRule `json:"gate,omitempty"`
 
@@ -534,20 +536,20 @@ func (f *Formula) Validate() error {
 				errs = append(errs, fmt.Sprintf("steps[%d] (%s): depends_on references unknown step %q", i, step.ID, dep))
 			}
 		}
-		// Validate needs field (bd-hr39) - same validation as depends_on
+		// Validate needs field - same validation as depends_on
 		for _, need := range step.Needs {
 			if _, exists := stepIDLocations[need]; !exists {
 				errs = append(errs, fmt.Sprintf("steps[%d] (%s): needs references unknown step %q", i, step.ID, need))
 			}
 		}
-		// Validate waits_for field (bd-j4cr, gt-8tmz.38)
+		// Validate waits_for field
 		// Valid formats: "all-children", "any-children", "children-of(step-id)"
 		if step.WaitsFor != "" {
 			if err := validateWaitsFor(step.WaitsFor, stepIDLocations); err != nil {
 				errs = append(errs, fmt.Sprintf("steps[%d] (%s): %s", i, step.ID, err.Error()))
 			}
 		}
-		// Validate on_complete field (gt-8tmz.8) - runtime expansion
+		// Validate on_complete field - runtime expansion
 		if step.OnComplete != nil {
 			validateOnComplete(step.OnComplete, &errs, fmt.Sprintf("steps[%d] (%s)", i, step.ID))
 		}
@@ -621,7 +623,7 @@ func collectChildIDs(children []*Step, idLocations map[string]string, errs *[]st
 	}
 }
 
-// WaitsForSpec holds the parsed waits_for field (gt-8tmz.38).
+// WaitsForSpec holds the parsed waits_for field.
 type WaitsForSpec struct {
 	// Gate is the gate type: "all-children" or "any-children"
 	Gate string
@@ -630,7 +632,7 @@ type WaitsForSpec struct {
 	SpawnerID string
 }
 
-// ParseWaitsFor parses a waits_for value into its components (gt-8tmz.38).
+// ParseWaitsFor parses a waits_for value into its components.
 // Returns nil if the value is empty.
 func ParseWaitsFor(value string) *WaitsForSpec {
 	if value == "" {
@@ -655,7 +657,7 @@ func ParseWaitsFor(value string) *WaitsForSpec {
 	return nil
 }
 
-// validateWaitsFor validates the waits_for field value (gt-8tmz.38).
+// validateWaitsFor validates the waits_for field value.
 // Valid formats:
 //   - "all-children": wait for all dynamically-bonded children
 //   - "any-children": wait for first child to complete
@@ -690,19 +692,19 @@ func validateChildDependsOn(children []*Step, idLocations map[string]string, err
 				*errs = append(*errs, fmt.Sprintf("%s (%s): depends_on references unknown step %q", childPrefix, child.ID, dep))
 			}
 		}
-		// Validate needs field (bd-hr39)
+		// Validate needs field
 		for _, need := range child.Needs {
 			if _, exists := idLocations[need]; !exists {
 				*errs = append(*errs, fmt.Sprintf("%s (%s): needs references unknown step %q", childPrefix, child.ID, need))
 			}
 		}
-		// Validate waits_for field (bd-j4cr, gt-8tmz.38)
+		// Validate waits_for field
 		if child.WaitsFor != "" {
 			if err := validateWaitsFor(child.WaitsFor, idLocations); err != nil {
 				*errs = append(*errs, fmt.Sprintf("%s (%s): %s", childPrefix, child.ID, err.Error()))
 			}
 		}
-		// Validate on_complete field (gt-8tmz.8)
+		// Validate on_complete field
 		if child.OnComplete != nil {
 			validateOnComplete(child.OnComplete, errs, fmt.Sprintf("%s (%s)", childPrefix, child.ID))
 		}
@@ -710,7 +712,7 @@ func validateChildDependsOn(children []*Step, idLocations map[string]string, err
 	}
 }
 
-// validateOnComplete validates an OnCompleteSpec (gt-8tmz.8).
+// validateOnComplete validates an OnCompleteSpec.
 func validateOnComplete(oc *OnCompleteSpec, errs *[]string, prefix string) {
 	// Check that for_each and bond are both present or both absent
 	if oc.ForEach != "" && oc.Bond == "" {

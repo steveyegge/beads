@@ -37,6 +37,7 @@ type Client struct {
 	socketPath string
 	timeout    time.Duration
 	dbPath     string // Expected database path for validation
+	actor      string // Actor for audit trail (who is performing operations)
 }
 
 // TryConnect attempts to connect to the daemon socket
@@ -157,6 +158,11 @@ func (c *Client) SetDatabasePath(dbPath string) {
 	c.dbPath = dbPath
 }
 
+// SetActor sets the actor for audit trail (who is performing operations)
+func (c *Client) SetActor(actor string) {
+	c.actor = actor
+}
+
 // Execute sends an RPC request and waits for a response
 func (c *Client) Execute(operation string, args interface{}) (*Response, error) {
 	return c.ExecuteWithCwd(operation, args, "")
@@ -177,6 +183,7 @@ func (c *Client) ExecuteWithCwd(operation string, args interface{}, cwd string) 
 	req := Request{
 		Operation:     operation,
 		Args:          argsJSON,
+		Actor:         c.actor, // Who is performing this operation
 		ClientVersion: ClientVersion,
 		Cwd:           cwd,
 		ExpectedDB:    c.dbPath, // Send expected database path for validation
@@ -400,7 +407,7 @@ func (c *Client) EpicStatus(args *EpicStatusArgs) (*Response, error) {
 	return c.Execute(OpEpicStatus, args)
 }
 
-// Gate operations (bd-likt)
+// Gate operations
 
 // GateCreate creates a gate via the daemon
 func (c *Client) GateCreate(args *GateCreateArgs) (*Response, error) {
@@ -437,6 +444,36 @@ func (c *Client) GetWorkerStatus(args *GetWorkerStatusArgs) (*GetWorkerStatusRes
 	var result GetWorkerStatusResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal worker status response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetConfig retrieves a config value from the daemon's database
+func (c *Client) GetConfig(args *GetConfigArgs) (*GetConfigResponse, error) {
+	resp, err := c.Execute(OpGetConfig, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result GetConfigResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// MolStale retrieves stale molecules (complete-but-unclosed) via the daemon
+func (c *Client) MolStale(args *MolStaleArgs) (*MolStaleResponse, error) {
+	resp, err := c.Execute(OpMolStale, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var result MolStaleResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mol stale response: %w", err)
 	}
 
 	return &result, nil

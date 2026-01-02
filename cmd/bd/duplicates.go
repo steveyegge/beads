@@ -283,7 +283,7 @@ func performMerge(targetID string, sourceIDs []string) map[string]interface{} {
 	for _, sourceID := range sourceIDs {
 		// Close the duplicate issue
 		reason := fmt.Sprintf("Duplicate of %s", targetID)
-		if err := store.CloseIssue(ctx, sourceID, reason, actor); err != nil {
+		if err := store.CloseIssue(ctx, sourceID, reason, actor, ""); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to close %s: %v", sourceID, err))
 			continue
 		}

@@ -67,7 +67,7 @@ func (h *integrationTestHelper) updateIssue(id string, updates map[string]interf
 }
 
 func (h *integrationTestHelper) closeIssue(id string, reason string) {
-	if err := h.store.CloseIssue(h.ctx, id, reason, "test-actor"); err != nil {
+	if err := h.store.CloseIssue(h.ctx, id, reason, "test-actor", ""); err != nil {
 		h.t.Fatalf("CloseIssue failed: %v", err)
 	}
 }

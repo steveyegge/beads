@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
@@ -14,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
@@ -84,6 +86,7 @@ var createCmd = &cobra.Command{
 
 		design, _ := cmd.Flags().GetString("design")
 		acceptance, _ := cmd.Flags().GetString("acceptance")
+		notes, _ := cmd.Flags().GetString("notes")
 
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
@@ -112,6 +115,63 @@ var createCmd = &cobra.Command{
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		var molType types.MolType
+		if molTypeStr != "" {
+			molType = types.MolType(molTypeStr)
+			if !molType.IsValid() {
+				FatalError("invalid mol-type %q (must be swarm, patrol, or work)", molTypeStr)
+			}
+		}
+
+		// Agent-specific flags
+		roleType, _ := cmd.Flags().GetString("role-type")
+		agentRig, _ := cmd.Flags().GetString("agent-rig")
+
+		// Validate agent-specific flags require --type=agent
+		if (roleType != "" || agentRig != "") && issueType != "agent" {
+			FatalError("--role-type and --agent-rig flags require --type=agent")
+		}
+
+		// Event-specific flags
+		eventCategory, _ := cmd.Flags().GetString("event-category")
+		eventActor, _ := cmd.Flags().GetString("event-actor")
+		eventTarget, _ := cmd.Flags().GetString("event-target")
+		eventPayload, _ := cmd.Flags().GetString("event-payload")
+
+		// Validate event-specific flags require --type=event
+		if (eventCategory != "" || eventActor != "" || eventTarget != "" || eventPayload != "") && issueType != "event" {
+			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
+		}
+
+		// Parse --due flag (GH#820)
+		// Uses layered parsing: compact duration → NLP → date-only → RFC3339
+		var dueAt *time.Time
+		dueStr, _ := cmd.Flags().GetString("due")
+		if dueStr != "" {
+			t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+			if err != nil {
+				FatalError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+			}
+			dueAt = &t
+		}
+
+		// Parse --defer flag (GH#820)
+		var deferUntil *time.Time
+		deferStr, _ := cmd.Flags().GetString("defer")
+		if deferStr != "" {
+			t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+			if err != nil {
+				FatalError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+			}
+			// Warn if defer date is in the past (user probably meant future)
+			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
+				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
+			}
+			deferUntil = &t
+		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
@@ -123,7 +183,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
 			return
 		}
 
@@ -136,6 +196,29 @@ var createCmd = &cobra.Command{
 			}
 			estimatedMinutes = &est
 		}
+
+		// Validate template based on --validate flag or config
+		validateTemplate, _ := cmd.Flags().GetBool("validate")
+		if validateTemplate {
+			// Explicit --validate flag: fail on error
+			if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
+				FatalError("%v", err)
+			}
+		} else {
+			// Check validation.on-create config (bd-t7jq)
+			validationMode := config.GetString("validation.on-create")
+			if validationMode == "error" || validationMode == "warn" {
+				if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
+					if validationMode == "error" {
+						FatalError("%v", err)
+					} else {
+						// warn mode: print warning but proceed
+						fmt.Fprintf(os.Stderr, "%s %v\n", ui.RenderWarn("⚠"), err)
+					}
+				}
+			}
+		}
+
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Determine target repository using routing logic
@@ -149,7 +232,7 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				debug.Logf("Warning: failed to detect user role: %v\n", err)
 			}
-			
+
 			routingConfig := &routing.RoutingConfig{
 				Mode:             config.GetString("routing.mode"),
 				DefaultRepo:      config.GetString("routing.default"),
@@ -157,11 +240,11 @@ var createCmd = &cobra.Command{
 				ContributorRepo:  config.GetString("routing.contributor"),
 				ExplicitOverride: repoOverride,
 			}
-			
+
 			repoPath = routing.DetermineTargetRepo(routingConfig, userRole, ".")
 		}
-		
-		// TODO: Switch to target repo for multi-repo support (bd-4ms)
+
+		// TODO(bd-6x6g): Switch to target repo for multi-repo support
 		// For now, we just log the target repo in debug mode
 		if repoPath != "." {
 			debug.Logf("DEBUG: Target repo: %s\n", repoPath)
@@ -205,8 +288,12 @@ var createCmd = &cobra.Command{
 			// Get database prefix from config
 			var dbPrefix string
 			if daemonClient != nil {
-				// TODO(bd-g5p7): Add RPC method to get config in daemon mode
-				// For now, skip validation in daemon mode (needs RPC enhancement)
+				// Daemon mode - use RPC to get config
+				configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"})
+				if err == nil {
+					dbPrefix = configResp.Value
+				}
+				// If error, continue without validation (non-fatal)
 			} else {
 				// Direct mode - check config
 				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
@@ -216,7 +303,7 @@ var createCmd = &cobra.Command{
 				FatalError("%v", err)
 			}
 
-			// Validate agent ID pattern if type is agent (gt-hlaaf)
+			// Validate agent ID pattern if type is agent
 			if issueType == "agent" {
 				if err := validation.ValidateAgentID(explicitID); err != nil {
 					FatalError("invalid agent ID: %v", err)
@@ -240,6 +327,7 @@ var createCmd = &cobra.Command{
 				Priority:           priority,
 				Design:             design,
 				AcceptanceCriteria: acceptance,
+				Notes:              notes,
 				Assignee:           assignee,
 				ExternalRef:        externalRef,
 				EstimatedMinutes:   estimatedMinutes,
@@ -249,6 +337,15 @@ var createCmd = &cobra.Command{
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				MolType:            string(molType),
+				RoleType:           roleType,
+				Rig:                agentRig,
+				EventCategory:      eventCategory,
+				EventActor:         eventActor,
+				EventTarget:        eventTarget,
+				EventPayload:       eventPayload,
+				DueAt:              dueStr,
+				DeferUntil:         deferStr,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -262,7 +359,7 @@ var createCmd = &cobra.Command{
 				FatalError("parsing response: %v", err)
 			}
 
-			// Run create hook (bd-kwro.8)
+			// Run create hook
 			if hookRunner != nil {
 				hookRunner.Run(hooks.EventCreate, &issue)
 			}
@@ -280,6 +377,9 @@ var createCmd = &cobra.Command{
 				// Log event
 				debug.LogEvent("bd.issue.create", issue.ID, issue.Title)
 			}
+
+			// Track as last touched issue
+			SetLastTouchedID(issue.ID)
 			return
 		}
 
@@ -290,6 +390,7 @@ var createCmd = &cobra.Command{
 			Description:        description,
 			Design:             design,
 			AcceptanceCriteria: acceptance,
+			Notes:              notes,
 			Status:             types.StatusOpen,
 			Priority:           priority,
 			IssueType:          types.IssueType(issueType),
@@ -297,11 +398,20 @@ var createCmd = &cobra.Command{
 			ExternalRef:        externalRefPtr,
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
-			CreatedBy:          getActorWithGit(), // GH#748: track who created the issue
+			CreatedBy:          getActorWithGit(),
+			MolType:            molType,
+			RoleType:           roleType,
+			Rig:                agentRig,
+			EventKind:          eventCategory,
+			Actor:              eventActor,
+			Target:             eventTarget,
+			Payload:            eventPayload,
+			DueAt:              dueAt,
+			DeferUntil:         deferUntil,
 		}
 
 		ctx := rootCtx
-		
+
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
 		var discoveredFromParentID string
@@ -310,16 +420,16 @@ var createCmd = &cobra.Command{
 			if depSpec == "" {
 				continue
 			}
-			
+
 			var depType types.DependencyType
 			var dependsOnID string
-			
+
 			if strings.Contains(depSpec, ":") {
 				parts := strings.SplitN(depSpec, ":", 2)
 				if len(parts) == 2 {
 					depType = types.DependencyType(strings.TrimSpace(parts[0]))
 					dependsOnID = strings.TrimSpace(parts[1])
-					
+
 					if depType == types.DepDiscoveredFrom && dependsOnID != "" {
 						discoveredFromParentID = dependsOnID
 						break
@@ -327,7 +437,7 @@ var createCmd = &cobra.Command{
 				}
 			}
 		}
-		
+
 		// If we found a discovered-from dependency, inherit source_repo from parent
 		if discoveredFromParentID != "" {
 			parentIssue, err := store.GetIssue(ctx, discoveredFromParentID)
@@ -336,7 +446,7 @@ var createCmd = &cobra.Command{
 			}
 			// If error getting parent or parent has no source_repo, continue with default
 		}
-		
+
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			FatalError("%v", err)
 		}
@@ -357,6 +467,22 @@ var createCmd = &cobra.Command{
 		for _, label := range labels {
 			if err := store.AddLabel(ctx, issue.ID, label, actor); err != nil {
 				WarnError("failed to add label %s: %v", label, err)
+			}
+		}
+
+		// Auto-add role_type/rig labels for agent beads (enables filtering queries)
+		if issue.IssueType == types.TypeAgent {
+			if issue.RoleType != "" {
+				agentLabel := "role_type:" + issue.RoleType
+				if err := store.AddLabel(ctx, issue.ID, agentLabel, actor); err != nil {
+					WarnError("failed to add role_type label: %v", err)
+				}
+			}
+			if issue.Rig != "" {
+				rigLabel := "rig:" + issue.Rig
+				if err := store.AddLabel(ctx, issue.ID, rigLabel, actor); err != nil {
+					WarnError("failed to add rig label: %v", err)
+				}
 			}
 		}
 
@@ -403,7 +529,7 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		// Add waits-for dependency if specified (bd-xo1o.2)
+		// Add waits-for dependency if specified
 		if waitsFor != "" {
 			// Validate gate type
 			gate := waitsForGate
@@ -437,7 +563,7 @@ var createCmd = &cobra.Command{
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
-		// Run create hook (bd-kwro.8)
+		// Run create hook
 		if hookRunner != nil {
 			hookRunner.Run(hooks.EventCreate, issue)
 		}
@@ -458,6 +584,9 @@ var createCmd = &cobra.Command{
 			// Show tip after successful create (direct mode only)
 			maybeShowTip(store)
 		}
+
+		// Track as last touched issue
+		SetLastTouchedID(issue.ID)
 	},
 }
 
@@ -466,7 +595,7 @@ func init() {
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
 	registerPriorityFlag(createCmd, "2")
-	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role)")
+	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|convoy|event)")
 	registerCommonIssueFlags(createCmd)
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
@@ -482,13 +611,33 @@ func init() {
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
+	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
+	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
+	// Agent-specific flags (only valid when --type=agent)
+	createCmd.Flags().String("role-type", "", "Agent role type: polecat|crew|witness|refinery|mayor|deacon (requires --type=agent)")
+	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
+	// Event-specific flags (only valid when --type=event)
+	createCmd.Flags().String("event-category", "", "Event category (e.g., patrol.muted, agent.started) (requires --type=event)")
+	createCmd.Flags().String("event-actor", "", "Entity URI who caused this event (requires --type=event)")
+	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
+	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
+	// Time-based scheduling flags (GH#820)
+	// Examples:
+	//   --due=+6h           Due in 6 hours
+	//   --due=tomorrow      Due tomorrow
+	//   --due="next monday" Due next Monday
+	//   --due=2025-01-15    Due on specific date
+	//   --defer=+1h         Hidden from bd ready for 1 hour
+	//   --defer=tomorrow    Hidden until tomorrow
+	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
+	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }
 
 // createInRig creates an issue in a different rig using --rig flag.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -526,6 +675,7 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		Description:        description,
 		Design:             design,
 		AcceptanceCriteria: acceptance,
+		Notes:              notes,
 		Status:             types.StatusOpen,
 		Priority:           priority,
 		IssueType:          types.IssueType(issueType),

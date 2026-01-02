@@ -2,33 +2,29 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
+// validateIssueUpdatable checks if an issue can be updated.
+// Uses the centralized validation package for consistency.
 func validateIssueUpdatable(id string, issue *types.Issue) error {
-	if issue == nil {
-		return nil
-	}
-	if issue.IsTemplate {
-		return fmt.Errorf("Error: cannot update template %s: templates are read-only; use 'bd molecule instantiate' to create a work item", id)
-	}
-	return nil
+	// Note: We use NotTemplate() directly instead of ForUpdate() to maintain
+	// backward compatibility - the original didn't check for nil issues.
+	return validation.NotTemplate()(id, issue)
 }
 
+// validateIssueClosable checks if an issue can be closed.
+// Uses the centralized validation package for consistency.
 func validateIssueClosable(id string, issue *types.Issue, force bool) error {
-	if issue == nil {
-		return nil
-	}
-	if issue.IsTemplate {
-		return fmt.Errorf("Error: cannot close template %s: templates are read-only", id)
-	}
-	if !force && issue.Status == types.StatusPinned {
-		return fmt.Errorf("Error: cannot close pinned issue %s (use --force to override)", id)
-	}
-	return nil
+	// Note: We use individual validators instead of ForClose() to maintain
+	// backward compatibility - the original didn't check for nil issues.
+	return validation.Chain(
+		validation.NotTemplate(),
+		validation.NotPinned(force),
+	)(id, issue)
 }
 
 func applyLabelUpdates(ctx context.Context, st storage.Storage, issueID, actor string, setLabels, addLabels, removeLabels []string) error {

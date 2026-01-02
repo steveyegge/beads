@@ -127,12 +127,6 @@ func setupDaemonLogger(logPath string, jsonFormat bool, level slog.Level) (*lumb
 	return logF, logger
 }
 
-// setupDaemonLoggerLegacy is the old signature for backward compatibility during migration.
-// TODO: Remove this once all callers are updated to use the new signature.
-func setupDaemonLoggerLegacy(logPath string) (*lumberjack.Logger, daemonLogger) {
-	return setupDaemonLogger(logPath, false, slog.LevelInfo)
-}
-
 // SetupStderrLogger creates a logger that writes to stderr only (no file).
 // Useful for foreground mode or testing.
 func SetupStderrLogger(jsonFormat bool, level slog.Level) daemonLogger {

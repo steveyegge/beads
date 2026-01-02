@@ -38,8 +38,8 @@ var YamlOnlyKeys = map[string]bool{
 	// Git settings
 	"git.author":       true,
 	"git.no-gpg-sign":  true,
-	"no-push":          true,
-	"no-git-ops":       true, // Disable git ops in bd prime session close protocol (GH#593)
+	"no-push":    true,
+	"no-git-ops": true, // Disable git ops in bd prime session close protocol (GH#593)
 
 	// Sync settings
 	"sync-branch":                           true,
@@ -55,10 +55,10 @@ var YamlOnlyKeys = map[string]bool{
 	// Create command settings
 	"create.require-description": true,
 
-	// Agent marketplace user preferences (stored in yaml for user-level overrides)
-	"agents.prefer_model":    true, // User's preferred model (opus, sonnet, haiku)
-	"agents.context_budget":  true, // Max context tokens for agent sessions
-	"agents.skill_autoload":  true, // Automatically load relevant skills
+	// Validation settings (bd-t7jq)
+	// Values: "warn" | "error" | "none"
+	"validation.on-create": true,
+	"validation.on-sync":   true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -70,7 +70,7 @@ func IsYamlOnlyKey(key string) bool {
 	}
 
 	// Check prefix matches for nested keys
-	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects."}
+	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation."}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true

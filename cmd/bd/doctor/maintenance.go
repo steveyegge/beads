@@ -21,7 +21,7 @@ const DefaultCleanupAgeDays = 30
 // CheckStaleClosedIssues detects closed issues that could be cleaned up.
 // This consolidates the cleanup command into doctor checks.
 func CheckStaleClosedIssues(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
@@ -100,7 +100,7 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 
 // CheckExpiredTombstones detects tombstones that have exceeded their TTL.
 func CheckExpiredTombstones(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
@@ -160,7 +160,7 @@ func CheckExpiredTombstones(path string) DoctorCheck {
 	}
 }
 
-// CheckStaleMolecules detects complete-but-unclosed molecules (bd-6a5z).
+// CheckStaleMolecules detects complete-but-unclosed molecules.
 // A molecule is stale if all children are closed but the root is still open.
 func CheckStaleMolecules(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
@@ -243,7 +243,7 @@ func CheckStaleMolecules(path string) DoctorCheck {
 
 // CheckCompactionCandidates detects issues eligible for compaction.
 func CheckCompactionCandidates(path string) DoctorCheck {
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
 	// Check metadata.json first for custom database name
@@ -311,44 +311,11 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 }
 
 // resolveBeadsDir follows a redirect file if present in the beads directory.
-// This handles Gas Town's redirect mechanism where .beads/redirect points to
-// the actual beads directory location.
+// This handles the redirect mechanism where .beads/redirect points to
+// the actual beads directory location (used in multi-clone setups).
+// This is a wrapper around beads.FollowRedirect for use within the doctor package.
 func resolveBeadsDir(beadsDir string) string {
-	redirectFile := filepath.Join(beadsDir, "redirect")
-	data, err := os.ReadFile(redirectFile) //nolint:gosec // redirect file path is constructed from known beadsDir
-	if err != nil {
-		// No redirect file - use original path
-		return beadsDir
-	}
-
-	// Parse the redirect target
-	target := strings.TrimSpace(string(data))
-	if target == "" {
-		return beadsDir
-	}
-
-	// Skip comments
-	lines := strings.Split(target, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			target = line
-			break
-		}
-	}
-
-	// Resolve relative paths from the parent of the .beads directory
-	if !filepath.IsAbs(target) {
-		projectRoot := filepath.Dir(beadsDir)
-		target = filepath.Join(projectRoot, target)
-	}
-
-	// Verify the target exists
-	if info, err := os.Stat(target); err != nil || !info.IsDir() {
-		return beadsDir
-	}
-
-	return target
+	return beads.FollowRedirect(beadsDir)
 }
 
 // CheckPersistentMolIssues detects mol- prefixed issues that should have been ephemeral.

@@ -441,14 +441,14 @@ func TestCompareVersions(t *testing.T) {
 		v2       string
 		expected int
 	}{
-		{"0.20.1", "0.20.1", 0},   // Equal
-		{"0.20.1", "0.20.0", 1},   // v1 > v2
-		{"0.20.0", "0.20.1", -1},  // v1 < v2
-		{"0.10.0", "0.9.9", 1},    // Major.minor comparison
-		{"1.0.0", "0.99.99", 1},   // Major version difference
-		{"0.20.1", "0.3.0", 1},    // String comparison would fail this
-		{"1.2", "1.2.0", 0},       // Different length, equal
-		{"1.2.1", "1.2", 1},       // Different length, v1 > v2
+		{"0.20.1", "0.20.1", 0},  // Equal
+		{"0.20.1", "0.20.0", 1},  // v1 > v2
+		{"0.20.0", "0.20.1", -1}, // v1 < v2
+		{"0.10.0", "0.9.9", 1},   // Major.minor comparison
+		{"1.0.0", "0.99.99", 1},  // Major version difference
+		{"0.20.1", "0.3.0", 1},   // String comparison would fail this
+		{"1.2", "1.2.0", 0},      // Different length, equal
+		{"1.2.1", "1.2", 1},      // Different length, v1 > v2
 	}
 
 	for _, tc := range tests {
@@ -599,7 +599,6 @@ func TestCheckDatabaseJSONLSync(t *testing.T) {
 	}
 }
 
-
 func TestCountJSONLIssuesWithMalformedLines(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -688,57 +687,47 @@ func TestCheckGitHooks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 
-			// Always change to tmpDir to ensure GetGitDir detects the correct context
-			oldDir, err := os.Getwd()
-			if err != nil {
-				t.Fatalf("Failed to get current directory: %v", err)
-			}
-			if err := os.Chdir(tmpDir); err != nil {
-				t.Fatalf("Failed to change to test directory: %v", err)
-			}
-			defer func() {
-				_ = os.Chdir(oldDir)
-			}()
+			runInDir(t, tmpDir, func() {
+				if tc.hasGitDir {
+					// Initialize a real git repository in the test directory
+					cmd := exec.Command("git", "init")
+					cmd.Dir = tmpDir
+					if err := cmd.Run(); err != nil {
+						t.Skipf("Skipping test: git init failed: %v", err)
+					}
 
-			if tc.hasGitDir {
-				// Initialize a real git repository in the test directory
-				cmd := exec.Command("git", "init")
-				cmd.Dir = tmpDir
-				if err := cmd.Run(); err != nil {
-					t.Skipf("Skipping test: git init failed: %v", err)
-				}
-
-				gitDir, err := git.GetGitDir()
-				if err != nil {
-					t.Fatalf("git.GetGitDir() failed: %v", err)
-				}
-				hooksDir := filepath.Join(gitDir, "hooks")
-				if err := os.MkdirAll(hooksDir, 0750); err != nil {
-					t.Fatal(err)
-				}
-
-				// Create installed hooks
-				for _, hookName := range tc.installedHooks {
-					hookPath := filepath.Join(hooksDir, hookName)
-					if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+					gitDir, err := git.GetGitDir()
+					if err != nil {
+						t.Fatalf("git.GetGitDir() failed: %v", err)
+					}
+					hooksDir := filepath.Join(gitDir, "hooks")
+					if err := os.MkdirAll(hooksDir, 0750); err != nil {
 						t.Fatal(err)
 					}
+
+					// Create installed hooks
+					for _, hookName := range tc.installedHooks {
+						hookPath := filepath.Join(hooksDir, hookName)
+						if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
 				}
-			}
 
-			check := doctor.CheckGitHooks()
+				check := doctor.CheckGitHooks()
 
-			if check.Status != tc.expectedStatus {
-				t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
-			}
+				if check.Status != tc.expectedStatus {
+					t.Errorf("Expected status %s, got %s", tc.expectedStatus, check.Status)
+				}
 
-			if tc.expectWarning && check.Fix == "" {
-				t.Error("Expected fix message for warning status")
-			}
+				if tc.expectWarning && check.Fix == "" {
+					t.Error("Expected fix message for warning status")
+				}
 
-			if !tc.expectWarning && check.Fix != "" && tc.hasGitDir {
-				t.Error("Expected no fix message for non-warning status")
-			}
+				if !tc.expectWarning && check.Fix != "" && tc.hasGitDir {
+					t.Error("Expected no fix message for non-warning status")
+				}
+			})
 		})
 	}
 }
@@ -940,7 +929,7 @@ func TestCheckMetadataVersionTracking(t *testing.T) {
 			name: "slightly outdated version",
 			setupVersion: func(beadsDir string) error {
 				// Use a version that's less than 10 minor versions behind current
-				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.30.0\n"), 0644)
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.35.0\n"), 0644)
 			},
 			expectedStatus: doctor.StatusOK,
 			expectWarning:  false,
@@ -949,7 +938,7 @@ func TestCheckMetadataVersionTracking(t *testing.T) {
 			name: "very old version",
 			setupVersion: func(beadsDir string) error {
 				// Use a version that's 10+ minor versions behind current (triggers warning)
-				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.24.0\n"), 0644)
+				return os.WriteFile(filepath.Join(beadsDir, ".local_version"), []byte("0.29.0\n"), 0644)
 			},
 			expectedStatus: doctor.StatusWarning,
 			expectWarning:  true,
@@ -1014,12 +1003,12 @@ func TestIsValidSemver(t *testing.T) {
 	}{
 		{"0.24.2", true},
 		{"1.0.0", true},
-		{"0.1", true},       // Major.minor is valid
-		{"1", true},         // Just major is valid
-		{"", false},         // Empty is invalid
-		{"invalid", false},  // Non-numeric is invalid
-		{"0.a.2", false},    // Letters in parts are invalid
-		{"1.2.3.4", true},   // Extra parts are ok
+		{"0.1", true},      // Major.minor is valid
+		{"1", true},        // Just major is valid
+		{"", false},        // Empty is invalid
+		{"invalid", false}, // Non-numeric is invalid
+		{"0.a.2", false},   // Letters in parts are invalid
+		{"1.2.3.4", true},  // Extra parts are ok
 	}
 
 	for _, tc := range tests {

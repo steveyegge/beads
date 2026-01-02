@@ -34,7 +34,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -53,7 +52,7 @@ type Issue struct {
 	CreatedBy    string       `json:"created_by,omitempty"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 	RawLine      string       `json:"-"` // Store original line for conflict output
-	// Tombstone fields (bd-0ih): inline soft-delete support for merge
+	// Tombstone fields: inline soft-delete support for merge
 	DeletedAt    string `json:"deleted_at,omitempty"`    // When the issue was deleted
 	DeletedBy    string `json:"deleted_by,omitempty"`    // Who deleted the issue
 	DeleteReason string `json:"delete_reason,omitempty"` // Why the issue was deleted
@@ -114,7 +113,7 @@ func Merge3Way(outputPath, basePath, leftPath, rightPath string, debug bool) err
 	}
 
 	// Perform 3-way merge
-	result, conflicts := merge3Way(baseIssues, leftIssues, rightIssues)
+	result, conflicts := merge3Way(baseIssues, leftIssues, rightIssues, debug)
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "Merge complete:\n")
@@ -241,19 +240,10 @@ func makeKey(issue Issue) IssueKey {
 	}
 }
 
-// bd-ig5, bd-a0cp: Use constants from types package for type safety
-// These string constants enable compile-time checking when comparing
-// merge.Issue.Status (which is string for JSONL flexibility) against
-// known status values. Using types.StatusX directly would require
-// casting, so we define local string constants derived from the types.
+// Use constants from types package to avoid duplication
 const (
-	StatusOpen       = string(types.StatusOpen)
-	StatusInProgress = string(types.StatusInProgress)
-	StatusBlocked    = string(types.StatusBlocked)
-	StatusDeferred   = string(types.StatusDeferred)
-	StatusClosed     = string(types.StatusClosed)
-	StatusTombstone  = string(types.StatusTombstone)
-	StatusPinned     = string(types.StatusPinned)
+	StatusTombstone = string(types.StatusTombstone)
+	StatusClosed    = string(types.StatusClosed)
 )
 
 // Alias TTL constants from types package for local use
@@ -265,13 +255,6 @@ var (
 // IsTombstone returns true if the issue has been soft-deleted
 func IsTombstone(issue Issue) bool {
 	return issue.Status == StatusTombstone
-}
-
-// logResurrection logs when a tombstone expires and loses to a live issue.
-// This implements the recommendation from bd-zvg Open Question 1.
-func logResurrection(issueID, tombstoneDeletedAt, liveUpdatedAt, side string) {
-	debug.Logf("merge: resurrection detected for %s - expired tombstone (deleted_at=%s) loses to live issue (updated_at=%s) from %s side\n",
-		issueID, tombstoneDeletedAt, liveUpdatedAt, side)
 }
 
 // IsExpiredTombstone returns true if the tombstone has exceeded its TTL.
@@ -311,15 +294,16 @@ func IsExpiredTombstone(issue Issue, ttl time.Duration) bool {
 	return time.Now().After(expirationTime)
 }
 
-func merge3Way(base, left, right []Issue) ([]Issue, []string) {
-	return Merge3WayWithTTL(base, left, right, DefaultTombstoneTTL)
+func merge3Way(base, left, right []Issue, debug bool) ([]Issue, []string) {
+	return Merge3WayWithTTL(base, left, right, DefaultTombstoneTTL, debug)
 }
 
 // Merge3WayWithTTL performs a 3-way merge with configurable tombstone TTL.
 // This is the core merge function that handles tombstone semantics.
 // Use this when you need to configure TTL for testing, debugging, or
 // per-repository configuration. For default TTL behavior, use merge3Way.
-func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []string) {
+// When debug is true, logs resurrection events to stderr.
+func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration, debug bool) ([]Issue, []string) {
 	// Build maps for quick lookup by IssueKey
 	baseMap := make(map[IssueKey]Issue)
 	for _, issue := range base {
@@ -336,7 +320,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 		rightMap[makeKey(issue)] = issue
 	}
 
-	// bd-ncwo: Also build ID-based maps for fallback matching
+	// Also build ID-based maps for fallback matching
 	// This handles cases where the same issue has slightly different CreatedAt/CreatedBy
 	// (e.g., due to timestamp precision differences between systems)
 	leftByID := make(map[string]Issue)
@@ -351,7 +335,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 
 	// Track which issues we've processed (by both key and ID)
 	processed := make(map[IssueKey]bool)
-	processedIDs := make(map[string]bool) // bd-ncwo: track processed IDs to avoid duplicates
+	processedIDs := make(map[string]bool) // track processed IDs to avoid duplicates
 	var result []Issue
 	var conflicts []string
 
@@ -377,7 +361,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 		leftIssue, inLeft := leftMap[key]
 		rightIssue, inRight := rightMap[key]
 
-		// bd-ncwo: ID-based fallback matching for tombstone preservation
+		// ID-based fallback matching for tombstone preservation
 		// If key doesn't match but same ID exists in the other side, use that
 		if !inLeft && inRight {
 			if fallback, found := leftByID[rightIssue.ID]; found {
@@ -396,7 +380,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			}
 		}
 
-		// bd-ncwo: Check if we've already processed this ID (via a different key)
+		// Check if we've already processed this ID (via a different key)
 		currentID := key.ID
 		if currentID == "" {
 			if inLeft {
@@ -433,8 +417,9 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			if leftTombstone && !rightTombstone {
 				if IsExpiredTombstone(leftIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
-					// bd-nl2: Log resurrection event for debugging
-					logResurrection(rightIssue.ID, leftIssue.DeletedAt, rightIssue.UpdatedAt, "right")
+					if debug {
+						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", rightIssue.ID)
+					}
 					result = append(result, rightIssue)
 				} else {
 					// Tombstone wins
@@ -447,8 +432,9 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			if rightTombstone && !leftTombstone {
 				if IsExpiredTombstone(rightIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
-					// bd-nl2: Log resurrection event for debugging
-					logResurrection(leftIssue.ID, rightIssue.DeletedAt, leftIssue.UpdatedAt, "left")
+					if debug {
+						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", leftIssue.ID)
+					}
 					result = append(result, leftIssue)
 				} else {
 					// Tombstone wins
@@ -477,8 +463,9 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			// CASE: Left is tombstone, right is live
 			if leftTombstone && !rightTombstone {
 				if IsExpiredTombstone(leftIssue, ttl) {
-					// bd-nl2: Log resurrection event for debugging
-					logResurrection(rightIssue.ID, leftIssue.DeletedAt, rightIssue.UpdatedAt, "right")
+					if debug {
+						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", rightIssue.ID)
+					}
 					result = append(result, rightIssue)
 				} else {
 					result = append(result, leftIssue)
@@ -489,8 +476,9 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			// CASE: Right is tombstone, left is live
 			if rightTombstone && !leftTombstone {
 				if IsExpiredTombstone(rightIssue, ttl) {
-					// bd-nl2: Log resurrection event for debugging
-					logResurrection(leftIssue.ID, rightIssue.DeletedAt, leftIssue.UpdatedAt, "left")
+					if debug {
+						fmt.Fprintf(os.Stderr, "Issue %s resurrected (tombstone expired)\n", leftIssue.ID)
+					}
 					result = append(result, leftIssue)
 				} else {
 					result = append(result, rightIssue)
@@ -508,7 +496,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			result = append(result, merged)
 		} else if inBase && inLeft && !inRight {
 			// Deleted in right (implicitly), maybe modified in left
-			// bd-ki14: Check if left is a tombstone - tombstones must be preserved
+			// Check if left is a tombstone - tombstones must be preserved
 			if leftTombstone {
 				result = append(result, leftIssue)
 				continue
@@ -518,7 +506,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			continue
 		} else if inBase && !inLeft && inRight {
 			// Deleted in left (implicitly), maybe modified in right
-			// bd-ki14: Check if right is a tombstone - tombstones must be preserved
+			// Check if right is a tombstone - tombstones must be preserved
 			if rightTombstone {
 				result = append(result, rightIssue)
 				continue
@@ -541,7 +529,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 // mergeTombstones merges two tombstones for the same issue.
 // The tombstone with the later deleted_at timestamp wins.
 //
-// bd-6x5: Edge cases for empty DeletedAt:
+// Edge cases for empty DeletedAt:
 //   - If both empty: left wins (arbitrary but deterministic)
 //   - If left empty, right not: right wins (has timestamp)
 //   - If right empty, left not: left wins (has timestamp)
@@ -549,7 +537,7 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 // Empty DeletedAt shouldn't happen in valid data (validation catches it),
 // but we handle it defensively here.
 func mergeTombstones(left, right Issue) Issue {
-	// bd-6x5: Handle empty DeletedAt explicitly for clarity
+	// Handle empty DeletedAt explicitly for clarity
 	if left.DeletedAt == "" && right.DeletedAt == "" {
 		// Both invalid - left wins as tie-breaker
 		return left
@@ -605,10 +593,10 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 		result.ClosedAt = ""
 	}
 
-	// Merge dependencies - proper 3-way merge where removals win (bd-ndye)
+	// Merge dependencies - proper 3-way merge where removals win
 	result.Dependencies = mergeDependencies(base.Dependencies, left.Dependencies, right.Dependencies)
 
-	// bd-1sn: If status became tombstone via mergeStatus safety fallback,
+	// If status became tombstone via mergeStatus safety fallback,
 	// copy tombstone fields from whichever side has them
 	if result.Status == StatusTombstone {
 		// Prefer the side with more recent deleted_at, or left if tied
@@ -714,7 +702,7 @@ func mergeNotes(base, left, right string) string {
 
 // mergePriority handles priority merging - on conflict, higher priority wins (lower number)
 // Special case: 0 is treated as "unset/no priority" due to Go's zero value.
-// Any explicitly set priority (!=0) wins over 0. (bd-d0t fix, bd-1kf fix)
+// Any explicitly set priority (!=0) wins over 0.
 func mergePriority(base, left, right int) int {
 	// Standard 3-way merge for non-conflict cases
 	if base == left && base != right {
@@ -728,8 +716,8 @@ func mergePriority(base, left, right int) int {
 	}
 	// True conflict: both sides changed to different values
 
-	// bd-d0t fix: Treat 0 as "unset" - explicitly set priority wins over unset
-	// bd-1kf fix: Use != 0 instead of > 0 to handle negative priorities
+	// Treat 0 as "unset" - explicitly set priority wins over unset
+	// Use != 0 instead of > 0 to handle negative priorities
 	if left == 0 && right != 0 {
 		return right // right has explicit priority, left is unset
 	}
@@ -776,7 +764,7 @@ func isTimeAfter(t1, t2 string) bool {
 		return true // t1 valid, t2 invalid - t1 wins
 	}
 
-	// Both valid - compare. On exact tie, left wins for consistency with IssueType rule (bd-8nz)
+	// Both valid - compare. On exact tie, left wins for consistency with IssueType rule
 	// Using !time2.After(time1) returns true when t1 > t2 OR t1 == t2
 	return !time2.After(time1)
 }
@@ -822,7 +810,7 @@ func maxTime(t1, t2 string) string {
 	return t2
 }
 
-// mergeDependencies performs a proper 3-way merge of dependencies (bd-ndye)
+// mergeDependencies performs a proper 3-way merge of dependencies
 // Key principle: REMOVALS ARE AUTHORITATIVE
 // - If dep was in base and removed by left OR right → exclude (removal wins)
 // - If dep wasn't in base and added by left OR right → include

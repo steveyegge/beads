@@ -134,9 +134,9 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		JOIN issues blocker ON d.depends_on_id = blocker.id
-		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  AND d.type = 'blocks'
-		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 	`).Scan(&stats.BlockedIssues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocked count: %w", err)
@@ -152,7 +152,7 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.issue_id = i.id
 		      AND d.type = 'blocks'
-		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  )
 	`).Scan(&stats.ReadyIssues)
 	if err != nil {
@@ -206,4 +206,75 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 	}
 
 	return &stats, nil
+}
+
+// GetMoleculeProgress returns efficient progress stats for a molecule.
+// Uses indexed queries on dependencies table instead of loading all steps.
+func (s *SQLiteStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
+	// First get the molecule's title
+	var title string
+	err := s.db.QueryRowContext(ctx, `SELECT title FROM issues WHERE id = ?`, moleculeID).Scan(&title)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("molecule not found: %s", moleculeID)
+		}
+		return nil, fmt.Errorf("failed to get molecule: %w", err)
+	}
+
+	stats := &types.MoleculeProgressStats{
+		MoleculeID:    moleculeID,
+		MoleculeTitle: title,
+	}
+
+	// Get counts from direct children via parent-child dependency
+	// Uses idx_dependencies_depends_on_type index
+	err = s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) as total,
+			COALESCE(SUM(CASE WHEN i.status = 'closed' THEN 1 ELSE 0 END), 0) as completed,
+			COALESCE(SUM(CASE WHEN i.status = 'in_progress' THEN 1 ELSE 0 END), 0) as in_progress
+		FROM dependencies d
+		JOIN issues i ON d.issue_id = i.id
+		WHERE d.depends_on_id = ? AND d.type = 'parent-child'
+	`, moleculeID).Scan(&stats.Total, &stats.Completed, &stats.InProgress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get child counts: %w", err)
+	}
+
+	// Get first in_progress step ID (for "current step" display)
+	var currentStepID sql.NullString
+	err = s.db.QueryRowContext(ctx, `
+		SELECT i.id
+		FROM dependencies d
+		JOIN issues i ON d.issue_id = i.id
+		WHERE d.depends_on_id = ? AND d.type = 'parent-child' AND i.status = 'in_progress'
+		ORDER BY i.created_at
+		LIMIT 1
+	`, moleculeID).Scan(&currentStepID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to get current step: %w", err)
+	}
+	if currentStepID.Valid {
+		stats.CurrentStepID = currentStepID.String
+	}
+
+	// Get first and last closure times for rate calculation
+	var firstClosed, lastClosed sql.NullTime
+	err = s.db.QueryRowContext(ctx, `
+		SELECT MIN(i.closed_at), MAX(i.closed_at)
+		FROM dependencies d
+		JOIN issues i ON d.issue_id = i.id
+		WHERE d.depends_on_id = ? AND d.type = 'parent-child' AND i.status = 'closed'
+	`, moleculeID).Scan(&firstClosed, &lastClosed)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to get closure times: %w", err)
+	}
+	if firstClosed.Valid {
+		stats.FirstClosed = &firstClosed.Time
+	}
+	if lastClosed.Valid {
+		stats.LastClosed = &lastClosed.Time
+	}
+
+	return stats, nil
 }

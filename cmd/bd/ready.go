@@ -39,7 +39,20 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		issueType, _ := cmd.Flags().GetString("type")
+		issueType = util.NormalizeIssueType(issueType) // Expand aliases (mr→merge-request, etc.)
 		parentID, _ := cmd.Flags().GetString("parent")
+		molTypeStr, _ := cmd.Flags().GetString("mol-type")
+		prettyFormat, _ := cmd.Flags().GetBool("pretty")
+		includeDeferred, _ := cmd.Flags().GetBool("include-deferred")
+		var molType *types.MolType
+		if molTypeStr != "" {
+			mt := types.MolType(molTypeStr)
+			if !mt.IsValid() {
+				fmt.Fprintf(os.Stderr, "Error: invalid mol-type %q (must be swarm, patrol, or work)\n", molTypeStr)
+				os.Exit(1)
+			}
+			molType = &mt
+		}
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 
 		// Normalize labels: trim, dedupe, remove empty
@@ -54,13 +67,14 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		}
 
 		filter := types.WorkFilter{
-			// Leave Status empty to get both 'open' and 'in_progress' (bd-165)
-			Type:       issueType,
-			Limit:      limit,
-			Unassigned: unassigned,
-			SortPolicy: types.SortPolicy(sortPolicy),
-			Labels:     labels,
-			LabelsAny:  labelsAny,
+			// Leave Status empty to get both 'open' and 'in_progress'
+			Type:            issueType,
+			Limit:           limit,
+			Unassigned:      unassigned,
+			SortPolicy:      types.SortPolicy(sortPolicy),
+			Labels:          labels,
+			LabelsAny:       labelsAny,
+			IncludeDeferred: includeDeferred, // GH#820: respect --include-deferred flag
 		}
 		// Use Changed() to properly handle P0 (priority=0)
 		if cmd.Flags().Changed("priority") {
@@ -73,6 +87,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if parentID != "" {
 			filter.ParentID = &parentID
 		}
+		if molType != nil {
+			filter.MolType = molType
+		}
 		// Validate sort policy
 		if !filter.SortPolicy.IsValid() {
 			fmt.Fprintf(os.Stderr, "Error: invalid sort policy '%s'. Valid values: hybrid, priority, oldest\n", sortPolicy)
@@ -81,14 +98,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
-				Assignee:   assignee,
-				Unassigned: unassigned,
-				Type:       issueType,
-				Limit:      limit,
-				SortPolicy: sortPolicy,
-				Labels:     labels,
-				LabelsAny:  labelsAny,
-				ParentID:   parentID,
+				Assignee:        assignee,
+				Unassigned:      unassigned,
+				Type:            issueType,
+				Limit:           limit,
+				SortPolicy:      sortPolicy,
+				Labels:          labels,
+				LabelsAny:       labelsAny,
+				ParentID:        parentID,
+				MolType:         molTypeStr,
+				IncludeDeferred: includeDeferred, // GH#820
 			}
 			if cmd.Flags().Changed("priority") {
 				priority, _ := cmd.Flags().GetInt("priority")
@@ -112,11 +131,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				return
 			}
 
-			// Show upgrade notification if needed (bd-loka)
+			// Show upgrade notification if needed
 			maybeShowUpgradeNotification()
 
 			if len(issues) == 0 {
-				// Check if there are any open issues at all (bd-r4n)
+				// Check if there are any open issues at all
 				statsResp, statsErr := daemonClient.Stats()
 				hasOpenIssues := false
 				if statsErr == nil {
@@ -133,26 +152,30 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				}
 				return
 			}
-			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-			for i, issue := range issues {
-				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-					ui.RenderPriority(issue.Priority),
-					ui.RenderType(string(issue.IssueType)),
-					ui.RenderID(issue.ID), issue.Title)
-				if issue.EstimatedMinutes != nil {
-					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+			if prettyFormat {
+				displayPrettyList(issues, false)
+			} else {
+				fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+				for i, issue := range issues {
+					fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
+						ui.RenderPriority(issue.Priority),
+						ui.RenderType(string(issue.IssueType)),
+						ui.RenderID(issue.ID), issue.Title)
+					if issue.EstimatedMinutes != nil {
+						fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+					}
+					if issue.Assignee != "" {
+						fmt.Printf("   Assignee: %s\n", issue.Assignee)
+					}
 				}
-				if issue.Assignee != "" {
-					fmt.Printf("   Assignee: %s\n", issue.Assignee)
-				}
+				fmt.Println()
 			}
-			fmt.Println()
 			return
 		}
 		// Direct mode
 		ctx := rootCtx
 
-		// Check database freshness before reading (bd-2q6d, bd-c4rq)
+		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		if daemonClient == nil {
 			if err := ensureDatabaseFresh(ctx); err != nil {
@@ -185,11 +208,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			outputJSON(issues)
 			return
 		}
-		// Show upgrade notification if needed (bd-loka)
+		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
 
 		if len(issues) == 0 {
-			// Check if there are any open issues at all (bd-r4n)
+			// Check if there are any open issues at all
 			hasOpenIssues := false
 			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
 				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
@@ -204,20 +227,24 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			maybeShowTip(store)
 			return
 		}
-		fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-		for i, issue := range issues {
-			fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-				ui.RenderPriority(issue.Priority),
-				ui.RenderType(string(issue.IssueType)),
-				ui.RenderID(issue.ID), issue.Title)
-			if issue.EstimatedMinutes != nil {
-				fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+		if prettyFormat {
+			displayPrettyList(issues, false)
+		} else {
+			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+			for i, issue := range issues {
+				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
+					ui.RenderPriority(issue.Priority),
+					ui.RenderType(string(issue.IssueType)),
+					ui.RenderID(issue.ID), issue.Title)
+				if issue.EstimatedMinutes != nil {
+					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+				}
+				if issue.Assignee != "" {
+					fmt.Printf("   Assignee: %s\n", issue.Assignee)
+				}
 			}
-			if issue.Assignee != "" {
-				fmt.Printf("   Assignee: %s\n", issue.Assignee)
-			}
+			fmt.Println()
 		}
-		fmt.Println()
 
 		// Show tip after successful ready (direct mode only)
 		maybeShowTip(store)
@@ -418,9 +445,12 @@ func init() {
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 	readyCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
 	readyCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
-	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, merge-request)")
+	readyCmd.Flags().StringP("type", "t", "", "Filter by issue type (task, bug, feature, epic, merge-request). Aliases: mr→merge-request, feat→feature, mol→molecule")
 	readyCmd.Flags().String("mol", "", "Filter to steps within a specific molecule")
 	readyCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
+	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
+	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
+	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)
