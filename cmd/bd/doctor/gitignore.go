@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // GitignoreTemplate is the canonical .beads/.gitignore content
@@ -133,6 +135,7 @@ func FixGitignore() error {
 // CheckIssuesTracking verifies that issues.jsonl is tracked by git.
 // This catches cases where global gitignore patterns (e.g., *.jsonl) would
 // cause issues.jsonl to be ignored, breaking bd sync.
+// In sync-branch mode, the file may be intentionally ignored in working branches (GH#858).
 func CheckIssuesTracking() DoctorCheck {
 	issuesPath := filepath.Join(".beads", "issues.jsonl")
 
@@ -143,6 +146,17 @@ func CheckIssuesTracking() DoctorCheck {
 			Name:   "Issues Tracking",
 			Status: "ok",
 			Message: "No issues.jsonl yet (will be created on first issue)",
+		}
+	}
+
+	// In sync-branch mode, JSONL files may be intentionally ignored in working branches.
+	// They are tracked only in the dedicated sync branch.
+	if branch := syncbranch.GetFromYAML(); branch != "" {
+		return DoctorCheck{
+			Name:    "Issues Tracking",
+			Status:  StatusOK,
+			Message: "N/A (sync-branch mode)",
+			Detail:  fmt.Sprintf("JSONL files tracked in '%s' branch only", branch),
 		}
 	}
 
