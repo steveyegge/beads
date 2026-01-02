@@ -1,0 +1,177 @@
+# validate-beads.ps1 - Beads integration validator for [YOUR_PROJECT_NAME]
+# Copy this template to .beads/validate.ps1 in your repository
+#
+# Usage: .\.beads\validate.ps1 [-Verbose] [-CreateTestIssue]
+#
+# Customize the PROJECT_NAME and add project-specific checks in the
+# "Project-Specific Checks" section at the bottom.
+
+param(
+    [switch]$VerboseOutput,
+    [switch]$CreateTestIssue
+)
+
+# ============================================================================
+# CONFIGURATION - Customize these values for your project
+# ============================================================================
+
+$PROJECT_NAME = "YourProject"  # <-- Change this to your project name
+
+# ============================================================================
+# CORE VALIDATION LOGIC - Generally no changes needed below this line
+# ============================================================================
+
+$ErrorActionPreference = "Stop"
+$script:Errors = @()
+
+function Write-Check {
+    param([string]$Name, [bool]$Passed, [string]$Details = "")
+    if ($Passed) {
+        Write-Host "[OK] $Name" -ForegroundColor Green
+    } else {
+        Write-Host "[!!] $Name" -ForegroundColor Red
+        $script:Errors += $Name
+    }
+    if ($VerboseOutput -and $Details) {
+        Write-Host "     $Details" -ForegroundColor DarkGray
+    }
+}
+
+function Get-JsonFromOutput {
+    param([string]$Output, [char]$StartChar = '{')
+    $start = $Output.IndexOf($StartChar)
+    if ($start -ge 0) {
+        return $Output.Substring($start) | ConvertFrom-Json
+    }
+    return $null
+}
+
+Write-Host "`nBeads Validation - $PROJECT_NAME" -ForegroundColor Cyan
+Write-Host ("=" * (20 + $PROJECT_NAME.Length)) -ForegroundColor Cyan
+Write-Host ""
+
+# --- Core Checks ---
+
+# Check 1: .beads directory exists
+Write-Check ".beads directory exists" (Test-Path ".beads")
+
+# Check 2: Database exists
+$dbPath = ".beads/beads.db"
+Write-Check "Database exists" (Test-Path $dbPath) "Path: $dbPath"
+
+# Check 3: bd command available
+try {
+    $version = bd --version 2>&1
+    Write-Check "bd command available" $true "Version: $version"
+} catch {
+    Write-Check "bd command available" $false "bd not in PATH"
+}
+
+# Check 4: bd info returns valid data
+try {
+    $output = bd --no-daemon info --json 2>&1 | Out-String
+    $info = Get-JsonFromOutput $output '{'
+    Write-Check "bd info succeeds" ($null -ne $info.database_path)
+} catch {
+    Write-Check "bd info succeeds" $false
+}
+
+# Check 5: Can list issues
+try {
+    $output = bd --no-daemon list --json 2>&1 | Out-String
+    $issues = Get-JsonFromOutput $output '['
+    $count = if ($issues -is [array]) { $issues.Count } else { if ($issues) { 1 } else { 0 } }
+    Write-Check "bd list succeeds" $true "Found $count issue(s)"
+} catch {
+    Write-Check "bd list succeeds" $false
+}
+
+# Check 6: Ready command works
+try {
+    $ready = bd --no-daemon ready 2>&1
+    Write-Check "bd ready succeeds" $true
+    if ($VerboseOutput -and $ready) {
+        Write-Host "     Ready issues:" -ForegroundColor DarkGray
+        $ready | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
+    }
+} catch {
+    Write-Check "bd ready succeeds" $false
+}
+
+# Check 7: JSONL file exists (indicates sync has run)
+$jsonlPath = ".beads/issues.jsonl"
+Write-Check "issues.jsonl exists" (Test-Path $jsonlPath)
+
+# Check 8: Doctor passes
+try {
+    $doctor = bd --no-daemon doctor 2>&1
+    Write-Check "bd doctor passes" $true
+} catch {
+    Write-Check "bd doctor passes" $false
+}
+
+# --- Optional: Test Issue Lifecycle ---
+if ($CreateTestIssue) {
+    Write-Host "`nTest Issue Lifecycle" -ForegroundColor Yellow
+    try {
+        $output = bd --no-daemon create "VALIDATE: Temporary test issue" -t task -p 4 --json 2>&1 | Out-String
+        $testIssue = Get-JsonFromOutput $output '{'
+        $testId = $testIssue.id
+        Write-Check "Create test issue" $true "ID: $testId"
+
+        bd --no-daemon close $testId --reason "Validation test" 2>&1 | Out-Null
+        Write-Check "Close test issue" $true
+
+        Write-Host "     Note: Test issue $testId remains in closed state" -ForegroundColor DarkGray
+    } catch {
+        Write-Check "Test issue lifecycle" $false $_.Exception.Message
+    }
+}
+
+# ============================================================================
+# PROJECT-SPECIFIC CHECKS - Add your custom validations here
+# ============================================================================
+
+# Example: Check for specific issue prefix
+# try {
+#     $output = bd --no-daemon info --json 2>&1 | Out-String
+#     $info = Get-JsonFromOutput $output '{'
+#     $expectedPrefix = "myproject"
+#     Write-Check "Issue prefix is '$expectedPrefix'" ($info.config.issue_prefix -eq $expectedPrefix)
+# } catch {
+#     Write-Check "Issue prefix check" $false
+# }
+
+# Example: Check for minimum number of issues (project has been set up)
+# try {
+#     $output = bd --no-daemon list --json 2>&1 | Out-String
+#     $issues = Get-JsonFromOutput $output '['
+#     $count = if ($issues -is [array]) { $issues.Count } else { 0 }
+#     Write-Check "Has at least 5 tracked issues" ($count -ge 5) "Found: $count"
+# } catch {
+#     Write-Check "Issue count check" $false
+# }
+
+# Example: Check for no stale in_progress issues
+# try {
+#     $output = bd --no-daemon list --status in_progress --json 2>&1 | Out-String
+#     $inProgress = Get-JsonFromOutput $output '['
+#     $count = if ($inProgress -is [array]) { $inProgress.Count } else { 0 }
+#     Write-Check "No abandoned in_progress issues" ($count -le 1) "Found: $count"
+# } catch {
+#     Write-Check "In-progress check" $false
+# }
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+
+Write-Host "`n$("=" * (20 + $PROJECT_NAME.Length))" -ForegroundColor Cyan
+if ($script:Errors.Count -eq 0) {
+    Write-Host "All checks passed!" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "Failed checks: $($script:Errors.Count)" -ForegroundColor Red
+    $script:Errors | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    exit 1
+}

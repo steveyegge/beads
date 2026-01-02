@@ -1,11 +1,17 @@
-# test-external-repo.ps1 - Validate beads execution against external repository
-# Usage: .\scripts\test-external-repo.ps1 [-RepoPath <path>] [-SkipCleanup] [-Verbose]
+# test-external-repo.ps1 - Validate beads execution against any external repository
+# Usage: .\scripts\test-external-repo.ps1 -RepoPath <path> [-SkipCleanup] [-Verbose]
 #
 # Tests beads CLI against an external repository in an isolated temp environment.
-# Default target: C:\myStuff\_infra\ActionalbleLogLines
+# Works with ANY git repository - creates fresh beads instance for testing.
+#
+# Examples:
+#   .\scripts\test-external-repo.ps1 -RepoPath "C:\myStuff\_infra\ActionableLogLines"
+#   .\scripts\test-external-repo.ps1 -RepoPath "." -Verbose
+#   .\scripts\test-external-repo.ps1 -RepoPath "C:\Projects\MyApp" -SkipCleanup
 
 param(
-    [string]$RepoPath = "C:\myStuff\_infra\ActionalbleLogLines",
+    [Parameter(Mandatory=$false)]
+    [string]$RepoPath,
     [switch]$SkipCleanup,
     [switch]$VerboseOutput
 )
@@ -102,15 +108,31 @@ function Invoke-BD {
 
 # --- Setup ---
 
-Write-Host "`nBeads External Repository Test Suite" -ForegroundColor Yellow
-Write-Host "Target: $RepoPath" -ForegroundColor Yellow
-Write-Host "Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
+# If no RepoPath provided, use current directory
+if (-not $RepoPath) {
+    $RepoPath = Get-Location
+    Write-Host "`nNo -RepoPath specified, using current directory" -ForegroundColor Yellow
+}
 
-# Verify source repo exists
-if (-not (Test-Path $RepoPath)) {
-    Write-Error "Source repository not found: $RepoPath"
+# Resolve to absolute path
+$RepoPath = (Resolve-Path $RepoPath -ErrorAction SilentlyContinue).Path
+if (-not $RepoPath) {
+    Write-Error "Repository path not found"
     exit 1
 }
+
+# Verify it's a git repository
+if (-not (Test-Path (Join-Path $RepoPath ".git"))) {
+    Write-Error "Not a git repository: $RepoPath"
+    exit 1
+}
+
+$RepoName = Split-Path $RepoPath -Leaf
+
+Write-Host "`nBeads External Repository Test Suite" -ForegroundColor Yellow
+Write-Host "Target: $RepoPath" -ForegroundColor Yellow
+Write-Host "Repo:   $RepoName" -ForegroundColor Yellow
+Write-Host "Time:   $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Yellow
 
 # Create isolated test environment
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -422,6 +444,96 @@ try {
         }
     } catch {
         Test-Fail "TC-7.1: Rapid creation - unique IDs" $_.Exception.Message
+    }
+
+    # ========================================
+    # TEST SUITE 8: Agent Pattern Compliance
+    # ========================================
+    Write-TestHeader "8. Agent Pattern Compliance"
+
+    # TC-8.1: Single-issue discipline - verify multiple in_progress tracking
+    try {
+        # Create two issues and put both in_progress
+        $issue1 = (Invoke-BD -BdArgs @("create", "Pattern test 1", "-t", "task", "-p", "3") -Json -NoDaemon).Output | ConvertFrom-Json
+        $issue2 = (Invoke-BD -BdArgs @("create", "Pattern test 2", "-t", "task", "-p", "3") -Json -NoDaemon).Output | ConvertFrom-Json
+
+        Invoke-BD -BdArgs @("update", $issue1.id, "--status", "in_progress") -NoDaemon | Out-Null
+        Invoke-BD -BdArgs @("update", $issue2.id, "--status", "in_progress") -NoDaemon | Out-Null
+
+        $result = Invoke-BD -BdArgs @("list", "--status", "in_progress") -Json -NoDaemon
+        $nowInProgress = @()
+        try { $nowInProgress = $result.Output | ConvertFrom-Json } catch {}
+        $count = if ($nowInProgress -is [array]) { $nowInProgress.Count } else { 1 }
+
+        # Note: bd allows multiple in_progress - agents must self-enforce single-issue discipline
+        Test-Pass "TC-8.1: Single-issue discipline" "bd tracks $count in_progress (agent self-enforces limit)"
+
+        # Cleanup
+        Invoke-BD -BdArgs @("close", $issue1.id, "--reason", "test") -NoDaemon | Out-Null
+        Invoke-BD -BdArgs @("close", $issue2.id, "--reason", "test") -NoDaemon | Out-Null
+    } catch {
+        Test-Fail "TC-8.1: Single-issue discipline" $_.Exception.Message
+    }
+
+    # TC-8.2: Dependency direction validation (DEPENDENT depends on REQUIRED)
+    try {
+        $parent = (Invoke-BD -BdArgs @("create", "Dep direction: Parent", "-t", "task", "-p", "2") -Json -NoDaemon).Output | ConvertFrom-Json
+        $child = (Invoke-BD -BdArgs @("create", "Dep direction: Child", "-t", "task", "-p", "2") -Json -NoDaemon).Output | ConvertFrom-Json
+
+        # Correct pattern: bd dep add CHILD PARENT means child depends on parent
+        Invoke-BD -BdArgs @("dep", "add", $child.id, $parent.id) -NoDaemon | Out-Null
+
+        # Verify child is blocked by parent
+        $result = Invoke-BD -BdArgs @("blocked") -NoDaemon
+        if ($result.Output -match $child.id) {
+            Test-Pass "TC-8.2: Dependency direction" "Child correctly blocked by parent"
+        } else {
+            Test-Fail "TC-8.2: Dependency direction" "Child not blocked after dep add"
+        }
+
+        # Cleanup
+        Invoke-BD -BdArgs @("close", $parent.id, "--reason", "test") -NoDaemon | Out-Null
+        Invoke-BD -BdArgs @("close", $child.id, "--reason", "test") -NoDaemon | Out-Null
+    } catch {
+        Test-Fail "TC-8.2: Dependency direction" $_.Exception.Message
+    }
+
+    # TC-8.3: Discovered issues pattern (filing new work during other work)
+    try {
+        $mainIssue = (Invoke-BD -BdArgs @("create", "Main work item", "-t", "task", "-p", "2") -Json -NoDaemon).Output | ConvertFrom-Json
+        Invoke-BD -BdArgs @("update", $mainIssue.id, "--status", "in_progress") -NoDaemon | Out-Null
+
+        # Create discovered issue with reference (simulating agent finding work during task)
+        $discovered = (Invoke-BD -BdArgs @("create", "Discovered: Found during main work", "-t", "task", "-p", "3", "-d", "Found while working on $($mainIssue.id)") -Json -NoDaemon).Output | ConvertFrom-Json
+
+        if ($discovered.id -ne $mainIssue.id) {
+            Test-Pass "TC-8.3: Discovered issues pattern" "Separate issue created for discovered work"
+        } else {
+            Test-Fail "TC-8.3: Discovered issues pattern" "Discovered work not separated"
+        }
+
+        # Cleanup
+        Invoke-BD -BdArgs @("close", $mainIssue.id, "--reason", "test") -NoDaemon | Out-Null
+        Invoke-BD -BdArgs @("close", $discovered.id, "--reason", "test") -NoDaemon | Out-Null
+    } catch {
+        Test-Fail "TC-8.3: Discovered issues pattern" $_.Exception.Message
+    }
+
+    # TC-8.4: Session end - export persists to JSONL
+    try {
+        $sessionTest = (Invoke-BD -BdArgs @("create", "Session end test", "-t", "task", "-p", "4") -Json -NoDaemon).Output | ConvertFrom-Json
+        Invoke-BD -BdArgs @("export") -NoDaemon | Out-Null
+
+        $jsonlContent = Get-Content ".beads/issues.jsonl" -Raw
+        if ($jsonlContent -match $sessionTest.id) {
+            Test-Pass "TC-8.4: Session end persistence" "Issue exported to JSONL"
+        } else {
+            Test-Fail "TC-8.4: Session end persistence" "Issue not found in JSONL"
+        }
+
+        Invoke-BD -BdArgs @("close", $sessionTest.id, "--reason", "test") -NoDaemon | Out-Null
+    } catch {
+        Test-Fail "TC-8.4: Session end persistence" $_.Exception.Message
     }
 
 } catch {

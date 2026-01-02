@@ -171,14 +171,14 @@ Beads includes tests that validate functionality against external repositories t
 
 ### PowerShell Validation Script
 
-Quick smoke testing against any external repo:
+Quick smoke testing against any git repository:
 
 ```powershell
-# Test against ActionableLogLines (default)
-.\scripts\test-external-repo.ps1
-
-# Test against custom repo
+# Test against a specific repo
 .\scripts\test-external-repo.ps1 -RepoPath "C:\path\to\repo"
+
+# Test current directory
+.\scripts\test-external-repo.ps1 -RepoPath "."
 
 # Verbose output
 .\scripts\test-external-repo.ps1 -Verbose
@@ -195,20 +195,23 @@ Quick smoke testing against any external repo:
 5. Mode Parity - daemon vs `--no-daemon`
 6. Recovery - doctor, error handling
 7. Concurrent Creation - hash collision prevention
+8. Agent Pattern Compliance - workflow patterns (single-issue, dependency direction, discovered issues, session end)
 
 ### Go Integration Tests
 
-Formal Go tests using external repo as target:
+Formal Go tests using any git repository as target:
 
 ```bash
-# Run external repo tests
-go test -tags=integration,external_repo ./cmd/bd/...
-
-# With custom repo path
+# Run external repo tests (BEADS_TEST_EXTERNAL_REPO is required)
 BEADS_TEST_EXTERNAL_REPO=/path/to/repo go test -tags=integration,external_repo ./cmd/bd/...
+
+# Use current directory
+BEADS_TEST_EXTERNAL_REPO=. go test -tags=integration,external_repo ./cmd/bd/...
 ```
 
 Tests are in `cmd/bd/external_repo_test.go` with build tag `external_repo`.
+
+**Note**: Tests skip automatically if `BEADS_TEST_EXTERNAL_REPO` is not set.
 
 ### In-Repo Validators
 

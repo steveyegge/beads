@@ -15,28 +15,42 @@ import (
 )
 
 // External repository integration tests
-// These tests validate beads functionality against a cloned external repository
+// These tests validate beads functionality against ANY git repository
 // Run with: go test -tags=integration,external_repo ./cmd/bd/...
 //
 // Environment variables:
-//   BEADS_TEST_EXTERNAL_REPO - Path to external repo (default: C:\myStuff\_infra\ActionalbleLogLines)
+//   BEADS_TEST_EXTERNAL_REPO - Path to external repo (REQUIRED)
+//
+// Examples:
+//   BEADS_TEST_EXTERNAL_REPO=/path/to/repo go test -tags=integration,external_repo ./cmd/bd/...
+//   BEADS_TEST_EXTERNAL_REPO=. go test -tags=integration,external_repo ./cmd/bd/...
 
-const defaultExternalRepo = `C:\myStuff\_infra\ActionalbleLogLines`
-
-func getExternalRepoPath() string {
-	if path := os.Getenv("BEADS_TEST_EXTERNAL_REPO"); path != "" {
-		return path
+func getExternalRepoPath(t *testing.T) string {
+	path := os.Getenv("BEADS_TEST_EXTERNAL_REPO")
+	if path == "" {
+		t.Skip("BEADS_TEST_EXTERNAL_REPO not set - provide path to any git repository")
 	}
-	return defaultExternalRepo
+	// Resolve relative paths
+	if !filepath.IsAbs(path) {
+		cwd, _ := os.Getwd()
+		path = filepath.Join(cwd, path)
+	}
+	return path
 }
 
 // cloneToTemp copies external repo to temp directory for isolated testing
 func cloneToTemp(t *testing.T) string {
 	t.Helper()
 
-	srcRepo := getExternalRepoPath()
+	srcRepo := getExternalRepoPath(t)
 	if _, err := os.Stat(srcRepo); os.IsNotExist(err) {
-		t.Skipf("External repo not found: %s (set BEADS_TEST_EXTERNAL_REPO)", srcRepo)
+		t.Skipf("External repo not found: %s", srcRepo)
+	}
+
+	// Verify it's a git repo
+	gitDir := filepath.Join(srcRepo, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		t.Skipf("Not a git repository: %s", srcRepo)
 	}
 
 	tmpDir := createTempDirWithCleanup(t)
