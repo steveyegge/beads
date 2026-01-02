@@ -96,9 +96,82 @@ func TestNormalizeLabels(t *testing.T) {
 func TestNormalizeLabels_PreservesCapacity(t *testing.T) {
 	input := []string{"bug", "critical", "frontend"}
 	result := NormalizeLabels(input)
-	
+
 	// Result should have reasonable capacity (not excessive allocation)
 	if cap(result) > len(input)*2 {
 		t.Errorf("NormalizeLabels capacity too large: got %d, input len %d", cap(result), len(input))
+	}
+}
+
+func TestNormalizeIssueType(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "mr alias",
+			input:    "mr",
+			expected: "merge-request",
+		},
+		{
+			name:     "MR uppercase",
+			input:    "MR",
+			expected: "merge-request",
+		},
+		{
+			name:     "feat alias",
+			input:    "feat",
+			expected: "feature",
+		},
+		{
+			name:     "FEAT uppercase",
+			input:    "FEAT",
+			expected: "feature",
+		},
+		{
+			name:     "mol alias",
+			input:    "mol",
+			expected: "molecule",
+		},
+		{
+			name:     "Mol mixed case",
+			input:    "Mol",
+			expected: "molecule",
+		},
+		{
+			name:     "non-alias unchanged",
+			input:    "bug",
+			expected: "bug",
+		},
+		{
+			name:     "full name unchanged",
+			input:    "merge-request",
+			expected: "merge-request",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "feature unchanged",
+			input:    "feature",
+			expected: "feature",
+		},
+		{
+			name:     "task unchanged",
+			input:    "task",
+			expected: "task",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NormalizeIssueType(tt.input)
+			if result != tt.expected {
+				t.Errorf("NormalizeIssueType(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
 	}
 }
