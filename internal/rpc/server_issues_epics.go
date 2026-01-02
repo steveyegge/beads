@@ -200,6 +200,23 @@ func (s *Server) handleCreate(req *Request) Response {
 		externalRef = &createArgs.ExternalRef
 	}
 
+	// Parse DueAt if provided (GH#820)
+	var dueAt *time.Time
+	if createArgs.DueAt != "" {
+		// Try date-only format first (YYYY-MM-DD)
+		if t, err := time.ParseInLocation("2006-01-02", createArgs.DueAt, time.Local); err == nil {
+			dueAt = &t
+		} else if t, err := time.Parse(time.RFC3339, createArgs.DueAt); err == nil {
+			// Try RFC3339 format (2025-01-15T10:00:00Z)
+			dueAt = &t
+		} else {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid due_at format %q. Examples: 2025-01-15, 2025-01-15T10:00:00Z", createArgs.DueAt),
+			}
+		}
+	}
+
 	issue := &types.Issue{
 		ID:                 issueID,
 		Title:              createArgs.Title,
@@ -230,6 +247,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		Actor:     createArgs.EventActor,
 		Target:    createArgs.EventTarget,
 		Payload:   createArgs.EventPayload,
+		// Time-based scheduling (GH#820)
+		DueAt: dueAt,
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -1124,6 +1143,50 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Time-based scheduling filters (GH#820)
+	filter.Deferred = listArgs.Deferred
+	if listArgs.DeferAfter != "" {
+		t, err := parseTimeRPC(listArgs.DeferAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --defer-after date: %v", err),
+			}
+		}
+		filter.DeferAfter = &t
+	}
+	if listArgs.DeferBefore != "" {
+		t, err := parseTimeRPC(listArgs.DeferBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --defer-before date: %v", err),
+			}
+		}
+		filter.DeferBefore = &t
+	}
+	if listArgs.DueAfter != "" {
+		t, err := parseTimeRPC(listArgs.DueAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --due-after date: %v", err),
+			}
+		}
+		filter.DueAfter = &t
+	}
+	if listArgs.DueBefore != "" {
+		t, err := parseTimeRPC(listArgs.DueBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --due-before date: %v", err),
+			}
+		}
+		filter.DueBefore = &t
+	}
+	filter.Overdue = listArgs.Overdue
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {
@@ -1536,14 +1599,15 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	wf := types.WorkFilter{
-		Status:     types.StatusOpen,
-		Type:       readyArgs.Type,
-		Priority:   readyArgs.Priority,
-		Unassigned: readyArgs.Unassigned,
-		Limit:      readyArgs.Limit,
-		SortPolicy: types.SortPolicy(readyArgs.SortPolicy),
-		Labels:     util.NormalizeLabels(readyArgs.Labels),
-		LabelsAny:  util.NormalizeLabels(readyArgs.LabelsAny),
+		Status:          types.StatusOpen,
+		Type:            readyArgs.Type,
+		Priority:        readyArgs.Priority,
+		Unassigned:      readyArgs.Unassigned,
+		Limit:           readyArgs.Limit,
+		SortPolicy:      types.SortPolicy(readyArgs.SortPolicy),
+		Labels:          util.NormalizeLabels(readyArgs.Labels),
+		LabelsAny:       util.NormalizeLabels(readyArgs.LabelsAny),
+		IncludeDeferred: readyArgs.IncludeDeferred, // GH#820
 	}
 	if readyArgs.Assignee != "" && !readyArgs.Unassigned {
 		wf.Assignee = &readyArgs.Assignee

@@ -40,6 +40,10 @@ type Issue struct {
 	CloseReason     string     `json:"close_reason,omitempty"`      // Reason provided when closing
 	ClosedBySession string     `json:"closed_by_session,omitempty"` // Claude Code session that closed this issue
 
+	// ===== Time-Based Scheduling (GH#820) =====
+	DueAt      *time.Time `json:"due_at,omitempty"`      // When this issue should be completed
+	DeferUntil *time.Time `json:"defer_until,omitempty"` // Hide from bd ready until this time
+
 	// ===== External Integration =====
 	ExternalRef *string `json:"external_ref,omitempty"` // e.g., "gh-9", "jira-ABC"
 
@@ -794,6 +798,14 @@ type IssueFilter struct {
 
 	// Type exclusion (for hiding internal types like gates)
 	ExcludeTypes []IssueType // Exclude issues with these types
+
+	// Time-based scheduling filters (GH#820)
+	Deferred    bool       // Filter issues with defer_until set (any value)
+	DeferAfter  *time.Time // Filter issues with defer_until > this time
+	DeferBefore *time.Time // Filter issues with defer_until < this time
+	DueAfter    *time.Time // Filter issues with due_at > this time
+	DueBefore   *time.Time // Filter issues with due_at < this time
+	Overdue     bool       // Filter issues where due_at < now AND status != closed
 }
 
 // SortPolicy determines how ready work is ordered
@@ -841,6 +853,9 @@ type WorkFilter struct {
 
 	// Molecule type filtering
 	MolType *MolType // Filter by molecule type (nil = any, swarm/patrol/work)
+
+	// Time-based deferral filtering (GH#820)
+	IncludeDeferred bool // If true, include issues with future defer_until timestamps
 }
 
 // StaleFilter is used to filter stale issue queries

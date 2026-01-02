@@ -286,6 +286,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var actor sql.NullString
 	var target sql.NullString
 	var payload sql.NullString
+	// Time-based scheduling fields (GH#820)
+	var dueAt sql.NullTime
+	var deferUntil sql.NullTime
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -298,7 +301,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       sender, ephemeral, pinned, is_template,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       event_kind, actor, target, payload
+		       event_kind, actor, target, payload,
+		       due_at, defer_until
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -312,6 +316,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
+		&dueAt, &deferUntil,
 	)
 
 	if err == sql.ErrNoRows {
@@ -425,6 +430,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if payload.Valid {
 		issue.Payload = payload.String
+	}
+	// Time-based scheduling fields (GH#820)
+	if dueAt.Valid {
+		issue.DueAt = &dueAt.Time
+	}
+	if deferUntil.Valid {
+		issue.DeferUntil = &deferUntil.Time
 	}
 
 	// Fetch labels for this issue
@@ -687,6 +699,9 @@ var allowedUpdateFields = map[string]bool{
 	"event_actor":    true,
 	"event_target":   true,
 	"event_payload":  true,
+	// Time-based scheduling fields (GH#820)
+	"due_at":      true,
+	"defer_until": true,
 }
 
 // validatePriority validates a priority value
@@ -1856,6 +1871,31 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.MolType != nil {
 		whereClauses = append(whereClauses, "mol_type = ?")
 		args = append(args, string(*filter.MolType))
+	}
+
+	// Time-based scheduling filters (GH#820)
+	if filter.Deferred {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL")
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
+	}
+	if filter.Overdue {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
+		args = append(args, time.Now().Format(time.RFC3339), types.StatusClosed)
 	}
 
 	whereSQL := ""

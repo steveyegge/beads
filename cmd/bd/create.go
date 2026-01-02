@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
@@ -14,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/validation"
@@ -140,6 +142,35 @@ var createCmd = &cobra.Command{
 		// Validate event-specific flags require --type=event
 		if (eventCategory != "" || eventActor != "" || eventTarget != "" || eventPayload != "") && issueType != "event" {
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
+		}
+
+		// Parse --due flag (GH#820)
+		// Uses layered parsing: compact duration → NLP → date-only → RFC3339
+		var dueAt *time.Time
+		dueStr, _ := cmd.Flags().GetString("due")
+		if dueStr != "" {
+			t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+			if err != nil {
+				FatalError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+			}
+			dueAt = &t
+		}
+
+		// Parse --defer flag (GH#820)
+		var deferUntil *time.Time
+		deferStr, _ := cmd.Flags().GetString("defer")
+		if deferStr != "" {
+			t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+			if err != nil {
+				FatalError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+			}
+			// Warn if defer date is in the past (user probably meant future)
+			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
+				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
+			}
+			deferUntil = &t
 		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
@@ -313,6 +344,8 @@ var createCmd = &cobra.Command{
 				EventActor:         eventActor,
 				EventTarget:        eventTarget,
 				EventPayload:       eventPayload,
+				DueAt:              dueStr,
+				DeferUntil:         deferStr,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -370,6 +403,8 @@ var createCmd = &cobra.Command{
 			Actor:              eventActor,
 			Target:             eventTarget,
 			Payload:            eventPayload,
+			DueAt:              dueAt,
+			DeferUntil:         deferUntil,
 		}
 
 		ctx := rootCtx
@@ -580,6 +615,16 @@ func init() {
 	createCmd.Flags().String("event-actor", "", "Entity URI who caused this event (requires --type=event)")
 	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
+	// Time-based scheduling flags (GH#820)
+	// Examples:
+	//   --due=+6h           Due in 6 hours
+	//   --due=tomorrow      Due tomorrow
+	//   --due="next monday" Due next Monday
+	//   --due=2025-01-15    Due on specific date
+	//   --defer=+1h         Hidden from bd ready for 1 hour
+	//   --defer=tomorrow    Hidden until tomorrow
+	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
+	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

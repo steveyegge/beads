@@ -113,6 +113,13 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		args = append(args, string(*filter.MolType))
 	}
 
+	// Time-based deferral filtering (GH#820)
+	// By default, exclude issues where defer_until is in the future.
+	// If IncludeDeferred is true, skip this filter to show deferred issues.
+	if !filter.IncludeDeferred {
+		whereClauses = append(whereClauses, "(i.defer_until IS NULL OR datetime(i.defer_until) <= datetime('now'))")
+	}
+
 	// Build WHERE clause properly
 	whereSQL := strings.Join(whereClauses, " AND ")
 

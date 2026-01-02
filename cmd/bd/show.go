@@ -225,6 +225,12 @@ var showCmd = &cobra.Command{
 						fmt.Printf("Created by: %s\n", issue.CreatedBy)
 					}
 					fmt.Printf("Updated: %s\n", issue.UpdatedAt.Format("2006-01-02 15:04"))
+					if issue.DueAt != nil {
+						fmt.Printf("Due: %s\n", issue.DueAt.Format("2006-01-02 15:04"))
+					}
+					if issue.DeferUntil != nil {
+						fmt.Printf("Deferred until: %s\n", issue.DeferUntil.Format("2006-01-02 15:04"))
+					}
 
 					// Show compaction status
 					if issue.CompactionLevel > 0 {
@@ -445,6 +451,12 @@ var showCmd = &cobra.Command{
 				fmt.Printf("Created by: %s\n", issue.CreatedBy)
 			}
 			fmt.Printf("Updated: %s\n", issue.UpdatedAt.Format("2006-01-02 15:04"))
+			if issue.DueAt != nil {
+				fmt.Printf("Due: %s\n", issue.DueAt.Format("2006-01-02 15:04"))
+			}
+			if issue.DeferUntil != nil {
+				fmt.Printf("Deferred until: %s\n", issue.DeferUntil.Format("2006-01-02 15:04"))
+			}
 
 			// Show compaction status footer
 			if issue.CompactionLevel > 0 {
