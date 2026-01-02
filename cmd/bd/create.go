@@ -145,24 +145,15 @@ var createCmd = &cobra.Command{
 		}
 
 		// Parse --due flag (GH#820)
-		// Layered parsing: compact duration first, then ISO fallback
+		// Uses layered parsing: compact duration → NLP → date-only → RFC3339
 		var dueAt *time.Time
 		dueStr, _ := cmd.Flags().GetString("due")
 		if dueStr != "" {
-			now := time.Now()
-
-			// Layer 1: Try compact duration (+6h, -1d, +2w, etc.)
-			if t, err := timeparsing.ParseCompactDuration(dueStr, now); err == nil {
-				dueAt = &t
-			} else if t, err := time.ParseInLocation("2006-01-02", dueStr, time.Local); err == nil {
-				// Layer 2: Try date-only format (YYYY-MM-DD)
-				dueAt = &t
-			} else if t, err := time.Parse(time.RFC3339, dueStr); err == nil {
-				// Layer 3: Try RFC3339 format (2025-01-15T10:00:00Z)
-				dueAt = &t
-			} else {
-				FatalError("invalid --due format %q. Examples: +6h, +1d, 2025-01-15, 2025-01-15T10:00:00Z", dueStr)
+			t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+			if err != nil {
+				FatalError("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
 			}
+			dueAt = &t
 		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
@@ -592,7 +583,7 @@ func init() {
 	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
 	// Time-based scheduling flags (GH#820)
-	createCmd.Flags().String("due", "", "Due date (e.g., +6h, +1d, +2w, 2025-01-15)")
+	createCmd.Flags().String("due", "", "Due date (e.g., +6h, tomorrow, next monday, 2025-01-15)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }
