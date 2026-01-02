@@ -240,8 +240,20 @@ func makeKey(issue Issue) IssueKey {
 	}
 }
 
-// bd-ig5: Use constants from types package to avoid duplication
-const StatusTombstone = string(types.StatusTombstone)
+// bd-ig5, bd-a0cp: Use constants from types package for type safety
+// These string constants enable compile-time checking when comparing
+// merge.Issue.Status (which is string for JSONL flexibility) against
+// known status values. Using types.StatusX directly would require
+// casting, so we define local string constants derived from the types.
+const (
+	StatusOpen       = string(types.StatusOpen)
+	StatusInProgress = string(types.StatusInProgress)
+	StatusBlocked    = string(types.StatusBlocked)
+	StatusDeferred   = string(types.StatusDeferred)
+	StatusClosed     = string(types.StatusClosed)
+	StatusTombstone  = string(types.StatusTombstone)
+	StatusPinned     = string(types.StatusPinned)
+)
 
 // Alias TTL constants from types package for local use
 var (
@@ -571,7 +583,7 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 
 	// Merge closed_at - only if status is closed
 	// This prevents invalid state (status=open with closed_at set)
-	if result.Status == "closed" {
+	if result.Status == StatusClosed {
 		result.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
 	} else {
 		result.ClosedAt = ""
@@ -622,8 +634,8 @@ func mergeStatus(base, left, right string) string {
 
 	// RULE 1: closed always wins over open
 	// This prevents the insane situation where issues never die
-	if left == "closed" || right == "closed" {
-		return "closed"
+	if left == StatusClosed || right == StatusClosed {
+		return StatusClosed
 	}
 
 	// Otherwise use standard 3-way merge
