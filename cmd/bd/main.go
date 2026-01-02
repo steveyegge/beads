@@ -546,7 +546,7 @@ var rootCmd = &cobra.Command{
 					}
 
 					// Use proper YAML parsing to detect no-db mode (bd-r6k2)
-					isNoDbMode := isNoDbModeConfigured(beadsDir)
+					isNoDbMode := config.IsNoDbModeConfigured(beadsDir)
 
 					// If JSONL-only mode is configured, auto-enable it
 					if jsonlExists && isNoDbMode {

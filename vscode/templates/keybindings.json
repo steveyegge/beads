@@ -1,22 +1,9 @@
 [
   {
-    "// BEADS SESSION SHORTCUTS": ""
-  },
-  {
-    "key": "ctrl+shift+b",
-    "command": "workbench.action.chat.open",
-    "args": {
-      "query": "Load beads-bootup skill and start session"
-    },
-    "when": "!terminalFocus"
-  },
-  {
-    "key": "ctrl+shift+l",
-    "command": "workbench.action.chat.open",
-    "args": {
-      "query": "Load beads-landing skill and end session"
-    },
-    "when": "!terminalFocus"
+    "// BEADS SESSION SHORTCUTS": "",
+    "// NOTE: Bootup/landing keybindings removed (bd-5g4d)": "",
+    "// Claude Code CLI startup hooks auto-fire, making manual keybindings redundant": "",
+    "// Git hooks (pre-commit, pre-push) provide the real enforcement value": ""
   },
   {
     "key": "ctrl+shift+r",
@@ -35,11 +22,17 @@
     "when": "terminalFocus"
   },
   {
-    "key": "ctrl+shift+e",
+    "key": "ctrl+shift+d",
     "command": "workbench.action.terminal.sendSequence",
     "args": {
-      "text": "tail -10 .beads/events.log\n"
+      "text": "bd doctor\n"
     },
     "when": "terminalFocus"
+  },
+  {
+    "key": "ctrl+shift+q",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Health: Quality Gates (All)",
+    "when": "!terminalFocus"
   }
 ]

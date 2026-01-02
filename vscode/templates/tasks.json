@@ -1,0 +1,153 @@
+{
+  "// BEADS SESSION TASKS": "",
+  "// These tasks integrate health checks with beads session rituals.": "",
+  "// Copy this file to .vscode/tasks.json and customize for your project.": "",
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Beads: Session Startup",
+      "type": "shell",
+      "command": "bd prime",
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Beads: Ready",
+      "type": "shell",
+      "command": "bd ready",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Beads: Sync",
+      "type": "shell",
+      "command": "bd sync && git status",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Health: Doctor",
+      "type": "shell",
+      "command": "bd doctor",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Health: Doctor (Fix)",
+      "type": "shell",
+      "command": "bd doctor --fix",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "// CUSTOMIZE: Replace with your project's test command": "",
+      "label": "Health: Test",
+      "type": "shell",
+      "command": "echo 'No test command configured. Edit .vscode/tasks.json to add your test command.'",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "// CUSTOMIZE: Replace with your project's lint command": "",
+      "label": "Health: Lint",
+      "type": "shell",
+      "command": "echo 'No lint command configured. Edit .vscode/tasks.json to add your lint command.'",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "// CUSTOMIZE: Replace with your project's build command": "",
+      "label": "Health: Build",
+      "type": "shell",
+      "command": "echo 'No build command configured. Edit .vscode/tasks.json to add your build command.'",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Health: Quality Gates (All)",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Health: Doctor",
+        "Health: Build",
+        "Health: Lint",
+        "Health: Test"
+      ],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Session: Bootup Health Check",
+      "type": "shell",
+      "command": "bd doctor --check-health",
+      "group": "test",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Session: Landing Quality Gates",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Health: Build",
+        "Health: Test"
+      ],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

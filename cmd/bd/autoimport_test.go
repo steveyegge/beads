@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -379,9 +380,9 @@ func TestIsNoDbModeConfigured(t *testing.T) {
 				}
 			}
 
-			got := isNoDbModeConfigured(beadsDir)
+			got := config.IsNoDbModeConfigured(beadsDir)
 			if got != tt.want {
-				t.Errorf("isNoDbModeConfigured() = %v, want %v", got, tt.want)
+				t.Errorf("config.IsNoDbModeConfigured() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -497,9 +498,9 @@ func TestGetLocalSyncBranch(t *testing.T) {
 				t.Setenv("BEADS_SYNC_BRANCH", tt.envVar)
 			}
 
-			got := getLocalSyncBranch(beadsDir)
+			got := config.GetLocalSyncBranch(beadsDir)
 			if got != tt.want {
-				t.Errorf("getLocalSyncBranch() = %q, want %q", got, tt.want)
+				t.Errorf("config.GetLocalSyncBranch() = %q, want %q", got, tt.want)
 			}
 		})
 	}

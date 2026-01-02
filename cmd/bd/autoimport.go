@@ -12,12 +12,11 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
-	"gopkg.in/yaml.v3"
 )
 
 // readFromGitRef reads file content from a git ref (branch or commit).
@@ -122,7 +121,7 @@ func checkGitForIssues() (int, string, string) {
 	// We read sync-branch directly from local config file rather than using cached global config
 	// to handle cases where CWD has changed since config initialization (e.g., in tests)
 	gitRef := "HEAD"
-	syncBranch := getLocalSyncBranch(beadsDir)
+	syncBranch := config.GetLocalSyncBranch(beadsDir)
 	if syncBranch != "" {
 		// Check if the sync branch exists (locally or on remote)
 		// Try origin/<branch> first (more likely to exist in fresh clones),
@@ -155,54 +154,9 @@ func checkGitForIssues() (int, string, string) {
 	return 0, "", ""
 }
 
-// localConfig represents the subset of config.yaml we need for auto-import and no-db detection.
-// Using proper YAML parsing handles edge cases like comments, indentation, and special characters.
-type localConfig struct {
-	SyncBranch string `yaml:"sync-branch"`
-	NoDb       bool   `yaml:"no-db"`
-}
-
-// isNoDbModeConfigured checks if no-db: true is set in config.yaml.
-// Uses proper YAML parsing to avoid false matches in comments or nested keys.
-func isNoDbModeConfigured(beadsDir string) bool {
-	configPath := filepath.Join(beadsDir, "config.yaml")
-	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from beadsDir
-	if err != nil {
-		return false
-	}
-
-	var cfg localConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.NoDb
-}
-
-// getLocalSyncBranch reads sync-branch from the local config.yaml file.
-// This reads directly from the file rather than using cached config to handle
-// cases where CWD has changed since config initialization.
-func getLocalSyncBranch(beadsDir string) string {
-	// First check environment variable (highest priority)
-	if envBranch := os.Getenv(syncbranch.EnvVar); envBranch != "" {
-		return envBranch
-	}
-
-	// Read config.yaml directly from the .beads directory
-	configPath := filepath.Join(beadsDir, "config.yaml")
-	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from findBeadsDir
-	if err != nil {
-		return ""
-	}
-
-	// Parse YAML properly to handle edge cases (comments, indentation, special chars)
-	var cfg localConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-
-	return cfg.SyncBranch
-}
+// NOTE: localConfig struct and parsing functions have been consolidated into
+// internal/config/local_config.go. Use config.LoadLocalConfig(), config.IsNoDbModeConfigured(),
+// and config.GetLocalSyncBranch() instead of duplicating YAML parsing logic here.
 
 
 

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
@@ -69,7 +70,7 @@ func ensureStoreActive() error {
 				jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 				if _, err := os.Stat(jsonlPath); err == nil {
 					// JSONL exists - check if no-db mode is configured
-					if isNoDbModeConfigured(beadsDir) {
+					if config.IsNoDbModeConfigured(beadsDir) {
 						return fmt.Errorf("this project uses JSONL-only mode (no SQLite database).\n" +
 							"Hint: use 'bd --no-db <command>' or set 'no-db: true' in config.yaml")
 					}

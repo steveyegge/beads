@@ -28,6 +28,9 @@
     "beads.jsonl": "json"
   },
   
+  "// Allow automatic tasks to run on folder open": "",
+  "task.allowAutomaticTasks": "on",
+
   "// Recommended Extensions": "",
   "recommendations": [
     "github.copilot",

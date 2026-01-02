@@ -14,15 +14,12 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
-	"gopkg.in/yaml.v3"
 )
 
-// localConfig represents the config.yaml structure for no-db mode detection
-type localConfig struct {
-	SyncBranch string `yaml:"sync-branch"`
-	NoDb       bool   `yaml:"no-db"`
-}
+// NOTE: localConfig struct has been consolidated into internal/config/local_config.go.
+// Use config.LoadLocalConfig() and config.IsNoDbModeConfigured() instead.
 
 // CheckDatabaseVersion checks the database version and migration status
 func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
@@ -55,7 +52,7 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 		if jsonlPath != "" {
 			// JSONL exists but no database - check if this is no-db mode or fresh clone
 			// Use proper YAML parsing to detect no-db mode (bd-r6k2)
-			if isNoDbModeConfigured(beadsDir) {
+			if config.IsNoDbModeConfigured(beadsDir) {
 				return DoctorCheck{
 					Name:    "Database",
 					Status:  StatusOK,
@@ -678,22 +675,8 @@ func detectPrefixFromJSONL(jsonlPath string) string {
 	return mostCommonPrefix
 }
 
-// isNoDbModeConfigured checks if no-db: true is set in config.yaml
-// Uses proper YAML parsing to avoid false matches in comments or nested keys
-func isNoDbModeConfigured(beadsDir string) bool {
-	configPath := filepath.Join(beadsDir, "config.yaml")
-	data, err := os.ReadFile(configPath) // #nosec G304 - config file path from beadsDir
-	if err != nil {
-		return false
-	}
-
-	var cfg localConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.NoDb
-}
+// NOTE: isNoDbModeConfigured has been consolidated into internal/config/local_config.go.
+// Use config.IsNoDbModeConfigured(beadsDir) instead.
 
 // CheckDatabaseSize warns when the database has accumulated many closed issues.
 // This is purely informational - pruning is NEVER auto-fixed because it
