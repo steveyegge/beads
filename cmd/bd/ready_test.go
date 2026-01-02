@@ -261,6 +261,110 @@ func TestReadyCommandInit(t *testing.T) {
 	}
 }
 
+// GH#820: Tests for defer_until filtering in ready work
+func TestReadyWorkDeferUntil(t *testing.T) {
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+
+	// Create issues with different defer_until values
+	futureDefer := time.Now().Add(24 * time.Hour) // Deferred to future
+	pastDefer := time.Now().Add(-1 * time.Hour)   // Deferred to past (should be visible)
+
+	issues := []*types.Issue{
+		{
+			ID:        "test-future-defer",
+			Title:     "Future deferred task",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			DeferUntil: &futureDefer,
+			CreatedAt: time.Now(),
+		},
+		{
+			ID:        "test-past-defer",
+			Title:     "Past deferred task",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			DeferUntil: &pastDefer,
+			CreatedAt: time.Now(),
+		},
+		{
+			ID:        "test-no-defer",
+			Title:     "Normal task (no defer)",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+		},
+	}
+
+	for _, issue := range issues {
+		if err := s.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("ExcludesFutureDeferredByDefault", func(t *testing.T) {
+		// Default behavior: exclude issues with future defer_until
+		ready, err := s.GetReadyWork(ctx, types.WorkFilter{})
+		if err != nil {
+			t.Fatalf("GetReadyWork failed: %v", err)
+		}
+
+		// Should NOT include test-future-defer
+		for _, issue := range ready {
+			if issue.ID == "test-future-defer" {
+				t.Error("Future deferred issue should not appear in ready work by default")
+			}
+		}
+
+		// Should include test-past-defer and test-no-defer
+		foundPast := false
+		foundNoDefer := false
+		for _, issue := range ready {
+			if issue.ID == "test-past-defer" {
+				foundPast = true
+			}
+			if issue.ID == "test-no-defer" {
+				foundNoDefer = true
+			}
+		}
+
+		if !foundPast {
+			t.Error("Past deferred issue should appear in ready work")
+		}
+		if !foundNoDefer {
+			t.Error("Issue without defer should appear in ready work")
+		}
+	})
+
+	t.Run("IncludeDeferredShowsAll", func(t *testing.T) {
+		// With IncludeDeferred: show all issues including future deferred
+		ready, err := s.GetReadyWork(ctx, types.WorkFilter{
+			IncludeDeferred: true,
+		})
+		if err != nil {
+			t.Fatalf("GetReadyWork with IncludeDeferred failed: %v", err)
+		}
+
+		// Should include test-future-defer
+		foundFuture := false
+		for _, issue := range ready {
+			if issue.ID == "test-future-defer" {
+				foundFuture = true
+				break
+			}
+		}
+
+		if !foundFuture {
+			t.Error("Future deferred issue should appear when IncludeDeferred=true")
+		}
+	})
+}
+
 func TestReadyWorkUnassigned(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")

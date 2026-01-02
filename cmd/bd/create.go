@@ -164,6 +164,12 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				FatalError("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
 			}
+			// Warn if defer date is in the past (user probably meant future)
+			if t.Before(time.Now()) && !silent && !debug.IsQuiet() {
+				fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+					ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
+			}
 			deferUntil = &t
 		}
 
@@ -596,8 +602,15 @@ func init() {
 	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
 	// Time-based scheduling flags (GH#820)
-	createCmd.Flags().String("due", "", "Due date (e.g., +6h, tomorrow, next monday, 2025-01-15)")
-	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then)")
+	// Examples:
+	//   --due=+6h           Due in 6 hours
+	//   --due=tomorrow      Due tomorrow
+	//   --due="next monday" Due next Monday
+	//   --due=2025-01-15    Due on specific date
+	//   --defer=+1h         Hidden from bd ready for 1 hour
+	//   --defer=tomorrow    Hidden until tomorrow
+	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
+	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }

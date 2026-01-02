@@ -111,6 +111,11 @@ func getNLPParser() *when.Parser {
 //   - "in 3 days" -> now + 3 days
 //   - "3 days ago" -> now - 3 days
 //
+// Known Issues (olebedev/when):
+//   - Month name "September" may not parse correctly in some contexts.
+//     Workaround: Use date format "2025-09-15" instead of "September 15" or "Sep 15".
+//     This is a known issue in the olebedev/when library.
+//
 // Returns error if input cannot be parsed as natural language.
 func ParseNaturalLanguage(s string, now time.Time) (time.Time, error) {
 	parser := getNLPParser()

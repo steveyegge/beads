@@ -158,6 +158,12 @@ create, update, show, or close operation).`,
 				if err != nil {
 					FatalErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
 				}
+				// Warn if defer date is in the past (user probably meant future)
+				if t.Before(time.Now()) && !jsonOutput {
+					fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+						ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+					fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
+				}
 				updates["defer_until"] = t
 			}
 		}
@@ -575,7 +581,15 @@ func init() {
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
 	// Time-based scheduling flags (GH#820)
-	updateCmd.Flags().String("due", "", "Due date (e.g., +6h, tomorrow, next monday, 2025-01-15; empty to clear)")
-	updateCmd.Flags().String("defer", "", "Defer until date (e.g., +1h, tomorrow; empty to clear)")
+	// Examples:
+	//   --due=+6h           Due in 6 hours
+	//   --due=tomorrow      Due tomorrow
+	//   --due="next monday" Due next Monday
+	//   --due=2025-01-15    Due on specific date
+	//   --due=""            Clear due date
+	//   --defer=+1h         Hidden from bd ready for 1 hour
+	//   --defer=""          Clear defer (show in bd ready immediately)
+	updateCmd.Flags().String("due", "", "Due date/time (empty to clear). Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
+	updateCmd.Flags().String("defer", "", "Defer until date (empty to clear). Issue hidden from bd ready until then")
 	rootCmd.AddCommand(updateCmd)
 }
