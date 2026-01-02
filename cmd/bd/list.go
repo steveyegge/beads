@@ -20,28 +20,18 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
-// parseTimeFlag parses time strings in multiple formats
+// parseTimeFlag parses time strings using the layered time parsing architecture.
+// Supports compact durations (+6h, -1d), natural language (tomorrow, next monday),
+// and absolute formats (2006-01-02, RFC3339).
 func parseTimeFlag(s string) (time.Time, error) {
-	formats := []string{
-		time.RFC3339,
-		"2006-01-02",
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, s); err == nil {
-			return t, nil
-		}
-	}
-
-	return time.Time{}, fmt.Errorf("unable to parse time %q (try formats: 2006-01-02, 2006-01-02T15:04:05, or RFC3339)", s)
+	return timeparsing.ParseRelativeTime(s, time.Now())
 }
 
 // pinIndicator returns a pushpin emoji prefix for pinned issues
@@ -433,6 +423,14 @@ var listCmd = &cobra.Command{
 			molType = &mt
 		}
 
+		// Time-based scheduling filters (GH#820)
+		deferredFlag, _ := cmd.Flags().GetBool("deferred")
+		deferAfter, _ := cmd.Flags().GetString("defer-after")
+		deferBefore, _ := cmd.Flags().GetString("defer-before")
+		dueAfter, _ := cmd.Flags().GetString("due-after")
+		dueBefore, _ := cmd.Flags().GetString("due-before")
+		overdueFlag, _ := cmd.Flags().GetBool("overdue")
+
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		watchMode, _ := cmd.Flags().GetBool("watch")
@@ -639,6 +637,46 @@ var listCmd = &cobra.Command{
 			filter.MolType = molType
 		}
 
+		// Time-based scheduling filters (GH#820)
+		if deferredFlag {
+			filter.Deferred = true
+		}
+		if deferAfter != "" {
+			t, err := parseTimeFlag(deferAfter)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --defer-after: %v\n", err)
+				os.Exit(1)
+			}
+			filter.DeferAfter = &t
+		}
+		if deferBefore != "" {
+			t, err := parseTimeFlag(deferBefore)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --defer-before: %v\n", err)
+				os.Exit(1)
+			}
+			filter.DeferBefore = &t
+		}
+		if dueAfter != "" {
+			t, err := parseTimeFlag(dueAfter)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --due-after: %v\n", err)
+				os.Exit(1)
+			}
+			filter.DueAfter = &t
+		}
+		if dueBefore != "" {
+			t, err := parseTimeFlag(dueBefore)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing --due-before: %v\n", err)
+				os.Exit(1)
+			}
+			filter.DueBefore = &t
+		}
+		if overdueFlag {
+			filter.Overdue = true
+		}
+
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
@@ -736,6 +774,22 @@ var listCmd = &cobra.Command{
 					listArgs.ExcludeTypes = append(listArgs.ExcludeTypes, string(t))
 				}
 			}
+
+			// Time-based scheduling filters (GH#820)
+			listArgs.Deferred = filter.Deferred
+			if filter.DeferAfter != nil {
+				listArgs.DeferAfter = filter.DeferAfter.Format(time.RFC3339)
+			}
+			if filter.DeferBefore != nil {
+				listArgs.DeferBefore = filter.DeferBefore.Format(time.RFC3339)
+			}
+			if filter.DueAfter != nil {
+				listArgs.DueAfter = filter.DueAfter.Format(time.RFC3339)
+			}
+			if filter.DueBefore != nil {
+				listArgs.DueBefore = filter.DueBefore.Format(time.RFC3339)
+			}
+			listArgs.Overdue = filter.Overdue
 
 			resp, err := daemonClient.List(listArgs)
 			if err != nil {
@@ -985,6 +1039,14 @@ func init() {
 
 	// Molecule type filtering
 	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
+
+	// Time-based scheduling filters (GH#820)
+	listCmd.Flags().Bool("deferred", false, "Show only issues with defer_until set")
+	listCmd.Flags().String("defer-after", "", "Filter issues deferred after date (supports relative: +6h, tomorrow)")
+	listCmd.Flags().String("defer-before", "", "Filter issues deferred before date (supports relative: +6h, tomorrow)")
+	listCmd.Flags().String("due-after", "", "Filter issues due after date (supports relative: +6h, tomorrow)")
+	listCmd.Flags().String("due-before", "", "Filter issues due before date (supports relative: +6h, tomorrow)")
+	listCmd.Flags().Bool("overdue", false, "Show only issues with due_at in the past (not closed)")
 
 	// Pretty and watch flags (GH#654)
 	listCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")

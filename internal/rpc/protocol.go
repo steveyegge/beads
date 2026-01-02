@@ -242,6 +242,14 @@ type ListArgs struct {
 
 	// Type exclusion (for hiding internal types like gates, bd-7zka.2)
 	ExcludeTypes []string `json:"exclude_types,omitempty"`
+
+	// Time-based scheduling filters (GH#820)
+	Deferred    bool   `json:"deferred,omitempty"`     // Filter issues with defer_until set
+	DeferAfter  string `json:"defer_after,omitempty"`  // ISO 8601 format
+	DeferBefore string `json:"defer_before,omitempty"` // ISO 8601 format
+	DueAfter    string `json:"due_after,omitempty"`    // ISO 8601 format
+	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
+	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
 }
 
 // CountArgs represents arguments for the count operation

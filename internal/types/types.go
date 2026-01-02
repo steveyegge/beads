@@ -798,6 +798,14 @@ type IssueFilter struct {
 
 	// Type exclusion (for hiding internal types like gates)
 	ExcludeTypes []IssueType // Exclude issues with these types
+
+	// Time-based scheduling filters (GH#820)
+	Deferred    bool       // Filter issues with defer_until set (any value)
+	DeferAfter  *time.Time // Filter issues with defer_until > this time
+	DeferBefore *time.Time // Filter issues with defer_until < this time
+	DueAfter    *time.Time // Filter issues with due_at > this time
+	DueBefore   *time.Time // Filter issues with due_at < this time
+	Overdue     bool       // Filter issues where due_at < now AND status != closed
 }
 
 // SortPolicy determines how ready work is ordered

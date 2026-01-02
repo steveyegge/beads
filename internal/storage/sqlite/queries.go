@@ -1873,6 +1873,31 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, string(*filter.MolType))
 	}
 
+	// Time-based scheduling filters (GH#820)
+	if filter.Deferred {
+		whereClauses = append(whereClauses, "defer_until IS NOT NULL")
+	}
+	if filter.DeferAfter != nil {
+		whereClauses = append(whereClauses, "defer_until > ?")
+		args = append(args, filter.DeferAfter.Format(time.RFC3339))
+	}
+	if filter.DeferBefore != nil {
+		whereClauses = append(whereClauses, "defer_until < ?")
+		args = append(args, filter.DeferBefore.Format(time.RFC3339))
+	}
+	if filter.DueAfter != nil {
+		whereClauses = append(whereClauses, "due_at > ?")
+		args = append(args, filter.DueAfter.Format(time.RFC3339))
+	}
+	if filter.DueBefore != nil {
+		whereClauses = append(whereClauses, "due_at < ?")
+		args = append(args, filter.DueBefore.Format(time.RFC3339))
+	}
+	if filter.Overdue {
+		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
+		args = append(args, time.Now().Format(time.RFC3339), types.StatusClosed)
+	}
+
 	whereSQL := ""
 	if len(whereClauses) > 0 {
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")

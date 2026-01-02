@@ -161,6 +161,16 @@ func ParseRelativeTime(s string, now time.Time) (time.Time, error) {
 		return t, nil
 	}
 
+	// Try ISO 8601 datetime without timezone (2025-01-15T10:00:00)
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05", s, time.Local); err == nil {
+		return t, nil
+	}
+
+	// Try datetime with space (2025-01-15 10:00:00)
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+		return t, nil
+	}
+
 	// Layer 3: Natural language (after absolute formats to avoid misinterpretation)
 	if t, err := ParseNaturalLanguage(s, now); err == nil {
 		return t, nil

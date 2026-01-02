@@ -1143,6 +1143,50 @@ func (s *Server) handleList(req *Request) Response {
 		}
 	}
 
+	// Time-based scheduling filters (GH#820)
+	filter.Deferred = listArgs.Deferred
+	if listArgs.DeferAfter != "" {
+		t, err := parseTimeRPC(listArgs.DeferAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --defer-after date: %v", err),
+			}
+		}
+		filter.DeferAfter = &t
+	}
+	if listArgs.DeferBefore != "" {
+		t, err := parseTimeRPC(listArgs.DeferBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --defer-before date: %v", err),
+			}
+		}
+		filter.DeferBefore = &t
+	}
+	if listArgs.DueAfter != "" {
+		t, err := parseTimeRPC(listArgs.DueAfter)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --due-after date: %v", err),
+			}
+		}
+		filter.DueAfter = &t
+	}
+	if listArgs.DueBefore != "" {
+		t, err := parseTimeRPC(listArgs.DueBefore)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid --due-before date: %v", err),
+			}
+		}
+		filter.DueBefore = &t
+	}
+	filter.Overdue = listArgs.Overdue
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {

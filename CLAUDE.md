@@ -43,6 +43,14 @@ bd dep tree <id>
 
 # Get issue details
 bd show <id> --json
+
+# Query issues by time-based scheduling (GH#820)
+bd list --deferred              # Show issues with defer_until set
+bd list --defer-before=tomorrow # Deferred before tomorrow
+bd list --defer-after=+1w       # Deferred after one week from now
+bd list --due-before=+2d        # Due within 2 days
+bd list --due-after="next monday" # Due after next Monday
+bd list --overdue               # Due date in past (not closed)
 ```
 
 ### Workflow
