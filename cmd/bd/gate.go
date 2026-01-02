@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +11,12 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -30,10 +37,15 @@ Gate types:
   timer   - Expires after timeout (Phase 2)
   gh:run  - Waits for GitHub workflow (Phase 3)
   gh:pr   - Waits for PR merge (Phase 3)
+  bead    - Waits for cross-rig bead to close (Phase 4)
+
+For bead gates, await_id format is <rig>:<bead-id> (e.g., "gastown:gt-abc123").
 
 Examples:
   bd gate list           # Show all open gates
   bd gate list --all     # Show all gates including closed
+  bd gate check          # Evaluate all open gates
+  bd gate check --type=bead  # Evaluate only bead gates
   bd gate resolve <id>   # Close a gate manually`,
 }
 
@@ -247,6 +259,7 @@ Gate types:
   gh:run   - Check GitHub Actions workflow runs
   gh:pr    - Check pull request merge status
   timer    - Check timer gates (auto-expire based on timeout)
+  bead     - Check cross-rig bead gates
   all      - Check all gate types
 
 GitHub gates use the 'gh' CLI to query status:
@@ -257,6 +270,7 @@ A gate is resolved when:
   - gh:run: status=completed AND conclusion=success
   - gh:pr: state=MERGED
   - timer: current time > created_at + timeout
+  - bead: target bead status=closed
 
 A gate is escalated when:
   - gh:run: status=completed AND conclusion in (failure, cancelled)
@@ -267,6 +281,7 @@ Examples:
   bd gate check --type=gh    # Check only GitHub gates
   bd gate check --type=gh:run # Check only workflow run gates
   bd gate check --type=timer # Check only timer gates
+  bd gate check --type=bead  # Check only cross-rig bead gates
   bd gate check --dry-run    # Show what would happen without changes
   bd gate check --escalate   # Escalate expired/failed gates`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -351,6 +366,8 @@ Examples:
 				result.resolved, result.escalated, result.reason, result.err = checkGHPR(gate)
 			case gate.AwaitType == "timer":
 				result.resolved, result.escalated, result.reason, result.err = checkTimer(gate, now)
+			case gate.AwaitType == "bead":
+				result.resolved, result.reason = checkBeadGate(ctx, gate.AwaitID)
 			default:
 				// Skip unsupported gate types (human gates need manual resolution)
 				continue
@@ -566,6 +583,68 @@ func checkTimer(gate *types.Issue, now time.Time) (resolved, escalated bool, rea
 	return false, false, fmt.Sprintf("expires in %s", remaining), nil
 }
 
+// checkBeadGate checks if a cross-rig bead gate is satisfied.
+// await_id format: <rig>:<bead-id> (e.g., "gastown:gt-abc123")
+// Returns (satisfied, reason).
+func checkBeadGate(ctx context.Context, awaitID string) (bool, string) {
+	// Parse await_id format: <rig>:<bead-id>
+	parts := strings.SplitN(awaitID, ":", 2)
+	if len(parts) != 2 {
+		return false, fmt.Sprintf("invalid await_id format: expected <rig>:<bead-id>, got %q", awaitID)
+	}
+
+	rigName := parts[0]
+	beadID := parts[1]
+
+	if rigName == "" || beadID == "" {
+		return false, "await_id missing rig name or bead ID"
+	}
+
+	// Resolve the target rig's beads directory
+	currentBeadsDir := beads.FindBeadsDir()
+	if currentBeadsDir == "" {
+		return false, "could not find current beads directory"
+	}
+	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, currentBeadsDir)
+	if err != nil {
+		return false, fmt.Sprintf("rig %q not found: %v", rigName, err)
+	}
+
+	// Load config to get database path
+	cfg, err := configfile.Load(targetBeadsDir)
+	if err != nil {
+		return false, fmt.Sprintf("failed to load config for rig %q: %v", rigName, err)
+	}
+
+	dbPath := cfg.DatabasePath(targetBeadsDir)
+
+	// Open the target database (read-only)
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	if err != nil {
+		return false, fmt.Sprintf("failed to open database for rig %q: %v", rigName, err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Check if the target bead exists and is closed
+	var status string
+	err = db.QueryRowContext(ctx, `
+		SELECT status FROM issues WHERE id = ?
+	`, beadID).Scan(&status)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, fmt.Sprintf("bead %s not found in rig %s", beadID, rigName)
+		}
+		return false, fmt.Sprintf("database query failed: %v", err)
+	}
+
+	if status == string(types.StatusClosed) {
+		return true, fmt.Sprintf("target bead %s is closed", beadID)
+	}
+
+	return false, fmt.Sprintf("target bead %s status is %q (waiting for closed)", beadID, status)
+}
+
 // closeGate closes a gate issue with the given reason
 func closeGate(ctx interface{}, gateID, reason string) error {
 	if daemonClient != nil {
@@ -617,10 +696,10 @@ func init() {
 	gateResolveCmd.Flags().StringP("reason", "r", "", "Reason for resolving the gate")
 
 	// gate check flags
-	gateCheckCmd.Flags().StringP("type", "t", "", "Gate type to check (gh, gh:run, gh:pr, timer, all)")
+	gateCheckCmd.Flags().StringP("type", "t", "", "Gate type to check (gh, gh:run, gh:pr, timer, bead, all)")
 	gateCheckCmd.Flags().Bool("dry-run", false, "Show what would happen without making changes")
 	gateCheckCmd.Flags().BoolP("escalate", "e", false, "Escalate failed/expired gates")
-	gateCheckCmd.Flags().IntP("limit", "n", 100, "Limit results (default 100)")
+	gateCheckCmd.Flags().IntP("limit", "l", 100, "Limit results (default 100)")
 
 	// Add subcommands
 	gateCmd.AddCommand(gateListCmd)
