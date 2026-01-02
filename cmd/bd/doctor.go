@@ -382,6 +382,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, claudeCheck)
 	// Don't fail overall check for missing Claude integration, just warn
 
+	// Check 11b: Gemini CLI integration
+	geminiCheck := convertWithCategory(doctor.CheckGemini(), doctor.CategoryIntegration)
+	result.Checks = append(result.Checks, geminiCheck)
+	// Don't fail overall check for missing Gemini integration, just info
+
 	// Check 11a: bd in PATH (needed for Claude hooks to work)
 	bdPathCheck := convertWithCategory(doctor.CheckBdInPath(), doctor.CategoryIntegration)
 	result.Checks = append(result.Checks, bdPathCheck)

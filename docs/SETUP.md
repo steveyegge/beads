@@ -5,12 +5,13 @@
 
 ## Overview
 
-The `bd setup` command configures beads integration with AI coding tools. It supports four integrations:
+The `bd setup` command configures beads integration with AI coding tools. It supports five integrations:
 
 | Tool | Command | Integration Type |
 |------|---------|-----------------|
 | [Factory.ai (Droid)](#factoryai-droid) | `bd setup factory` | AGENTS.md file (universal standard) |
 | [Claude Code](#claude-code) | `bd setup claude` | SessionStart/PreCompact hooks |
+| [Gemini CLI](#gemini-cli) | `bd setup gemini` | SessionStart/PreCompress hooks |
 | [Cursor IDE](#cursor-ide) | `bd setup cursor` | Rules file (.cursor/rules/beads.mdc) |
 | [Aider](#aider) | `bd setup aider` | Config file (.aider.conf.yml) |
 
@@ -20,12 +21,14 @@ The `bd setup` command configures beads integration with AI coding tools. It sup
 # Install integration for your tool
 bd setup factory   # For Factory.ai Droid (and other AGENTS.md-compatible tools)
 bd setup claude    # For Claude Code
+bd setup gemini    # For Gemini CLI
 bd setup cursor    # For Cursor IDE
 bd setup aider     # For Aider
 
 # Verify installation
 bd setup factory --check
 bd setup claude --check
+bd setup gemini --check
 bd setup cursor --check
 bd setup aider --check
 ```
@@ -177,6 +180,64 @@ The hooks call `bd prime` which:
 
 This is more context-efficient than MCP tools (~1-2k tokens vs 10-50k for MCP schemas).
 
+## Gemini CLI
+
+Gemini CLI integration uses hooks to automatically inject beads workflow context at session start and before context compression.
+
+### Installation
+
+```bash
+# Global installation (recommended)
+bd setup gemini
+
+# Project-only installation
+bd setup gemini --project
+
+# With stealth mode (flush only, no git operations)
+bd setup gemini --stealth
+```
+
+### What Gets Installed
+
+**Global installation** (`~/.gemini/settings.json`):
+- `SessionStart` hook: Runs `bd prime` when a new session starts
+- `PreCompress` hook: Runs `bd prime` before context compression
+
+**Project installation** (`.gemini/settings.json`):
+- Same hooks, but only active for this project
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--check` | Check if integration is installed |
+| `--remove` | Remove beads hooks |
+| `--project` | Install for this project only (not globally) |
+| `--stealth` | Use `bd prime --stealth` (flush only, no git operations) |
+
+### Examples
+
+```bash
+# Check if hooks are installed
+bd setup gemini --check
+# Output: ✓ Global hooks installed: /Users/you/.gemini/settings.json
+
+# Remove hooks
+bd setup gemini --remove
+
+# Install project-specific hooks with stealth mode
+bd setup gemini --project --stealth
+```
+
+### How It Works
+
+The hooks call `bd prime` which:
+1. Outputs workflow context for Gemini to read
+2. Syncs any pending changes
+3. Ensures Gemini always knows how to use beads
+
+This works identically to Claude Code integration, using Gemini CLI's hook system (SessionStart and PreCompress events).
+
 ## Cursor IDE
 
 Cursor integration creates a rules file that provides beads workflow context to the AI.
@@ -277,14 +338,14 @@ This respects Aider's philosophy of keeping humans in control while still levera
 
 ## Comparison
 
-| Feature | Factory.ai | Claude Code | Cursor | Aider |
-|---------|-----------|-------------|--------|-------|
-| Command execution | Automatic | Automatic | Automatic | Manual (/run) |
-| Context injection | AGENTS.md | Hooks | Rules file | Config file |
-| Global install | No (per-project) | Yes | No (per-project) | No (per-project) |
-| Stealth mode | N/A | Yes | N/A | N/A |
-| Standard format | Yes (AGENTS.md) | No (proprietary) | No (proprietary) | No (proprietary) |
-| Multi-tool compatible | Yes | No | No | No |
+| Feature | Factory.ai | Claude Code | Gemini CLI | Cursor | Aider |
+|---------|-----------|-------------|------------|--------|-------|
+| Command execution | Automatic | Automatic | Automatic | Automatic | Manual (/run) |
+| Context injection | AGENTS.md | Hooks | Hooks | Rules file | Config file |
+| Global install | No (per-project) | Yes | Yes | No (per-project) | No (per-project) |
+| Stealth mode | N/A | Yes | Yes | N/A | N/A |
+| Standard format | Yes (AGENTS.md) | No (proprietary) | No (proprietary) | No (proprietary) | No (proprietary) |
+| Multi-tool compatible | Yes | No | No | No | No |
 
 ## Best Practices
 
@@ -295,16 +356,17 @@ This respects Aider's philosophy of keeping humans in control while still levera
 
 2. **Add tool-specific integrations as needed** - Claude hooks, Cursor rules, or Aider config for tool-specific features
 
-3. **Install globally for Claude Code** - You'll get beads context in every project automatically
+3. **Install globally for Claude Code or Gemini CLI** - You'll get beads context in every project automatically
 
-4. **Use stealth mode in CI/CD** - `bd setup claude --stealth` avoids git operations that might fail in automated environments
+4. **Use stealth mode in CI/CD** - `bd setup claude --stealth` or `bd setup gemini --stealth` avoids git operations that might fail in automated environments
 
 5. **Commit AGENTS.md to git** - This ensures all team members and AI tools get the same instructions
 
 6. **Run `bd doctor` after setup** - Verifies the integration is working:
    ```bash
-   bd doctor | grep -i claude
+   bd doctor | grep -iE "claude|gemini"
    # Claude Integration: Hooks installed (CLI mode)
+   # Gemini CLI Integration: Hooks installed
    ```
 
 ## Troubleshooting

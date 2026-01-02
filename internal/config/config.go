@@ -114,6 +114,14 @@ func Initialize() error {
 	// Create command defaults
 	v.SetDefault("create.require-description", false)
 
+	// Validation configuration defaults (bd-t7jq)
+	// Values: "warn" | "error" | "none"
+	// - "none": no validation (default, backwards compatible)
+	// - "warn": validate and print warnings but proceed
+	// - "error": validate and fail on missing sections
+	v.SetDefault("validation.on-create", "none")
+	v.SetDefault("validation.on-sync", "none")
+
 	// Git configuration defaults (GH#600)
 	v.SetDefault("git.author", "")        // Override commit author (e.g., "beads-bot <beads@example.com>")
 	v.SetDefault("git.no-gpg-sign", false) // Disable GPG signing for beads commits

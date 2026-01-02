@@ -2417,7 +2417,7 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 	}
 
 	// Spawn with ephemeral=true
-	result, err := spawnMolecule(ctx, s, subgraph, nil, "", "test", true, "eph")
+	result, err := spawnMolecule(ctx, s, subgraph, nil, "", "test", true, "wisp")
 	if err != nil {
 		t.Fatalf("spawnMolecule failed: %v", err)
 	}
@@ -2435,8 +2435,8 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 
 	// Verify spawned issues have the correct prefix
 	for _, newID := range result.IDMapping {
-		if !strings.HasPrefix(newID, "test-eph-") {
-			t.Errorf("Spawned issue ID %s should have prefix 'test-eph-'", newID)
+		if !strings.HasPrefix(newID, "test-wisp-") {
+			t.Errorf("Spawned issue ID %s should have prefix 'test-wisp-'", newID)
 		}
 	}
 }
@@ -2490,7 +2490,7 @@ func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 	}
 
 	// Spawn with ephemeral=true (simulating bd mol wisp <formula>)
-	result, err := spawnMolecule(ctx, s, subgraph, nil, "", "test", true, "eph")
+	result, err := spawnMolecule(ctx, s, subgraph, nil, "", "test", true, "wisp")
 	if err != nil {
 		t.Fatalf("spawnMolecule failed: %v", err)
 	}
@@ -2509,8 +2509,8 @@ func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 
 	// Verify they have the correct prefix
 	for _, newID := range result.IDMapping {
-		if !strings.HasPrefix(newID, "test-eph-") {
-			t.Errorf("Spawned issue ID %s should have prefix 'test-eph-'", newID)
+		if !strings.HasPrefix(newID, "test-wisp-") {
+			t.Errorf("Spawned issue ID %s should have prefix 'test-wisp-'", newID)
 		}
 	}
 

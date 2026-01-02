@@ -383,32 +383,45 @@ func TestIsWispOperation(t *testing.T) {
 		{
 			name:     "mol burn",
 			cmdNames: []string{"bd", "mol", "burn"},
-			args:     []string{"bd-eph-abc"},
+			args:     []string{"bd-wisp-abc"},
 			want:     true,
 		},
 		{
 			name:     "mol squash",
 			cmdNames: []string{"bd", "mol", "squash"},
-			args:     []string{"bd-eph-abc"},
+			args:     []string{"bd-wisp-abc"},
 			want:     true,
 		},
-		// Ephemeral issue IDs in args
+		// Ephemeral issue IDs in args (wisp-* pattern)
 		{
-			name:     "close with bd-eph ID",
+			name:     "close with bd-wisp ID",
+			cmdNames: []string{"bd", "close"},
+			args:     []string{"bd-wisp-abc123"},
+			want:     true,
+		},
+		{
+			name:     "show with gt-wisp ID",
+			cmdNames: []string{"bd", "show"},
+			args:     []string{"gt-wisp-xyz"},
+			want:     true,
+		},
+		{
+			name:     "update with wisp- prefix",
+			cmdNames: []string{"bd", "update"},
+			args:     []string{"wisp-test", "--status=closed"},
+			want:     true,
+		},
+		// Legacy eph-* pattern (backwards compatibility)
+		{
+			name:     "close with legacy bd-eph ID",
 			cmdNames: []string{"bd", "close"},
 			args:     []string{"bd-eph-abc123"},
 			want:     true,
 		},
 		{
-			name:     "show with gt-eph ID",
+			name:     "show with legacy gt-eph ID",
 			cmdNames: []string{"bd", "show"},
 			args:     []string{"gt-eph-xyz"},
-			want:     true,
-		},
-		{
-			name:     "update with eph- prefix",
-			cmdNames: []string{"bd", "update"},
-			args:     []string{"eph-test", "--status=closed"},
 			want:     true,
 		},
 		// Non-wisp operations (should NOT bypass)
@@ -438,9 +451,9 @@ func TestIsWispOperation(t *testing.T) {
 		},
 		// Edge cases
 		{
-			name:     "flag that looks like eph ID should be ignored",
+			name:     "flag that looks like wisp ID should be ignored",
 			cmdNames: []string{"bd", "show"},
-			args:     []string{"--format=bd-eph-style", "bd-regular"},
+			args:     []string{"--format=bd-wisp-style", "bd-regular"},
 			want:     false,
 		},
 	}

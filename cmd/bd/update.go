@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -132,6 +134,39 @@ create, update, show, or close operation).`,
 			}
 			updates["issue_type"] = issueType
 		}
+		// Time-based scheduling flags (GH#820)
+		if cmd.Flags().Changed("due") {
+			dueStr, _ := cmd.Flags().GetString("due")
+			if dueStr == "" {
+				// Empty string clears the due date
+				updates["due_at"] = nil
+			} else {
+				t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+				if err != nil {
+					FatalErrorRespectJSON("invalid --due format %q. Examples: +6h, tomorrow, next monday, 2025-01-15", dueStr)
+				}
+				updates["due_at"] = t
+			}
+		}
+		if cmd.Flags().Changed("defer") {
+			deferStr, _ := cmd.Flags().GetString("defer")
+			if deferStr == "" {
+				// Empty string clears the defer_until
+				updates["defer_until"] = nil
+			} else {
+				t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+				if err != nil {
+					FatalErrorRespectJSON("invalid --defer format %q. Examples: +1h, tomorrow, next monday, 2025-01-15", deferStr)
+				}
+				// Warn if defer date is in the past (user probably meant future)
+				if t.Before(time.Now()) && !jsonOutput {
+					fmt.Fprintf(os.Stderr, "%s Defer date %q is in the past. Issue will appear in bd ready immediately.\n",
+						ui.RenderWarn("!"), t.Format("2006-01-02 15:04"))
+					fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
+				}
+				updates["defer_until"] = t
+			}
+		}
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
@@ -228,6 +263,23 @@ create, update, show, or close operation).`,
 				}
 				if parent, ok := updates["parent"].(string); ok {
 					updateArgs.Parent = &parent
+				}
+				// Time-based scheduling (GH#820)
+				if dueAt, ok := updates["due_at"].(time.Time); ok {
+					s := dueAt.Format(time.RFC3339)
+					updateArgs.DueAt = &s
+				} else if updates["due_at"] == nil && cmd.Flags().Changed("due") {
+					// Explicit clear
+					empty := ""
+					updateArgs.DueAt = &empty
+				}
+				if deferUntil, ok := updates["defer_until"].(time.Time); ok {
+					s := deferUntil.Format(time.RFC3339)
+					updateArgs.DeferUntil = &s
+				} else if updates["defer_until"] == nil && cmd.Flags().Changed("defer") {
+					// Explicit clear
+					empty := ""
+					updateArgs.DeferUntil = &empty
 				}
 
 				// Set claim flag for atomic claim operation
@@ -528,5 +580,16 @@ func init() {
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")
+	// Time-based scheduling flags (GH#820)
+	// Examples:
+	//   --due=+6h           Due in 6 hours
+	//   --due=tomorrow      Due tomorrow
+	//   --due="next monday" Due next Monday
+	//   --due=2025-01-15    Due on specific date
+	//   --due=""            Clear due date
+	//   --defer=+1h         Hidden from bd ready for 1 hour
+	//   --defer=""          Clear defer (show in bd ready immediately)
+	updateCmd.Flags().String("due", "", "Due date/time (empty to clear). Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
+	updateCmd.Flags().String("defer", "", "Defer until date (empty to clear). Issue hidden from bd ready until then")
 	rootCmd.AddCommand(updateCmd)
 }

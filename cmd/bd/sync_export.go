@@ -10,8 +10,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // exportToJSONL exports the database to JSONL format
@@ -175,6 +178,66 @@ func exportToJSONL(ctx context.Context, jsonlPath string) error {
 	if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 		// Non-fatal warning
 		fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)
+	}
+
+	return nil
+}
+
+// validateOpenIssuesForSync validates all open issues against their templates
+// before export, based on the validation.on-sync config setting.
+// Returns an error if validation.on-sync is "error" and issues fail validation.
+// Prints warnings if validation.on-sync is "warn".
+// Does nothing if validation.on-sync is "none" (default).
+func validateOpenIssuesForSync(ctx context.Context) error {
+	validationMode := config.GetString("validation.on-sync")
+	if validationMode == "none" || validationMode == "" {
+		return nil
+	}
+
+	// Ensure store is active
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("failed to initialize store for validation: %w", err)
+	}
+
+	// Get all issues (excluding tombstones) and filter to open ones
+	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	if err != nil {
+		return fmt.Errorf("failed to get issues for validation: %w", err)
+	}
+
+	// Filter to only open issues (not closed, not tombstones)
+	var issues []*types.Issue
+	for _, issue := range allIssues {
+		if issue.Status != types.StatusClosed && issue.Status != types.StatusTombstone {
+			issues = append(issues, issue)
+		}
+	}
+
+	// Validate each issue
+	var warnings []string
+	for _, issue := range issues {
+		if err := validation.LintIssue(issue); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", issue.ID, err))
+		}
+	}
+
+	if len(warnings) == 0 {
+		return nil
+	}
+
+	// Report based on mode
+	if validationMode == "error" {
+		fmt.Fprintf(os.Stderr, "%s Validation failed for %d issue(s):\n", ui.RenderFail("✗"), len(warnings))
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  - %s\n", w)
+		}
+		return fmt.Errorf("template validation failed: %d issues missing required sections (set validation.on-sync: none or warn to proceed)", len(warnings))
+	}
+
+	// warn mode: print warnings but proceed
+	fmt.Fprintf(os.Stderr, "%s Validation warnings for %d issue(s):\n", ui.RenderWarn("⚠"), len(warnings))
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "  - %s\n", w)
 	}
 
 	return nil

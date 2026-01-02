@@ -77,7 +77,7 @@ func handleFreshCloneError(err error, beadsDir string) bool {
 //   - mol wisp subcommands (create, list, gc, or direct proto invocation)
 //   - mol burn (only operates on wisps)
 //   - mol squash (condenses wisps to digests)
-//   - Commands with ephemeral issue IDs in args (bd-*-eph-*, eph-*)
+//   - Commands with ephemeral issue IDs in args (bd-*-wisp-*, wisp-*, or legacy eph-*)
 func isWispOperation(cmd *cobra.Command, args []string) bool {
 	cmdName := cmd.Name()
 
@@ -97,14 +97,16 @@ func isWispOperation(cmd *cobra.Command, args []string) bool {
 	}
 
 	// Check for ephemeral issue IDs in arguments
-	// Ephemeral IDs have "eph" segment: bd-eph-xxx, gt-eph-xxx, eph-xxx
+	// Ephemeral IDs have "wisp" segment: bd-wisp-xxx, gt-wisp-xxx, wisp-xxx
+	// Also detect legacy "eph" prefix for backwards compatibility
 	for _, arg := range args {
 		// Skip flags
 		if strings.HasPrefix(arg, "-") {
 			continue
 		}
-		// Check for ephemeral prefix patterns
-		if strings.Contains(arg, "-eph-") || strings.HasPrefix(arg, "eph-") {
+		// Check for ephemeral prefix patterns (wisp-* or legacy eph-*)
+		if strings.Contains(arg, "-wisp-") || strings.HasPrefix(arg, "wisp-") ||
+			strings.Contains(arg, "-eph-") || strings.HasPrefix(arg, "eph-") {
 			return true
 		}
 	}

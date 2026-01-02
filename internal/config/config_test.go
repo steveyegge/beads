@@ -786,3 +786,61 @@ func TestConfigSourceConstants(t *testing.T) {
 		t.Errorf("SourceFlag = %q, want \"flag\"", SourceFlag)
 	}
 }
+
+func TestValidationConfigDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test validation.on-create default is "none"
+	if got := GetString("validation.on-create"); got != "none" {
+		t.Errorf("GetString(validation.on-create) = %q, want \"none\"", got)
+	}
+
+	// Test validation.on-sync default is "none"
+	if got := GetString("validation.on-sync"); got != "none" {
+		t.Errorf("GetString(validation.on-sync) = %q, want \"none\"", got)
+	}
+}
+
+func TestValidationConfigFromFile(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with validation settings
+	configContent := `
+validation:
+  on-create: error
+  on-sync: warn
+`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test that validation settings are loaded correctly
+	if got := GetString("validation.on-create"); got != "error" {
+		t.Errorf("GetString(validation.on-create) = %q, want \"error\"", got)
+	}
+	if got := GetString("validation.on-sync"); got != "warn" {
+		t.Errorf("GetString(validation.on-sync) = %q, want \"warn\"", got)
+	}
+}
