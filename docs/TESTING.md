@@ -165,6 +165,78 @@ Running: go test -timeout 3m -skip TestFoo|TestBar ./...
 Skipping: TestFoo|TestBar
 ```
 
+## External Repository Testing
+
+Beads includes tests that validate functionality against external repositories to ensure real-world compatibility.
+
+### PowerShell Validation Script
+
+Quick smoke testing against any external repo:
+
+```powershell
+# Test against ActionableLogLines (default)
+.\scripts\test-external-repo.ps1
+
+# Test against custom repo
+.\scripts\test-external-repo.ps1 -RepoPath "C:\path\to\repo"
+
+# Verbose output
+.\scripts\test-external-repo.ps1 -Verbose
+
+# Keep temp directory for debugging
+.\scripts\test-external-repo.ps1 -SkipCleanup
+```
+
+**Test categories:**
+1. Init & Info - database initialization
+2. Issue CRUD - create, show, update, close, reopen
+3. Sync Operations - export, JSONL verification
+4. Dependencies - add/remove, blocked list
+5. Mode Parity - daemon vs `--no-daemon`
+6. Recovery - doctor, error handling
+7. Concurrent Creation - hash collision prevention
+
+### Go Integration Tests
+
+Formal Go tests using external repo as target:
+
+```bash
+# Run external repo tests
+go test -tags=integration,external_repo ./cmd/bd/...
+
+# With custom repo path
+BEADS_TEST_EXTERNAL_REPO=/path/to/repo go test -tags=integration,external_repo ./cmd/bd/...
+```
+
+Tests are in `cmd/bd/external_repo_test.go` with build tag `external_repo`.
+
+### In-Repo Validators
+
+Repos with beads integration can include a validation script:
+
+```powershell
+# From repo root (e.g., ActionableLogLines)
+.\.beads\validate.ps1
+
+# Verbose output
+.\.beads\validate.ps1 -Verbose
+
+# Create and close test issue
+.\.beads\validate.ps1 -CreateTestIssue
+```
+
+### Test Isolation
+
+All external repo tests use isolated environments:
+1. Clone to temp directory
+2. Create test branch
+3. Remove existing `.beads/` directory
+4. Initialize fresh beads instance
+5. Run tests
+6. Cleanup temp directory
+
+**Never modifies the original repository's beads data.**
+
 ## Contributing
 
 When adding new tests:
