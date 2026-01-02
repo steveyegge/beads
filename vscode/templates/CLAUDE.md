@@ -80,6 +80,29 @@ See `events/EVENT_TAXONOMY.md` for codes.
 | Build command | `___` |
 | Primary language | `___` |
 
+### VS Code Tasks Integration
+
+Health check tasks are defined in `.vscode/tasks.json`:
+
+| Task | Purpose | When to Run |
+|------|---------|-------------|
+| `Health: Doctor` | Run `bd doctor` health checks | Session bootup |
+| `Health: Doctor (Fix)` | Auto-fix detected issues | When doctor reports problems |
+| `Health: Test` | Run project tests | Before landing/closing issues |
+| `Health: Lint` | Run linter | Before landing/closing issues |
+| `Health: Build` | Verify project builds | Before landing/closing issues |
+| `Health: Quality Gates (All)` | Run all checks in sequence | Session landing |
+| `Session: Bootup Health Check` | Quick health check (silent) | Auto-run on folder open |
+| `Session: Landing Quality Gates` | Build + Test before push | Before git push |
+
+**Run tasks via:** `Ctrl+Shift+P` -> `Tasks: Run Task` -> Select task
+
+**Keybindings:**
+- `Ctrl+Shift+R` (terminal): `bd ready --json`
+- `Ctrl+Shift+S` (terminal): `bd sync && git status`
+- `Ctrl+Shift+D` (terminal): `bd doctor`
+- `Ctrl+Shift+Q` (anywhere): Run all quality gates
+
 ---
 
 **This protocol is NON-NEGOTIABLE.**
