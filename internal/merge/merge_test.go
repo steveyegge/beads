@@ -1356,6 +1356,9 @@ func TestMergeTombstones(t *testing.T) {
 
 // TestMerge3Way_TombstoneVsLive tests tombstone vs live issue scenarios
 func TestMerge3Way_TombstoneVsLive(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	// Base issue (live)
 	baseIssue := Issue{
 		ID:        "bd-abc123",
@@ -1376,7 +1379,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		CreatedAt:    "2024-01-01T00:00:00Z",
 		UpdatedAt:    "2024-01-02T00:00:00Z",
 		CreatedBy:    "user1",
-		DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339), // 1 day ago
+		DeletedAt:    now.Add(-24 * time.Hour).Format(time.RFC3339), // 1 day ago
 		DeletedBy:    "user2",
 		DeleteReason: "Duplicate issue",
 		OriginalType: "task",
@@ -1391,7 +1394,7 @@ func TestMerge3Way_TombstoneVsLive(t *testing.T) {
 		CreatedAt:    "2024-01-01T00:00:00Z",
 		UpdatedAt:    "2024-01-02T00:00:00Z",
 		CreatedBy:    "user1",
-		DeletedAt:    time.Now().Add(-60 * 24 * time.Hour).Format(time.RFC3339), // 60 days ago
+		DeletedAt:    now.Add(-60 * 24 * time.Hour).Format(time.RFC3339), // 60 days ago
 		DeletedBy:    "user2",
 		DeleteReason: "Duplicate issue",
 		OriginalType: "task",
@@ -1534,6 +1537,9 @@ func TestMerge3Way_TombstoneVsTombstone(t *testing.T) {
 
 // TestMerge3Way_TombstoneNoBase tests tombstone scenarios without a base
 func TestMerge3Way_TombstoneNoBase(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	t.Run("tombstone added only in left", func(t *testing.T) {
 		tombstone := Issue{
 			ID:        "bd-abc123",
@@ -1587,7 +1593,7 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 			Status:    StatusTombstone,
 			CreatedAt: "2024-01-01T00:00:00Z",
 			CreatedBy: "user1",
-			DeletedAt: time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedAt: now.Add(-24 * time.Hour).Format(time.RFC3339),
 			DeletedBy: "user1",
 		}
 		live := Issue{
@@ -1614,6 +1620,9 @@ func TestMerge3Way_TombstoneNoBase(t *testing.T) {
 
 // TestMerge3WayWithTTL tests the TTL-configurable merge function
 func TestMerge3WayWithTTL(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	baseIssue := Issue{
 		ID:        "bd-abc123",
 		Title:     "Original",
@@ -1629,7 +1638,7 @@ func TestMerge3WayWithTTL(t *testing.T) {
 		Status:    StatusTombstone,
 		CreatedAt: "2024-01-01T00:00:00Z",
 		CreatedBy: "user1",
-		DeletedAt: time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339),
+		DeletedAt: now.Add(-10 * 24 * time.Hour).Format(time.RFC3339),
 		DeletedBy: "user2",
 	}
 
@@ -1729,6 +1738,9 @@ func TestMergeStatus_Tombstone(t *testing.T) {
 // TestMerge3Way_TombstoneWithImplicitDeletion tests bd-ki14 fix:
 // tombstones should be preserved even when the other side implicitly deleted
 func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	baseIssue := Issue{
 		ID:        "bd-abc123",
 		Title:     "Original",
@@ -1743,7 +1755,7 @@ func TestMerge3Way_TombstoneWithImplicitDeletion(t *testing.T) {
 		Status:       StatusTombstone,
 		CreatedAt:    "2024-01-01T00:00:00Z",
 		CreatedBy:    "user1",
-		DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+		DeletedAt:    now.Add(-24 * time.Hour).Format(time.RFC3339),
 		DeletedBy:    "user2",
 		DeleteReason: "Duplicate",
 	}
@@ -2105,6 +2117,9 @@ func TestIsExpiredTombstone(t *testing.T) {
 // This can happen if Clone A deletes an issue, Clones B and C sync (getting tombstone),
 // then both B and C independently recreate an issue with same ID. (bd-bob)
 func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	// Base is a tombstone (issue was deleted)
 	baseTombstone := Issue{
 		ID:           "bd-abc123",
@@ -2114,7 +2129,7 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 		CreatedAt:    "2024-01-01T00:00:00Z",
 		UpdatedAt:    "2024-01-05T00:00:00Z",
 		CreatedBy:    "user1",
-		DeletedAt:    time.Now().Add(-10 * 24 * time.Hour).Format(time.RFC3339), // 10 days ago
+		DeletedAt:    now.Add(-10 * 24 * time.Hour).Format(time.RFC3339), // 10 days ago
 		DeletedBy:    "user2",
 		DeleteReason: "Obsolete",
 		OriginalType: "task",
@@ -2248,6 +2263,9 @@ func TestMerge3Way_TombstoneBaseBothLiveResurrection(t *testing.T) {
 // When the same issue has different CreatedAt timestamp precision (e.g., with/without nanoseconds),
 // the tombstone should still win over the live version.
 func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
+	// Capture time.Now() once at test start to avoid drift during test execution
+	now := time.Now()
+
 	// This test simulates the ghost resurrection bug where timestamp precision
 	// differences caused the same issue to be treated as two different issues.
 	// The key fix (bd-ncwo) adds ID-based fallback matching when keys don't match.
@@ -2273,7 +2291,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 			CreatedAt:    "2024-01-01T00:00:00.000000Z", // WITH fractional seconds
 			UpdatedAt:    "2024-01-15T00:00:00Z",
 			CreatedBy:    "user1",
-			DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedAt:    now.Add(-24 * time.Hour).Format(time.RFC3339),
 			DeletedBy:    "user2",
 			DeleteReason: "Duplicate issue",
 		}
@@ -2322,7 +2340,7 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 			Priority:     2,
 			CreatedAt:    "2024-01-01T00:00:00Z",
 			CreatedBy:    "", // Empty CreatedBy
-			DeletedAt:    time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+			DeletedAt:    now.Add(-24 * time.Hour).Format(time.RFC3339),
 			DeletedBy:    "user2",
 			DeleteReason: "Cleanup",
 		}

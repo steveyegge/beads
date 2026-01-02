@@ -34,6 +34,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -266,6 +267,13 @@ func IsTombstone(issue Issue) bool {
 	return issue.Status == StatusTombstone
 }
 
+// logResurrection logs when a tombstone expires and loses to a live issue.
+// This implements the recommendation from bd-zvg Open Question 1.
+func logResurrection(issueID, tombstoneDeletedAt, liveUpdatedAt, side string) {
+	debug.Logf("merge: resurrection detected for %s - expired tombstone (deleted_at=%s) loses to live issue (updated_at=%s) from %s side\n",
+		issueID, tombstoneDeletedAt, liveUpdatedAt, side)
+}
+
 // IsExpiredTombstone returns true if the tombstone has exceeded its TTL.
 // Non-tombstone issues always return false.
 // ttl is the configured TTL duration; if zero, DefaultTombstoneTTL is used.
@@ -425,6 +433,8 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			if leftTombstone && !rightTombstone {
 				if IsExpiredTombstone(leftIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
+					// bd-nl2: Log resurrection event for debugging
+					logResurrection(rightIssue.ID, leftIssue.DeletedAt, rightIssue.UpdatedAt, "right")
 					result = append(result, rightIssue)
 				} else {
 					// Tombstone wins
@@ -437,6 +447,8 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			if rightTombstone && !leftTombstone {
 				if IsExpiredTombstone(rightIssue, ttl) {
 					// Tombstone expired - resurrection allowed, keep live issue
+					// bd-nl2: Log resurrection event for debugging
+					logResurrection(leftIssue.ID, rightIssue.DeletedAt, leftIssue.UpdatedAt, "left")
 					result = append(result, leftIssue)
 				} else {
 					// Tombstone wins
@@ -465,6 +477,8 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			// CASE: Left is tombstone, right is live
 			if leftTombstone && !rightTombstone {
 				if IsExpiredTombstone(leftIssue, ttl) {
+					// bd-nl2: Log resurrection event for debugging
+					logResurrection(rightIssue.ID, leftIssue.DeletedAt, rightIssue.UpdatedAt, "right")
 					result = append(result, rightIssue)
 				} else {
 					result = append(result, leftIssue)
@@ -475,6 +489,8 @@ func Merge3WayWithTTL(base, left, right []Issue, ttl time.Duration) ([]Issue, []
 			// CASE: Right is tombstone, left is live
 			if rightTombstone && !leftTombstone {
 				if IsExpiredTombstone(rightIssue, ttl) {
+					// bd-nl2: Log resurrection event for debugging
+					logResurrection(leftIssue.ID, rightIssue.DeletedAt, leftIssue.UpdatedAt, "left")
 					result = append(result, leftIssue)
 				} else {
 					result = append(result, rightIssue)
