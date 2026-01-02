@@ -287,6 +287,11 @@ Use --merge to merge the sync branch back to main branch.`,
 					}
 				}
 
+				// Template validation before export (bd-t7jq)
+				if err := validateOpenIssuesForSync(ctx); err != nil {
+					FatalError("%v", err)
+				}
+
 				fmt.Println("→ Exporting pending changes to JSONL...")
 				if err := exportToJSONL(ctx, jsonlPath); err != nil {
 					FatalError("exporting: %v", err)

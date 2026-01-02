@@ -166,11 +166,25 @@ var createCmd = &cobra.Command{
 			estimatedMinutes = &est
 		}
 
-		// Validate template if --validate flag is set
+		// Validate template based on --validate flag or config
 		validateTemplate, _ := cmd.Flags().GetBool("validate")
 		if validateTemplate {
+			// Explicit --validate flag: fail on error
 			if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
 				FatalError("%v", err)
+			}
+		} else {
+			// Check validation.on-create config (bd-t7jq)
+			validationMode := config.GetString("validation.on-create")
+			if validationMode == "error" || validationMode == "warn" {
+				if err := validation.ValidateTemplate(types.IssueType(issueType), description); err != nil {
+					if validationMode == "error" {
+						FatalError("%v", err)
+					} else {
+						// warn mode: print warning but proceed
+						fmt.Fprintf(os.Stderr, "%s %v\n", ui.RenderWarn("⚠"), err)
+					}
+				}
 			}
 		}
 

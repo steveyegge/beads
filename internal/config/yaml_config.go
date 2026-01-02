@@ -54,6 +54,11 @@ var YamlOnlyKeys = map[string]bool{
 
 	// Create command settings
 	"create.require-description": true,
+
+	// Validation settings (bd-t7jq)
+	// Values: "warn" | "error" | "none"
+	"validation.on-create": true,
+	"validation.on-sync":   true,
 }
 
 // IsYamlOnlyKey returns true if the given key should be stored in config.yaml
@@ -65,7 +70,7 @@ func IsYamlOnlyKey(key string) bool {
 	}
 
 	// Check prefix matches for nested keys
-	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects."}
+	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation."}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
