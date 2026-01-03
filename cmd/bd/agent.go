@@ -781,7 +781,7 @@ func parseAgentIDFields(agentID string) (roleType, rig string) {
 	rigLevelRoles := map[string]bool{"witness": true, "refinery": true}
 	namedRoles := map[string]bool{"crew": true, "polecat": true}
 
-	// Case 1: Town-level roles (gt-mayor, gt-deacon)
+	// Case 1: Town-level roles (gt-mayor, gt-deacon) - single part after prefix
 	if len(parts) == 1 {
 		role := parts[0]
 		if townLevelRoles[role] {
@@ -790,20 +790,23 @@ func parseAgentIDFields(agentID string) (roleType, rig string) {
 		return "", "" // Unknown format
 	}
 
-	// Case 2: Rig-level roles (<prefix>-<rig>-witness, <prefix>-<rig>-refinery)
-	if len(parts) == 2 {
-		potentialRig, potentialRole := parts[0], parts[1]
-		if rigLevelRoles[potentialRole] {
-			return potentialRole, potentialRig
-		}
-		return "", "" // Unknown format
-	}
+	// For 2+ parts, scan from the right to find a known role.
+	// This allows rig names to contain hyphens (e.g., "my-project").
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
 
-	// Case 3: Named roles (<prefix>-<rig>-crew-<name>, <prefix>-<rig>-polecat-<name>)
-	if len(parts) >= 3 {
-		potentialRig, potentialRole := parts[0], parts[1]
-		if namedRoles[potentialRole] {
-			return potentialRole, potentialRig
+		// Check for rig-level role (witness, refinery) - must be at end
+		if rigLevelRoles[part] && i == len(parts)-1 {
+			// rig is everything before role
+			rig = strings.Join(parts[:i], "-")
+			return part, rig
+		}
+
+		// Check for named role (crew, polecat) - must have something after (the name)
+		if namedRoles[part] && i < len(parts)-1 {
+			// rig is everything before role
+			rig = strings.Join(parts[:i], "-")
+			return part, rig
 		}
 	}
 
