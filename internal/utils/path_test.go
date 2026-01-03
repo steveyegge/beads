@@ -3,6 +3,8 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -258,4 +260,138 @@ func TestFindMoleculesJSONLInDir(t *testing.T) {
 	if got := FindMoleculesJSONLInDir(otherDir); got != "" {
 		t.Fatalf("expected empty path when file missing, got %q", got)
 	}
+}
+
+func TestNormalizePathForComparison(t *testing.T) {
+	t.Run("empty path", func(t *testing.T) {
+		result := NormalizePathForComparison("")
+		if result != "" {
+			t.Errorf("expected empty string for empty input, got %q", result)
+		}
+	})
+
+	t.Run("absolute path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		result := NormalizePathForComparison(tmpDir)
+		if !filepath.IsAbs(result) {
+			t.Errorf("expected absolute path, got %q", result)
+		}
+	})
+
+	t.Run("relative path becomes absolute", func(t *testing.T) {
+		result := NormalizePathForComparison(".")
+		if !filepath.IsAbs(result) {
+			t.Errorf("expected absolute path, got %q", result)
+		}
+	})
+
+	t.Run("symlink resolution", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a subdirectory
+		subDir := filepath.Join(tmpDir, "subdir")
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a symlink to the subdirectory
+		linkPath := filepath.Join(tmpDir, "link")
+		if err := os.Symlink(subDir, linkPath); err != nil {
+			t.Skipf("symlink creation failed: %v", err)
+		}
+
+		normalizedLink := NormalizePathForComparison(linkPath)
+		normalizedSubdir := NormalizePathForComparison(subDir)
+
+		if normalizedLink != normalizedSubdir {
+			t.Errorf("symlink and target should normalize to same path: %q vs %q", normalizedLink, normalizedSubdir)
+		}
+	})
+
+	t.Run("case normalization on case-insensitive systems", func(t *testing.T) {
+		if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			t.Skip("case normalization only applies to darwin/windows")
+		}
+
+		// On macOS/Windows, different case should normalize to same
+		tmpDir := t.TempDir()
+		lowerCase := strings.ToLower(tmpDir)
+		upperCase := strings.ToUpper(tmpDir)
+
+		normalizedLower := NormalizePathForComparison(lowerCase)
+		normalizedUpper := NormalizePathForComparison(upperCase)
+
+		if normalizedLower != normalizedUpper {
+			t.Errorf("case-insensitive paths should normalize to same value: %q vs %q", normalizedLower, normalizedUpper)
+		}
+	})
+}
+
+func TestPathsEqual(t *testing.T) {
+	t.Run("identical paths", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		if !PathsEqual(tmpDir, tmpDir) {
+			t.Error("identical paths should be equal")
+		}
+	})
+
+	t.Run("empty paths", func(t *testing.T) {
+		if !PathsEqual("", "") {
+			t.Error("two empty paths should be equal")
+		}
+	})
+
+	t.Run("one empty path", func(t *testing.T) {
+		if PathsEqual("/tmp/foo", "") {
+			t.Error("non-empty and empty paths should not be equal")
+		}
+	})
+
+	t.Run("different paths", func(t *testing.T) {
+		if PathsEqual("/tmp/foo", "/tmp/bar") {
+			t.Error("different paths should not be equal")
+		}
+	})
+
+	t.Run("symlink equality", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a subdirectory
+		subDir := filepath.Join(tmpDir, "subdir")
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a symlink to the subdirectory
+		linkPath := filepath.Join(tmpDir, "link")
+		if err := os.Symlink(subDir, linkPath); err != nil {
+			t.Skipf("symlink creation failed: %v", err)
+		}
+
+		if !PathsEqual(linkPath, subDir) {
+			t.Error("symlink and target should be equal")
+		}
+	})
+
+	t.Run("case-insensitive equality on macOS/Windows (GH#869)", func(t *testing.T) {
+		if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			t.Skip("case normalization only applies to darwin/windows")
+		}
+
+		// This is the actual bug from GH#869: Desktop vs desktop
+		tmpDir := t.TempDir()
+
+		// Create a subdirectory with mixed case
+		mixedCase := filepath.Join(tmpDir, "Desktop")
+		if err := os.MkdirAll(mixedCase, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// The lowercase version should still refer to the same directory
+		lowerCase := filepath.Join(tmpDir, "desktop")
+
+		if !PathsEqual(mixedCase, lowerCase) {
+			t.Errorf("paths with different case should be equal on case-insensitive FS: %q vs %q", mixedCase, lowerCase)
+		}
+	})
 }

@@ -4,6 +4,8 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // FindJSONLInDir finds the JSONL file in the given .beads directory.
@@ -113,4 +115,45 @@ func CanonicalizePath(path string) string {
 	}
 
 	return canonical
+}
+
+// NormalizePathForComparison returns a normalized path suitable for comparison.
+// It resolves symlinks and handles case-insensitive filesystems (macOS, Windows).
+//
+// On case-insensitive filesystems (darwin, windows), the path is lowercased
+// to ensure that /Users/foo/Desktop and /Users/foo/desktop compare as equal.
+//
+// This function should be used whenever comparing workspace paths, not for
+// storing or displaying paths (preserve original case for those purposes).
+func NormalizePathForComparison(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	// Try to get absolute path first
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	// Try to resolve symlinks
+	canonical, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// If symlink resolution fails (e.g., path doesn't exist), use absolute path
+		canonical = absPath
+	}
+
+	// On case-insensitive filesystems, lowercase for comparison
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		canonical = strings.ToLower(canonical)
+	}
+
+	return canonical
+}
+
+// PathsEqual compares two paths for equality, handling case-insensitive
+// filesystems and symlinks. This is the preferred way to compare workspace
+// paths in the daemon registry and discovery code.
+func PathsEqual(path1, path2 string) bool {
+	return NormalizePathForComparison(path1) == NormalizePathForComparison(path2)
 }

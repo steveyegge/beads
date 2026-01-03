@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // JSON response types for daemons commands
@@ -180,9 +181,10 @@ Sends shutdown command via RPC, with SIGTERM fallback if RPC fails.`,
 			os.Exit(1)
 		}
 		// Find matching daemon by workspace path or PID
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
 		var targetDaemon *daemon.DaemonInfo
 		for _, d := range daemons {
-			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+			if utils.PathsEqual(d.WorkspacePath, target) || fmt.Sprintf("%d", d.PID) == target {
 				targetDaemon = &d
 				break
 			}
@@ -232,9 +234,10 @@ Stops the daemon gracefully, then starts a new one.`,
 			os.Exit(1)
 		}
 		// Find the target daemon
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
 		var targetDaemon *daemon.DaemonInfo
 		for _, d := range daemons {
-			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+			if utils.PathsEqual(d.WorkspacePath, target) || fmt.Sprintf("%d", d.PID) == target {
 				targetDaemon = &d
 				break
 			}
@@ -350,9 +353,10 @@ Supports tail mode (last N lines) and follow mode (like tail -f).`,
 			os.Exit(1)
 		}
 		// Find matching daemon by workspace path or PID
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
 		var targetDaemon *daemon.DaemonInfo
 		for _, d := range daemons {
-			if d.WorkspacePath == target || fmt.Sprintf("%d", d.PID) == target {
+			if utils.PathsEqual(d.WorkspacePath, target) || fmt.Sprintf("%d", d.PID) == target {
 				targetDaemon = &d
 				break
 			}

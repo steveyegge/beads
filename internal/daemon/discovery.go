@@ -10,6 +10,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // walkWithDepth walks a directory tree with depth limiting
@@ -229,7 +230,8 @@ func FindDaemonByWorkspace(workspacePath string) (*DaemonInfo, error) {
 	}
 
 	for _, daemon := range daemons {
-		if daemon.WorkspacePath == workspacePath && daemon.Alive {
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
+		if utils.PathsEqual(daemon.WorkspacePath, workspacePath) && daemon.Alive {
 			return &daemon, nil
 		}
 	}

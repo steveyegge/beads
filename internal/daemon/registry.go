@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/lockfile"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // RegistryEntry represents a daemon entry in the registry
@@ -179,9 +180,10 @@ func (r *Registry) Register(entry RegistryEntry) error {
 		}
 
 		// Remove any existing entry for this workspace or PID
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
 		filtered := []RegistryEntry{}
 		for _, e := range entries {
-			if e.WorkspacePath != entry.WorkspacePath && e.PID != entry.PID {
+			if !utils.PathsEqual(e.WorkspacePath, entry.WorkspacePath) && e.PID != entry.PID {
 				filtered = append(filtered, e)
 			}
 		}
@@ -202,9 +204,10 @@ func (r *Registry) Unregister(workspacePath string, pid int) error {
 		}
 
 		// Filter out entries matching workspace or PID
+		// Use PathsEqual for case-insensitive comparison on macOS/Windows (GH#869)
 		filtered := []RegistryEntry{}
 		for _, e := range entries {
-			if e.WorkspacePath != workspacePath && e.PID != pid {
+			if !utils.PathsEqual(e.WorkspacePath, workspacePath) && e.PID != pid {
 				filtered = append(filtered, e)
 			}
 		}
