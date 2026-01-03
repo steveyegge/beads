@@ -9,7 +9,7 @@ Beads has several components - here's what they are and when you need them:
 | Component | What It Is | When You Need It |
 |-----------|------------|------------------|
 | **bd CLI** | Core command-line tool | Always - this is the foundation |
-| **Claude Code Plugin** | Slash commands + enhanced UX | Optional - if you want `/bd-ready`, `/bd-create` commands |
+| **Claude Code Plugin** | Slash commands + enhanced UX | Optional - if you want `/beads:ready`, `/beads:create` commands |
 | **MCP Server (beads-mcp)** | Model Context Protocol interface | Only for MCP-only environments (Claude Desktop, Amp) |
 
 **How they relate:**
@@ -209,7 +209,7 @@ For enhanced UX with slash commands:
 ```
 
 The plugin adds:
-- Slash commands: `/bd-ready`, `/bd-create`, `/bd-show`, `/bd-update`, `/bd-close`, etc.
+- Slash commands: `/beads:ready`, `/beads:create`, `/beads:show`, `/beads:update`, `/beads:close`, etc.
 - Task agent for autonomous execution
 
 See [PLUGIN.md](PLUGIN.md) for complete plugin documentation.

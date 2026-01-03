@@ -144,11 +144,11 @@ For enhanced UX with slash commands:
 ```
 
 Adds slash commands:
-- `/bd-ready` - Show ready work
-- `/bd-create` - Create issue
-- `/bd-show` - Show issue
-- `/bd-update` - Update issue
-- `/bd-close` - Close issue
+- `/beads:ready` - Show ready work
+- `/beads:create` - Create issue
+- `/beads:show` - Show issue
+- `/beads:update` - Update issue
+- `/beads:close` - Close issue
 
 ## Troubleshooting
 
