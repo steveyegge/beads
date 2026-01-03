@@ -220,6 +220,14 @@ func TestValidateAgentID(t *testing.T) {
 		{"valid bd-beads-polecat-pearl", "bd-beads-polecat-pearl", false, ""},
 		{"valid bd-beads-witness", "bd-beads-witness", false, ""},
 
+		// Valid: hyphenated rig names (GH#854)
+		{"hyphenated rig witness", "ob-my-project-witness", false, ""},
+		{"hyphenated rig refinery", "gt-foo-bar-refinery", false, ""},
+		{"hyphenated rig crew", "bd-my-cool-project-crew-fang", false, ""},
+		{"hyphenated rig polecat", "gt-some-long-rig-name-polecat-nux", false, ""},
+		{"hyphenated rig and name", "gt-my-rig-polecat-war-boy", false, ""},
+		{"multi-hyphen rig crew", "ob-a-b-c-d-crew-dave", false, ""},
+
 		// Invalid: no prefix (missing hyphen)
 		{"no prefix", "mayor", true, "must have a prefix followed by '-'"},
 
@@ -230,8 +238,8 @@ func TestValidateAgentID(t *testing.T) {
 		{"unknown role", "gt-gastown-admin", true, "invalid agent format"},
 
 		// Invalid: town-level with rig (put role first)
-		{"mayor with rig suffix", "gt-gastown-mayor", true, "cannot have rig suffix"},
-		{"deacon with rig suffix", "gt-beads-deacon", true, "cannot have rig suffix"},
+		{"mayor with rig suffix", "gt-gastown-mayor", true, "cannot have rig/name suffixes"},
+		{"deacon with rig suffix", "gt-beads-deacon", true, "cannot have rig/name suffixes"},
 
 		// Invalid: per-rig role without rig
 		{"witness alone", "gt-witness", true, "requires rig"},

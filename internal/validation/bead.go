@@ -146,6 +146,8 @@ func isNamedRole(s string) bool {
 //   - Per-rig named: <prefix>-<rig>-<role>-<name> (e.g., gt-gastown-polecat-nux)
 //
 // The prefix can be any rig's configured prefix (gt-, bd-, etc.).
+// Rig names may contain hyphens (e.g., my-project), so we parse by scanning
+// for known role tokens from the right side of the ID.
 // Returns nil if the ID is valid, or an error describing the issue.
 func ValidateAgentID(id string) error {
 	if id == "" {
@@ -165,7 +167,7 @@ func ValidateAgentID(id string) error {
 		return fmt.Errorf("agent ID must include content after prefix (got %q)", id)
 	}
 
-	// Case 1: Town-level roles (gt-mayor, gt-deacon)
+	// Case 1: Single part after prefix - must be town-level role
 	if len(parts) == 1 {
 		role := parts[0]
 		if isTownLevelRole(role) {
@@ -177,53 +179,52 @@ func ValidateAgentID(id string) error {
 		return fmt.Errorf("invalid agent role %q (valid: %s)", role, strings.Join(ValidAgentRoles, ", "))
 	}
 
-	// Case 2: Rig-level roles (<prefix>-<rig>-witness, <prefix>-<rig>-refinery)
-	if len(parts) == 2 {
-		rig, role := parts[0], parts[1]
-
-		if isRigLevelRole(role) {
-			if rig == "" {
-				return fmt.Errorf("rig name cannot be empty in %q", id)
-			}
-			return nil // Valid rig-level singleton agent
+	// For 2+ parts, scan from the right to find a known role.
+	// This allows rig names to contain hyphens (e.g., "my-project").
+	roleIdx := -1
+	var role string
+	for i := len(parts) - 1; i >= 0; i-- {
+		if isValidRole(parts[i]) {
+			roleIdx = i
+			role = parts[i]
+			break
 		}
-
-		if isNamedRole(role) {
-			return fmt.Errorf("agent role %q requires name: <prefix>-<rig>-%s-<name> (got %q)", role, role, id)
-		}
-
-		if isTownLevelRole(role) {
-			return fmt.Errorf("town-level agent %q cannot have rig suffix (expected <prefix>-%s, got %q)", role, role, id)
-		}
-
-		// First part might be a rig name with second part being something invalid
-		return fmt.Errorf("invalid agent format: expected <prefix>-<rig>-<role>[-<name>] where role is one of: %s (got %q)", strings.Join(ValidAgentRoles, ", "), id)
 	}
 
-	// Case 3: Named roles (<prefix>-<rig>-crew-<name>, <prefix>-<rig>-polecat-<name>)
-	if len(parts) >= 3 {
-		rig, role := parts[0], parts[1]
-		name := strings.Join(parts[2:], "-") // Allow hyphens in names
+	if roleIdx == -1 {
+		return fmt.Errorf("invalid agent format: no valid role found in %q (valid roles: %s)", id, strings.Join(ValidAgentRoles, ", "))
+	}
 
-		if isNamedRole(role) {
-			if rig == "" {
-				return fmt.Errorf("rig name cannot be empty in %q", id)
-			}
-			if name == "" {
-				return fmt.Errorf("agent name cannot be empty in %q", id)
-			}
-			return nil // Valid named agent
-		}
+	// Extract rig (everything before role) and name (everything after role)
+	rig := strings.Join(parts[:roleIdx], "-")
+	name := strings.Join(parts[roleIdx+1:], "-")
 
-		if isRigLevelRole(role) {
-			return fmt.Errorf("agent role %q cannot have name suffix (expected <prefix>-<rig>-%s, got %q)", role, role, id)
-		}
-
-		if isTownLevelRole(role) {
+	// Validate based on role type
+	if isTownLevelRole(role) {
+		if rig != "" || name != "" {
 			return fmt.Errorf("town-level agent %q cannot have rig/name suffixes (expected <prefix>-%s, got %q)", role, role, id)
 		}
+		return nil
+	}
 
-		return fmt.Errorf("invalid agent format: expected <prefix>-<rig>-<role>-<name> where role is one of: %s (got %q)", strings.Join(NamedRoles, ", "), id)
+	if isRigLevelRole(role) {
+		if rig == "" {
+			return fmt.Errorf("agent role %q requires rig: <prefix>-<rig>-%s (got %q)", role, role, id)
+		}
+		if name != "" {
+			return fmt.Errorf("agent role %q cannot have name suffix (expected <prefix>-<rig>-%s, got %q)", role, role, id)
+		}
+		return nil // Valid rig-level singleton agent
+	}
+
+	if isNamedRole(role) {
+		if rig == "" {
+			return fmt.Errorf("rig name cannot be empty in %q", id)
+		}
+		if name == "" {
+			return fmt.Errorf("agent role %q requires name: <prefix>-<rig>-%s-<name> (got %q)", role, role, id)
+		}
+		return nil // Valid named agent
 	}
 
 	return fmt.Errorf("invalid agent ID format: %q", id)
