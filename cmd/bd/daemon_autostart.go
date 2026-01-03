@@ -325,7 +325,14 @@ func canDialSocket(socketPath string, timeout time.Duration) bool {
 //
 //nolint:unparam // timeout is configurable even though current callers use 5s
 func waitForSocketReadiness(socketPath string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
+	// For auto-start scenarios, use shorter timeout to fail fast
+	// Users can set BEADS_NO_DAEMON=1 to skip daemon entirely
+	effectiveTimeout := timeout
+	if effectiveTimeout > 500*time.Millisecond {
+		effectiveTimeout = 500 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(effectiveTimeout)
 	for time.Now().Before(deadline) {
 		if canDialSocket(socketPath, 200*time.Millisecond) {
 			return true
