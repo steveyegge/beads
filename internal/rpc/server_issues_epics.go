@@ -142,6 +142,10 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if len(a.Waiters) > 0 {
 		u["waiters"] = a.Waiters
 	}
+	// Slot fields
+	if a.Holder != nil {
+		u["holder"] = *a.Holder
+	}
 	return u
 }
 

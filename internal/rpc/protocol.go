@@ -164,6 +164,8 @@ type UpdateArgs struct {
 	// Gate fields
 	AwaitID *string  `json:"await_id,omitempty"` // Condition identifier for gates (run ID, PR number, etc.)
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
+	// Slot fields
+	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
 }
 
 // CloseArgs represents arguments for the close operation
