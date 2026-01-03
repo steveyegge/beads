@@ -702,6 +702,8 @@ var allowedUpdateFields = map[string]bool{
 	// Time-based scheduling fields (GH#820)
 	"due_at":      true,
 	"defer_until": true,
+	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
+	"await_id": true,
 }
 
 // validatePriority validates a priority value

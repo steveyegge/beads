@@ -135,6 +135,17 @@ func updatesFromArgs(a UpdateArgs) map[string]interface{} {
 	if a.EventPayload != nil {
 		u["event_payload"] = *a.EventPayload
 	}
+	// Gate fields
+	if a.AwaitID != nil {
+		u["await_id"] = *a.AwaitID
+	}
+	if len(a.Waiters) > 0 {
+		u["waiters"] = a.Waiters
+	}
+	// Slot fields
+	if a.Holder != nil {
+		u["holder"] = *a.Holder
+	}
 	return u
 }
 

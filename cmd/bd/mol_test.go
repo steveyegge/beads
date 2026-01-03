@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -2525,5 +2526,308 @@ func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 				t.Errorf("Ephemeral issue %s should not appear in ready work", spawnedID)
 			}
 		}
+	}
+}
+
+// TestCompoundMoleculeVisualization tests the compound molecule display in mol show
+func TestCompoundMoleculeVisualization(t *testing.T) {
+	// Test IsCompound() and GetConstituents()
+	tests := []struct {
+		name          string
+		bondedFrom    []types.BondRef
+		isCompound    bool
+		expectedCount int
+	}{
+		{
+			name:          "not a compound - no BondedFrom",
+			bondedFrom:    nil,
+			isCompound:    false,
+			expectedCount: 0,
+		},
+		{
+			name:          "not a compound - empty BondedFrom",
+			bondedFrom:    []types.BondRef{},
+			isCompound:    false,
+			expectedCount: 0,
+		},
+		{
+			name: "compound with one constituent",
+			bondedFrom: []types.BondRef{
+				{SourceID: "proto-a", BondType: types.BondTypeSequential},
+			},
+			isCompound:    true,
+			expectedCount: 1,
+		},
+		{
+			name: "compound with two constituents - sequential bond",
+			bondedFrom: []types.BondRef{
+				{SourceID: "proto-a", BondType: types.BondTypeSequential},
+				{SourceID: "proto-b", BondType: types.BondTypeSequential},
+			},
+			isCompound:    true,
+			expectedCount: 2,
+		},
+		{
+			name: "compound with parallel bond",
+			bondedFrom: []types.BondRef{
+				{SourceID: "proto-a", BondType: types.BondTypeParallel},
+				{SourceID: "proto-b", BondType: types.BondTypeParallel},
+			},
+			isCompound:    true,
+			expectedCount: 2,
+		},
+		{
+			name: "compound with bond point",
+			bondedFrom: []types.BondRef{
+				{SourceID: "proto-a", BondType: types.BondTypeSequential, BondPoint: "step-2"},
+			},
+			isCompound:    true,
+			expectedCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := &types.Issue{
+				ID:         "test-compound",
+				Title:      "Test Compound Molecule",
+				BondedFrom: tt.bondedFrom,
+			}
+
+			if got := issue.IsCompound(); got != tt.isCompound {
+				t.Errorf("IsCompound() = %v, want %v", got, tt.isCompound)
+			}
+
+			constituents := issue.GetConstituents()
+			if len(constituents) != tt.expectedCount {
+				t.Errorf("GetConstituents() returned %d items, want %d", len(constituents), tt.expectedCount)
+			}
+		})
+	}
+}
+
+// TestFormatBondType tests the formatBondType helper function
+func TestFormatBondType(t *testing.T) {
+	tests := []struct {
+		bondType string
+		expected string
+	}{
+		{types.BondTypeSequential, "sequential"},
+		{types.BondTypeParallel, "parallel"},
+		{types.BondTypeConditional, "on-failure"},
+		{types.BondTypeRoot, "root"},
+		{"", "default"},
+		{"custom-type", "custom-type"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.bondType, func(t *testing.T) {
+			if got := formatBondType(tt.bondType); got != tt.expected {
+				t.Errorf("formatBondType(%q) = %q, want %q", tt.bondType, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestPourRootTitleDescSubstitution verifies that the root molecule's title and description
+// are substituted with {{title}} and {{desc}} variables when pouring a formula.
+// This is a tracer bullet test for GitHub issue #852:
+// https://github.com/steveyegge/beads/issues/852
+func TestPourRootTitleDescSubstitution(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Create a formula that has title and desc variables
+	f := &formula.Formula{
+		Formula:     "mol-task",
+		Description: "Standard task workflow for 2-8 hour work...",
+		Version:     1,
+		Type:        formula.TypeWorkflow,
+		Vars: map[string]*formula.VarDef{
+			"title": {
+				Description: "Task title",
+				Required:    true,
+			},
+			"desc": {
+				Description: "Task description",
+				Required:    false,
+				Default:     "No description provided",
+			},
+		},
+		Steps: []*formula.Step{
+			{ID: "plan", Title: "Plan: {{title}}", Type: "task"},
+			{ID: "implement", Title: "Implement: {{title}}", Type: "task", DependsOn: []string{"plan"}},
+			{ID: "verify", Title: "Verify: {{title}}", Type: "task", DependsOn: []string{"implement"}},
+			{ID: "review", Title: "Review: {{title}}", Type: "task", DependsOn: []string{"verify"}},
+		},
+	}
+
+	// Cook the formula to a subgraph (in-memory, no DB)
+	subgraph, err := cookFormulaToSubgraphWithVars(f, f.Formula, f.Vars)
+	if err != nil {
+		t.Fatalf("Failed to cook formula: %v", err)
+	}
+
+	// Spawn with title and desc variables
+	vars := map[string]string{
+		"title": "My Task",
+		"desc":  "My description",
+	}
+
+	result, err := spawnMolecule(ctx, s, subgraph, vars, "", "test", false, "mol")
+	if err != nil {
+		t.Fatalf("spawnMolecule failed: %v", err)
+	}
+
+	// Get the spawned root issue
+	spawnedRoot, err := s.GetIssue(ctx, result.NewEpicID)
+	if err != nil {
+		t.Fatalf("Failed to get spawned root: %v", err)
+	}
+
+	// BUG: The root title should contain "My Task" but currently contains "mol-task"
+	// because cookFormulaToSubgraph sets root.Title = f.Formula instead of using
+	// a template that includes {{title}}.
+	if !strings.Contains(spawnedRoot.Title, "My Task") {
+		t.Errorf("Root title should contain 'My Task' from variable substitution, got: %q", spawnedRoot.Title)
+	}
+
+	// BUG: The root description should contain "My description" but currently
+	// contains the formula's static description.
+	if !strings.Contains(spawnedRoot.Description, "My description") {
+		t.Errorf("Root description should contain 'My description' from variable substitution, got: %q", spawnedRoot.Description)
+	}
+
+	// Verify child beads DO have correct substitution (this should pass)
+	for oldID, newID := range result.IDMapping {
+		if oldID == f.Formula {
+			continue // Skip root
+		}
+		spawned, err := s.GetIssue(ctx, newID)
+		if err != nil {
+			t.Fatalf("Failed to get spawned issue %s: %v", newID, err)
+		}
+		if !strings.Contains(spawned.Title, "My Task") {
+			t.Errorf("Child issue %s (from %s) title should contain 'My Task', got: %q", newID, oldID, spawned.Title)
+		}
+	}
+}
+
+// TestPourRootTitleOnly verifies edge case: only title var defined, no desc.
+// Root should use {{title}} for title, but keep formula description.
+func TestPourRootTitleOnly(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Formula with only title var (no desc)
+	f := &formula.Formula{
+		Formula:     "mol-simple",
+		Description: "Static description that should be preserved",
+		Version:     1,
+		Type:        formula.TypeWorkflow,
+		Vars: map[string]*formula.VarDef{
+			"title": {Description: "Task title", Required: true},
+		},
+		Steps: []*formula.Step{
+			{ID: "work", Title: "Do: {{title}}", Type: "task"},
+		},
+	}
+
+	subgraph, err := cookFormulaToSubgraphWithVars(f, f.Formula, f.Vars)
+	if err != nil {
+		t.Fatalf("Failed to cook formula: %v", err)
+	}
+
+	vars := map[string]string{"title": "Custom Title"}
+	result, err := spawnMolecule(ctx, s, subgraph, vars, "", "test", false, "mol")
+	if err != nil {
+		t.Fatalf("spawnMolecule failed: %v", err)
+	}
+
+	spawnedRoot, err := s.GetIssue(ctx, result.NewEpicID)
+	if err != nil {
+		t.Fatalf("Failed to get spawned root: %v", err)
+	}
+
+	// Title should be substituted
+	if !strings.Contains(spawnedRoot.Title, "Custom Title") {
+		t.Errorf("Root title should contain 'Custom Title', got: %q", spawnedRoot.Title)
+	}
+
+	// Description should be the static formula description (no desc var)
+	if spawnedRoot.Description != "Static description that should be preserved" {
+		t.Errorf("Root description should be static formula desc, got: %q", spawnedRoot.Description)
+	}
+}
+
+// TestPourRootNoVars verifies backward compatibility: no title/desc vars defined.
+// Root should use formula name and formula description (original behavior).
+func TestPourRootNoVars(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/test.db"
+	s, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer s.Close()
+	if err := s.SetConfig(ctx, "issue_prefix", "mol"); err != nil {
+		t.Fatalf("Failed to set config: %v", err)
+	}
+
+	// Formula with no title/desc vars (uses different var names)
+	f := &formula.Formula{
+		Formula:     "mol-release",
+		Description: "Release workflow for version bumps",
+		Version:     1,
+		Type:        formula.TypeWorkflow,
+		Vars: map[string]*formula.VarDef{
+			"version": {Description: "Version number", Required: true},
+		},
+		Steps: []*formula.Step{
+			{ID: "bump", Title: "Bump to {{version}}", Type: "task"},
+			{ID: "tag", Title: "Tag {{version}}", Type: "task", DependsOn: []string{"bump"}},
+		},
+	}
+
+	subgraph, err := cookFormulaToSubgraphWithVars(f, f.Formula, f.Vars)
+	if err != nil {
+		t.Fatalf("Failed to cook formula: %v", err)
+	}
+
+	vars := map[string]string{"version": "1.2.3"}
+	result, err := spawnMolecule(ctx, s, subgraph, vars, "", "test", false, "mol")
+	if err != nil {
+		t.Fatalf("spawnMolecule failed: %v", err)
+	}
+
+	spawnedRoot, err := s.GetIssue(ctx, result.NewEpicID)
+	if err != nil {
+		t.Fatalf("Failed to get spawned root: %v", err)
+	}
+
+	// Title should be formula name (no title var defined)
+	if spawnedRoot.Title != "mol-release" {
+		t.Errorf("Root title should be formula name 'mol-release', got: %q", spawnedRoot.Title)
+	}
+
+	// Description should be formula description (no desc var defined)
+	if spawnedRoot.Description != "Release workflow for version bumps" {
+		t.Errorf("Root description should be formula desc, got: %q", spawnedRoot.Description)
 	}
 }
