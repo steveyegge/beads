@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/steveyegge/beads/internal/importer"
 	"github.com/steveyegge/beads/internal/storage"
@@ -165,7 +166,7 @@ type ImportOptions struct {
 	SkipPrefixValidation       bool              // Skip prefix validation (for auto-import)
 	ClearDuplicateExternalRefs bool              // Clear duplicate external_ref values instead of erroring
 	OrphanHandling             string            // Orphan handling mode: strict/resurrect/skip/allow (empty = use config)
-	ProtectLocalExportIDs      map[string]bool   // IDs from left snapshot to protect from git-history-backfill (bd-sync-deletion fix)
+	ProtectLocalExportIDs      map[string]time.Time // IDs from left snapshot with timestamps for timestamp-aware protection (GH#865)
 }
 
 // ImportResult contains statistics about the import operation
