@@ -161,6 +161,8 @@ type UpdateArgs struct {
 	// Time-based scheduling fields (GH#820)
 	DueAt      *string `json:"due_at,omitempty"`      // Relative or ISO format due date
 	DeferUntil *string `json:"defer_until,omitempty"` // Relative or ISO format defer date
+	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
+	AwaitID *string `json:"await_id,omitempty"` // Condition identifier for gates (run ID, PR number, etc.)
 }
 
 // CloseArgs represents arguments for the close operation

@@ -134,6 +134,11 @@ create, update, show, or close operation).`,
 			}
 			updates["issue_type"] = issueType
 		}
+		// Gate fields (bd-z6kw)
+		if cmd.Flags().Changed("await-id") {
+			awaitID, _ := cmd.Flags().GetString("await-id")
+			updates["await_id"] = awaitID
+		}
 		// Time-based scheduling flags (GH#820)
 		if cmd.Flags().Changed("due") {
 			dueStr, _ := cmd.Flags().GetString("due")
@@ -263,6 +268,10 @@ create, update, show, or close operation).`,
 				}
 				if parent, ok := updates["parent"].(string); ok {
 					updateArgs.Parent = &parent
+				}
+				// Gate fields (bd-z6kw)
+				if awaitID, ok := updates["await_id"].(string); ok {
+					updateArgs.AwaitID = &awaitID
 				}
 				// Time-based scheduling (GH#820)
 				if dueAt, ok := updates["due_at"].(time.Time); ok {
@@ -591,5 +600,7 @@ func init() {
 	//   --defer=""          Clear defer (show in bd ready immediately)
 	updateCmd.Flags().String("due", "", "Due date/time (empty to clear). Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	updateCmd.Flags().String("defer", "", "Defer until date (empty to clear). Issue hidden from bd ready until then")
+	// Gate fields (bd-z6kw)
+	updateCmd.Flags().String("await-id", "", "Set gate await_id (e.g., GitHub run ID for gh:run gates)")
 	rootCmd.AddCommand(updateCmd)
 }
