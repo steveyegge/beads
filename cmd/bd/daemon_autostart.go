@@ -328,8 +328,8 @@ func waitForSocketReadiness(socketPath string, timeout time.Duration) bool {
 	// For auto-start scenarios, use shorter timeout to fail fast
 	// Users can set BEADS_NO_DAEMON=1 to skip daemon entirely
 	effectiveTimeout := timeout
-	if effectiveTimeout > 500*time.Millisecond {
-		effectiveTimeout = 500 * time.Millisecond
+	if effectiveTimeout > 3*time.Second {
+		effectiveTimeout = 3 * time.Second
 	}
 
 	deadline := time.Now().Add(effectiveTimeout)

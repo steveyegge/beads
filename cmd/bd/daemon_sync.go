@@ -311,25 +311,25 @@ func validateDatabaseFingerprint(ctx context.Context, store storage.Storage, log
 		return fmt.Errorf("failed to read repo_id: %w", err)
 	}
 
-	// If no repo_id, this is a legacy database - require explicit migration
+	// If no repo_id, this is a legacy database - auto-migrate
 	if storedRepoID == "" {
-		return fmt.Errorf(`
-LEGACY DATABASE DETECTED!
+		log.log("Legacy database detected (missing repo_id), auto-migrating...")
 
-This database was created before version 0.17.5 and lacks a repository fingerprint.
-To continue using this database, you must explicitly set its repository ID:
+		// Compute repository fingerprint
+		currentRepoID, err := beads.ComputeRepoID()
+		if err != nil {
+			return fmt.Errorf("auto-migration failed: could not compute repo ID: %w", err)
+		}
 
-  bd migrate --update-repo-id
+		// Set the repository ID
+		if err := store.SetMetadata(ctx, "repo_id", currentRepoID); err != nil {
+			return fmt.Errorf("auto-migration failed: could not set repo_id: %w", err)
+		}
 
-This ensures the database is bound to this repository and prevents accidental
-database sharing between different repositories.
+		log.log("✓ Auto-migrated legacy database (repo_id: %s)", currentRepoID)
 
-If this is a fresh clone, run:
-  rm -rf .beads && bd init
-
-Note: Auto-claiming legacy databases is intentionally disabled to prevent
-silent corruption when databases are copied between repositories.
-`)
+		// Note: CLI will show one-time notification after successful daemon connection
+		// This is handled in main.go after first RPC success
 	}
 
 	// Validate repo ID matches current repository
