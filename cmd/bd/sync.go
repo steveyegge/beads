@@ -382,7 +382,11 @@ Use --merge to merge the sync branch back to main branch.`,
 		var repoRoot string
 		var useSyncBranch bool
 		var onSyncBranch bool // GH#519: track if we're on the sync branch
+		// GH#872: Get configured remote from sync.remote (for fork workflows, etc.)
+		var configuredRemote string
 		if err := ensureStoreActive(); err == nil && store != nil {
+			// Read sync.remote config (e.g., "upstream" for fork workflows)
+			configuredRemote, _ = store.GetConfig(ctx, "sync.remote")
 			syncBranchName, _ = syncbranch.Get(ctx, store)
 			if syncBranchName != "" && syncbranch.HasGitRemote(ctx) {
 				// GH#829/bd-e2q9/bd-kvus: Get repo root from beads location, not cwd.
@@ -629,12 +633,15 @@ Use --merge to merge the sync branch back to main branch.`,
 					checkMergeDriverConfig()
 
 					// GH#519: show appropriate message when on sync branch
+					// GH#872: show configured remote if using sync.remote
 					if onSyncBranch {
 						fmt.Printf("→ Pulling from remote on sync branch '%s'...\n", syncBranchName)
+					} else if configuredRemote != "" {
+						fmt.Printf("→ Pulling from %s...\n", configuredRemote)
 					} else {
 						fmt.Println("→ Pulling from remote...")
 					}
-					err := gitPull(ctx)
+					err := gitPull(ctx, configuredRemote)
 					if err != nil {
 						// Check if it's a rebase conflict on beads.jsonl that we can auto-resolve
 						if isInRebase() && hasJSONLConflict() {
@@ -789,12 +796,21 @@ Use --merge to merge the sync branch back to main branch.`,
 		// Step 5: Push to remote (skip if using sync branch - all pushes go via worktree)
 		// When sync.branch is configured, we don't push the main branch at all.
 		// The sync branch worktree handles all pushes.
+		// GH#872: Use sync.remote config if set
 		if !noPush && hasChanges && !pushedViaSyncBranch && !useSyncBranch {
 			if dryRun {
-				fmt.Println("→ [DRY RUN] Would push to remote")
+				if configuredRemote != "" {
+					fmt.Printf("→ [DRY RUN] Would push to %s\n", configuredRemote)
+				} else {
+					fmt.Println("→ [DRY RUN] Would push to remote")
+				}
 			} else {
-				fmt.Println("→ Pushing to remote...")
-				if err := gitPush(ctx); err != nil {
+				if configuredRemote != "" {
+					fmt.Printf("→ Pushing to %s...\n", configuredRemote)
+				} else {
+					fmt.Println("→ Pushing to remote...")
+				}
+				if err := gitPush(ctx, configuredRemote); err != nil {
 					FatalErrorWithHint(fmt.Sprintf("pushing: %v", err), "pull may have brought new changes, run 'bd sync' again")
 				}
 			}
