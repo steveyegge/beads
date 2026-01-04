@@ -1179,6 +1179,59 @@ func TestCreateBeadsWorktree_MissingButRegistered(t *testing.T) {
 	}
 }
 
+// TestCreateBeadsWorktree_MainRepoSparseCheckoutDisabled tests that creating a worktree
+// does not leave core.sparseCheckout enabled on the main repo (GH#886).
+// Git 2.38+ enables sparse checkout on the main repo as a side effect of worktree creation,
+// which causes confusing "You are in a sparse checkout with 100% of tracked files present"
+// message in git status.
+func TestCreateBeadsWorktree_MainRepoSparseCheckoutDisabled(t *testing.T) {
+	repoPath, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	wm := NewWorktreeManager(repoPath)
+	worktreePath := filepath.Join(t.TempDir(), "beads-worktree-gh886")
+
+	// Verify sparse checkout is not enabled before worktree creation
+	cmd := exec.Command("git", "config", "--get", "core.sparseCheckout")
+	cmd.Dir = repoPath
+	output, _ := cmd.Output()
+	initialValue := strings.TrimSpace(string(output))
+	// Empty or "false" are both acceptable initial states
+	if initialValue == "true" {
+		t.Log("Note: sparse checkout was already enabled before test")
+	}
+
+	// Create worktree
+	if err := wm.CreateBeadsWorktree("beads-gh886", worktreePath); err != nil {
+		t.Fatalf("CreateBeadsWorktree failed: %v", err)
+	}
+
+	// Verify sparse checkout is disabled on main repo after worktree creation
+	cmd = exec.Command("git", "config", "--get", "core.sparseCheckout")
+	cmd.Dir = repoPath
+	output, _ = cmd.Output()
+	finalValue := strings.TrimSpace(string(output))
+
+	// Should be either empty (unset) or "false"
+	if finalValue == "true" {
+		t.Errorf("GH#886: Main repo has core.sparseCheckout=true after worktree creation. "+
+			"This causes confusing git status message. Value should be 'false' or unset, got: %q", finalValue)
+	}
+
+	// Verify that sparse checkout functionality STILL WORKS in the worktree
+	// (the patterns were applied during checkout, before we disabled the config)
+	// Check that .beads exists but other.txt does not
+	beadsDir := filepath.Join(worktreePath, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		t.Error(".beads directory should exist in worktree (sparse checkout should include it)")
+	}
+
+	otherFile := filepath.Join(worktreePath, "other.txt")
+	if _, err := os.Stat(otherFile); err == nil {
+		t.Error("other.txt should NOT exist in worktree (sparse checkout should exclude it)")
+	}
+}
+
 // TestNormalizeBeadsRelPath tests path normalization for bare repo worktrees (GH#785, GH#810)
 func TestNormalizeBeadsRelPath(t *testing.T) {
 	tests := []struct {
