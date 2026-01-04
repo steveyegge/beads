@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/beads/internal/daemon"
+	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // CheckDaemonStatus checks the health of the daemon for a workspace.
@@ -121,4 +123,40 @@ func CheckVersionMismatch(db *sql.DB, cliVersion string) string {
 	}
 
 	return ""
+}
+
+// CheckGitSyncSetup checks if git repository and sync-branch are configured for daemon sync.
+// This is informational - beads works fine without git sync, but users may want to enable it.
+func CheckGitSyncSetup(path string) DoctorCheck {
+	// Check if we're in a git repository
+	_, err := git.GetGitDir()
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Git Sync Setup",
+			Status:   StatusWarning,
+			Message:  "No git repository (background sync unavailable)",
+			Detail:   "The daemon requires a git repository for background sync. Without it, beads runs in direct mode.",
+			Fix:      "Run 'git init' to enable background sync",
+			Category: CategoryRuntime,
+		}
+	}
+
+	// Git repo exists - check if sync-branch is configured
+	if !syncbranch.IsConfigured() {
+		return DoctorCheck{
+			Name:     "Git Sync Setup",
+			Status:   StatusOK,
+			Message:  "Git repository detected (sync-branch not configured)",
+			Detail:   "Beads commits directly to current branch. For team collaboration or to keep beads changes isolated, consider using a sync-branch.",
+			Fix:      "Run 'bd config set sync.branch beads-sync' to use a dedicated branch for beads metadata",
+			Category: CategoryRuntime,
+		}
+	}
+
+	return DoctorCheck{
+		Name:     "Git Sync Setup",
+		Status:   StatusOK,
+		Message:  "Git repository and sync-branch configured",
+		Category: CategoryRuntime,
+	}
 }

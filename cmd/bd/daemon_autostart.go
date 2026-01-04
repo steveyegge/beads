@@ -310,6 +310,14 @@ func determineSocketPath(socketPath string) string {
 }
 
 func startDaemonProcess(socketPath string) bool {
+	// Early check: daemon requires a git repository (unless --local mode)
+	// Skip attempting to start and avoid the 5-second wait if not in git repo
+	if !isGitRepo() {
+		debugLog("not in a git repository, skipping daemon start")
+		fmt.Fprintf(os.Stderr, "%s No git repository initialized - running without background sync\n", ui.RenderMuted("Note:"))
+		return false
+	}
+
 	binPath, err := executableFn()
 	if err != nil {
 		binPath = os.Args[0]
