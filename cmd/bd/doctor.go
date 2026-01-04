@@ -368,6 +368,14 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 9a: Sync divergence (JSONL/SQLite/git) - GH#885
+	syncDivergenceCheck := convertWithCategory(doctor.CheckSyncDivergence(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, syncDivergenceCheck)
+	if syncDivergenceCheck.Status == statusError {
+		result.OverallOK = false
+	}
+	// Warning-level divergence is informational, doesn't fail overall
+
 	// Check 9: Permissions
 	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)
 	result.Checks = append(result.Checks, permCheck)
