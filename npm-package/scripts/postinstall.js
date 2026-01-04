@@ -120,28 +120,53 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
   }
 }
 
-// Extract zip file (for Windows)
-function extractZip(zipPath, destDir, binaryName) {
+// Sleep helper for retry logic
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Extract zip file (for Windows) with retry logic
+async function extractZip(zipPath, destDir, binaryName) {
   console.log(`Extracting ${zipPath}...`);
 
-  try {
-    // Use unzip command or powershell on Windows
-    if (os.platform() === 'win32') {
-      execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
-    } else {
-      execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'inherit' });
+  const maxRetries = 5;
+  const baseDelayMs = 500;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Use unzip command or powershell on Windows
+      if (os.platform() === 'win32') {
+        execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
+      } else {
+        execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'inherit' });
+      }
+
+      // The binary should now be in destDir
+      const extractedBinary = path.join(destDir, binaryName);
+
+      if (!fs.existsSync(extractedBinary)) {
+        throw new Error(`Binary not found after extraction: ${extractedBinary}`);
+      }
+
+      console.log(`Binary extracted to: ${extractedBinary}`);
+      return; // Success
+    } catch (err) {
+      const isFileLockError = err.message && (
+        err.message.includes('being used by another process') ||
+        err.message.includes('Access is denied') ||
+        err.message.includes('cannot access the file')
+      );
+
+      if (isFileLockError && attempt < maxRetries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`File may be locked (attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`);
+        await sleep(delayMs);
+      } else if (attempt === maxRetries) {
+        throw new Error(`Failed to extract archive after ${maxRetries} attempts: ${err.message}`);
+      } else {
+        throw new Error(`Failed to extract archive: ${err.message}`);
+      }
     }
-
-    // The binary should now be in destDir
-    const extractedBinary = path.join(destDir, binaryName);
-
-    if (!fs.existsSync(extractedBinary)) {
-      throw new Error(`Binary not found after extraction: ${extractedBinary}`);
-    }
-
-    console.log(`Binary extracted to: ${extractedBinary}`);
-  } catch (err) {
-    throw new Error(`Failed to extract archive: ${err.message}`);
   }
 }
 
@@ -175,7 +200,7 @@ async function install() {
 
     // Extract the archive based on platform
     if (platformName === 'windows') {
-      extractZip(archivePath, binDir, binaryName);
+      await extractZip(archivePath, binDir, binaryName);
     } else {
       extractTarGz(archivePath, binDir, binaryName);
     }
