@@ -27,6 +27,10 @@ function getPlatformInfo() {
     case 'linux':
       platformName = 'linux';
       break;
+    case 'android':
+      // Android/Termux uses Linux binaries
+      platformName = 'linux';
+      break;
     case 'win32':
       platformName = 'windows';
       binaryName = 'bd.exe';
@@ -109,7 +113,7 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
       throw new Error(`Binary not found after extraction: ${extractedBinary}`);
     }
 
-    // Make executable on Unix-like systems
+    // Make executable on Unix-like systems (Linux, macOS, Android)
     if (os.platform() !== 'win32') {
       fs.chmodSync(extractedBinary, 0o755);
     }
@@ -145,12 +149,72 @@ function extractZip(zipPath, destDir, binaryName) {
   }
 }
 
+// Build from source (for Android/Termux)
+function buildFromSource(binaryPath) {
+  console.log('Building bd from source for Android/Termux...');
+
+  try {
+    // Check if Go is installed
+    try {
+      execSync('go version', { stdio: 'pipe' });
+    } catch (err) {
+      throw new Error('Go is not installed. Please install Go to build bd for Android/Termux.\n' +
+        'Install Go in Termux: pkg install golang');
+    }
+
+    // Check if we're in the git repo (for development installs)
+    const repoRoot = path.resolve(__dirname, '../..');
+    const cmdBdPath = path.join(repoRoot, 'cmd', 'bd');
+
+    if (fs.existsSync(cmdBdPath)) {
+      // Build from the repository
+      console.log('Building from repository source...');
+      execSync(`go build -o "${binaryPath}" ./cmd/bd`, {
+        cwd: repoRoot,
+        stdio: 'inherit'
+      });
+    } else {
+      // For npm installs, guide user to install from source
+      throw new Error(
+        'Android/Termux requires building from source.\n\n' +
+        'Please install using one of these methods:\n\n' +
+        '1. Install from source with Go:\n' +
+        '   go install github.com/steveyegge/beads/cmd/bd@latest\n\n' +
+        '2. Clone and build:\n' +
+        '   git clone https://github.com/steveyegge/beads.git\n' +
+        '   cd beads\n' +
+        '   go build -o bd ./cmd/bd\n' +
+        '   mv bd ~/.local/bin/  # or any directory in your PATH'
+      );
+    }
+  } catch (err) {
+    throw err;
+  }
+}
+
 // Main installation function
 async function install() {
   try {
     const { platformName, archName, binaryName } = getPlatformInfo();
+    const platform = os.platform();
 
     console.log(`Installing bd v${VERSION} for ${platformName}-${archName}...`);
+
+    // Determine destination paths
+    const binDir = path.join(__dirname, '..', 'bin');
+    const binaryPath = path.join(binDir, binaryName);
+
+    // Ensure bin directory exists
+    if (!fs.existsSync(binDir)) {
+      fs.mkdirSync(binDir, { recursive: true });
+    }
+
+    // Handle Android/Termux specially
+    if (platform === 'android') {
+      buildFromSource(binaryPath);
+      console.log(`✓ bd built successfully for Android/Termux`);
+      return;
+    }
 
     // Construct download URL
     // Format: https://github.com/steveyegge/beads/releases/download/v0.21.5/beads_0.21.5_darwin_amd64.tar.gz
@@ -158,16 +222,7 @@ async function install() {
     const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
     const archiveName = `beads_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
     const downloadUrl = `https://github.com/steveyegge/beads/releases/download/v${releaseVersion}/${archiveName}`;
-
-    // Determine destination paths
-    const binDir = path.join(__dirname, '..', 'bin');
     const archivePath = path.join(binDir, archiveName);
-    const binaryPath = path.join(binDir, binaryName);
-
-    // Ensure bin directory exists
-    if (!fs.existsSync(binDir)) {
-      fs.mkdirSync(binDir, { recursive: true });
-    }
 
     // Download the archive
     console.log(`Downloading bd binary...`);
