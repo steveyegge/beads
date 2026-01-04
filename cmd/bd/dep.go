@@ -64,9 +64,19 @@ is "shipped" in the target project.
 Examples:
   bd dep add bd-42 bd-41                              # Local dependency
   bd dep add gt-xyz external:beads:mol-run-assignee   # Cross-project dependency`,
-	Args: cobra.ExactArgs(2),
+	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("dep add")
+		if len(args) == 1 {
+			parent, _ := cmd.Flags().GetString("blocked-by")
+			if parent == "" {
+				parent, _ = cmd.Flags().GetString("depends-on")
+			}
+			if parent == "" {
+				FatalErrorRespectJSON("requires a parent issue ID (provide it as 2nd argument or use --blocked-by)")
+			}
+			args = append(args, parent)
+		}
 		depType, _ := cmd.Flags().GetString("type")
 
 		ctx := rootCtx
@@ -361,7 +371,7 @@ var depRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		CheckReadonly("dep remove")
 		ctx := rootCtx
-		
+
 		// Resolve partial IDs first
 		var fromID, toID string
 		if daemonClient != nil {
@@ -420,7 +430,7 @@ var depRemoveCmd = &cobra.Command{
 		// Direct mode
 		fullFromID := fromID
 		fullToID := toID
-		
+
 		if err := store.RemoveDependency(ctx, fullFromID, fullToID, actor); err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -985,6 +995,8 @@ func init() {
 	depTreeCmd.Flags().String("direction", "", "Tree direction: 'down' (dependencies), 'up' (dependents), or 'both'")
 	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)")
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
+	depAddCmd.Flags().String("blocked-by", "", "The issue that blocks the current issue")
+	depAddCmd.Flags().String("depends-on", "", "Alias for --blocked-by")
 	depTreeCmd.Flags().StringP("type", "t", "", "Filter to only show dependencies of this type (e.g., tracks, blocks, parent-child)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 
