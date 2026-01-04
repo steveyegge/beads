@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -117,11 +118,12 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	autoSync := !(response == "n" || response == "no")
 
 	if autoSync {
-		if err := store.SetConfig(ctx, "daemon.auto_commit", "true"); err != nil {
+		// GH#871: Write to config.yaml for team-wide settings (version controlled)
+		if err := config.SetYamlConfig("daemon.auto_commit", "true"); err != nil {
 			return fmt.Errorf("failed to enable auto-commit: %w", err)
 		}
 
-		if err := store.SetConfig(ctx, "daemon.auto_push", "true"); err != nil {
+		if err := config.SetYamlConfig("daemon.auto_push", "true"); err != nil {
 			return fmt.Errorf("failed to enable auto-push: %w", err)
 		}
 

@@ -46,6 +46,11 @@ var YamlOnlyKeys = map[string]bool{
 	"sync.branch":                           true,
 	"sync.require_confirmation_on_mass_delete": true,
 
+	// Daemon settings (GH#871: team-wide auto-sync config)
+	"daemon.auto_commit": true,
+	"daemon.auto_push":   true,
+	"daemon.auto_pull":   true,
+
 	// Routing settings
 	"routing.mode":        true,
 	"routing.default":     true,
@@ -70,7 +75,7 @@ func IsYamlOnlyKey(key string) bool {
 	}
 
 	// Check prefix matches for nested keys
-	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation."}
+	prefixes := []string{"routing.", "sync.", "git.", "directory.", "repos.", "external_projects.", "validation.", "daemon."}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
