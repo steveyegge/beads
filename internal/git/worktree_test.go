@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1230,6 +1231,60 @@ func TestCreateBeadsWorktree_MainRepoSparseCheckoutDisabled(t *testing.T) {
 	otherFile := filepath.Join(worktreePath, "other.txt")
 	if _, err := os.Stat(otherFile); err == nil {
 		t.Error("other.txt should NOT exist in worktree (sparse checkout should exclude it)")
+	}
+}
+
+// TestGetRepoRootCanonicalCase tests that GetRepoRoot returns paths with correct
+// filesystem case on case-insensitive filesystems (GH#880)
+func TestGetRepoRootCanonicalCase(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("case canonicalization test only runs on macOS")
+	}
+
+	// Create a repo with mixed-case directory
+	tmpDir := t.TempDir()
+	mixedCaseDir := filepath.Join(tmpDir, "TestRepo")
+	if err := os.MkdirAll(mixedCaseDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = mixedCaseDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to init git repo: %v\nOutput: %s", err, string(output))
+	}
+
+	// Save cwd and change to the repo using WRONG case
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current dir: %v", err)
+	}
+	defer func() { _ = os.Chdir(originalDir) }()
+
+	// Access the repo with lowercase (wrong case)
+	wrongCasePath := filepath.Join(tmpDir, "testrepo")
+
+	// Verify the wrong case path works on macOS (case-insensitive)
+	if _, err := os.Stat(wrongCasePath); err != nil {
+		t.Fatalf("Wrong case path should be accessible on macOS: %v", err)
+	}
+
+	if err := os.Chdir(wrongCasePath); err != nil {
+		t.Fatalf("Failed to chdir with wrong case: %v", err)
+	}
+
+	ResetCaches() // Reset git context cache
+
+	// GetRepoRoot should return the canonical case (TestRepo, not testrepo)
+	repoRoot := GetRepoRoot()
+	if repoRoot == "" {
+		t.Fatal("GetRepoRoot returned empty string")
+	}
+
+	// The path should end with "TestRepo" (correct case), not "testrepo"
+	if !strings.HasSuffix(repoRoot, "TestRepo") {
+		t.Errorf("GetRepoRoot() = %q, want path ending in 'TestRepo' (correct case)", repoRoot)
 	}
 }
 
