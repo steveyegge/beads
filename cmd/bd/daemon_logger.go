@@ -149,6 +149,12 @@ func SetupStderrLogger(jsonFormat bool, level slog.Level) daemonLogger {
 // newTestLogger creates a no-op logger for testing.
 // Logs are discarded - use this when you don't need to verify log output.
 func newTestLogger() daemonLogger {
+	return newSilentLogger()
+}
+
+// newSilentLogger creates a logger that discards all output.
+// Use this for operations that need a logger but shouldn't produce output.
+func newSilentLogger() daemonLogger {
 	return daemonLogger{
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
