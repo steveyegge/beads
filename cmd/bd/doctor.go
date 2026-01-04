@@ -349,7 +349,12 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8: Daemon health
+	// Check 8a: Git sync setup (informational - explains why daemon might not start)
+	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, gitSyncCheck)
+	// Don't fail overall check for git sync warning - beads works fine without git
+
+	// Check 8b: Daemon health
 	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
