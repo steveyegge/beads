@@ -384,6 +384,27 @@ func TestOutputMermaidTree(t *testing.T) {
 		})
 	}
 }
+func TestDepAddFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		flagName string
+	}{
+		{"blocked-by flag", "blocked-by"},
+		{"depends-on flag", "depends-on"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flag := depAddCmd.Flags().Lookup(tt.flagName)
+			if flag == nil {
+				t.Fatalf("depAddCmd should have --%s flag", tt.flagName)
+			}
+			if flag.DefValue != "" {
+				t.Errorf("Expected default value for --%s to be empty, got %q", tt.flagName, flag.DefValue)
+			}
+		})
+	}
+}
 
 func TestOutputMermaidTree_Siblings(t *testing.T) {
 	// Test case: Siblings with children (reproduces issue with wrong parent inference)
@@ -451,10 +472,10 @@ func TestOutputMermaidTree_Siblings(t *testing.T) {
 
 	// Verify incorrect edges do NOT exist (siblings shouldn't be connected)
 	incorrectEdges := []string{
-		"BD-2 --> BD-3",   // Siblings shouldn't be connected
-		"BD-3 --> BD-4",   // BD-4's parent is BD-2, not BD-3
-		"BD-4 --> BD-3",   // Wrong direction
-		"BD-4 --> BD-5",   // These are cousins, not parent-child
+		"BD-2 --> BD-3", // Siblings shouldn't be connected
+		"BD-3 --> BD-4", // BD-4's parent is BD-2, not BD-3
+		"BD-4 --> BD-3", // Wrong direction
+		"BD-4 --> BD-5", // These are cousins, not parent-child
 	}
 
 	for _, edge := range incorrectEdges {
@@ -868,11 +889,11 @@ func TestMergeBidirectionalTrees_MultipleDepth(t *testing.T) {
 
 	// Verify all IDs are present (except we might have root twice from both trees)
 	expectedIDs := map[string]bool{
-		"root":            false,
-		"dep-1":           false,
-		"dep-1-1":         false,
-		"dependent-1":     false,
-		"dependent-1-1":   false,
+		"root":          false,
+		"dep-1":         false,
+		"dep-1-1":       false,
+		"dependent-1":   false,
+		"dependent-1-1": false,
 	}
 
 	for _, node := range result {
