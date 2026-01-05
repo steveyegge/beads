@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -67,10 +68,15 @@ Run 'bd daemon' with no flags to see available options.`,
 		}
 
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
+		// GH#871: Read from config.yaml first (team-shared), then fall back to SQLite (legacy)
 		// (skip if --stop, --status, --health, --metrics)
 		if start && !stop && !status && !health && !metrics {
 			if !cmd.Flags().Changed("auto-commit") {
-				if dbPath := beads.FindDatabasePath(); dbPath != "" {
+				// Check config.yaml first (GH#871: team-wide settings)
+				if config.GetBool("daemon.auto_commit") {
+					autoCommit = true
+				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {
@@ -82,7 +88,11 @@ Run 'bd daemon' with no flags to see available options.`,
 				}
 			}
 			if !cmd.Flags().Changed("auto-push") {
-				if dbPath := beads.FindDatabasePath(); dbPath != "" {
+				// Check config.yaml first (GH#871: team-wide settings)
+				if config.GetBool("daemon.auto_push") {
+					autoPush = true
+				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {
@@ -97,8 +107,11 @@ Run 'bd daemon' with no flags to see available options.`,
 				// Check environment variable first
 				if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 					autoPull = envVal == "true" || envVal == "1"
+				} else if config.GetBool("daemon.auto_pull") {
+					// Check config.yaml (GH#871: team-wide settings)
+					autoPull = true
 				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Check database config
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {
@@ -452,6 +465,12 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	} else if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {
 			log.Error("repository fingerprint validation failed", "error", err)
+			// Write error to daemon-error file so user sees it instead of just "daemon took too long"
+			errFile := filepath.Join(beadsDir, "daemon-error")
+			// nolint:gosec // G306: Error file needs to be readable for debugging
+			if writeErr := os.WriteFile(errFile, []byte(err.Error()), 0644); writeErr != nil {
+				log.Warn("could not write daemon-error file", "error", writeErr)
+			}
 			return // Use return instead of os.Exit to allow defers to run
 		}
 		log.Warn("repository mismatch ignored (BEADS_IGNORE_REPO_MISMATCH=1)")

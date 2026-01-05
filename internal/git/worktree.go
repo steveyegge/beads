@@ -94,6 +94,13 @@ func (wm *WorktreeManager) CreateBeadsWorktree(branch, worktreePath string) erro
 		return fmt.Errorf("failed to checkout branch in worktree: %w\nOutput: %s", err, string(output))
 	}
 
+	// GH#886: Git 2.38+ enables sparse checkout on the main repo as a side effect
+	// of worktree creation. Explicitly disable it to prevent confusing git status
+	// message: "You are in a sparse checkout with 100% of tracked files present."
+	disableSparseCmd := exec.Command("git", "config", "core.sparseCheckout", "false")
+	disableSparseCmd.Dir = wm.repoPath
+	_ = disableSparseCmd.Run() // Best effort - don't fail if this doesn't work
+
 	return nil
 }
 

@@ -310,6 +310,14 @@ func determineSocketPath(socketPath string) string {
 }
 
 func startDaemonProcess(socketPath string) bool {
+	// Early check: daemon requires a git repository (unless --local mode)
+	// Skip attempting to start and avoid the 5-second wait if not in git repo
+	if !isGitRepo() {
+		debugLog("not in a git repository, skipping daemon start")
+		fmt.Fprintf(os.Stderr, "%s No git repository initialized - running without background sync\n", ui.RenderMuted("Note:"))
+		return false
+	}
+
 	binPath, err := executableFn()
 	if err != nil {
 		binPath = os.Args[0]
@@ -340,6 +348,17 @@ func startDaemonProcess(socketPath string) bool {
 
 	recordDaemonStartFailure()
 	debugLog("daemon socket not ready after 5 seconds")
+
+	// Check for daemon-error file which contains the actual failure reason
+	beadsDir := filepath.Dir(dbPath)
+	errFile := filepath.Join(beadsDir, "daemon-error")
+	if errContent, err := os.ReadFile(errFile); err == nil && len(errContent) > 0 {
+		// Show the actual error from the daemon
+		fmt.Fprintf(os.Stderr, "%s Daemon failed to start:\n", ui.RenderWarn("Warning:"))
+		fmt.Fprintf(os.Stderr, "%s\n", string(errContent))
+		return false
+	}
+
 	// Emit visible warning so user understands why command was slow
 	fmt.Fprintf(os.Stderr, "%s Daemon took too long to start (>5s). Running in direct mode.\n", ui.RenderWarn("Warning:"))
 	fmt.Fprintf(os.Stderr, "  %s Run 'bd doctor' to diagnose daemon issues\n", ui.RenderMuted("Hint:"))

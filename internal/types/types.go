@@ -91,6 +91,9 @@ type Issue struct {
 	Timeout   time.Duration `json:"timeout,omitempty"`    // Max wait time before escalation
 	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
 
+	// ===== Slot Fields (exclusive access primitives) =====
+	Holder string `json:"holder,omitempty"` // Who currently holds the slot (empty = available)
+
 	// ===== Source Tracing Fields (formula cooking origin) =====
 	SourceFormula  string `json:"source_formula,omitempty"`  // Formula name where step was defined
 	SourceLocation string `json:"source_location,omitempty"` // Path: "steps[0]", "advice[0].after"
@@ -162,6 +165,9 @@ func (i *Issue) ComputeContentHash() string {
 	for _, waiter := range i.Waiters {
 		w.str(waiter)
 	}
+
+	// Slot fields for exclusive access
+	w.str(i.Holder)
 
 	// Agent identity fields
 	w.str(i.HookBead)
@@ -413,12 +419,13 @@ const (
 	TypeRole         IssueType = "role"          // Agent role definition
 	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
 	TypeEvent        IssueType = "event"         // Operational state change record
+	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 )
 
 // IsValid checks if the issue type value is valid
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeConvoy, TypeEvent:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeConvoy, TypeEvent, TypeSlot:
 		return true
 	}
 	return false

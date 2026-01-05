@@ -1513,6 +1513,140 @@ func TestCheckExternalDepInvalidFormats(t *testing.T) {
 	}
 }
 
+// TestCheckExternalDepsBatching verifies that CheckExternalDeps correctly
+// batches multiple refs to the same project and deduplicates refs (bd-687v).
+func TestCheckExternalDepsBatching(t *testing.T) {
+	ctx := context.Background()
+
+	// Initialize config (required for config.Set to work)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+
+	// Create external project directory with beads database
+	externalDir, err := os.MkdirTemp("", "beads-batch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create external temp dir: %v", err)
+	}
+	defer os.RemoveAll(externalDir)
+
+	// Create .beads directory and config
+	beadsDir := filepath.Join(externalDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+	cfg := configfile.DefaultConfig()
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	// Create external database
+	externalDBPath := filepath.Join(beadsDir, "beads.db")
+	externalStore, err := New(ctx, externalDBPath)
+	if err != nil {
+		t.Fatalf("failed to create external store: %v", err)
+	}
+
+	if err := externalStore.SetConfig(ctx, "issue_prefix", "ext"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Ship capability "cap1" (closed issue with provides:cap1 label)
+	cap1Issue := &types.Issue{
+		ID:        "ext-cap1",
+		Title:     "Capability 1",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeFeature,
+	}
+	if err := externalStore.CreateIssue(ctx, cap1Issue, "test-user"); err != nil {
+		t.Fatalf("failed to create cap1 issue: %v", err)
+	}
+	if err := externalStore.AddLabel(ctx, cap1Issue.ID, "provides:cap1", "test-user"); err != nil {
+		t.Fatalf("failed to add provides:cap1 label: %v", err)
+	}
+	if err := externalStore.CloseIssue(ctx, cap1Issue.ID, "Shipped", "test-user", ""); err != nil {
+		t.Fatalf("failed to close cap1 issue: %v", err)
+	}
+
+	// Ship capability "cap2"
+	cap2Issue := &types.Issue{
+		ID:        "ext-cap2",
+		Title:     "Capability 2",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeFeature,
+	}
+	if err := externalStore.CreateIssue(ctx, cap2Issue, "test-user"); err != nil {
+		t.Fatalf("failed to create cap2 issue: %v", err)
+	}
+	if err := externalStore.AddLabel(ctx, cap2Issue.ID, "provides:cap2", "test-user"); err != nil {
+		t.Fatalf("failed to add provides:cap2 label: %v", err)
+	}
+	if err := externalStore.CloseIssue(ctx, cap2Issue.ID, "Shipped", "test-user", ""); err != nil {
+		t.Fatalf("failed to close cap2 issue: %v", err)
+	}
+
+	// Close to checkpoint WAL before read-only access
+	externalStore.Close()
+
+	// Configure external_projects
+	oldProjects := config.GetExternalProjects()
+	t.Cleanup(func() {
+		if oldProjects != nil {
+			config.Set("external_projects", oldProjects)
+		} else {
+			config.Set("external_projects", map[string]string{})
+		}
+	})
+	config.Set("external_projects", map[string]string{
+		"batch-test": externalDir,
+	})
+
+	// Test: Check multiple refs including duplicates and mixed satisfied/unsatisfied
+	refs := []string{
+		"external:batch-test:cap1",           // satisfied
+		"external:batch-test:cap2",           // satisfied
+		"external:batch-test:cap3",           // NOT satisfied
+		"external:batch-test:cap1",           // duplicate - should still work
+		"external:unconfigured-project:cap1", // unconfigured project
+		"invalid-ref",                        // invalid format
+	}
+
+	statuses := CheckExternalDeps(ctx, refs)
+
+	// Verify we got results for all unique refs (5 unique, since cap1 appears twice)
+	expectedUnique := 5
+	if len(statuses) != expectedUnique {
+		t.Errorf("Expected %d unique statuses, got %d", expectedUnique, len(statuses))
+	}
+
+	// cap1 should be satisfied
+	if s := statuses["external:batch-test:cap1"]; s == nil || !s.Satisfied {
+		t.Error("Expected external:batch-test:cap1 to be satisfied")
+	}
+
+	// cap2 should be satisfied
+	if s := statuses["external:batch-test:cap2"]; s == nil || !s.Satisfied {
+		t.Error("Expected external:batch-test:cap2 to be satisfied")
+	}
+
+	// cap3 should NOT be satisfied
+	if s := statuses["external:batch-test:cap3"]; s == nil || s.Satisfied {
+		t.Error("Expected external:batch-test:cap3 to be unsatisfied")
+	}
+
+	// unconfigured project should NOT be satisfied
+	if s := statuses["external:unconfigured-project:cap1"]; s == nil || s.Satisfied {
+		t.Error("Expected external:unconfigured-project:cap1 to be unsatisfied")
+	}
+
+	// invalid ref should NOT be satisfied
+	if s := statuses["invalid-ref"]; s == nil || s.Satisfied {
+		t.Error("Expected invalid-ref to be unsatisfied")
+	}
+}
+
 // TestGetNewlyUnblockedByClose tests the --suggest-next functionality (GH#679)
 func TestGetNewlyUnblockedByClose(t *testing.T) {
 	env := newTestEnv(t)

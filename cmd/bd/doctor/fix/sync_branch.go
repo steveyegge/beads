@@ -2,7 +2,9 @@ package fix
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -145,5 +147,208 @@ func SyncBranchHealth(path, syncBranch string) error {
 	}
 
 	fmt.Printf("  ✓ Recreated %s from %s and pushed\n", syncBranch, mainBranch)
+	return nil
+}
+
+// SyncBranchGitignore sets git index flags to hide .beads/issues.jsonl from git status
+// when sync.branch is configured. This prevents the file from showing as modified on
+// the main branch while actual data lives on the sync branch. (GH#797, GH#801, GH#870)
+//
+// Sets both flags for comprehensive hiding:
+// - assume-unchanged: Performance optimization, skips file stat check
+// - skip-worktree: Clear error message if user tries explicit `git add`
+func SyncBranchGitignore(path string) error {
+	if err := validateBeadsWorkspace(path); err != nil {
+		return err
+	}
+
+	// Find the .beads directory
+	beadsDir := filepath.Join(path, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return fmt.Errorf(".beads directory not found at %s", beadsDir)
+	}
+
+	// Process both JSONL files that need hiding
+	filesToHide := []string{"issues.jsonl", "interactions.jsonl"}
+	anyChanged := false
+
+	for _, filename := range filesToHide {
+		jsonlPath := filepath.Join(beadsDir, filename)
+		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+			continue // File doesn't exist, skip
+		}
+
+		changed, err := setGitIndexFlags(path, jsonlPath, ".beads/"+filename)
+		if err != nil {
+			return err
+		}
+		if changed {
+			anyChanged = true
+		}
+	}
+
+	if anyChanged {
+		fmt.Println("  ✓ Set git index flags to hide .beads/*.jsonl from git status")
+	}
+	return nil
+}
+
+// setGitIndexFlags sets assume-unchanged and skip-worktree flags on a file.
+// Returns true if flags were changed, false if already set or file not tracked.
+func setGitIndexFlags(repoPath, filePath, excludePattern string) (bool, error) {
+	// Check if file is tracked by git
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", filePath)
+	cmd.Dir = repoPath
+	if err := cmd.Run(); err != nil {
+		// File is not tracked - add to .git/info/exclude instead
+		return false, addToGitExclude(repoPath, excludePattern)
+	}
+
+	// Check if flags are already set (skip-worktree takes precedence in ls-files -v output)
+	cmd = exec.Command("git", "ls-files", "-v", filePath)
+	cmd.Dir = repoPath
+	output, err := cmd.Output()
+	if err == nil {
+		line := strings.TrimSpace(string(output))
+		if len(line) > 0 {
+			firstChar := line[0]
+			// 'S' = skip-worktree (our target state), 'h' = assume-unchanged only
+			if firstChar == 'S' {
+				return false, nil // Already has skip-worktree, nothing to do
+			}
+		}
+	}
+
+	// Set both git index flags (must be separate commands - git quirk)
+	cmd = exec.Command("git", "update-index", "--assume-unchanged", filePath)
+	cmd.Dir = repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("failed to set assume-unchanged on %s: %w\n%s", filePath, err, out)
+	}
+
+	cmd = exec.Command("git", "update-index", "--skip-worktree", filePath)
+	cmd.Dir = repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Revert assume-unchanged if skip-worktree fails
+		revertCmd := exec.Command("git", "update-index", "--no-assume-unchanged", filePath)
+		revertCmd.Dir = repoPath
+		_ = revertCmd.Run()
+		return false, fmt.Errorf("failed to set skip-worktree on %s: %w\n%s", filePath, err, out)
+	}
+
+	return true, nil
+}
+
+// ClearSyncBranchGitignore removes git index flags from .beads/*.jsonl files.
+// Called when sync.branch is disabled to restore normal git tracking.
+func ClearSyncBranchGitignore(path string) error {
+	beadsDir := filepath.Join(path, ".beads")
+	filesToClear := []string{"issues.jsonl", "interactions.jsonl"}
+
+	for _, filename := range filesToClear {
+		jsonlPath := filepath.Join(beadsDir, filename)
+
+		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+			continue // File doesn't exist, skip
+		}
+
+		// Check if file is tracked
+		cmd := exec.Command("git", "ls-files", "--error-unmatch", jsonlPath)
+		cmd.Dir = path
+		if err := cmd.Run(); err != nil {
+			continue // Not tracked, skip
+		}
+
+		// Clear both flags (ignore errors - flags might not be set)
+		cmd = exec.Command("git", "update-index", "--no-assume-unchanged", jsonlPath)
+		cmd.Dir = path
+		_ = cmd.Run()
+
+		cmd = exec.Command("git", "update-index", "--no-skip-worktree", jsonlPath)
+		cmd.Dir = path
+		_ = cmd.Run()
+	}
+
+	return nil
+}
+
+// HasSyncBranchGitignoreFlags checks if git index flags are set on .beads/issues.jsonl.
+// Returns (hasAnyFlag, hasSkipWorktree, error).
+// Note: When both assume-unchanged and skip-worktree are set, git shows 'S' (skip-worktree
+// takes precedence). So hasAnyFlag being true means the file is hidden from git status.
+func HasSyncBranchGitignoreFlags(path string) (bool, bool, error) {
+	beadsDir := filepath.Join(path, ".beads")
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		return false, false, nil
+	}
+
+	// Get file status from git ls-files -v
+	// 'H' = tracked normally, 'h' = assume-unchanged, 'S' = skip-worktree
+	// When both flags are set, 'S' is shown (skip-worktree takes precedence)
+	cmd := exec.Command("git", "ls-files", "-v", jsonlPath)
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return false, false, nil // File not tracked
+	}
+
+	line := strings.TrimSpace(string(output))
+	if len(line) == 0 {
+		return false, false, nil
+	}
+
+	firstChar := line[0]
+	// 'h' = assume-unchanged only, 'S' = skip-worktree (possibly with assume-unchanged too)
+	hasAnyFlag := firstChar == 'h' || firstChar == 'S'
+	hasSkipWorktree := firstChar == 'S'
+
+	return hasAnyFlag, hasSkipWorktree, nil
+}
+
+// addToGitExclude adds a pattern to .git/info/exclude
+func addToGitExclude(path, pattern string) error {
+	// Get git directory
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get git directory: %w", err)
+	}
+
+	gitDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+
+	// Create info directory if needed
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0755); err != nil {
+		return fmt.Errorf("failed to create info directory: %w", err)
+	}
+
+	// Check if pattern already exists (exact line match)
+	content, _ := os.ReadFile(excludePath)
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == pattern {
+			return nil // Already excluded
+		}
+	}
+
+	// Append pattern
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open exclude file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(pattern + "\n"); err != nil {
+		return fmt.Errorf("failed to write exclude pattern: %w", err)
+	}
+
+	fmt.Printf("  ✓ Added %s to .git/info/exclude\n", pattern)
 	return nil
 }

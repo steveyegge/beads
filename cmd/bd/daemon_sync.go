@@ -487,9 +487,10 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 					}
 					log.log("Committed changes")
 
-					// Auto-push if enabled
+					// Auto-push if enabled (GH#872: use sync.remote config)
 					if autoPush {
-						if err := gitPush(exportCtx); err != nil {
+						configuredRemote, _ := store.GetConfig(exportCtx, "sync.remote")
+						if err := gitPush(exportCtx, configuredRemote); err != nil {
 							log.log("Push failed: %v", err)
 							return
 						}
@@ -598,9 +599,10 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 				return
 			}
 
-			// If sync branch not configured, use regular pull
+			// If sync branch not configured, use regular pull (GH#872: use sync.remote config)
 			if !pulled {
-				if err := gitPull(importCtx); err != nil {
+				configuredRemote, _ := store.GetConfig(importCtx, "sync.remote")
+				if err := gitPull(importCtx, configuredRemote); err != nil {
 					backoff := RecordSyncFailure(beadsDir, err.Error())
 					log.log("Pull failed: %v (backoff: %v)", err, backoff)
 					return
@@ -801,9 +803,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			return
 		}
 
-		// If sync branch not configured, use regular pull
+		// If sync branch not configured, use regular pull (GH#872: use sync.remote config)
 		if !pulled {
-			if err := gitPull(syncCtx); err != nil {
+			configuredRemote, _ := store.GetConfig(syncCtx, "sync.remote")
+			if err := gitPull(syncCtx, configuredRemote); err != nil {
 				log.log("Pull failed: %v", err)
 				return
 			}
@@ -890,8 +893,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			}
 		}
 
+		// GH#872: use sync.remote config
 		if autoPush && autoCommit {
-			if err := gitPush(syncCtx); err != nil {
+			configuredRemote, _ := store.GetConfig(syncCtx, "sync.remote")
+			if err := gitPush(syncCtx, configuredRemote); err != nil {
 				log.log("Push failed: %v", err)
 				return
 			}

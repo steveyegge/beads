@@ -1,6 +1,7 @@
 package formula
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1100,5 +1101,209 @@ func TestValidate_OnComplete_InChildren(t *testing.T) {
 
 	if err := formula.Validate(); err != nil {
 		t.Errorf("Validate failed for on_complete in child: %v", err)
+	}
+}
+
+// bd-4bt1: Tests for gate field parsing
+
+func TestParse_GateField(t *testing.T) {
+	jsonData := `{
+  "formula": "mol-release",
+  "version": 1,
+  "type": "workflow",
+  "steps": [
+    {
+      "id": "run-tests",
+      "title": "Run CI tests",
+      "gate": {
+        "type": "gh:run",
+        "id": "ci-tests",
+        "timeout": "1h"
+      }
+    },
+    {"id": "deploy", "title": "Deploy to prod", "depends_on": ["run-tests"]}
+  ]
+}`
+	p := NewParser()
+	formula, err := p.Parse([]byte(jsonData))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// Validate parsed formula
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed: %v", err)
+	}
+
+	// Check gate field
+	gate := formula.Steps[0].Gate
+	if gate == nil {
+		t.Fatal("Steps[0].Gate is nil")
+	}
+	if gate.Type != "gh:run" {
+		t.Errorf("Gate.Type = %q, want 'gh:run'", gate.Type)
+	}
+	if gate.ID != "ci-tests" {
+		t.Errorf("Gate.ID = %q, want 'ci-tests'", gate.ID)
+	}
+	if gate.Timeout != "1h" {
+		t.Errorf("Gate.Timeout = %q, want '1h'", gate.Timeout)
+	}
+}
+
+func TestParse_GateFieldTOML(t *testing.T) {
+	tomlData := `
+formula = "mol-release"
+version = 1
+type = "workflow"
+
+[[steps]]
+id = "wait-for-approval"
+title = "Wait for human approval"
+[steps.gate]
+type = "human"
+timeout = "24h"
+
+[[steps]]
+id = "proceed"
+title = "Proceed after approval"
+depends_on = ["wait-for-approval"]
+`
+	p := NewParser()
+	formula, err := p.ParseTOML([]byte(tomlData))
+	if err != nil {
+		t.Fatalf("ParseTOML failed: %v", err)
+	}
+
+	// Validate parsed formula
+	if err := formula.Validate(); err != nil {
+		t.Errorf("Validate failed: %v", err)
+	}
+
+	// Check gate field
+	gate := formula.Steps[0].Gate
+	if gate == nil {
+		t.Fatal("Steps[0].Gate is nil")
+	}
+	if gate.Type != "human" {
+		t.Errorf("Gate.Type = %q, want 'human'", gate.Type)
+	}
+	if gate.Timeout != "24h" {
+		t.Errorf("Gate.Timeout = %q, want '24h'", gate.Timeout)
+	}
+}
+
+func TestParse_GateFieldMinimal(t *testing.T) {
+	// Test gate with only type (minimal valid gate)
+	jsonData := `{
+  "formula": "mol-timer",
+  "version": 1,
+  "type": "workflow",
+  "steps": [
+    {
+      "id": "wait",
+      "title": "Wait for timer",
+      "gate": {"type": "timer"}
+    }
+  ]
+}`
+	p := NewParser()
+	formula, err := p.Parse([]byte(jsonData))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	gate := formula.Steps[0].Gate
+	if gate == nil {
+		t.Fatal("Steps[0].Gate is nil")
+	}
+	if gate.Type != "timer" {
+		t.Errorf("Gate.Type = %q, want 'timer'", gate.Type)
+	}
+	if gate.ID != "" {
+		t.Errorf("Gate.ID = %q, want empty", gate.ID)
+	}
+	if gate.Timeout != "" {
+		t.Errorf("Gate.Timeout = %q, want empty", gate.Timeout)
+	}
+}
+
+func TestParse_GateFieldWithAllTypes(t *testing.T) {
+	// Test various gate types mentioned in the spec
+	tests := []struct {
+		name     string
+		gateType string
+		id       string
+	}{
+		{"github_run", "gh:run", "test-workflow"},
+		{"github_pr", "gh:pr", "123"},
+		{"timer", "timer", ""},
+		{"human", "human", ""},
+		{"bead", "bead", "bd-xyz"},
+		{"mail", "mail", "from:witness"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jsonData := fmt.Sprintf(`{
+  "formula": "mol-test",
+  "version": 1,
+  "type": "workflow",
+  "steps": [
+    {"id": "step1", "title": "Test step", "gate": {"type": "%s", "id": "%s"}}
+  ]
+}`, tt.gateType, tt.id)
+
+			p := NewParser()
+			formula, err := p.Parse([]byte(jsonData))
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+
+			gate := formula.Steps[0].Gate
+			if gate == nil {
+				t.Fatal("Gate is nil")
+			}
+			if gate.Type != tt.gateType {
+				t.Errorf("Gate.Type = %q, want %q", gate.Type, tt.gateType)
+			}
+			if gate.ID != tt.id {
+				t.Errorf("Gate.ID = %q, want %q", gate.ID, tt.id)
+			}
+		})
+	}
+}
+
+func TestParse_GateInChildStep(t *testing.T) {
+	jsonData := `{
+  "formula": "mol-nested",
+  "version": 1,
+  "type": "workflow",
+  "steps": [
+    {
+      "id": "epic",
+      "title": "Release Epic",
+      "children": [
+        {
+          "id": "child-gate",
+          "title": "Wait for CI",
+          "gate": {"type": "gh:run", "id": "ci", "timeout": "30m"}
+        }
+      ]
+    }
+  ]
+}`
+	p := NewParser()
+	formula, err := p.Parse([]byte(jsonData))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	child := formula.Steps[0].Children[0]
+	if child.Gate == nil {
+		t.Fatal("Child gate is nil")
+	}
+	if child.Gate.Type != "gh:run" {
+		t.Errorf("Child Gate.Type = %q, want 'gh:run'", child.Gate.Type)
 	}
 }

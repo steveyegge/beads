@@ -285,21 +285,27 @@ var createCmd = &cobra.Command{
 			// Validate prefix matches database prefix
 			ctx := rootCtx
 
-			// Get database prefix from config
-			var dbPrefix string
+			// Get database prefix and allowed prefixes from config
+			var dbPrefix, allowedPrefixes string
 			if daemonClient != nil {
 				// Daemon mode - use RPC to get config
 				configResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"})
 				if err == nil {
 					dbPrefix = configResp.Value
 				}
+				// Also get allowed_prefixes for multi-prefix support (e.g., Gas Town)
+				allowedResp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "allowed_prefixes"})
+				if err == nil {
+					allowedPrefixes = allowedResp.Value
+				}
 				// If error, continue without validation (non-fatal)
 			} else {
 				// Direct mode - check config
 				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
+				allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
 			}
 
-			if err := validation.ValidatePrefix(requestedPrefix, dbPrefix, forceCreate); err != nil {
+			if err := validation.ValidatePrefixWithAllowed(requestedPrefix, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				FatalError("%v", err)
 			}
 
@@ -669,6 +675,42 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		externalRefPtr = &externalRef
 	}
 
+	// Extract event-specific flags (bd-xwvo fix)
+	eventCategory, _ := cmd.Flags().GetString("event-category")
+	eventActor, _ := cmd.Flags().GetString("event-actor")
+	eventTarget, _ := cmd.Flags().GetString("event-target")
+	eventPayload, _ := cmd.Flags().GetString("event-payload")
+
+	// Extract molecule/agent flags (bd-xwvo fix)
+	molTypeStr, _ := cmd.Flags().GetString("mol-type")
+	var molType types.MolType
+	if molTypeStr != "" {
+		molType = types.MolType(molTypeStr)
+	}
+	roleType, _ := cmd.Flags().GetString("role-type")
+	agentRig, _ := cmd.Flags().GetString("agent-rig")
+
+	// Extract time-based scheduling flags (bd-xwvo fix)
+	var dueAt *time.Time
+	dueStr, _ := cmd.Flags().GetString("due")
+	if dueStr != "" {
+		t, err := timeparsing.ParseRelativeTime(dueStr, time.Now())
+		if err != nil {
+			FatalError("invalid --due format %q", dueStr)
+		}
+		dueAt = &t
+	}
+
+	var deferUntil *time.Time
+	deferStr, _ := cmd.Flags().GetString("defer")
+	if deferStr != "" {
+		t, err := timeparsing.ParseRelativeTime(deferStr, time.Now())
+		if err != nil {
+			FatalError("invalid --defer format %q", deferStr)
+		}
+		deferUntil = &t
+	}
+
 	// Create issue without ID - CreateIssue will generate one with the correct prefix
 	issue := &types.Issue{
 		Title:              title,
@@ -683,6 +725,18 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		ExternalRef:        externalRefPtr,
 		Ephemeral:          wisp,
 		CreatedBy:          getActorWithGit(),
+		// Event fields (bd-xwvo fix)
+		EventKind: eventCategory,
+		Actor:     eventActor,
+		Target:    eventTarget,
+		Payload:   eventPayload,
+		// Molecule/agent fields (bd-xwvo fix)
+		MolType:  molType,
+		RoleType: roleType,
+		Rig:      agentRig,
+		// Time scheduling fields (bd-xwvo fix)
+		DueAt:      dueAt,
+		DeferUntil: deferUntil,
 	}
 
 	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {

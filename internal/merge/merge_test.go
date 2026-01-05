@@ -2409,3 +2409,334 @@ func TestMerge3Way_TombstoneVsLiveTimestampPrecisionMismatch(t *testing.T) {
 		}
 	})
 }
+
+// TestMerge3Way_DeterministicOutputOrder verifies that merge output is sorted by ID
+// for consistent, reproducible results regardless of input order or map iteration.
+// This is important for:
+// - Reproducible git diffs between merges
+// - Cross-machine consistency
+// - Matching bd export behavior
+func TestMerge3Way_DeterministicOutputOrder(t *testing.T) {
+	// Create issues with IDs that would appear in different orders
+	// if map iteration order determined output order
+	issueA := Issue{ID: "beads-aaa", Title: "A", Status: "open", CreatedAt: "2024-01-01T00:00:00Z"}
+	issueB := Issue{ID: "beads-bbb", Title: "B", Status: "open", CreatedAt: "2024-01-02T00:00:00Z"}
+	issueC := Issue{ID: "beads-ccc", Title: "C", Status: "open", CreatedAt: "2024-01-03T00:00:00Z"}
+	issueZ := Issue{ID: "beads-zzz", Title: "Z", Status: "open", CreatedAt: "2024-01-04T00:00:00Z"}
+	issueM := Issue{ID: "beads-mmm", Title: "M", Status: "open", CreatedAt: "2024-01-05T00:00:00Z"}
+
+	t.Run("output is sorted by ID", func(t *testing.T) {
+		// Input in arbitrary (non-sorted) order
+		base := []Issue{}
+		left := []Issue{issueZ, issueA, issueM}
+		right := []Issue{issueC, issueB}
+
+		result, conflicts := merge3Way(base, left, right, false)
+
+		if len(conflicts) != 0 {
+			t.Errorf("unexpected conflicts: %v", conflicts)
+		}
+
+		if len(result) != 5 {
+			t.Fatalf("expected 5 issues, got %d", len(result))
+		}
+
+		// Verify output is sorted by ID
+		expectedOrder := []string{"beads-aaa", "beads-bbb", "beads-ccc", "beads-mmm", "beads-zzz"}
+		for i, expected := range expectedOrder {
+			if result[i].ID != expected {
+				t.Errorf("result[%d].ID = %q, want %q", i, result[i].ID, expected)
+			}
+		}
+	})
+
+	t.Run("deterministic across multiple runs", func(t *testing.T) {
+		// Run merge multiple times to verify consistent ordering
+		base := []Issue{}
+		left := []Issue{issueZ, issueA, issueM}
+		right := []Issue{issueC, issueB}
+
+		var firstRunIDs []string
+		for run := 0; run < 10; run++ {
+			result, _ := merge3Way(base, left, right, false)
+
+			var ids []string
+			for _, issue := range result {
+				ids = append(ids, issue.ID)
+			}
+
+			if run == 0 {
+				firstRunIDs = ids
+			} else {
+				// Compare to first run
+				for i, id := range ids {
+					if id != firstRunIDs[i] {
+						t.Errorf("run %d: result[%d].ID = %q, want %q (non-deterministic output)", run, i, id, firstRunIDs[i])
+					}
+				}
+			}
+		}
+	})
+}
+// TestMerge3Way_CloseReasonPreservation tests that close_reason and closed_by_session
+// are preserved during merge/sync operations (GH#891)
+func TestMerge3Way_CloseReasonPreservation(t *testing.T) {
+	t.Run("close_reason preserved when both sides closed - later closed_at wins", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:        "bd-close1",
+				Title:     "Test Issue",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+			},
+		}
+		left := []Issue{
+			{
+				ID:              "bd-close1",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-02T00:00:00Z", // Earlier
+				CloseReason:     "Fixed in commit abc",
+				ClosedBySession: "session-left",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+		right := []Issue{
+			{
+				ID:              "bd-close1",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-03T00:00:00Z", // Later - should win
+				CloseReason:     "Fixed in commit xyz",
+				ClosedBySession: "session-right",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 merged issue, got %d", len(result))
+		}
+		// Right has later closed_at, so right's close_reason should win
+		if result[0].CloseReason != "Fixed in commit xyz" {
+			t.Errorf("expected close_reason 'Fixed in commit xyz', got %q", result[0].CloseReason)
+		}
+		if result[0].ClosedBySession != "session-right" {
+			t.Errorf("expected closed_by_session 'session-right', got %q", result[0].ClosedBySession)
+		}
+	})
+
+	t.Run("close_reason preserved when left has later closed_at", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:        "bd-close2",
+				Title:     "Test Issue",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+			},
+		}
+		left := []Issue{
+			{
+				ID:              "bd-close2",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-03T00:00:00Z", // Later - should win
+				CloseReason:     "Resolved by PR #123",
+				ClosedBySession: "session-left",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+		right := []Issue{
+			{
+				ID:              "bd-close2",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-02T00:00:00Z", // Earlier
+				CloseReason:     "Duplicate",
+				ClosedBySession: "session-right",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 merged issue, got %d", len(result))
+		}
+		// Left has later closed_at, so left's close_reason should win
+		if result[0].CloseReason != "Resolved by PR #123" {
+			t.Errorf("expected close_reason 'Resolved by PR #123', got %q", result[0].CloseReason)
+		}
+		if result[0].ClosedBySession != "session-left" {
+			t.Errorf("expected closed_by_session 'session-left', got %q", result[0].ClosedBySession)
+		}
+	})
+
+	t.Run("close_reason cleared when status becomes open", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:              "bd-close3",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-02T00:00:00Z",
+				CloseReason:     "Fixed",
+				ClosedBySession: "session-old",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+		left := []Issue{
+			{
+				ID:              "bd-close3",
+				Title:           "Test Issue",
+				Status:          "open", // Reopened
+				ClosedAt:        "",
+				CloseReason:     "", // Should be cleared
+				ClosedBySession: "",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+		right := []Issue{
+			{
+				ID:              "bd-close3",
+				Title:           "Test Issue",
+				Status:          "open", // Both reopened
+				ClosedAt:        "",
+				CloseReason:     "",
+				ClosedBySession: "",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 merged issue, got %d", len(result))
+		}
+		if result[0].Status != "open" {
+			t.Errorf("expected status 'open', got %q", result[0].Status)
+		}
+		if result[0].CloseReason != "" {
+			t.Errorf("expected empty close_reason when reopened, got %q", result[0].CloseReason)
+		}
+		if result[0].ClosedBySession != "" {
+			t.Errorf("expected empty closed_by_session when reopened, got %q", result[0].ClosedBySession)
+		}
+	})
+
+	t.Run("close_reason from single side preserved", func(t *testing.T) {
+		base := []Issue{
+			{
+				ID:        "bd-close4",
+				Title:     "Test Issue",
+				Status:    "open",
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+			},
+		}
+		left := []Issue{
+			{
+				ID:              "bd-close4",
+				Title:           "Test Issue",
+				Status:          "closed",
+				ClosedAt:        "2024-01-02T00:00:00Z",
+				CloseReason:     "Won't fix - by design",
+				ClosedBySession: "session-abc",
+				CreatedAt:       "2024-01-01T00:00:00Z",
+				CreatedBy:       "user1",
+			},
+		}
+		right := []Issue{
+			{
+				ID:        "bd-close4",
+				Title:     "Test Issue",
+				Status:    "open", // Still open on right
+				CreatedAt: "2024-01-01T00:00:00Z",
+				CreatedBy: "user1",
+			},
+		}
+
+		result, conflicts := merge3Way(base, left, right, false)
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts, got %d", len(conflicts))
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 merged issue, got %d", len(result))
+		}
+		// Closed wins over open
+		if result[0].Status != "closed" {
+			t.Errorf("expected status 'closed', got %q", result[0].Status)
+		}
+		// Close reason from the closed side should be preserved
+		if result[0].CloseReason != "Won't fix - by design" {
+			t.Errorf("expected close_reason 'Won't fix - by design', got %q", result[0].CloseReason)
+		}
+		if result[0].ClosedBySession != "session-abc" {
+			t.Errorf("expected closed_by_session 'session-abc', got %q", result[0].ClosedBySession)
+		}
+	})
+
+	t.Run("close_reason survives round-trip through JSONL", func(t *testing.T) {
+		// This tests the full merge pipeline including JSON marshaling/unmarshaling
+		tmpDir := t.TempDir()
+
+		baseContent := `{"id":"bd-jsonl1","title":"Test Issue","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`
+		leftContent := `{"id":"bd-jsonl1","title":"Test Issue","status":"closed","closed_at":"2024-01-02T00:00:00Z","close_reason":"Fixed in commit def456","closed_by_session":"session-jsonl","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`
+		rightContent := `{"id":"bd-jsonl1","title":"Test Issue","status":"open","created_at":"2024-01-01T00:00:00Z","created_by":"user1"}`
+
+		basePath := filepath.Join(tmpDir, "base.jsonl")
+		leftPath := filepath.Join(tmpDir, "left.jsonl")
+		rightPath := filepath.Join(tmpDir, "right.jsonl")
+		outputPath := filepath.Join(tmpDir, "output.jsonl")
+
+		if err := os.WriteFile(basePath, []byte(baseContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(leftPath, []byte(leftContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rightPath, []byte(rightContent+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Merge3Way(outputPath, basePath, leftPath, rightPath, false); err != nil {
+			t.Fatalf("Merge3Way failed: %v", err)
+		}
+
+		// Read output and verify close_reason is preserved
+		outputData, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var outputIssue Issue
+		if err := json.Unmarshal(outputData[:len(outputData)-1], &outputIssue); err != nil {
+			t.Fatalf("failed to parse output: %v", err)
+		}
+
+		if outputIssue.Status != "closed" {
+			t.Errorf("expected status 'closed', got %q", outputIssue.Status)
+		}
+		if outputIssue.CloseReason != "Fixed in commit def456" {
+			t.Errorf("expected close_reason 'Fixed in commit def456', got %q", outputIssue.CloseReason)
+		}
+		if outputIssue.ClosedBySession != "session-jsonl" {
+			t.Errorf("expected closed_by_session 'session-jsonl', got %q", outputIssue.ClosedBySession)
+		}
+	})
+}

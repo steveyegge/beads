@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,24 +12,36 @@ import (
 )
 
 func TestRepairMultiplePrefixes(t *testing.T) {
-	// Create a temporary database
-	dbPath := t.TempDir() + "/test.db"
-	store, err := sqlite.New(context.Background(), dbPath)
+	// Create a temporary database with .beads directory structure
+	tempDir := t.TempDir()
+	testDBPath := filepath.Join(tempDir, ".beads", "beads.db")
+
+	// Create .beads directory
+	if err := os.MkdirAll(filepath.Dir(testDBPath), 0750); err != nil {
+		t.Fatalf("failed to create .beads dir: %v", err)
+	}
+
+	testStore, err := sqlite.New(context.Background(), testDBPath)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
-	defer store.Close()
+	defer testStore.Close()
+
+	// Set global dbPath so findJSONLPath() finds the right location
+	oldDBPath := dbPath
+	dbPath = testDBPath
+	defer func() { dbPath = oldDBPath }()
 
 	ctx := context.Background()
 
 	// Set initial prefix
-	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("failed to set prefix: %v", err)
 	}
 
 	// Create issues with multiple prefixes (simulating corruption)
 	// We need to directly insert into the database to bypass prefix validation
-	db := store.UnderlyingDB()
+	db := testStore.UnderlyingDB()
 	
 	now := time.Now()
 	issues := []struct {
@@ -52,7 +66,7 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 	}
 
 	// Verify we have multiple prefixes
-	allIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
+	allIssues, err := testStore.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		t.Fatalf("failed to search issues: %v", err)
 	}
@@ -63,12 +77,12 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 	}
 
 	// Test repair
-	if err := repairPrefixes(ctx, store, "test", "test", allIssues, prefixes, false); err != nil {
+	if err := repairPrefixes(ctx, testStore, "test", "test", allIssues, prefixes, false); err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
 
 	// Verify all issues now have correct prefix
-	allIssues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+	allIssues, err = testStore.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		t.Fatalf("failed to search issues after repair: %v", err)
 	}
@@ -84,7 +98,7 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 
 	// Verify the original test-1 and test-2 are unchanged
 	for _, id := range []string{"test-1", "test-2"} {
-		issue, err := store.GetIssue(ctx, id)
+		issue, err := testStore.GetIssue(ctx, id)
 		if err != nil {
 			t.Fatalf("expected issue %s to exist unchanged: %v", id, err)
 		}
@@ -112,7 +126,7 @@ func TestRepairMultiplePrefixes(t *testing.T) {
 
 	// Verify old IDs no longer exist
 	for _, oldID := range []string{"old-1", "old-2", "another-1"} {
-		issue, err := store.GetIssue(ctx, oldID)
+		issue, err := testStore.GetIssue(ctx, oldID)
 		if err == nil && issue != nil {
 			t.Fatalf("expected old ID %s to no longer exist", oldID)
 		}

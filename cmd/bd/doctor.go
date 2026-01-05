@@ -349,7 +349,12 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8: Daemon health
+	// Check 8a: Git sync setup (informational - explains why daemon might not start)
+	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, gitSyncCheck)
+	// Don't fail overall check for git sync warning - beads works fine without git
+
+	// Check 8b: Daemon health
 	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
@@ -456,6 +461,11 @@ func runDiagnostics(path string) doctorResult {
 	orphanedIssuesCheck := convertWithCategory(doctor.CheckOrphanedIssues(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, orphanedIssuesCheck)
 	// Don't fail overall check for orphaned issues, just warn
+
+	// Check 17c: Sync branch gitignore flags (GH#870)
+	syncBranchGitignoreCheck := convertWithCategory(doctor.CheckSyncBranchGitignore(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, syncBranchGitignoreCheck)
+	// Don't fail overall check for sync branch gitignore, just warn
 
 	// Check 18: Deletions manifest (legacy, now replaced by tombstones)
 	deletionsCheck := convertWithCategory(doctor.CheckDeletionsManifest(path), doctor.CategoryMetadata)
