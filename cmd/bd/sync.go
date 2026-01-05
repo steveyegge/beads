@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -961,14 +962,20 @@ Use --merge to merge the sync branch back to main branch.`,
 // This eliminates the export-before-pull data loss pattern (#911) by
 // seeing remote changes before exporting local state.
 //
-// Phase 1 (Tracer Bullet): Uses stub merge that returns remote issues.
-// This validates the architecture without implementing full merge logic.
+// The 3-way merge uses:
+// - Base state: Last successful sync (.beads/sync_base.jsonl)
+// - Local state: Current database contents
+// - Remote state: JSONL after git pull
 func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGitHistory, dryRun, noPush bool, message string) error {
+	beadsDir := filepath.Dir(jsonlPath)
+
 	if dryRun {
 		fmt.Println("→ [DRY RUN] Pull-first sync mode")
 		fmt.Println("→ [DRY RUN] Would pull from remote")
-		fmt.Println("→ [DRY RUN] Would merge local and remote issues")
+		fmt.Println("→ [DRY RUN] Would load base state from sync_base.jsonl")
+		fmt.Println("→ [DRY RUN] Would merge base, local, and remote issues (3-way)")
 		fmt.Println("→ [DRY RUN] Would export merged state to JSONL")
+		fmt.Println("→ [DRY RUN] Would update sync_base.jsonl")
 		fmt.Println("→ [DRY RUN] Would commit and push changes")
 		fmt.Println("\n✓ Dry run complete (no changes made)")
 		return nil
@@ -976,13 +983,8 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 
 	fmt.Println("→ Pull-first sync mode (--pull-first)")
 
-	// Step 1: Pull from remote
-	fmt.Println("→ Pulling from remote...")
-	if err := gitPull(ctx, ""); err != nil {
-		return fmt.Errorf("pulling: %w", err)
-	}
-
-	// Step 2: Load local state from DB
+	// Step 1: Load local state from DB BEFORE pulling
+	// This captures the current DB state before remote changes arrive
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("activating store: %w", err)
 	}
@@ -992,35 +994,85 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 	fmt.Printf("  Loaded %d local issues from database\n", len(localIssues))
 
-	// Step 3: Load remote state from JSONL (after pull)
+	// Step 2: Load base state (last successful sync)
+	fmt.Println("→ Loading base state...")
+	baseIssues, err := loadBaseState(beadsDir)
+	if err != nil {
+		return fmt.Errorf("loading base state: %w", err)
+	}
+	if baseIssues == nil {
+		fmt.Println("  No base state found (first sync)")
+	} else {
+		fmt.Printf("  Loaded %d issues from base state\n", len(baseIssues))
+	}
+
+	// Step 3: Pull from remote
+	fmt.Println("→ Pulling from remote...")
+	if err := gitPull(ctx, ""); err != nil {
+		return fmt.Errorf("pulling: %w", err)
+	}
+
+	// Step 4: Load remote state from JSONL (after pull)
 	remoteIssues, err := loadIssuesFromJSONL(jsonlPath)
 	if err != nil {
 		return fmt.Errorf("loading remote issues from JSONL: %w", err)
 	}
 	fmt.Printf("  Loaded %d remote issues from JSONL\n", len(remoteIssues))
 
-	// Step 4: Merge local and remote (Phase 1: stub returns remote)
-	// Note: base state is nil for Phase 1 - will be added in Phase 2
-	fmt.Println("→ Merging local and remote issues...")
-	mergeResult, err := MergeIssues(nil, localIssues, remoteIssues)
+	// Step 5: Perform 3-way merge
+	fmt.Println("→ Merging base, local, and remote issues (3-way)...")
+	mergeResult, err := MergeIssues(baseIssues, localIssues, remoteIssues)
 	if err != nil {
 		return fmt.Errorf("merging issues: %w", err)
 	}
-	fmt.Printf("  Merged: %d issues, %d conflicts resolved\n", len(mergeResult.Merged), mergeResult.Conflicts)
 
-	// Step 5: Import merged state to DB
+	// Report merge results
+	localCount, remoteCount, sameCount := 0, 0, 0
+	for _, strategy := range mergeResult.Strategy {
+		switch strategy {
+		case StrategyLocal:
+			localCount++
+		case StrategyRemote:
+			remoteCount++
+		case StrategySame:
+			sameCount++
+		}
+	}
+	fmt.Printf("  Merged: %d issues total\n", len(mergeResult.Merged))
+	fmt.Printf("    Local wins: %d, Remote wins: %d, Same: %d, Conflicts (LWW): %d\n",
+		localCount, remoteCount, sameCount, mergeResult.Conflicts)
+
+	// Step 6: Import merged state to DB
+	// First, write merged result to JSONL so import can read it
+	fmt.Println("→ Writing merged state to JSONL...")
+	if err := writeMergedStateToJSONL(jsonlPath, mergeResult.Merged); err != nil {
+		return fmt.Errorf("writing merged state: %w", err)
+	}
+
 	fmt.Println("→ Importing merged state to database...")
 	if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
 		return fmt.Errorf("importing merged state: %w", err)
 	}
 
-	// Step 6: Export to JSONL (ensures consistency)
-	fmt.Println("→ Exporting to JSONL...")
+	// Step 7: Export from DB to JSONL (ensures DB is source of truth)
+	fmt.Println("→ Exporting from database to JSONL...")
 	if err := exportToJSONL(ctx, jsonlPath); err != nil {
 		return fmt.Errorf("exporting: %w", err)
 	}
 
-	// Step 7: Check for changes and commit
+	// Step 8: Update base state for next sync
+	fmt.Println("→ Updating base state...")
+	// Reload from exported JSONL to capture any normalization from import/export cycle
+	finalIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("reloading final state: %w", err)
+	}
+	if err := saveBaseState(beadsDir, finalIssues); err != nil {
+		return fmt.Errorf("saving base state: %w", err)
+	}
+	fmt.Printf("  Saved %d issues to base state\n", len(finalIssues))
+
+	// Step 9: Check for changes and commit
 	hasChanges, err := gitHasBeadsChanges(ctx)
 	if err != nil {
 		return fmt.Errorf("checking git status: %w", err)
@@ -1035,7 +1087,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		fmt.Println("→ No changes to commit")
 	}
 
-	// Step 8: Push to remote
+	// Step 10: Push to remote
 	if !noPush && hasChanges {
 		fmt.Println("→ Pushing to remote...")
 		if err := gitPush(ctx, ""); err != nil {
@@ -1045,6 +1097,33 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 
 	fmt.Println("\n✓ Pull-first sync complete")
 	return nil
+}
+
+// writeMergedStateToJSONL writes merged issues to JSONL file
+func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
+	tempPath := path + ".tmp"
+	file, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			file.Close()
+			os.Remove(tempPath)
+			return err
+		}
+	}
+
+	if err := file.Close(); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+
+	return os.Rename(tempPath, path)
 }
 
 func init() {

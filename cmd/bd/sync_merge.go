@@ -1,6 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
 	"github.com/steveyegge/beads/internal/beads"
 )
 
@@ -8,45 +15,382 @@ import (
 type MergeResult struct {
 	Merged    []*beads.Issue    // Final merged state
 	Conflicts int               // Number of true conflicts resolved
-	Strategy  map[string]string // Per-issue: "local", "remote", "merged"
+	Strategy  map[string]string // Per-issue: "local", "remote", "merged", "same"
 }
+
+// MergeStrategy constants for describing how each issue was merged
+const (
+	StrategyLocal  = "local"  // Only local changed
+	StrategyRemote = "remote" // Only remote changed
+	StrategyMerged = "merged" // True conflict, LWW applied
+	StrategySame   = "same"   // Both made identical change (or no change)
+)
 
 // MergeIssues performs 3-way merge: base x local x remote -> merged
 //
-// Phase 1 (Tracer Bullet): This is a stub implementation that just returns
-// remote issues. This validates the pull-first architecture without implementing
-// the full merge algorithm.
-//
-// Future phases will implement:
-// - Phase 2: Content-level 3-way merge algorithm
-// - Phase 3: Field-level resolution (LWW for scalars, union for sets)
+// Algorithm:
+// 1. Build lookup maps for base, local, and remote by issue ID
+// 2. Collect all unique issue IDs across all three sets
+// 3. For each ID, apply MergeIssue to determine final state
+// 4. Return merged result with per-issue strategy annotations
 func MergeIssues(base, local, remote []*beads.Issue) (*MergeResult, error) {
-	// Phase 1 stub: just return remote issues (pull-first validated)
-	// This proves the architecture works before adding merge complexity
-	strategy := make(map[string]string)
-	for _, issue := range remote {
-		strategy[issue.ID] = "remote"
+	// Build lookup maps by issue ID
+	baseMap := buildIssueMap(base)
+	localMap := buildIssueMap(local)
+	remoteMap := buildIssueMap(remote)
+
+	// Collect all unique issue IDs
+	allIDs := collectUniqueIDs(baseMap, localMap, remoteMap)
+
+	result := &MergeResult{
+		Merged:   make([]*beads.Issue, 0, len(allIDs)),
+		Strategy: make(map[string]string),
 	}
 
-	return &MergeResult{
-		Merged:    remote,
-		Conflicts: 0,
-		Strategy:  strategy,
-	}, nil
+	for _, id := range allIDs {
+		baseIssue := baseMap[id]
+		localIssue := localMap[id]
+		remoteIssue := remoteMap[id]
+
+		merged, strategy := MergeIssue(baseIssue, localIssue, remoteIssue)
+
+		// Always record strategy (even for deletions, for logging/debugging)
+		result.Strategy[id] = strategy
+
+		if merged != nil {
+			result.Merged = append(result.Merged, merged)
+			if strategy == StrategyMerged {
+				result.Conflicts++
+			}
+		}
+		// If merged is nil, the issue was deleted (present in base but not in local/remote)
+	}
+
+	return result, nil
 }
 
 // MergeIssue merges a single issue using 3-way algorithm
 //
-// Phase 1 (Tracer Bullet): Returns remote issue (stub).
-// Phase 2+ will implement the actual merge logic:
+// Cases:
+// - base=nil: First sync (no common ancestor)
+//   - local=nil, remote=nil: impossible (would not be in allIDs)
+//   - local=nil: return remote (new from remote)
+//   - remote=nil: return local (new from local)
+//   - both exist: LWW by updated_at (both added independently)
 //
-//	if base == local { return remote }  // Only remote changed
-//	if base == remote { return local }  // Only local changed
-//	if local == remote { return local } // Same change
-//	// True conflict: LWW by updated_at
-//	if local.UpdatedAt.After(remote.UpdatedAt) { return local }
-//	return remote
+// - base!=nil: Standard 3-way merge
+//   - base=local=remote: no changes (same)
+//   - base=local, remote differs: only remote changed (remote)
+//   - base=remote, local differs: only local changed (local)
+//   - local=remote (but differs from base): both made identical change (same)
+//   - all three differ: true conflict, LWW by updated_at (merged)
+//
+// - Deletion handling:
+//   - local=nil (deleted locally): if remote unchanged from base, delete; else keep remote
+//   - remote=nil (deleted remotely): if local unchanged from base, delete; else keep local
 func MergeIssue(base, local, remote *beads.Issue) (*beads.Issue, string) {
-	// Phase 1 stub: return remote
-	return remote, "remote"
+	// Case: no base state (first sync)
+	if base == nil {
+		if local == nil && remote == nil {
+			// Should not happen (would not be in allIDs)
+			return nil, StrategySame
+		}
+		if local == nil {
+			return remote, StrategyRemote
+		}
+		if remote == nil {
+			return local, StrategyLocal
+		}
+		// Both exist with no base: treat as conflict, LWW by updated_at
+		// Remote wins on tie (per design.md Decision 3)
+		if local.UpdatedAt.After(remote.UpdatedAt) {
+			return local, StrategyMerged
+		}
+		return remote, StrategyMerged
+	}
+
+	// Case: local deleted
+	if local == nil {
+		// If remote unchanged from base, honor the local deletion
+		if issueEqual(base, remote) {
+			return nil, StrategyLocal
+		}
+		// Remote changed after local deleted: keep remote (remote wins conflict)
+		return remote, StrategyMerged
+	}
+
+	// Case: remote deleted
+	if remote == nil {
+		// If local unchanged from base, honor the remote deletion
+		if issueEqual(base, local) {
+			return nil, StrategyRemote
+		}
+		// Local changed after remote deleted: keep local (local wins conflict)
+		return local, StrategyMerged
+	}
+
+	// Standard 3-way cases (all three exist)
+	if issueEqual(base, local) && issueEqual(base, remote) {
+		// No changes anywhere
+		return local, StrategySame
+	}
+
+	if issueEqual(base, local) {
+		// Only remote changed
+		return remote, StrategyRemote
+	}
+
+	if issueEqual(base, remote) {
+		// Only local changed
+		return local, StrategyLocal
+	}
+
+	if issueEqual(local, remote) {
+		// Both made identical change
+		return local, StrategySame
+	}
+
+	// True conflict: LWW by updated_at, remote wins on tie
+	if local.UpdatedAt.After(remote.UpdatedAt) {
+		return local, StrategyMerged
+	}
+	return remote, StrategyMerged
+}
+
+// issueEqual compares two issues for equality (content-level, not pointer)
+// Compares all merge-relevant fields: content, status, workflow, assignment
+func issueEqual(a, b *beads.Issue) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+
+	// Core identification
+	if a.ID != b.ID {
+		return false
+	}
+
+	// Issue content
+	if a.Title != b.Title ||
+		a.Description != b.Description ||
+		a.Design != b.Design ||
+		a.AcceptanceCriteria != b.AcceptanceCriteria ||
+		a.Notes != b.Notes {
+		return false
+	}
+
+	// Status & workflow
+	if a.Status != b.Status ||
+		a.Priority != b.Priority ||
+		a.IssueType != b.IssueType {
+		return false
+	}
+
+	// Assignment
+	if a.Assignee != b.Assignee {
+		return false
+	}
+	if !intPtrEqual(a.EstimatedMinutes, b.EstimatedMinutes) {
+		return false
+	}
+
+	// Timestamps (updated_at is crucial for LWW)
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return false
+	}
+
+	// Closed state
+	if !timePtrEqual(a.ClosedAt, b.ClosedAt) ||
+		a.CloseReason != b.CloseReason {
+		return false
+	}
+
+	// Time-based scheduling
+	if !timePtrEqual(a.DueAt, b.DueAt) ||
+		!timePtrEqual(a.DeferUntil, b.DeferUntil) {
+		return false
+	}
+
+	// External reference
+	if !stringPtrEqual(a.ExternalRef, b.ExternalRef) {
+		return false
+	}
+
+	// Tombstone fields
+	if !timePtrEqual(a.DeletedAt, b.DeletedAt) ||
+		a.DeletedBy != b.DeletedBy ||
+		a.DeleteReason != b.DeleteReason {
+		return false
+	}
+
+	// Labels (order-independent comparison)
+	if !stringSliceEqual(a.Labels, b.Labels) {
+		return false
+	}
+
+	return true
+}
+
+// buildIssueMap creates a lookup map from issue ID to issue pointer
+func buildIssueMap(issues []*beads.Issue) map[string]*beads.Issue {
+	m := make(map[string]*beads.Issue, len(issues))
+	for _, issue := range issues {
+		if issue != nil {
+			m[issue.ID] = issue
+		}
+	}
+	return m
+}
+
+// collectUniqueIDs gathers all unique issue IDs from the three maps
+// Returns sorted for deterministic output
+func collectUniqueIDs(base, local, remote map[string]*beads.Issue) []string {
+	seen := make(map[string]bool)
+	for id := range base {
+		seen[id] = true
+	}
+	for id := range local {
+		seen[id] = true
+	}
+	for id := range remote {
+		seen[id] = true
+	}
+
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// Helper functions for pointer comparison
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func timePtrEqual(a, b *time.Time) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equal(*b)
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Sort copies for order-independent comparison
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Base state storage functions for sync_base.jsonl
+
+const syncBaseFileName = "sync_base.jsonl"
+
+// loadBaseState loads the last-synced state from .beads/sync_base.jsonl
+// Returns empty slice if file doesn't exist (first sync scenario)
+func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
+	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+
+	// Check if file exists
+	if _, err := os.Stat(baseStatePath); os.IsNotExist(err) {
+		// First sync: no base state
+		return nil, nil
+	}
+
+	// Read and parse JSONL file
+	file, err := os.Open(baseStatePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var issues []*beads.Issue
+	scanner := bufio.NewScanner(file)
+	// Increase buffer for large issues
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue beads.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			// Skip malformed lines (defensive)
+			continue
+		}
+		issues = append(issues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return issues, nil
+}
+
+// saveBaseState writes the merged state to .beads/sync_base.jsonl
+// This becomes the base for the next 3-way merge
+func saveBaseState(beadsDir string, issues []*beads.Issue) error {
+	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+
+	// Write to temp file first for atomicity
+	tempPath := baseStatePath + ".tmp"
+	file, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			file.Close()
+			os.Remove(tempPath)
+			return err
+		}
+	}
+
+	if err := file.Close(); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+
+	// Atomic rename
+	return os.Rename(tempPath, baseStatePath)
 }
