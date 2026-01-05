@@ -1510,6 +1510,20 @@ func (m *MemoryStorage) GetCommentsForIssues(ctx context.Context, issueIDs []str
 	return result, nil
 }
 
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+func (m *MemoryStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string]int)
+	for _, issueID := range issueIDs {
+		if comments, exists := m.comments[issueID]; exists {
+			result[issueID] = len(comments)
+		}
+	}
+	return result, nil
+}
+
 func (m *MemoryStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
