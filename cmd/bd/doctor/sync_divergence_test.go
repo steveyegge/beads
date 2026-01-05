@@ -150,7 +150,7 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
-		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
 		db.Close()
 
 		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
@@ -173,7 +173,7 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
-		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
 		db.Close()
 
 		// Create JSONL
@@ -214,8 +214,8 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
-		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
-		_, _ = db.Exec("INSERT INTO config (key, value) VALUES (?, ?)",
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
+		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
 			"last_import_time", importTime.Format(time.RFC3339))
 		db.Close()
 
@@ -239,9 +239,9 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
-		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
 		oldTime := time.Now().Add(-1 * time.Hour)
-		_, _ = db.Exec("INSERT INTO config (key, value) VALUES (?, ?)",
+		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
 			"last_import_time", oldTime.Format(time.RFC3339))
 		db.Close()
 
@@ -261,6 +261,47 @@ func TestCheckSQLiteMtimeDivergence(t *testing.T) {
 			if !strings.Contains(issue.FixCommand, "import") {
 				t.Errorf("fix=%q want import command", issue.FixCommand)
 			}
+		}
+	})
+
+	// Regression test: verify we read from metadata table, not config table.
+	// The sync code writes to metadata, so doctor must read from there.
+	// This catches the bug where doctor queried 'config' instead of 'metadata'.
+	t.Run("reads from metadata table not config", func(t *testing.T) {
+		dir := mkTmpDirInTmp(t, "bd-mtime-table-*")
+		beadsDir := filepath.Join(dir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create JSONL first
+		jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+		if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1"}`+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Get JSONL mtime
+		jsonlInfo, _ := os.Stat(jsonlPath)
+		importTime := jsonlInfo.ModTime()
+
+		// Create database with BOTH config and metadata tables (realistic schema)
+		// Put last_import_time ONLY in metadata (as real sync code does)
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = db.Exec("CREATE TABLE issues (id TEXT)")
+		_, _ = db.Exec("CREATE TABLE config (key TEXT, value TEXT)")
+		_, _ = db.Exec("CREATE TABLE metadata (key TEXT, value TEXT)")
+		// Only insert into metadata, NOT config
+		_, _ = db.Exec("INSERT INTO metadata (key, value) VALUES (?, ?)",
+			"last_import_time", importTime.Format(time.RFC3339))
+		db.Close()
+
+		issue := checkSQLiteMtimeDivergence(dir, beadsDir)
+		if issue != nil {
+			t.Errorf("expected nil issue when last_import_time is in metadata table, got %+v", issue)
 		}
 	})
 }
