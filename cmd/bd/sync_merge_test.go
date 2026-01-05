@@ -751,3 +751,494 @@ func TestIssueEqual(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Field-Level Merge Tests (Phase 3)
+// =============================================================================
+
+// makeTestIssueWithLabels creates a test issue with labels
+func makeTestIssueWithLabels(id, title string, status types.Status, priority int, updatedAt time.Time, labels []string) *types.Issue {
+	issue := makeTestIssue(id, title, status, priority, updatedAt)
+	issue.Labels = labels
+	return issue
+}
+
+// TestFieldMerge_LWW_LocalNewer tests field-level merge where local is newer
+func TestFieldMerge_LWW_LocalNewer(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssue("bd-1234", "Original", types.StatusOpen, 1, now)
+	local := makeTestIssue("bd-1234", "Local Update", types.StatusInProgress, 2, now.Add(2*time.Hour))
+	remote := makeTestIssue("bd-1234", "Remote Update", types.StatusClosed, 3, now.Add(time.Hour))
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+	// Local is newer, should have local's scalar values
+	if merged.Title != "Local Update" {
+		t.Errorf("Expected title='Local Update' (local is newer), got %s", merged.Title)
+	}
+	if merged.Status != types.StatusInProgress {
+		t.Errorf("Expected status=in_progress (local is newer), got %s", merged.Status)
+	}
+	if merged.Priority != 2 {
+		t.Errorf("Expected priority=2 (local is newer), got %d", merged.Priority)
+	}
+}
+
+// TestFieldMerge_LWW_RemoteNewer tests field-level merge where remote is newer
+func TestFieldMerge_LWW_RemoteNewer(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssue("bd-1234", "Original", types.StatusOpen, 1, now)
+	local := makeTestIssue("bd-1234", "Local Update", types.StatusInProgress, 2, now.Add(time.Hour))
+	remote := makeTestIssue("bd-1234", "Remote Update", types.StatusClosed, 3, now.Add(2*time.Hour))
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+	// Remote is newer, should have remote's scalar values
+	if merged.Title != "Remote Update" {
+		t.Errorf("Expected title='Remote Update' (remote is newer), got %s", merged.Title)
+	}
+	if merged.Status != types.StatusClosed {
+		t.Errorf("Expected status=closed (remote is newer), got %s", merged.Status)
+	}
+	if merged.Priority != 3 {
+		t.Errorf("Expected priority=3 (remote is newer), got %d", merged.Priority)
+	}
+}
+
+// TestFieldMerge_LWW_SameTimestamp tests field-level merge where timestamps are equal (remote wins)
+func TestFieldMerge_LWW_SameTimestamp(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssue("bd-1234", "Original", types.StatusOpen, 1, now.Add(-time.Hour))
+	local := makeTestIssue("bd-1234", "Local Update", types.StatusInProgress, 2, now)
+	remote := makeTestIssue("bd-1234", "Remote Update", types.StatusClosed, 3, now)
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+	// Same timestamp: remote wins (per design.md Decision 3)
+	if merged.Title != "Remote Update" {
+		t.Errorf("Expected title='Remote Update' (remote wins on tie), got %s", merged.Title)
+	}
+	if merged.Status != types.StatusClosed {
+		t.Errorf("Expected status=closed (remote wins on tie), got %s", merged.Status)
+	}
+}
+
+// TestLabelUnion_BothAdd tests label union when both local and remote add different labels
+func TestLabelUnion_BothAdd(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssueWithLabels("bd-1234", "Test", types.StatusOpen, 1, now, []string{"original"})
+	local := makeTestIssueWithLabels("bd-1234", "Test Local", types.StatusOpen, 1, now.Add(time.Hour), []string{"original", "local-added"})
+	remote := makeTestIssueWithLabels("bd-1234", "Test Remote", types.StatusOpen, 1, now.Add(2*time.Hour), []string{"original", "remote-added"})
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+
+	// Labels should be union of both
+	expectedLabels := []string{"local-added", "original", "remote-added"}
+	if len(merged.Labels) != len(expectedLabels) {
+		t.Errorf("Expected %d labels, got %d: %v", len(expectedLabels), len(merged.Labels), merged.Labels)
+	}
+	for _, expected := range expectedLabels {
+		found := false
+		for _, actual := range merged.Labels {
+			if actual == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected label %q in merged labels %v", expected, merged.Labels)
+		}
+	}
+}
+
+// TestLabelUnion_LocalOnly tests label union when only local adds labels
+func TestLabelUnion_LocalOnly(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssueWithLabels("bd-1234", "Test", types.StatusOpen, 1, now, []string{"original"})
+	local := makeTestIssueWithLabels("bd-1234", "Test Local", types.StatusOpen, 1, now.Add(time.Hour), []string{"original", "local-added"})
+	remote := makeTestIssueWithLabels("bd-1234", "Test Remote", types.StatusOpen, 1, now.Add(2*time.Hour), []string{"original"})
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+
+	// Labels should include local-added even though remote is newer for scalars
+	expectedLabels := []string{"local-added", "original"}
+	if len(merged.Labels) != len(expectedLabels) {
+		t.Errorf("Expected %d labels, got %d: %v", len(expectedLabels), len(merged.Labels), merged.Labels)
+	}
+}
+
+// TestLabelUnion_RemoteOnly tests label union when only remote adds labels
+func TestLabelUnion_RemoteOnly(t *testing.T) {
+	now := time.Now()
+	base := makeTestIssueWithLabels("bd-1234", "Test", types.StatusOpen, 1, now, []string{"original"})
+	local := makeTestIssueWithLabels("bd-1234", "Test Local", types.StatusOpen, 1, now.Add(2*time.Hour), []string{"original"})
+	remote := makeTestIssueWithLabels("bd-1234", "Test Remote", types.StatusOpen, 1, now.Add(time.Hour), []string{"original", "remote-added"})
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+
+	// Labels should include remote-added even though local is newer for scalars
+	expectedLabels := []string{"original", "remote-added"}
+	if len(merged.Labels) != len(expectedLabels) {
+		t.Errorf("Expected %d labels, got %d: %v", len(expectedLabels), len(merged.Labels), merged.Labels)
+	}
+}
+
+// TestDependencyUnion tests dependency union when both add different dependencies
+func TestDependencyUnion(t *testing.T) {
+	now := time.Now()
+
+	localDep := &types.Dependency{
+		IssueID:     "bd-1234",
+		DependsOnID: "bd-aaaa",
+		Type:        types.DepBlocks,
+		CreatedAt:   now,
+	}
+	remoteDep := &types.Dependency{
+		IssueID:     "bd-1234",
+		DependsOnID: "bd-bbbb",
+		Type:        types.DepBlocks,
+		CreatedAt:   now,
+	}
+
+	base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+	local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+	local.Dependencies = []*types.Dependency{localDep}
+	remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+	remote.Dependencies = []*types.Dependency{remoteDep}
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+
+	// Dependencies should be union of both
+	if len(merged.Dependencies) != 2 {
+		t.Errorf("Expected 2 dependencies, got %d", len(merged.Dependencies))
+	}
+
+	// Check both dependencies are present
+	foundAAA := false
+	foundBBB := false
+	for _, dep := range merged.Dependencies {
+		if dep.DependsOnID == "bd-aaaa" {
+			foundAAA = true
+		}
+		if dep.DependsOnID == "bd-bbbb" {
+			foundBBB = true
+		}
+	}
+	if !foundAAA {
+		t.Error("Expected dependency to bd-aaaa in merged")
+	}
+	if !foundBBB {
+		t.Error("Expected dependency to bd-bbbb in merged")
+	}
+}
+
+// TestCommentAppend tests comment append-merge with deduplication
+func TestCommentAppend(t *testing.T) {
+	now := time.Now()
+
+	// Common comment (should be deduplicated)
+	commonComment := &types.Comment{
+		ID:        1,
+		IssueID:   "bd-1234",
+		Author:    "user1",
+		Text:      "Common comment",
+		CreatedAt: now.Add(-time.Hour),
+	}
+	localComment := &types.Comment{
+		ID:        2,
+		IssueID:   "bd-1234",
+		Author:    "user2",
+		Text:      "Local comment",
+		CreatedAt: now,
+	}
+	remoteComment := &types.Comment{
+		ID:        3,
+		IssueID:   "bd-1234",
+		Author:    "user3",
+		Text:      "Remote comment",
+		CreatedAt: now.Add(30 * time.Minute),
+	}
+
+	base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now.Add(-2*time.Hour))
+	base.Comments = []*types.Comment{commonComment}
+
+	local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+	local.Comments = []*types.Comment{commonComment, localComment}
+
+	remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+	remote.Comments = []*types.Comment{commonComment, remoteComment}
+
+	merged, strategy := MergeIssue(base, local, remote)
+
+	if strategy != StrategyMerged {
+		t.Errorf("Expected strategy=%s, got %s", StrategyMerged, strategy)
+	}
+	if merged == nil {
+		t.Fatal("Expected merged issue, got nil")
+	}
+
+	// Comments should be union (3 total: common, local, remote)
+	if len(merged.Comments) != 3 {
+		t.Errorf("Expected 3 comments, got %d", len(merged.Comments))
+	}
+
+	// Check comments are sorted chronologically
+	for i := 0; i < len(merged.Comments)-1; i++ {
+		if merged.Comments[i].CreatedAt.After(merged.Comments[i+1].CreatedAt) {
+			t.Errorf("Comments not sorted chronologically: %v after %v",
+				merged.Comments[i].CreatedAt, merged.Comments[i+1].CreatedAt)
+		}
+	}
+}
+
+// TestFieldMerge_EdgeCases tests edge cases in field-level merge
+func TestFieldMerge_EdgeCases(t *testing.T) {
+	t.Run("nil_labels", func(t *testing.T) {
+		now := time.Now()
+		base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+		local.Labels = nil
+		remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+		remote.Labels = []string{"remote-label"}
+
+		merged, _ := MergeIssue(base, local, remote)
+		if merged == nil {
+			t.Fatal("Expected merged issue, got nil")
+		}
+
+		// Should have remote label (union of nil and ["remote-label"])
+		if len(merged.Labels) != 1 || merged.Labels[0] != "remote-label" {
+			t.Errorf("Expected ['remote-label'], got %v", merged.Labels)
+		}
+	})
+
+	t.Run("empty_labels", func(t *testing.T) {
+		now := time.Now()
+		base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+		local.Labels = []string{}
+		remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+		remote.Labels = []string{"remote-label"}
+
+		merged, _ := MergeIssue(base, local, remote)
+		if merged == nil {
+			t.Fatal("Expected merged issue, got nil")
+		}
+
+		// Should have remote label (union of [] and ["remote-label"])
+		if len(merged.Labels) != 1 || merged.Labels[0] != "remote-label" {
+			t.Errorf("Expected ['remote-label'], got %v", merged.Labels)
+		}
+	})
+
+	t.Run("nil_dependencies", func(t *testing.T) {
+		now := time.Now()
+		dep := &types.Dependency{
+			IssueID:     "bd-1234",
+			DependsOnID: "bd-dep",
+			Type:        types.DepBlocks,
+			CreatedAt:   now,
+		}
+
+		base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+		local.Dependencies = []*types.Dependency{dep}
+		remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+		remote.Dependencies = nil
+
+		merged, _ := MergeIssue(base, local, remote)
+		if merged == nil {
+			t.Fatal("Expected merged issue, got nil")
+		}
+
+		// Should have the dependency from local
+		if len(merged.Dependencies) != 1 {
+			t.Errorf("Expected 1 dependency, got %d", len(merged.Dependencies))
+		}
+	})
+
+	t.Run("nil_comments", func(t *testing.T) {
+		now := time.Now()
+		comment := &types.Comment{
+			ID:        1,
+			IssueID:   "bd-1234",
+			Author:    "user",
+			Text:      "Test comment",
+			CreatedAt: now,
+		}
+
+		base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now.Add(-time.Hour))
+		local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+		local.Comments = nil
+		remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+		remote.Comments = []*types.Comment{comment}
+
+		merged, _ := MergeIssue(base, local, remote)
+		if merged == nil {
+			t.Fatal("Expected merged issue, got nil")
+		}
+
+		// Should have the comment from remote
+		if len(merged.Comments) != 1 {
+			t.Errorf("Expected 1 comment, got %d", len(merged.Comments))
+		}
+	})
+
+	t.Run("duplicate_dependencies_newer_wins", func(t *testing.T) {
+		now := time.Now()
+
+		// Same dependency in both, but with different metadata/timestamps
+		localDep := &types.Dependency{
+			IssueID:     "bd-1234",
+			DependsOnID: "bd-dep",
+			Type:        types.DepBlocks,
+			CreatedAt:   now,
+			CreatedBy:   "local-user",
+		}
+		remoteDep := &types.Dependency{
+			IssueID:     "bd-1234",
+			DependsOnID: "bd-dep",
+			Type:        types.DepBlocks,
+			CreatedAt:   now.Add(time.Hour), // Newer
+			CreatedBy:   "remote-user",
+		}
+
+		base := makeTestIssue("bd-1234", "Test", types.StatusOpen, 1, now.Add(-time.Hour))
+		local := makeTestIssue("bd-1234", "Test Local", types.StatusInProgress, 1, now.Add(time.Hour))
+		local.Dependencies = []*types.Dependency{localDep}
+		remote := makeTestIssue("bd-1234", "Test Remote", types.StatusClosed, 1, now.Add(2*time.Hour))
+		remote.Dependencies = []*types.Dependency{remoteDep}
+
+		merged, _ := MergeIssue(base, local, remote)
+		if merged == nil {
+			t.Fatal("Expected merged issue, got nil")
+		}
+
+		// Should have only 1 dependency (deduplicated), the newer one
+		if len(merged.Dependencies) != 1 {
+			t.Errorf("Expected 1 dependency, got %d", len(merged.Dependencies))
+		}
+		if merged.Dependencies[0].CreatedBy != "remote-user" {
+			t.Errorf("Expected newer dependency (remote-user), got %s", merged.Dependencies[0].CreatedBy)
+		}
+	})
+}
+
+// TestMergeLabels tests the mergeLabels helper function directly
+func TestMergeLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		local    []string
+		remote   []string
+		expected []string
+	}{
+		{
+			name:     "both_empty",
+			local:    nil,
+			remote:   nil,
+			expected: nil,
+		},
+		{
+			name:     "local_only",
+			local:    []string{"a", "b"},
+			remote:   nil,
+			expected: []string{"a", "b"},
+		},
+		{
+			name:     "remote_only",
+			local:    nil,
+			remote:   []string{"x", "y"},
+			expected: []string{"x", "y"},
+		},
+		{
+			name:     "no_overlap",
+			local:    []string{"a", "b"},
+			remote:   []string{"x", "y"},
+			expected: []string{"a", "b", "x", "y"},
+		},
+		{
+			name:     "full_overlap",
+			local:    []string{"a", "b"},
+			remote:   []string{"a", "b"},
+			expected: []string{"a", "b"},
+		},
+		{
+			name:     "partial_overlap",
+			local:    []string{"a", "b", "c"},
+			remote:   []string{"b", "c", "d"},
+			expected: []string{"a", "b", "c", "d"},
+		},
+		{
+			name:     "duplicates_in_input",
+			local:    []string{"a", "a", "b"},
+			remote:   []string{"b", "b", "c"},
+			expected: []string{"a", "b", "c"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := mergeLabels(tc.local, tc.remote)
+
+			// Check length
+			if len(result) != len(tc.expected) {
+				t.Errorf("Expected %d labels, got %d: %v", len(tc.expected), len(result), result)
+				return
+			}
+
+			// Check contents (result is sorted, so direct comparison works)
+			for i, expected := range tc.expected {
+				if i >= len(result) || result[i] != expected {
+					t.Errorf("Expected %v, got %v", tc.expected, result)
+					return
+				}
+			}
+		})
+	}
+}

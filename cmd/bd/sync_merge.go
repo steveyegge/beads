@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +26,196 @@ const (
 	StrategyMerged = "merged" // True conflict, LWW applied
 	StrategySame   = "same"   // Both made identical change (or no change)
 )
+
+// FieldMergeRule defines how a specific field is merged in conflicts
+type FieldMergeRule string
+
+const (
+	RuleLWW    FieldMergeRule = "lww"    // Last-Write-Wins by updated_at
+	RuleUnion  FieldMergeRule = "union"  // Set union (OR-Set)
+	RuleAppend FieldMergeRule = "append" // Append-only merge
+)
+
+// FieldRules maps field names to merge rules
+// Scalar fields use LWW, collection fields use union/append
+var FieldRules = map[string]FieldMergeRule{
+	// Scalar fields - LWW by updated_at
+	"status":      RuleLWW,
+	"priority":    RuleLWW,
+	"assignee":    RuleLWW,
+	"title":       RuleLWW,
+	"description": RuleLWW,
+	"design":      RuleLWW,
+	"issue_type":  RuleLWW,
+	"notes":       RuleLWW,
+
+	// Set fields - union (no data loss)
+	"labels":       RuleUnion,
+	"dependencies": RuleUnion,
+
+	// Append-only fields
+	"comments": RuleAppend,
+}
+
+// mergeFieldLevel performs field-by-field merge for true conflicts.
+// Returns a new issue with:
+// - Scalar fields: from the newer issue (LWW by updated_at, remote wins on tie)
+// - Labels: union of both
+// - Dependencies: union of both (by DependsOnID+Type)
+// - Comments: append from both (deduplicated by ID or content)
+func mergeFieldLevel(base, local, remote *beads.Issue) *beads.Issue {
+	// Determine which is newer for LWW scalars
+	localNewer := local.UpdatedAt.After(remote.UpdatedAt)
+
+	// Start with a copy of the newer issue for scalar fields
+	var merged beads.Issue
+	if localNewer {
+		merged = *local
+	} else {
+		merged = *remote
+	}
+
+	// Union merge: Labels
+	merged.Labels = mergeLabels(local.Labels, remote.Labels)
+
+	// Union merge: Dependencies (by DependsOnID+Type key)
+	merged.Dependencies = mergeDependencies(local.Dependencies, remote.Dependencies)
+
+	// Append merge: Comments (deduplicated)
+	merged.Comments = mergeComments(local.Comments, remote.Comments)
+
+	return &merged
+}
+
+// mergeLabels performs set union on labels
+func mergeLabels(local, remote []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	// Add all local labels
+	for _, label := range local {
+		if !seen[label] {
+			seen[label] = true
+			result = append(result, label)
+		}
+	}
+
+	// Add remote labels not in local
+	for _, label := range remote {
+		if !seen[label] {
+			seen[label] = true
+			result = append(result, label)
+		}
+	}
+
+	// Sort for deterministic output
+	sort.Strings(result)
+	return result
+}
+
+// dependencyKey creates a unique key for deduplication
+// Uses DependsOnID + Type as the identity (same target+type = same dependency)
+func dependencyKey(d *beads.Dependency) string {
+	if d == nil {
+		return ""
+	}
+	return d.DependsOnID + ":" + string(d.Type)
+}
+
+// mergeDependencies performs set union on dependencies
+func mergeDependencies(local, remote []*beads.Dependency) []*beads.Dependency {
+	seen := make(map[string]*beads.Dependency)
+
+	// Add all local dependencies
+	for _, dep := range local {
+		if dep == nil {
+			continue
+		}
+		key := dependencyKey(dep)
+		seen[key] = dep
+	}
+
+	// Add remote dependencies not in local (or with newer timestamp)
+	for _, dep := range remote {
+		if dep == nil {
+			continue
+		}
+		key := dependencyKey(dep)
+		if existing, ok := seen[key]; ok {
+			// Keep the one with newer CreatedAt
+			if dep.CreatedAt.After(existing.CreatedAt) {
+				seen[key] = dep
+			}
+		} else {
+			seen[key] = dep
+		}
+	}
+
+	// Collect and sort by key for deterministic output
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]*beads.Dependency, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, seen[k])
+	}
+
+	return result
+}
+
+// commentKey creates a unique key for deduplication
+// Uses ID if present, otherwise content hash
+func commentKey(c *beads.Comment) string {
+	if c == nil {
+		return ""
+	}
+	if c.ID != 0 {
+		return fmt.Sprintf("id:%d", c.ID)
+	}
+	// Fallback to content-based key for comments without ID
+	return fmt.Sprintf("content:%s:%s", c.Author, c.Text)
+}
+
+// mergeComments performs append-merge on comments with deduplication
+func mergeComments(local, remote []*beads.Comment) []*beads.Comment {
+	seen := make(map[string]*beads.Comment)
+
+	// Add all local comments
+	for _, c := range local {
+		if c == nil {
+			continue
+		}
+		key := commentKey(c)
+		seen[key] = c
+	}
+
+	// Add remote comments not in local
+	for _, c := range remote {
+		if c == nil {
+			continue
+		}
+		key := commentKey(c)
+		if _, ok := seen[key]; !ok {
+			seen[key] = c
+		}
+	}
+
+	// Collect all comments
+	result := make([]*beads.Comment, 0, len(seen))
+	for _, c := range seen {
+		result = append(result, c)
+	}
+
+	// Sort by CreatedAt for chronological order
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+
+	return result
+}
 
 // MergeIssues performs 3-way merge: base x local x remote -> merged
 //
@@ -101,12 +292,9 @@ func MergeIssue(base, local, remote *beads.Issue) (*beads.Issue, string) {
 		if remote == nil {
 			return local, StrategyLocal
 		}
-		// Both exist with no base: treat as conflict, LWW by updated_at
-		// Remote wins on tie (per design.md Decision 3)
-		if local.UpdatedAt.After(remote.UpdatedAt) {
-			return local, StrategyMerged
-		}
-		return remote, StrategyMerged
+		// Both exist with no base: treat as conflict, use field-level merge
+		// This allows labels/comments to be union-merged even in first sync
+		return mergeFieldLevel(nil, local, remote), StrategyMerged
 	}
 
 	// Case: local deleted
@@ -150,11 +338,12 @@ func MergeIssue(base, local, remote *beads.Issue) (*beads.Issue, string) {
 		return local, StrategySame
 	}
 
-	// True conflict: LWW by updated_at, remote wins on tie
-	if local.UpdatedAt.After(remote.UpdatedAt) {
-		return local, StrategyMerged
-	}
-	return remote, StrategyMerged
+	// True conflict: use field-level merge
+	// - Scalar fields use LWW (remote wins on tie)
+	// - Labels use union (no data loss)
+	// - Dependencies use union (no data loss)
+	// - Comments use append (deduplicated)
+	return mergeFieldLevel(base, local, remote), StrategyMerged
 }
 
 // issueEqual compares two issues for equality (content-level, not pointer)
