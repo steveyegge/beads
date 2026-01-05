@@ -455,9 +455,14 @@ func recordDaemonStartFailure() {
 	// No cap needed - backoff is capped at 120s in canRetryDaemonStart
 }
 
-// getSocketPath returns the daemon socket path based on the database location
+// getSocketPath returns the daemon socket path based on the database location.
+// If BD_SOCKET env var is set, uses that value instead (enables test isolation).
 // Returns local socket path (.beads/bd.sock relative to database)
 func getSocketPath() string {
+	// Check environment variable first (enables test isolation)
+	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
+		return socketPath
+	}
 	return filepath.Join(filepath.Dir(dbPath), "bd.sock")
 }
 
