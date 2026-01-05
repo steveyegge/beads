@@ -5,6 +5,121 @@ All notable changes to the beads project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.0] - 2026-01-04
+
+### Added
+
+- **Recipe-based setup architecture** - Major refactor of `bd init` (bd-i3ed)
+  - Modular, composable setup via recipes
+  - Cleaner separation of init concerns
+
+- **Gate evaluation system** - Phases 2-4
+  - `bd gate check` for timer and GitHub gate evaluation (GH#884)
+  - `bd gate discover` for auto-discovery of gh:run await_id (bd-z6kw)
+  - `bd gate add-waiter` and `bd gate show` for phase handoff
+  - Cross-rig bead gate support
+  - Gate-aware beads-release.formula v2 (bd-r24e)
+  - Merge-slot gate for serialized conflict resolution
+
+- **Dependency command improvements**
+  - `--blocks` shorthand flag for natural dependency syntax (GH#884)
+  - `--blocked-by` and `--depends-on` flag aliases (bd-09kt)
+
+- **Multi-prefix support** - `allowed_prefixes` config option (#881)
+  - Configure multiple valid prefixes per rig
+  - Enables flexible issue routing
+
+- **Sync improvements**
+  - Detect uncommitted JSONL changes before sync (GH#885)
+  - `bd doctor` sync divergence check for JSONL/SQLite/git
+  - `BD_DEBUG_SYNC` env for protection debugging
+
+- **`PRIME.md` override** - Workflow customization (GH#876)
+  - Custom prime output per project
+
+- **Daemon config** - `daemon.auto_*` settings in config.yaml (GH#871)
+
+- **Compound visualization** - `bd mol show` displays compound structure (bd-iw4z)
+
+- **`/handoff` skill** - Session cycling slash command (bd-xwvo)
+
+### Fixed
+
+- **`bd ready` now shows in_progress issues** (#894)
+  - Previously filtered out your active work
+
+- **`bd show` displays external_ref field** in text output (#899)
+
+- **macOS case-insensitive path handling** (GH#880)
+  - Worktree validation, daemon paths, git operations
+  - Canonicalize path case for consistency
+
+- **Sync metadata timing** - Finalize after commit, not push (GH#885)
+  - Defer SQLite metadata updates until after git commit
+  - Prevents sync state corruption
+
+- **Sparse checkout isolation** - Prevent config leaking to main repo (GH#886)
+  - Disable sparse checkout on main repo after worktree creation
+
+- **`close_reason` preserved** during merge/sync (GH#891)
+
+- **Parent hub contamination** during `bd init` (GH#896)
+
+- **NoDb mode** - Set cmdCtx.StoreActive correctly (GH#897)
+
+- **Event storm prevention** when gitRefsPath is empty (#883)
+
+- **Doctor improvements**
+  - Detect status mismatches between DB and JSONL (GH#885)
+  - Detect missing git repo, improve daemon startup message (#890)
+  - Skip JSONL tracking checks in sync-branch mode (GH#858)
+
+- **`bd rename-prefix`** - Sync JSONL before and after (#893)
+
+- **`sync.remote` config** now respected in `bd sync` (GH#872)
+
+- **Snapshot protection** made timestamp-aware (GH#865)
+
+- **Hyphenated rig names** supported in agent IDs (GH#854, GH#868)
+
+- **Cross-repo agent routing** (#864)
+
+- **Config key normalization** - GetYamlConfig matches SetYamlConfig (#874)
+
+- **Daemon startup failure** - Propagate reason to user (GH#863)
+
+- **Molecule variable substitution** in root bead title/desc
+
+- **Submodule detection** - Correct main repo root detection (#849)
+
+- **`bd merge` output** sorted by issue id (#859)
+
+- **Auto-create agent bead** when `bd agent state` called on non-existent agent
+
+- **Windows zip extraction** - Add retry logic for npm install
+
+- **Cycle detection** runs in daemon mode for --blocks flag
+
+- **`bd slot set`** cross-beads prefix routing (bd-hmeb)
+
+- **`git status` noise** - Hide issues.jsonl when sync.branch configured (GH#870)
+
+### Changed
+
+- **Skill names** updated from `/bd-*` to `/beads:*` (#862)
+
+### Performance
+
+- **Batch external dep checks** by project (bd-687v)
+
+### Internal
+
+- Extract warnIfCyclesExist helper
+- Gate field parsing and creation tests
+- Sync unit tests for gitHasUncommittedBeadsChanges
+- SQLite cache rebuild benchmarks
+- Repository guards in deployment workflows
+
 ## [0.43.0] - 2026-01-02
 
 ### Added
