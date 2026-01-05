@@ -14,11 +14,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
-	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 var daemonCmd = &cobra.Command{
@@ -71,68 +69,8 @@ Run 'bd daemon' with no flags to see available options.`,
 		// GH#871: Read from config.yaml first (team-shared), then fall back to SQLite (legacy)
 		// (skip if --stop, --status, --health, --metrics)
 		if start && !stop && !status && !health && !metrics {
-			if !cmd.Flags().Changed("auto-commit") {
-				// Check config.yaml first (GH#871: team-wide settings)
-				if config.GetBool("daemon.auto_commit") {
-					autoCommit = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_commit"); err == nil && configVal == "true" {
-							autoCommit = true
-						}
-						_ = store.Close()
-					}
-				}
-			}
-			if !cmd.Flags().Changed("auto-push") {
-				// Check config.yaml first (GH#871: team-wide settings)
-				if config.GetBool("daemon.auto_push") {
-					autoPush = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_push"); err == nil && configVal == "true" {
-							autoPush = true
-						}
-						_ = store.Close()
-					}
-				}
-			}
-			if !cmd.Flags().Changed("auto-pull") {
-				// Check environment variable first
-				if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
-					autoPull = envVal == "true" || envVal == "1"
-				} else if config.GetBool("daemon.auto_pull") {
-					// Check config.yaml (GH#871: team-wide settings)
-					autoPull = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_pull"); err == nil {
-							if configVal == "true" {
-								autoPull = true
-							} else if configVal == "false" {
-								autoPull = false
-							}
-						} else {
-							// Default: auto_pull is true when sync-branch is configured
-							// Use syncbranch.IsConfigured() which checks env var and config.yaml
-							// (the common case), not just SQLite (legacy)
-							if syncbranch.IsConfigured() {
-								autoPull = true
-							}
-						}
-						_ = store.Close()
-					}
-				}
-			}
+			// Load auto-commit/push/pull defaults from env vars, config, or sync-branch
+			autoCommit, autoPush, autoPull = loadDaemonAutoSettings(cmd, autoCommit, autoPush, autoPull)
 		}
 
 		if interval <= 0 {
@@ -601,4 +539,145 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("unknown BEADS_DAEMON_MODE, defaulting to poll", "mode", daemonMode, "valid", "poll, events")
 		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 	}
+}
+
+// loadDaemonAutoSettings loads daemon sync mode settings.
+//
+// # Two Sync Modes
+//
+// Read/Write Mode (full sync):
+//
+//	daemon.auto-sync: true  (or BEADS_AUTO_SYNC=true)
+//
+// Enables auto-commit, auto-push, AND auto-pull. Full bidirectional sync
+// with team. Eliminates need for manual `bd sync`. This is the default
+// when sync-branch is configured.
+//
+// Read-Only Mode:
+//
+//	daemon.auto-pull: true  (or BEADS_AUTO_PULL=true)
+//
+// Only enables auto-pull (receive updates from team). Does NOT auto-publish
+// your changes. Useful for experimental work or manual review before sharing.
+//
+// # Precedence
+//
+// 1. auto-sync=true → Read/Write mode (all three ON, no exceptions)
+// 2. auto-sync=false → Write-side OFF, auto-pull can still be enabled
+// 3. auto-sync not set → Legacy compat mode:
+//   - If either BEADS_AUTO_COMMIT/daemon.auto_commit or BEADS_AUTO_PUSH/daemon.auto_push
+//     is enabled, treat as auto-sync=true (full read/write)
+//   - Otherwise check auto-pull for read-only mode
+// 4. Fallback: all default to true when sync-branch configured
+//
+// Note: The individual auto-commit/auto-push settings are deprecated.
+// Use auto-sync for read/write mode, auto-pull for read-only mode.
+func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull bool) (bool, bool, bool) {
+	dbPath := beads.FindDatabasePath()
+	if dbPath == "" {
+		return autoCommit, autoPush, autoPull
+	}
+
+	ctx := context.Background()
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		return autoCommit, autoPush, autoPull
+	}
+	defer func() { _ = store.Close() }()
+
+	// Check if sync-branch is configured (used for defaults)
+	syncBranch, _ := store.GetConfig(ctx, "sync.branch")
+	hasSyncBranch := syncBranch != ""
+
+	// Check unified auto-sync setting first (controls auto-commit + auto-push)
+	unifiedAutoSync := ""
+	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
+		unifiedAutoSync = envVal
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
+		unifiedAutoSync = configVal
+	}
+
+	// Handle unified auto-sync setting
+	if unifiedAutoSync != "" {
+		enabled := unifiedAutoSync == "true" || unifiedAutoSync == "1"
+		if enabled {
+			// auto-sync=true: MASTER CONTROL, forces all three ON
+			// Individual CLI flags are ignored - you said "full sync"
+			autoCommit = true
+			autoPush = true
+			autoPull = true
+			return autoCommit, autoPush, autoPull
+		}
+		// auto-sync=false: Write-side (commit/push) locked OFF
+		// Only auto-pull can be individually enabled (for read-only mode)
+		autoCommit = false
+		autoPush = false
+		// Auto-pull can still be enabled via CLI flag or individual config
+		if cmd.Flags().Changed("auto-pull") {
+			// Use the CLI flag value (already in autoPull)
+		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
+			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if hasSyncBranch {
+			// Default auto-pull to true when sync-branch configured
+			autoPull = true
+		} else {
+			autoPull = false
+		}
+		return autoCommit, autoPush, autoPull
+	}
+
+	// No unified setting - check legacy individual settings for backward compat
+	// If either legacy auto-commit or auto-push is enabled, treat as auto-sync=true
+	legacyCommit := false
+	legacyPush := false
+
+	// Check legacy auto-commit (env var or config)
+	if envVal := os.Getenv("BEADS_AUTO_COMMIT"); envVal != "" {
+		legacyCommit = envVal == "true" || envVal == "1"
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_commit"); configVal != "" {
+		legacyCommit = configVal == "true"
+	}
+
+	// Check legacy auto-push (env var or config)
+	if envVal := os.Getenv("BEADS_AUTO_PUSH"); envVal != "" {
+		legacyPush = envVal == "true" || envVal == "1"
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_push"); configVal != "" {
+		legacyPush = configVal == "true"
+	}
+
+	// If either legacy write-side option is enabled, enable full auto-sync
+	// (backward compat: user wanted writes, so give them full sync)
+	if legacyCommit || legacyPush {
+		autoCommit = true
+		autoPush = true
+		autoPull = true
+		return autoCommit, autoPush, autoPull
+	}
+
+	// Neither legacy write option enabled - check auto-pull for read-only mode
+	if !cmd.Flags().Changed("auto-pull") {
+		if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
+			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if hasSyncBranch {
+			// Default auto-pull to true when sync-branch configured
+			autoPull = true
+		}
+	}
+
+	// Fallback: if sync-branch configured and no explicit settings, default to full sync
+	if hasSyncBranch && !cmd.Flags().Changed("auto-commit") && !cmd.Flags().Changed("auto-push") {
+		autoCommit = true
+		autoPush = true
+		autoPull = true
+	}
+
+	return autoCommit, autoPush, autoPull
 }

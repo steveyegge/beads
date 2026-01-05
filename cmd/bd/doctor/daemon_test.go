@@ -1,12 +1,14 @@
 package doctor
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestCheckDaemonStatus(t *testing.T) {
@@ -79,7 +81,7 @@ func TestCheckGitSyncSetup(t *testing.T) {
 		}()
 
 		// Initialize git repo
-		cmd := exec.Command("git", "init")
+		cmd := exec.Command("git", "init", "--initial-branch=main")
 		cmd.Dir = tmpDir
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("Failed to init git repo: %v", err)
@@ -101,6 +103,91 @@ func TestCheckGitSyncSetup(t *testing.T) {
 		// Should mention sync-branch not configured
 		if check.Detail == "" {
 			t.Error("Expected Detail to contain sync-branch hint")
+		}
+	})
+}
+
+func TestCheckDaemonAutoSync(t *testing.T) {
+	t.Run("no daemon socket", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		check := CheckDaemonAutoSync(tmpDir)
+
+		if check.Status != StatusOK {
+			t.Errorf("Status = %q, want %q", check.Status, StatusOK)
+		}
+		if check.Message != "Daemon not running (will use defaults on next start)" {
+			t.Errorf("Message = %q, want 'Daemon not running...'", check.Message)
+		}
+	})
+
+	t.Run("no sync-branch configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database without sync-branch config
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		ctx := context.Background()
+		store, err := sqlite.New(ctx, dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = store.Close() }()
+
+		// Create a fake socket file to simulate daemon running
+		socketPath := filepath.Join(beadsDir, "bd.sock")
+		if err := os.WriteFile(socketPath, []byte{}, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		check := CheckDaemonAutoSync(tmpDir)
+
+		// Should return OK because no sync-branch means auto-sync not applicable
+		if check.Status != StatusOK {
+			t.Errorf("Status = %q, want %q", check.Status, StatusOK)
+		}
+		if check.Message != "No sync-branch configured (auto-sync not applicable)" {
+			t.Errorf("Message = %q, want 'No sync-branch...'", check.Message)
+		}
+	})
+
+	t.Run("sync-branch configured but cannot connect", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database with sync-branch config
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		ctx := context.Background()
+		store, err := sqlite.New(ctx, dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetConfig(ctx, "sync.branch", "beads-sync"); err != nil {
+			t.Fatal(err)
+		}
+		_ = store.Close()
+
+		// Create a fake socket file (not a real daemon)
+		socketPath := filepath.Join(beadsDir, "bd.sock")
+		if err := os.WriteFile(socketPath, []byte{}, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		check := CheckDaemonAutoSync(tmpDir)
+
+		// Should return warning because can't connect to fake socket
+		if check.Status != StatusWarning {
+			t.Errorf("Status = %q, want %q", check.Status, StatusWarning)
 		}
 	})
 }
