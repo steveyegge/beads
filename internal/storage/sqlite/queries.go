@@ -289,6 +289,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// IUF priority scoring fields
+	var importance sql.NullInt64
+	var urgency sql.NullInt64
+	var feasibility sql.NullInt64
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -302,7 +306,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until,
+		       importance, urgency, feasibility
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -317,6 +322,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
+		&importance, &urgency, &feasibility,
 	)
 
 	if err == sql.ErrNoRows {
@@ -437,6 +443,19 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
+	}
+	// IUF priority scoring fields
+	if importance.Valid {
+		i := int(importance.Int64)
+		issue.Importance = &i
+	}
+	if urgency.Valid {
+		u := int(urgency.Int64)
+		issue.Urgency = &u
+	}
+	if feasibility.Valid {
+		f := int(feasibility.Int64)
+		issue.Feasibility = &f
 	}
 
 	// Fetch labels for this issue

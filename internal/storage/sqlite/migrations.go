@@ -52,6 +52,7 @@ var migrationsList = []Migration{
 	{"event_fields", migrations.MigrateEventFields},
 	{"closed_by_session_column", migrations.MigrateClosedBySessionColumn},
 	{"due_defer_columns", migrations.MigrateDueDeferColumns},
+	{"iuf_columns", migrations.MigrateIUFColumns},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -111,6 +112,7 @@ func getMigrationDescription(name string) string {
 		"event_fields":                 "Adds event fields (event_kind, actor, target, payload) for operational state change beads",
 		"closed_by_session_column":     "Adds closed_by_session column for tracking which Claude Code session closed an issue",
 		"due_defer_columns":            "Adds due_at and defer_until columns for time-based task scheduling (GH#820)",
+		"iuf_columns":                  "Adds importance, urgency, feasibility columns for IUF priority scoring: P = (2×I + U) × F",
 	}
 
 	if desc, ok := descriptions[name]; ok {

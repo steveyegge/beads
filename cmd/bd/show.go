@@ -213,6 +213,20 @@ var showCmd = &cobra.Command{
 						fmt.Printf("Closed by session: %s\n", issue.ClosedBySession)
 					}
 					fmt.Printf("Priority: P%d\n", issue.Priority)
+					// Display IUF breakdown if any are set
+					if issue.Importance != nil || issue.Urgency != nil || issue.Feasibility != nil {
+						iStr, uStr, fStr := "-", "-", "-"
+						if issue.Importance != nil {
+							iStr = fmt.Sprintf("%d", *issue.Importance)
+						}
+						if issue.Urgency != nil {
+							uStr = fmt.Sprintf("%d", *issue.Urgency)
+						}
+						if issue.Feasibility != nil {
+							fStr = fmt.Sprintf("%d", *issue.Feasibility)
+						}
+						fmt.Printf("  IUF: I=%s U=%s F=%s\n", iStr, uStr, fStr)
+					}
 					fmt.Printf("Type: %s\n", issue.IssueType)
 					if issue.Assignee != "" {
 						fmt.Printf("Assignee: %s\n", issue.Assignee)
@@ -439,6 +453,20 @@ var showCmd = &cobra.Command{
 				fmt.Printf("Closed by session: %s\n", issue.ClosedBySession)
 			}
 			fmt.Printf("Priority: P%d\n", issue.Priority)
+			// Display IUF breakdown if any are set
+			if issue.Importance != nil || issue.Urgency != nil || issue.Feasibility != nil {
+				iStr, uStr, fStr := "-", "-", "-"
+				if issue.Importance != nil {
+					iStr = fmt.Sprintf("%d", *issue.Importance)
+				}
+				if issue.Urgency != nil {
+					uStr = fmt.Sprintf("%d", *issue.Urgency)
+				}
+				if issue.Feasibility != nil {
+					fStr = fmt.Sprintf("%d", *issue.Feasibility)
+				}
+				fmt.Printf("  IUF: I=%s U=%s F=%s\n", iStr, uStr, fStr)
+			}
 			fmt.Printf("Type: %s\n", issue.IssueType)
 			if issue.Assignee != "" {
 				fmt.Printf("Assignee: %s\n", issue.Assignee)

@@ -88,11 +88,47 @@ var createCmd = &cobra.Command{
 		acceptance, _ := cmd.Flags().GetString("acceptance")
 		notes, _ := cmd.Flags().GetString("notes")
 
+		// Parse IUF priority scoring flags
+		var importance, urgency, feasibility *int
+		importanceVal, _ := cmd.Flags().GetInt("importance")
+		urgencyVal, _ := cmd.Flags().GetInt("urgency")
+		feasibilityVal, _ := cmd.Flags().GetInt("feasibility")
+		hasIUF := cmd.Flags().Changed("importance") || cmd.Flags().Changed("urgency") || cmd.Flags().Changed("feasibility")
+
+		if hasIUF {
+			// If any IUF flag is set, validate and store them
+			if cmd.Flags().Changed("importance") {
+				importance = &importanceVal
+			}
+			if cmd.Flags().Changed("urgency") {
+				urgency = &urgencyVal
+			}
+			if cmd.Flags().Changed("feasibility") {
+				feasibility = &feasibilityVal
+			}
+
+			// Validate IUF values
+			if err := validation.ValidateIUF(importance, urgency, feasibility); err != nil {
+				FatalError("%v", err)
+			}
+		}
+
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
 		priority, err := validation.ValidatePriority(priorityStr)
 		if err != nil {
 			FatalError("%v", err)
+		}
+
+		// If all IUF values provided, calculate priority (overrides default, warns if explicit)
+		if importance != nil && urgency != nil && feasibility != nil {
+			calculatedPriority := validation.CalculatePriorityFromIUF(*importance, *urgency, *feasibility)
+			if cmd.Flags().Changed("priority") && priority != calculatedPriority {
+				// User explicitly set both IUF and --priority - warn and use IUF
+				fmt.Fprintf(os.Stderr, "%s Both IUF scores and --priority specified. Using IUF-calculated priority P%d (was P%d).\n",
+					ui.RenderWarn("!"), calculatedPriority, priority)
+			}
+			priority = calculatedPriority
 		}
 
 		issueType, _ := cmd.Flags().GetString("type")
@@ -183,7 +219,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, importance, urgency, feasibility)
 			return
 		}
 
@@ -352,6 +388,9 @@ var createCmd = &cobra.Command{
 				EventPayload:       eventPayload,
 				DueAt:              dueStr,
 				DeferUntil:         deferStr,
+				Importance:         importance,
+				Urgency:            urgency,
+				Feasibility:        feasibility,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -397,6 +436,9 @@ var createCmd = &cobra.Command{
 			Status:             types.StatusOpen,
 			Priority:           priority,
 			IssueType:          types.IssueType(issueType),
+			Importance:         importance,
+			Urgency:            urgency,
+			Feasibility:        feasibility,
 			Assignee:           assignee,
 			ExternalRef:        externalRefPtr,
 			EstimatedMinutes:   estimatedMinutes,
@@ -631,13 +673,18 @@ func init() {
 	//   --defer=tomorrow    Hidden until tomorrow
 	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
+	// IUF priority scoring flags (alternative to --priority)
+	// When all three are provided, priority is auto-calculated: P = (2×I + U) × F → P0-P4
+	createCmd.Flags().IntP("importance", "i", 0, "Importance (1-3): 1=low, 2=medium, 3=high. Used with --urgency and --feasibility to calculate priority")
+	createCmd.Flags().IntP("urgency", "u", 0, "Urgency (1-3): 1=low, 2=medium, 3=high. Used with --importance and --feasibility to calculate priority")
+	createCmd.Flags().Int("feasibility", 0, "Feasibility (1-3): 1=blocked, 2=partial, 3=ready. Used with --importance and --urgency to calculate priority")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }
 
 // createInRig creates an issue in a different rig using --rig flag.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool, importance, urgency, feasibility *int) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -715,6 +762,9 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		Status:             types.StatusOpen,
 		Priority:           priority,
 		IssueType:          types.IssueType(issueType),
+		Importance:         importance,
+		Urgency:            urgency,
+		Feasibility:        feasibility,
 		Assignee:           assignee,
 		ExternalRef:        externalRefPtr,
 		Ephemeral:          wisp,

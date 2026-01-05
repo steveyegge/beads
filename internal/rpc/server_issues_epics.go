@@ -241,6 +241,10 @@ func (s *Server) handleCreate(req *Request) Response {
 		ExternalRef:        externalRef,
 		EstimatedMinutes:   createArgs.EstimatedMinutes,
 		Status:             types.StatusOpen,
+		// IUF priority scoring
+		Importance:  createArgs.Importance,
+		Urgency:     createArgs.Urgency,
+		Feasibility: createArgs.Feasibility,
 		// Messaging fields
 		Sender:    createArgs.Sender,
 		Ephemeral: createArgs.Ephemeral,

@@ -28,6 +28,12 @@ type Issue struct {
 	Priority  int       `json:"priority"` // No omitempty: 0 is valid (P0/critical)
 	IssueType IssueType `json:"issue_type,omitempty"`
 
+	// ===== IUF Priority Scoring (optional) =====
+	// When all three are set, Priority is auto-calculated: P = (2×I + U) × F → P0-P4
+	Importance  *int `json:"importance,omitempty"`  // 1-3: 1=low, 2=medium, 3=high
+	Urgency     *int `json:"urgency,omitempty"`     // 1-3: 1=low, 2=medium, 3=high
+	Feasibility *int `json:"feasibility,omitempty"` // 1-3: 1=blocked, 2=partial, 3=ready
+
 	// ===== Assignment =====
 	Assignee         string `json:"assignee,omitempty"`
 	EstimatedMinutes *int   `json:"estimated_minutes,omitempty"`
@@ -135,6 +141,11 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Assignee)
 	w.str(i.CreatedBy)
 
+	// IUF priority scoring fields
+	w.intPtr(i.Importance)
+	w.intPtr(i.Urgency)
+	w.intPtr(i.Feasibility)
+
 	// Optional fields
 	w.strPtr(i.ExternalRef)
 	w.flag(i.Pinned, "pinned")
@@ -201,6 +212,13 @@ func (w hashFieldWriter) str(s string) {
 
 func (w hashFieldWriter) int(n int) {
 	w.h.Write([]byte(fmt.Sprintf("%d", n)))
+	w.h.Write([]byte{0})
+}
+
+func (w hashFieldWriter) intPtr(p *int) {
+	if p != nil {
+		w.h.Write([]byte(fmt.Sprintf("%d", *p)))
+	}
 	w.h.Write([]byte{0})
 }
 

@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS issues (
     compacted_at DATETIME,
     compacted_at_commit TEXT,
     original_size INTEGER,
+    source_repo TEXT DEFAULT '.',
+    close_reason TEXT DEFAULT '',
     deleted_at DATETIME,
     deleted_by TEXT DEFAULT '',
     delete_reason TEXT DEFAULT '',
@@ -36,6 +38,18 @@ CREATE TABLE IF NOT EXISTS issues (
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
     is_template INTEGER DEFAULT 0,
+    -- Gate columns (bd-cuhj)
+    await_type TEXT DEFAULT '',
+    await_id TEXT DEFAULT '',
+    timeout_ns INTEGER DEFAULT 0,
+    waiters TEXT DEFAULT '',
+    -- Agent fields (bd-lqfs)
+    hook_bead TEXT DEFAULT '',
+    role_bead TEXT DEFAULT '',
+    agent_state TEXT DEFAULT '',
+    last_activity DATETIME,
+    role_type TEXT DEFAULT '',
+    rig TEXT DEFAULT '',
     -- Molecule type field (bd-oxgi)
     mol_type TEXT DEFAULT '',
     -- Event fields (bd-ecmd)
@@ -43,6 +57,13 @@ CREATE TABLE IF NOT EXISTS issues (
     actor TEXT DEFAULT '',
     target TEXT DEFAULT '',
     payload TEXT DEFAULT '',
+    -- Time-based scheduling fields (GH#820)
+    due_at DATETIME,
+    defer_until DATETIME,
+    -- IUF priority scoring fields (68-SVPTWIN-g1h)
+    importance INTEGER,
+    urgency INTEGER,
+    feasibility INTEGER,
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     -- closed_at constraint: closed issues must have it, tombstones may retain it from before deletion

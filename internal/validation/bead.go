@@ -49,6 +49,47 @@ func ValidatePriority(priorityStr string) (int, error) {
 	return priority, nil
 }
 
+// ValidateIUF validates Importance, Urgency, and Feasibility values.
+// Each must be 1-3 if provided.
+// Returns an error if any value is out of range.
+func ValidateIUF(importance, urgency, feasibility *int) error {
+	if importance != nil && (*importance < 1 || *importance > 3) {
+		return fmt.Errorf("importance must be 1-3 (got %d)", *importance)
+	}
+	if urgency != nil && (*urgency < 1 || *urgency > 3) {
+		return fmt.Errorf("urgency must be 1-3 (got %d)", *urgency)
+	}
+	if feasibility != nil && (*feasibility < 1 || *feasibility > 3) {
+		return fmt.Errorf("feasibility must be 1-3 (got %d)", *feasibility)
+	}
+	return nil
+}
+
+// CalculatePriorityFromIUF calculates priority (P0-P4) from IUF scores.
+// Formula: score = (2×I + U) × F, then mapped to P0-P4.
+// - Score range: 3-27
+// - P0 (critical): score 23-27
+// - P1 (high):     score 18-22
+// - P2 (medium):   score 13-17
+// - P3 (low):      score 8-12
+// - P4 (backlog):  score 3-7
+//
+// Returns the calculated priority (0-4).
+// All three values must be provided and valid (1-3).
+func CalculatePriorityFromIUF(importance, urgency, feasibility int) int {
+	score := (2*importance + urgency) * feasibility
+	// Map score (3-27) to priority (4-0)
+	// Using buckets of 5: 3-7→P4, 8-12→P3, 13-17→P2, 18-22→P1, 23-27→P0
+	priority := 4 - (score-3)/5
+	if priority < 0 {
+		priority = 0
+	}
+	if priority > 4 {
+		priority = 4
+	}
+	return priority
+}
+
 // ValidateIDFormat validates that an ID has the correct format.
 // Supports: prefix-number (bd-42), prefix-hash (bd-a3f8e9), or hierarchical (bd-a3f8e9.1)
 // Returns the prefix part or an error if invalid.

@@ -49,8 +49,9 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			sender, ephemeral, pinned, is_template,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until,
+			importance, urgency, feasibility
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -63,6 +64,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.DueAt, issue.DeferUntil,
+		issue.Importance, issue.Urgency, issue.Feasibility,
 	)
 	if err != nil {
 		// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -86,8 +88,9 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			sender, ephemeral, pinned, is_template,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
-			due_at, defer_until
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			due_at, defer_until,
+			importance, urgency, feasibility
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -125,6 +128,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 			issue.DueAt, issue.DeferUntil,
+			issue.Importance, issue.Urgency, issue.Feasibility,
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error

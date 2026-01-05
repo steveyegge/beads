@@ -111,6 +111,10 @@ type CreateArgs struct {
 	// Time-based scheduling fields (GH#820)
 	DueAt      string `json:"due_at,omitempty"`      // Relative or ISO format due date
 	DeferUntil string `json:"defer_until,omitempty"` // Relative or ISO format defer date
+	// IUF priority scoring (optional, when all three set, Priority is auto-calculated)
+	Importance  *int `json:"importance,omitempty"`  // 1-3: 1=low, 2=medium, 3=high
+	Urgency     *int `json:"urgency,omitempty"`     // 1-3: 1=low, 2=medium, 3=high
+	Feasibility *int `json:"feasibility,omitempty"` // 1-3: 1=blocked, 2=partial, 3=ready
 }
 
 // UpdateArgs represents arguments for the update operation
