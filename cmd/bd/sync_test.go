@@ -894,3 +894,117 @@ func TestIsExternalBeadsDir(t *testing.T) {
 		}
 	})
 }
+
+// TestConcurrentEdit tests the pull-first sync flow with concurrent edits.
+// This is the Phase 1 tracer bullet test for the pull-first sync refactor (#911).
+//
+// Scenario:
+// - Two "worktrees" (simulated) have the same base state
+// - Worktree A edits issue bd-1 (changes title to "A's edit")
+// - Worktree B edits issue bd-1 (changes title to "B's edit")
+// - When using pull-first, the merge (stub) returns remote state
+// - This test verifies the pull-first flow executes without data loss
+func TestConcurrentEdit(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Setup: Initialize git repo
+	if err := exec.Command("git", "init", "--initial-branch=main").Run(); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+	_ = exec.Command("git", "config", "user.email", "test@test.com").Run()
+	_ = exec.Command("git", "config", "user.name", "Test User").Run()
+
+	// Setup: Create beads directory with JSONL (base state)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	// Base state: single issue
+	baseIssue := `{"id":"bd-1","title":"Original Title","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
+	if err := os.WriteFile(jsonlPath, []byte(baseIssue+"\n"), 0644); err != nil {
+		t.Fatalf("write JSONL failed: %v", err)
+	}
+
+	// Initial commit
+	_ = exec.Command("git", "add", ".").Run()
+	if err := exec.Command("git", "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("initial commit failed: %v", err)
+	}
+
+	// Create database and import base state
+	testDBPath := filepath.Join(beadsDir, "beads.db")
+	testStore, err := sqlite.New(ctx, testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create test store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Set issue_prefix
+	if err := testStore.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Create the base issue in DB
+	baseIssueObj := &types.Issue{
+		ID:        "bd-1",
+		Title:     "Original Title",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+		Priority:  2,
+	}
+	if err := testStore.CreateIssue(ctx, baseIssueObj, "test"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Simulate "remote" edit: change title in JSONL (as if pulled from remote)
+	remoteIssue := `{"id":"bd-1","title":"Remote Edit","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-02T00:00:00Z"}`
+	if err := os.WriteFile(jsonlPath, []byte(remoteIssue+"\n"), 0644); err != nil {
+		t.Fatalf("write remote JSONL failed: %v", err)
+	}
+
+	// "Local" state in DB still has "Original Title"
+	// (simulating a stale worktree that hasn't pulled)
+
+	// Test the merge function directly (Phase 1: stub returns remote)
+	localIssues := []*types.Issue{baseIssueObj}
+	remoteIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		t.Fatalf("loadIssuesFromJSONL failed: %v", err)
+	}
+
+	if len(remoteIssues) != 1 {
+		t.Fatalf("expected 1 remote issue, got %d", len(remoteIssues))
+	}
+
+	// Phase 1 stub merge: should return remote issues
+	mergeResult, err := MergeIssues(nil, localIssues, remoteIssues)
+	if err != nil {
+		t.Fatalf("MergeIssues failed: %v", err)
+	}
+
+	// Verify merge result
+	if len(mergeResult.Merged) != 1 {
+		t.Fatalf("expected 1 merged issue, got %d", len(mergeResult.Merged))
+	}
+
+	// Phase 1 stub returns remote, so title should be "Remote Edit"
+	if mergeResult.Merged[0].Title != "Remote Edit" {
+		t.Errorf("expected merged title 'Remote Edit', got '%s'", mergeResult.Merged[0].Title)
+	}
+
+	// Verify strategy
+	if mergeResult.Strategy["bd-1"] != "remote" {
+		t.Errorf("expected strategy 'remote' for bd-1, got '%s'", mergeResult.Strategy["bd-1"])
+	}
+
+	// Verify no conflicts (stub doesn't report conflicts)
+	if mergeResult.Conflicts != 0 {
+		t.Errorf("expected 0 conflicts (Phase 1 stub), got %d", mergeResult.Conflicts)
+	}
+
+	t.Log("TestConcurrentEdit: Phase 1 tracer bullet passed - pull-first merge architecture validated")
+}

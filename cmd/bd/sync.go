@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -52,6 +53,7 @@ Use --merge to merge the sync branch back to main branch.`,
 		squash, _ := cmd.Flags().GetBool("squash")
 		checkIntegrity, _ := cmd.Flags().GetBool("check")
 		acceptRebase, _ := cmd.Flags().GetBool("accept-rebase")
+		pullFirst, _ := cmd.Flags().GetBool("pull-first")
 
 		// If --no-push not explicitly set, check no-push config
 		if !cmd.Flags().Changed("no-push") {
@@ -211,6 +213,16 @@ Use --merge to merge the sync branch back to main branch.`,
 				return
 			}
 			// If no remote at all, gitPull/gitPush will gracefully skip
+		}
+
+		// Pull-First Flow (--pull-first flag)
+		// New sync ordering: Pull → Merge → Export → Commit → Push
+		// This eliminates the export-before-pull data loss pattern (#911)
+		if pullFirst && !noPull {
+			if err := doPullFirstSync(ctx, jsonlPath, renameOnImport, noGitHistory, dryRun, noPush, message); err != nil {
+				FatalError("%v", err)
+			}
+			return
 		}
 
 		// Step 1: Export pending changes (but check for stale DB first)
@@ -943,6 +955,98 @@ Use --merge to merge the sync branch back to main branch.`,
 	},
 }
 
+// doPullFirstSync implements the pull-first sync flow:
+// Pull → Merge → Export → Commit → Push
+//
+// This eliminates the export-before-pull data loss pattern (#911) by
+// seeing remote changes before exporting local state.
+//
+// Phase 1 (Tracer Bullet): Uses stub merge that returns remote issues.
+// This validates the architecture without implementing full merge logic.
+func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGitHistory, dryRun, noPush bool, message string) error {
+	if dryRun {
+		fmt.Println("→ [DRY RUN] Pull-first sync mode")
+		fmt.Println("→ [DRY RUN] Would pull from remote")
+		fmt.Println("→ [DRY RUN] Would merge local and remote issues")
+		fmt.Println("→ [DRY RUN] Would export merged state to JSONL")
+		fmt.Println("→ [DRY RUN] Would commit and push changes")
+		fmt.Println("\n✓ Dry run complete (no changes made)")
+		return nil
+	}
+
+	fmt.Println("→ Pull-first sync mode (--pull-first)")
+
+	// Step 1: Pull from remote
+	fmt.Println("→ Pulling from remote...")
+	if err := gitPull(ctx, ""); err != nil {
+		return fmt.Errorf("pulling: %w", err)
+	}
+
+	// Step 2: Load local state from DB
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("activating store: %w", err)
+	}
+	localIssues, err := store.SearchIssues(ctx, "", beads.IssueFilter{IncludeTombstones: true})
+	if err != nil {
+		return fmt.Errorf("loading local issues: %w", err)
+	}
+	fmt.Printf("  Loaded %d local issues from database\n", len(localIssues))
+
+	// Step 3: Load remote state from JSONL (after pull)
+	remoteIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("loading remote issues from JSONL: %w", err)
+	}
+	fmt.Printf("  Loaded %d remote issues from JSONL\n", len(remoteIssues))
+
+	// Step 4: Merge local and remote (Phase 1: stub returns remote)
+	// Note: base state is nil for Phase 1 - will be added in Phase 2
+	fmt.Println("→ Merging local and remote issues...")
+	mergeResult, err := MergeIssues(nil, localIssues, remoteIssues)
+	if err != nil {
+		return fmt.Errorf("merging issues: %w", err)
+	}
+	fmt.Printf("  Merged: %d issues, %d conflicts resolved\n", len(mergeResult.Merged), mergeResult.Conflicts)
+
+	// Step 5: Import merged state to DB
+	fmt.Println("→ Importing merged state to database...")
+	if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+		return fmt.Errorf("importing merged state: %w", err)
+	}
+
+	// Step 6: Export to JSONL (ensures consistency)
+	fmt.Println("→ Exporting to JSONL...")
+	if err := exportToJSONL(ctx, jsonlPath); err != nil {
+		return fmt.Errorf("exporting: %w", err)
+	}
+
+	// Step 7: Check for changes and commit
+	hasChanges, err := gitHasBeadsChanges(ctx)
+	if err != nil {
+		return fmt.Errorf("checking git status: %w", err)
+	}
+
+	if hasChanges {
+		fmt.Println("→ Committing changes...")
+		if err := gitCommitBeadsDir(ctx, message); err != nil {
+			return fmt.Errorf("committing: %w", err)
+		}
+	} else {
+		fmt.Println("→ No changes to commit")
+	}
+
+	// Step 8: Push to remote
+	if !noPush && hasChanges {
+		fmt.Println("→ Pushing to remote...")
+		if err := gitPush(ctx, ""); err != nil {
+			return fmt.Errorf("pushing: %w", err)
+		}
+	}
+
+	fmt.Println("\n✓ Pull-first sync complete")
+	return nil
+}
+
 func init() {
 	syncCmd.Flags().StringP("message", "m", "", "Commit message (default: auto-generated)")
 	syncCmd.Flags().Bool("dry-run", false, "Preview sync without making changes")
@@ -959,6 +1063,7 @@ func init() {
 	syncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output sync statistics in JSON format")
 	syncCmd.Flags().Bool("check", false, "Pre-sync integrity check: detect forced pushes, prefix mismatches, and orphaned issues")
 	syncCmd.Flags().Bool("accept-rebase", false, "Accept remote sync branch history (use when force-push detected)")
+	syncCmd.Flags().Bool("pull-first", false, "Pull and merge remote changes before exporting local state (new sync flow)")
 	rootCmd.AddCommand(syncCmd)
 }
 
