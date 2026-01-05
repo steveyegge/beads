@@ -406,6 +406,20 @@ Examples:
 			issue.Labels = labels
 		}
 
+		// Populate comments for all issues in one query (avoids N+1 problem)
+		issueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			issueIDs[i] = issue.ID
+		}
+		allComments, err := store.GetCommentsForIssues(ctx, issueIDs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting comments: %v\n", err)
+			os.Exit(1)
+		}
+		for _, issue := range issues {
+			issue.Comments = allComments[issue.ID]
+		}
+
 		// Open output
 		out := os.Stdout
 		var tempFile *os.File

@@ -906,13 +906,14 @@ var listCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			// Get labels and dependency counts in bulk (single query instead of N queries)
+			// Get labels, dependency counts, and comment counts in bulk (single query instead of N queries)
 			issueIDs := make([]string, len(issues))
 			for i, issue := range issues {
 				issueIDs[i] = issue.ID
 			}
 			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 
 			// Populate labels for JSON output
 			for _, issue := range issues {
@@ -930,6 +931,7 @@ var listCmd = &cobra.Command{
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					CommentCount:    commentCounts[issue.ID],
 				}
 			}
 			outputJSON(issuesWithCounts)

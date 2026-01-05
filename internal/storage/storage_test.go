@@ -122,6 +122,9 @@ func (m *mockStorage) GetIssueComments(ctx context.Context, issueID string) ([]*
 func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	return nil, nil
 }

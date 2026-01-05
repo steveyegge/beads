@@ -118,17 +118,22 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			var issuesWithCounts []*types.IssueWithCounts
+			if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 				os.Exit(1)
 			}
 			if jsonOutput {
-				if issues == nil {
-					issues = []*types.Issue{}
+				if issuesWithCounts == nil {
+					issuesWithCounts = []*types.IssueWithCounts{}
 				}
-				outputJSON(issues)
+				outputJSON(issuesWithCounts)
 				return
+			}
+			// Convert to Issue slice for non-JSON output
+			var issues []*types.Issue
+			for _, iwc := range issuesWithCounts {
+				issues = append(issues, iwc.Issue)
 			}
 
 			// Show upgrade notification if needed
@@ -205,7 +210,29 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if issues == nil {
 				issues = []*types.Issue{}
 			}
-			outputJSON(issues)
+			// Get dependency and comment counts in bulk
+			issueIDs := make([]string, len(issues))
+			for i, issue := range issues {
+				issueIDs[i] = issue.ID
+			}
+			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+
+			// Build response with counts
+			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+			for i, issue := range issues {
+				counts := depCounts[issue.ID]
+				if counts == nil {
+					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
+				}
+				issuesWithCounts[i] = &types.IssueWithCounts{
+					Issue:           issue,
+					DependencyCount: counts.DependencyCount,
+					DependentCount:  counts.DependentCount,
+					CommentCount:    commentCounts[issue.ID],
+				}
+			}
+			outputJSON(issuesWithCounts)
 			return
 		}
 		// Show upgrade notification if needed

@@ -1,5 +1,7 @@
 """Pydantic models for beads issue tracker types."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Literal, Any
 
@@ -33,6 +35,7 @@ class IssueMinimal(BaseModel):
     labels: list[str] = Field(default_factory=list)
     dependency_count: int = 0
     dependent_count: int = 0
+    comment_count: int = 0
 
     @field_validator("priority")
     @classmethod
@@ -115,6 +118,7 @@ class IssueBase(BaseModel):
     labels: list[str] = Field(default_factory=list)
     dependency_count: int = 0
     dependent_count: int = 0
+    comment_count: int = 0
 
     @field_validator("priority")
     @classmethod
@@ -136,6 +140,7 @@ class Issue(IssueBase):
 
     dependencies: list[LinkedIssue] = Field(default_factory=list)
     dependents: list[LinkedIssue] = Field(default_factory=list)
+    latest_comment: Comment | None = None
 
 
 class Dependency(BaseModel):
@@ -248,6 +253,11 @@ class Stats(BaseModel):
     blocked_issues: int
     ready_issues: int
     average_lead_time_hours: float
+    # Optional extended stats (may not be present in all versions)
+    deferred_issues: int = 0
+    tombstone_issues: int = 0
+    pinned_issues: int = 0
+    epics_eligible_for_closure: int = 0
 
 
 class BlockedIssue(Issue):
@@ -269,3 +279,31 @@ class InitResult(BaseModel):
     database: str
     prefix: str
     message: str
+
+
+# =============================================================================
+# COMMENT MODELS
+# =============================================================================
+
+class Comment(BaseModel):
+    """Comment on an issue."""
+
+    id: int
+    issue_id: str
+    author: str
+    text: str
+    created_at: datetime
+
+
+class CommentListParams(BaseModel):
+    """Parameters for listing comments on an issue."""
+
+    issue_id: str
+
+
+class CommentAddParams(BaseModel):
+    """Parameters for adding a comment to an issue."""
+
+    issue_id: str
+    text: str
+    author: str | None = None
