@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -40,6 +41,35 @@ func isChildOf(childID, parentID string) bool {
 	}
 	// Also check if parentID is an ancestor (e.g., "bd-abc" is parent of "bd-abc.1.2")
 	return strings.HasPrefix(childID, parentID+".")
+}
+
+// warnIfCyclesExist checks for dependency cycles and prints a warning if found.
+func warnIfCyclesExist(s storage.Storage) {
+	cycles, err := s.DetectCycles(rootCtx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
+		return
+	}
+	if len(cycles) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", ui.RenderWarn("⚠"))
+	fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
+	fmt.Fprintf(os.Stderr, "Cycle path:\n")
+	for _, cycle := range cycles {
+		for j, issue := range cycle {
+			if j == 0 {
+				fmt.Fprintf(os.Stderr, "  %s", issue.ID)
+			} else {
+				fmt.Fprintf(os.Stderr, " → %s", issue.ID)
+			}
+		}
+		if len(cycle) > 0 {
+			fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+	}
+	fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
 }
 
 var depCmd = &cobra.Command{
@@ -149,28 +179,7 @@ Examples:
 			}
 
 			// Check for cycles after adding dependency (both daemon and direct mode)
-			cycles, err := store.DetectCycles(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
-			} else if len(cycles) > 0 {
-				fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", ui.RenderWarn("⚠"))
-				fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
-				fmt.Fprintf(os.Stderr, "Cycle path:\n")
-				for _, cycle := range cycles {
-					for j, issue := range cycle {
-						if j == 0 {
-							fmt.Fprintf(os.Stderr, "  %s", issue.ID)
-						} else {
-							fmt.Fprintf(os.Stderr, " → %s", issue.ID)
-						}
-					}
-					if len(cycle) > 0 {
-						fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
-					}
-					fmt.Fprintf(os.Stderr, "\n")
-				}
-				fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
-			}
+			warnIfCyclesExist(store)
 
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
@@ -370,28 +379,7 @@ Examples:
 		markDirtyAndScheduleFlush()
 
 		// Check for cycles after adding dependency
-		cycles, err := store.DetectCycles(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
-		} else if len(cycles) > 0 {
-			fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", ui.RenderWarn("⚠"))
-			fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
-			fmt.Fprintf(os.Stderr, "Cycle path:\n")
-			for _, cycle := range cycles {
-				for j, issue := range cycle {
-					if j == 0 {
-						fmt.Fprintf(os.Stderr, "  %s", issue.ID)
-					} else {
-						fmt.Fprintf(os.Stderr, " → %s", issue.ID)
-					}
-				}
-				if len(cycle) > 0 {
-					fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
-				}
-				fmt.Fprintf(os.Stderr, "\n")
-			}
-			fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
-		}
+		warnIfCyclesExist(store)
 
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
