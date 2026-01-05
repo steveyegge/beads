@@ -163,6 +163,24 @@ Use --merge to merge the sync branch back to main branch.`,
 			FatalErrorWithHint("unmerged paths or merge in progress", "resolve conflicts, run 'bd import' if needed, then 'bd sync' again")
 		}
 
+		// GH#885: Preflight check for uncommitted JSONL changes
+		// This detects when a previous sync exported but failed before commit,
+		// leaving the JSONL in an inconsistent state across worktrees.
+		// Track if we already exported during pre-flight to avoid redundant export later.
+		alreadyExported := false
+		if hasUncommitted, err := gitHasUncommittedBeadsChanges(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to check for uncommitted changes: %v\n", err)
+		} else if hasUncommitted {
+			fmt.Println("→ Detected uncommitted JSONL changes (possible incomplete sync)")
+			fmt.Println("→ Re-exporting from database to reconcile state...")
+			// Force a fresh export to ensure JSONL matches current DB state
+			if err := exportToJSONL(ctx, jsonlPath); err != nil {
+				FatalError("re-exporting to reconcile state: %v", err)
+			}
+			fmt.Println("✓ State reconciled")
+			alreadyExported = true
+		}
+
 		// GH#638: Check sync.branch BEFORE upstream check
 		// When sync.branch is configured, we should use worktree-based sync even if
 		// the current branch has no upstream (e.g., detached HEAD in jj, git worktrees)
@@ -272,7 +290,7 @@ Use --merge to merge the sync branch back to main branch.`,
 				}
 			}
 
-			if !skipExport {
+			if !skipExport && !alreadyExported {
 				// Pre-export integrity checks
 				if err := ensureStoreActive(); err == nil && store != nil {
 					if err := validatePreExport(ctx, store, jsonlPath); err != nil {

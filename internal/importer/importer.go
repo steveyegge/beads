@@ -568,6 +568,7 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 					// GH#865: Check timestamp-aware protection first
 					// If local snapshot has a newer version, protect it from being overwritten
 					if shouldProtectFromUpdate(existing.ID, incoming.UpdatedAt, opts.ProtectLocalExportIDs) {
+						debugLogProtection(existing.ID, opts.ProtectLocalExportIDs[existing.ID], incoming.UpdatedAt)
 						result.Skipped++
 						continue
 					}
@@ -672,6 +673,7 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 				// GH#865: Check timestamp-aware protection first
 				// If local snapshot has a newer version, protect it from being overwritten
 				if shouldProtectFromUpdate(incoming.ID, incoming.UpdatedAt, opts.ProtectLocalExportIDs) {
+					debugLogProtection(incoming.ID, opts.ProtectLocalExportIDs[incoming.ID], incoming.UpdatedAt)
 					result.Skipped++
 					continue
 				}
@@ -946,6 +948,14 @@ func shouldProtectFromUpdate(issueID string, incomingTime time.Time, protectMap 
 	// Only protect if local snapshot is newer than or equal to incoming
 	// If incoming is newer, allow the update
 	return !incomingTime.After(localTime)
+}
+
+// debugLogProtection logs when timestamp-aware protection triggers (for debugging sync issues).
+func debugLogProtection(issueID string, localTime, incomingTime time.Time) {
+	if os.Getenv("BD_DEBUG_SYNC") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] Protected %s: local=%s >= incoming=%s\n",
+			issueID, localTime.Format(time.RFC3339), incomingTime.Format(time.RFC3339))
+	}
 }
 
 func GetPrefixList(prefixes map[string]int) []string {

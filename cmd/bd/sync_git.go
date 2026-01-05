@@ -447,6 +447,51 @@ func restoreBeadsDirFromBranch(ctx context.Context) error {
 	return nil
 }
 
+// gitHasUncommittedBeadsChanges checks if .beads/issues.jsonl has uncommitted changes.
+// This detects the failure mode where a previous sync exported but failed before commit.
+// Returns true if the JSONL file has staged or unstaged changes (M or A status).
+// GH#885: Pre-flight safety check to detect incomplete sync operations.
+func gitHasUncommittedBeadsChanges(ctx context.Context) (bool, error) {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return false, nil // No beads dir, nothing to check
+	}
+
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	// Check git status for the JSONL file specifically
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", jsonlPath) //nolint:gosec // G204: jsonlPath from internal beads.FindBeadsDir()
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("git status failed: %w", err)
+	}
+
+	return parseGitStatusForBeadsChanges(string(output)), nil
+}
+
+// parseGitStatusForBeadsChanges parses git status --porcelain output and returns
+// true if the status indicates uncommitted changes (modified or added).
+// Format: XY filename where X=staged, Y=unstaged
+// M = modified, A = added, ? = untracked, D = deleted
+// Only M and A in either position indicate changes we care about.
+func parseGitStatusForBeadsChanges(statusOutput string) bool {
+	statusLine := strings.TrimSpace(statusOutput)
+	if statusLine == "" {
+		return false // No changes
+	}
+
+	// Any status (M, A, MM, AM, etc.) indicates uncommitted changes
+	if len(statusLine) >= 2 {
+		x, y := statusLine[0], statusLine[1]
+		// Check for modifications (staged or unstaged)
+		if x == 'M' || x == 'A' || y == 'M' || y == 'A' {
+			return true
+		}
+	}
+
+	return false
+}
+
 // getDefaultBranch returns the default branch name (main or master) for origin remote
 // Checks remote HEAD first, then falls back to checking if main/master exist
 func getDefaultBranch(ctx context.Context) string {

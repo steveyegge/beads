@@ -349,7 +349,12 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
-	// Check 8: Daemon health
+	// Check 8a: Git sync setup (informational - explains why daemon might not start)
+	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, gitSyncCheck)
+	// Don't fail overall check for git sync warning - beads works fine without git
+
+	// Check 8b: Daemon health
 	daemonCheck := convertWithCategory(doctor.CheckDaemonStatus(path, Version), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, daemonCheck)
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
@@ -362,6 +367,14 @@ func runDiagnostics(path string) doctorResult {
 	if syncCheck.Status == statusWarning || syncCheck.Status == statusError {
 		result.OverallOK = false
 	}
+
+	// Check 9a: Sync divergence (JSONL/SQLite/git) - GH#885
+	syncDivergenceCheck := convertWithCategory(doctor.CheckSyncDivergence(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, syncDivergenceCheck)
+	if syncDivergenceCheck.Status == statusError {
+		result.OverallOK = false
+	}
+	// Warning-level divergence is informational, doesn't fail overall
 
 	// Check 9: Permissions
 	permCheck := convertWithCategory(doctor.CheckPermissions(path), doctor.CategoryCore)

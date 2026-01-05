@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,6 +278,39 @@ func TestDaemonAutostart_StartDaemonProcess_Stubbed(t *testing.T) {
 
 	if !startDaemonProcess(filepath.Join(t.TempDir(), "bd.sock")) {
 		t.Fatalf("expected startDaemonProcess true when readiness stubbed")
+	}
+}
+
+func TestDaemonAutostart_StartDaemonProcess_NoGitRepo(t *testing.T) {
+	// Test that startDaemonProcess returns false immediately when not in a git repo
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
+
+	// Change to a temp directory that is NOT a git repo
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	// Capture stderr to verify the message
+	output := captureStderr(t, func() {
+		result := startDaemonProcess(filepath.Join(tmpDir, "bd.sock"))
+		if result {
+			t.Errorf("expected startDaemonProcess to return false when not in git repo")
+		}
+	})
+
+	// Verify the correct message is shown
+	if !strings.Contains(output, "No git repository initialized") {
+		t.Errorf("expected output to contain 'No git repository initialized', got: %q", output)
+	}
+	if !strings.Contains(output, "running without background sync") {
+		t.Errorf("expected output to contain 'running without background sync', got: %q", output)
 	}
 }
 

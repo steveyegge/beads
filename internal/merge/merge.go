@@ -48,10 +48,12 @@ type Issue struct {
 	Status       string       `json:"status,omitempty"`
 	Priority     int          `json:"priority"` // No omitempty: 0 is valid (P0/critical)
 	IssueType    string       `json:"issue_type,omitempty"`
-	CreatedAt    string       `json:"created_at,omitempty"`
-	UpdatedAt    string       `json:"updated_at,omitempty"`
-	ClosedAt     string       `json:"closed_at,omitempty"`
-	CreatedBy    string       `json:"created_by,omitempty"`
+	CreatedAt       string       `json:"created_at,omitempty"`
+	UpdatedAt       string       `json:"updated_at,omitempty"`
+	ClosedAt        string       `json:"closed_at,omitempty"`
+	CloseReason     string       `json:"close_reason,omitempty"`     // Reason provided when closing (GH#891)
+	ClosedBySession string       `json:"closed_by_session,omitempty"` // Session that closed this issue (GH#891)
+	CreatedBy       string       `json:"created_by,omitempty"`
 	Dependencies []Dependency `json:"dependencies,omitempty"`
 	RawLine      string       `json:"-"` // Store original line for conflict output
 	// Tombstone fields: inline soft-delete support for merge
@@ -596,8 +598,23 @@ func mergeIssue(base, left, right Issue) (Issue, string) {
 	// This prevents invalid state (status=open with closed_at set)
 	if result.Status == StatusClosed {
 		result.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
+		// Merge close_reason and closed_by_session - use value from side with later closed_at (GH#891)
+		// This ensures we keep the most recent close action's metadata
+		if isTimeAfter(left.ClosedAt, right.ClosedAt) {
+			result.CloseReason = left.CloseReason
+			result.ClosedBySession = left.ClosedBySession
+		} else if right.ClosedAt != "" {
+			result.CloseReason = right.CloseReason
+			result.ClosedBySession = right.ClosedBySession
+		} else {
+			// Both empty or only left has value - prefer left
+			result.CloseReason = left.CloseReason
+			result.ClosedBySession = left.ClosedBySession
+		}
 	} else {
 		result.ClosedAt = ""
+		result.CloseReason = ""
+		result.ClosedBySession = ""
 	}
 
 	// Merge dependencies - proper 3-way merge where removals win

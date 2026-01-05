@@ -1612,7 +1612,7 @@ func (s *Server) handleReady(req *Request) Response {
 	}
 
 	wf := types.WorkFilter{
-		Status:          types.StatusOpen,
+		// Leave Status empty to get both 'open' and 'in_progress' (GH#5aml)
 		Type:            readyArgs.Type,
 		Priority:        readyArgs.Priority,
 		Unassigned:      readyArgs.Unassigned,

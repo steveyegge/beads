@@ -210,7 +210,8 @@ func (fw *FileWatcher) Start(ctx context.Context, log daemonLogger) {
 				}
 
 				// Handle git ref changes (only events under gitRefsPath)
-				if event.Op&fsnotify.Write != 0 && strings.HasPrefix(event.Name, fw.gitRefsPath) {
+				// Fix: check gitRefsPath is not empty, otherwise HasPrefix("any", "") is always true
+				if fw.gitRefsPath != "" && event.Op&fsnotify.Write != 0 && strings.HasPrefix(event.Name, fw.gitRefsPath) {
 					if fw.shouldLogGitRefChange() {
 						log.log("Git ref change detected: %s", event.Name)
 					}
