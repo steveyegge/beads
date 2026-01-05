@@ -10,13 +10,14 @@ var (
 	setupCheck   bool
 	setupRemove  bool
 	setupStealth bool
+	setupGlobal  bool
 )
 
 var setupCmd = &cobra.Command{
 	Use:     "setup",
 	GroupID: "setup",
 	Short:   "Setup integration with AI editors",
-	Long:  `Setup integration files for AI editors like Claude Code, Cursor, Aider, and Factory.ai Droid.`,
+	Long:  `Setup integration files for AI editors like Claude Code, Cursor, Aider, Kilo Code, and Factory.ai Droid.`,
 }
 
 var setupCursorCmd = &cobra.Command{
@@ -142,6 +143,31 @@ agents from forgetting bd workflow after context compaction.`,
 	},
 }
 
+var setupKiloCodeCmd = &cobra.Command{
+	Use:   "kilocode",
+	Short: "Setup Kilo Code integration",
+	Long: `Install Beads workflow rules for Kilo Code.
+
+Creates .kilocode/rules/bd.md with bd workflow context.
+Use --global flag to install in ~/.kilocode/rules/ for all projects.
+
+Kilo Code automatically loads rules from .kilocode/rules/ on session start.
+Project rules take precedence over global rules.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		if setupCheck {
+			setup.CheckKiloCode()
+			return
+		}
+
+		if setupRemove {
+			setup.RemoveKiloCode(setupGlobal)
+			return
+		}
+
+		setup.InstallKiloCode(setupGlobal)
+	},
+}
+
 func init() {
 	setupFactoryCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Factory.ai integration is installed")
 	setupFactoryCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd section from AGENTS.md")
@@ -162,10 +188,15 @@ func init() {
 	setupGeminiCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd hooks from Gemini CLI settings")
 	setupGeminiCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use 'bd prime --stealth' (flush only, no git operations)")
 
+	setupKiloCodeCmd.Flags().BoolVar(&setupGlobal, "global", false, "Install globally (~/.kilocode/rules/) instead of project")
+	setupKiloCodeCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Kilo Code integration is installed")
+	setupKiloCodeCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd rules from Kilo Code")
+
 	setupCmd.AddCommand(setupFactoryCmd)
 	setupCmd.AddCommand(setupClaudeCmd)
 	setupCmd.AddCommand(setupCursorCmd)
 	setupCmd.AddCommand(setupAiderCmd)
 	setupCmd.AddCommand(setupGeminiCmd)
+	setupCmd.AddCommand(setupKiloCodeCmd)
 	rootCmd.AddCommand(setupCmd)
 }
