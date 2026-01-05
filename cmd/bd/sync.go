@@ -168,6 +168,11 @@ Use --merge to merge the sync branch back to main branch.`,
 		// leaving the JSONL in an inconsistent state across worktrees.
 		// Track if we already exported during pre-flight to avoid redundant export later.
 		alreadyExported := false
+
+		// GH#885/bd-3bhl: Track pending export for atomic sync.
+		// When using deferred export, we store the result here and finalize
+		// only after git commit succeeds. If commit fails, we rollback JSONL.
+		var pendingExportResult *ExportResult
 		if hasUncommitted, err := gitHasUncommittedBeadsChanges(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to check for uncommitted changes: %v\n", err)
 		} else if hasUncommitted {
@@ -311,10 +316,16 @@ Use --merge to merge the sync branch back to main branch.`,
 					FatalError("%v", err)
 				}
 
+				// GH#885/bd-3bhl: Use deferred export for atomic sync.
+				// Metadata updates are deferred until after git commit succeeds.
+				// This prevents SQLite from "lying" about sync state if commit fails.
 				fmt.Println("→ Exporting pending changes to JSONL...")
-				if err := exportToJSONL(ctx, jsonlPath); err != nil {
+				exportResult, err := exportToJSONLDeferred(ctx, jsonlPath)
+				if err != nil {
 					FatalError("exporting: %v", err)
 				}
+				// Store result for finalization after commit
+				pendingExportResult = exportResult
 			}
 
 			// Capture left snapshot (pre-pull state) for 3-way merge
@@ -356,9 +367,21 @@ Use --merge to merge the sync branch back to main branch.`,
 				} else {
 					committed, err := commitToExternalBeadsRepo(ctx, beadsDir, message, !noPush)
 					if err != nil {
-						FatalError("%v", err)
+						// GH#885/bd-3bhl: Rollback JSONL on commit failure
+						fmt.Fprintf(os.Stderr, "\n⚠️  Git commit failed - rolling back JSONL to previous state...\n")
+						if rollbackErr := rollbackJSONLFromGit(ctx, jsonlPath); rollbackErr != nil {
+							fmt.Fprintf(os.Stderr, "Warning: failed to rollback JSONL: %v\n", rollbackErr)
+							fmt.Fprintf(os.Stderr, "  Manual recovery: git checkout HEAD -- %s\n", jsonlPath)
+						} else {
+							fmt.Fprintf(os.Stderr, "✓ JSONL rolled back to last committed state\n")
+						}
+						FatalErrorWithHint(fmt.Sprintf("%v", err),
+							"fix the git issue and run 'bd sync' again")
 					}
 					if committed {
+						// GH#885/bd-3bhl: Finalize export after successful commit
+						finalizeExport(ctx, pendingExportResult)
+						pendingExportResult = nil
 						if !noPush {
 							fmt.Println("✓ Committed and pushed to external beads repo")
 						} else {
@@ -368,6 +391,9 @@ Use --merge to merge the sync branch back to main branch.`,
 				}
 			} else {
 				fmt.Println("→ No changes to commit in external beads repo")
+				// GH#885/bd-3bhl: No commit needed, but still finalize export metadata
+				finalizeExport(ctx, pendingExportResult)
+				pendingExportResult = nil
 			}
 
 			if !noPull {
@@ -549,10 +575,22 @@ Use --merge to merge the sync branch back to main branch.`,
 				fmt.Printf("→ Committing changes to sync branch '%s'...\n", syncBranchName)
 				result, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath, !noPush)
 				if err != nil {
-					FatalError("committing to sync branch: %v", err)
+					// GH#885/bd-3bhl: Rollback JSONL on commit failure
+					fmt.Fprintf(os.Stderr, "\n⚠️  Git commit failed - rolling back JSONL to previous state...\n")
+					if rollbackErr := rollbackJSONLFromGit(ctx, jsonlPath); rollbackErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to rollback JSONL: %v\n", rollbackErr)
+						fmt.Fprintf(os.Stderr, "  Manual recovery: git checkout HEAD -- %s\n", jsonlPath)
+					} else {
+						fmt.Fprintf(os.Stderr, "✓ JSONL rolled back to last committed state\n")
+					}
+					FatalErrorWithHint(fmt.Sprintf("committing to sync branch: %v", err),
+						"fix the git issue and run 'bd sync' again")
 				}
 				if result.Committed {
 					fmt.Printf("✓ Committed to %s\n", syncBranchName)
+					// GH#885/bd-3bhl: Finalize export after successful commit
+					finalizeExport(ctx, pendingExportResult)
+					pendingExportResult = nil
 					if result.Pushed {
 						fmt.Printf("✓ Pushed %s to remote\n", syncBranchName)
 						pushedViaSyncBranch = true
@@ -561,6 +599,9 @@ Use --merge to merge the sync branch back to main branch.`,
 					// GH#812: When useSyncBranch is true, we always attempt commit
 					// (bypassing gitHasBeadsChanges). Report when worktree has no changes.
 					fmt.Println("→ No changes to commit")
+					// No commit needed, but still finalize export metadata
+					finalizeExport(ctx, pendingExportResult)
+					pendingExportResult = nil
 				}
 			} else {
 				// Regular commit to current branch
@@ -571,11 +612,26 @@ Use --merge to merge the sync branch back to main branch.`,
 					fmt.Println("→ Committing changes to git...")
 				}
 				if err := gitCommitBeadsDir(ctx, message); err != nil {
-					FatalError("committing: %v", err)
+					// GH#885/bd-3bhl: Rollback JSONL on commit failure
+					fmt.Fprintf(os.Stderr, "\n⚠️  Git commit failed - rolling back JSONL to previous state...\n")
+					if rollbackErr := rollbackJSONLFromGit(ctx, jsonlPath); rollbackErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to rollback JSONL: %v\n", rollbackErr)
+						fmt.Fprintf(os.Stderr, "  Manual recovery: git checkout HEAD -- %s\n", jsonlPath)
+					} else {
+						fmt.Fprintf(os.Stderr, "✓ JSONL rolled back to last committed state\n")
+					}
+					FatalErrorWithHint(fmt.Sprintf("committing: %v", err),
+						"fix the git issue and run 'bd sync' again")
 				}
+				// GH#885/bd-3bhl: Finalize export after successful commit
+				finalizeExport(ctx, pendingExportResult)
+				pendingExportResult = nil
 			}
 		} else {
 			fmt.Println("→ No changes to commit")
+			// GH#885/bd-3bhl: No commit needed, but still finalize export metadata
+			finalizeExport(ctx, pendingExportResult)
+			pendingExportResult = nil
 		}
 
 		// Step 3: Pull from remote

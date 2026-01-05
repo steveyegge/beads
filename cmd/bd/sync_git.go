@@ -492,6 +492,27 @@ func parseGitStatusForBeadsChanges(statusOutput string) bool {
 	return false
 }
 
+// rollbackJSONLFromGit restores the JSONL file from git HEAD after a failed commit.
+// This is part of the sync atomicity fix (GH#885/bd-3bhl): when git commit fails
+// after export, we restore the JSONL to its previous state so the working
+// directory stays consistent with the last successful sync.
+func rollbackJSONLFromGit(ctx context.Context, jsonlPath string) error {
+	// Check if the file is tracked by git
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "--error-unmatch", jsonlPath)
+	if err := cmd.Run(); err != nil {
+		// File not tracked - nothing to restore
+		return nil
+	}
+
+	// Restore from HEAD
+	restoreCmd := exec.CommandContext(ctx, "git", "checkout", "HEAD", "--", jsonlPath) //nolint:gosec // G204: jsonlPath from internal beads.FindBeadsDir()
+	output, err := restoreCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout failed: %w\n%s", err, output)
+	}
+	return nil
+}
+
 // getDefaultBranch returns the default branch name (main or master) for origin remote
 // Checks remote HEAD first, then falls back to checking if main/master exist
 func getDefaultBranch(ctx context.Context) string {
