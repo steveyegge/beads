@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/merge"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // WorktreeManager handles git worktree lifecycle for separate beads branches
@@ -360,7 +361,8 @@ func (wm *WorktreeManager) isValidWorktree(worktreePath string) (bool, error) {
 					continue
 				}
 			}
-			if absPath == absWorktreePath {
+			// Use PathsEqual to handle case-insensitive filesystems (macOS/Windows)
+			if utils.PathsEqual(absPath, absWorktreePath) {
 				return true, nil
 			}
 		}
