@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -668,6 +670,66 @@ func TestBaseState_LoadMissing(t *testing.T) {
 
 	if loaded != nil {
 		t.Errorf("Expected nil for missing base state, got %d issues", len(loaded))
+	}
+}
+
+// TestBaseState_LoadMalformed tests loading sync_base.jsonl with malformed lines
+func TestBaseState_LoadMalformed(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseStatePath := filepath.Join(tmpDir, syncBaseFileName)
+
+	// Create file with mix of valid and malformed lines
+	content := `{"id":"bd-0001","title":"Valid Issue","status":"open","priority":1,"issue_type":"task"}
+not valid json at all
+{"id":"bd-0002","title":"Another Valid","status":"closed","priority":2,"issue_type":"bug"}
+{truncated json
+{"id":"bd-0003","title":"Third Valid","status":"open","priority":3,"issue_type":"task"}
+`
+	if err := os.WriteFile(baseStatePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Capture stderr to verify warning is produced
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	loaded, err := loadBaseState(tmpDir)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	var stderrBuf bytes.Buffer
+	stderrBuf.ReadFrom(r)
+	stderrOutput := stderrBuf.String()
+
+	if err != nil {
+		t.Fatalf("loadBaseState failed: %v", err)
+	}
+
+	// Should have loaded 3 valid issues, skipping 2 malformed lines
+	if len(loaded) != 3 {
+		t.Errorf("Expected 3 valid issues, got %d", len(loaded))
+	}
+
+	// Verify correct issues loaded
+	expectedIDs := []string{"bd-0001", "bd-0002", "bd-0003"}
+	for i, expected := range expectedIDs {
+		if i >= len(loaded) {
+			t.Errorf("Missing issue at index %d", i)
+			continue
+		}
+		if loaded[i].ID != expected {
+			t.Errorf("Issue %d: expected ID=%s, got %s", i, expected, loaded[i].ID)
+		}
+	}
+
+	// Verify warnings were produced for malformed lines (lines 2 and 4)
+	if !strings.Contains(stderrOutput, "line 2") {
+		t.Errorf("Expected warning for line 2, got: %s", stderrOutput)
+	}
+	if !strings.Contains(stderrOutput, "line 4") {
+		t.Errorf("Expected warning for line 4, got: %s", stderrOutput)
 	}
 }
 

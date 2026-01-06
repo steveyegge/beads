@@ -531,7 +531,9 @@ func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 
+	lineNum := 0
 	for scanner.Scan() {
+		lineNum++
 		line := scanner.Text()
 		if line == "" {
 			continue
@@ -539,7 +541,7 @@ func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
 
 		var issue beads.Issue
 		if err := json.Unmarshal([]byte(line), &issue); err != nil {
-			// Skip malformed lines (defensive)
+			fmt.Fprintf(os.Stderr, "Warning: Skipping malformed line %d in sync_base.jsonl: %v\n", lineNum, err)
 			continue
 		}
 		issues = append(issues, &issue)
