@@ -180,7 +180,7 @@ func checkSQLiteMtimeDivergence(path, beadsDir string) *SyncDivergenceIssue {
 	defer db.Close()
 
 	var lastImportTimeStr string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'last_import_time'").Scan(&lastImportTimeStr)
+	err = db.QueryRow("SELECT value FROM metadata WHERE key = 'last_import_time'").Scan(&lastImportTimeStr)
 	if err != nil {
 		// No last_import_time recorded - this is a potential issue
 		return &SyncDivergenceIssue{
