@@ -157,3 +157,114 @@ func TestGetDeletionsRetentionDays(t *testing.T) {
 		})
 	}
 }
+
+func TestGetExportFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{
+			name: "empty defaults to jsonl",
+			cfg:  &Config{ExportFormat: ""},
+			want: "jsonl",
+		},
+		{
+			name: "jsonl explicit",
+			cfg:  &Config{ExportFormat: "jsonl"},
+			want: "jsonl",
+		},
+		{
+			name: "toon explicit",
+			cfg:  &Config{ExportFormat: "toon"},
+			want: "toon",
+		},
+		{
+			name: "invalid format defaults to jsonl",
+			cfg:  &Config{ExportFormat: "invalid"},
+			want: "jsonl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetExportFormat()
+			if got != tt.want {
+				t.Errorf("GetExportFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetExportFilename(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{
+			name: "empty defaults to issues.jsonl",
+			cfg:  &Config{ExportFormat: "", JSONLExport: ""},
+			want: "issues.jsonl",
+		},
+		{
+			name: "jsonl format",
+			cfg:  &Config{ExportFormat: "jsonl", JSONLExport: ""},
+			want: "issues.jsonl",
+		},
+		{
+			name: "toon format",
+			cfg:  &Config{ExportFormat: "toon", JSONLExport: ""},
+			want: "issues.toon",
+		},
+		{
+			name: "custom JSONLExport takes precedence",
+			cfg:  &Config{ExportFormat: "toon", JSONLExport: "custom.jsonl"},
+			want: "custom.jsonl",
+		},
+		{
+			name: "default JSONLExport ignored when not custom",
+			cfg:  &Config{ExportFormat: "toon", JSONLExport: "issues.jsonl"},
+			want: "issues.toon",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetExportFilename()
+			if got != tt.want {
+				t.Errorf("GetExportFilename() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetExportPath(t *testing.T) {
+	beadsDir := "/home/user/project/.beads"
+
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{
+			name: "jsonl format",
+			cfg:  &Config{ExportFormat: "jsonl"},
+			want: filepath.Join(beadsDir, "issues.jsonl"),
+		},
+		{
+			name: "toon format",
+			cfg:  &Config{ExportFormat: "toon"},
+			want: filepath.Join(beadsDir, "issues.toon"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetExportPath(beadsDir)
+			if got != tt.want {
+				t.Errorf("GetExportPath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

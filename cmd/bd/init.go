@@ -29,6 +29,10 @@ var initCmd = &cobra.Command{
 	Long: `Initialize bd in the current directory by creating a .beads/ directory
 and database file. Optionally specify a custom issue prefix.
 
+EXPORT FORMAT:
+With --export-format toon: uses TOON format for export files (compact, preserves nested structures like dependencies).
+Default: jsonl (one JSON object per line). Format is stored in metadata.json and used for all sync operations.
+
 With --no-db: creates .beads/ directory and issues.jsonl file instead of SQLite database.
 
 With --from-jsonl: imports from the current .beads/issues.jsonl file on disk instead
@@ -50,6 +54,13 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
+		exportFormat, _ := cmd.Flags().GetString("export-format")
+
+		// Validate export format
+		if exportFormat != "" && exportFormat != "jsonl" && exportFormat != "toon" {
+			fmt.Fprintf(os.Stderr, "Error: invalid export format %q (must be 'jsonl' or 'toon')\n", exportFormat)
+			os.Exit(1)
+		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -356,6 +367,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			if existingCfg != nil {
 				// Preserve existing config
 				cfg = existingCfg
+				// Apply export format if specified (override existing)
+				if exportFormat != "" {
+					cfg.ExportFormat = exportFormat
+				}
 			} else {
 				// Create new config, detecting JSONL filename from existing files
 				cfg = configfile.DefaultConfig()
@@ -366,6 +381,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
 					if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
 						cfg.JSONLExport = "beads.jsonl" // Legacy filename
 					}
+				}
+				// Set export format if specified
+				if exportFormat != "" {
+					cfg.ExportFormat = exportFormat
 				}
 			}
 			if err := cfg.Save(beadsDir); err != nil {
@@ -496,6 +515,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
 		fmt.Printf("  Database: %s\n", ui.RenderAccent(initDBPath))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
+		// Load config to get the actual export format that was set
+		cfg, _ := configfile.Load(beadsDir)
+		if cfg != nil {
+			format := cfg.GetExportFormat()
+			fmt.Printf("  Export format: %s\n", ui.RenderAccent(format))
+		}
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
 		fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd quickstart"))
 
@@ -534,6 +559,7 @@ func init() {
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+	initCmd.Flags().String("export-format", "", "Export file format: 'jsonl' (default) or 'toon' for compact format with nested structures")
 	rootCmd.AddCommand(initCmd)
 }
 

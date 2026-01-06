@@ -13,6 +13,13 @@ type Config struct {
 	Database    string `json:"database"`
 	JSONLExport string `json:"jsonl_export,omitempty"`
 
+	// ExportFormat specifies the format for issue export files: "jsonl" or "toon"
+	// Default: "jsonl" for backwards compatibility
+	// This preference is used during sync export operations.
+	// The format is detected from file extension, but this controls which format
+	// is created when initializing or exporting to a new file.
+	ExportFormat string `json:"export_format,omitempty"` // "jsonl" (default) or "toon"
+
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
@@ -101,6 +108,37 @@ func (c *Config) JSONLPath(beadsDir string) string {
 		return filepath.Join(beadsDir, "issues.jsonl")
 	}
 	return filepath.Join(beadsDir, c.JSONLExport)
+}
+
+// GetExportFormat returns the configured export format with sensible defaults.
+// Returns "jsonl" or "toon". Defaults to "jsonl" for backwards compatibility.
+func (c *Config) GetExportFormat() string {
+	if c.ExportFormat == "toon" {
+		return "toon"
+	}
+	// Default to jsonl for backwards compatibility (also handles empty string)
+	return "jsonl"
+}
+
+// GetExportFilename returns the export filename based on the configured format.
+// Uses the JSONLExport filename if configured, otherwise generates based on format.
+func (c *Config) GetExportFilename() string {
+	// If JSONLExport is explicitly configured, use it (backwards compat)
+	if c.JSONLExport != "" && c.JSONLExport != "issues.jsonl" {
+		return c.JSONLExport
+	}
+	// Otherwise, use format-based filename
+	format := c.GetExportFormat()
+	if format == "toon" {
+		return "issues.toon"
+	}
+	return "issues.jsonl"
+}
+
+// GetExportPath returns the full path to the export file based on configuration.
+func (c *Config) GetExportPath(beadsDir string) string {
+	filename := c.GetExportFilename()
+	return filepath.Join(beadsDir, filename)
 }
 
 // DefaultDeletionsRetentionDays is the default retention period for deletion records.

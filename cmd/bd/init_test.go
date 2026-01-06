@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -1225,4 +1227,124 @@ func captureStdout(t *testing.T, fn func() error) string {
 		t.Errorf("unexpected error: %v", err)
 	}
 	return buf.String()
+}
+
+func TestInitExportFormat(t *testing.T) {
+	tests := []struct {
+		name           string
+		exportFormat   string
+		wantFormat     string
+		wantError      bool
+		wantOutputText string
+	}{
+		{
+			name:           "init with toon format",
+			exportFormat:   "toon",
+			wantFormat:     "toon",
+			wantError:      false,
+			wantOutputText: "Export format: toon",
+		},
+		{
+			name:           "init with jsonl format",
+			exportFormat:   "jsonl",
+			wantFormat:     "jsonl",
+			wantError:      false,
+			wantOutputText: "Export format: jsonl",
+		},
+		{
+			name:       "init with no format defaults to jsonl",
+			wantFormat: "jsonl",
+			wantError:  false,
+		},
+		{
+			name:           "init with invalid format fails",
+			exportFormat:   "invalid",
+			wantError:      true,
+			wantOutputText: "invalid export format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset global state
+			origDBPath := dbPath
+			defer func() { dbPath = origDBPath }()
+			dbPath = ""
+
+			// Reset Cobra command state
+			rootCmd.SetArgs([]string{})
+			initCmd.Flags().Set("prefix", "")
+			initCmd.Flags().Set("quiet", "false")
+			initCmd.Flags().Set("export-format", "")
+
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+
+			// Capture output
+			var buf bytes.Buffer
+			oldStdout := os.Stdout
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+			os.Stderr = w
+			defer func() {
+				os.Stdout = oldStdout
+				os.Stderr = oldStderr
+			}()
+
+			// Build command arguments
+			args := []string{"init", "--prefix", "test"}
+			if tt.exportFormat != "" {
+				args = append(args, "--export-format", tt.exportFormat)
+			}
+
+			rootCmd.SetArgs(args)
+
+			// Run command
+			err := rootCmd.Execute()
+
+			// Restore output and read
+			w.Close()
+			buf.ReadFrom(r)
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+			output := buf.String()
+
+			// Check error
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+				if tt.wantOutputText != "" && !strings.Contains(output, tt.wantOutputText) {
+					t.Errorf("expected output to contain %q, got: %s", tt.wantOutputText, output)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("init command failed: %v\nOutput: %s", err, output)
+			}
+
+			// Check output text if provided
+			if tt.wantOutputText != "" && !strings.Contains(output, tt.wantOutputText) {
+				t.Errorf("expected output to contain %q, got: %s", tt.wantOutputText, output)
+			}
+
+			// Load config and verify format
+			beadsDir := filepath.Join(tmpDir, ".beads")
+			cfg, err := configfile.Load(beadsDir)
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+
+			if cfg == nil {
+				t.Fatal("config is nil")
+			}
+
+			gotFormat := cfg.GetExportFormat()
+			if gotFormat != tt.wantFormat {
+				t.Errorf("GetExportFormat() = %q, want %q", gotFormat, tt.wantFormat)
+			}
+		})
+	}
 }
