@@ -1226,6 +1226,117 @@ func TestFieldMerge_EdgeCases(t *testing.T) {
 	})
 }
 
+// =============================================================================
+// Clock Skew Detection Tests (Phase 2 - PR918)
+// =============================================================================
+
+// TestMergeClockSkewWarning tests that large timestamp differences produce a warning
+func TestMergeClockSkewWarning(t *testing.T) {
+	now := time.Now()
+
+	t.Run("no_warning_under_24h", func(t *testing.T) {
+		base := makeTestIssue("bd-1234", "Original", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-1234", "Local Update", types.StatusInProgress, 1, now.Add(23*time.Hour))
+		remote := makeTestIssue("bd-1234", "Remote Update", types.StatusClosed, 1, now)
+
+		// Capture stderr
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		_, _ = MergeIssue(base, local, remote)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var stderrBuf bytes.Buffer
+		stderrBuf.ReadFrom(r)
+		stderrOutput := stderrBuf.String()
+
+		// Should NOT produce warning for <24h difference
+		if strings.Contains(stderrOutput, "clock skew") {
+			t.Errorf("Expected no warning for 23h difference, got: %s", stderrOutput)
+		}
+	})
+
+	t.Run("warning_over_24h_local_newer", func(t *testing.T) {
+		base := makeTestIssue("bd-1234", "Original", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-1234", "Local Update", types.StatusInProgress, 1, now.Add(48*time.Hour))
+		remote := makeTestIssue("bd-1234", "Remote Update", types.StatusClosed, 1, now)
+
+		// Capture stderr
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		_, _ = MergeIssue(base, local, remote)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var stderrBuf bytes.Buffer
+		stderrBuf.ReadFrom(r)
+		stderrOutput := stderrBuf.String()
+
+		// Should produce warning for 48h difference
+		if !strings.Contains(stderrOutput, "clock skew") {
+			t.Errorf("Expected clock skew warning for 48h difference, got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, "bd-1234") {
+			t.Errorf("Warning should contain issue ID, got: %s", stderrOutput)
+		}
+	})
+
+	t.Run("warning_over_24h_remote_newer", func(t *testing.T) {
+		base := makeTestIssue("bd-5678", "Original", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-5678", "Local Update", types.StatusInProgress, 1, now)
+		remote := makeTestIssue("bd-5678", "Remote Update", types.StatusClosed, 1, now.Add(72*time.Hour))
+
+		// Capture stderr
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		_, _ = MergeIssue(base, local, remote)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var stderrBuf bytes.Buffer
+		stderrBuf.ReadFrom(r)
+		stderrOutput := stderrBuf.String()
+
+		// Should produce warning for 72h difference
+		if !strings.Contains(stderrOutput, "clock skew") {
+			t.Errorf("Expected clock skew warning for 72h difference, got: %s", stderrOutput)
+		}
+		if !strings.Contains(stderrOutput, "bd-5678") {
+			t.Errorf("Warning should contain issue ID, got: %s", stderrOutput)
+		}
+	})
+
+	t.Run("warning_exactly_24h", func(t *testing.T) {
+		base := makeTestIssue("bd-exact", "Original", types.StatusOpen, 1, now)
+		local := makeTestIssue("bd-exact", "Local Update", types.StatusInProgress, 1, now.Add(24*time.Hour))
+		remote := makeTestIssue("bd-exact", "Remote Update", types.StatusClosed, 1, now)
+
+		// Capture stderr
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		_, _ = MergeIssue(base, local, remote)
+
+		w.Close()
+		os.Stderr = oldStderr
+		var stderrBuf bytes.Buffer
+		stderrBuf.ReadFrom(r)
+		stderrOutput := stderrBuf.String()
+
+		// Exactly 24h should NOT trigger warning (> not >=)
+		if strings.Contains(stderrOutput, "clock skew") {
+			t.Errorf("Expected no warning for exactly 24h difference, got: %s", stderrOutput)
+		}
+	})
+}
+
 // TestMergeLabels tests the mergeLabels helper function directly
 func TestMergeLabels(t *testing.T) {
 	tests := []struct {

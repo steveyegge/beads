@@ -67,6 +67,16 @@ func mergeFieldLevel(_base, local, remote *beads.Issue) *beads.Issue {
 	// Determine which is newer for LWW scalars
 	localNewer := local.UpdatedAt.After(remote.UpdatedAt)
 
+	// Clock skew detection: warn if timestamps differ by more than 24 hours
+	timeDiff := local.UpdatedAt.Sub(remote.UpdatedAt)
+	if timeDiff < 0 {
+		timeDiff = -timeDiff
+	}
+	if timeDiff > 24*time.Hour {
+		fmt.Fprintf(os.Stderr, "Warning: Issue %s has %v timestamp difference (possible clock skew)\n",
+			local.ID, timeDiff.Round(time.Hour))
+	}
+
 	// Start with a copy of the newer issue for scalar fields
 	var merged beads.Issue
 	if localNewer {
