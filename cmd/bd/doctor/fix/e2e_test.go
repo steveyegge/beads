@@ -815,6 +815,9 @@ func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
 
 // TestPermissionsWithWrongPermissions_E2E tests fixing wrong permissions on .beads
 func TestPermissionsWithWrongPermissions_E2E(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping Unix permission test on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("skipping permission tests when running as root")
 	}

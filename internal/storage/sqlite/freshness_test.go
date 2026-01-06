@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -14,20 +13,6 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
-
-// getInode returns the inode of a file (Unix only)
-func getInode(path string) uint64 {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	if sys := info.Sys(); sys != nil {
-		if stat, ok := sys.(*syscall.Stat_t); ok {
-			return stat.Ino
-		}
-	}
-	return 0
-}
 
 // testFreshnessEnv creates two independent connections to the same database file.
 // conn1 simulates the daemon's long-lived connection.

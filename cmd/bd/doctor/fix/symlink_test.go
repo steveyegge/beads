@@ -3,8 +3,17 @@ package fix
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// skipOnWindows skips tests that rely on Unix file permissions or symlinks.
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping Unix permission/symlink test on Windows")
+	}
+}
 
 // TestPermissions_SkipsSymlinkedBeadsDir verifies that permission fixes are skipped
 // when .beads directory is a symlink (common on NixOS with home-manager).
@@ -13,6 +22,7 @@ import (
 // - When .beads is a symlink, Permissions() should return nil without changing anything
 // - This prevents attempts to chmod symlink targets (which may be read-only like /nix/store)
 func TestPermissions_SkipsSymlinkedBeadsDir(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 
 	// Create target .beads directory with wrong permissions
@@ -62,6 +72,7 @@ func TestPermissions_SkipsSymlinkedBeadsDir(t *testing.T) {
 // TestPermissions_SkipsSymlinkedDatabase verifies that chmod is skipped for
 // symlinked database files, but .beads directory permissions are still fixed.
 func TestPermissions_SkipsSymlinkedDatabase(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 
 	// Create real .beads directory with wrong permissions
@@ -125,6 +136,7 @@ func TestPermissions_SkipsSymlinkedDatabase(t *testing.T) {
 // TestPermissions_FixesRegularFiles verifies that permissions ARE fixed for
 // regular (non-symlinked) files.
 func TestPermissions_FixesRegularFiles(t *testing.T) {
+	skipOnWindows(t)
 	tmpDir := t.TempDir()
 
 	// Create .beads directory with wrong permissions

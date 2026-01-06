@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -352,6 +353,9 @@ func TestGitHooks_EdgeCases(t *testing.T) {
 // TestMergeDriver_EdgeCases tests MergeDriver with edge cases
 func TestMergeDriver_EdgeCases(t *testing.T) {
 	t.Run("read-only git config file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("skipping Unix permission test on Windows")
+		}
 		dir := setupTestGitRepo(t)
 		gitDir := filepath.Join(dir, ".git")
 		gitConfigPath := filepath.Join(gitDir, "config")
@@ -665,6 +669,9 @@ func TestMigrateTombstones_EdgeCases(t *testing.T) {
 
 // TestPermissions_EdgeCases tests Permissions with edge cases
 func TestPermissions_EdgeCases(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping Unix permission/symlink test on Windows")
+	}
 	t.Run("symbolic link to .beads directory", func(t *testing.T) {
 		dir := t.TempDir()
 
