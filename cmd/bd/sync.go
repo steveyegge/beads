@@ -226,105 +226,28 @@ Use --merge to merge the sync branch back to main branch.`,
 			return
 		}
 
-		// Step 1: Export pending changes (but check for stale DB first)
-		skipExport := false // Track if we should skip export due to ZFC import
+		// Step 1: Export pending changes
+		// Note: ZFC (Zero-False-Convergence) checks removed - use --pull-first for
+		// structural handling of staleness via 3-way merge
 		if dryRun {
 			fmt.Println("→ [DRY RUN] Would export pending changes to JSONL")
 		} else {
-			// ZFC safety check: if DB significantly diverges from JSONL,
-			// force import first to sync with JSONL source of truth.
-			// After import, skip export to prevent overwriting JSONL (JSONL is source of truth).
-			//
-			// Added REVERSE ZFC check - if JSONL has MORE issues than DB,
-			// this indicates the DB is stale and exporting would cause data loss.
-			// This catches the case where a fresh/stale clone tries to export an
-			// empty or outdated database over a JSONL with many issues.
+			// Pre-export integrity checks
 			if err := ensureStoreActive(); err == nil && store != nil {
-				dbCount, err := countDBIssuesFast(ctx, store)
-				if err == nil {
-					jsonlCount, err := countIssuesInJSONL(jsonlPath)
-					if err == nil && jsonlCount > 0 {
-						// Case 1: DB has significantly more issues than JSONL
-						// (original ZFC check - DB is ahead of JSONL)
-						if dbCount > jsonlCount {
-							divergence := float64(dbCount-jsonlCount) / float64(jsonlCount)
-							if divergence > 0.5 { // >50% more issues in DB than JSONL
-								fmt.Printf("→ DB has %d issues but JSONL has %d (stale JSONL detected)\n", dbCount, jsonlCount)
-								fmt.Println("→ Importing JSONL first (ZFC)...")
-								if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
-									FatalError("importing (ZFC): %v", err)
-								}
-								// Skip export after ZFC import - JSONL is source of truth
-								skipExport = true
-								fmt.Println("→ Skipping export (JSONL is source of truth after ZFC import)")
-							}
-						}
-
-						// Case 2: JSONL has significantly more issues than DB
-						// This is the DANGEROUS case - exporting would lose issues!
-						// A stale/empty DB exporting over a populated JSONL causes data loss.
-						if jsonlCount > dbCount && !skipExport {
-							divergence := float64(jsonlCount-dbCount) / float64(jsonlCount)
-							// Use stricter threshold for this dangerous case:
-							// - Any loss > 20% is suspicious
-							// - Complete loss (DB empty) is always blocked
-							if dbCount == 0 || divergence > 0.2 {
-								fmt.Printf("→ JSONL has %d issues but DB has only %d (stale DB detected)\n", jsonlCount, dbCount)
-								fmt.Println("→ Importing JSONL first to prevent data loss...")
-								if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
-									FatalError("importing (reverse ZFC): %v", err)
-								}
-								// Skip export after import - JSONL is source of truth
-								skipExport = true
-								fmt.Println("→ Skipping export (JSONL is source of truth after reverse ZFC import)")
-							}
-						}
-					}
+				if err := validatePreExport(ctx, store, jsonlPath); err != nil {
+					FatalError("pre-export validation failed: %v", err)
 				}
-
-				// Case 3: JSONL content differs from DB (hash mismatch)
-				// This catches the case where counts match but STATUS/content differs.
-				// A stale DB exporting wrong status values over correct JSONL values
-				// causes corruption that the 3-way merge propagates.
-				//
-				// Example: Remote has status=open, stale DB has status=closed (count=5 both)
-				// Without this check: export writes status=closed → git merge keeps it → corruption
-				// With this check: detect hash mismatch → import first → get correct status
-				//
-				// Note: Auto-import in autoflush.go also checks for hash changes during store
-				// initialization, so this check may be redundant in most cases. However, it
-				// provides defense-in-depth for cases where auto-import is disabled or bypassed.
-				if !skipExport {
-					repoKey := getRepoKeyForPath(jsonlPath)
-					if hasJSONLChanged(ctx, store, jsonlPath, repoKey) {
-						fmt.Println("→ JSONL content differs from last sync")
-						fmt.Println("→ Importing JSONL first to prevent stale DB from overwriting changes...")
-						if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
-							FatalError("importing (hash mismatch): %v", err)
-						}
-						// Don't skip export - we still want to export any remaining local dirty issues
-						// The import updated DB with JSONL content, and export will write merged state
-						fmt.Println("→ Import complete, continuing with export of merged state")
-					}
+				if err := checkDuplicateIDs(ctx, store); err != nil {
+					FatalError("database corruption detected: %v", err)
+				}
+				if orphaned, err := checkOrphanedDeps(ctx, store); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: orphaned dependency check failed: %v\n", err)
+				} else if len(orphaned) > 0 {
+					fmt.Fprintf(os.Stderr, "Warning: found %d orphaned dependencies: %v\n", len(orphaned), orphaned)
 				}
 			}
 
-			if !skipExport && !alreadyExported {
-				// Pre-export integrity checks
-				if err := ensureStoreActive(); err == nil && store != nil {
-					if err := validatePreExport(ctx, store, jsonlPath); err != nil {
-						FatalError("pre-export validation failed: %v", err)
-					}
-					if err := checkDuplicateIDs(ctx, store); err != nil {
-						FatalError("database corruption detected: %v", err)
-					}
-					if orphaned, err := checkOrphanedDeps(ctx, store); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: orphaned dependency check failed: %v\n", err)
-					} else if len(orphaned) > 0 {
-						fmt.Fprintf(os.Stderr, "Warning: found %d orphaned dependencies: %v\n", len(orphaned), orphaned)
-					}
-				}
-
+			if !alreadyExported {
 				// Template validation before export (bd-t7jq)
 				if err := validateOpenIssuesForSync(ctx); err != nil {
 					FatalError("%v", err)
@@ -808,70 +731,48 @@ Use --merge to merge the sync branch back to main branch.`,
 					}
 				}
 
-				// Post-pull ZFC check: if skipExport was set by initial ZFC detection,
-				// or if DB has more issues than JSONL, skip re-export.
-				// This prevents resurrection of deleted issues when syncing stale clones.
-				skipReexport := skipExport // Carry forward initial ZFC detection
-				if !skipReexport {
-					if err := ensureStoreActive(); err == nil && store != nil {
-						dbCountPostImport, dbErr := countDBIssuesFast(ctx, store)
-						jsonlCountPostPull, jsonlErr := countIssuesInJSONL(jsonlPath)
-						if dbErr == nil && jsonlErr == nil && jsonlCountPostPull > 0 {
-							// Skip re-export if DB has more issues than JSONL (any amount)
-							if dbCountPostImport > jsonlCountPostPull {
-								fmt.Printf("→ DB (%d) has more issues than JSONL (%d) after pull\n",
-									dbCountPostImport, jsonlCountPostPull)
-								fmt.Println("→ Trusting JSONL as source of truth (skipping re-export)")
-								fmt.Println("  Hint: Run 'bd import --delete-missing' to fully sync DB with JSONL")
-								skipReexport = true
-							}
-						}
-					}
-				}
-
 				// Step 4.5: Check if DB needs re-export (only if DB differs from JSONL)
 				// This prevents the infinite loop: import → export → commit → dirty again
-				if !skipReexport {
-					if err := ensureStoreActive(); err == nil && store != nil {
-						needsExport, err := dbNeedsExport(ctx, store, jsonlPath)
+				// Note: ZFC count-based checks removed - use --pull-first for structural staleness handling
+				if err := ensureStoreActive(); err == nil && store != nil {
+					needsExport, err := dbNeedsExport(ctx, store, jsonlPath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to check if export needed: %v\n", err)
+						// Conservative: assume export needed
+						needsExport = true
+					}
+
+					if needsExport {
+						fmt.Println("→ Re-exporting after import to sync DB changes...")
+						if err := exportToJSONL(ctx, jsonlPath); err != nil {
+							FatalError("re-exporting after import: %v", err)
+						}
+
+						// Step 4.6: Commit the re-export if it created changes
+						hasPostImportChanges, err := gitHasBeadsChanges(ctx)
 						if err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: failed to check if export needed: %v\n", err)
-							// Conservative: assume export needed
-							needsExport = true
+							FatalError("checking git status after re-export: %v", err)
 						}
-
-						if needsExport {
-							fmt.Println("→ Re-exporting after import to sync DB changes...")
-							if err := exportToJSONL(ctx, jsonlPath); err != nil {
-								FatalError("re-exporting after import: %v", err)
-							}
-
-							// Step 4.6: Commit the re-export if it created changes
-							hasPostImportChanges, err := gitHasBeadsChanges(ctx)
-							if err != nil {
-								FatalError("checking git status after re-export: %v", err)
-							}
-							if hasPostImportChanges {
-								fmt.Println("→ Committing DB changes from import...")
-								if useSyncBranch {
-									// Commit to sync branch via worktree
-									result, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath, !noPush)
-									if err != nil {
-										FatalError("committing to sync branch: %v", err)
-									}
-									if result.Pushed {
-										pushedViaSyncBranch = true
-									}
-								} else {
-									if err := gitCommitBeadsDir(ctx, "bd sync: apply DB changes after import"); err != nil {
-										FatalError("committing post-import changes: %v", err)
-									}
+						if hasPostImportChanges {
+							fmt.Println("→ Committing DB changes from import...")
+							if useSyncBranch {
+								// Commit to sync branch via worktree
+								result, err := syncbranch.CommitToSyncBranch(ctx, repoRoot, syncBranchName, jsonlPath, !noPush)
+								if err != nil {
+									FatalError("committing to sync branch: %v", err)
 								}
-								hasChanges = true // Mark that we have changes to push
+								if result.Pushed {
+									pushedViaSyncBranch = true
+								}
+							} else {
+								if err := gitCommitBeadsDir(ctx, "bd sync: apply DB changes after import"); err != nil {
+									FatalError("committing post-import changes: %v", err)
+								}
 							}
-						} else {
-							fmt.Println("→ DB and JSONL in sync, skipping re-export")
+							hasChanges = true // Mark that we have changes to push
 						}
+					} else {
+						fmt.Println("→ DB and JSONL in sync, skipping re-export")
 					}
 				}
 
