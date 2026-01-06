@@ -389,6 +389,152 @@ func TestCheckHuskyBdIntegration(t *testing.T) {
 	}
 }
 
+func TestCheckPrecommitBdIntegration(t *testing.T) {
+	tests := []struct {
+		name                 string
+		configContent        string
+		expectNil            bool
+		expectConfigured     bool
+		expectHooksWithBd    []string
+		expectHooksNotInConfig []string
+	}{
+		{
+			name:      "no config",
+			expectNil: true,
+		},
+		{
+			name: "all hooks with bd",
+			configContent: `repos:
+  - repo: local
+    hooks:
+      - id: bd-pre-commit
+        entry: bd hooks run pre-commit
+        language: system
+        stages: [pre-commit]
+      - id: bd-post-merge
+        entry: bd hooks run post-merge
+        language: system
+        stages: [post-merge]
+      - id: bd-pre-push
+        entry: bd hooks run pre-push
+        language: system
+        stages: [pre-push]
+`,
+			expectConfigured:  true,
+			expectHooksWithBd: []string{"pre-commit", "post-merge", "pre-push"},
+		},
+		{
+			name: "only pre-commit hook",
+			configContent: `repos:
+  - repo: local
+    hooks:
+      - id: bd-pre-commit
+        entry: bd hooks run pre-commit
+        language: system
+`,
+			expectConfigured:      true,
+			expectHooksWithBd:     []string{"pre-commit"},
+			expectHooksNotInConfig: []string{"post-merge", "pre-push"},
+		},
+		{
+			name: "legacy stage names (pre-3.2.0)",
+			configContent: `repos:
+  - repo: local
+    hooks:
+      - id: bd-commit
+        entry: bd hooks run pre-commit
+        language: system
+        stages: [commit]
+      - id: bd-push
+        entry: bd hooks run pre-push
+        language: system
+        stages: [push]
+`,
+			expectConfigured:      true,
+			expectHooksWithBd:     []string{"pre-commit", "pre-push"},
+			expectHooksNotInConfig: []string{"post-merge"},
+		},
+		{
+			name: "no bd hooks at all",
+			configContent: `repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+`,
+			expectConfigured:      false,
+			expectHooksNotInConfig: []string{"pre-commit", "post-merge", "pre-push"},
+		},
+		{
+			name: "mixed bd and other hooks",
+			configContent: `repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+  - repo: local
+    hooks:
+      - id: bd-pre-commit
+        entry: bd hooks run pre-commit
+        language: system
+`,
+			expectConfigured:      true,
+			expectHooksWithBd:     []string{"pre-commit"},
+			expectHooksNotInConfig: []string{"post-merge", "pre-push"},
+		},
+		{
+			name: "empty repos list",
+			configContent: `repos: []
+`,
+			expectConfigured:      false,
+			expectHooksNotInConfig: []string{"pre-commit", "post-merge", "pre-push"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			if tt.configContent != "" {
+				configPath := filepath.Join(dir, ".pre-commit-config.yaml")
+				if err := os.WriteFile(configPath, []byte(tt.configContent), 0644); err != nil {
+					t.Fatalf("failed to write config: %v", err)
+				}
+			}
+
+			status := CheckPrecommitBdIntegration(dir)
+
+			if tt.expectNil {
+				if status != nil {
+					t.Errorf("expected nil status, got %+v", status)
+				}
+				return
+			}
+
+			if status == nil {
+				t.Fatal("expected non-nil status")
+			}
+
+			if status.Manager != "pre-commit" {
+				t.Errorf("Manager: expected 'pre-commit', got %q", status.Manager)
+			}
+
+			if status.Configured != tt.expectConfigured {
+				t.Errorf("Configured: expected %v, got %v", tt.expectConfigured, status.Configured)
+			}
+
+			if !slicesEqual(status.HooksWithBd, tt.expectHooksWithBd) {
+				t.Errorf("HooksWithBd: expected %v, got %v", tt.expectHooksWithBd, status.HooksWithBd)
+			}
+
+			if !slicesEqual(status.HooksNotInConfig, tt.expectHooksNotInConfig) {
+				t.Errorf("HooksNotInConfig: expected %v, got %v", tt.expectHooksNotInConfig, status.HooksNotInConfig)
+			}
+		})
+	}
+}
+
 func TestBdHookPatternMatching(t *testing.T) {
 	tests := []struct {
 		content string
@@ -652,12 +798,39 @@ func TestCheckExternalHookManagerIntegration(t *testing.T) {
 			expectDetectionOnly: false,
 		},
 		{
-			name: "unsupported manager (pre-commit framework)",
+			name: "pre-commit framework without bd",
 			setup: func(dir string) error {
 				return os.WriteFile(filepath.Join(dir, ".pre-commit-config.yaml"), []byte("repos:\n"), 0644)
 			},
 			expectNil:           false,
 			expectManager:       "pre-commit",
+			expectConfigured:    false,
+			expectDetectionOnly: false, // pre-commit is now fully supported
+		},
+		{
+			name: "pre-commit framework with bd integration",
+			setup: func(dir string) error {
+				config := `repos:
+  - repo: local
+    hooks:
+      - id: bd-pre-commit
+        entry: bd hooks run pre-commit
+        language: system
+`
+				return os.WriteFile(filepath.Join(dir, ".pre-commit-config.yaml"), []byte(config), 0644)
+			},
+			expectNil:           false,
+			expectManager:       "pre-commit",
+			expectConfigured:    true,
+			expectDetectionOnly: false,
+		},
+		{
+			name: "unsupported manager (overcommit)",
+			setup: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, ".overcommit.yml"), []byte("PreCommit:\n"), 0644)
+			},
+			expectNil:           false,
+			expectManager:       "overcommit",
 			expectConfigured:    false,
 			expectDetectionOnly: true,
 		},
@@ -754,13 +927,13 @@ func TestMultipleManagersDetected(t *testing.T) {
 		{
 			name: "multiple unsupported managers",
 			setup: func(dir string) error {
-				// pre-commit and overcommit
-				if err := os.WriteFile(filepath.Join(dir, ".pre-commit-config.yaml"), []byte("repos:\n"), 0644); err != nil {
+				// overcommit and yorkie (both unsupported)
+				if err := os.WriteFile(filepath.Join(dir, ".overcommit.yml"), []byte("PreCommit:\n"), 0644); err != nil {
 					return err
 				}
-				return os.WriteFile(filepath.Join(dir, ".overcommit.yml"), []byte("PreCommit:\n"), 0644)
+				return os.MkdirAll(filepath.Join(dir, ".yorkie"), 0755)
 			},
-			expectManager: "pre-commit, overcommit", // Falls through to basic status
+			expectManager: "overcommit, yorkie", // Falls through to basic status
 		},
 	}
 

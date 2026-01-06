@@ -263,6 +263,158 @@ func hasBdInCommands(hookSection interface{}) bool {
 	return false
 }
 
+// precommitConfigFiles lists pre-commit config files.
+var precommitConfigFiles = []string{".pre-commit-config.yaml", ".pre-commit-config.yml"}
+
+// CheckPrecommitBdIntegration parses pre-commit config and checks if bd hooks are integrated.
+// See https://pre-commit.com/ for config file format.
+func CheckPrecommitBdIntegration(path string) *HookIntegrationStatus {
+	// Find first existing config file
+	var configPath string
+	for _, name := range precommitConfigFiles {
+		p := filepath.Join(path, name)
+		if _, err := os.Stat(p); err == nil {
+			configPath = p
+			break
+		}
+	}
+	if configPath == "" {
+		return nil
+	}
+
+	content, err := os.ReadFile(configPath) // #nosec G304 - path is validated
+	if err != nil {
+		return nil
+	}
+
+	// Parse YAML config
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(content, &config); err != nil {
+		return nil
+	}
+
+	status := &HookIntegrationStatus{
+		Manager:    "pre-commit",
+		Configured: false,
+	}
+
+	// Track which hooks have bd integration
+	hooksWithBd := make(map[string]bool)
+
+	// Parse repos list
+	repos, ok := config["repos"]
+	if !ok {
+		// Empty config, all hooks missing
+		status.HooksNotInConfig = recommendedBdHooks
+		return status
+	}
+
+	reposList, ok := repos.([]interface{})
+	if !ok {
+		status.HooksNotInConfig = recommendedBdHooks
+		return status
+	}
+
+	// Walk through repos and hooks
+	for _, repo := range reposList {
+		repoMap, ok := repo.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		hooks, ok := repoMap["hooks"]
+		if !ok {
+			continue
+		}
+
+		hooksList, ok := hooks.([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, hook := range hooksList {
+			hookMap, ok := hook.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Check if entry contains bd hooks run
+			entry, ok := hookMap["entry"]
+			if !ok {
+				continue
+			}
+
+			entryStr, ok := entry.(string)
+			if !ok {
+				continue
+			}
+
+			if !bdHookPattern.MatchString(entryStr) {
+				continue
+			}
+
+			// Found bd hooks run - determine which hook stage(s) it applies to
+			stages := getPrecommitStages(hookMap)
+			for _, stage := range stages {
+				hooksWithBd[stage] = true
+			}
+		}
+	}
+
+	// Build status based on what we found
+	for _, hookName := range recommendedBdHooks {
+		if hooksWithBd[hookName] {
+			status.HooksWithBd = append(status.HooksWithBd, hookName)
+			status.Configured = true
+		} else {
+			// Hook not configured with bd integration
+			status.HooksNotInConfig = append(status.HooksNotInConfig, hookName)
+		}
+	}
+
+	return status
+}
+
+// getPrecommitStages extracts the stages from a pre-commit hook config.
+// Returns the hook stages, defaulting to ["pre-commit"] if not specified.
+// Handles both new format (stages: [pre-commit]) and legacy format (stages: [commit]).
+func getPrecommitStages(hookMap map[string]interface{}) []string {
+	stages, ok := hookMap["stages"]
+	if !ok {
+		// Default to pre-commit if no stages specified
+		return []string{"pre-commit"}
+	}
+
+	stagesList, ok := stages.([]interface{})
+	if !ok {
+		return []string{"pre-commit"}
+	}
+
+	var result []string
+	for _, s := range stagesList {
+		stage, ok := s.(string)
+		if !ok {
+			continue
+		}
+		// Normalize legacy stage names (pre-3.2.0)
+		switch stage {
+		case "commit":
+			result = append(result, "pre-commit")
+		case "push":
+			result = append(result, "pre-push")
+		case "merge-commit":
+			result = append(result, "pre-merge-commit")
+		default:
+			result = append(result, stage)
+		}
+	}
+
+	if len(result) == 0 {
+		return []string{"pre-commit"}
+	}
+	return result
+}
+
 // CheckHuskyBdIntegration checks .husky/ scripts for bd integration.
 func CheckHuskyBdIntegration(path string) *HookIntegrationStatus {
 	huskyDir := filepath.Join(path, ".husky")
@@ -305,6 +457,8 @@ func checkManagerBdIntegration(name, path string) *HookIntegrationStatus {
 		return CheckLefthookBdIntegration(path)
 	case "husky":
 		return CheckHuskyBdIntegration(path)
+	case "pre-commit":
+		return CheckPrecommitBdIntegration(path)
 	default:
 		return nil
 	}
