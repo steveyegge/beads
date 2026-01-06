@@ -569,14 +569,14 @@ func saveBaseState(beadsDir string, issues []*beads.Issue) error {
 
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-			file.Close()
-			os.Remove(tempPath)
+			_ = file.Close() // Best-effort cleanup
+			_ = os.Remove(tempPath)
 			return err
 		}
 	}
 
 	if err := file.Close(); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath) // Best-effort cleanup
 		return err
 	}
 

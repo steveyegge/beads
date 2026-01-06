@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -734,14 +735,13 @@ func TestIsExternalBeadsDir(t *testing.T) {
 }
 
 // TestConcurrentEdit tests the pull-first sync flow with concurrent edits.
-// This is the Phase 1 tracer bullet test for the pull-first sync refactor (#911).
+// This validates the 3-way merge logic for the pull-first sync refactor (#911).
 //
 // Scenario:
-// - Two "worktrees" (simulated) have the same base state
-// - Worktree A edits issue bd-1 (changes title to "A's edit")
-// - Worktree B edits issue bd-1 (changes title to "B's edit")
-// - When using pull-first, the merge (stub) returns remote state
-// - This test verifies the pull-first flow executes without data loss
+// - Base state exists (issue bd-1 at version 2025-01-01)
+// - Local modifies issue (version 2025-01-02)
+// - Remote also modifies issue (version 2025-01-03)
+// - 3-way merge detects conflict and resolves using LWW (remote wins)
 func TestConcurrentEdit(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -761,7 +761,8 @@ func TestConcurrentEdit(t *testing.T) {
 	}
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
-	// Base state: single issue
+	// Base state: single issue at 2025-01-01
+	baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	baseIssue := `{"id":"bd-1","title":"Original Title","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
 	if err := os.WriteFile(jsonlPath, []byte(baseIssue+"\n"), 0644); err != nil {
 		t.Fatalf("write JSONL failed: %v", err)
@@ -786,40 +787,42 @@ func TestConcurrentEdit(t *testing.T) {
 		t.Fatalf("failed to set issue_prefix: %v", err)
 	}
 
-	// Create the base issue in DB
-	baseIssueObj := &types.Issue{
+	// Load base state for 3-way merge
+	baseIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		t.Fatalf("loadIssuesFromJSONL (base) failed: %v", err)
+	}
+
+	// Create local issue (modified at 2025-01-02)
+	localTime := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	localIssueObj := &types.Issue{
 		ID:        "bd-1",
-		Title:     "Original Title",
+		Title:     "Local Edit",
 		Status:    types.StatusOpen,
 		IssueType: types.TypeTask,
 		Priority:  2,
+		CreatedAt: baseTime,
+		UpdatedAt: localTime,
 	}
-	if err := testStore.CreateIssue(ctx, baseIssueObj, "test"); err != nil {
-		t.Fatalf("failed to create issue: %v", err)
-	}
+	localIssues := []*types.Issue{localIssueObj}
 
-	// Simulate "remote" edit: change title in JSONL (as if pulled from remote)
-	remoteIssue := `{"id":"bd-1","title":"Remote Edit","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-02T00:00:00Z"}`
+	// Simulate "remote" edit: change title in JSONL (modified at 2025-01-03 - later)
+	remoteIssue := `{"id":"bd-1","title":"Remote Edit","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-03T00:00:00Z"}`
 	if err := os.WriteFile(jsonlPath, []byte(remoteIssue+"\n"), 0644); err != nil {
 		t.Fatalf("write remote JSONL failed: %v", err)
 	}
 
-	// "Local" state in DB still has "Original Title"
-	// (simulating a stale worktree that hasn't pulled)
-
-	// Test the merge function directly (Phase 1: stub returns remote)
-	localIssues := []*types.Issue{baseIssueObj}
 	remoteIssues, err := loadIssuesFromJSONL(jsonlPath)
 	if err != nil {
-		t.Fatalf("loadIssuesFromJSONL failed: %v", err)
+		t.Fatalf("loadIssuesFromJSONL (remote) failed: %v", err)
 	}
 
 	if len(remoteIssues) != 1 {
 		t.Fatalf("expected 1 remote issue, got %d", len(remoteIssues))
 	}
 
-	// Phase 1 stub merge: should return remote issues
-	mergeResult, err := MergeIssues(nil, localIssues, remoteIssues)
+	// 3-way merge with base state
+	mergeResult, err := MergeIssues(baseIssues, localIssues, remoteIssues)
 	if err != nil {
 		t.Fatalf("MergeIssues failed: %v", err)
 	}
@@ -829,20 +832,20 @@ func TestConcurrentEdit(t *testing.T) {
 		t.Fatalf("expected 1 merged issue, got %d", len(mergeResult.Merged))
 	}
 
-	// Phase 1 stub returns remote, so title should be "Remote Edit"
+	// LWW: Remote wins because it has later updated_at (2025-01-03 > 2025-01-02)
 	if mergeResult.Merged[0].Title != "Remote Edit" {
-		t.Errorf("expected merged title 'Remote Edit', got '%s'", mergeResult.Merged[0].Title)
+		t.Errorf("expected merged title 'Remote Edit' (remote wins LWW), got '%s'", mergeResult.Merged[0].Title)
 	}
 
-	// Verify strategy
-	if mergeResult.Strategy["bd-1"] != "remote" {
-		t.Errorf("expected strategy 'remote' for bd-1, got '%s'", mergeResult.Strategy["bd-1"])
+	// Verify strategy: should be "merged" (conflict resolved by LWW)
+	if mergeResult.Strategy["bd-1"] != StrategyMerged {
+		t.Errorf("expected strategy '%s' for bd-1, got '%s'", StrategyMerged, mergeResult.Strategy["bd-1"])
 	}
 
-	// Verify no conflicts (stub doesn't report conflicts)
-	if mergeResult.Conflicts != 0 {
-		t.Errorf("expected 0 conflicts (Phase 1 stub), got %d", mergeResult.Conflicts)
+	// Verify 1 conflict was detected and resolved
+	if mergeResult.Conflicts != 1 {
+		t.Errorf("expected 1 conflict (both sides modified), got %d", mergeResult.Conflicts)
 	}
 
-	t.Log("TestConcurrentEdit: Phase 1 tracer bullet passed - pull-first merge architecture validated")
+	t.Log("TestConcurrentEdit: 3-way merge with LWW resolution validated")
 }
