@@ -215,13 +215,15 @@ func CheckDuplicateIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Find duplicates by title+description hash
+	// Find duplicates by content hash (matching bd duplicates algorithm)
+	// Only check open issues - closed issues are done, no point flagging duplicates
 	seen := make(map[string][]string) // hash -> list of IDs
 	for _, issue := range issues {
-		if issue.Status == types.StatusTombstone {
+		if issue.Status == types.StatusTombstone || issue.Status == types.StatusClosed {
 			continue
 		}
-		key := issue.Title + "|" + issue.Description
+		// Content key matches bd duplicates: title + description + design + acceptanceCriteria + status
+		key := issue.Title + "|" + issue.Description + "|" + issue.Design + "|" + issue.AcceptanceCriteria + "|" + string(issue.Status)
 		seen[key] = append(seen[key], issue.ID)
 	}
 
