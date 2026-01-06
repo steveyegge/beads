@@ -285,8 +285,10 @@ func HasSyncBranchGitignoreFlags(path string) (bool, bool, error) {
 	}
 
 	// Get file status from git ls-files -v
-	// 'H' = tracked normally, 'h' = assume-unchanged, 'S' = skip-worktree
-	// When both flags are set, 'S' is shown (skip-worktree takes precedence)
+	// 'H' = tracked normally
+	// 'h' = assume-unchanged only
+	// 'S' = skip-worktree only
+	// 's' = skip-worktree + assume-unchanged (lowercase due to assume-unchanged)
 	cmd := exec.Command("git", "ls-files", "-v", jsonlPath)
 	cmd.Dir = path
 	output, err := cmd.Output()
@@ -301,8 +303,8 @@ func HasSyncBranchGitignoreFlags(path string) (bool, bool, error) {
 
 	firstChar := line[0]
 	// 'h' = assume-unchanged only, 'S' = skip-worktree (possibly with assume-unchanged too)
-	hasAnyFlag := firstChar == 'h' || firstChar == 'S'
-	hasSkipWorktree := firstChar == 'S'
+	hasAnyFlag := firstChar == 'h' || firstChar == 'S' || firstChar == 's'
+	hasSkipWorktree := firstChar == 'S' || firstChar == 's'
 
 	return hasAnyFlag, hasSkipWorktree, nil
 }
