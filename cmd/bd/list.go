@@ -409,8 +409,11 @@ var listCmd = &cobra.Command{
 		// Gate filtering (bd-7zka.2)
 		includeGates, _ := cmd.Flags().GetBool("include-gates")
 
-		// Parent filtering
+		// Parent filtering (--filter-parent is alias for --parent)
 		parentID, _ := cmd.Flags().GetString("parent")
+		if parentID == "" {
+			parentID, _ = cmd.Flags().GetString("filter-parent")
+		}
 
 		// Molecule type filtering
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
@@ -1037,6 +1040,7 @@ func init() {
 
 	// Parent filtering: filter children by parent issue
 	listCmd.Flags().String("parent", "", "Filter by parent issue ID (shows children of specified issue)")
+	listCmd.Flags().String("filter-parent", "", "Alias for --parent")
 
 	// Molecule type filtering
 	listCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")

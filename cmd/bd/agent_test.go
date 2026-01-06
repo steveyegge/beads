@@ -101,6 +101,37 @@ func TestParseAgentIDFields(t *testing.T) {
 			wantRoleType: "polecat",
 			wantRig:      "gastown",
 		},
+		// Hyphenated rig names (GH#868)
+		{
+			name:         "polecat with hyphenated rig",
+			agentID:      "gt-my-project-polecat-nux",
+			wantRoleType: "polecat",
+			wantRig:      "my-project",
+		},
+		{
+			name:         "crew with hyphenated rig",
+			agentID:      "bd-infra-dashboard-crew-alice",
+			wantRoleType: "crew",
+			wantRig:      "infra-dashboard",
+		},
+		{
+			name:         "witness with hyphenated rig",
+			agentID:      "gt-my-cool-rig-witness",
+			wantRoleType: "witness",
+			wantRig:      "my-cool-rig",
+		},
+		{
+			name:         "refinery with hyphenated rig",
+			agentID:      "bd-super-long-rig-name-refinery",
+			wantRoleType: "refinery",
+			wantRig:      "super-long-rig-name",
+		},
+		{
+			name:         "polecat with multi-hyphen rig and name",
+			agentID:      "gt-my-awesome-project-polecat-worker-1",
+			wantRoleType: "polecat",
+			wantRig:      "my-awesome-project",
+		},
 		// Edge cases
 		{
 			name:         "no hyphen",

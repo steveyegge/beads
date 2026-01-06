@@ -371,6 +371,7 @@ async function testPlatformDetection() {
     const supportedPlatforms = {
       darwin: ['x64', 'arm64'],
       linux: ['x64', 'arm64'],
+      android: ['arm64'],  // Only arm64 built for android/termux
       win32: ['x64', 'arm64']
     };
 

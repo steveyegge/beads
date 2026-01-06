@@ -262,19 +262,19 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			OrphanHandling:             orphanHandling,
 		}
 
-		// If --protect-left-snapshot is set, read the left snapshot and build ID set
-		// This protects locally exported issues from git-history-backfill
+		// If --protect-left-snapshot is set, read the left snapshot and build timestamp map
+		// GH#865: Use timestamp-aware protection - only protect if local is newer than incoming
 		if protectLeftSnapshot && input != "" {
 			beadsDir := filepath.Dir(input)
 			leftSnapshotPath := filepath.Join(beadsDir, "beads.left.jsonl")
 			if _, err := os.Stat(leftSnapshotPath); err == nil {
 				sm := NewSnapshotManager(input)
-				leftIDs, err := sm.BuildIDSet(leftSnapshotPath)
+				leftTimestamps, err := sm.BuildIDToTimestampMap(leftSnapshotPath)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to read left snapshot: %v\n", err)
-				} else if len(leftIDs) > 0 {
-					opts.ProtectLocalExportIDs = leftIDs
-					fmt.Fprintf(os.Stderr, "Protecting %d issue(s) from left snapshot\n", len(leftIDs))
+				} else if len(leftTimestamps) > 0 {
+					opts.ProtectLocalExportIDs = leftTimestamps
+					fmt.Fprintf(os.Stderr, "Protecting %d issue(s) from left snapshot (timestamp-aware)\n", len(leftTimestamps))
 				}
 			}
 		}

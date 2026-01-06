@@ -297,6 +297,41 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.44.0",
+		Date:    "2026-01-04",
+		Changes: []string{
+			"NEW: Recipe-based setup - bd init refactored to modular recipes (bd-i3ed)",
+			"NEW: Gate evaluation phases 2-4 - Timer, GitHub, cross-rig gate support",
+			"NEW: bd gate check/discover/add-waiter/show - Gate workflow commands",
+			"NEW: --blocks flag for bd dep add - Natural dependency syntax (GH#884)",
+			"NEW: --blocked-by/--depends-on aliases for bd dep add (bd-09kt)",
+			"NEW: Multi-prefix support - allowed_prefixes config option (#881)",
+			"NEW: Sync divergence detection - JSONL/SQLite/git consistency checks (GH#885)",
+			"NEW: PRIME.md override - Custom prime output per project (GH#876)",
+			"NEW: Compound visualization - bd mol show displays compound structure (bd-iw4z)",
+			"NEW: /handoff skill - Session cycling slash command (bd-xwvo)",
+			"FIX: bd ready now shows in_progress issues (#894)",
+			"FIX: macOS case-insensitive path handling for worktrees/daemon (GH#880)",
+			"FIX: Sync metadata timing - finalize after commit not push (GH#885)",
+			"FIX: Sparse checkout isolation - prevent config leak to main repo (GH#886)",
+			"FIX: close_reason preserved during merge/sync (GH#891)",
+			"FIX: Hyphenated rig names supported in agent IDs (GH#854, GH#868)",
+		},
+	},
+	{
+		Version: "0.43.0",
+		Date:    "2026-01-02",
+		Changes: []string{
+			"NEW: Step.Gate evaluation Phase 1 - Human gates for workflow control",
+			"NEW: bd lint command - Template validation against schema",
+			"NEW: bd ready --pretty - Formatted human-friendly output",
+			"FIX: Cross-rig routing for bd close and bd update",
+			"FIX: Agent ID validation accepts any rig prefix (GH#827)",
+			"FIX: bd sync in bare repo worktrees - Exit 128 error (GH#827)",
+			"FIX: bd --no-db dep tree shows complete tree (GH#836)",
+		},
+	},
+	{
 		Version: "0.42.0",
 		Date:    "2025-12-30",
 		Changes: []string{

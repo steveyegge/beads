@@ -79,7 +79,13 @@ func CheckForcePush(ctx context.Context, store storage.Storage, repoRoot, syncBr
 	status.Remote = getRemoteForBranch(ctx, worktreePath, syncBranch)
 
 	// Fetch from remote to get latest state
-	fetchCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", status.Remote, syncBranch) // #nosec G204 - repoRoot/syncBranch are validated git inputs
+	// bd-4hh5: Use explicit refspec to ensure the remote-tracking ref is always updated.
+	// Without an explicit refspec, `git fetch origin beads-sync` only updates
+	// refs/remotes/origin/beads-sync if it already exists. On fresh clones or
+	// after ref cleanup, this can leave the tracking ref stale, causing
+	// false-positive force-push detection when comparing against wrong commits.
+	refspec := fmt.Sprintf("+refs/heads/%s:refs/remotes/%s/%s", syncBranch, status.Remote, syncBranch)
+	fetchCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "fetch", status.Remote, refspec) // #nosec G204 - repoRoot/syncBranch are validated git inputs
 	fetchOutput, err := fetchCmd.CombinedOutput()
 	if err != nil {
 		// Check if remote branch doesn't exist

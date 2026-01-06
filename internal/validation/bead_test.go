@@ -195,6 +195,43 @@ func TestValidatePrefix(t *testing.T) {
 	}
 }
 
+func TestValidatePrefixWithAllowed(t *testing.T) {
+	tests := []struct {
+		name            string
+		requestedPrefix string
+		dbPrefix        string
+		allowedPrefixes string
+		force           bool
+		wantError       bool
+	}{
+		// Basic cases (same as ValidatePrefix)
+		{"matching prefixes", "bd", "bd", "", false, false},
+		{"empty db prefix", "bd", "", "", false, false},
+		{"mismatched with force", "foo", "bd", "", true, false},
+		{"mismatched without force", "foo", "bd", "", false, true},
+
+		// Multi-prefix cases (Gas Town use case)
+		{"allowed prefix gt", "gt", "hq", "gt,hmc", false, false},
+		{"allowed prefix hmc", "hmc", "hq", "gt,hmc", false, false},
+		{"primary prefix still works", "hq", "hq", "gt,hmc", false, false},
+		{"prefix not in allowed list", "foo", "hq", "gt,hmc", false, true},
+
+		// Edge cases
+		{"allowed with spaces", "gt", "hq", "gt, hmc, foo", false, false},
+		{"empty allowed list", "gt", "hq", "", false, true},
+		{"single allowed prefix", "gt", "hq", "gt", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePrefixWithAllowed(tt.requestedPrefix, tt.dbPrefix, tt.allowedPrefixes, tt.force)
+			if (err != nil) != tt.wantError {
+				t.Errorf("ValidatePrefixWithAllowed() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestValidateAgentID(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -220,6 +257,14 @@ func TestValidateAgentID(t *testing.T) {
 		{"valid bd-beads-polecat-pearl", "bd-beads-polecat-pearl", false, ""},
 		{"valid bd-beads-witness", "bd-beads-witness", false, ""},
 
+		// Valid: hyphenated rig names (GH#854)
+		{"hyphenated rig witness", "ob-my-project-witness", false, ""},
+		{"hyphenated rig refinery", "gt-foo-bar-refinery", false, ""},
+		{"hyphenated rig crew", "bd-my-cool-project-crew-fang", false, ""},
+		{"hyphenated rig polecat", "gt-some-long-rig-name-polecat-nux", false, ""},
+		{"hyphenated rig and name", "gt-my-rig-polecat-war-boy", false, ""},
+		{"multi-hyphen rig crew", "ob-a-b-c-d-crew-dave", false, ""},
+
 		// Invalid: no prefix (missing hyphen)
 		{"no prefix", "mayor", true, "must have a prefix followed by '-'"},
 
@@ -230,8 +275,8 @@ func TestValidateAgentID(t *testing.T) {
 		{"unknown role", "gt-gastown-admin", true, "invalid agent format"},
 
 		// Invalid: town-level with rig (put role first)
-		{"mayor with rig suffix", "gt-gastown-mayor", true, "cannot have rig suffix"},
-		{"deacon with rig suffix", "gt-beads-deacon", true, "cannot have rig suffix"},
+		{"mayor with rig suffix", "gt-gastown-mayor", true, "cannot have rig/name suffixes"},
+		{"deacon with rig suffix", "gt-beads-deacon", true, "cannot have rig/name suffixes"},
 
 		// Invalid: per-rig role without rig
 		{"witness alone", "gt-witness", true, "requires rig"},

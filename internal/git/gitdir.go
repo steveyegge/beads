@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -62,10 +63,16 @@ func initGitContext() {
 	// Derive isWorktree from comparing absolute paths
 	gitCtx.isWorktree = absGitDir != absCommon
 
-	// Process repoRoot: normalize Windows paths and resolve symlinks
+	// Process repoRoot: normalize Windows paths, resolve symlinks,
+	// and canonicalize case on case-insensitive filesystems (GH#880).
+	// This is critical for git worktree operations which string-compare paths.
 	repoRoot := NormalizePath(repoRootRaw)
 	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
 		repoRoot = resolved
+	}
+	// Canonicalize case on macOS/Windows (GH#880)
+	if canonicalized := canonicalizeCase(repoRoot); canonicalized != "" {
+		repoRoot = canonicalized
 	}
 	gitCtx.repoRoot = repoRoot
 }
@@ -171,6 +178,27 @@ func GetRepoRoot() string {
 		return ""
 	}
 	return ctx.repoRoot
+}
+
+// canonicalizeCase resolves a path to its true filesystem case on
+// case-insensitive filesystems (macOS/Windows). This is needed because
+// git operations string-compare paths exactly - a path with wrong case
+// will fail even though it points to the same location. (GH#880)
+//
+// On macOS, uses realpath(1) which returns the canonical case.
+// Returns empty string if resolution fails or isn't needed.
+func canonicalizeCase(path string) string {
+	if runtime.GOOS == "darwin" {
+		// Use realpath to get canonical path with correct case
+		cmd := exec.Command("realpath", path)
+		output, err := cmd.Output()
+		if err == nil {
+			return strings.TrimSpace(string(output))
+		}
+	}
+	// Windows: filepath.EvalSymlinks already handles case
+	// Linux: case-sensitive, no canonicalization needed
+	return ""
 }
 
 // NormalizePath converts Git's Windows path formats to native format.

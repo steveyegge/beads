@@ -437,25 +437,29 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		}
 		log.log("Exported to JSONL")
 
-		// Update export metadata for multi-repo support with stable keys
-		multiRepoPaths := getMultiRepoJSONLPaths()
-		if multiRepoPaths != nil {
-			// Multi-repo mode: update metadata for each JSONL with stable repo key
-			for _, path := range multiRepoPaths {
-				repoKey := getRepoKeyForPath(path)
-				updateExportMetadata(exportCtx, store, path, log, repoKey)
+		// GH#885: Defer metadata updates until AFTER git commit succeeds.
+		// This is a helper to finalize the export after git operations.
+		finalizeExportMetadata := func() {
+			// Update export metadata for multi-repo support with stable keys
+			multiRepoPaths := getMultiRepoJSONLPaths()
+			if multiRepoPaths != nil {
+				// Multi-repo mode: update metadata for each JSONL with stable repo key
+				for _, path := range multiRepoPaths {
+					repoKey := getRepoKeyForPath(path)
+					updateExportMetadata(exportCtx, store, path, log, repoKey)
+				}
+			} else {
+				// Single-repo mode: update metadata for main JSONL
+				updateExportMetadata(exportCtx, store, jsonlPath, log, "")
 			}
-		} else {
-			// Single-repo mode: update metadata for main JSONL
-			updateExportMetadata(exportCtx, store, jsonlPath, log, "")
-		}
 
-		// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
-		// This prevents validatePreExport from incorrectly blocking on next export
-		// with "JSONL is newer than database" after daemon auto-export
-		dbPath := filepath.Join(beadsDir, "beads.db")
-		if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
-			log.log("Warning: failed to update database mtime: %v", err)
+			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
+			// This prevents validatePreExport from incorrectly blocking on next export
+			// with "JSONL is newer than database" after daemon auto-export
+			dbPath := filepath.Join(beadsDir, "beads.db")
+			if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
+				log.log("Warning: failed to update database mtime: %v", err)
+			}
 		}
 
 		// Auto-commit if enabled (skip in git-free mode)
@@ -470,8 +474,11 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 				return
 			}
 
-			// If sync branch not configured, use regular commit
-			if !committed {
+			if committed {
+				// GH#885: Finalize after sync branch commit succeeded
+				finalizeExportMetadata()
+			} else {
+				// If sync branch not configured, use regular commit
 				hasChanges, err := gitHasChanges(exportCtx, jsonlPath)
 				if err != nil {
 					log.log("Error checking git status: %v", err)
@@ -486,16 +493,27 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 					}
 					log.log("Committed changes")
 
-					// Auto-push if enabled
+					// GH#885: Finalize after git commit succeeded, before push
+					// Push failure shouldn't prevent metadata update since commit succeeded
+					finalizeExportMetadata()
+
+					// Auto-push if enabled (GH#872: use sync.remote config)
 					if autoPush {
-						if err := gitPush(exportCtx); err != nil {
+						configuredRemote, _ := store.GetConfig(exportCtx, "sync.remote")
+						if err := gitPush(exportCtx, configuredRemote); err != nil {
 							log.log("Push failed: %v", err)
 							return
 						}
 						log.log("Pushed to remote")
 					}
+				} else {
+					// No git changes but export happened - finalize metadata
+					finalizeExportMetadata()
 				}
 			}
+		} else if skipGit {
+			// Git-free mode: finalize immediately since there's no git to wait for
+			finalizeExportMetadata()
 		}
 
 		if skipGit {
@@ -597,9 +615,10 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 				return
 			}
 
-			// If sync branch not configured, use regular pull
+			// If sync branch not configured, use regular pull (GH#872: use sync.remote config)
 			if !pulled {
-				if err := gitPull(importCtx); err != nil {
+				configuredRemote, _ := store.GetConfig(importCtx, "sync.remote")
+				if err := gitPull(importCtx, configuredRemote); err != nil {
 					backoff := RecordSyncFailure(beadsDir, err.Error())
 					log.log("Pull failed: %v (backoff: %v)", err, backoff)
 					return
@@ -718,28 +737,34 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		}
 		log.log("Exported to JSONL")
 
-		// Update export metadata for multi-repo support with stable keys
-		if multiRepoPaths != nil {
-			// Multi-repo mode: update metadata for each JSONL with stable repo key
-			for _, path := range multiRepoPaths {
-				repoKey := getRepoKeyForPath(path)
-				updateExportMetadata(syncCtx, store, path, log, repoKey)
-			}
-		} else {
-			// Single-repo mode: update metadata for main JSONL
-			updateExportMetadata(syncCtx, store, jsonlPath, log, "")
-		}
-
-		// Update database mtime to be >= JSONL mtime
-		// This prevents validatePreExport from incorrectly blocking on next export
+		// GH#885: Defer metadata updates until AFTER git commit succeeds.
+		// Define helper to finalize after git operations.
 		dbPath := filepath.Join(beadsDir, "beads.db")
-		if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
-			log.log("Warning: failed to update database mtime: %v", err)
+		finalizeExportMetadata := func() {
+			// Update export metadata for multi-repo support with stable keys
+			if multiRepoPaths != nil {
+				// Multi-repo mode: update metadata for each JSONL with stable repo key
+				for _, path := range multiRepoPaths {
+					repoKey := getRepoKeyForPath(path)
+					updateExportMetadata(syncCtx, store, path, log, repoKey)
+				}
+			} else {
+				// Single-repo mode: update metadata for main JSONL
+				updateExportMetadata(syncCtx, store, jsonlPath, log, "")
+			}
+
+			// Update database mtime to be >= JSONL mtime
+			// This prevents validatePreExport from incorrectly blocking on next export
+			if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
+				log.log("Warning: failed to update database mtime: %v", err)
+			}
 		}
 
 		// Skip git operations, snapshot capture, deletion tracking, and import in local-only mode
 		// Local-only sync is export-only since there's no remote to sync with
 		if skipGit {
+			// Git-free mode: finalize immediately since there's no git to wait for
+			finalizeExportMetadata()
 			log.log("Local %s complete", mode)
 			return
 		}
@@ -791,6 +816,9 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 					log.log("Committed changes")
 				}
 			}
+
+			// GH#885: NOW finalize metadata after git commit succeeded
+			finalizeExportMetadata()
 		}
 
 		// Pull (try sync branch first)
@@ -800,9 +828,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			return
 		}
 
-		// If sync branch not configured, use regular pull
+		// If sync branch not configured, use regular pull (GH#872: use sync.remote config)
 		if !pulled {
-			if err := gitPull(syncCtx); err != nil {
+			configuredRemote, _ := store.GetConfig(syncCtx, "sync.remote")
+			if err := gitPull(syncCtx, configuredRemote); err != nil {
 				log.log("Pull failed: %v", err)
 				return
 			}
@@ -889,8 +918,10 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 			}
 		}
 
+		// GH#872: use sync.remote config
 		if autoPush && autoCommit {
-			if err := gitPush(syncCtx); err != nil {
+			configuredRemote, _ := store.GetConfig(syncCtx, "sync.remote")
+			if err := gitPush(syncCtx, configuredRemote); err != nil {
 				log.log("Push failed: %v", err)
 				return
 			}

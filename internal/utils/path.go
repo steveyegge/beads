@@ -3,7 +3,10 @@ package utils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // FindJSONLInDir finds the JSONL file in the given .beads directory.
@@ -90,13 +93,16 @@ func ResolveForWrite(path string) (string, error) {
 // CanonicalizePath converts a path to its canonical form by:
 // 1. Converting to absolute path
 // 2. Resolving symlinks
+// 3. On macOS/Windows, resolving the true filesystem case (GH#880)
 //
-// If either step fails, it falls back to the best available form:
+// If any step fails, it falls back to the best available form:
+// - If case resolution fails, returns symlink-resolved path
 // - If symlink resolution fails, returns absolute path
 // - If absolute path conversion fails, returns original path
 //
 // This function is used to ensure consistent path handling across the codebase,
-// particularly for BEADS_DIR environment variable processing.
+// particularly for BEADS_DIR environment variable processing and git worktree
+// paths which require exact case matching.
 func CanonicalizePath(path string) string {
 	// Try to get absolute path
 	absPath, err := filepath.Abs(path)
@@ -112,5 +118,72 @@ func CanonicalizePath(path string) string {
 		return absPath
 	}
 
+	// On case-insensitive filesystems, resolve to true filesystem case (GH#880)
+	// This is critical for git operations which string-compare paths exactly.
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		if resolved := resolveCanonicalCase(canonical); resolved != "" {
+			return resolved
+		}
+	}
+
 	return canonical
+}
+
+// resolveCanonicalCase resolves a path to its true filesystem case.
+// On macOS, uses realpath(1) to get the canonical case.
+// Returns empty string if resolution fails.
+func resolveCanonicalCase(path string) string {
+	if runtime.GOOS == "darwin" {
+		// Use realpath to get canonical path with correct case
+		// realpath on macOS returns the true filesystem case
+		cmd := exec.Command("realpath", path)
+		output, err := cmd.Output()
+		if err == nil {
+			return strings.TrimSpace(string(output))
+		}
+	}
+	// Windows: filepath.EvalSymlinks already handles case on Windows
+	// For other systems or if realpath fails, return empty to use fallback
+	return ""
+}
+
+// NormalizePathForComparison returns a normalized path suitable for comparison.
+// It resolves symlinks and handles case-insensitive filesystems (macOS, Windows).
+//
+// On case-insensitive filesystems (darwin, windows), the path is lowercased
+// to ensure that /Users/foo/Desktop and /Users/foo/desktop compare as equal.
+//
+// This function should be used whenever comparing workspace paths, not for
+// storing or displaying paths (preserve original case for those purposes).
+func NormalizePathForComparison(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	// Try to get absolute path first
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	// Try to resolve symlinks
+	canonical, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// If symlink resolution fails (e.g., path doesn't exist), use absolute path
+		canonical = absPath
+	}
+
+	// On case-insensitive filesystems, lowercase for comparison
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		canonical = strings.ToLower(canonical)
+	}
+
+	return canonical
+}
+
+// PathsEqual compares two paths for equality, handling case-insensitive
+// filesystems and symlinks. This is the preferred way to compare workspace
+// paths in the daemon registry and discovery code.
+func PathsEqual(path1, path2 string) bool {
+	return NormalizePathForComparison(path1) == NormalizePathForComparison(path2)
 }

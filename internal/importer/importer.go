@@ -39,7 +39,7 @@ type Options struct {
 	SkipPrefixValidation       bool            // Skip prefix validation (for auto-import)
 	OrphanHandling             OrphanHandling  // How to handle missing parent issues (default: allow)
 	ClearDuplicateExternalRefs bool            // Clear duplicate external_ref values instead of erroring
-	ProtectLocalExportIDs      map[string]bool // IDs from left snapshot to protect from deletion
+	ProtectLocalExportIDs      map[string]time.Time // IDs from left snapshot with timestamps for timestamp-aware protection (GH#865)
 }
 
 // Result contains statistics about the import operation
@@ -565,6 +565,13 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			if existing, found := dbByExternalRef[*incoming.ExternalRef]; found {
 				// Found match by external_ref - update the existing issue
 				if !opts.SkipUpdate {
+					// GH#865: Check timestamp-aware protection first
+					// If local snapshot has a newer version, protect it from being overwritten
+					if shouldProtectFromUpdate(existing.ID, incoming.UpdatedAt, opts.ProtectLocalExportIDs) {
+						debugLogProtection(existing.ID, opts.ProtectLocalExportIDs[existing.ID], incoming.UpdatedAt)
+						result.Skipped++
+						continue
+					}
 					// Check timestamps - only update if incoming is newer
 					if !incoming.UpdatedAt.After(existing.UpdatedAt) {
 						// Local version is newer or same - skip update
@@ -663,6 +670,13 @@ func upsertIssues(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues
 			// The update should have been detected earlier by detectUpdates
 			// If we reach here, it means collision wasn't resolved - treat as update
 			if !opts.SkipUpdate {
+				// GH#865: Check timestamp-aware protection first
+				// If local snapshot has a newer version, protect it from being overwritten
+				if shouldProtectFromUpdate(incoming.ID, incoming.UpdatedAt, opts.ProtectLocalExportIDs) {
+					debugLogProtection(incoming.ID, opts.ProtectLocalExportIDs[incoming.ID], incoming.UpdatedAt)
+					result.Skipped++
+					continue
+				}
 				// Check timestamps - only update if incoming is newer
 				if !incoming.UpdatedAt.After(existingWithID.UpdatedAt) {
 					// Local version is newer or same - skip update
@@ -917,6 +931,31 @@ func importComments(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issu
 	}
 
 	return nil
+}
+
+// shouldProtectFromUpdate checks if an update should be skipped due to timestamp-aware protection (GH#865).
+// Returns true if the update should be skipped (local is newer), false if the update should proceed.
+// If the issue is not in the protection map, returns false (allow update).
+func shouldProtectFromUpdate(issueID string, incomingTime time.Time, protectMap map[string]time.Time) bool {
+	if protectMap == nil {
+		return false
+	}
+	localTime, exists := protectMap[issueID]
+	if !exists {
+		// Issue not in protection map - allow update
+		return false
+	}
+	// Only protect if local snapshot is newer than or equal to incoming
+	// If incoming is newer, allow the update
+	return !incomingTime.After(localTime)
+}
+
+// debugLogProtection logs when timestamp-aware protection triggers (for debugging sync issues).
+func debugLogProtection(issueID string, localTime, incomingTime time.Time) {
+	if os.Getenv("BD_DEBUG_SYNC") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] Protected %s: local=%s >= incoming=%s\n",
+			issueID, localTime.Format(time.RFC3339), incomingTime.Format(time.RFC3339))
+	}
 }
 
 func GetPrefixList(prefixes map[string]int) []string {

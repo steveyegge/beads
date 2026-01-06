@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
-	"github.com/steveyegge/beads/internal/utils"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -205,13 +204,8 @@ create, update, show, or close operation).`,
 				}
 				resolvedIDs = append(resolvedIDs, resolvedID)
 			}
-		} else {
-			var err error
-			resolvedIDs, err = utils.ResolvePartialIDs(ctx, store, args)
-			if err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
 		}
+		// Note: Direct mode (no daemon) uses resolveAndGetIssueWithRouting in the loop below
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
@@ -429,18 +423,32 @@ create, update, show, or close operation).`,
 			return
 		}
 
-		// Direct mode
+		// Direct mode - use routed resolution for cross-repo lookups
 		updatedIssues := []*types.Issue{}
 		var firstUpdatedID string // Track first successful update for last-touched
-		for _, id := range resolvedIDs {
-			// Check if issue is a template: templates are read-only
-			issue, err := store.GetIssue(ctx, id)
+		for _, id := range args {
+			// Resolve and get issue with routing (e.g., gt-xyz routes to gastown)
+			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting %s: %v\n", id, err)
+				if result != nil {
+					result.Close()
+				}
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
 				continue
 			}
+			if result == nil || result.Issue == nil {
+				if result != nil {
+					result.Close()
+				}
+				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				continue
+			}
+			issue := result.Issue
+			issueStore := result.Store
+
 			if err := validateIssueUpdatable(id, issue); err != nil {
 				fmt.Fprintf(os.Stderr, "%s\n", err)
+				result.Close()
 				continue
 			}
 
@@ -449,6 +457,7 @@ create, update, show, or close operation).`,
 				// Check if already claimed (has non-empty assignee)
 				if issue.Assignee != "" {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: already claimed by %s\n", id, issue.Assignee)
+					result.Close()
 					continue
 				}
 				// Atomically set assignee and status
@@ -456,8 +465,9 @@ create, update, show, or close operation).`,
 					"assignee": actor,
 					"status":   "in_progress",
 				}
-				if err := store.UpdateIssue(ctx, id, claimUpdates, actor); err != nil {
+				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, claimUpdates, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error claiming %s: %v\n", id, err)
+					result.Close()
 					continue
 				}
 			}
@@ -470,8 +480,9 @@ create, update, show, or close operation).`,
 				}
 			}
 			if len(regularUpdates) > 0 {
-				if err := store.UpdateIssue(ctx, id, regularUpdates, actor); err != nil {
+				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
 					fmt.Fprintf(os.Stderr, "Error updating %s: %v\n", id, err)
+					result.Close()
 					continue
 				}
 			}
@@ -488,8 +499,9 @@ create, update, show, or close operation).`,
 				removeLabels = v
 			}
 			if len(setLabels) > 0 || len(addLabels) > 0 || len(removeLabels) > 0 {
-				if err := applyLabelUpdates(ctx, store, id, actor, setLabels, addLabels, removeLabels); err != nil {
+				if err := applyLabelUpdates(ctx, issueStore, result.ResolvedID, actor, setLabels, addLabels, removeLabels); err != nil {
 					fmt.Fprintf(os.Stderr, "Error updating labels for %s: %v\n", id, err)
+					result.Close()
 					continue
 				}
 			}
@@ -498,26 +510,29 @@ create, update, show, or close operation).`,
 			if newParent, ok := updates["parent"].(string); ok {
 				// Validate new parent exists (unless empty string to remove parent)
 				if newParent != "" {
-					parentIssue, err := store.GetIssue(ctx, newParent)
+					parentIssue, err := issueStore.GetIssue(ctx, newParent)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Error getting parent %s: %v\n", newParent, err)
+						result.Close()
 						continue
 					}
 					if parentIssue == nil {
 						fmt.Fprintf(os.Stderr, "Error: parent issue %s not found\n", newParent)
+						result.Close()
 						continue
 					}
 				}
 
 				// Find and remove existing parent-child dependency
-				deps, err := store.GetDependencyRecords(ctx, id)
+				deps, err := issueStore.GetDependencyRecords(ctx, result.ResolvedID)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error getting dependencies for %s: %v\n", id, err)
+					result.Close()
 					continue
 				}
 				for _, dep := range deps {
 					if dep.Type == types.DepParentChild {
-						if err := store.RemoveDependency(ctx, id, dep.DependsOnID, actor); err != nil {
+						if err := issueStore.RemoveDependency(ctx, result.ResolvedID, dep.DependsOnID, actor); err != nil {
 							fmt.Fprintf(os.Stderr, "Error removing old parent dependency: %v\n", err)
 						}
 						break
@@ -527,19 +542,20 @@ create, update, show, or close operation).`,
 				// Add new parent-child dependency (if not removing parent)
 				if newParent != "" {
 					newDep := &types.Dependency{
-						IssueID:     id,
+						IssueID:     result.ResolvedID,
 						DependsOnID: newParent,
 						Type:        types.DepParentChild,
 					}
-					if err := store.AddDependency(ctx, newDep, actor); err != nil {
+					if err := issueStore.AddDependency(ctx, newDep, actor); err != nil {
 						fmt.Fprintf(os.Stderr, "Error adding parent dependency: %v\n", err)
+						result.Close()
 						continue
 					}
 				}
 			}
 
 			// Run update hook
-			updatedIssue, _ := store.GetIssue(ctx, id)
+			updatedIssue, _ := issueStore.GetIssue(ctx, result.ResolvedID)
 			if updatedIssue != nil && hookRunner != nil {
 				hookRunner.Run(hooks.EventUpdate, updatedIssue)
 			}
@@ -549,13 +565,14 @@ create, update, show, or close operation).`,
 					updatedIssues = append(updatedIssues, updatedIssue)
 				}
 			} else {
-				fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), id)
+				fmt.Printf("%s Updated issue: %s\n", ui.RenderPass("✓"), result.ResolvedID)
 			}
 
 			// Track first successful update for last-touched
 			if firstUpdatedID == "" {
-				firstUpdatedID = id
+				firstUpdatedID = result.ResolvedID
 			}
+			result.Close()
 		}
 
 		// Set last touched after all updates complete

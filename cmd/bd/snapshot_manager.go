@@ -289,6 +289,48 @@ func (sm *SnapshotManager) BuildIDSet(path string) (map[string]bool, error) {
 	return sm.buildIDSet(path)
 }
 
+// BuildIDToTimestampMap reads a JSONL file and returns a map of issue ID to updated_at timestamp.
+// This is used for timestamp-aware snapshot protection (GH#865): only protect local issues
+// if they are newer than incoming remote versions.
+func (sm *SnapshotManager) BuildIDToTimestampMap(path string) (map[string]time.Time, error) {
+	result := make(map[string]time.Time)
+
+	// #nosec G304 -- snapshot file path derived from internal state
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil // Empty map for missing files
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		// Parse ID and updated_at fields
+		var issue struct {
+			ID        string    `json:"id"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			return nil, fmt.Errorf("failed to parse issue from line: %w", err)
+		}
+
+		result[issue.ID] = issue.UpdatedAt
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // Private helper methods
 
 func (sm *SnapshotManager) createMetadata() snapshotMetadata {

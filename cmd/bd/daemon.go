@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -67,10 +68,15 @@ Run 'bd daemon' with no flags to see available options.`,
 		}
 
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
+		// GH#871: Read from config.yaml first (team-shared), then fall back to SQLite (legacy)
 		// (skip if --stop, --status, --health, --metrics)
 		if start && !stop && !status && !health && !metrics {
 			if !cmd.Flags().Changed("auto-commit") {
-				if dbPath := beads.FindDatabasePath(); dbPath != "" {
+				// Check config.yaml first (GH#871: team-wide settings)
+				if config.GetBool("daemon.auto_commit") {
+					autoCommit = true
+				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {
@@ -82,7 +88,11 @@ Run 'bd daemon' with no flags to see available options.`,
 				}
 			}
 			if !cmd.Flags().Changed("auto-push") {
-				if dbPath := beads.FindDatabasePath(); dbPath != "" {
+				// Check config.yaml first (GH#871: team-wide settings)
+				if config.GetBool("daemon.auto_push") {
+					autoPush = true
+				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {
@@ -97,8 +107,11 @@ Run 'bd daemon' with no flags to see available options.`,
 				// Check environment variable first
 				if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 					autoPull = envVal == "true" || envVal == "1"
+				} else if config.GetBool("daemon.auto_pull") {
+					// Check config.yaml (GH#871: team-wide settings)
+					autoPull = true
 				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Check database config
+					// Fall back to SQLite for backwards compatibility
 					ctx := context.Background()
 					store, err := sqlite.New(ctx, dbPath)
 					if err == nil {

@@ -1,36 +1,53 @@
 # Setup Command Reference
 
 **For:** Setting up beads integration with AI coding tools
-**Version:** 0.29.0+
+**Version:** 0.30.0+
 
 ## Overview
 
-The `bd setup` command configures beads integration with AI coding tools. It supports five integrations:
+The `bd setup` command uses a **recipe-based architecture** to configure beads integration with AI coding tools. Recipes define where workflow instructions are written—built-in recipes handle popular tools, and you can add custom recipes for any tool.
 
-| Tool | Command | Integration Type |
-|------|---------|-----------------|
-| [Factory.ai (Droid)](#factoryai-droid) | `bd setup factory` | AGENTS.md file (universal standard) |
-| [Claude Code](#claude-code) | `bd setup claude` | SessionStart/PreCompact hooks |
-| [Gemini CLI](#gemini-cli) | `bd setup gemini` | SessionStart/PreCompress hooks |
-| [Cursor IDE](#cursor-ide) | `bd setup cursor` | Rules file (.cursor/rules/beads.mdc) |
-| [Aider](#aider) | `bd setup aider` | Config file (.aider.conf.yml) |
+### Built-in Recipes
+
+| Recipe | Path | Integration Type |
+|--------|------|-----------------|
+| `cursor` | `.cursor/rules/beads.mdc` | Rules file |
+| `windsurf` | `.windsurf/rules/beads.md` | Rules file |
+| `cody` | `.cody/rules/beads.md` | Rules file |
+| `kilocode` | `.kilocode/rules/beads.md` | Rules file |
+| `claude` | `~/.claude/settings.json` | SessionStart/PreCompact hooks |
+| `gemini` | `~/.gemini/settings.json` | SessionStart/PreCompress hooks |
+| `factory` | `AGENTS.md` | Marked section |
+| `aider` | `.aider.conf.yml` + `.aider/` | Multi-file config |
 
 ## Quick Start
 
 ```bash
+# List all available recipes
+bd setup --list
+
 # Install integration for your tool
-bd setup factory   # For Factory.ai Droid (and other AGENTS.md-compatible tools)
-bd setup claude    # For Claude Code
-bd setup gemini    # For Gemini CLI
-bd setup cursor    # For Cursor IDE
-bd setup aider     # For Aider
+bd setup cursor     # Cursor IDE
+bd setup windsurf   # Windsurf
+bd setup kilocode   # Kilo Code
+bd setup claude     # Claude Code
+bd setup gemini     # Gemini CLI
+bd setup factory    # Factory.ai Droid
+bd setup aider      # Aider
 
 # Verify installation
-bd setup factory --check
-bd setup claude --check
-bd setup gemini --check
 bd setup cursor --check
-bd setup aider --check
+bd setup claude --check
+
+# Print template to stdout (for inspection)
+bd setup --print
+
+# Write template to custom path
+bd setup -o .my-editor/rules.md
+
+# Add a custom recipe
+bd setup --add myeditor .myeditor/rules.md
+bd setup myeditor  # Now you can use it
 ```
 
 ## Factory.ai (Droid)
@@ -395,6 +412,60 @@ bd setup claude --remove
 # Install project hooks
 bd setup claude --project
 ```
+
+## Custom Recipes
+
+You can add custom recipes for editors/tools not included in the built-in list.
+
+### Adding a Custom Recipe
+
+```bash
+# Add a recipe that writes to a specific path
+bd setup --add myeditor .myeditor/rules.md
+
+# Install it
+bd setup myeditor
+
+# Check it
+bd setup myeditor --check
+
+# Remove it
+bd setup myeditor --remove
+```
+
+### User Recipes File
+
+Custom recipes are stored in `.beads/recipes.toml`:
+
+```toml
+[recipes.myeditor]
+name = "myeditor"
+path = ".myeditor/rules.md"
+type = "file"
+```
+
+### Using Arbitrary Paths
+
+For one-off installs without saving a recipe:
+
+```bash
+# Write template to any path
+bd setup -o .my-custom-location/beads.md
+
+# Inspect the template first
+bd setup --print
+```
+
+### Recipe Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `file` | Write template to a single file | cursor, windsurf, cody, kilocode |
+| `hooks` | Modify JSON settings to add hooks | claude, gemini |
+| `section` | Inject marked section into existing file | factory |
+| `multifile` | Write multiple files | aider |
+
+Custom recipes added via `--add` are always type `file`.
 
 ## Related Documentation
 

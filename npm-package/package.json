@@ -1,6 +1,6 @@
 {
   "name": "@beads/bd",
-  "version": "0.43.0",
+  "version": "0.44.0",
   "description": "Beads issue tracker - lightweight memory system for coding agents with native binary support",
   "main": "bin/bd.js",
   "bin": {
@@ -39,7 +39,8 @@
   "os": [
     "darwin",
     "linux",
-    "win32"
+    "win32",
+    "android"
   ],
   "cpu": [
     "x64",

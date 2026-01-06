@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/merge"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // CommitResult contains information about a worktree commit operation
@@ -968,7 +969,10 @@ func getRemoteForBranch(ctx context.Context, worktreePath, branch string) string
 
 // GetRepoRoot returns the git repository root directory
 // For worktrees, this returns the main repository root (not the worktree root)
+// The returned path is canonicalized to fix case on case-insensitive filesystems (GH#880)
 func GetRepoRoot(ctx context.Context) (string, error) {
+	var repoRoot string
+
 	// Check if .git is a file (worktree) or directory (regular repo)
 	gitPath := ".git"
 	if info, err := os.Stat(gitPath); err == nil {
@@ -985,7 +989,7 @@ func GetRepoRoot(ctx context.Context) (string, error) {
 				if idx := strings.Index(gitDir, "/worktrees/"); idx > 0 {
 					gitDir = gitDir[:idx]
 				}
-				return filepath.Dir(gitDir), nil
+				repoRoot = filepath.Dir(gitDir)
 			}
 		} else if info.IsDir() {
 			// Regular repo: .git is a directory
@@ -993,17 +997,23 @@ func GetRepoRoot(ctx context.Context) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			return filepath.Dir(absGitPath), nil
+			repoRoot = filepath.Dir(absGitPath)
 		}
 	}
 
-	// Fallback to git command
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("not a git repository: %w", err)
+	// Fallback to git command if not determined above
+	if repoRoot == "" {
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("not a git repository: %w", err)
+		}
+		repoRoot = strings.TrimSpace(string(output))
 	}
-	return strings.TrimSpace(string(output)), nil
+
+	// Canonicalize path to fix case on macOS/Windows (GH#880)
+	// This is critical for git worktree operations which string-compare paths
+	return utils.CanonicalizePath(repoRoot), nil
 }
 
 // countIssuesInContent counts the number of non-empty lines in JSONL content.

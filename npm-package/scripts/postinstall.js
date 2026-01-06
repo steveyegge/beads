@@ -27,6 +27,9 @@ function getPlatformInfo() {
     case 'linux':
       platformName = 'linux';
       break;
+    case 'android':
+      platformName = 'android';
+      break;
     case 'win32':
       platformName = 'windows';
       binaryName = 'bd.exe';
@@ -109,7 +112,7 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
       throw new Error(`Binary not found after extraction: ${extractedBinary}`);
     }
 
-    // Make executable on Unix-like systems
+    // Make executable on Unix-like systems (Linux, macOS, Android)
     if (os.platform() !== 'win32') {
       fs.chmodSync(extractedBinary, 0o755);
     }
@@ -120,28 +123,53 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
   }
 }
 
-// Extract zip file (for Windows)
-function extractZip(zipPath, destDir, binaryName) {
+// Sleep helper for retry logic
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Extract zip file (for Windows) with retry logic
+async function extractZip(zipPath, destDir, binaryName) {
   console.log(`Extracting ${zipPath}...`);
 
-  try {
-    // Use unzip command or powershell on Windows
-    if (os.platform() === 'win32') {
-      execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
-    } else {
-      execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'inherit' });
+  const maxRetries = 5;
+  const baseDelayMs = 500;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Use unzip command or powershell on Windows
+      if (os.platform() === 'win32') {
+        execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`, { stdio: 'inherit' });
+      } else {
+        execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'inherit' });
+      }
+
+      // The binary should now be in destDir
+      const extractedBinary = path.join(destDir, binaryName);
+
+      if (!fs.existsSync(extractedBinary)) {
+        throw new Error(`Binary not found after extraction: ${extractedBinary}`);
+      }
+
+      console.log(`Binary extracted to: ${extractedBinary}`);
+      return; // Success
+    } catch (err) {
+      const isFileLockError = err.message && (
+        err.message.includes('being used by another process') ||
+        err.message.includes('Access is denied') ||
+        err.message.includes('cannot access the file')
+      );
+
+      if (isFileLockError && attempt < maxRetries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`File may be locked (attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`);
+        await sleep(delayMs);
+      } else if (attempt === maxRetries) {
+        throw new Error(`Failed to extract archive after ${maxRetries} attempts: ${err.message}`);
+      } else {
+        throw new Error(`Failed to extract archive: ${err.message}`);
+      }
     }
-
-    // The binary should now be in destDir
-    const extractedBinary = path.join(destDir, binaryName);
-
-    if (!fs.existsSync(extractedBinary)) {
-      throw new Error(`Binary not found after extraction: ${extractedBinary}`);
-    }
-
-    console.log(`Binary extracted to: ${extractedBinary}`);
-  } catch (err) {
-    throw new Error(`Failed to extract archive: ${err.message}`);
   }
 }
 
@@ -152,16 +180,8 @@ async function install() {
 
     console.log(`Installing bd v${VERSION} for ${platformName}-${archName}...`);
 
-    // Construct download URL
-    // Format: https://github.com/steveyegge/beads/releases/download/v0.21.5/beads_0.21.5_darwin_amd64.tar.gz
-    const releaseVersion = VERSION;
-    const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
-    const archiveName = `beads_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
-    const downloadUrl = `https://github.com/steveyegge/beads/releases/download/v${releaseVersion}/${archiveName}`;
-
     // Determine destination paths
     const binDir = path.join(__dirname, '..', 'bin');
-    const archivePath = path.join(binDir, archiveName);
     const binaryPath = path.join(binDir, binaryName);
 
     // Ensure bin directory exists
@@ -169,13 +189,21 @@ async function install() {
       fs.mkdirSync(binDir, { recursive: true });
     }
 
+    // Construct download URL
+    // Format: https://github.com/steveyegge/beads/releases/download/v0.21.5/beads_0.21.5_darwin_amd64.tar.gz
+    const releaseVersion = VERSION;
+    const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
+    const archiveName = `beads_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
+    const downloadUrl = `https://github.com/steveyegge/beads/releases/download/v${releaseVersion}/${archiveName}`;
+    const archivePath = path.join(binDir, archiveName);
+
     // Download the archive
     console.log(`Downloading bd binary...`);
     await downloadFile(downloadUrl, archivePath);
 
     // Extract the archive based on platform
     if (platformName === 'windows') {
-      extractZip(archivePath, binDir, binaryName);
+      await extractZip(archivePath, binDir, binaryName);
     } else {
       extractTarGz(archivePath, binDir, binaryName);
     }
@@ -188,7 +216,7 @@ async function install() {
       const output = execSync(`"${binaryPath}" version`, { encoding: 'utf8' });
       console.log(`✓ bd installed successfully: ${output.trim()}`);
     } catch (err) {
-      console.warn('Warning: Could not verify binary version');
+      throw new Error(`Binary verification failed: ${err.message}`);
     }
 
   } catch (err) {
