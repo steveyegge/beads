@@ -1138,6 +1138,56 @@ func TestSetupClaudeSettings_NoExistingFile(t *testing.T) {
 	}
 }
 
+// TestInitBranchPersistsToConfigYaml verifies that --branch flag persists to config.yaml
+// GH#927 Bug 3: The --branch flag sets sync.branch in database but NOT in config.yaml.
+// This matters because config.yaml is version-controlled and shared across clones,
+// while the database is local and gitignored.
+func TestInitBranchPersistsToConfigYaml(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("branch", "")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first (needed for sync branch)
+	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Run bd init with --branch flag
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with --branch failed: %v", err)
+	}
+
+	// Read config.yaml and verify sync-branch is uncommented
+	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml: %v", err)
+	}
+
+	configStr := string(content)
+
+	// The bug: sync-branch remains commented as "# sync-branch:" instead of "sync-branch:"
+	// This test should FAIL on the current codebase to prove the bug exists
+	if strings.Contains(configStr, "# sync-branch:") && !strings.Contains(configStr, "\nsync-branch:") {
+		t.Errorf("BUG: --branch flag did not persist to config.yaml\n"+
+			"Expected uncommented 'sync-branch: \"beads-sync\"'\n"+
+			"Got commented '# sync-branch:' (only set in database, not config.yaml)")
+	}
+
+	// Verify the uncommented line exists with correct value
+	if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
+		t.Errorf("config.yaml should contain 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
+	}
+}
+
 // TestSetupGlobalGitIgnore_ReadOnly verifies graceful handling when the
 // gitignore file cannot be written (prints manual instructions instead of failing).
 func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
