@@ -27,6 +27,9 @@ function getPlatformInfo() {
     case 'linux':
       platformName = 'linux';
       break;
+    case 'android':
+      platformName = 'android';
+      break;
     case 'win32':
       platformName = 'windows';
       binaryName = 'bd.exe';
@@ -109,7 +112,7 @@ function extractTarGz(tarGzPath, destDir, binaryName) {
       throw new Error(`Binary not found after extraction: ${extractedBinary}`);
     }
 
-    // Make executable on Unix-like systems
+    // Make executable on Unix-like systems (Linux, macOS, Android)
     if (os.platform() !== 'win32') {
       fs.chmodSync(extractedBinary, 0o755);
     }
@@ -177,22 +180,22 @@ async function install() {
 
     console.log(`Installing bd v${VERSION} for ${platformName}-${archName}...`);
 
-    // Construct download URL
-    // Format: https://github.com/steveyegge/beads/releases/download/v0.21.5/beads_0.21.5_darwin_amd64.tar.gz
-    const releaseVersion = VERSION;
-    const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
-    const archiveName = `beads_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
-    const downloadUrl = `https://github.com/steveyegge/beads/releases/download/v${releaseVersion}/${archiveName}`;
-
     // Determine destination paths
     const binDir = path.join(__dirname, '..', 'bin');
-    const archivePath = path.join(binDir, archiveName);
     const binaryPath = path.join(binDir, binaryName);
 
     // Ensure bin directory exists
     if (!fs.existsSync(binDir)) {
       fs.mkdirSync(binDir, { recursive: true });
     }
+
+    // Construct download URL
+    // Format: https://github.com/steveyegge/beads/releases/download/v0.21.5/beads_0.21.5_darwin_amd64.tar.gz
+    const releaseVersion = VERSION;
+    const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
+    const archiveName = `beads_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
+    const downloadUrl = `https://github.com/steveyegge/beads/releases/download/v${releaseVersion}/${archiveName}`;
+    const archivePath = path.join(binDir, archiveName);
 
     // Download the archive
     console.log(`Downloading bd binary...`);
@@ -213,7 +216,7 @@ async function install() {
       const output = execSync(`"${binaryPath}" version`, { encoding: 'utf8' });
       console.log(`✓ bd installed successfully: ${output.trim()}`);
     } catch (err) {
-      console.warn('Warning: Could not verify binary version');
+      throw new Error(`Binary verification failed: ${err.message}`);
     }
 
   } catch (err) {
