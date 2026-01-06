@@ -329,19 +329,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		return fmt.Errorf("exporting: %w", err)
 	}
 
-	// Step 8: Update base state for next sync
-	fmt.Println("→ Updating base state...")
-	// Reload from exported JSONL to capture any normalization from import/export cycle
-	finalIssues, err := loadIssuesFromJSONL(jsonlPath)
-	if err != nil {
-		return fmt.Errorf("reloading final state: %w", err)
-	}
-	if err := saveBaseState(beadsDir, finalIssues); err != nil {
-		return fmt.Errorf("saving base state: %w", err)
-	}
-	fmt.Printf("  Saved %d issues to base state\n", len(finalIssues))
-
-	// Step 9: Check for changes and commit
+	// Step 8: Check for changes and commit
 	hasChanges, err := gitHasBeadsChanges(ctx)
 	if err != nil {
 		return fmt.Errorf("checking git status: %w", err)
@@ -356,7 +344,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		fmt.Println("→ No changes to commit")
 	}
 
-	// Step 10: Push to remote
+	// Step 9: Push to remote
 	if !noPush && hasChanges {
 		fmt.Println("→ Pushing to remote...")
 		if err := gitPush(ctx, ""); err != nil {
@@ -364,7 +352,20 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		}
 	}
 
-	// Clear sync state on successful sync
+	// Step 10: Update base state for next sync (after successful push)
+	// Base state only updates after confirmed push to ensure consistency
+	fmt.Println("→ Updating base state...")
+	// Reload from exported JSONL to capture any normalization from import/export cycle
+	finalIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("reloading final state: %w", err)
+	}
+	if err := saveBaseState(beadsDir, finalIssues); err != nil {
+		return fmt.Errorf("saving base state: %w", err)
+	}
+	fmt.Printf("  Saved %d issues to base state\n", len(finalIssues))
+
+	// Step 11: Clear sync state on successful sync
 	if bd := beads.FindBeadsDir(); bd != "" {
 		_ = ClearSyncState(bd)
 	}
