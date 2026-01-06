@@ -119,16 +119,16 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 
 	if autoSync {
 		// GH#871: Write to config.yaml for team-wide settings (version controlled)
-		if err := config.SetYamlConfig("daemon.auto_commit", "true"); err != nil {
-			return fmt.Errorf("failed to enable auto-commit: %w", err)
-		}
-
-		if err := config.SetYamlConfig("daemon.auto_push", "true"); err != nil {
-			return fmt.Errorf("failed to enable auto-push: %w", err)
+		// Use unified auto-sync config (replaces individual auto_commit/auto_push/auto_pull)
+		if err := config.SetYamlConfig("daemon.auto-sync", "true"); err != nil {
+			return fmt.Errorf("failed to enable auto-sync: %w", err)
 		}
 
 		fmt.Printf("%s Auto-sync enabled\n", ui.RenderPass("✓"))
 	} else {
+		if err := config.SetYamlConfig("daemon.auto-sync", "false"); err != nil {
+			return fmt.Errorf("failed to disable auto-sync: %w", err)
+		}
 		fmt.Printf("%s Auto-sync disabled (manual sync with 'bd sync')\n", ui.RenderWarn("⚠"))
 	}
 
@@ -172,7 +172,7 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println()
 	fmt.Printf("Try it: %s\n", ui.RenderAccent("bd create \"Team planning issue\" -p 2"))
 	fmt.Println()
-	
+
 	if protectedMain {
 		fmt.Println("Next steps:")
 		fmt.Printf("  1. %s\n", "Share the "+syncBranch+" branch with your team")
@@ -204,19 +204,19 @@ func createSyncBranch(branchName string) error {
 		// Branch exists, nothing to do
 		return nil
 	}
-	
+
 	// Create new branch from current HEAD
 	cmd = exec.Command("git", "checkout", "-b", branchName)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	
+
 	// Switch back to original branch
 	currentBranch, err := getGitBranch()
 	if err == nil && currentBranch != branchName {
 		cmd = exec.Command("git", "checkout", "-")
 		_ = cmd.Run() // Ignore error, branch creation succeeded
 	}
-	
+
 	return nil
 }

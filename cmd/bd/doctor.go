@@ -361,6 +361,16 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 8b: Daemon auto-sync (only warn, don't fail overall)
+	autoSyncCheck := convertWithCategory(doctor.CheckDaemonAutoSync(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, autoSyncCheck)
+	// Note: Don't set OverallOK = false for this - it's a performance hint, not a failure
+
+	// Check 8c: Legacy daemon config (warn about deprecated options)
+	legacyDaemonConfigCheck := convertWithCategory(doctor.CheckLegacyDaemonConfig(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
+	// Note: Don't set OverallOK = false for this - deprecated options still work
+
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)
