@@ -293,10 +293,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 
 	// Step 5: Perform 3-way merge
 	fmt.Println("→ Merging base, local, and remote issues (3-way)...")
-	mergeResult, err := MergeIssues(baseIssues, localIssues, remoteIssues)
-	if err != nil {
-		return fmt.Errorf("merging issues: %w", err)
-	}
+	mergeResult := MergeIssues(baseIssues, localIssues, remoteIssues)
 
 	// Report merge results
 	localCount, remoteCount, sameCount := 0, 0, 0
@@ -438,7 +435,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 // writeMergedStateToJSONL writes merged issues to JSONL file
 func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 	tempPath := path + ".tmp"
-	file, err := os.Create(tempPath)
+	file, err := os.Create(tempPath) //nolint:gosec // path is trusted internal beads path
 	if err != nil {
 		return err
 	}

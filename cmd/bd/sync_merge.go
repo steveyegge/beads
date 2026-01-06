@@ -63,7 +63,7 @@ var FieldRules = map[string]FieldMergeRule{
 // - Labels: union of both
 // - Dependencies: union of both (by DependsOnID+Type)
 // - Comments: append from both (deduplicated by ID or content)
-func mergeFieldLevel(base, local, remote *beads.Issue) *beads.Issue {
+func mergeFieldLevel(_base, local, remote *beads.Issue) *beads.Issue {
 	// Determine which is newer for LWW scalars
 	localNewer := local.UpdatedAt.After(remote.UpdatedAt)
 
@@ -224,7 +224,7 @@ func mergeComments(local, remote []*beads.Comment) []*beads.Comment {
 // 2. Collect all unique issue IDs across all three sets
 // 3. For each ID, apply MergeIssue to determine final state
 // 4. Return merged result with per-issue strategy annotations
-func MergeIssues(base, local, remote []*beads.Issue) (*MergeResult, error) {
+func MergeIssues(base, local, remote []*beads.Issue) *MergeResult {
 	// Build lookup maps by issue ID
 	baseMap := buildIssueMap(base)
 	localMap := buildIssueMap(local)
@@ -257,7 +257,7 @@ func MergeIssues(base, local, remote []*beads.Issue) (*MergeResult, error) {
 		// If merged is nil, the issue was deleted (present in base but not in local/remote)
 	}
 
-	return result, nil
+	return result
 }
 
 // MergeIssue merges a single issue using 3-way algorithm

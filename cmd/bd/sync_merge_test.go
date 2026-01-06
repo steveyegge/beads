@@ -525,10 +525,7 @@ func TestMergeIssue_RemoteDeleted_LocalChanged(t *testing.T) {
 
 // TestMergeIssues_Empty tests merging empty sets
 func TestMergeIssues_Empty(t *testing.T) {
-	result, err := MergeIssues(nil, nil, nil)
-	if err != nil {
-		t.Fatalf("MergeIssues failed: %v", err)
-	}
+	result := MergeIssues(nil, nil, nil)
 	if len(result.Merged) != 0 {
 		t.Errorf("Expected 0 merged issues, got %d", len(result.Merged))
 	}
@@ -567,10 +564,7 @@ func TestMergeIssues_MultipleIssues(t *testing.T) {
 		makeTestIssue("bd-0006", "New remote issue", types.StatusOpen, 1, now),  // New issue
 	}
 
-	result, err := MergeIssues(base, local, remote)
-	if err != nil {
-		t.Fatalf("MergeIssues failed: %v", err)
-	}
+	result := MergeIssues(base, local, remote)
 
 	// Should have 5 issues:
 	// - bd-0001: same

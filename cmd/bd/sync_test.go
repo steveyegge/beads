@@ -822,10 +822,7 @@ func TestConcurrentEdit(t *testing.T) {
 	}
 
 	// 3-way merge with base state
-	mergeResult, err := MergeIssues(baseIssues, localIssues, remoteIssues)
-	if err != nil {
-		t.Fatalf("MergeIssues failed: %v", err)
-	}
+	mergeResult := MergeIssues(baseIssues, localIssues, remoteIssues)
 
 	// Verify merge result
 	if len(mergeResult.Merged) != 1 {
