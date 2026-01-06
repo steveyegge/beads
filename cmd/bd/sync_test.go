@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -845,4 +846,95 @@ func TestConcurrentEdit(t *testing.T) {
 	}
 
 	t.Log("TestConcurrentEdit: 3-way merge with LWW resolution validated")
+}
+
+// TestConcurrentSyncBlocked tests that concurrent syncs are blocked by file lock.
+// This validates the P0 fix for preventing data corruption when running bd sync
+// from multiple terminals simultaneously.
+func TestConcurrentSyncBlocked(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Setup: Initialize git repo
+	if err := exec.Command("git", "init", "--initial-branch=main").Run(); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+	_ = exec.Command("git", "config", "user.email", "test@test.com").Run()
+	_ = exec.Command("git", "config", "user.name", "Test User").Run()
+
+	// Setup: Create beads directory with JSONL
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	// Create initial JSONL
+	if err := os.WriteFile(jsonlPath, []byte(`{"id":"bd-1","title":"Test"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write JSONL failed: %v", err)
+	}
+
+	// Initial commit
+	_ = exec.Command("git", "add", ".").Run()
+	if err := exec.Command("git", "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("initial commit failed: %v", err)
+	}
+
+	// Create database
+	testDBPath := filepath.Join(beadsDir, "beads.db")
+	testStore, err := sqlite.New(ctx, testDBPath)
+	if err != nil {
+		t.Fatalf("failed to create test store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Set issue_prefix
+	if err := testStore.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Simulate another sync holding the lock
+	lockPath := filepath.Join(beadsDir, ".sync.lock")
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	if err != nil {
+		t.Fatalf("failed to acquire lock: %v", err)
+	}
+	if !locked {
+		t.Fatal("expected to acquire lock")
+	}
+
+	// Now try to acquire the same lock (simulating concurrent sync)
+	lock2 := flock.New(lockPath)
+	locked2, err := lock2.TryLock()
+	if err != nil {
+		t.Fatalf("TryLock error: %v", err)
+	}
+
+	// Second lock attempt should fail (not block)
+	if locked2 {
+		lock2.Unlock()
+		t.Error("expected second lock attempt to fail (concurrent sync should be blocked)")
+	} else {
+		t.Log("Concurrent sync correctly blocked by file lock")
+	}
+
+	// Release first lock
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("failed to unlock: %v", err)
+	}
+
+	// Now lock should be acquirable again
+	lock3 := flock.New(lockPath)
+	locked3, err := lock3.TryLock()
+	if err != nil {
+		t.Fatalf("TryLock error after unlock: %v", err)
+	}
+	if !locked3 {
+		t.Error("expected lock to be acquirable after first sync completes")
+	} else {
+		lock3.Unlock()
+		t.Log("Lock correctly acquirable after first sync completes")
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
@@ -266,6 +267,18 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 	fmt.Printf("→ Loaded %d local issues from database\n", len(localIssues))
 
+	// Acquire exclusive lock to prevent concurrent sync corruption
+	lockPath := filepath.Join(beadsDir, ".sync.lock")
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return fmt.Errorf("acquiring sync lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("another sync is in progress")
+	}
+	defer lock.Unlock()
+
 	// Step 2: Load base state (last successful sync)
 	fmt.Println("→ Loading base state...")
 	baseIssues, err := loadBaseState(beadsDir)
@@ -376,6 +389,20 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 
 // doExportOnlySync handles the --no-pull case: just export, commit, and push
 func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, message string) error {
+	beadsDir := filepath.Dir(jsonlPath)
+
+	// Acquire exclusive lock to prevent concurrent sync corruption
+	lockPath := filepath.Join(beadsDir, ".sync.lock")
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return fmt.Errorf("acquiring sync lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("another sync is in progress")
+	}
+	defer lock.Unlock()
+
 	// Pre-export integrity checks
 	if err := ensureStoreActive(); err == nil && store != nil {
 		if err := validatePreExport(ctx, store, jsonlPath); err != nil {
