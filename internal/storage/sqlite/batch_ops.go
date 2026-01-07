@@ -16,13 +16,6 @@ func validateBatchIssues(issues []*types.Issue) error {
 	return validateBatchIssuesWithCustom(issues, nil, nil)
 }
 
-// validateBatchIssuesWithCustomStatuses validates all issues in a batch,
-// allowing custom statuses in addition to built-in ones.
-// Deprecated: Use validateBatchIssuesWithCustom instead.
-func validateBatchIssuesWithCustomStatuses(issues []*types.Issue, customStatuses []string) error {
-	return validateBatchIssuesWithCustom(issues, customStatuses, nil)
-}
-
 // validateBatchIssuesWithCustom validates all issues in a batch,
 // allowing custom statuses and types in addition to built-in ones.
 func validateBatchIssuesWithCustom(issues []*types.Issue, customStatuses, customTypes []string) error {
