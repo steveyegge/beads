@@ -110,12 +110,13 @@ Use --merge to merge the sync branch back to main branch.`,
 		}
 
 		// If import-only mode, just import and exit
+		// Use inline import to avoid subprocess path resolution issues with .beads/redirect (bd-ysal)
 		if importOnly {
 			if dryRun {
 				fmt.Println("→ [DRY RUN] Would import from JSONL")
 			} else {
 				fmt.Println("→ Importing from JSONL...")
-				if err := importFromJSONL(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+				if err := importFromJSONLInline(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
 					FatalError("importing: %v", err)
 				}
 				fmt.Println("✓ Import complete")
