@@ -523,6 +523,24 @@ func resolveWorktreePath(repoRoot, name string) (string, error) {
 		return repoPath, nil
 	}
 
+	// Consult git's worktree registry - match by name (basename) or path
+	// This handles worktrees created in subdirectories (e.g., .worktrees/foo)
+	// where the name shown in "bd worktree list" doesn't match a simple path
+	// #nosec G204 - repoRoot comes from git.GetRepoRoot()
+	gitCmd := exec.Command("git", "worktree", "list", "--porcelain")
+	gitCmd.Dir = repoRoot
+	output, err := gitCmd.CombinedOutput()
+	if err == nil {
+		worktrees := parseWorktreeList(string(output))
+		for _, wt := range worktrees {
+			if wt.Name == name || wt.Path == name {
+				if _, err := os.Stat(wt.Path); err == nil {
+					return wt.Path, nil
+				}
+			}
+		}
+	}
+
 	return "", fmt.Errorf("worktree not found: %s", name)
 }
 
