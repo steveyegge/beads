@@ -128,6 +128,7 @@ func TestParseIssueType(t *testing.T) {
 		{"gate type", "gate", types.TypeGate, false, ""},
 		{"agent type", "agent", types.TypeAgent, false, ""},
 		{"role type", "role", types.TypeRole, false, ""},
+		{"rig type", "rig", types.TypeRig, false, ""},
 		{"message type", "message", types.TypeMessage, false, ""},
 
 		// Case sensitivity (function is case-sensitive)

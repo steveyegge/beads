@@ -94,6 +94,7 @@ func TestRenderTypeVariants(t *testing.T) {
 		{"chore", TypeChoreStyle.Render("chore")},
 		{"agent", TypeAgentStyle.Render("agent")},
 		{"role", TypeRoleStyle.Render("role")},
+		{"rig", TypeRigStyle.Render("rig")},
 		{"custom", "custom"},
 	}
 	for _, tc := range cases {

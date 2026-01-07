@@ -143,6 +143,10 @@ var (
 		Light: "#7fd962", // green - role definition
 		Dark:  "#7fd962",
 	}
+	ColorTypeRig = lipgloss.AdaptiveColor{
+		Light: "#e6a756", // orange - rig identity (project container)
+		Dark:  "#e6a756",
+	}
 
 	// === Issue ID Color ===
 	// IDs use standard text color - subtle, not attention-grabbing
@@ -192,6 +196,7 @@ var (
 	TypeChoreStyle   = lipgloss.NewStyle().Foreground(ColorTypeChore)
 	TypeAgentStyle   = lipgloss.NewStyle().Foreground(ColorTypeAgent)
 	TypeRoleStyle    = lipgloss.NewStyle().Foreground(ColorTypeRole)
+	TypeRigStyle     = lipgloss.NewStyle().Foreground(ColorTypeRig)
 )
 
 // CategoryStyle for section headers - bold with accent color
@@ -343,6 +348,8 @@ func RenderType(issueType string) string {
 		return TypeAgentStyle.Render(issueType)
 	case "role":
 		return TypeRoleStyle.Render(issueType)
+	case "rig":
+		return TypeRigStyle.Render(issueType)
 	default:
 		return issueType
 	}

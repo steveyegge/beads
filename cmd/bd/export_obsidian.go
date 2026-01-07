@@ -45,6 +45,7 @@ var obsidianTypeTag = map[types.IssueType]string{
 	types.TypeGate:         "#Gate",
 	types.TypeAgent:        "#Agent",
 	types.TypeRole:         "#Role",
+	types.TypeRig:          "#Rig",
 	types.TypeConvoy:       "#Convoy",
 	types.TypeEvent:        "#Event",
 }
