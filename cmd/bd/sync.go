@@ -183,12 +183,16 @@ Use --merge to merge the sync branch back to main branch.`,
 		// GH#638: Check sync.branch BEFORE upstream check
 		// When sync.branch is configured, we should use worktree-based sync even if
 		// the current branch has no upstream (e.g., detached HEAD in jj, git worktrees)
-		var hasSyncBranchConfig bool
+		var syncBranchName, syncBranchRepoRoot string
 		if err := ensureStoreActive(); err == nil && store != nil {
-			if syncBranch, _ := syncbranch.Get(ctx, store); syncBranch != "" {
-				hasSyncBranchConfig = true
+			if sb, _ := syncbranch.Get(ctx, store); sb != "" {
+				syncBranchName = sb
+				if rr, err := syncbranch.GetRepoRoot(ctx); err == nil {
+					syncBranchRepoRoot = rr
+				}
 			}
 		}
+		hasSyncBranchConfig := syncBranchName != ""
 
 		// Preflight: check for upstream tracking
 		// If no upstream, automatically switch to --from-main mode (gt-ick9: ephemeral branch support)
@@ -209,7 +213,7 @@ Use --merge to merge the sync branch back to main branch.`,
 		// Pull-first sync: Pull → Merge → Export → Commit → Push
 		// This eliminates the export-before-pull data loss pattern (#911) by
 		// seeing remote changes before exporting local state.
-		if err := doPullFirstSync(ctx, jsonlPath, renameOnImport, noGitHistory, dryRun, noPush, noPull, message, acceptRebase); err != nil {
+		if err := doPullFirstSync(ctx, jsonlPath, renameOnImport, noGitHistory, dryRun, noPush, noPull, message, acceptRebase, syncBranchName, syncBranchRepoRoot); err != nil {
 			FatalError("%v", err)
 		}
 	},
@@ -228,7 +232,7 @@ Use --merge to merge the sync branch back to main branch.`,
 //
 // When noPull is true, skips the pull/merge steps and just does:
 // Export → Commit → Push
-func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGitHistory, dryRun, noPush, noPull bool, message string, acceptRebase bool) error {
+func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGitHistory, dryRun, noPush, noPull bool, message string, acceptRebase bool, syncBranch, syncBranchRepoRoot string) error {
 	beadsDir := filepath.Dir(jsonlPath)
 	_ = acceptRebase // Reserved for future sync branch force-push detection
 
@@ -261,6 +265,10 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("activating store: %w", err)
 	}
+
+	// Derive sync-branch config from parameters (detected at caller)
+	hasSyncBranchConfig := syncBranch != ""
+
 	localIssues, err := store.SearchIssues(ctx, "", beads.IssueFilter{IncludeTombstones: true})
 	if err != nil {
 		return fmt.Errorf("loading local issues: %w", err)
@@ -292,9 +300,28 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 
 	// Step 3: Pull from remote
-	fmt.Println("→ Pulling from remote...")
-	if err := gitPull(ctx, ""); err != nil {
-		return fmt.Errorf("pulling: %w", err)
+	// When sync.branch is configured, pull from the sync branch via worktree
+	// Otherwise, use normal git pull on the current branch
+	if hasSyncBranchConfig {
+		fmt.Printf("→ Pulling from sync branch '%s'...\n", syncBranch)
+		pullResult, err := syncbranch.PullFromSyncBranch(ctx, syncBranchRepoRoot, syncBranch, jsonlPath, false)
+		if err != nil {
+			return fmt.Errorf("pulling from sync branch: %w", err)
+		}
+		// Display any safety warnings from the pull
+		for _, warning := range pullResult.SafetyWarnings {
+			fmt.Fprintln(os.Stderr, warning)
+		}
+		if pullResult.Merged {
+			fmt.Println("  Merged divergent sync branch histories")
+		} else if pullResult.FastForwarded {
+			fmt.Println("  Fast-forwarded to remote")
+		}
+	} else {
+		fmt.Println("→ Pulling from remote...")
+		if err := gitPull(ctx, ""); err != nil {
+			return fmt.Errorf("pulling: %w", err)
+		}
 	}
 
 	// Step 4: Load remote state from JSONL (after pull)
@@ -343,25 +370,44 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 
 	// Step 8: Check for changes and commit
-	hasChanges, err := gitHasBeadsChanges(ctx)
-	if err != nil {
-		return fmt.Errorf("checking git status: %w", err)
-	}
-
-	if hasChanges {
-		fmt.Println("→ Committing changes...")
-		if err := gitCommitBeadsDir(ctx, message); err != nil {
-			return fmt.Errorf("committing: %w", err)
+	// Step 9: Push to remote
+	// When sync.branch is configured, use worktree-based commit/push to sync branch
+	// Otherwise, use normal git commit/push on the current branch
+	if hasSyncBranchConfig {
+		fmt.Printf("→ Committing to sync branch '%s'...\n", syncBranch)
+		commitResult, err := syncbranch.CommitToSyncBranch(ctx, syncBranchRepoRoot, syncBranch, jsonlPath, !noPush)
+		if err != nil {
+			return fmt.Errorf("committing to sync branch: %w", err)
+		}
+		if commitResult.Committed {
+			fmt.Printf("  Committed: %s\n", commitResult.Message)
+			if commitResult.Pushed {
+				fmt.Println("  Pushed to remote")
+			}
+		} else {
+			fmt.Println("→ No changes to commit")
 		}
 	} else {
-		fmt.Println("→ No changes to commit")
-	}
+		hasChanges, err := gitHasBeadsChanges(ctx)
+		if err != nil {
+			return fmt.Errorf("checking git status: %w", err)
+		}
 
-	// Step 9: Push to remote
-	if !noPush && hasChanges {
-		fmt.Println("→ Pushing to remote...")
-		if err := gitPush(ctx, ""); err != nil {
-			return fmt.Errorf("pushing: %w", err)
+		if hasChanges {
+			fmt.Println("→ Committing changes...")
+			if err := gitCommitBeadsDir(ctx, message); err != nil {
+				return fmt.Errorf("committing: %w", err)
+			}
+		} else {
+			fmt.Println("→ No changes to commit")
+		}
+
+		// Push to remote
+		if !noPush && hasChanges {
+			fmt.Println("→ Pushing to remote...")
+			if err := gitPush(ctx, ""); err != nil {
+				return fmt.Errorf("pushing: %w", err)
+			}
 		}
 	}
 
