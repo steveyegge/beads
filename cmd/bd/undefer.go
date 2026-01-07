@@ -135,5 +135,6 @@ Examples:
 }
 
 func init() {
+	undeferCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(undeferCmd)
 }

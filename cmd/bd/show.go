@@ -821,5 +821,6 @@ func init() {
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
 	showCmd.Flags().Bool("refs", false, "Show issues that reference this issue (reverse lookup)")
+	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }
