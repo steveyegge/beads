@@ -257,14 +257,18 @@ func (s *SQLiteStorage) CreateIssuesWithFullOptions(ctx context.Context, issues 
 		return nil
 	}
 
-	// Fetch custom statuses for validation
+	// Fetch custom statuses and types for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
 	}
+	customTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
+	}
 
-	// Phase 1: Validate all issues first (fail-fast, with custom status support)
-	if err := validateBatchIssuesWithCustomStatuses(issues, customStatuses); err != nil {
+	// Phase 1: Validate all issues first (fail-fast, with custom status and type support)
+	if err := validateBatchIssuesWithCustom(issues, customStatuses, customTypes); err != nil {
 		return err
 	}
 
