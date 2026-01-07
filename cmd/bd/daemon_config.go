@@ -58,8 +58,13 @@ func getEnvBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
-// getSocketPathForPID determines the socket path for a given PID file
+// getSocketPathForPID determines the socket path for a given PID file.
+// If BD_SOCKET env var is set, uses that value instead.
 func getSocketPathForPID(pidFile string) string {
+	// Check environment variable first (enables test isolation)
+	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
+		return socketPath
+	}
 	// Socket is in same directory as PID file
 	return filepath.Join(filepath.Dir(pidFile), "bd.sock")
 }
