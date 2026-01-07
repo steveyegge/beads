@@ -292,6 +292,45 @@ func TestGetWorkflowNameHint(t *testing.T) {
 	}
 }
 
+func TestWorkflowNameMatches(t *testing.T) {
+	tests := []struct {
+		name         string
+		hint         string
+		workflowName string
+		runName      string
+		want         bool
+	}{
+		// Exact matches
+		{"exact workflow name", "Release", "Release", "release.yml", true},
+		{"exact run name", "release.yml", "Release", "release.yml", true},
+		{"case insensitive workflow", "release", "Release", "release.yml", true},
+		{"case insensitive run", "RELEASE.YML", "Release", "release.yml", true},
+
+		// Hint with suffix, match display name without
+		{"hint yml vs display name", "release.yml", "release", "ci.yml", true},
+		{"hint yaml vs display name", "release.yaml", "release", "ci.yaml", true},
+
+		// Hint without suffix, match filename with suffix
+		{"hint base vs filename yml", "release", "CI", "release.yml", true},
+		{"hint base vs filename yaml", "release", "CI", "release.yaml", true},
+
+		// No match
+		{"no match different name", "release", "CI", "ci.yml", false},
+		{"no match partial", "rel", "Release", "release.yml", false},
+		{"empty hint", "", "Release", "release.yml", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := workflowNameMatches(tt.hint, tt.workflowName, tt.runName)
+			if got != tt.want {
+				t.Errorf("workflowNameMatches(%q, %q, %q) = %v, want %v",
+					tt.hint, tt.workflowName, tt.runName, got, tt.want)
+			}
+		})
+	}
+}
+
 // gateTestContainsIgnoreCase checks if haystack contains needle (case-insensitive)
 func gateTestContainsIgnoreCase(haystack, needle string) bool {
 	return gateTestContains(gateTestLowerCase(haystack), gateTestLowerCase(needle))

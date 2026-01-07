@@ -145,17 +145,10 @@ func runGateDiscover(cmd *cobra.Command, args []string) {
 	}
 }
 
-// isNumericRunID returns true if the string looks like a GitHub numeric run ID
+// isNumericRunID returns true if the string looks like a GitHub numeric run ID.
+// This is a local alias for consistency - the canonical implementation is isNumericID in gate.go.
 func isNumericRunID(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
+	return isNumericID(s)
 }
 
 // needsDiscovery returns true if a gh:run gate needs run ID discovery.
@@ -175,6 +168,33 @@ func getWorkflowNameHint(g *types.Issue) string {
 		return ""
 	}
 	return g.AwaitID
+}
+
+// workflowNameMatches checks if a workflow hint matches a GitHub workflow run.
+// It handles various naming conventions:
+//   - Exact match (case-insensitive)
+//   - Hint with .yml/.yaml suffix vs display name without
+//   - Hint without suffix vs filename with .yml/.yaml
+func workflowNameMatches(hint, workflowName, runName string) bool {
+	// Normalize hint by removing .yml/.yaml suffix for comparison
+	hintBase := strings.TrimSuffix(strings.TrimSuffix(hint, ".yml"), ".yaml")
+
+	// Exact matches (case-insensitive)
+	if strings.EqualFold(workflowName, hint) || strings.EqualFold(runName, hint) {
+		return true
+	}
+
+	// Match hint base against workflow display name
+	if strings.EqualFold(workflowName, hintBase) {
+		return true
+	}
+
+	// Match hint (with suffix added) against run filename
+	if strings.EqualFold(runName, hintBase+".yml") || strings.EqualFold(runName, hintBase+".yaml") {
+		return true
+	}
+
+	return false
 }
 
 // findPendingGates returns open gh:run gates that need run ID discovery.
@@ -305,10 +325,7 @@ func matchGateToRun(gate *types.Issue, runs []GHWorkflowRun, maxAge time.Duratio
 		// If gate has a workflow name hint, require matching workflow
 		// Match against both WorkflowName (display name) and Name (filename)
 		if workflowHint != "" {
-			workflowMatches := strings.EqualFold(run.WorkflowName, workflowHint) ||
-				strings.EqualFold(run.Name, workflowHint) ||
-				strings.EqualFold(run.WorkflowName, strings.TrimSuffix(workflowHint, ".yml")) ||
-				strings.EqualFold(run.WorkflowName, strings.TrimSuffix(workflowHint, ".yaml"))
+			workflowMatches := workflowNameMatches(workflowHint, run.WorkflowName, run.Name)
 			if !workflowMatches {
 				continue // Skip runs that don't match the workflow hint
 			}
