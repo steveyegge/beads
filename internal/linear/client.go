@@ -92,6 +92,7 @@ func (c *Client) WithEndpoint(endpoint string) *Client {
 	return &Client{
 		APIKey:     c.APIKey,
 		TeamID:     c.TeamID,
+		ProjectID:  c.ProjectID,
 		Endpoint:   endpoint,
 		HTTPClient: c.HTTPClient,
 	}
@@ -103,8 +104,21 @@ func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 	return &Client{
 		APIKey:     c.APIKey,
 		TeamID:     c.TeamID,
+		ProjectID:  c.ProjectID,
 		Endpoint:   c.Endpoint,
 		HTTPClient: httpClient,
+	}
+}
+
+// WithProjectID returns a new client configured to filter issues by the specified project.
+// When set, FetchIssues and FetchIssuesSince will only return issues belonging to this project.
+func (c *Client) WithProjectID(projectID string) *Client {
+	return &Client{
+		APIKey:     c.APIKey,
+		TeamID:     c.TeamID,
+		ProjectID:  projectID,
+		Endpoint:   c.Endpoint,
+		HTTPClient: c.HTTPClient,
 	}
 }
 
@@ -178,6 +192,7 @@ func (c *Client) Execute(ctx context.Context, req *GraphQLRequest) (json.RawMess
 
 // FetchIssues retrieves issues from Linear with optional filtering by state.
 // state can be: "open" (unstarted/started), "closed" (completed/canceled), or "all".
+// If ProjectID is set on the client, only issues from that project are returned.
 func (c *Client) FetchIssues(ctx context.Context, state string) ([]Issue, error) {
 	var allIssues []Issue
 	var cursor string
@@ -189,6 +204,16 @@ func (c *Client) FetchIssues(ctx context.Context, state string) ([]Issue, error)
 			},
 		},
 	}
+
+	// Add project filter if configured
+	if c.ProjectID != "" {
+		filter["project"] = map[string]interface{}{
+			"id": map[string]interface{}{
+				"eq": c.ProjectID,
+			},
+		}
+	}
+
 	switch state {
 	case "open":
 		filter["state"] = map[string]interface{}{
@@ -242,6 +267,7 @@ func (c *Client) FetchIssues(ctx context.Context, state string) ([]Issue, error)
 // FetchIssuesSince retrieves issues from Linear that have been updated since the given time.
 // This enables incremental sync by only fetching issues modified after the last sync.
 // The state parameter can be: "open", "closed", or "all".
+// If ProjectID is set on the client, only issues from that project are returned.
 func (c *Client) FetchIssuesSince(ctx context.Context, state string, since time.Time) ([]Issue, error) {
 	var allIssues []Issue
 	var cursor string
@@ -258,6 +284,15 @@ func (c *Client) FetchIssuesSince(ctx context.Context, state string, since time.
 		"updatedAt": map[string]interface{}{
 			"gte": sinceStr,
 		},
+	}
+
+	// Add project filter if configured
+	if c.ProjectID != "" {
+		filter["project"] = map[string]interface{}{
+			"id": map[string]interface{}{
+				"eq": c.ProjectID,
+			},
+		}
 	}
 
 	// Add state filter if specified
