@@ -180,6 +180,49 @@ For maximum reliability, ensure machine clocks are synchronized via NTP.
 
 The JSONL files are the source of truth for git. The database is derived from JSONL on each machine.
 
+## Sync Modes
+
+Beads supports several sync modes for different use cases:
+
+| Mode | Trigger | Flow | Use Case |
+|------|---------|------|----------|
+| **Normal** | Default `bd sync` | Pull → Merge → Export → Push | Standard multi-machine sync |
+| **Sync-branch** | `sync.branch` config | Separate git branch for beads files | Isolated beads history |
+| **External** | `BEADS_DIR` env | Separate repo for beads | Shared team database |
+| **From-main** | `sync.from_main` config | Clone beads from main branch | Feature branch workflow |
+| **Local-only** | No git remote | Export only (no push) | Single-machine usage |
+| **Export-only** | `--no-pull` flag | Export → Push (skip pull/merge) | Force local state to remote |
+
+### Mode Selection Logic
+
+```
+sync:
+├─ --no-pull flag?
+│   └─ Yes → Export-only (skip pull/merge)
+├─ No remote configured?
+│   └─ Yes → Local-only (export only)
+├─ BEADS_DIR or external .beads?
+│   └─ Yes → External repo mode
+├─ sync.branch configured?
+│   └─ Yes → Sync-branch mode
+├─ sync.from_main configured?
+│   └─ Yes → From-main mode
+└─ Normal pull-first sync
+```
+
+### Test Coverage
+
+Each mode has E2E tests in `cmd/bd/`:
+
+| Mode | Test File |
+|------|-----------|
+| Normal | `sync_test.go`, `sync_merge_test.go` |
+| Sync-branch | `sync_modes_test.go` |
+| External | `sync_external_test.go` |
+| From-main | `sync_branch_priority_test.go` |
+| Local-only | `sync_local_only_test.go` |
+| Export-only | `sync_modes_test.go` |
+
 ## Historical Context
 
 The pull-first sync design was introduced in PR #918 to fix issue #911 (data loss during concurrent edits). The original export-first design was simpler but could not handle the "edit during sync" scenario correctly.
