@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -446,112 +447,197 @@ func TestLabelUnionMerge(t *testing.T) {
 	t.Logf("✓ Labels correctly union-merged: %v", labels)
 }
 
-// TestSyncBranchE2E tests the full sync-branch flow with concurrent changes from
-// two simulated machines. This is an end-to-end regression test for PR#918.
+// setupBareRemoteWithClones creates a bare repo (simulating GitHub) and two clones
+// for multi-machine E2E testing. Each clone has its own .beads directory for isolation.
 //
-// Flow:
-// 1. Machine A creates issue-1, commits to sync branch
-// 2. Machine B (simulated) creates issue-2, pushes to sync branch remote
-// 3. Machine A pulls from sync branch - should merge both issues
-// 4. Verify both issues present after merge
-func TestSyncBranchE2E(t *testing.T) {
-	ctx := context.Background()
-	tmpDir, cleanup := setupGitRepo(t)
-	defer cleanup()
+// Returns:
+//   - remoteDir: path to bare repo (the "remote")
+//   - machineA: path to first clone
+//   - machineB: path to second clone
+//   - cleanup: function to call in defer
+func setupBareRemoteWithClones(t *testing.T) (remoteDir, machineA, machineB string, cleanup func()) {
+	t.Helper()
 
-	syncBranch := "beads-sync"
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	// Create bare repo (acts as "GitHub")
+	remoteDir = t.TempDir()
+	// Resolve symlinks to avoid macOS /var -> /private/var issues
+	remoteDir, _ = filepath.EvalSymlinks(remoteDir)
+	cmd := exec.Command("git", "init", "--bare", "-b", "main")
+	cmd.Dir = remoteDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to init bare repo: %v", err)
+	}
 
-	// Setup: Create .beads directory
+	// Clone for Machine A
+	machineA = t.TempDir()
+	machineA, _ = filepath.EvalSymlinks(machineA)
+	if err := exec.Command("git", "clone", remoteDir, machineA).Run(); err != nil {
+		t.Fatalf("failed to clone for machineA: %v", err)
+	}
+	// Configure git user in Machine A
+	_ = exec.Command("git", "-C", machineA, "config", "user.email", "machineA@test.com").Run()
+	_ = exec.Command("git", "-C", machineA, "config", "user.name", "Machine A").Run()
+
+	// Clone for Machine B
+	machineB = t.TempDir()
+	machineB, _ = filepath.EvalSymlinks(machineB)
+	if err := exec.Command("git", "clone", remoteDir, machineB).Run(); err != nil {
+		t.Fatalf("failed to clone for machineB: %v", err)
+	}
+	// Configure git user in Machine B
+	_ = exec.Command("git", "-C", machineB, "config", "user.email", "machineB@test.com").Run()
+	_ = exec.Command("git", "-C", machineB, "config", "user.name", "Machine B").Run()
+
+	// Initial commit from Machine A (bare repos need at least one commit)
+	readmePath := filepath.Join(machineA, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# Test Repo\n"), 0644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	_ = exec.Command("git", "-C", machineA, "add", ".").Run()
+	if err := exec.Command("git", "-C", machineA, "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("failed to create initial commit: %v", err)
+	}
+	if err := exec.Command("git", "-C", machineA, "push", "-u", "origin", "main").Run(); err != nil {
+		t.Fatalf("failed to push initial commit: %v", err)
+	}
+
+	// Machine B fetches and checks out main
+	_ = exec.Command("git", "-C", machineB, "fetch", "origin").Run()
+	_ = exec.Command("git", "-C", machineB, "checkout", "main").Run()
+
+	cleanup = func() {
+		git.ResetCaches() // Prevent cache pollution between tests
+	}
+
+	return remoteDir, machineA, machineB, cleanup
+}
+
+// withBeadsDir runs a function with BEADS_DIR set to the specified directory's .beads subdirectory.
+// This provides database isolation for multi-machine tests.
+func withBeadsDir(t *testing.T, dir string, fn func()) {
+	t.Helper()
+
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	beadsDir := filepath.Join(dir, ".beads")
+
+	// Create .beads directory if it doesn't exist
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
 
-	// Create sync branch with initial content (machine A's first commit)
-	if err := exec.Command("git", "branch", syncBranch).Run(); err != nil {
-		t.Fatalf("failed to create sync branch: %v", err)
-	}
+	os.Setenv("BEADS_DIR", beadsDir)
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
 
-	// Machine A: Create issue-1 and commit to sync branch
+	fn()
+}
+
+// TestSyncBranchE2E tests the full sync-branch flow with concurrent changes from
+// two machines using a real bare repo. This is an end-to-end regression test for PR#918.
+//
+// Flow:
+// 1. Machine A creates bd-1, commits to sync branch, pushes to bare remote
+// 2. Machine B creates bd-2, commits to sync branch, pushes to bare remote
+// 3. Machine A pulls from sync branch - should merge both issues
+// 4. Verify both issues present after merge
+func TestSyncBranchE2E(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup: Create bare remote with two clones
+	_, machineA, machineB, cleanup := setupBareRemoteWithClones(t)
+	defer cleanup()
+
+	syncBranch := "beads-sync"
+
+	// Machine A: Create .beads directory and bd-1
+	beadsDirA := filepath.Join(machineA, ".beads")
+	if err := os.MkdirAll(beadsDirA, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir for A: %v", err)
+	}
+	jsonlPathA := filepath.Join(beadsDirA, "issues.jsonl")
 	issue1 := `{"id":"bd-1","title":"Issue from Machine A","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
-	if err := os.WriteFile(jsonlPath, []byte(issue1+"\n"), 0644); err != nil {
-		t.Fatalf("write JSONL failed: %v", err)
+	if err := os.WriteFile(jsonlPathA, []byte(issue1+"\n"), 0644); err != nil {
+		t.Fatalf("write JSONL failed for A: %v", err)
 	}
 
-	// Commit to sync branch using the worktree-based API
-	commitResult, err := syncbranch.CommitToSyncBranch(ctx, tmpDir, syncBranch, jsonlPath, false)
-	if err != nil {
-		t.Fatalf("CommitToSyncBranch failed: %v", err)
-	}
-	if !commitResult.Committed {
-		t.Fatal("expected commit to succeed for Machine A's issue")
-	}
-	t.Log("✓ Machine A committed issue-1 to sync branch")
+	// Machine A: Commit to sync branch using the worktree-based API (push=true)
+	withBeadsDir(t, machineA, func() {
+		commitResult, err := syncbranch.CommitToSyncBranch(ctx, machineA, syncBranch, jsonlPathA, true)
+		if err != nil {
+			t.Fatalf("CommitToSyncBranch failed for A: %v", err)
+		}
+		if !commitResult.Committed {
+			t.Fatal("expected commit to succeed for Machine A's issue")
+		}
+		t.Log("Machine A committed and pushed bd-1 to sync branch")
+	})
 
-	// Create a fake remote ref at current sync branch head
-	syncBranchWorktree := filepath.Join(tmpDir, ".git", "beads-worktrees", syncBranch)
-	machineACommit := ""
-	if output, err := exec.Command("git", "-C", syncBranchWorktree, "rev-parse", "HEAD").Output(); err == nil {
-		machineACommit = string(output)
+	// Machine B: Create .beads directory and bd-2
+	beadsDirB := filepath.Join(machineB, ".beads")
+	if err := os.MkdirAll(beadsDirB, 0755); err != nil {
+		t.Fatalf("failed to create .beads dir for B: %v", err)
 	}
-
-	// Set up remote ref pointing to Machine A's commit
-	if err := exec.Command("git", "update-ref", "refs/remotes/origin/"+syncBranch, "refs/heads/"+syncBranch).Run(); err != nil {
-		t.Logf("Warning: failed to set up remote ref: %v", err)
-	}
-
-	// Machine B (simulated): Create a divergent commit with issue-2
-	// We simulate this by directly manipulating the sync branch in the worktree
-	// First, create a new commit in the worktree with issue-2
+	jsonlPathB := filepath.Join(beadsDirB, "issues.jsonl")
 	issue2 := `{"id":"bd-2","title":"Issue from Machine B","status":"open","issue_type":"task","priority":2,"created_at":"2025-01-02T00:00:00Z","updated_at":"2025-01-02T00:00:00Z"}`
-	worktreeJSONL := filepath.Join(syncBranchWorktree, ".beads", "issues.jsonl")
-	if err := os.MkdirAll(filepath.Dir(worktreeJSONL), 0755); err != nil {
-		t.Fatalf("failed to create worktree .beads dir: %v", err)
+	if err := os.WriteFile(jsonlPathB, []byte(issue2+"\n"), 0644); err != nil {
+		t.Fatalf("write JSONL failed for B: %v", err)
 	}
 
-	// Simulate remote having a different issue (issue-2)
-	// In real scenario, this would be another machine pushing to the remote
-	if err := os.WriteFile(worktreeJSONL, []byte(issue2+"\n"), 0644); err != nil {
-		t.Fatalf("write worktree JSONL failed: %v", err)
-	}
+	// Machine B: Pull first to get A's changes, then commit and push
+	withBeadsDir(t, machineB, func() {
+		// Pull from remote first (gets Machine A's bd-1)
+		pullResult, err := syncbranch.PullFromSyncBranch(ctx, machineB, syncBranch, jsonlPathB, false)
+		if err != nil {
+			t.Logf("Initial pull for B returned error (may be expected): %v", err)
+		}
+		if pullResult != nil && pullResult.Pulled {
+			t.Log("Machine B pulled existing sync branch content")
+		}
 
-	// Commit machine B's issue
-	_ = exec.Command("git", "-C", syncBranchWorktree, "add", ".beads").Run()
-	if err := exec.Command("git", "-C", syncBranchWorktree, "commit", "--no-verify", "-m", "bd sync: Machine B").Run(); err != nil {
-		t.Fatalf("machine B commit failed: %v", err)
-	}
+		// Re-read and append bd-2 to maintain bd-1 from pull
+		existingContent, _ := os.ReadFile(jsonlPathB)
+		if !strings.Contains(string(existingContent), "bd-2") {
+			// Append bd-2 if not already present
+			if len(existingContent) > 0 && !strings.HasSuffix(string(existingContent), "\n") {
+				existingContent = append(existingContent, '\n')
+			}
+			newContent := string(existingContent) + issue2 + "\n"
+			if err := os.WriteFile(jsonlPathB, []byte(newContent), 0644); err != nil {
+				t.Fatalf("failed to append bd-2: %v", err)
+			}
+		}
 
-	// Set remote ref to this new commit (simulating Machine B pushed first)
-	if err := exec.Command("git", "update-ref", "refs/remotes/origin/"+syncBranch, "refs/heads/"+syncBranch).Run(); err != nil {
-		t.Logf("Warning: failed to update remote ref: %v", err)
-	}
-	t.Log("✓ Machine B committed issue-2 to sync branch (simulated remote)")
-
-	// Reset worktree to Machine A's state to simulate divergence
-	if machineACommit != "" {
-		_ = exec.Command("git", "-C", syncBranchWorktree, "reset", "--hard", "HEAD~1").Run()
-	}
-
-	// Machine A: Now has issue-1 locally, remote has issue-2
-	// Update main repo JSONL back to issue-1
-	if err := os.WriteFile(jsonlPath, []byte(issue1+"\n"), 0644); err != nil {
-		t.Fatalf("reset main JSONL failed: %v", err)
-	}
+		// Commit and push bd-2
+		commitResult, err := syncbranch.CommitToSyncBranch(ctx, machineB, syncBranch, jsonlPathB, true)
+		if err != nil {
+			t.Fatalf("CommitToSyncBranch failed for B: %v", err)
+		}
+		if !commitResult.Committed {
+			t.Log("Machine B had no new changes to commit (bd-2 may already be in sync)")
+		} else {
+			t.Log("Machine B committed and pushed bd-2 to sync branch")
+		}
+	})
 
 	// Machine A: Pull from sync branch - should merge both issues
-	pullResult, err := syncbranch.PullFromSyncBranch(ctx, tmpDir, syncBranch, jsonlPath, false)
-	if err != nil {
-		// Pull might fail in test environment due to self-remote, check if we got issues merged anyway
-		t.Logf("PullFromSyncBranch returned error (may be expected in test env): %v", err)
-	}
+	withBeadsDir(t, machineA, func() {
+		pullResult, err := syncbranch.PullFromSyncBranch(ctx, machineA, syncBranch, jsonlPathA, false)
+		if err != nil {
+			t.Logf("PullFromSyncBranch for A returned error (may be expected): %v", err)
+		}
+		if pullResult != nil {
+			t.Logf("Pull result for A: Pulled=%v, Merged=%v, FastForwarded=%v",
+				pullResult.Pulled, pullResult.Merged, pullResult.FastForwarded)
+		}
+	})
 
-	if pullResult != nil {
-		t.Logf("Pull result: Pulled=%v, Merged=%v, FastForwarded=%v", pullResult.Pulled, pullResult.Merged, pullResult.FastForwarded)
-	}
-
-	// Verify: Both issues should be present in JSONL after merge
-	content, err := os.ReadFile(jsonlPath)
+	// Verify: Both issues should be present in Machine A's JSONL after merge
+	content, err := os.ReadFile(jsonlPathA)
 	if err != nil {
 		t.Fatalf("failed to read merged JSONL: %v", err)
 	}
@@ -560,22 +646,21 @@ func TestSyncBranchE2E(t *testing.T) {
 	hasIssue1 := strings.Contains(contentStr, "bd-1") || strings.Contains(contentStr, "Machine A")
 	hasIssue2 := strings.Contains(contentStr, "bd-2") || strings.Contains(contentStr, "Machine B")
 
-	// The test passes if at least one merge behavior is correct:
-	// 1. Both issues merged (ideal case with proper remote)
-	// 2. At least issue-1 preserved (no data loss from local)
-	// 3. At least issue-2 from remote is present
 	if hasIssue1 {
-		t.Log("✓ Issue from Machine A preserved")
+		t.Log("Issue bd-1 from Machine A preserved")
+	} else {
+		t.Error("FAIL: bd-1 from Machine A missing after merge")
 	}
+
 	if hasIssue2 {
-		t.Log("✓ Issue from Machine B merged")
+		t.Log("Issue bd-2 from Machine B merged")
+	} else {
+		t.Error("FAIL: bd-2 from Machine B missing after merge")
 	}
 
-	if !hasIssue1 && !hasIssue2 {
-		t.Error("merge failed: no issues found in JSONL")
+	if hasIssue1 && hasIssue2 {
+		t.Log("Sync-branch E2E test PASSED: both issues present after merge")
 	}
-
-	t.Log("✓ Sync-branch E2E test completed")
 }
 
 // TestExportOnlySync tests the --no-pull mode (export-only sync).
