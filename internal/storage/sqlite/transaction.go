@@ -91,10 +91,14 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 
 // CreateIssue creates a new issue within the transaction.
 func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Fetch custom statuses for validation
+	// Fetch custom statuses and types for validation
 	customStatuses, err := t.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := t.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
 	// Set timestamps first so defensive fixes can use them
@@ -127,8 +131,8 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.DeletedAt = &deletedAt
 	}
 
-	// Validate issue before creating (with custom status support)
-	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
+	// Validate issue before creating (with custom status and type support)
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -207,13 +211,17 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 		return nil
 	}
 
-	// Fetch custom statuses for validation
+	// Fetch custom statuses and types for validation
 	customStatuses, err := t.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
 	}
+	customTypes, err := t.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
+	}
 
-	// Validate and prepare all issues first (with custom status support)
+	// Validate and prepare all issues first (with custom status and type support)
 	now := time.Now()
 	for _, issue := range issues {
 		// Set timestamps first so defensive fixes can use them
@@ -245,7 +253,7 @@ func (t *sqliteTxStorage) CreateIssues(ctx context.Context, issues []*types.Issu
 			issue.DeletedAt = &deletedAt
 		}
 
-		if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
+		if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 			return fmt.Errorf("validation failed for issue: %w", err)
 		}
 		if issue.ContentHash == "" {
@@ -965,7 +973,19 @@ func (t *sqliteTxStorage) GetCustomStatuses(ctx context.Context) ([]string, erro
 	if value == "" {
 		return nil, nil
 	}
-	return parseCustomStatuses(value), nil
+	return parseCommaSeparated(value), nil
+}
+
+// GetCustomTypes retrieves the list of custom issue types from config within the transaction.
+func (t *sqliteTxStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
+	value, err := t.GetConfig(ctx, CustomTypeConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCommaSeparated(value), nil
 }
 
 // SetMetadata sets a metadata value within the transaction.

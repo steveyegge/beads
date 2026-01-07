@@ -11,14 +11,21 @@ import (
 )
 
 // validateBatchIssues validates all issues in a batch and sets timestamps if not provided
-// Uses built-in statuses only for backward compatibility.
+// Uses built-in statuses and types only for backward compatibility.
 func validateBatchIssues(issues []*types.Issue) error {
-	return validateBatchIssuesWithCustomStatuses(issues, nil)
+	return validateBatchIssuesWithCustom(issues, nil, nil)
 }
 
 // validateBatchIssuesWithCustomStatuses validates all issues in a batch,
 // allowing custom statuses in addition to built-in ones.
+// Deprecated: Use validateBatchIssuesWithCustom instead.
 func validateBatchIssuesWithCustomStatuses(issues []*types.Issue, customStatuses []string) error {
+	return validateBatchIssuesWithCustom(issues, customStatuses, nil)
+}
+
+// validateBatchIssuesWithCustom validates all issues in a batch,
+// allowing custom statuses and types in addition to built-in ones.
+func validateBatchIssuesWithCustom(issues []*types.Issue, customStatuses, customTypes []string) error {
 	now := time.Now()
 	for i, issue := range issues {
 		if issue == nil {
@@ -54,7 +61,7 @@ func validateBatchIssuesWithCustomStatuses(issues []*types.Issue, customStatuses
 			issue.DeletedAt = &deletedAt
 		}
 
-		if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
+		if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 			return fmt.Errorf("validation failed for issue %d: %w", i, err)
 		}
 	}

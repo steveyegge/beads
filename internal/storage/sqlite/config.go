@@ -98,6 +98,9 @@ func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, er
 // CustomStatusConfigKey is the config key for custom status states
 const CustomStatusConfigKey = "status.custom"
 
+// CustomTypeConfigKey is the config key for custom issue types
+const CustomTypeConfigKey = "types.custom"
+
 // GetCustomStatuses retrieves the list of custom status states from config.
 // Custom statuses are stored as comma-separated values in the "status.custom" config key.
 // Returns an empty slice if no custom statuses are configured.
@@ -109,12 +112,12 @@ func (s *SQLiteStorage) GetCustomStatuses(ctx context.Context) ([]string, error)
 	if value == "" {
 		return nil, nil
 	}
-	return parseCustomStatuses(value), nil
+	return parseCommaSeparated(value), nil
 }
 
-// parseCustomStatuses splits a comma-separated string into a slice of trimmed status names.
+// parseCommaSeparated splits a comma-separated string into a slice of trimmed values.
 // Empty entries are filtered out.
-func parseCustomStatuses(value string) []string {
+func parseCommaSeparated(value string) []string {
 	if value == "" {
 		return nil
 	}
@@ -127,4 +130,18 @@ func parseCustomStatuses(value string) []string {
 		}
 	}
 	return result
+}
+
+// GetCustomTypes retrieves the list of custom issue types from config.
+// Custom types are stored as comma-separated values in the "types.custom" config key.
+// Returns an empty slice if no custom types are configured.
+func (s *SQLiteStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
+	value, err := s.GetConfig(ctx, CustomTypeConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCommaSeparated(value), nil
 }

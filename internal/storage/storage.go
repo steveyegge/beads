@@ -152,6 +152,7 @@ type Storage interface {
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	DeleteConfig(ctx context.Context, key string) error
 	GetCustomStatuses(ctx context.Context) ([]string, error) // Custom status states from status.custom config
+	GetCustomTypes(ctx context.Context) ([]string, error)    // Custom issue types from types.custom config
 
 	// Metadata (for internal state like import hashes)
 	SetMetadata(ctx context.Context, key, value string) error

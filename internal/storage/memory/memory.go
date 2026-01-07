@@ -1648,8 +1648,8 @@ func (m *MemoryStorage) GetCustomStatuses(ctx context.Context) ([]string, error)
 	return parseCustomStatuses(value), nil
 }
 
-// parseCustomStatuses splits a comma-separated string into a slice of trimmed status names.
-func parseCustomStatuses(value string) []string {
+// parseCommaSeparated splits a comma-separated string into a slice of trimmed values.
+func parseCommaSeparated(value string) []string {
 	if value == "" {
 		return nil
 	}
@@ -1662,6 +1662,23 @@ func parseCustomStatuses(value string) []string {
 		}
 	}
 	return result
+}
+
+// Alias for backwards compatibility in tests
+func parseCustomStatuses(value string) []string {
+	return parseCommaSeparated(value)
+}
+
+// GetCustomTypes retrieves the list of custom issue types from config.
+func (m *MemoryStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
+	value, err := m.GetConfig(ctx, "types.custom")
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCommaSeparated(value), nil
 }
 
 // Metadata

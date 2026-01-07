@@ -170,6 +170,9 @@ func (m *mockStorage) DeleteConfig(ctx context.Context, key string) error {
 func (m *mockStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
 func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error {
 	return nil
 }
@@ -358,6 +361,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		_ = s.GetAllConfig
 		_ = s.DeleteConfig
 		_ = s.GetCustomStatuses
+		_ = s.GetCustomTypes
 
 		// Verify metadata operations
 		_ = s.SetMetadata

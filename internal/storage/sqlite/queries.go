@@ -75,10 +75,14 @@ func formatJSONStringArray(arr []string) string {
 
 // CreateIssue creates a new issue
 func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	// Fetch custom statuses for validation
+	// Fetch custom statuses and types for validation
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
 	// Set timestamps first so defensive fixes can use them
@@ -111,8 +115,8 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		issue.DeletedAt = &deletedAt
 	}
 
-	// Validate issue before creating (with custom status support)
-	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
+	// Validate issue before creating (with custom status and type support)
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 

@@ -205,14 +205,14 @@ func TestParseCustomStatuses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseCustomStatuses(tt.value)
+			got := parseCommaSeparated(tt.value)
 			if len(got) != len(tt.want) {
-				t.Errorf("parseCustomStatuses() = %v, want %v", got, tt.want)
+				t.Errorf("parseCommaSeparated() = %v, want %v", got, tt.want)
 				return
 			}
 			for i := range got {
 				if got[i] != tt.want[i] {
-					t.Errorf("parseCustomStatuses()[%d] = %v, want %v", i, got[i], tt.want[i])
+					t.Errorf("parseCommaSeparated()[%d] = %v, want %v", i, got[i], tt.want[i])
 				}
 			}
 		})

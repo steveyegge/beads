@@ -292,14 +292,21 @@ func (i *Issue) IsExpired(ttl time.Duration) bool {
 	return time.Now().After(expirationTime)
 }
 
-// Validate checks if the issue has valid field values (built-in statuses only)
+// Validate checks if the issue has valid field values (built-in statuses and types only)
 func (i *Issue) Validate() error {
-	return i.ValidateWithCustomStatuses(nil)
+	return i.ValidateWithCustom(nil, nil)
 }
 
 // ValidateWithCustomStatuses checks if the issue has valid field values,
 // allowing custom statuses in addition to built-in ones.
+// Deprecated: Use ValidateWithCustom instead.
 func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
+	return i.ValidateWithCustom(customStatuses, nil)
+}
+
+// ValidateWithCustom checks if the issue has valid field values,
+// allowing custom statuses and types in addition to built-in ones.
+func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	if len(i.Title) == 0 {
 		return fmt.Errorf("title is required")
 	}
@@ -312,7 +319,7 @@ func (i *Issue) ValidateWithCustomStatuses(customStatuses []string) error {
 	if !i.Status.IsValidWithCustom(customStatuses) {
 		return fmt.Errorf("invalid status: %s", i.Status)
 	}
-	if !i.IssueType.IsValid() {
+	if !i.IssueType.IsValidWithCustom(customTypes) {
 		return fmt.Errorf("invalid issue type: %s", i.IssueType)
 	}
 	if i.EstimatedMinutes != nil && *i.EstimatedMinutes < 0 {
@@ -423,11 +430,27 @@ const (
 	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 )
 
-// IsValid checks if the issue type value is valid
+// IsValid checks if the issue type value is valid (built-in types only)
 func (t IssueType) IsValid() bool {
 	switch t {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot:
 		return true
+	}
+	return false
+}
+
+// IsValidWithCustom checks if the issue type is valid, including custom types.
+// Custom types are user-defined via bd config set types.custom "type1,type2,..."
+func (t IssueType) IsValidWithCustom(customTypes []string) bool {
+	// First check built-in types
+	if t.IsValid() {
+		return true
+	}
+	// Then check custom types
+	for _, custom := range customTypes {
+		if string(t) == custom {
+			return true
+		}
 	}
 	return false
 }

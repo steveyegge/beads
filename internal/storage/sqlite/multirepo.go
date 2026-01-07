@@ -126,10 +126,14 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 	}
 	defer file.Close()
 
-	// Fetch custom statuses for validation (bd-1pj6)
+	// Fetch custom statuses and types for validation (bd-1pj6)
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get custom statuses: %w", err)
+	}
+	customTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get custom types: %w", err)
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -183,8 +187,8 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
-		// Insert or update issue (with custom status support)
-		if err := s.upsertIssueInTx(ctx, tx, &issue, customStatuses); err != nil {
+		// Insert or update issue (with custom status and type support)
+		if err := s.upsertIssueInTx(ctx, tx, &issue, customStatuses, customTypes); err != nil {
 			return 0, fmt.Errorf("failed to import issue %s at line %d: %w", issue.ID, lineNum, err)
 		}
 
@@ -250,7 +254,7 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 
 // upsertIssueInTx inserts or updates an issue within a transaction.
 // Uses INSERT OR REPLACE to handle both new and existing issues.
-func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *types.Issue, customStatuses []string) error {
+func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *types.Issue, customStatuses, customTypes []string) error {
 	// Defensive fix for closed_at invariant (GH#523): older versions of bd could
 	// close issues without setting closed_at. Fix by using max(created_at, updated_at) + 1s.
 	if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
@@ -272,8 +276,8 @@ func (s *SQLiteStorage) upsertIssueInTx(ctx context.Context, tx *sql.Tx, issue *
 		issue.DeletedAt = &deletedAt
 	}
 
-	// Validate issue (with custom status support, bd-1pj6)
-	if err := issue.ValidateWithCustomStatuses(customStatuses); err != nil {
+	// Validate issue (with custom status and type support, bd-1pj6)
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
