@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -51,8 +50,10 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 		defer currentStore.Close()
 	}
 
-	// Use SearchIssues with empty query and default filter to get all issues
-	filter := types.IssueFilter{}
+	// Use SearchIssues with IDPrefix filter to efficiently query matching issues
+	filter := types.IssueFilter{
+		IDPrefix: toComplete, // Filter at database level for better performance
+	}
 	issues, err := currentStore.SearchIssues(ctx, "", filter)
 	if err != nil {
 		// If we can't list issues, return empty completion
@@ -62,11 +63,6 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 	// Build completion list
 	completions := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		// Filter based on what's already typed
-		if toComplete != "" && !strings.HasPrefix(issue.ID, toComplete) {
-			continue
-		}
-
 		// Format: ID\tTitle (shown during completion)
 		completions = append(completions, fmt.Sprintf("%s\t%s", issue.ID, issue.Title))
 	}

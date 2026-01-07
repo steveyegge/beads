@@ -41,6 +41,10 @@ Example:
 }
 
 func init() {
+	// Issue ID completions
+	relateCmd.ValidArgsFunction = issueIDCompletion
+	unrelateCmd.ValidArgsFunction = issueIDCompletion
+
 	// Add as subcommands of dep
 	depCmd.AddCommand(relateCmd)
 	depCmd.AddCommand(unrelateCmd)

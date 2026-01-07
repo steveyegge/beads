@@ -620,6 +620,11 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			}
 		}
 
+		// ID prefix filtering (for shell completion)
+		if filter.IDPrefix != "" && !strings.HasPrefix(issue.ID, filter.IDPrefix) {
+			continue
+		}
+
 		// Parent filtering (bd-yqhh): filter children by parent issue
 		if filter.ParentID != nil {
 			isChild := false

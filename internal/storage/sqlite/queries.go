@@ -1836,6 +1836,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", ")))
 	}
 
+	// ID prefix filtering (for shell completion)
+	if filter.IDPrefix != "" {
+		whereClauses = append(whereClauses, "id LIKE ?")
+		args = append(args, filter.IDPrefix+"%")
+	}
+
 	// Wisp filtering
 	if filter.Ephemeral != nil {
 		if *filter.Ephemeral {

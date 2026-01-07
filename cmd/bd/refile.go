@@ -160,5 +160,6 @@ Examples:
 
 func init() {
 	refileCmd.Flags().Bool("keep-open", false, "Keep the source issue open (don't close it)")
+	refileCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(refileCmd)
 }

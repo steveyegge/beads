@@ -276,5 +276,6 @@ func init() {
 	moveCmd.Flags().String("to", "", "Target rig or prefix (required)")
 	moveCmd.Flags().Bool("keep-open", false, "Keep the source issue open (don't close it)")
 	moveCmd.Flags().Bool("skip-deps", false, "Skip dependency remapping")
+	moveCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(moveCmd)
 }

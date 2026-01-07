@@ -871,6 +871,11 @@ func init() {
 	gateCheckCmd.Flags().BoolP("escalate", "e", false, "Escalate failed/expired gates")
 	gateCheckCmd.Flags().IntP("limit", "l", 100, "Limit results (default 100)")
 
+	// Issue ID completions
+	gateShowCmd.ValidArgsFunction = issueIDCompletion
+	gateResolveCmd.ValidArgsFunction = issueIDCompletion
+	gateAddWaiterCmd.ValidArgsFunction = issueIDCompletion
+
 	// Add subcommands
 	gateCmd.AddCommand(gateListCmd)
 	gateCmd.AddCommand(gateShowCmd)

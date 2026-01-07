@@ -218,11 +218,16 @@ func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
-	
+
 	// Add the same flags to the alias
 	commentCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentCmd.Flags().StringP("author", "a", "", "Add author to comment")
-	
+
+	// Issue ID completions
+	commentsCmd.ValidArgsFunction = issueIDCompletion
+	commentsAddCmd.ValidArgsFunction = issueIDCompletion
+	commentCmd.ValidArgsFunction = issueIDCompletion
+
 	rootCmd.AddCommand(commentsCmd)
 	rootCmd.AddCommand(commentCmd)
 }

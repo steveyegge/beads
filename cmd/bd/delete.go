@@ -833,5 +833,6 @@ func init() {
 	deleteCmd.Flags().Bool("cascade", false, "Recursively delete all dependent issues")
 	deleteCmd.Flags().Bool("hard", false, "Permanently delete (skip tombstone, cannot be recovered via sync)")
 	deleteCmd.Flags().String("reason", "", "Reason for deletion (stored in tombstone for audit trail)")
+	deleteCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(deleteCmd)
 }

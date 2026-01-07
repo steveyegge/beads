@@ -117,6 +117,7 @@ Colors indicate status:
 }
 
 func init() {
+	graphCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(graphCmd)
 }
 
