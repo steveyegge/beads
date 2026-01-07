@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -1542,4 +1543,417 @@ func TestGitPushFromWorktree_FetchRebaseRetry(t *testing.T) {
 	}
 
 	t.Log("Fetch-rebase-retry test passed: diverged sync branch was successfully rebased and pushed")
+}
+
+// TestDaemonSyncBranchE2E tests the daemon sync-branch flow with concurrent changes from
+// two machines using a real bare repo. This tests the daemon path (syncBranchCommitAndPush/Pull)
+// as opposed to TestSyncBranchE2E which tests the CLI path (syncbranch.CommitToSyncBranch/Pull).
+//
+// Key difference from CLI path tests:
+// - CLI: Uses syncbranch.CommitToSyncBranch() from internal/syncbranch
+// - Daemon: Uses syncBranchCommitAndPush() from daemon_sync_branch.go
+//
+// Flow:
+// 1. Machine A creates bd-1, calls daemon syncBranchCommitAndPush(), pushes to bare remote
+// 2. Machine B creates bd-2, calls daemon syncBranchCommitAndPush(), pushes to bare remote
+// 3. Machine A calls daemon syncBranchPull(), should merge both issues
+// 4. Verify both issues present after merge
+func TestDaemonSyncBranchE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Skip on Windows due to path issues with worktrees
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows")
+	}
+
+	ctx := context.Background()
+
+	// Setup: Create bare remote with two clones using Phase 1 helper
+	_, machineA, machineB, cleanup := setupBareRemoteWithClones(t)
+	defer cleanup()
+
+	// Use unique sync branch name and set via env var (highest priority)
+	// This overrides any config.yaml setting
+	syncBranch := "beads-daemon-sync"
+	t.Setenv(syncbranch.EnvVar, syncBranch)
+
+	// Machine A: Setup database with sync.branch configured
+	var storeA *sqlite.SQLiteStorage
+	var jsonlPathA string
+
+	withBeadsDir(t, machineA, func() {
+		beadsDirA := filepath.Join(machineA, ".beads")
+		dbPathA := filepath.Join(beadsDirA, "beads.db")
+
+		var err error
+		storeA, err = sqlite.New(ctx, dbPathA)
+		if err != nil {
+			t.Fatalf("Failed to create store for Machine A: %v", err)
+		}
+
+		// Configure store
+		if err := storeA.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+			t.Fatalf("Failed to set issue_prefix: %v", err)
+		}
+		if err := storeA.SetConfig(ctx, syncbranch.ConfigKey, syncBranch); err != nil {
+			t.Fatalf("Failed to set sync.branch: %v", err)
+		}
+
+		// Create issue in Machine A
+		issueA := &types.Issue{
+			Title:     "Issue from Machine A (daemon path)",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := storeA.CreateIssue(ctx, issueA, "machineA"); err != nil {
+			t.Fatalf("Failed to create issue in Machine A: %v", err)
+		}
+		t.Logf("Machine A created issue: %s", issueA.ID)
+
+		// Export to JSONL
+		jsonlPathA = filepath.Join(beadsDirA, "issues.jsonl")
+		if err := exportToJSONLWithStore(ctx, storeA, jsonlPathA); err != nil {
+			t.Fatalf("Failed to export JSONL for Machine A: %v", err)
+		}
+
+		// Change to machineA directory for git operations
+		if err := os.Chdir(machineA); err != nil {
+			t.Fatalf("Failed to chdir to machineA: %v", err)
+		}
+
+		// Set global dbPath so findJSONLPath() works for daemon functions
+		oldDBPath := dbPath
+		dbPath = dbPathA
+		defer func() { dbPath = oldDBPath }()
+
+		// Machine A: Commit and push using daemon path (syncBranchCommitAndPush)
+		log, _ := newTestSyncBranchLogger()
+		committed, err := syncBranchCommitAndPush(ctx, storeA, true, log)
+		if err != nil {
+			t.Fatalf("Machine A syncBranchCommitAndPush failed: %v", err)
+		}
+		if !committed {
+			t.Fatal("Expected Machine A daemon commit to succeed")
+		}
+		t.Log("Machine A: Daemon committed and pushed issue to sync branch")
+	})
+	defer storeA.Close()
+
+	// Reset git caches before switching to Machine B to prevent path caching issues
+	git.ResetCaches()
+
+	// Machine B: Setup database and sync with Machine A's changes first
+	var storeB *sqlite.SQLiteStorage
+	var jsonlPathB string
+
+	withBeadsDir(t, machineB, func() {
+		beadsDirB := filepath.Join(machineB, ".beads")
+		dbPathB := filepath.Join(beadsDirB, "beads.db")
+
+		var err error
+		storeB, err = sqlite.New(ctx, dbPathB)
+		if err != nil {
+			t.Fatalf("Failed to create store for Machine B: %v", err)
+		}
+
+		// Configure store
+		if err := storeB.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+			t.Fatalf("Failed to set issue_prefix: %v", err)
+		}
+		if err := storeB.SetConfig(ctx, syncbranch.ConfigKey, syncBranch); err != nil {
+			t.Fatalf("Failed to set sync.branch: %v", err)
+		}
+
+		jsonlPathB = filepath.Join(beadsDirB, "issues.jsonl")
+
+		// Change to machineB directory for git operations
+		if err := os.Chdir(machineB); err != nil {
+			t.Fatalf("Failed to chdir to machineB: %v", err)
+		}
+
+		// Set global dbPath so findJSONLPath() works for daemon functions
+		oldDBPath := dbPath
+		dbPath = dbPathB
+		defer func() { dbPath = oldDBPath }()
+
+		// Machine B: First pull from sync branch to get Machine A's issue
+		// This is the correct workflow - always pull before creating local changes
+		log, _ := newTestSyncBranchLogger()
+		pulled, err := syncBranchPull(ctx, storeB, log)
+		if err != nil {
+			t.Logf("Machine B initial pull error (may be expected): %v", err)
+		}
+		if pulled {
+			t.Log("Machine B: Pulled Machine A's changes from sync branch")
+		}
+
+		// Import the pulled JSONL into Machine B's database
+		if _, err := os.Stat(jsonlPathB); err == nil {
+			if err := importToJSONLWithStore(ctx, storeB, jsonlPathB); err != nil {
+				t.Logf("Machine B import warning: %v", err)
+			}
+		}
+
+		// Create issue in Machine B (different from A)
+		issueB := &types.Issue{
+			Title:     "Issue from Machine B (daemon path)",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeBug,
+			CreatedAt: time.Now().Add(time.Second), // Ensure different timestamp
+			UpdatedAt: time.Now().Add(time.Second),
+		}
+		if err := storeB.CreateIssue(ctx, issueB, "machineB"); err != nil {
+			t.Fatalf("Failed to create issue in Machine B: %v", err)
+		}
+		t.Logf("Machine B created issue: %s", issueB.ID)
+
+		// Export to JSONL (now includes both Machine A's and Machine B's issues)
+		if err := exportToJSONLWithStore(ctx, storeB, jsonlPathB); err != nil {
+			t.Fatalf("Failed to export JSONL for Machine B: %v", err)
+		}
+
+		// Machine B: Commit and push using daemon path
+		// This should succeed without conflict because we pulled first
+		committed, err := syncBranchCommitAndPush(ctx, storeB, true, log)
+		if err != nil {
+			t.Fatalf("Machine B syncBranchCommitAndPush failed: %v", err)
+		}
+		if !committed {
+			t.Fatal("Expected Machine B daemon commit to succeed")
+		}
+		t.Log("Machine B: Daemon committed and pushed issue to sync branch")
+	})
+	defer storeB.Close()
+
+	// Reset git caches before switching back to Machine A
+	git.ResetCaches()
+
+	// Machine A: Pull from sync branch using daemon path
+	withBeadsDir(t, machineA, func() {
+		beadsDirA := filepath.Join(machineA, ".beads")
+		dbPathA := filepath.Join(beadsDirA, "beads.db")
+
+		// Change to machineA directory for git operations
+		if err := os.Chdir(machineA); err != nil {
+			t.Fatalf("Failed to chdir to machineA: %v", err)
+		}
+
+		// Set global dbPath so findJSONLPath() works for daemon functions
+		oldDBPath := dbPath
+		dbPath = dbPathA
+		defer func() { dbPath = oldDBPath }()
+
+		log, _ := newTestSyncBranchLogger()
+		pulled, err := syncBranchPull(ctx, storeA, log)
+		if err != nil {
+			t.Fatalf("Machine A syncBranchPull failed: %v", err)
+		}
+		if !pulled {
+			t.Log("Machine A syncBranchPull returned false (may be expected if no remote changes)")
+		} else {
+			t.Log("Machine A: Daemon pulled from sync branch")
+		}
+	})
+
+	// Verify: Both issues should be present in Machine A's JSONL after merge
+	content, err := os.ReadFile(jsonlPathA)
+	if err != nil {
+		t.Fatalf("Failed to read Machine A's JSONL: %v", err)
+	}
+
+	contentStr := string(content)
+	hasMachineA := strings.Contains(contentStr, "Machine A")
+	hasMachineB := strings.Contains(contentStr, "Machine B")
+
+	if hasMachineA {
+		t.Log("Issue from Machine A preserved in JSONL")
+	} else {
+		t.Error("FAIL: Issue from Machine A missing after merge")
+	}
+
+	if hasMachineB {
+		t.Log("Issue from Machine B merged into JSONL")
+	} else {
+		t.Error("FAIL: Issue from Machine B missing after merge")
+	}
+
+	if hasMachineA && hasMachineB {
+		t.Log("Daemon sync-branch E2E test PASSED: both issues present after merge")
+	}
+
+	// Clean up git caches to prevent test pollution
+	git.ResetCaches()
+}
+
+// TestDaemonSyncBranchForceOverwrite tests the forceOverwrite flag behavior for delete mutations.
+// When forceOverwrite is true, the local JSONL is copied directly to the worktree without merging,
+// which is necessary for delete mutations to be properly reflected in the sync branch.
+//
+// Flow:
+// 1. Machine A creates issue, commits to sync branch
+// 2. Machine A deletes issue locally, calls syncBranchCommitAndPushWithOptions(forceOverwrite=true)
+// 3. Verify the deletion is reflected in the sync branch worktree
+func TestDaemonSyncBranchForceOverwrite(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Skip on Windows due to path issues with worktrees
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows")
+	}
+
+	ctx := context.Background()
+
+	// Setup: Create bare remote with two clones
+	_, machineA, _, cleanup := setupBareRemoteWithClones(t)
+	defer cleanup()
+
+	// Use unique sync branch name and set via env var (highest priority)
+	// This overrides any config.yaml setting
+	syncBranch := "beads-force-sync"
+	t.Setenv(syncbranch.EnvVar, syncBranch)
+
+	withBeadsDir(t, machineA, func() {
+		beadsDirA := filepath.Join(machineA, ".beads")
+		dbPathA := filepath.Join(beadsDirA, "beads.db")
+
+		storeA, err := sqlite.New(ctx, dbPathA)
+		if err != nil {
+			t.Fatalf("Failed to create store: %v", err)
+		}
+		defer storeA.Close()
+
+		// Configure store
+		if err := storeA.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+			t.Fatalf("Failed to set issue_prefix: %v", err)
+		}
+		if err := storeA.SetConfig(ctx, syncbranch.ConfigKey, syncBranch); err != nil {
+			t.Fatalf("Failed to set sync.branch: %v", err)
+		}
+
+		// Create two issues
+		issue1 := &types.Issue{
+			Title:     "Issue to keep",
+			Status:    types.StatusOpen,
+			Priority:  1,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := storeA.CreateIssue(ctx, issue1, "test"); err != nil {
+			t.Fatalf("Failed to create issue1: %v", err)
+		}
+
+		issue2 := &types.Issue{
+			Title:     "Issue to delete",
+			Status:    types.StatusOpen,
+			Priority:  2,
+			IssueType: types.TypeTask,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := storeA.CreateIssue(ctx, issue2, "test"); err != nil {
+			t.Fatalf("Failed to create issue2: %v", err)
+		}
+		issue2ID := issue2.ID
+		t.Logf("Created issue to delete: %s", issue2ID)
+
+		// Export to JSONL
+		jsonlPath := filepath.Join(beadsDirA, "issues.jsonl")
+		if err := exportToJSONLWithStore(ctx, storeA, jsonlPath); err != nil {
+			t.Fatalf("Failed to export JSONL: %v", err)
+		}
+
+		// Change to machineA directory for git operations
+		if err := os.Chdir(machineA); err != nil {
+			t.Fatalf("Failed to chdir: %v", err)
+		}
+
+		// Set global dbPath so findJSONLPath() works for daemon functions
+		oldDBPath := dbPath
+		dbPath = dbPathA
+		defer func() { dbPath = oldDBPath }()
+
+		// First commit with both issues (without forceOverwrite)
+		log, _ := newTestSyncBranchLogger()
+		committed, err := syncBranchCommitAndPush(ctx, storeA, true, log)
+		if err != nil {
+			t.Fatalf("Initial commit failed: %v", err)
+		}
+		if !committed {
+			t.Fatal("Expected initial commit to succeed")
+		}
+		t.Log("Initial commit with both issues succeeded")
+
+		// Verify worktree has both issues
+		worktreePath := filepath.Join(machineA, ".git", "beads-worktrees", syncBranch)
+		worktreeJSONL := filepath.Join(worktreePath, ".beads", "issues.jsonl")
+		initialContent, err := os.ReadFile(worktreeJSONL)
+		if err != nil {
+			t.Fatalf("Failed to read worktree JSONL: %v", err)
+		}
+		if !strings.Contains(string(initialContent), "Issue to delete") {
+			t.Error("Initial worktree JSONL should contain 'Issue to delete'")
+		}
+
+		// Now delete the issue from database
+		if err := storeA.DeleteIssue(ctx, issue2ID); err != nil {
+			t.Fatalf("Failed to delete issue: %v", err)
+		}
+		t.Logf("Deleted issue %s from database", issue2ID)
+
+		// Export JSONL after deletion (issue2 should not be in the file)
+		if err := exportToJSONLWithStore(ctx, storeA, jsonlPath); err != nil {
+			t.Fatalf("Failed to export JSONL after deletion: %v", err)
+		}
+
+		// Verify local JSONL no longer has the deleted issue
+		localContent, err := os.ReadFile(jsonlPath)
+		if err != nil {
+			t.Fatalf("Failed to read local JSONL: %v", err)
+		}
+		if strings.Contains(string(localContent), "Issue to delete") {
+			t.Error("Local JSONL should not contain deleted issue")
+		}
+
+		// Commit with forceOverwrite=true (simulating delete mutation)
+		committed, err = syncBranchCommitAndPushWithOptions(ctx, storeA, true, true, log)
+		if err != nil {
+			t.Fatalf("forceOverwrite commit failed: %v", err)
+		}
+		if !committed {
+			t.Fatal("Expected forceOverwrite commit to succeed")
+		}
+		t.Log("forceOverwrite commit succeeded")
+
+		// Verify worktree JSONL no longer has the deleted issue
+		afterContent, err := os.ReadFile(worktreeJSONL)
+		if err != nil {
+			t.Fatalf("Failed to read worktree JSONL after forceOverwrite: %v", err)
+		}
+
+		if strings.Contains(string(afterContent), "Issue to delete") {
+			t.Error("FAIL: Worktree JSONL still contains deleted issue after forceOverwrite")
+		} else {
+			t.Log("Worktree JSONL correctly reflects deletion after forceOverwrite")
+		}
+
+		if !strings.Contains(string(afterContent), "Issue to keep") {
+			t.Error("FAIL: Worktree JSONL should still contain 'Issue to keep'")
+		} else {
+			t.Log("Worktree JSONL correctly preserves non-deleted issue")
+		}
+
+		t.Log("forceOverwrite test PASSED: delete mutation correctly propagated")
+	})
+
+	// Clean up git caches to prevent test pollution
+	git.ResetCaches()
 }
