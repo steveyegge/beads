@@ -277,7 +277,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	if !locked {
 		return fmt.Errorf("another sync is in progress")
 	}
-	defer lock.Unlock()
+	defer func() { _ = lock.Unlock() }()
 
 	// Step 2: Load base state (last successful sync)
 	fmt.Println("→ Loading base state...")
@@ -401,7 +401,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 	if !locked {
 		return fmt.Errorf("another sync is in progress")
 	}
-	defer lock.Unlock()
+	defer func() { _ = lock.Unlock() }()
 
 	// Pre-export integrity checks
 	if err := ensureStoreActive(); err == nil && store != nil {
