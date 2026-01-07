@@ -222,6 +222,74 @@ Each mode has E2E tests in `cmd/bd/`:
 | From-main | `sync_branch_priority_test.go` |
 | Local-only | `sync_local_only_test.go` |
 | Export-only | `sync_modes_test.go` |
+| Sync-branch (CLI E2E) | `syncbranch_e2e_test.go` |
+| Sync-branch (Daemon E2E) | `daemon_sync_branch_e2e_test.go` |
+
+## Sync Paths: CLI vs Daemon
+
+Sync-branch mode has two distinct code paths that must be tested independently:
+
+```
+bd sync (CLI)                     Daemon (background)
+     │                                  │
+     ▼                                  ▼
+Force close daemon              daemon_sync_branch.go
+(prevent stale conn)            syncBranchCommitAndPush()
+     │                                  │
+     ▼                                  ▼
+syncbranch.CommitToSyncBranch   Direct database + git
+syncbranch.PullFromSyncBranch   with forceOverwrite flag
+```
+
+### Why Two Paths?
+
+SQLite connections become stale when the daemon holds them while the CLI operates on the same database. The CLI path forces daemon closure before sync to prevent connection corruption. The daemon path operates directly since it owns the connection.
+
+### Test Isolation Strategy
+
+Each E2E test requires proper isolation to prevent interference:
+
+| Variable | Purpose |
+|----------|---------|
+| `BEADS_NO_DAEMON=1` | Prevent daemon auto-start (set in TestMain) |
+| `BEADS_DIR=<clone>/.beads` | Isolate database per clone |
+
+### E2E Test Architecture: Bare Repo Pattern
+
+E2E tests use a bare repository as a local "remote" to enable real git operations:
+
+```
+     ┌─────────────┐
+     │  bare.git   │  ← Local "remote"
+     └──────┬──────┘
+            │
+     ┌──────┴──────┐
+     ▼             ▼
+ Machine A    Machine B
+ (clone)      (clone)
+     │             │
+     │ bd-1        │ bd-2
+     │ push        │ push (wins)
+     │             │
+     │◄────────────┤ divergence
+     │ 3-way merge │
+     ▼             │
+ [bd-1, bd-2]      │
+```
+
+| Aspect | update-ref (old) | bare repo (new) |
+|--------|------------------|-----------------|
+| Push testing | Simulated | Real |
+| Fetch testing | Fake refs | Real |
+| Divergence | Cannot test | Non-fast-forward |
+
+### E2E Test Coverage Matrix
+
+| Test | Path | What It Tests |
+|------|------|---------------|
+| TestSyncBranchE2E | CLI | syncbranch.CommitToSyncBranch/Pull |
+| TestDaemonSyncBranchE2E | Daemon | syncBranchCommitAndPush/Pull |
+| TestDaemonSyncBranchForceOverwrite | Daemon | forceOverwrite delete propagation |
 
 ## Historical Context
 
