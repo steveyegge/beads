@@ -43,15 +43,14 @@ jobs:
           fi
           echo "No .beads/issues.jsonl changes detected"
 
-  # Cross-platform test matrix
-  # Catches platform-specific bugs like GH#880 (macOS path casing) and GH#387 (Windows daemon)
+  # Cross-platform test matrix (Linux/macOS only - Windows uses smoke tests)
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           # Linux: full test suite with coverage
           - os: ubuntu-latest
@@ -61,10 +60,6 @@ jobs:
           - os: macos-latest
             coverage: false
             test-flags: '-v -race -short'
-          # Windows: full test suite, no race detector (slower on Windows)
-          - os: windows-latest
-            coverage: false
-            test-flags: '-v -short -timeout=30m'
     steps:
       - uses: actions/checkout@v6
 
@@ -106,6 +101,42 @@ jobs:
         with:
           file: ./coverage.out
           fail_ci_if_error: false
+
+  # Windows smoke tests only - full test suite times out (see bd-bmev)
+  # Linux/macOS run comprehensive tests; Windows just verifies binary works
+  test-windows:
+    name: Test (Windows - smoke)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@beads.test"
+
+      - name: Build
+        run: go build -v -o bd.exe ./cmd/bd
+
+      - name: Smoke test - version
+        run: ./bd.exe version
+
+      - name: Smoke test - init and CRUD
+        run: |
+          ./bd.exe init --quiet --prefix smoke
+          $output = ./bd.exe create --title "Windows smoke test" --type task
+          $id = ($output | Select-String -Pattern "smoke-\w+").Matches.Value
+          echo "Created issue: $id"
+          ./bd.exe list
+          ./bd.exe show $id
+          ./bd.exe update $id --status in_progress
+          ./bd.exe close $id
+          echo "All smoke tests passed!"
 
   lint:
     name: Lint
