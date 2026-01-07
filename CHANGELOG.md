@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-01-06
+
 ### Added
+
+- **Dynamic shell completions** - Tab completion for issue IDs in bash/zsh/fish (#935)
+  - Optimized prefix filtering for faster completion
+  - Added completions to more commands
+
+- **Android/Termux support** - Native ARM64 binaries for Android (#887)
+
+- **Deep pre-commit framework integration** - `bd doctor` checks pre-commit hook configs (bd-28r5)
+
+- **Rig identity bead type** - New `rig` bead type for Gas Town rig tracking (gt-zmznh)
+
+- **`--filter-parent` alias** - Alternative to `--parent` in `bd list` (bd-3p4u)
+
+- **Unified auto-sync config** - Simpler daemon configuration for agent workflows (#904)
+
+- **BD_SOCKET env var** - Test isolation for daemon socket paths (#914)
+
+### Fixed
 
 - **External hook manager detection** - `bd doctor` now detects lefthook, husky, pre-commit, and other hook managers
   - Checks if external managers have `bd hooks run` integration configured
@@ -15,6 +35,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bd doctor --fix` uses `--chain` flag when external managers detected to preserve existing hooks
   - Supports YAML, TOML, and JSON config formats for lefthook
   - Detects active manager from git hooks when multiple managers present
+
+- **Init branch persistence** - `--branch` flag now correctly persists to config.yaml (#934)
+
+- **Worktree resolution** - Resolve worktrees by name from git registry (#921)
+
+- **Sync with redirect** - Use inline import for `--import-only` with .beads/redirect (bd-ysal)
+  - Handle .beads/redirect in git status checks (bd-arjb)
+  - Persist sync branch to yaml and database (GH#909)
+  - Atomic export and force-push detection (bd-3bhl, bd-4hh5)
+
+- **Doctor improvements**
+  - Recognize lowercase 's' skip-worktree flag (#931)
+  - Improve messaging for detection-only hook managers (bd-par1)
+  - Align duplicate detection with `bd duplicates` (bd-sali)
+  - Query metadata table instead of config for last_import_time (#916)
+
+- **Update prefix routing** - `bd update` now routes like `bd show` (bd-618f)
+
+- **Formula phase** - beads-release formula marked as vapor phase (gt-mjsjv)
+
+- **Lint fixes** - Address gosec, misspell, and unparam warnings
+
+- **CI improvements** - Windows smoke tests, timeouts, golangci-lint exclusions
+
+### Changed
+
+- **Test refactoring** - Replace testify with stdlib in daemon tests (#936)
+
+### Documentation
+
+- Add bun installation method to INSTALLING.md (#930)
+- Add Parade app to community tools list
 
 ## [0.44.0] - 2026-01-04
 

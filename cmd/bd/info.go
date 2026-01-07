@@ -297,6 +297,24 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.45.0",
+		Date:    "2026-01-06",
+		Changes: []string{
+			"NEW: Dynamic shell completions - Tab complete issue IDs in bash/zsh/fish (#935)",
+			"NEW: Android/Termux support - Native ARM64 binaries (#887)",
+			"NEW: Deep pre-commit integration - bd doctor checks pre-commit configs (bd-28r5)",
+			"NEW: Rig identity bead type - New 'rig' type for Gas Town tracking (gt-zmznh)",
+			"NEW: --filter-parent alias - Alternative to --parent in bd list (bd-3p4u)",
+			"NEW: Unified auto-sync config - Simpler daemon config for agents (#904)",
+			"NEW: BD_SOCKET env var - Test isolation for daemon socket paths (#914)",
+			"FIX: Init branch persistence - --branch flag persists to config.yaml (#934)",
+			"FIX: Worktree resolution - Resolve worktrees by name from git registry (#921)",
+			"FIX: Sync with redirect - Handle .beads/redirect in git status and import",
+			"FIX: Doctor improvements - skip-worktree flag, duplicate detection, metadata queries",
+			"FIX: Update prefix routing - bd update routes like bd show (bd-618f)",
+		},
+	},
+	{
 		Version: "0.44.0",
 		Date:    "2026-01-04",
 		Changes: []string{
