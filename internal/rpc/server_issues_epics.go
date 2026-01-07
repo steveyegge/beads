@@ -14,6 +14,16 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// containsLabel checks if a label exists in the list
+func containsLabel(labels []string, label string) bool {
+	for _, l := range labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
 // parseTimeRPC parses time strings in multiple formats (RFC3339, YYYY-MM-DD, etc.)
 // Matches the parseTimeFlag behavior in cmd/bd/list.go for CLI parity
 func parseTimeRPC(s string) (time.Time, error) {
@@ -346,7 +356,8 @@ func (s *Server) handleCreate(req *Request) Response {
 	}
 
 	// Auto-add role_type/rig labels for agent beads (enables filtering queries)
-	if issue.IssueType == types.TypeAgent {
+	// Check for gt:agent label to identify agent beads (Gas Town separation)
+	if containsLabel(createArgs.Labels, "gt:agent") {
 		if issue.RoleType != "" {
 			label := "role_type:" + issue.RoleType
 			if err := store.AddLabel(ctx, issue.ID, label, s.reqActor(req)); err != nil {
@@ -590,13 +601,14 @@ func (s *Server) handleUpdate(req *Request) Response {
 	}
 
 	// Auto-add role_type/rig labels for agent beads when these fields are set
-	// This enables filtering queries like: bd list --type=agent --label=role_type:witness
+	// This enables filtering queries like: bd list --label=gt:agent --label=role_type:witness
 	// Note: We remove old role_type/rig labels first to prevent accumulation
-	if issue.IssueType == types.TypeAgent {
+	// Check for gt:agent label to identify agent beads (Gas Town separation)
+	issueLabels, _ := store.GetLabels(ctx, updateArgs.ID)
+	if containsLabel(issueLabels, "gt:agent") {
 		if updateArgs.RoleType != nil && *updateArgs.RoleType != "" {
 			// Remove any existing role_type:* labels first
-			existingLabels, _ := store.GetLabels(ctx, updateArgs.ID)
-			for _, l := range existingLabels {
+			for _, l := range issueLabels {
 				if strings.HasPrefix(l, "role_type:") {
 					_ = store.RemoveLabel(ctx, updateArgs.ID, l, actor)
 				}
@@ -612,8 +624,7 @@ func (s *Server) handleUpdate(req *Request) Response {
 		}
 		if updateArgs.Rig != nil && *updateArgs.Rig != "" {
 			// Remove any existing rig:* labels first
-			existingLabels, _ := store.GetLabels(ctx, updateArgs.ID)
-			for _, l := range existingLabels {
+			for _, l := range issueLabels {
 				if strings.HasPrefix(l, "rig:") {
 					_ = store.RemoveLabel(ctx, updateArgs.ID, l, actor)
 				}

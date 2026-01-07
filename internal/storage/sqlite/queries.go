@@ -1151,15 +1151,16 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 
 	// Reactive convoy completion: check if any convoys tracking this issue should auto-close
 	// Find convoys that track this issue (convoy.issue_id tracks closed_issue.depends_on_id)
+	// Uses gt:convoy label instead of issue_type for Gas Town separation
 	convoyRows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT d.issue_id
 		FROM dependencies d
 		JOIN issues i ON d.issue_id = i.id
+		JOIN labels l ON i.id = l.issue_id AND l.label = 'gt:convoy'
 		WHERE d.depends_on_id = ?
 		  AND d.type = ?
-		  AND i.issue_type = ?
 		  AND i.status != ?
-	`, id, types.DepTracks, types.TypeConvoy, types.StatusClosed)
+	`, id, types.DepTracks, types.StatusClosed)
 	if err != nil {
 		return fmt.Errorf("failed to find tracking convoys: %w", err)
 	}

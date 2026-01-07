@@ -135,18 +135,8 @@ var (
 		Light: "", // standard text color
 		Dark:  "",
 	}
-	ColorTypeAgent = lipgloss.AdaptiveColor{
-		Light: "#59c2ff", // cyan - agent identity
-		Dark:  "#59c2ff",
-	}
-	ColorTypeRole = lipgloss.AdaptiveColor{
-		Light: "#7fd962", // green - role definition
-		Dark:  "#7fd962",
-	}
-	ColorTypeRig = lipgloss.AdaptiveColor{
-		Light: "#e6a756", // orange - rig identity (project container)
-		Dark:  "#e6a756",
-	}
+	// Note: Gas Town-specific types (agent, role, rig) have been removed.
+	// Use labels (gt:agent, gt:role, gt:rig) with custom styling if needed.
 
 	// === Issue ID Color ===
 	// IDs use standard text color - subtle, not attention-grabbing
@@ -194,9 +184,7 @@ var (
 	TypeTaskStyle    = lipgloss.NewStyle().Foreground(ColorTypeTask)
 	TypeEpicStyle    = lipgloss.NewStyle().Foreground(ColorTypeEpic)
 	TypeChoreStyle   = lipgloss.NewStyle().Foreground(ColorTypeChore)
-	TypeAgentStyle   = lipgloss.NewStyle().Foreground(ColorTypeAgent)
-	TypeRoleStyle    = lipgloss.NewStyle().Foreground(ColorTypeRole)
-	TypeRigStyle     = lipgloss.NewStyle().Foreground(ColorTypeRig)
+	// Note: Gas Town-specific type styles (agent, role, rig) have been removed.
 )
 
 // CategoryStyle for section headers - bold with accent color
@@ -331,7 +319,8 @@ func RenderPriority(priority int) string {
 }
 
 // RenderType renders an issue type with semantic styling
-// bugs get color; all other types use standard text
+// bugs and epics get color; all other types use standard text
+// Note: Gas Town-specific types (agent, role, rig) now fall through to default
 func RenderType(issueType string) string {
 	switch issueType {
 	case "bug":
@@ -344,12 +333,6 @@ func RenderType(issueType string) string {
 		return TypeEpicStyle.Render(issueType)
 	case "chore":
 		return TypeChoreStyle.Render(issueType)
-	case "agent":
-		return TypeAgentStyle.Render(issueType)
-	case "role":
-		return TypeRoleStyle.Render(issueType)
-	case "rig":
-		return TypeRigStyle.Render(issueType)
 	default:
 		return issueType
 	}

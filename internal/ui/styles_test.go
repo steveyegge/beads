@@ -92,9 +92,10 @@ func TestRenderTypeVariants(t *testing.T) {
 		{"task", TypeTaskStyle.Render("task")},
 		{"epic", TypeEpicStyle.Render("epic")},
 		{"chore", TypeChoreStyle.Render("chore")},
-		{"agent", TypeAgentStyle.Render("agent")},
-		{"role", TypeRoleStyle.Render("role")},
-		{"rig", TypeRigStyle.Render("rig")},
+		// Gas Town types (agent, role, rig) have been removed - they now fall through to default
+		{"agent", "agent"},  // Falls through to default (no styling)
+		{"role", "role"},    // Falls through to default (no styling)
+		{"rig", "rig"},      // Falls through to default (no styling)
 		{"custom", "custom"},
 	}
 	for _, tc := range cases {

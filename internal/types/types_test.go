@@ -401,12 +401,15 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeTask, true},
 		{TypeEpic, true},
 		{TypeChore, true},
-		{TypeAgent, true},
-		{TypeRole, true},
-		{TypeRig, true},
-		{TypeConvoy, true},
+		{TypeMessage, true},
+		{TypeMergeRequest, true},
+		{TypeMolecule, true},
+		{TypeGate, true},
 		{TypeEvent, true},
-		{TypeSlot, true},
+		// Gas Town types (agent, role, rig, convoy, slot) have been removed
+		// They are now identified by labels (gt:agent, etc.) instead
+		{IssueType("agent"), false},  // Now requires custom type config
+		{IssueType("convoy"), false}, // Now requires custom type config
 		{IssueType("invalid"), false},
 		{IssueType(""), false},
 	}
@@ -434,12 +437,9 @@ func TestIssueTypeRequiredSections(t *testing.T) {
 		{TypeMessage, 0, ""},
 		{TypeMolecule, 0, ""},
 		{TypeGate, 0, ""},
-		{TypeAgent, 0, ""},
-		{TypeRole, 0, ""},
-		{TypeRig, 0, ""},
-		{TypeConvoy, 0, ""},
 		{TypeEvent, 0, ""},
 		{TypeMergeRequest, 0, ""},
+		// Gas Town types (agent, role, rig, convoy, slot) have been removed
 	}
 
 	for _, tt := range tests {

@@ -25,7 +25,7 @@ A merge slot is an exclusive access primitive: only one agent can hold it at a t
 This prevents "monkey knife fights" where multiple polecats race to resolve conflicts
 and create cascading conflicts.
 
-Each rig has one merge slot bead: <prefix>-merge-slot (type=slot).
+Each rig has one merge slot bead: <prefix>-merge-slot (labeled gt:slot).
 The slot uses:
   - status=open: slot is available
   - status=in_progress: slot is held
@@ -157,15 +157,15 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 	// Create the merge slot bead
 	title := "Merge Slot"
 	description := "Exclusive access slot for serialized conflict resolution in the merge queue."
-	slotType := types.TypeSlot
 
 	if daemonClient != nil {
 		createArgs := &rpc.CreateArgs{
 			ID:          slotID,
 			Title:       title,
 			Description: description,
-			IssueType:   string(slotType),
-			Priority:    0, // P0 - system infrastructure
+			IssueType:   string(types.TypeTask), // Use task type; gt:slot label marks it as slot
+			Priority:    0,                      // P0 - system infrastructure
+			Labels:      []string{"gt:slot"},   // Gas Town slot label
 		}
 		resp, err := daemonClient.Create(createArgs)
 		if err != nil {
@@ -179,12 +179,17 @@ func runMergeSlotCreate(cmd *cobra.Command, args []string) error {
 			ID:          slotID,
 			Title:       title,
 			Description: description,
-			IssueType:   slotType,
+			IssueType:   types.TypeTask, // Use task type; gt:slot label marks it as slot
 			Status:      types.StatusOpen,
 			Priority:    0,
 		}
 		if err := store.CreateIssue(ctx, issue, actor); err != nil {
 			return fmt.Errorf("failed to create merge slot: %w", err)
+		}
+		// Add gt:slot label to mark as slot bead
+		if err := store.AddLabel(ctx, slotID, "gt:slot", actor); err != nil {
+			// Non-fatal: log warning but don't fail creation
+			fmt.Fprintf(os.Stderr, "warning: failed to add gt:slot label: %v\n", err)
 		}
 		markDirtyAndScheduleFlush()
 	}

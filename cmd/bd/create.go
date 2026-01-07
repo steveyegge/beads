@@ -474,7 +474,15 @@ var createCmd = &cobra.Command{
 		}
 
 		// Auto-add role_type/rig labels for agent beads (enables filtering queries)
-		if issue.IssueType == types.TypeAgent {
+		// Check for gt:agent label to identify agent beads (Gas Town separation)
+		hasAgentLabel := false
+		for _, l := range labels {
+			if l == "gt:agent" {
+				hasAgentLabel = true
+				break
+			}
+		}
+		if hasAgentLabel {
 			if issue.RoleType != "" {
 				agentLabel := "role_type:" + issue.RoleType
 				if err := store.AddLabel(ctx, issue.ID, agentLabel, actor); err != nil {

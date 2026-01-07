@@ -126,10 +126,10 @@ func TestParseIssueType(t *testing.T) {
 		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
 		{"molecule type", "molecule", types.TypeMolecule, false, ""},
 		{"gate type", "gate", types.TypeGate, false, ""},
-		{"agent type", "agent", types.TypeAgent, false, ""},
-		{"role type", "role", types.TypeRole, false, ""},
-		{"rig type", "rig", types.TypeRig, false, ""},
+		{"event type", "event", types.TypeEvent, false, ""},
 		{"message type", "message", types.TypeMessage, false, ""},
+		// Gas Town types (agent, role, rig, convoy, slot) have been removed
+		// They now require custom type configuration,
 
 		// Case sensitivity (function is case-sensitive)
 		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},

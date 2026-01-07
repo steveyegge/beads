@@ -1475,16 +1475,19 @@ func TestConvoyReactiveCompletion(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a convoy
+	// Create a convoy (using task type with gt:convoy label)
 	convoy := &types.Issue{
 		Title:     "Test Convoy",
 		Status:    types.StatusOpen,
 		Priority:  2,
-		IssueType: types.TypeConvoy,
+		IssueType: types.TypeTask, // Use task type; gt:convoy label marks it as convoy
 	}
 	err := store.CreateIssue(ctx, convoy, "test-user")
 	if err != nil {
 		t.Fatalf("CreateIssue convoy failed: %v", err)
+	}
+	if err := store.AddLabel(ctx, convoy.ID, "gt:convoy", "test-user"); err != nil {
+		t.Fatalf("Failed to add gt:convoy label: %v", err)
 	}
 
 	// Create two issues to track
