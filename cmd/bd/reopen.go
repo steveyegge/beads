@@ -138,5 +138,6 @@ This is more explicit than 'bd update --status open' and emits a Reopened event.
 }
 func init() {
 	reopenCmd.Flags().StringP("reason", "r", "", "Reason for reopening")
+	reopenCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(reopenCmd)
 }

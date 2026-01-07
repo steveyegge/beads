@@ -205,5 +205,6 @@ func init() {
 	editCmd.Flags().Bool("design", false, "Edit the design notes")
 	editCmd.Flags().Bool("notes", false, "Edit the notes")
 	editCmd.Flags().Bool("acceptance", false, "Edit the acceptance criteria")
+	editCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(editCmd)
 }
