@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-01-06
+
+### Added
+
+- **Custom type support** - Configure custom issue types in beads config.yaml (bd-649s)
+  - Define project-specific types beyond the built-in set
+  - Types persist across sync and export
+
+- **Gas Town types extraction** - Core Gas Town types moved into beads package (bd-i54l)
+  - Enables beads to understand rig identities and agent workflows
+  - Foundation for deeper Gas Town integration
+
+### Fixed
+
+- **Gate workflow discovery** - Handle workflow name hints in `gh:run` gate discovery (bd-m8ew)
+  - Better matching of GitHub Actions workflow runs
+  - Consolidated numeric ID handling
+
 ## [0.45.0] - 2026-01-06
 
 ### Added

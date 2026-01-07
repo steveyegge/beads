@@ -297,6 +297,15 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.46.0",
+		Date:    "2026-01-06",
+		Changes: []string{
+			"NEW: Custom type support - Configure custom issue types in config.yaml (bd-649s)",
+			"NEW: Gas Town types extraction - Core Gas Town types in beads package (bd-i54l)",
+			"FIX: Gate workflow discovery - Better matching of GitHub Actions runs (bd-m8ew)",
+		},
+	},
+	{
 		Version: "0.45.0",
 		Date:    "2026-01-06",
 		Changes: []string{
