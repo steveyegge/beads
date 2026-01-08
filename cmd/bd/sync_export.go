@@ -140,9 +140,9 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 	}
 
 	// Safety check: prevent exporting empty database over non-empty JSONL
-	// Note: The main bd-53c protection is the reverse ZFC check earlier in sync.go
-	// which runs BEFORE export. Here we only block the most catastrophic case (empty DB)
-	// to allow legitimate deletions.
+	// This blocks the catastrophic case where an empty/corrupted DB would overwrite
+	// a valid JSONL. For staleness handling, use --pull-first which provides
+	// structural protection via 3-way merge.
 	if len(issues) == 0 {
 		existingCount, countErr := countIssuesInJSONL(jsonlPath)
 		if countErr != nil {
