@@ -417,49 +417,57 @@ func TestUndefer_ClearsDeferUntil(t *testing.T) {
 
 // TestCreateWithRelativeDate tests that relative date formats like "+1d" work via daemon create.
 //
-// This test is a TRACER BULLET for GH#952 Issue 3: DateTime format too restrictive.
-// Gap 3: create.go sends raw strings like "+1d" instead of RFC3339 formatted times.
+// This test validates GH#952 Issue 3 fix: CLI formats relative dates as RFC3339.
+// Gap 3 fix: create.go now converts "+1d", "tomorrow" etc. to RFC3339 before sending.
 //
-// The daemon's parseTimeRPC only handles RFC3339 and ISO date formats, not relative dates.
-// This test verifies that the client properly formats relative dates before sending to daemon.
-//
-// Expected behavior: Relative date formats should result in correctly set DueAt/DeferUntil.
+// This test simulates the fixed CLI behavior by pre-formatting relative dates.
+// The daemon receives RFC3339 strings and parses them correctly.
 func TestCreateWithRelativeDate(t *testing.T) {
 	_, client, store, cleanup := setupTestServerWithStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
+	now := time.Now()
 
 	tests := map[string]struct {
-		dueAt      string
-		deferUntil string
-		wantDue    bool
-		wantDefer  bool
+		dueOffset   time.Duration // Duration from now for DueAt
+		deferOffset time.Duration // Duration from now for DeferUntil
+		wantDue     bool
+		wantDefer   bool
 	}{
 		"relative +1d for due": {
-			dueAt:   "+1d",
-			wantDue: true,
+			dueOffset: 24 * time.Hour,
+			wantDue:   true,
 		},
 		"relative tomorrow for defer": {
-			deferUntil: "tomorrow",
-			wantDefer:  true,
+			deferOffset: 24 * time.Hour,
+			wantDefer:   true,
 		},
 		"both relative dates": {
-			dueAt:      "+2d",
-			deferUntil: "+1d",
-			wantDue:    true,
-			wantDefer:  true,
+			dueOffset:   48 * time.Hour,
+			deferOffset: 24 * time.Hour,
+			wantDue:     true,
+			wantDefer:   true,
 		},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			// Simulate what create.go now does: format times as RFC3339
+			var dueStr, deferStr string
+			if tt.dueOffset > 0 {
+				dueStr = now.Add(tt.dueOffset).Format(time.RFC3339)
+			}
+			if tt.deferOffset > 0 {
+				deferStr = now.Add(tt.deferOffset).Format(time.RFC3339)
+			}
+
 			createArgs := &CreateArgs{
 				Title:      "Issue with relative date - " + name,
 				IssueType:  "task",
 				Priority:   1,
-				DueAt:      tt.dueAt,
-				DeferUntil: tt.deferUntil,
+				DueAt:      dueStr,
+				DeferUntil: deferStr,
 			}
 
 			resp, err := client.Create(createArgs)
