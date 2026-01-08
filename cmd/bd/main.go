@@ -310,6 +310,7 @@ var rootCmd = &cobra.Command{
 			"prime",
 			"quickstart",
 			"repair",
+			"resolve-conflicts",
 			"setup",
 			"version",
 			"zsh",
