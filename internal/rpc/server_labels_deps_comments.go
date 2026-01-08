@@ -80,12 +80,20 @@ func (s *Server) handleDepAdd(req *Request) Response {
 	title, assignee := s.lookupIssueMeta(ctx, depArgs.FromID)
 	s.emitMutation(MutationUpdate, depArgs.FromID, title, assignee)
 
-	return Response{Success: true}
+	result := map[string]interface{}{
+		"status":        "added",
+		"issue_id":      depArgs.FromID,
+		"depends_on_id": depArgs.ToID,
+		"type":          depArgs.DepType,
+	}
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
 }
 
 // Generic handler for simple store operations with standard error handling
 func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc string,
-	opFunc func(context.Context, storage.Storage, string) error, issueID string) Response {
+	opFunc func(context.Context, storage.Storage, string) error, issueID string,
+	responseData func() map[string]interface{}) Response {
 	if err := json.Unmarshal(req.Args, argsPtr); err != nil {
 		return Response{
 			Success: false,
@@ -113,28 +121,42 @@ func (s *Server) handleSimpleStoreOp(req *Request, argsPtr interface{}, argDesc 
 	title, assignee := s.lookupIssueMeta(ctx, issueID)
 	s.emitMutation(MutationUpdate, issueID, title, assignee)
 
+	if responseData != nil {
+		data, _ := json.Marshal(responseData())
+		return Response{Success: true, Data: data}
+	}
 	return Response{Success: true}
 }
 
 func (s *Server) handleDepRemove(req *Request) Response {
 	var depArgs DepRemoveArgs
-	return s.handleSimpleStoreOp(req, &depArgs, "dep remove", func(ctx context.Context, store storage.Storage, actor string) error {
-		return store.RemoveDependency(ctx, depArgs.FromID, depArgs.ToID, actor)
-	}, depArgs.FromID)
+	return s.handleSimpleStoreOp(req, &depArgs, "dep remove",
+		func(ctx context.Context, store storage.Storage, actor string) error {
+			return store.RemoveDependency(ctx, depArgs.FromID, depArgs.ToID, actor)
+		},
+		depArgs.FromID,
+		func() map[string]interface{} {
+			return map[string]interface{}{
+				"status":        "removed",
+				"issue_id":      depArgs.FromID,
+				"depends_on_id": depArgs.ToID,
+			}
+		},
+	)
 }
 
 func (s *Server) handleLabelAdd(req *Request) Response {
 	var labelArgs LabelAddArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label add", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.AddLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	}, labelArgs.ID)
+	}, labelArgs.ID, nil)
 }
 
 func (s *Server) handleLabelRemove(req *Request) Response {
 	var labelArgs LabelRemoveArgs
 	return s.handleSimpleStoreOp(req, &labelArgs, "label remove", func(ctx context.Context, store storage.Storage, actor string) error {
 		return store.RemoveLabel(ctx, labelArgs.ID, labelArgs.Label, actor)
-	}, labelArgs.ID)
+	}, labelArgs.ID, nil)
 }
 
 func (s *Server) handleCommentList(req *Request) Response {
