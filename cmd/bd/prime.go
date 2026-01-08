@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/steveyegge/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
@@ -179,6 +181,11 @@ var isEphemeralBranch = func() bool {
 	return err != nil
 }
 
+// primeHasGitRemote detects if any git remote is configured (stubbable for tests)
+var primeHasGitRemote = func() bool {
+	return syncbranch.HasGitRemote(context.Background())
+}
+
 // getRedirectNotice returns a notice string if beads is redirected
 func getRedirectNotice(verbose bool) string {
 	redirectInfo := beads.GetRedirectInfo()
@@ -208,10 +215,11 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
 	autoSync := isDaemonAutoSyncing()
+	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
-	if stealthMode {
-		// Stealth mode: only flush to JSONL as there's nothing to commit.
+	if stealthMode || localOnly {
+		// Stealth mode or local-only: only flush to JSONL, no git operations
 		closeProtocol = "Before saying \"done\": bd sync --flush-only"
 	} else if autoSync && !ephemeral && !noPush {
 		// Daemon is auto-syncing - no bd sync needed
@@ -248,6 +256,7 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
 	autoSync := isDaemonAutoSyncing()
+	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
 	var closeNote string
@@ -255,8 +264,8 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 	var completingWorkflow string
 	var gitWorkflowRule string
 
-	if stealthMode {
-		// Stealth mode: only flush to JSONL, no git operations
+	if stealthMode || localOnly {
+		// Stealth mode or local-only: only flush to JSONL, no git operations
 		closeProtocol = `[ ] bd sync --flush-only    (export beads to JSONL only)`
 		syncSection = `### Sync & Collaboration
 - ` + "`bd sync --flush-only`" + ` - Export to JSONL`
@@ -265,7 +274,13 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 bd close <id1> <id2> ...    # Close all completed issues at once
 bd sync --flush-only        # Export to JSONL
 ` + "```"
-		gitWorkflowRule = "Git workflow: stealth mode (no git ops)"
+		// Only show local-only note if not in stealth mode (stealth is explicit user choice)
+		if localOnly && !stealthMode {
+			closeNote = "**Note:** No git remote configured. Issues are saved locally only."
+			gitWorkflowRule = "Git workflow: local-only (no git remote)"
+		} else {
+			gitWorkflowRule = "Git workflow: stealth mode (no git ops)"
+		}
 	} else if autoSync && !ephemeral && !noPush {
 		// Daemon is auto-syncing - simplified protocol (no bd sync needed)
 		closeProtocol = `[ ] 1. git status              (check what changed)
