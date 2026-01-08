@@ -42,7 +42,10 @@ func TestUpdatesFromArgs_DueAt(t *testing.T) {
 				DueAt: &tt.input,
 			}
 
-			updates := updatesFromArgs(args)
+			updates, err := updatesFromArgs(args)
+			if err != nil {
+				t.Fatalf("updatesFromArgs returned error: %v", err)
+			}
 
 			val, exists := updates[tt.wantKey]
 			if !exists {
@@ -91,7 +94,10 @@ func TestUpdatesFromArgs_DeferUntil(t *testing.T) {
 				DeferUntil: &tt.input,
 			}
 
-			updates := updatesFromArgs(args)
+			updates, err := updatesFromArgs(args)
+			if err != nil {
+				t.Fatalf("updatesFromArgs returned error: %v", err)
+			}
 
 			val, exists := updates[tt.wantKey]
 			if !exists {
@@ -145,7 +151,10 @@ func TestUpdatesFromArgs_ClearFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			args := tt.setupArgs()
 
-			updates := updatesFromArgs(args)
+			updates, err := updatesFromArgs(args)
+			if err != nil {
+				t.Fatalf("updatesFromArgs returned error: %v", err)
+			}
 
 			val, exists := updates[tt.wantKey]
 			if !exists {
