@@ -524,3 +524,176 @@ func mapKeys(m map[string]interface{}) []string {
 	}
 	return keys
 }
+
+// TestDualPathParity validates that daemon mode produces identical results to direct mode.
+// This test prevents regressions like GH#952 where new fields work in direct mode but
+// fail in daemon mode due to missing extraction in updatesFromArgs() or handleCreate().
+//
+// ADD NEW FIELDS HERE when extending the Issue type to prevent future gaps.
+func TestDualPathParity(t *testing.T) {
+	_, client, store, cleanup := setupTestServerWithStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	now := time.Now()
+	dueAt := now.Add(24 * time.Hour)
+	deferUntil := now.Add(48 * time.Hour)
+
+	t.Run("Create_DueAt", func(t *testing.T) {
+		// Direct mode: set field directly on Issue struct
+		directIssue := &types.Issue{
+			Title:     "Direct DueAt",
+			IssueType: "task",
+			Priority:  1,
+			Status:    types.StatusOpen,
+			DueAt:     &dueAt,
+			CreatedAt: now,
+		}
+		if err := store.CreateIssue(ctx, directIssue, "bd"); err != nil {
+			t.Fatalf("Direct create failed: %v", err)
+		}
+
+		// Daemon mode: send via RPC
+		resp, err := client.Create(&CreateArgs{
+			Title:     "Daemon DueAt",
+			IssueType: "task",
+			Priority:  1,
+			DueAt:     dueAt.Format(time.RFC3339),
+		})
+		if err != nil || !resp.Success {
+			t.Fatalf("Daemon create failed: %v / %s", err, resp.Error)
+		}
+		var daemonIssue types.Issue
+		if err := json.Unmarshal(resp.Data, &daemonIssue); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		// Compare persisted values
+		directRetrieved, _ := store.GetIssue(ctx, directIssue.ID)
+		daemonRetrieved, _ := store.GetIssue(ctx, daemonIssue.ID)
+
+		if !compareTimePtr(t, "DueAt", directRetrieved.DueAt, daemonRetrieved.DueAt) {
+			t.Error("PARITY FAILURE: DueAt differs between direct and daemon mode")
+		}
+	})
+
+	t.Run("Create_DeferUntil", func(t *testing.T) {
+		// Direct mode
+		directIssue := &types.Issue{
+			Title:      "Direct DeferUntil",
+			IssueType:  "task",
+			Priority:   1,
+			Status:     types.StatusOpen,
+			DeferUntil: &deferUntil,
+			CreatedAt:  now,
+		}
+		if err := store.CreateIssue(ctx, directIssue, "bd"); err != nil {
+			t.Fatalf("Direct create failed: %v", err)
+		}
+
+		// Daemon mode
+		resp, err := client.Create(&CreateArgs{
+			Title:      "Daemon DeferUntil",
+			IssueType:  "task",
+			Priority:   1,
+			DeferUntil: deferUntil.Format(time.RFC3339),
+		})
+		if err != nil || !resp.Success {
+			t.Fatalf("Daemon create failed: %v / %s", err, resp.Error)
+		}
+		var daemonIssue types.Issue
+		if err := json.Unmarshal(resp.Data, &daemonIssue); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		// Compare persisted values
+		directRetrieved, _ := store.GetIssue(ctx, directIssue.ID)
+		daemonRetrieved, _ := store.GetIssue(ctx, daemonIssue.ID)
+
+		if !compareTimePtr(t, "DeferUntil", directRetrieved.DeferUntil, daemonRetrieved.DeferUntil) {
+			t.Error("PARITY FAILURE: DeferUntil differs between direct and daemon mode")
+		}
+	})
+
+	t.Run("Update_DueAt", func(t *testing.T) {
+		// Create base issue
+		issue := &types.Issue{
+			Title:     "Update DueAt Test",
+			IssueType: "task",
+			Priority:  1,
+			Status:    types.StatusOpen,
+			CreatedAt: now,
+		}
+		if err := store.CreateIssue(ctx, issue, "bd"); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		// Update via daemon
+		dueStr := dueAt.Format(time.RFC3339)
+		resp, err := client.Update(&UpdateArgs{
+			ID:    issue.ID,
+			DueAt: &dueStr,
+		})
+		if err != nil || !resp.Success {
+			t.Fatalf("Daemon update failed: %v / %s", err, resp.Error)
+		}
+
+		// Verify persisted
+		retrieved, _ := store.GetIssue(ctx, issue.ID)
+		if retrieved.DueAt == nil {
+			t.Error("PARITY FAILURE: DueAt not set after daemon update")
+		} else if retrieved.DueAt.Sub(dueAt).Abs() > time.Second {
+			t.Errorf("PARITY FAILURE: DueAt mismatch: got %v, want %v", *retrieved.DueAt, dueAt)
+		}
+	})
+
+	t.Run("Update_DeferUntil", func(t *testing.T) {
+		// Create base issue
+		issue := &types.Issue{
+			Title:     "Update DeferUntil Test",
+			IssueType: "task",
+			Priority:  1,
+			Status:    types.StatusOpen,
+			CreatedAt: now,
+		}
+		if err := store.CreateIssue(ctx, issue, "bd"); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		// Update via daemon
+		deferStr := deferUntil.Format(time.RFC3339)
+		resp, err := client.Update(&UpdateArgs{
+			ID:         issue.ID,
+			DeferUntil: &deferStr,
+		})
+		if err != nil || !resp.Success {
+			t.Fatalf("Daemon update failed: %v / %s", err, resp.Error)
+		}
+
+		// Verify persisted
+		retrieved, _ := store.GetIssue(ctx, issue.ID)
+		if retrieved.DeferUntil == nil {
+			t.Error("PARITY FAILURE: DeferUntil not set after daemon update")
+		} else if retrieved.DeferUntil.Sub(deferUntil).Abs() > time.Second {
+			t.Errorf("PARITY FAILURE: DeferUntil mismatch: got %v, want %v", *retrieved.DeferUntil, deferUntil)
+		}
+	})
+
+	// ADD NEW FIELD PARITY TESTS HERE when extending Issue type
+}
+
+// compareTimePtr compares two time pointers with 1-second tolerance
+func compareTimePtr(t *testing.T, name string, direct, daemon *time.Time) bool {
+	if (direct == nil) != (daemon == nil) {
+		t.Errorf("%s nil mismatch: direct=%v, daemon=%v", name, direct, daemon)
+		return false
+	}
+	if direct != nil && daemon != nil {
+		// Allow 1-second tolerance for parsing/timezone differences
+		if direct.Sub(*daemon).Abs() > time.Second {
+			t.Errorf("%s value mismatch: direct=%v, daemon=%v", name, *direct, *daemon)
+			return false
+		}
+	}
+	return true
+}
