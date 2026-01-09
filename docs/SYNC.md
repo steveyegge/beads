@@ -174,7 +174,7 @@ For maximum reliability, ensure machine clocks are synchronized via NTP.
 | File | Purpose |
 |------|---------|
 | `.beads/issues.jsonl` | Current state (git-tracked) |
-| `.beads/sync_base.jsonl` | Last-synced state (git-tracked) |
+| `.beads/sync_base.jsonl` | Last-synced state (not tracked, per-machine) |
 | `.beads/.sync.lock` | Concurrency guard (not tracked) |
 | `.beads/beads.db` | SQLite database (not tracked) |
 
