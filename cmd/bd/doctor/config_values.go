@@ -14,6 +14,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/viper"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 )
 
@@ -248,14 +249,14 @@ func checkYAMLConfigValues(repoPath string) []string {
 	}
 
 	// Validate repos.additional (should be directory paths if set)
-	if v.IsSet("repos.additional") {
-		additional := v.GetStringSlice("repos.additional")
-		for _, path := range additional {
-			if path != "" {
-				expandedPath := expandPath(path)
+	// Use GetMultiRepoConfig to properly handle both string and structured formats
+	if multiRepo := config.GetMultiRepoConfig(); multiRepo != nil {
+		for _, repo := range multiRepo.Additional {
+			if repo.Path != "" {
+				expandedPath := expandPath(repo.Path)
 				if info, err := os.Stat(expandedPath); err == nil {
 					if !info.IsDir() {
-						issues = append(issues, fmt.Sprintf("repos.additional: %q is not a directory", path))
+						issues = append(issues, fmt.Sprintf("repos.additional: %q is not a directory", repo.Path))
 					}
 				}
 				// Note: path not existing is OK - might be created later
