@@ -105,6 +105,16 @@ directory:
     packages/agency: agency
     packages/io: io
 
+# Multi-repo hydration configuration
+# Aggregates issues from multiple repos into unified database
+# See: docs/MULTI_REPO_HYDRATION.md
+repos:
+  primary: "."
+  additional:
+    - "specs/"                    # Simple format (prefix inferred: "specs")
+    - path: "oss/"                # Structured format with custom types
+      custom_types: [bd, pm, llm]
+
 # Cross-project dependency resolution (bd-h807)
 # Maps project names to paths for resolving external: blocked_by references
 # Paths can be relative (from cwd) or absolute
@@ -112,6 +122,30 @@ external_projects:
   beads: ../beads
   gastown: /path/to/gastown
 ```
+
+### Multi-Repo Configuration
+
+The `repos.additional` field supports two formats for specifying additional repositories:
+
+**Simple format** (path only, prefix inferred from basename):
+```yaml
+repos:
+  additional:
+    - "~/projects/planning"    # prefix: "planning"
+    - "oss/"                   # prefix: "oss"
+```
+
+**Structured format** (explicit prefix and/or custom types):
+```yaml
+repos:
+  additional:
+    - path: "~/projects/specs"
+      prefix: "spec"           # Override inferred prefix
+    - path: "oss/"
+      custom_types: [bd, pm, llm]  # Types for issues from this repo
+```
+
+**Custom types resolution**: During hydration, issues are validated against the union of parent custom types and the source repo's custom types. This allows child repos to define their own issue types without requiring the parent to configure them manually.
 
 ### Why Two Systems?
 

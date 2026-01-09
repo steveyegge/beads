@@ -24,19 +24,45 @@ This table tracks the last known modification time of each repository's JSONL fi
 
 ### 2. Configuration
 
-Multi-repo mode is configured via `internal/config/config.go`:
+Multi-repo mode is configured via `.beads/config.yaml`:
 
 ```yaml
 # .beads/config.yaml
 repos:
-  primary: /path/to/primary/repo  # Canonical source (optional)
+  primary: "."                     # Canonical source (optional)
   additional:                      # Additional repos to hydrate from
-    - ~/projects/repo1
-    - ~/projects/repo2
+    - "~/projects/repo1"           # Simple format (prefix inferred)
+    - path: "oss/"                 # Structured format
+      custom_types: [bd, pm, llm]  # Types used by this repo
 ```
 
 - **Primary repo** (`.`): Issues from this repo are marked with `source_repo = "."`
 - **Additional repos**: Issues marked with their relative path as `source_repo`
+
+### 2a. Custom Types Resolution
+
+When hydrating issues from additional repos, custom types are resolved per-issue using a prefix map:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. Build prefixMap from config at hydration start:              │
+│    {"oss": {Path:"oss/", CustomTypes:[bd,pm,llm]}}              │
+│                                                                 │
+│ 2. For each issue (e.g., "oss-grj"):                            │
+│    prefix = extractPrefix("oss-grj") → "oss"                    │
+│    repo = prefixMap["oss"]                                      │
+│                                                                 │
+│ 3. Resolve types:                                               │
+│    If repo.CustomTypes set → use them                           │
+│    Else → read from child's SQLite config                       │
+│                                                                 │
+│ 4. Validate against union:                                      │
+│    allTypes = union(parentTypes, repoTypes)                     │
+│    issue.Validate(allTypes) → ✅ or ❌                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+This eliminates the need to manually sync the parent's `types.custom` when child repos add new issue types.
 
 ### 3. Implementation Files
 
