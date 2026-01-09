@@ -233,8 +233,8 @@ func getRepoKeyForPath(jsonlPath string) string {
 
 		// Try to match against additional repos
 		for _, additional := range multiRepo.Additional {
-			if repoPath == additional {
-				return additional
+			if repoPath == additional.Path {
+				return additional.Path
 			}
 		}
 	}

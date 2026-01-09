@@ -86,7 +86,8 @@ func (s *SQLiteStorage) ExportToMultiRepo(ctx context.Context) (map[string]int, 
 	}
 
 	// Export additional repos
-	for _, repoPath := range multiRepo.Additional {
+	for _, repo := range multiRepo.Additional {
+		repoPath := repo.Path
 		issues := issuesByRepo[repoPath]
 		if len(issues) == 0 {
 			// No issues for this repo - write empty JSONL to keep in sync

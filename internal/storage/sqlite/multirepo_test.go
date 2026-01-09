@@ -824,11 +824,6 @@ func TestExportToMultiRepo(t *testing.T) {
 		store, cleanup := setupTestDB(t)
 		defer cleanup()
 
-		// Initialize config
-		if err := config.Initialize(); err != nil {
-			t.Fatalf("failed to initialize config: %v", err)
-		}
-
 		// Create temporary repos
 		primaryDir := t.TempDir()
 		additionalDir := t.TempDir()
@@ -843,9 +838,29 @@ func TestExportToMultiRepo(t *testing.T) {
 			t.Fatalf("failed to create additional .beads dir: %v", err)
 		}
 
-		// Set multi-repo config
-		config.Set("repos.primary", primaryDir)
-		config.Set("repos.additional", []string{additionalDir})
+		// Create config.yaml with multi-repo config
+		// (config.Set doesn't work for repos.additional because GetMultiRepoConfig uses YAML parsing)
+		configContent := fmt.Sprintf(`repos:
+  primary: %q
+  additional:
+    - %q
+`, primaryDir, additionalDir)
+		configPath := filepath.Join(primaryBeadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+			t.Fatalf("failed to write config file: %v", err)
+		}
+
+		// Change to primary dir so config is found
+		originalDir, _ := os.Getwd()
+		if err := os.Chdir(primaryDir); err != nil {
+			t.Fatalf("failed to change to primary dir: %v", err)
+		}
+		defer os.Chdir(originalDir)
+
+		// Re-initialize config to pick up the file
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
 
 		ctx := context.Background()
 
@@ -1172,10 +1187,6 @@ func TestCustomTypesResolution(t *testing.T) {
 		store, cleanup := setupTestDB(t)
 		defer cleanup()
 
-		if err := config.Initialize(); err != nil {
-			t.Fatalf("failed to initialize config: %v", err)
-		}
-
 		tmpDir := t.TempDir()
 		childDir := filepath.Join(tmpDir, "child")
 		beadsDir := filepath.Join(tmpDir, ".beads")
@@ -1199,21 +1210,24 @@ func TestCustomTypesResolution(t *testing.T) {
 			t.Fatalf("failed to write config: %v", err)
 		}
 
-		// Also set viper config for export (it uses GetMultiRepoConfig)
-		config.Set("repos.primary", tmpDir)
-		config.Set("repos.additional", []string{childDir})
+		// Change to tmpDir BEFORE initializing config so it finds the config file
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		// Initialize config AFTER chdir so it picks up the config file
+		// (GetMultiRepoConfig uses YAML parsing, not viper.Set)
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
 
 		// Set parent custom types so CreateIssue validation passes
 		// (In real usage, the issue would already exist from hydration)
 		ctx := context.Background()
 		if err := store.SetConfig(ctx, CustomTypeConfigKey, "pm"); err != nil {
 			t.Fatalf("failed to set custom types: %v", err)
-		}
-
-		oldWd, _ := os.Getwd()
-		defer func() { _ = os.Chdir(oldWd) }()
-		if err := os.Chdir(tmpDir); err != nil {
-			t.Fatalf("failed to chdir: %v", err)
 		}
 
 		// Step 1: Create issue with custom type directly in DB

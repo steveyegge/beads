@@ -124,12 +124,10 @@ func (s *SQLiteStorage) HydrateFromMultiRepo(ctx context.Context) (map[string]in
 		if multiRepo == nil {
 			return nil, nil
 		}
-		// Convert to ReposConfig format
+		// MultiRepoConfig now uses []AdditionalRepo directly
 		reposConfig = &config.ReposConfig{
-			Primary: multiRepo.Primary,
-		}
-		for _, path := range multiRepo.Additional {
-			reposConfig.Additional = append(reposConfig.Additional, config.AdditionalRepo{Path: path})
+			Primary:    multiRepo.Primary,
+			Additional: multiRepo.Additional,
 		}
 	}
 

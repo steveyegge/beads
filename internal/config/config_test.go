@@ -339,9 +339,10 @@ func TestGetMultiRepoConfig(t *testing.T) {
 		t.Errorf("GetMultiRepoConfig() with no repos.primary = %+v, want nil", config)
 	}
 
-	// Test when repos.primary is set (multi-repo mode)
+	// Test when repos.primary is set via viper (multi-repo mode)
+	// Note: Since GetMultiRepoConfig now uses YAML parsing for Additional,
+	// we only test that Primary is correctly read from viper when no config file exists.
 	Set("repos.primary", "/path/to/primary")
-	Set("repos.additional", []string{"/path/to/repo1", "/path/to/repo2"})
 
 	config = GetMultiRepoConfig()
 	if config == nil {
@@ -352,8 +353,10 @@ func TestGetMultiRepoConfig(t *testing.T) {
 		t.Errorf("GetMultiRepoConfig().Primary = %q, want \"/path/to/primary\"", config.Primary)
 	}
 
-	if len(config.Additional) != 2 || config.Additional[0] != "/path/to/repo1" || config.Additional[1] != "/path/to/repo2" {
-		t.Errorf("GetMultiRepoConfig().Additional = %v, want [/path/to/repo1 /path/to/repo2]", config.Additional)
+	// When no config file is used (viper.Set only), Additional will be empty
+	// because GetMultiRepoConfig uses YAML parsing for structured repos.additional
+	if config.Additional != nil && len(config.Additional) != 0 {
+		t.Errorf("GetMultiRepoConfig().Additional = %v, want nil or empty (no config file)", config.Additional)
 	}
 }
 
@@ -401,7 +404,15 @@ repos:
 	}
 
 	if len(config.Additional) != 3 {
-		t.Errorf("GetMultiRepoConfig().Additional has %d items, want 3", len(config.Additional))
+		t.Fatalf("GetMultiRepoConfig().Additional has %d items, want 3", len(config.Additional))
+	}
+
+	// Verify paths are correctly parsed (Additional is now []AdditionalRepo)
+	expectedPaths := []string{"/extra/repo1", "/extra/repo2", "/extra/repo3"}
+	for i, expected := range expectedPaths {
+		if config.Additional[i].Path != expected {
+			t.Errorf("GetMultiRepoConfig().Additional[%d].Path = %q, want %q", i, config.Additional[i].Path, expected)
+		}
 	}
 }
 

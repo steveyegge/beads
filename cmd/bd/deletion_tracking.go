@@ -185,8 +185,8 @@ func getMultiRepoJSONLPaths() []string {
 	paths = append(paths, primaryJSONL)
 
 	// Additional repos' JSONLs
-	for _, repoPath := range multiRepo.Additional {
-		jsonlPath := filepath.Join(repoPath, ".beads", "issues.jsonl")
+	for _, repo := range multiRepo.Additional {
+		jsonlPath := filepath.Join(repo.Path, ".beads", "issues.jsonl")
 		paths = append(paths, jsonlPath)
 	}
 

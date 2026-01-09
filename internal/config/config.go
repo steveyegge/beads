@@ -401,12 +401,16 @@ func GetDirectoryLabels() []string {
 
 // MultiRepoConfig contains configuration for multi-repo support
 type MultiRepoConfig struct {
-	Primary    string   // Primary repo path (where canonical issues live)
-	Additional []string // Additional repos to hydrate from
+	Primary    string           // Primary repo path (where canonical issues live)
+	Additional []AdditionalRepo // Additional repos to hydrate from (supports structured format)
 }
 
 // GetMultiRepoConfig retrieves multi-repo configuration
 // Returns nil if multi-repo is not configured (single-repo mode)
+//
+// This function uses YAML parsing (via GetReposFromYAML) to properly handle
+// both string ("oss/") and object ({path: "oss/", custom_types: [bd]}) formats.
+// Viper's GetStringSlice silently drops object entries, so we must use YAML parsing.
 func GetMultiRepoConfig() *MultiRepoConfig {
 	if v == nil {
 		return nil
@@ -418,9 +422,29 @@ func GetMultiRepoConfig() *MultiRepoConfig {
 		return nil // Single-repo mode
 	}
 
+	// Use YAML parsing to properly handle structured repos.additional entries
+	// This is necessary because viper's GetStringSlice silently drops object entries
+	configPath := v.ConfigFileUsed()
+	if configPath == "" {
+		// No config file, use viper's value (likely empty or from env vars)
+		return &MultiRepoConfig{
+			Primary:    primary,
+			Additional: nil,
+		}
+	}
+
+	repos, err := GetReposFromYAML(configPath)
+	if err != nil {
+		// Fallback to empty additional on error
+		return &MultiRepoConfig{
+			Primary:    primary,
+			Additional: nil,
+		}
+	}
+
 	return &MultiRepoConfig{
 		Primary:    primary,
-		Additional: v.GetStringSlice("repos.additional"),
+		Additional: repos.Additional,
 	}
 }
 

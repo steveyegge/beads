@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -412,6 +413,29 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 		t.Fatalf("Failed to create additional .beads dir: %v", err)
 	}
 
+	// Create config.yaml (GetMultiRepoConfig uses YAML parsing)
+	configContent := fmt.Sprintf(`repos:
+  primary: %q
+  additional:
+    - %q
+`, primaryDir, additionalDir)
+	configPath := filepath.Join(primaryBeadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Change to primary dir so config is found
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(primaryDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	// Re-initialize config to pick up the file
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Create database in primary dir
 	dbPath := filepath.Join(primaryBeadsDir, "beads.db")
 	ctx := context.Background()
@@ -425,14 +449,6 @@ func TestMultiRepoDeletionTracking(t *testing.T) {
 	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
-
-	// Setup multi-repo config
-	config.Set("repos.primary", primaryDir)
-	config.Set("repos.additional", []string{additionalDir})
-	defer func() {
-		config.Set("repos.primary", "")
-		config.Set("repos.additional", nil)
-	}()
 
 	// Create issues in different repos
 	primaryIssue := &types.Issue{
@@ -584,29 +600,47 @@ func TestGetMultiRepoJSONLPaths_EmptyPaths(t *testing.T) {
 func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
 	// Setup temp dirs
 	primaryDir := t.TempDir()
-	
+
 	// Create .beads directories
-	if err := os.MkdirAll(filepath.Join(primaryDir, ".beads"), 0755); err != nil {
+	beadsDir := filepath.Join(primaryDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
 
-	// Test with duplicate paths (., ./, and absolute path to same location)
-	config.Set("repos.primary", primaryDir)
-	config.Set("repos.additional", []string{primaryDir, primaryDir}) // Duplicates
-	defer func() {
-		config.Set("repos.primary", "")
-		config.Set("repos.additional", nil)
-	}()
+	// Create config.yaml with duplicate additional repos
+	// (GetMultiRepoConfig uses YAML parsing, not viper.Set)
+	configContent := fmt.Sprintf(`repos:
+  primary: %q
+  additional:
+    - %q
+    - %q
+`, primaryDir, primaryDir, primaryDir)
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Change to primary dir so config is found
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(primaryDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	// Re-initialize config to pick up the file
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	// Current implementation doesn't dedupe - just verify it returns all entries
 	// (This documents current behavior; future improvement could dedupe)
 	expectedCount := 3 // primary + 2 duplicates
 	if len(paths) != expectedCount {
 		t.Errorf("Expected %d paths, got %d: %v", expectedCount, len(paths), paths)
 	}
-	
+
 	// All should point to same JSONL location
 	expectedJSONL := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	for i, p := range paths {
@@ -622,32 +656,49 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 	baseDir := t.TempDir()
 	primaryDir := filepath.Join(baseDir, "my project")
 	additionalDir := filepath.Join(baseDir, "other repo")
-	
+
 	// Create .beads directories
-	if err := os.MkdirAll(filepath.Join(primaryDir, ".beads"), 0755); err != nil {
+	primaryBeads := filepath.Join(primaryDir, ".beads")
+	if err := os.MkdirAll(primaryBeads, 0755); err != nil {
 		t.Fatalf("Failed to create primary .beads: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(additionalDir, ".beads"), 0755); err != nil {
 		t.Fatalf("Failed to create additional .beads: %v", err)
 	}
 
-	config.Set("repos.primary", primaryDir)
-	config.Set("repos.additional", []string{additionalDir})
-	defer func() {
-		config.Set("repos.primary", "")
-		config.Set("repos.additional", nil)
-	}()
+	// Create config.yaml (GetMultiRepoConfig uses YAML parsing)
+	configContent := fmt.Sprintf(`repos:
+  primary: %q
+  additional:
+    - %q
+`, primaryDir, additionalDir)
+	configPath := filepath.Join(primaryBeads, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Change to primary dir so config is found
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(primaryDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	// Re-initialize config to pick up the file
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Verify paths are constructed correctly
 	expectedPrimary := filepath.Join(primaryDir, ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join(additionalDir, ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -658,27 +709,49 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_RelativePaths tests handling of relative paths
 func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
-	// Note: Current implementation takes paths as-is without normalization
-	// This test documents current behavior
-	config.Set("repos.primary", ".")
-	config.Set("repos.additional", []string{"../other", "./foo/../bar"})
-	defer func() {
-		config.Set("repos.primary", "")
-		config.Set("repos.additional", nil)
-	}()
+	// Create temp dir for config file
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads: %v", err)
+	}
+
+	// Create config.yaml with relative paths
+	configContent := `repos:
+  primary: "."
+  additional:
+    - "../other"
+    - "./foo/../bar"
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Change to tmp dir so config is found
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	// Re-initialize config to pick up the file
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 3 {
 		t.Fatalf("Expected 3 paths, got %d", len(paths))
 	}
-	
+
 	// Current implementation: relative paths are NOT expanded to absolute
 	// They're used as-is with filepath.Join
 	expectedPrimary := filepath.Join(".", ".beads", "issues.jsonl")
 	expectedOther := filepath.Join("../other", ".beads", "issues.jsonl")
 	expectedBar := filepath.Join("./foo/../bar", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
@@ -692,24 +765,46 @@ func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_TildeExpansion tests that tilde is NOT expanded
 func TestGetMultiRepoJSONLPaths_TildeExpansion(t *testing.T) {
-	// Current implementation does NOT expand tilde - it's used literally
-	config.Set("repos.primary", "~/repos/main")
-	config.Set("repos.additional", []string{"~/repos/other"})
-	defer func() {
-		config.Set("repos.primary", "")
-		config.Set("repos.additional", nil)
-	}()
+	// Create temp dir for config file
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads: %v", err)
+	}
+
+	// Create config.yaml with tilde paths
+	configContent := `repos:
+  primary: "~/repos/main"
+  additional:
+    - "~/repos/other"
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Change to tmp dir so config is found
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	// Re-initialize config to pick up the file
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
 
 	paths := getMultiRepoJSONLPaths()
-	
+
 	if len(paths) != 2 {
 		t.Fatalf("Expected 2 paths, got %d", len(paths))
 	}
-	
+
 	// Tilde should be literal (NOT expanded) in current implementation
 	expectedPrimary := filepath.Join("~/repos/main", ".beads", "issues.jsonl")
 	expectedAdditional := filepath.Join("~/repos/other", ".beads", "issues.jsonl")
-	
+
 	if paths[0] != expectedPrimary {
 		t.Errorf("Primary path = %s, want %s", paths[0], expectedPrimary)
 	}
