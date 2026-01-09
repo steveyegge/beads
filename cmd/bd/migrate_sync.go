@@ -155,12 +155,12 @@ func runMigrateSync(ctx context.Context, branchName string, dryRun, force bool) 
 			fmt.Printf("→ Would create new branch '%s'\n", branchName)
 		}
 
-		// Use worktree-aware git directory detection
-		gitDir, err := git.GetGitDir()
+		// Use git-common-dir for worktree path to support bare repos and worktrees (GH#639)
+		gitCommonDir, err := git.GetGitCommonDir()
 		if err != nil {
 			return fmt.Errorf("not a git repository: %w", err)
 		}
-		worktreePath := filepath.Join(gitDir, "beads-worktrees", branchName)
+		worktreePath := filepath.Join(gitCommonDir, "beads-worktrees", branchName)
 		fmt.Printf("→ Would create worktree at: %s\n", worktreePath)
 
 		fmt.Println("\n=== END DRY RUN ===")
@@ -195,12 +195,12 @@ func runMigrateSync(ctx context.Context, branchName string, dryRun, force bool) 
 	}
 
 	// Step 2: Create the worktree
-	// Use worktree-aware git directory detection
-	gitDir, err := git.GetGitDir()
+	// Use git-common-dir for worktree path to support bare repos and worktrees (GH#639)
+	gitCommonDir, err := git.GetGitCommonDir()
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
 	}
-	worktreePath := filepath.Join(gitDir, "beads-worktrees", branchName)
+	worktreePath := filepath.Join(gitCommonDir, "beads-worktrees", branchName)
 	fmt.Printf("→ Creating worktree at %s...\n", worktreePath)
 
 	wtMgr := git.NewWorktreeManager(repoRoot)

@@ -987,8 +987,9 @@ func GetRepoRoot(ctx context.Context) (string, error) {
 			line := strings.TrimSpace(string(content))
 			if strings.HasPrefix(line, "gitdir: ") {
 				gitDir := strings.TrimPrefix(line, "gitdir: ")
-				// Remove /worktrees/* part
-				if idx := strings.Index(gitDir, "/worktrees/"); idx > 0 {
+				// Remove /worktrees/* part - use LastIndex to handle user paths containing "worktrees"
+				// e.g., /Users/foo/worktrees/project/.bare/worktrees/main should strip at .bare/worktrees/
+				if idx := strings.LastIndex(gitDir, "/worktrees/"); idx > 0 {
 					gitDir = gitDir[:idx]
 				}
 				repoRoot = filepath.Dir(gitDir)
