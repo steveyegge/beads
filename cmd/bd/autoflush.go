@@ -102,6 +102,39 @@ func canonicalizeIfRelative(path string) string {
 	return path
 }
 
+// detectPrefixFromJSONL extracts the issue prefix from JSONL data.
+// Returns empty string if prefix cannot be detected.
+// Used by cold-start bootstrap to initialize the database (GH#b09).
+func detectPrefixFromJSONL(jsonlData []byte) string {
+	// Parse first issue to extract prefix from its ID
+	scanner := bufio.NewScanner(bytes.NewReader(jsonlData))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			continue
+		}
+
+		if issue.ID == "" {
+			continue
+		}
+
+		// Extract prefix from ID (e.g., "gt-abc" -> "gt", "test-001" -> "test")
+		if idx := strings.Index(issue.ID, "-"); idx > 0 {
+			return issue.ID[:idx]
+		}
+		// No hyphen - use whole ID as prefix
+		return issue.ID
+	}
+	return ""
+}
+
 // autoImportIfNewer checks if JSONL content changed (via hash) and imports if so
 // Hash-based comparison is git-proof (mtime comparison fails after git pull).
 // Uses collision detection to prevent silently overwriting local changes.
@@ -151,6 +184,34 @@ func autoImportIfNewer() {
 	}
 
 	debug.Logf("auto-import triggered (hash changed)")
+
+	// Check if database needs initialization (GH#b09 - cold-start bootstrap)
+	// If issue_prefix is not set, the DB is uninitialized and import will fail.
+	// Auto-detect and set the prefix to enable seamless cold-start recovery.
+	// Note: Use global store directly as cmdCtx.Store may not be synced yet (GH#b09)
+	if store != nil {
+		prefix, prefixErr := store.GetConfig(ctx, "issue_prefix")
+		if prefixErr != nil || prefix == "" {
+			// Database needs initialization - detect prefix from JSONL or directory
+			detectedPrefix := detectPrefixFromJSONL(jsonlData)
+			if detectedPrefix == "" {
+				// Fallback: detect from directory name
+				beadsDir := filepath.Dir(jsonlPath)
+				parentDir := filepath.Dir(beadsDir)
+				detectedPrefix = filepath.Base(parentDir)
+				if detectedPrefix == "." || detectedPrefix == "/" {
+					detectedPrefix = "bd"
+				}
+			}
+			detectedPrefix = strings.TrimRight(detectedPrefix, "-")
+
+			if setErr := store.SetConfig(ctx, "issue_prefix", detectedPrefix); setErr != nil {
+				fmt.Fprintf(os.Stderr, "Auto-import: failed to initialize database prefix: %v\n", setErr)
+				return
+			}
+			debug.Logf("auto-import: initialized database with prefix '%s'", detectedPrefix)
+		}
+	}
 
 	// Check for Git merge conflict markers
 	// Only match if they appear as standalone lines (not embedded in JSON strings)
