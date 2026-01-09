@@ -100,6 +100,23 @@ func GetGitDir() (string, error) {
 	return ctx.gitDir, nil
 }
 
+// GetGitCommonDir returns the common git directory shared across all worktrees.
+// For regular repos, this equals GetGitDir(). For worktrees, this returns
+// the main repository's .git directory where shared data (like worktree
+// registrations, hooks, and objects) lives.
+//
+// Use this instead of GetGitDir() when you need to create new worktrees or
+// access shared git data that should not be scoped to a single worktree.
+// GH#639: This is critical for bare repo setups where GetGitDir() returns
+// a worktree-specific path that cannot host new worktrees.
+func GetGitCommonDir() (string, error) {
+	ctx, err := getGitContext()
+	if err != nil {
+		return "", err
+	}
+	return ctx.commonDir, nil
+}
+
 // GetGitHooksDir returns the path to the Git hooks directory.
 // This function is worktree-aware and handles both regular repos and worktrees.
 func GetGitHooksDir() (string, error) {
