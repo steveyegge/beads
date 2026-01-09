@@ -932,6 +932,354 @@ func TestExportToMultiRepo(t *testing.T) {
 	})
 }
 
+// TestCustomTypesResolution tests that custom_types from config are used during hydration.
+// This is the core feature: child repos can define custom types that parent doesn't know about.
+func TestCustomTypesResolution(t *testing.T) {
+	t.Run("accepts custom type from config during import", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		// Create temp directories
+		tmpDir := t.TempDir()
+		childDir := filepath.Join(tmpDir, "child")
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		childBeadsDir := filepath.Join(childDir, ".beads")
+
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+		if err := os.MkdirAll(childBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create child .beads: %v", err)
+		}
+
+		// Create config.yaml with structured format including custom_types
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+  additional:
+    - path: "%s"
+      custom_types: ["pm", "llm"]
+`, tmpDir, childDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		// Change to tmpDir so config is found
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		// Create child JSONL with custom type issue
+		childIssue := types.Issue{
+			ID:         "child-abc",
+			Title:      "Issue with custom type",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  "pm", // Custom type - only in child config
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: childDir,
+		}
+		childIssue.ContentHash = childIssue.ComputeContentHash()
+
+		childJSONL := filepath.Join(childBeadsDir, "issues.jsonl")
+		f, err := os.Create(childJSONL)
+		if err != nil {
+			t.Fatalf("failed to create child JSONL: %v", err)
+		}
+		if err := json.NewEncoder(f).Encode(childIssue); err != nil {
+			f.Close()
+			t.Fatalf("failed to write child issue: %v", err)
+		}
+		f.Close()
+
+		// Hydrate - should succeed because "pm" is in child's custom_types
+		ctx := context.Background()
+		results, err := store.HydrateFromMultiRepo(ctx)
+		if err != nil {
+			t.Fatalf("HydrateFromMultiRepo() should accept custom type, got error: %v", err)
+		}
+
+		if results[childDir] != 1 {
+			t.Errorf("expected 1 issue imported from child, got %d", results[childDir])
+		}
+
+		// Verify issue was imported
+		imported, err := store.GetIssue(ctx, "child-abc")
+		if err != nil {
+			t.Fatalf("failed to get imported issue: %v", err)
+		}
+		if imported.IssueType != "pm" {
+			t.Errorf("expected IssueType 'pm', got %q", imported.IssueType)
+		}
+	})
+
+	t.Run("rejects unknown type not in union", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		childDir := filepath.Join(tmpDir, "child")
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		childBeadsDir := filepath.Join(childDir, ".beads")
+
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+		if err := os.MkdirAll(childBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create child .beads: %v", err)
+		}
+
+		// Config with custom_types that does NOT include "unknown"
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+  additional:
+    - path: "%s"
+      custom_types: ["pm"]
+`, tmpDir, childDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		// Create child JSONL with UNKNOWN type
+		childIssue := types.Issue{
+			ID:         "child-bad",
+			Title:      "Issue with unknown type",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  "unknown", // NOT in config
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: childDir,
+		}
+		childIssue.ContentHash = childIssue.ComputeContentHash()
+
+		childJSONL := filepath.Join(childBeadsDir, "issues.jsonl")
+		f, err := os.Create(childJSONL)
+		if err != nil {
+			t.Fatalf("failed to create child JSONL: %v", err)
+		}
+		if err := json.NewEncoder(f).Encode(childIssue); err != nil {
+			f.Close()
+			t.Fatalf("failed to write child issue: %v", err)
+		}
+		f.Close()
+
+		// Hydrate - should FAIL because "unknown" is not in any config
+		ctx := context.Background()
+		_, err = store.HydrateFromMultiRepo(ctx)
+		if err == nil {
+			t.Fatal("HydrateFromMultiRepo() should reject unknown type, but succeeded")
+		}
+		if !strings.Contains(err.Error(), "invalid issue type") {
+			t.Errorf("expected 'invalid issue type' error, got: %v", err)
+		}
+	})
+
+	t.Run("unknown prefix falls back to parent types", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		childDir := filepath.Join(tmpDir, "child")
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		childBeadsDir := filepath.Join(childDir, ".beads")
+
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+		if err := os.MkdirAll(childBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create child .beads: %v", err)
+		}
+
+		// Config with child having custom_types
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+  additional:
+    - path: "%s"
+      custom_types: ["pm"]
+`, tmpDir, childDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		// Create child JSONL with issue that has DIFFERENT prefix than "child"
+		// This tests the fallback: prefix "other" not in config → use parent types only
+		issueWithBuiltinType := types.Issue{
+			ID:         "other-xyz", // "other" prefix not in config
+			Title:      "Issue with built-in type",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  types.TypeTask, // Built-in type, should work
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: childDir,
+		}
+		issueWithBuiltinType.ContentHash = issueWithBuiltinType.ComputeContentHash()
+
+		childJSONL := filepath.Join(childBeadsDir, "issues.jsonl")
+		f, err := os.Create(childJSONL)
+		if err != nil {
+			t.Fatalf("failed to create child JSONL: %v", err)
+		}
+		if err := json.NewEncoder(f).Encode(issueWithBuiltinType); err != nil {
+			f.Close()
+			t.Fatalf("failed to write issue: %v", err)
+		}
+		f.Close()
+
+		// Hydrate - should succeed because "task" is built-in
+		ctx := context.Background()
+		results, err := store.HydrateFromMultiRepo(ctx)
+		if err != nil {
+			t.Fatalf("HydrateFromMultiRepo() with built-in type should succeed: %v", err)
+		}
+
+		if results[childDir] != 1 {
+			t.Errorf("expected 1 issue imported, got %d", results[childDir])
+		}
+	})
+
+	t.Run("round-trip preserves custom types", func(t *testing.T) {
+		store, cleanup := setupTestDB(t)
+		defer cleanup()
+
+		if err := config.Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		tmpDir := t.TempDir()
+		childDir := filepath.Join(tmpDir, "child")
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		childBeadsDir := filepath.Join(childDir, ".beads")
+
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+		if err := os.MkdirAll(childBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create child .beads: %v", err)
+		}
+
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+  additional:
+    - path: "%s"
+      custom_types: ["pm"]
+`, tmpDir, childDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		// Also set viper config for export (it uses GetMultiRepoConfig)
+		config.Set("repos.primary", tmpDir)
+		config.Set("repos.additional", []string{childDir})
+
+		// Set parent custom types so CreateIssue validation passes
+		// (In real usage, the issue would already exist from hydration)
+		ctx := context.Background()
+		if err := store.SetConfig(ctx, CustomTypeConfigKey, "pm"); err != nil {
+			t.Fatalf("failed to set custom types: %v", err)
+		}
+
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		// Step 1: Create issue with custom type directly in DB
+		// Note: ID must match test DB's issue_prefix "bd"
+		issue := &types.Issue{
+			ID:         "bd-rt1",
+			Title:      "Round-trip test",
+			Status:     types.StatusOpen,
+			Priority:   1,
+			IssueType:  "pm",
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+			SourceRepo: childDir,
+		}
+		issue.ContentHash = issue.ComputeContentHash()
+
+		if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		// Step 2: Export to JSONL
+		_, err := store.ExportToMultiRepo(ctx)
+		if err != nil {
+			t.Fatalf("ExportToMultiRepo() failed: %v", err)
+		}
+
+		// Step 3: Verify JSONL was written
+		childJSONL := filepath.Join(childBeadsDir, "issues.jsonl")
+		data, err := os.ReadFile(childJSONL)
+		if err != nil {
+			t.Fatalf("failed to read exported JSONL: %v", err)
+		}
+		if !strings.Contains(string(data), `"issue_type":"pm"`) {
+			t.Errorf("exported JSONL should contain issue_type:pm, got: %s", string(data))
+		}
+
+		// Step 4: Delete from DB and re-import
+		if err := store.DeleteIssue(ctx, "bd-rt1"); err != nil {
+			t.Fatalf("failed to delete issue: %v", err)
+		}
+
+		// Clear mtime cache to force re-import
+		if err := store.ClearRepoMtime(ctx, childDir); err != nil {
+			t.Fatalf("failed to clear mtime: %v", err)
+		}
+
+		// Step 5: Re-hydrate
+		results, err := store.HydrateFromMultiRepo(ctx)
+		if err != nil {
+			t.Fatalf("re-hydration failed: %v", err)
+		}
+		if results[childDir] != 1 {
+			t.Errorf("expected 1 issue re-imported, got %d", results[childDir])
+		}
+
+		// Step 6: Verify issue type preserved
+		reimported, err := store.GetIssue(ctx, "bd-rt1")
+		if err != nil {
+			t.Fatalf("failed to get re-imported issue: %v", err)
+		}
+		if reimported.IssueType != "pm" {
+			t.Errorf("round-trip should preserve type 'pm', got %q", reimported.IssueType)
+		}
+	})
+}
+
 // TestUpsertPreservesGateFields tests that gate await fields are preserved during upsert (bd-gr4q).
 // Gates are wisps and aren't exported to JSONL. When an issue with the same ID is imported,
 // the await fields should NOT be cleared.
