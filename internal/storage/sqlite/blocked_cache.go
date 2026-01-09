@@ -100,12 +100,23 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // execer is an interface for types that can execute SQL queries
 // Both *sql.DB and *sql.Tx implement this interface
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+// validStatusNameRegex validates status names to prevent SQL injection.
+// Only allows alphanumeric characters, underscores, and hyphens.
+var validStatusNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// isValidStatusName checks if a status name is safe for SQL inclusion
+func isValidStatusName(name string) bool {
+	return validStatusNameRegex.MatchString(name) && len(name) <= 50
 }
 
 // rebuildBlockedCache completely rebuilds the blocked_issues_cache table
@@ -121,12 +132,38 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		return fmt.Errorf("failed to clear blocked_issues_cache: %w", err)
 	}
 
+	// Get non-blocking statuses from config
+	// These statuses are treated like 'closed' - they don't block dependents
+	nonBlockingStatuses, err := s.GetNonBlockingStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get non-blocking statuses: %w", err)
+	}
+
+	// Build the exclusion clause for non-blocking statuses
+	// Statuses in this list are treated like 'closed' for blocking purposes
+	nonBlockingExclusion := ""
+	nonBlockingInclusionForWaitsFor := "'closed', 'tombstone'"
+	if len(nonBlockingStatuses) > 0 {
+		// Validate and sanitize status names to prevent SQL injection
+		var validStatuses []string
+		for _, status := range nonBlockingStatuses {
+			if isValidStatusName(status) {
+				validStatuses = append(validStatuses, "'"+status+"'")
+			}
+		}
+		if len(validStatuses) > 0 {
+			statusList := strings.Join(validStatuses, ", ")
+			nonBlockingExclusion = " AND blocker.status NOT IN (" + statusList + ")"
+			nonBlockingInclusionForWaitsFor = "'closed', 'tombstone', " + statusList
+		}
+	}
+
 	// Rebuild using the recursive CTE logic
 	// Only includes local blockers (open issues) - external refs are resolved
 	// lazily at query time by GetReadyWork (bd-zmmy supersedes bd-om4a)
 	//
 	// Handles four blocking types:
-	// - 'blocks': B is blocked until A is closed (any close reason)
+	// - 'blocks': B is blocked until A is closed (any close reason) or has non-blocking status
 	// - 'conditional-blocks': B is blocked until A is closed with failure (bd-kzda)
 	// - 'waits-for': B is blocked until all children of spawner A are closed (bd-xo1o.2)
 	// - 'parent-child': Propagates blockage to children
@@ -134,19 +171,23 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 	// Failure close reasons are detected by matching keywords in close_reason:
 	// failed, rejected, wontfix, won't fix, canceled, abandoned,
 	// blocked, error, timeout, aborted
+	//
+	// Non-blocking statuses (from status.non_blocking config) are treated like 'closed':
+	// issues with these statuses don't block their dependents.
 	//nolint:misspell // SQL contains both "cancelled" and "canceled" for British/US spelling
-	query := `
+	// #nosec G201 -- nonBlockingExclusion is built from validated status names (alphanumeric/underscore/hyphen only)
+	query := fmt.Sprintf(`
 		INSERT INTO blocked_issues_cache (issue_id)
 		WITH RECURSIVE
 		  -- Step 1: Find issues blocked directly by LOCAL dependencies
 		  -- External refs (external:*) are excluded - they're resolved lazily by GetReadyWork
 		  blocked_directly AS (
-		    -- Regular 'blocks' dependencies: B blocked if A not closed
+		    -- Regular 'blocks' dependencies: B blocked if A not closed and not in non-blocking status
 		    SELECT DISTINCT d.issue_id
 		    FROM dependencies d
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.type = 'blocks'
-		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		      AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')%s
 
 		    UNION
 
@@ -154,27 +195,29 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		    -- B is blocked if:
 		    --   - A is not closed (still in progress), OR
 		    --   - A is closed without a failure indication
+		    -- Note: non-blocking statuses don't apply here - conditional-blocks specifically
+		    -- needs failure close reason to unblock
 		    SELECT DISTINCT d.issue_id
 		    FROM dependencies d
 		    JOIN issues blocker ON d.depends_on_id = blocker.id
 		    WHERE d.type = 'conditional-blocks'
 		      AND (
 		        -- A is not closed: B stays blocked
-		        blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')
+		        blocker.status IN ('open', 'in_progress', 'blocked', 'deferred')%s
 		        OR
 		        -- A is closed but NOT with a failure: B stays blocked (condition not met)
 		        (blocker.status = 'closed' AND NOT (
-		          LOWER(COALESCE(blocker.close_reason, '')) LIKE '%failed%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%rejected%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%wontfix%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%won''t fix%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%cancelled%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%canceled%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%abandoned%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%blocked%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%error%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%timeout%'
-		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%aborted%'
+		          LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%failed%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%rejected%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%wontfix%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%won''t fix%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%cancelled%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%canceled%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%abandoned%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%blocked%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%error%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%timeout%%'
+		          OR LOWER(COALESCE(blocker.close_reason, '')) LIKE '%%aborted%%'
 		        ))
 		      )
 
@@ -182,7 +225,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 
 		    -- 'waits-for' dependencies: B blocked until all children of spawner closed (bd-xo1o.2)
 		    -- This is a fanout gate for dynamic molecule bonding
-		    -- B waits for A (spawner), blocked while ANY child of A is not closed
+		    -- B waits for A (spawner), blocked while ANY child of A is not closed (or non-blocking)
 		    -- Gate type from metadata: "all-children" (default) or "any-children"
 		    SELECT DISTINCT d.issue_id
 		    FROM dependencies d
@@ -198,7 +241,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		              json_extract(d.metadata, '$.spawner_id'),
 		              d.depends_on_id
 		            )
-		            AND child.status NOT IN ('closed', 'tombstone')
+		            AND child.status NOT IN (%s)
 		        )
 		        OR
 		        -- Alternative gate: "any-children" - blocked until ANY child closes
@@ -211,7 +254,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		              json_extract(d.metadata, '$.spawner_id'),
 		              d.depends_on_id
 		            )
-		            AND child.status IN ('closed', 'tombstone')
+		            AND child.status IN (%s)
 		        )
 		      )
 		  ),
@@ -232,7 +275,7 @@ func (s *SQLiteStorage) rebuildBlockedCache(ctx context.Context, exec execer) er
 		      AND bt.depth < 50
 		  )
 		SELECT DISTINCT issue_id FROM blocked_transitively
-	`
+	`, nonBlockingExclusion, nonBlockingExclusion, nonBlockingInclusionForWaitsFor, nonBlockingInclusionForWaitsFor)
 
 	if _, err := exec.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("failed to rebuild blocked_issues_cache: %w", err)

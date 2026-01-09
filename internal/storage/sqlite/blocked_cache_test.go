@@ -643,3 +643,274 @@ func TestWaitsForDynamicChildrenAdded(t *testing.T) {
 		t.Errorf("Expected waiter to be unblocked (dynamic child closed)")
 	}
 }
+
+// TestNonBlockingStatusReleasesDependent tests that non_blocking status releases dependents
+func TestNonBlockingStatusReleasesDependent(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create blocker → blocked relationship
+	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker, "test-user")
+	store.CreateIssue(ctx, blocked, "test-user")
+
+	dep := &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}
+	store.AddDependency(ctx, dep, "test-user")
+
+	// Initially blocked issue should be in cache
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[blocked.ID] {
+		t.Fatalf("Setup failed: expected %s in cache", blocked.ID)
+	}
+
+	// Configure 'in_review' as a valid custom status first
+	if err := store.SetConfig(ctx, CustomStatusConfigKey, "in_review"); err != nil {
+		t.Fatalf("Failed to set custom status config: %v", err)
+	}
+
+	// Configure 'in_review' as non-blocking status
+	if err := store.SetConfig(ctx, NonBlockingStatusConfigKey, "in_review"); err != nil {
+		t.Fatalf("Failed to set non_blocking config: %v", err)
+	}
+
+	// Change blocker to 'in_review' status
+	updates := map[string]interface{}{"status": "in_review"}
+	if err := store.UpdateIssue(ctx, blocker.ID, updates, "test-user"); err != nil {
+		t.Fatalf("UpdateIssue failed: %v", err)
+	}
+
+	// Verify blocked issue removed from cache (blocker has non_blocking status)
+	cached = getCachedBlockedIssues(t, store)
+	if cached[blocked.ID] {
+		t.Errorf("Expected %s to be removed from cache after blocker set to non_blocking status", blocked.ID)
+	}
+}
+
+// TestNonBlockingStatusWithParentChild tests non_blocking status with parent-child hierarchy
+func TestNonBlockingStatusWithParentChild(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create: blocker → epic → task
+	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	epic := &types.Issue{Title: "Epic", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeEpic}
+	task := &types.Issue{Title: "Task", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker, "test-user")
+	store.CreateIssue(ctx, epic, "test-user")
+	store.CreateIssue(ctx, task, "test-user")
+
+	// Add blocking dependency and parent-child
+	depBlock := &types.Dependency{IssueID: epic.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}
+	depChild := &types.Dependency{IssueID: task.ID, DependsOnID: epic.ID, Type: types.DepParentChild}
+	store.AddDependency(ctx, depBlock, "test-user")
+	store.AddDependency(ctx, depChild, "test-user")
+
+	// Verify both epic and task are blocked
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[epic.ID] || !cached[task.ID] {
+		t.Fatalf("Setup failed: expected epic and task in cache")
+	}
+
+	// Configure 'in_review' as valid custom status and non-blocking
+	store.SetConfig(ctx, CustomStatusConfigKey, "in_review")
+	store.SetConfig(ctx, NonBlockingStatusConfigKey, "in_review")
+
+	// Change blocker to 'in_review'
+	updates := map[string]interface{}{"status": "in_review"}
+	store.UpdateIssue(ctx, blocker.ID, updates, "test-user")
+
+	// Both epic and task should be released
+	cached = getCachedBlockedIssues(t, store)
+	if cached[epic.ID] {
+		t.Errorf("Expected epic to be released when blocker has non_blocking status")
+	}
+	if cached[task.ID] {
+		t.Errorf("Expected task (child of epic) to be released when blocker has non_blocking status")
+	}
+}
+
+// TestMultipleNonBlockingStatuses tests multiple non_blocking statuses work together
+func TestMultipleNonBlockingStatuses(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create two blocker → blocked relationships
+	blocker1 := &types.Issue{Title: "Blocker 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocker2 := &types.Issue{Title: "Blocker 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked1 := &types.Issue{Title: "Blocked 1", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked2 := &types.Issue{Title: "Blocked 2", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker1, "test-user")
+	store.CreateIssue(ctx, blocker2, "test-user")
+	store.CreateIssue(ctx, blocked1, "test-user")
+	store.CreateIssue(ctx, blocked2, "test-user")
+
+	dep1 := &types.Dependency{IssueID: blocked1.ID, DependsOnID: blocker1.ID, Type: types.DepBlocks}
+	dep2 := &types.Dependency{IssueID: blocked2.ID, DependsOnID: blocker2.ID, Type: types.DepBlocks}
+	store.AddDependency(ctx, dep1, "test-user")
+	store.AddDependency(ctx, dep2, "test-user")
+
+	// Configure multiple custom statuses and non_blocking statuses
+	store.SetConfig(ctx, CustomStatusConfigKey, "in_review, awaiting_deploy")
+	store.SetConfig(ctx, NonBlockingStatusConfigKey, "in_review, awaiting_deploy")
+
+	// Set blocker1 to 'in_review', blocker2 to 'awaiting_deploy'
+	store.UpdateIssue(ctx, blocker1.ID, map[string]interface{}{"status": "in_review"}, "test-user")
+	store.UpdateIssue(ctx, blocker2.ID, map[string]interface{}{"status": "awaiting_deploy"}, "test-user")
+
+	// Both blocked issues should be released
+	cached := getCachedBlockedIssues(t, store)
+	if cached[blocked1.ID] {
+		t.Errorf("Expected blocked1 to be released (blocker has in_review)")
+	}
+	if cached[blocked2.ID] {
+		t.Errorf("Expected blocked2 to be released (blocker has awaiting_deploy)")
+	}
+}
+
+// TestEmptyNonBlockingConfig tests default behavior when no non_blocking statuses configured
+func TestEmptyNonBlockingConfig(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create blocker → blocked relationship
+	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker, "test-user")
+	store.CreateIssue(ctx, blocked, "test-user")
+
+	dep := &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}
+	store.AddDependency(ctx, dep, "test-user")
+
+	// Configure 'in_review' as valid custom status, but NOT as non_blocking
+	store.SetConfig(ctx, CustomStatusConfigKey, "in_review")
+	// Note: status.non_blocking is NOT set
+
+	// Set status to 'in_review'
+	updates := map[string]interface{}{"status": "in_review"}
+	store.UpdateIssue(ctx, blocker.ID, updates, "test-user")
+
+	// blocked should still be in cache (in_review is not configured as non_blocking)
+	cached := getCachedBlockedIssues(t, store)
+	if !cached[blocked.ID] {
+		t.Errorf("Expected %s to remain in cache (in_review not configured as non_blocking)", blocked.ID)
+	}
+}
+
+// TestNonBlockingStatusWithGetBlockedIssues tests GetBlockedIssues excludes non_blocking
+func TestNonBlockingStatusWithGetBlockedIssues(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create blocker → blocked relationship
+	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker, "test-user")
+	store.CreateIssue(ctx, blocked, "test-user")
+
+	dep := &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}
+	store.AddDependency(ctx, dep, "test-user")
+
+	// Configure 'in_review' as custom status and non_blocking
+	store.SetConfig(ctx, CustomStatusConfigKey, "in_review")
+	store.SetConfig(ctx, NonBlockingStatusConfigKey, "in_review")
+
+	// Initially, GetBlockedIssues should return blocked
+	blockedList, err := store.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+	found := false
+	for _, b := range blockedList {
+		if b.ID == blocked.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected %s in GetBlockedIssues result", blocked.ID)
+	}
+
+	// Set blocker to non_blocking status
+	updates := map[string]interface{}{"status": "in_review"}
+	store.UpdateIssue(ctx, blocker.ID, updates, "test-user")
+
+	// GetBlockedIssues should NOT return blocked anymore
+	blockedList, err = store.GetBlockedIssues(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetBlockedIssues failed: %v", err)
+	}
+	for _, b := range blockedList {
+		if b.ID == blocked.ID {
+			t.Errorf("Expected %s NOT to be in GetBlockedIssues result (blocker has non_blocking status)", blocked.ID)
+		}
+	}
+}
+
+// TestNonBlockingStatusWithGetReadyWork tests GetReadyWork includes issues when blocker has non_blocking status
+func TestNonBlockingStatusWithGetReadyWork(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create blocker → blocked relationship
+	blocker := &types.Issue{Title: "Blocker", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+	blocked := &types.Issue{Title: "Blocked", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask}
+
+	store.CreateIssue(ctx, blocker, "test-user")
+	store.CreateIssue(ctx, blocked, "test-user")
+
+	dep := &types.Dependency{IssueID: blocked.ID, DependsOnID: blocker.ID, Type: types.DepBlocks}
+	store.AddDependency(ctx, dep, "test-user")
+
+	// Configure 'in_review' as custom status and non_blocking
+	store.SetConfig(ctx, CustomStatusConfigKey, "in_review")
+	store.SetConfig(ctx, NonBlockingStatusConfigKey, "in_review")
+
+	// Initially, GetReadyWork should NOT return blocked
+	ready, err := store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+	for _, r := range ready {
+		if r.ID == blocked.ID {
+			t.Errorf("Expected %s NOT to be in GetReadyWork result initially", blocked.ID)
+		}
+	}
+
+	// Set blocker to non_blocking status
+	updates := map[string]interface{}{"status": "in_review"}
+	store.UpdateIssue(ctx, blocker.ID, updates, "test-user")
+
+	// GetReadyWork should return blocked now
+	ready, err = store.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatalf("GetReadyWork failed: %v", err)
+	}
+	found := false
+	for _, r := range ready {
+		if r.ID == blocked.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected %s in GetReadyWork result (blocker has non_blocking status)", blocked.ID)
+	}
+}

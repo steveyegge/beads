@@ -98,6 +98,15 @@ func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, er
 // CustomStatusConfigKey is the config key for custom status states
 const CustomStatusConfigKey = "status.custom"
 
+// NonBlockingStatusConfigKey is the config key for statuses that don't block dependents.
+// Statuses listed here are treated like 'closed' for dependency resolution:
+// when an issue has one of these statuses, it no longer blocks dependent issues.
+// This enables workflows like code review where 'in_review' status means the work
+// is complete enough for downstream work to begin.
+//
+// Example: bd config set status.non_blocking "in_review,awaiting_deploy"
+const NonBlockingStatusConfigKey = "status.non_blocking"
+
 // CustomTypeConfigKey is the config key for custom issue types
 const CustomTypeConfigKey = "types.custom"
 
@@ -137,6 +146,21 @@ func parseCommaSeparated(value string) []string {
 // Returns an empty slice if no custom types are configured.
 func (s *SQLiteStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	value, err := s.GetConfig(ctx, CustomTypeConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+	return parseCommaSeparated(value), nil
+}
+
+// GetNonBlockingStatuses retrieves the list of non-blocking status states from config.
+// Non-blocking statuses are stored as comma-separated values in the "status.non_blocking" config key.
+// Issues with these statuses do not block their dependents (similar to 'closed' status).
+// Returns an empty slice if no non-blocking statuses are configured.
+func (s *SQLiteStorage) GetNonBlockingStatuses(ctx context.Context) ([]string, error) {
+	value, err := s.GetConfig(ctx, NonBlockingStatusConfigKey)
 	if err != nil {
 		return nil, err
 	}

@@ -476,6 +476,29 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 	// - Count local blockers (open issues) + external refs (external:*)
 	// - External refs are always considered "open" until resolved
 
+	// Get non-blocking statuses from config
+	// These statuses are treated like 'closed' - they don't block dependents
+	nonBlockingStatuses, err := s.GetNonBlockingStatuses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get non-blocking statuses: %w", err)
+	}
+
+	// Build the exclusion clause for non-blocking statuses
+	nonBlockingExclusion := ""
+	if len(nonBlockingStatuses) > 0 {
+		// Validate and sanitize status names to prevent SQL injection
+		var validStatuses []string
+		for _, status := range nonBlockingStatuses {
+			if isValidStatusName(status) {
+				validStatuses = append(validStatuses, "'"+status+"'")
+			}
+		}
+		if len(validStatuses) > 0 {
+			statusList := strings.Join(validStatuses, ", ")
+			nonBlockingExclusion = " AND blocker.status NOT IN (" + statusList + ")"
+		}
+	}
+
 	// Build additional WHERE clauses for filtering
 	var filterClauses []string
 	var args []any
@@ -504,6 +527,7 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		filterSQL = " AND " + strings.Join(filterClauses, " AND ")
 	}
 
+	// #nosec G201 -- nonBlockingExclusion is built from validated status names (alphanumeric/underscore/hyphen only)
 	// nolint:gosec // G201: filterSQL contains only parameterized WHERE clauses with ? placeholders, not user input
 	query := fmt.Sprintf(`
 		SELECT
@@ -516,11 +540,11 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		LEFT JOIN dependencies d ON i.id = d.issue_id
 		    AND d.type = 'blocks'
 		    AND (
-		        -- Local blockers: must be open/in_progress/blocked/deferred
+		        -- Local blockers: must be open/in_progress/blocked/deferred and not in non_blocking statuses
 		        EXISTS (
 		            SELECT 1 FROM issues blocker
 		            WHERE blocker.id = d.depends_on_id
-		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')%s
 		        )
 		        -- External refs: always included (resolution happens at query time)
 		        OR d.depends_on_id LIKE 'external:%%'
@@ -530,13 +554,13 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		  AND (
 		      i.status = 'blocked'
 		      OR i.status = 'deferred'
-		      -- Has local open blockers
+		      -- Has local open blockers (excluding non_blocking statuses)
 		      OR EXISTS (
 		          SELECT 1 FROM dependencies d2
 		          JOIN issues blocker ON d2.depends_on_id = blocker.id
 		          WHERE d2.issue_id = i.id
 		            AND d2.type = 'blocks'
-		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
+		            AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')%s
 		      )
 		      -- Has external blockers (always considered blocking until resolved)
 		      OR EXISTS (
@@ -549,7 +573,7 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 		  %s
 		GROUP BY i.id
 		ORDER BY i.priority ASC
-	`, filterSQL)
+	`, nonBlockingExclusion, nonBlockingExclusion, filterSQL)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get blocked issues: %w", err)

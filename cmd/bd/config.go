@@ -36,10 +36,25 @@ Custom Status States:
   This enables issues to use statuses like 'awaiting_review' in addition to
   the built-in statuses (open, in_progress, blocked, deferred, closed).
 
+Non-Blocking Statuses:
+  By default, open issues block their dependents. You can configure certain
+  statuses to be "non-blocking" - issues with these statuses will release
+  their dependents just like closed issues do.
+
+  This is useful for workflows where code review or testing doesn't need to
+  block downstream work.
+
+  Example:
+    bd config set status.non_blocking "in_review,awaiting_deploy"
+
+  With this config, when an issue is set to 'in_review', its dependent issues
+  will appear in 'bd ready' output.
+
 Examples:
   bd config set jira.url "https://company.atlassian.net"
   bd config set jira.project "PROJ"
   bd config set status.custom "awaiting_review,awaiting_testing"
+  bd config set status.non_blocking "in_review"
   bd config get jira.url
   bd config list
   bd config unset jira.url`,
