@@ -16,41 +16,162 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// buildPrefixToRepoMap builds a map from issue ID prefix to repo configuration.
+// Used to resolve which repo's custom types to use during hydration.
+func buildPrefixToRepoMap(additional []config.AdditionalRepo) map[string]config.AdditionalRepo {
+	m := make(map[string]config.AdditionalRepo)
+	for _, repo := range additional {
+		prefix := strings.ToLower(repo.InferredPrefix())
+		m[prefix] = repo
+	}
+	return m
+}
+
+// extractPrefix extracts the prefix from an issue ID (e.g., "oss-abc" → "oss").
+// Returns empty string if no prefix found.
+func extractPrefix(issueID string) string {
+	parts := strings.SplitN(issueID, "-", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.ToLower(parts[0])
+}
+
+// unionStrings returns the union of two string slices (deduplicated).
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// readChildCustomTypes reads custom types from a child repo's database.
+// Returns empty slice if child has no database or custom types configured.
+func readChildCustomTypes(ctx context.Context, repoPath string) []string {
+	// Expand tilde
+	expandedPath, err := expandTilde(repoPath)
+	if err != nil {
+		return nil
+	}
+
+	// Get absolute path
+	absPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return nil
+	}
+
+	// Construct path to child's database
+	dbPath := filepath.Join(absPath, ".beads", "beads.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	// Open child database
+	childDB, err := sql.Open("sqlite", dbPath+"?mode=ro&_busy_timeout=5000")
+	if err != nil {
+		return nil
+	}
+	defer childDB.Close()
+
+	// Read custom types from child's config table
+	var typesJSON sql.NullString
+	err = childDB.QueryRowContext(ctx, `
+		SELECT value FROM config WHERE key = 'types.custom'
+	`).Scan(&typesJSON)
+	if err != nil || !typesJSON.Valid || typesJSON.String == "" {
+		return nil
+	}
+
+	// Parse comma-separated types
+	types := strings.Split(typesJSON.String, ",")
+	result := make([]string, 0, len(types))
+	for _, t := range types {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
 // HydrateFromMultiRepo loads issues from all configured repositories into the database.
 // Uses mtime caching to skip unchanged JSONL files for performance.
 // Returns the number of issues imported from each repo.
 func (s *SQLiteStorage) HydrateFromMultiRepo(ctx context.Context) (map[string]int, error) {
-	// Get multi-repo config
-	multiRepo := config.GetMultiRepoConfig()
-	if multiRepo == nil {
+	// Try to get multi-repo config from YAML file (supports AdditionalRepo objects)
+	// Fallback to viper-based config for backwards compatibility with tests
+	var reposConfig *config.ReposConfig
+	configPath, err := config.FindConfigYAMLPath()
+	if err == nil {
+		reposConfig, err = config.GetReposFromYAML(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read repos config: %w", err)
+		}
+	} else {
+		// Fallback to viper-based config (for tests and backwards compat)
+		multiRepo := config.GetMultiRepoConfig()
+		if multiRepo == nil {
+			return nil, nil
+		}
+		// Convert to ReposConfig format
+		reposConfig = &config.ReposConfig{
+			Primary: multiRepo.Primary,
+		}
+		for _, path := range multiRepo.Additional {
+			reposConfig.Additional = append(reposConfig.Additional, config.AdditionalRepo{Path: path})
+		}
+	}
+
+	// Check if multi-repo mode is enabled
+	if reposConfig.Primary == "" {
 		// Single-repo mode - nothing to hydrate
 		return nil, nil
+	}
+
+	// Build prefix map for custom type resolution
+	prefixMap := buildPrefixToRepoMap(reposConfig.Additional)
+
+	// Get parent repo's custom types (used as base for union)
+	parentTypes, err := s.GetCustomTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parent custom types: %w", err)
 	}
 
 	results := make(map[string]int)
 
 	// Process primary repo first (if set)
-	if multiRepo.Primary != "" {
-		count, err := s.hydrateFromRepo(ctx, multiRepo.Primary, ".")
+	if reposConfig.Primary != "" {
+		count, err := s.hydrateFromRepo(ctx, reposConfig.Primary, ".", prefixMap, parentTypes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to hydrate primary repo %s: %w", multiRepo.Primary, err)
+			return nil, fmt.Errorf("failed to hydrate primary repo %s: %w", reposConfig.Primary, err)
 		}
 		results["."] = count
 	}
 
 	// Process additional repos
-	for _, repoPath := range multiRepo.Additional {
+	for _, repo := range reposConfig.Additional {
 		// Expand tilde in path
-		expandedPath, err := expandTilde(repoPath)
+		expandedPath, err := expandTilde(repo.Path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to expand path %s: %w", repoPath, err)
+			return nil, fmt.Errorf("failed to expand path %s: %w", repo.Path, err)
 		}
 
 		// Use relative path as source_repo identifier
-		relPath := repoPath // Keep original for source_repo field
-		count, err := s.hydrateFromRepo(ctx, expandedPath, relPath)
+		relPath := repo.Path // Keep original for source_repo field
+		count, err := s.hydrateFromRepo(ctx, expandedPath, relPath, prefixMap, parentTypes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to hydrate repo %s: %w", repoPath, err)
+			return nil, fmt.Errorf("failed to hydrate repo %s: %w", repo.Path, err)
 		}
 		results[relPath] = count
 	}
@@ -60,7 +181,8 @@ func (s *SQLiteStorage) HydrateFromMultiRepo(ctx context.Context) (map[string]in
 
 // hydrateFromRepo loads issues from a single repository's JSONL file.
 // Uses mtime caching to skip unchanged files.
-func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRepo string) (int, error) {
+// prefixMap is used for custom type resolution, parentTypes are the parent repo's custom types.
+func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRepo string, prefixMap map[string]config.AdditionalRepo, parentTypes []string) (int, error) {
 	// Get absolute path to repo
 	absRepoPath, err := filepath.Abs(repoPath)
 	if err != nil {
@@ -100,7 +222,7 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 	}
 
 	// Import issues from JSONL
-	count, err := s.importJSONLFile(ctx, jsonlPath, sourceRepo)
+	count, err := s.importJSONLFile(ctx, jsonlPath, sourceRepo, prefixMap, parentTypes)
 	if err != nil {
 		return 0, fmt.Errorf("failed to import JSONL: %w", err)
 	}
@@ -119,22 +241,23 @@ func (s *SQLiteStorage) hydrateFromRepo(ctx context.Context, repoPath, sourceRep
 
 // importJSONLFile imports issues from a JSONL file, setting the source_repo field.
 // Disables FK checks during import to handle out-of-order dependencies.
-func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRepo string) (int, error) {
+// prefixMap maps issue ID prefixes to repo configs for custom type resolution.
+// parentTypes are the parent repo's custom types (used as base for union).
+func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRepo string, prefixMap map[string]config.AdditionalRepo, parentTypes []string) (int, error) {
 	file, err := os.Open(jsonlPath) // #nosec G304 -- jsonlPath is from trusted source
 	if err != nil {
 		return 0, fmt.Errorf("failed to open JSONL file: %w", err)
 	}
 	defer file.Close()
 
-	// Fetch custom statuses and types for validation (bd-1pj6)
+	// Fetch custom statuses for validation (bd-1pj6)
 	customStatuses, err := s.GetCustomStatuses(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get custom statuses: %w", err)
 	}
-	customTypes, err := s.GetCustomTypes(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get custom types: %w", err)
-	}
+
+	// Cache for child repo custom types (avoid re-reading DBs)
+	childTypesCache := make(map[string][]string)
 
 	scanner := bufio.NewScanner(file)
 	// Increase buffer size for large issues
@@ -185,6 +308,23 @@ func (s *SQLiteStorage) importJSONLFile(ctx context.Context, jsonlPath, sourceRe
 		// Compute content hash if missing
 		if issue.ContentHash == "" {
 			issue.ContentHash = issue.ComputeContentHash()
+		}
+
+		// Resolve custom types using prefix map
+		customTypes := parentTypes
+		issuePrefix := extractPrefix(issue.ID)
+		if repo, ok := prefixMap[issuePrefix]; ok {
+			// Found in prefix map - use union of parent and child types
+			if len(repo.CustomTypes) > 0 {
+				// Explicit types from config - use those
+				customTypes = unionStrings(parentTypes, repo.CustomTypes)
+			} else {
+				// Read from child DB (cached)
+				if _, cached := childTypesCache[repo.Path]; !cached {
+					childTypesCache[repo.Path] = readChildCustomTypes(ctx, repo.Path)
+				}
+				customTypes = unionStrings(parentTypes, childTypesCache[repo.Path])
+			}
 		}
 
 		// Insert or update issue (with custom status and type support)

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,22 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 			t.Fatalf("failed to create .beads dir: %v", err)
 		}
 
+		// Create config.yaml for multi-repo mode
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+`, tmpDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		// Change to tmpDir so FindConfigYAMLPath finds our config
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
 		// Create test issue
 		issue := types.Issue{
 			ID:         "test-1",
@@ -97,9 +114,6 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 		}
 		f.Close()
 
-		// Set multi-repo config
-		config.Set("repos.primary", tmpDir)
-
 		ctx := context.Background()
 		results, err := store.HydrateFromMultiRepo(ctx)
 		if err != nil {
@@ -121,9 +135,7 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 		if imported.SourceRepo != "." {
 			t.Errorf("expected source_repo '.', got %q", imported.SourceRepo)
 		}
-
-		// Clean up config
-		config.Set("repos.primary", "")
+		// Note: config cleanup happens via deferred os.Chdir(oldWd)
 	})
 
 	t.Run("uses mtime caching to skip unchanged files", func(t *testing.T) {
@@ -140,6 +152,22 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
 			t.Fatalf("failed to create .beads dir: %v", err)
+		}
+
+		// Create config.yaml for multi-repo mode
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+`, tmpDir)
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		// Change to tmpDir so FindConfigYAMLPath finds our config
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
 		}
 
 		// Create test issue
@@ -167,9 +195,6 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 			t.Fatalf("failed to write issue: %v", err)
 		}
 		f.Close()
-
-		// Set multi-repo config
-		config.Set("repos.primary", tmpDir)
 
 		ctx := context.Background()
 
@@ -208,6 +233,31 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 			t.Fatalf("failed to create primary .beads dir: %v", err)
 		}
 
+		// Create additional repo
+		additionalDir := t.TempDir()
+		additionalBeadsDir := filepath.Join(additionalDir, ".beads")
+		if err := os.MkdirAll(additionalBeadsDir, 0755); err != nil {
+			t.Fatalf("failed to create additional .beads dir: %v", err)
+		}
+
+		// Create config.yaml for multi-repo mode in primary repo
+		configYAML := fmt.Sprintf(`repos:
+  primary: "%s"
+  additional:
+    - "%s"
+`, primaryDir, additionalDir)
+		configPath := filepath.Join(primaryBeadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+			t.Fatalf("failed to write config.yaml: %v", err)
+		}
+
+		// Change to primaryDir so FindConfigYAMLPath finds our config
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(primaryDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
 		issue1 := types.Issue{
 			ID:         "primary-1",
 			Title:      "Primary Issue",
@@ -227,13 +277,6 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 		json.NewEncoder(f1).Encode(issue1)
 		f1.Close()
 
-		// Create additional repo
-		additionalDir := t.TempDir()
-		additionalBeadsDir := filepath.Join(additionalDir, ".beads")
-		if err := os.MkdirAll(additionalBeadsDir, 0755); err != nil {
-			t.Fatalf("failed to create additional .beads dir: %v", err)
-		}
-
 		issue2 := types.Issue{
 			ID:         "additional-1",
 			Title:      "Additional Issue",
@@ -252,10 +295,6 @@ func TestHydrateFromMultiRepo(t *testing.T) {
 		}
 		json.NewEncoder(f2).Encode(issue2)
 		f2.Close()
-
-		// Set multi-repo config
-		config.Set("repos.primary", primaryDir)
-		config.Set("repos.additional", []string{additionalDir})
 
 		ctx := context.Background()
 		results, err := store.HydrateFromMultiRepo(ctx)
@@ -344,7 +383,7 @@ func TestImportJSONLFile(t *testing.T) {
 
 		// Import
 		ctx := context.Background()
-		count, err := store.importJSONLFile(ctx, jsonlPath, "test")
+		count, err := store.importJSONLFile(ctx, jsonlPath, "test", nil, nil)
 		if err != nil {
 			t.Fatalf("importJSONLFile() error = %v", err)
 		}
@@ -430,7 +469,7 @@ func TestImportJSONLFileOutOfOrderDeps(t *testing.T) {
 
 		// Import should succeed despite out-of-order dependencies
 		ctx := context.Background()
-		count, err := store.importJSONLFile(ctx, jsonlPath, "test")
+		count, err := store.importJSONLFile(ctx, jsonlPath, "test", nil, nil)
 		if err != nil {
 			t.Fatalf("importJSONLFile() error = %v", err)
 		}
@@ -490,7 +529,7 @@ func TestImportJSONLFileOutOfOrderDeps(t *testing.T) {
 
 		// Import should fail due to FK violation
 		ctx := context.Background()
-		_, err = store.importJSONLFile(ctx, jsonlPath, "test")
+		_, err = store.importJSONLFile(ctx, jsonlPath, "test", nil, nil)
 		if err == nil {
 			t.Error("expected error for orphaned dependency, got nil")
 		}
@@ -967,7 +1006,7 @@ func TestUpsertPreservesGateFields(t *testing.T) {
 	f.Close()
 
 	// Import the JSONL file (this should NOT clear the await fields)
-	_, err = store.importJSONLFile(ctx, jsonlPath, "test")
+	_, err = store.importJSONLFile(ctx, jsonlPath, "test", nil, nil)
 	if err != nil {
 		t.Fatalf("importJSONLFile failed: %v", err)
 	}

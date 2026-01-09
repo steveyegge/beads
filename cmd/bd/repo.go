@@ -181,9 +181,14 @@ repositories configured for hydration.`,
 			if primary == "" {
 				primary = "."
 			}
+			// Convert to paths for backwards-compatible JSON output
+			paths := make([]string, len(repos.Additional))
+			for i, repo := range repos.Additional {
+				paths[i] = repo.Path
+			}
 			result := map[string]interface{}{
 				"primary":    primary,
-				"additional": repos.Additional,
+				"additional": paths,
 			}
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
@@ -197,8 +202,8 @@ repositories configured for hydration.`,
 			fmt.Println("No additional repositories configured")
 		} else {
 			fmt.Println("\nAdditional repositories:")
-			for _, path := range repos.Additional {
-				fmt.Printf("  - %s\n", path)
+			for _, repo := range repos.Additional {
+				fmt.Printf("  - %s\n", repo.Path)
 			}
 		}
 		return nil

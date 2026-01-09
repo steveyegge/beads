@@ -9,10 +9,50 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AdditionalRepo represents a repository in repos.additional config.
+// Supports both string format (path only) and object format (with prefix/types).
+type AdditionalRepo struct {
+	Path        string   `yaml:"path"`
+	Prefix      string   `yaml:"prefix,omitempty"`
+	CustomTypes []string `yaml:"custom_types,omitempty"`
+}
+
+// UnmarshalYAML implements custom unmarshaling for backwards compatibility.
+// Accepts both string ("oss/") and object ({path: "oss/", prefix: "oss"}) formats.
+func (r *AdditionalRepo) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		// String format: just the path
+		r.Path = node.Value
+		return nil
+	case yaml.MappingNode:
+		// Object format: decode normally
+		type plain AdditionalRepo
+		return node.Decode((*plain)(r))
+	default:
+		return fmt.Errorf("invalid additional repo: expected string or object, got %v", node.Kind)
+	}
+}
+
+// InferredPrefix returns the effective prefix for this repo.
+// Uses explicit Prefix if set, otherwise infers from Path basename.
+func (r *AdditionalRepo) InferredPrefix() string {
+	if r.Prefix != "" {
+		return r.Prefix
+	}
+	return inferPrefixFromPath(r.Path)
+}
+
+// inferPrefixFromPath extracts a prefix from a path (e.g., "oss/" → "oss")
+func inferPrefixFromPath(path string) string {
+	path = strings.TrimSuffix(path, "/")
+	return filepath.Base(path)
+}
+
 // ReposConfig represents the repos section of config.yaml
 type ReposConfig struct {
-	Primary    string   `yaml:"primary,omitempty"`
-	Additional []string `yaml:"additional,omitempty,flow"`
+	Primary    string           `yaml:"primary,omitempty"`
+	Additional []AdditionalRepo `yaml:"additional,omitempty"`
 }
 
 // configFile represents the structure for reading/writing config.yaml
@@ -69,13 +109,14 @@ func GetReposFromYAML(configPath string) (*ReposConfig, error) {
 		}
 
 		if additional, ok := reposMap["additional"]; ok && additional != nil {
-			switch v := additional.(type) {
-			case []interface{}:
-				for _, item := range v {
-					if str, ok := item.(string); ok {
-						repos.Additional = append(repos.Additional, str)
-					}
-				}
+			// Re-parse just the additional section using yaml.Node
+			// to leverage the custom AdditionalRepo unmarshaler
+			additionalYAML, err := yaml.Marshal(additional)
+			if err != nil {
+				return nil, fmt.Errorf("failed to re-marshal additional: %w", err)
+			}
+			if err := yaml.Unmarshal(additionalYAML, &repos.Additional); err != nil {
+				return nil, fmt.Errorf("failed to parse additional repos: %w", err)
 			}
 		}
 	}
@@ -191,10 +232,39 @@ func buildReposNode(repos *ReposConfig) *yaml.Node {
 
 	if len(repos.Additional) > 0 {
 		additionalNode := &yaml.Node{Kind: yaml.SequenceNode}
-		for _, path := range repos.Additional {
-			additionalNode.Content = append(additionalNode.Content,
-				&yaml.Node{Kind: yaml.ScalarNode, Value: path, Style: yaml.DoubleQuotedStyle},
-			)
+		for _, repo := range repos.Additional {
+			// If only Path is set (no explicit Prefix or CustomTypes), output as scalar for backwards compat
+			if repo.Prefix == "" && len(repo.CustomTypes) == 0 {
+				additionalNode.Content = append(additionalNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: repo.Path, Style: yaml.DoubleQuotedStyle},
+				)
+			} else {
+				// Output as mapping node for full format
+				repoNode := &yaml.Node{Kind: yaml.MappingNode}
+				repoNode.Content = append(repoNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "path"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: repo.Path, Style: yaml.DoubleQuotedStyle},
+				)
+				if repo.Prefix != "" {
+					repoNode.Content = append(repoNode.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Value: "prefix"},
+						&yaml.Node{Kind: yaml.ScalarNode, Value: repo.Prefix, Style: yaml.DoubleQuotedStyle},
+					)
+				}
+				if len(repo.CustomTypes) > 0 {
+					typesNode := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+					for _, t := range repo.CustomTypes {
+						typesNode.Content = append(typesNode.Content,
+							&yaml.Node{Kind: yaml.ScalarNode, Value: t},
+						)
+					}
+					repoNode.Content = append(repoNode.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Value: "custom_types"},
+						typesNode,
+					)
+				}
+				additionalNode.Content = append(additionalNode.Content, repoNode)
+			}
 		}
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "additional"},
@@ -220,13 +290,13 @@ func AddRepo(configPath, repoPath string) error {
 
 	// Check if repo already exists
 	for _, existing := range repos.Additional {
-		if existing == repoPath {
+		if existing.Path == repoPath {
 			return fmt.Errorf("repository already configured: %s", repoPath)
 		}
 	}
 
-	// Add the new repo
-	repos.Additional = append(repos.Additional, repoPath)
+	// Add the new repo (as simple path-only entry)
+	repos.Additional = append(repos.Additional, AdditionalRepo{Path: repoPath})
 
 	return SetReposInYAML(configPath, repos)
 }
@@ -240,9 +310,9 @@ func RemoveRepo(configPath, repoPath string) error {
 
 	// Find and remove the repo
 	found := false
-	newAdditional := make([]string, 0, len(repos.Additional))
+	newAdditional := make([]AdditionalRepo, 0, len(repos.Additional))
 	for _, existing := range repos.Additional {
-		if existing == repoPath {
+		if existing.Path == repoPath {
 			found = true
 			continue
 		}
