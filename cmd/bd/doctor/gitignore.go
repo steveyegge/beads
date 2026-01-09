@@ -46,6 +46,11 @@ beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
 
+# Sync state (local-only, per-machine)
+# These files are machine-specific and should not be shared across clones
+.sync.lock
+sync_base.jsonl
+
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
 # They would override fork protection in .git/info/exclude, allowing
 # contributors to accidentally commit upstream issue databases.
@@ -64,6 +69,8 @@ var requiredPatterns = []string{
 	"*.db?*",
 	"redirect",
 	"last-touched",
+	".sync.lock",
+	"sync_base.jsonl",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
