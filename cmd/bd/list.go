@@ -795,6 +795,9 @@ var listCmd = &cobra.Command{
 			}
 			listArgs.Overdue = filter.Overdue
 
+			// Pass through --allow-stale flag for resilient queries (bd-dpkdm)
+			listArgs.AllowStale = allowStale
+
 			resp, err := daemonClient.List(listArgs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)

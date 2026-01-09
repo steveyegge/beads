@@ -255,6 +255,9 @@ type ListArgs struct {
 	DueAfter    string `json:"due_after,omitempty"`    // ISO 8601 format
 	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
 	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
+
+	// Staleness control (bd-dpkdm)
+	AllowStale bool `json:"allow_stale,omitempty"` // Skip staleness check, return potentially stale data
 }
 
 // CountArgs represents arguments for the count operation
