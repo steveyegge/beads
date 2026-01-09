@@ -442,7 +442,19 @@ var rootCmd = &cobra.Command{
 						isYamlOnlyConfigOp = true
 					}
 				}
-				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp {
+
+				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
+				// This enables `bd --no-daemon show` after cold-start when DB is missing
+				canAutoBootstrap := false
+				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
+					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+					if _, err := os.Stat(jsonlPath); err == nil {
+						canAutoBootstrap = true
+						debug.Logf("cold-start bootstrap: JSONL exists, allowing auto-create for %s", cmd.Name())
+					}
+				}
+
+				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
 					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 
@@ -707,6 +719,7 @@ var rootCmd = &cobra.Command{
 
 		// Fall back to direct storage access
 		var err error
+		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
 		if useReadOnly {
 			// Read-only mode: prevents file modifications (GH#804)
 			store, err = sqlite.NewReadOnlyWithTimeout(rootCtx, dbPath, lockTimeout)
@@ -715,6 +728,7 @@ var rootCmd = &cobra.Command{
 				// This handles the case where user runs "bd list" before "bd init"
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
 				store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
+				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
 		} else {
 			store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
@@ -760,7 +774,9 @@ var rootCmd = &cobra.Command{
 		// Skip for delete command to prevent resurrection of deleted issues
 		// Skip if sync --dry-run to avoid modifying DB in dry-run mode
 		// Skip for read-only commands - they can't write anyway (GH#804)
-		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && !useReadOnly {
+		// Exception: allow auto-import for read-only commands that fell back to
+		// read-write mode due to missing DB (needsBootstrap) - fixes GH#b09
+		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && (!useReadOnly || needsBootstrap) {
 			// Check if this is sync command with --dry-run flag
 			if cmd.Name() == "sync" {
 				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
