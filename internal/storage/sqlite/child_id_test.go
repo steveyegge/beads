@@ -435,6 +435,11 @@ func TestGetNextChildID_ConfigurableMaxDepth(t *testing.T) {
 		t.Fatalf("failed to initialize config: %v", err)
 	}
 
+	// Ensure config is reset even if test fails or panics
+	t.Cleanup(func() {
+		config.Set("hierarchy.max-depth", 3)
+	})
+
 	tmpFile := t.TempDir() + "/test.db"
 	defer os.Remove(tmpFile)
 	store := newTestStore(t, tmpFile)
@@ -496,9 +501,6 @@ func TestGetNextChildID_ConfigurableMaxDepth(t *testing.T) {
 	if err != nil && err.Error() != "maximum hierarchy depth (2) exceeded for parent bd-depth.1.1" {
 		t.Errorf("unexpected error message: %v", err)
 	}
-
-	// Reset to default for other tests
-	config.Set("hierarchy.max-depth", 3)
 }
 
 // TestGetNextChildID_ResurrectParentChain tests resurrection of deeply nested missing parents (bd-ar2.7)

@@ -1599,15 +1599,9 @@ func (m *MemoryStorage) GetNextChildID(ctx context.Context, parentID string) (st
 		return "", fmt.Errorf("parent issue %s does not exist", parentID)
 	}
 
-	// Calculate depth (count dots)
-	// Read max depth from config, falling back to types.MaxHierarchyDepth (GH#995)
-	maxDepth := config.GetInt("hierarchy.max-depth")
-	if maxDepth < 1 {
-		maxDepth = types.MaxHierarchyDepth
-	}
-	depth := strings.Count(parentID, ".")
-	if depth >= maxDepth {
-		return "", fmt.Errorf("maximum hierarchy depth (%d) exceeded for parent %s", maxDepth, parentID)
+	// Check hierarchy depth limit (GH#995)
+	if err := types.CheckHierarchyDepth(parentID, config.GetInt("hierarchy.max-depth")); err != nil {
+		return "", err
 	}
 
 	// Get or initialize counter for this parent

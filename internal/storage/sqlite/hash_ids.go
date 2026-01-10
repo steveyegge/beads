@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
@@ -52,15 +51,9 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 		}
 	}
 
-	// Calculate current depth by counting dots
-	// Read max depth from config, falling back to types.MaxHierarchyDepth (GH#995)
-	maxDepth := config.GetInt("hierarchy.max-depth")
-	if maxDepth < 1 {
-		maxDepth = types.MaxHierarchyDepth
-	}
-	depth := strings.Count(parentID, ".")
-	if depth >= maxDepth {
-		return "", fmt.Errorf("maximum hierarchy depth (%d) exceeded for parent %s", maxDepth, parentID)
+	// Check hierarchy depth limit (GH#995)
+	if err := types.CheckHierarchyDepth(parentID, config.GetInt("hierarchy.max-depth")); err != nil {
+		return "", err
 	}
 
 	// Get next child number atomically
