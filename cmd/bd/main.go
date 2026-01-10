@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -106,6 +108,41 @@ func isReadOnlyCommand(cmdName string) bool {
 	return readOnlyCommands[cmdName]
 }
 
+// getActorWithGit returns the actor for audit trails with git config fallback.
+// Priority: --actor flag > BD_ACTOR env > BEADS_ACTOR env > git config user.name > $USER > "unknown"
+// This provides a sensible default for developers: their git identity is used unless
+// explicitly overridden
+func getActorWithGit() string {
+	// If actor is already set (from --actor flag), use it
+	if actor != "" {
+		return actor
+	}
+
+	// Check BD_ACTOR env var (primary env override)
+	if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
+		return bdActor
+	}
+
+	// Check BEADS_ACTOR env var (alias for MCP/integration compatibility)
+	if beadsActor := os.Getenv("BEADS_ACTOR"); beadsActor != "" {
+		return beadsActor
+	}
+
+	// Try git config user.name - the natural default for a git-native tool
+	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		if gitUser := strings.TrimSpace(string(out)); gitUser != "" {
+			return gitUser
+		}
+	}
+
+	// Fall back to system username
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+
+	return "unknown"
+}
+
 func init() {
 	// Initialize viper configuration
 	if err := config.Initialize(); err != nil {
@@ -120,7 +157,7 @@ func init() {
 
 	// Register persistent flags
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
-	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR or $USER)")
+	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR, git user.name, $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
@@ -377,15 +414,7 @@ var rootCmd = &cobra.Command{
 			}
 
 			// Set actor for audit trail
-			if actor == "" {
-				if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-					actor = bdActor
-				} else if user := os.Getenv("USER"); user != "" {
-					actor = user
-				} else {
-					actor = "unknown"
-				}
-			}
+			actor = getActorWithGit()
 
 			// Skip daemon and SQLite initialization - we're in memory mode
 			return
@@ -419,15 +448,7 @@ var rootCmd = &cobra.Command{
 							os.Exit(1)
 						}
 						// Set actor for audit trail
-						if actor == "" {
-							if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-								actor = bdActor
-							} else if user := os.Getenv("USER"); user != "" {
-								actor = user
-							} else {
-								actor = "unknown"
-							}
-						}
+						actor = getActorWithGit()
 						return
 					}
 				}
@@ -488,16 +509,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Set actor for audit trail
-		// Priority: --actor flag > BD_ACTOR env > USER env > "unknown"
-		if actor == "" {
-			if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-				actor = bdActor
-			} else if user := os.Getenv("USER"); user != "" {
-				actor = user
-			} else {
-				actor = "unknown"
-			}
-		}
+		actor = getActorWithGit()
 
 		// Track bd version changes
 		// Best-effort tracking - failures are silent
