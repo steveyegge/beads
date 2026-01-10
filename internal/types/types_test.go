@@ -442,14 +442,14 @@ func TestValidateForImport(t *testing.T) {
 			wantErr: false, // Should pass - federation trust model
 		},
 		{
-			name: "custom type agent is trusted",
+			name: "built-in type agent passes",
 			issue: Issue{
 				Title:     "Test Issue",
 				Status:    StatusOpen,
 				Priority:  1,
-				IssueType: IssueType("agent"), // Gas Town custom type
+				IssueType: TypeAgent, // Gas Town built-in type
 			},
-			wantErr: false, // Should pass - federation trust model
+			wantErr: false,
 		},
 		{
 			name: "empty type defaults to task (handled by SetDefaults)",
@@ -548,11 +548,12 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeMergeRequest, true},
 		{TypeMolecule, true},
 		{TypeGate, true},
+		{TypeAgent, true},
+		{TypeRole, true},
+		{TypeRig, true},
+		{TypeConvoy, true},
 		{TypeEvent, true},
-		// Gas Town types (agent, role, rig, convoy, slot) have been removed
-		// They are now identified by labels (gt:agent, etc.) instead
-		{IssueType("agent"), false},  // Now requires custom type config
-		{IssueType("convoy"), false}, // Now requires custom type config
+		{TypeSlot, true},
 		{IssueType("invalid"), false},
 		{IssueType(""), false},
 	}
@@ -585,13 +586,16 @@ func TestIssueTypeIsBuiltIn(t *testing.T) {
 		{TypeMergeRequest, true},
 		{TypeMolecule, true},
 		{TypeGate, true},
+		{TypeAgent, true},
+		{TypeRole, true},
+		{TypeRig, true},
+		{TypeConvoy, true},
 		{TypeEvent, true},
+		{TypeSlot, true},
 		// Custom types (not built-in)
-		{IssueType("pm"), false},      // Custom type from child repo
-		{IssueType("llm"), false},     // Custom type from child repo
-		{IssueType("agent"), false},   // Gas Town custom type
-		{IssueType("convoy"), false},  // Gas Town custom type
-		{IssueType(""), false},        // Empty is not built-in
+		{IssueType("pm"), false},  // Custom type from child repo
+		{IssueType("llm"), false}, // Custom type from child repo
+		{IssueType(""), false},    // Empty is not built-in
 	}
 
 	for _, tt := range tests {

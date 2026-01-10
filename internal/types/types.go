@@ -442,9 +442,6 @@ func (s Status) IsValidWithCustom(customStatuses []string) bool {
 type IssueType string
 
 // Issue type constants
-// Note: Gas Town-specific types (agent, role, rig, convoy, slot) have been removed.
-// Use custom types via `bd config set types.custom "agent,role,..."` if needed.
-// These types are now identified by labels (gt:agent, gt:role, etc.) instead.
 const (
 	TypeBug          IssueType = "bug"
 	TypeFeature      IssueType = "feature"
@@ -455,13 +452,18 @@ const (
 	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
 	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
 	TypeGate         IssueType = "gate"          // Async coordination gate
+	TypeAgent        IssueType = "agent"         // Agent identity bead
+	TypeRole         IssueType = "role"          // Agent role definition
+	TypeRig          IssueType = "rig"           // Rig identity bead (project container)
+	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
 	TypeEvent        IssueType = "event"         // Operational state change record
+	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 )
 
 // IsValid checks if the issue type value is valid (built-in types only)
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeEvent:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot:
 		return true
 	}
 	return false
