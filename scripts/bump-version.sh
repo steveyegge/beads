@@ -313,9 +313,9 @@ main() {
         "Version = \"$CURRENT_VERSION\"" \
         "Version = \"$NEW_VERSION\""
 
-    # 2. Update .claude-plugin/plugin.json
-    echo "  • .claude-plugin/plugin.json"
-    update_file ".claude-plugin/plugin.json" \
+    # 2. Update claude-plugin/.claude-plugin/plugin.json
+    echo "  • claude-plugin/.claude-plugin/plugin.json"
+    update_file "claude-plugin/.claude-plugin/plugin.json" \
         "\"version\": \"$CURRENT_VERSION\"" \
         "\"version\": \"$NEW_VERSION\""
 
@@ -383,7 +383,7 @@ main() {
     echo "Verifying version consistency..."
     VERSIONS=(
         "$(grep 'Version = ' cmd/bd/version.go | sed 's/.*"\(.*\)".*/\1/')"
-        "$(jq -r '.version' .claude-plugin/plugin.json)"
+        "$(jq -r '.version' claude-plugin/.claude-plugin/plugin.json)"
         "$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)"
         "$(grep 'version = ' integrations/beads-mcp/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
         "$(grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py | sed 's/.*"\(.*\)".*/\1/')"
@@ -722,7 +722,7 @@ main() {
         echo "Creating git commit..."
 
         git add cmd/bd/version.go \
-                .claude-plugin/plugin.json \
+                claude-plugin/.claude-plugin/plugin.json \
                 .claude-plugin/marketplace.json \
                 integrations/beads-mcp/pyproject.toml \
                 integrations/beads-mcp/src/beads_mcp/__init__.py \

@@ -88,8 +88,8 @@ Bumps the version number across all beads components in a single command.
 
 Updates version in all these files:
 - `cmd/bd/version.go` - bd CLI version constant
-- `.claude-plugin/plugin.json` - Plugin version
-- `.claude-plugin/marketplace.json` - Marketplace plugin version
+- `claude-plugin/.claude-plugin/plugin.json` - Plugin version
+- `.claude-plugin/marketplace.json` - Marketplace plugin version (pointer only)
 - `integrations/beads-mcp/pyproject.toml` - MCP server version
 - `README.md` - Alpha status version
 - `PLUGIN.md` - Version requirements

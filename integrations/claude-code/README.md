@@ -15,7 +15,7 @@ bd setup claude
 ## Installation
 
 ```bash
-cp commands/plan-to-beads.md ~/.claude/commands/
+cp claude-plugin/commands/plan-to-beads.md ~/.claude/commands/
 ```
 
 Optionally add to `~/.claude/settings.json` under `permissions.allow`:
