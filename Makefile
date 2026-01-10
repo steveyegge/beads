@@ -1,3 +1,24 @@
+# Makefile - Standard project targets
+# See: https://github.com/aygp-dr/hydra-setup/docs/makefile-standards.md
+
+.DEFAULT_GOAL := help
+
+##@ Setup
+
+.PHONY: deps
+deps: ## Install dependencies
+	@echo "Installing dependencies..."
+
+.PHONY: setup
+setup: deps ## Initial project setup
+	@echo "Setting up project..."
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	@echo "Cleaning..."
+
+##@ Development
+
 # Makefile for beads project
 
 .PHONY: all build test bench bench-quick clean install help
