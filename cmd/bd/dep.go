@@ -45,6 +45,9 @@ func isChildOf(childID, parentID string) bool {
 
 // warnIfCyclesExist checks for dependency cycles and prints a warning if found.
 func warnIfCyclesExist(s storage.Storage) {
+	if s == nil {
+		return // Skip cycle check in daemon mode (daemon handles it)
+	}
 	cycles, err := s.DetectCycles(rootCtx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
