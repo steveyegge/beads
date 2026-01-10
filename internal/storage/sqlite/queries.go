@@ -212,8 +212,10 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		}
 	}
 
-	// Insert issue
-	if err := insertIssue(ctx, conn, issue); err != nil {
+	// Insert issue using strict mode (fails on duplicates)
+	// GH#956: Use insertIssueStrict instead of insertIssue to prevent FK constraint errors
+	// from silent INSERT OR IGNORE failures under concurrent load.
+	if err := insertIssueStrict(ctx, conn, issue); err != nil {
 		return wrapDBError("insert issue", err)
 	}
 
