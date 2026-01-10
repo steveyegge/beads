@@ -96,6 +96,14 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		settings["hooks"] = hooks
 	}
 
+	// GH#955: Clean up any null values left by previous buggy removal
+	// Claude Code expects arrays, not null values
+	for key, val := range hooks {
+		if val == nil {
+			delete(hooks, key)
+		}
+	}
+
 	command := "bd prime"
 	if stealth {
 		command = "bd prime --stealth"
@@ -272,7 +280,8 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 	}
 
 	// Filter out bd prime hooks
-	var filtered []interface{}
+	// Initialize as empty slice (not nil) to avoid JSON null serialization
+	filtered := make([]interface{}, 0, len(eventHooks))
 	for _, hook := range eventHooks {
 		hookMap, ok := hook.(map[string]interface{})
 		if !ok {
@@ -304,7 +313,14 @@ func removeHookCommand(hooks map[string]interface{}, event, command string) {
 		}
 	}
 
-	hooks[event] = filtered
+	// GH#955: Delete the key entirely if no hooks remain, rather than
+	// leaving an empty array. This is cleaner and avoids potential
+	// issues with empty arrays in settings.
+	if len(filtered) == 0 {
+		delete(hooks, event)
+	} else {
+		hooks[event] = filtered
+	}
 }
 
 // hasBeadsHooks checks if a settings file has bd prime hooks
