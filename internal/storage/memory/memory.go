@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -21,14 +22,14 @@ type MemoryStorage struct {
 	mu sync.RWMutex // Protects all maps
 
 	// Core data
-	issues       map[string]*types.Issue       // ID -> Issue
+	issues       map[string]*types.Issue        // ID -> Issue
 	dependencies map[string][]*types.Dependency // IssueID -> Dependencies
-	labels       map[string][]string           // IssueID -> Labels
-	events       map[string][]*types.Event     // IssueID -> Events
-	comments     map[string][]*types.Comment   // IssueID -> Comments
-	config       map[string]string             // Config key-value pairs
-	metadata     map[string]string             // Metadata key-value pairs
-	counters     map[string]int                // Prefix -> Last ID
+	labels       map[string][]string            // IssueID -> Labels
+	events       map[string][]*types.Event      // IssueID -> Events
+	comments     map[string][]*types.Comment    // IssueID -> Comments
+	config       map[string]string              // Config key-value pairs
+	metadata     map[string]string              // Metadata key-value pairs
+	counters     map[string]int                 // Prefix -> Last ID
 
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
@@ -1599,9 +1600,14 @@ func (m *MemoryStorage) GetNextChildID(ctx context.Context, parentID string) (st
 	}
 
 	// Calculate depth (count dots)
+	// Read max depth from config, falling back to types.MaxHierarchyDepth (GH#995)
+	maxDepth := config.GetInt("hierarchy.max-depth")
+	if maxDepth < 1 {
+		maxDepth = types.MaxHierarchyDepth
+	}
 	depth := strings.Count(parentID, ".")
-	if depth >= 3 {
-		return "", fmt.Errorf("maximum hierarchy depth (3) exceeded for parent %s", parentID)
+	if depth >= maxDepth {
+		return "", fmt.Errorf("maximum hierarchy depth (%d) exceeded for parent %s", maxDepth, parentID)
 	}
 
 	// Get or initialize counter for this parent

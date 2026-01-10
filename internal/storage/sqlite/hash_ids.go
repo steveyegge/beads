@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // getNextChildNumber atomically increments and returns the next child counter for a parent issue.
@@ -48,19 +51,24 @@ func (s *SQLiteStorage) GetNextChildID(ctx context.Context, parentID string) (st
 			return "", fmt.Errorf("parent issue %s does not exist and could not be resurrected from JSONL history", parentID)
 		}
 	}
-	
+
 	// Calculate current depth by counting dots
-	depth := strings.Count(parentID, ".")
-	if depth >= 3 {
-		return "", fmt.Errorf("maximum hierarchy depth (3) exceeded for parent %s", parentID)
+	// Read max depth from config, falling back to types.MaxHierarchyDepth (GH#995)
+	maxDepth := config.GetInt("hierarchy.max-depth")
+	if maxDepth < 1 {
+		maxDepth = types.MaxHierarchyDepth
 	}
-	
+	depth := strings.Count(parentID, ".")
+	if depth >= maxDepth {
+		return "", fmt.Errorf("maximum hierarchy depth (%d) exceeded for parent %s", maxDepth, parentID)
+	}
+
 	// Get next child number atomically
 	nextNum, err := s.getNextChildNumber(ctx, parentID)
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Format as parentID.counter
 	childID := fmt.Sprintf("%s.%d", parentID, nextNum)
 	return childID, nil
