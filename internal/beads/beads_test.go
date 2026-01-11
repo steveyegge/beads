@@ -10,15 +10,24 @@ import (
 )
 
 func TestFindDatabasePathEnvVar(t *testing.T) {
-	// Save original env var
-	originalEnv := os.Getenv("BEADS_DB")
+	// Save original env vars
+	originalDB := os.Getenv("BEADS_DB")
+	originalDir := os.Getenv("BEADS_DIR")
 	defer func() {
-		if originalEnv != "" {
-			_ = os.Setenv("BEADS_DB", originalEnv)
+		if originalDB != "" {
+			_ = os.Setenv("BEADS_DB", originalDB)
 		} else {
 			_ = os.Unsetenv("BEADS_DB")
 		}
+		if originalDir != "" {
+			_ = os.Setenv("BEADS_DIR", originalDir)
+		} else {
+			_ = os.Unsetenv("BEADS_DIR")
+		}
 	}()
+
+	// Clear BEADS_DIR to prevent it from interfering
+	_ = os.Unsetenv("BEADS_DIR")
 
 	// Set env var to a test path (platform-agnostic)
 	testPath := filepath.Join("test", "path", "test.db")
@@ -33,17 +42,23 @@ func TestFindDatabasePathEnvVar(t *testing.T) {
 }
 
 func TestFindDatabasePathInTree(t *testing.T) {
-	// Save original env var
-	originalEnv := os.Getenv("BEADS_DB")
+	// Save original env vars
+	originalDB := os.Getenv("BEADS_DB")
+	originalDir := os.Getenv("BEADS_DIR")
 	defer func() {
-		if originalEnv != "" {
-			os.Setenv("BEADS_DB", originalEnv)
+		if originalDB != "" {
+			os.Setenv("BEADS_DB", originalDB)
 		} else {
 			os.Unsetenv("BEADS_DB")
 		}
+		if originalDir != "" {
+			os.Setenv("BEADS_DIR", originalDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
 	}()
 
-	// Clear env var
+	// Clear env vars
 	os.Unsetenv("BEADS_DB")
 
 	// Create temporary directory structure
@@ -66,6 +81,9 @@ func TestFindDatabasePathInTree(t *testing.T) {
 		t.Fatalf("Failed to create db file: %v", err)
 	}
 	f.Close()
+
+	// Set BEADS_DIR to our test .beads directory to override git repo detection
+	os.Setenv("BEADS_DIR", beadsDir)
 
 	// Create a subdirectory and change to it
 	subDir := filepath.Join(tmpDir, "sub", "nested")

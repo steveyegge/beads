@@ -454,6 +454,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 		}
 
 		// Drop the column to simulate fresh migration
+		// Note: Schema must include owner column for GetIssue to work
 		_, err = s.db.Exec(`
 			CREATE TABLE issues_backup AS SELECT * FROM issues;
 			DROP TABLE issues;
@@ -471,8 +472,10 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				estimated_minutes INTEGER,
 				created_at DATETIME NOT NULL,
 				created_by TEXT DEFAULT '',
+				owner TEXT DEFAULT '',
 				updated_at DATETIME NOT NULL,
 				closed_at DATETIME,
+				closed_by_session TEXT DEFAULT '',
 				external_ref TEXT,
 				compaction_level INTEGER DEFAULT 0,
 				compacted_at DATETIME,
@@ -488,10 +491,6 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				ephemeral INTEGER DEFAULT 0,
 				pinned INTEGER DEFAULT 0,
 				is_template INTEGER DEFAULT 0,
-				replies_to TEXT DEFAULT '',
-				relates_to TEXT DEFAULT '',
-				duplicate_of TEXT DEFAULT '',
-				superseded_by TEXT DEFAULT '',
 				await_type TEXT DEFAULT '',
 				await_id TEXT DEFAULT '',
 				timeout_ns INTEGER DEFAULT 0,
@@ -511,7 +510,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				defer_until DATETIME,
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', updated_at, closed_at, external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, '', '', '', '', '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

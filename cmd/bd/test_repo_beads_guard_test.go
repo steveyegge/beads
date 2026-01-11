@@ -29,6 +29,17 @@ func TestMain(m *testing.M) {
 		}
 	}()
 
+	// Clear BEADS_DIR to prevent tests from accidentally picking up the project's
+	// .beads directory via git repo detection when there's a redirect file.
+	// Each test that needs a .beads directory should set BEADS_DIR explicitly.
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DIR")
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		}
+	}()
+
 	if os.Getenv("BEADS_TEST_GUARD_DISABLE") != "" {
 		os.Exit(m.Run())
 	}
