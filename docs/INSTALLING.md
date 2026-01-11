@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/insta
 ```
 
 The installer will:
-- Detect your platform (macOS/Linux, amd64/arm64)
+- Detect your platform (macOS/Linux/FreeBSD, amd64/arm64)
 - Install via `go install` if Go is available
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
@@ -121,6 +121,18 @@ git clone https://github.com/steveyegge/beads
 cd beads
 go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/
+```
+
+### FreeBSD
+
+**Via Quick Install Script**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+**Via go install**:
+```bash
+go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 ### Windows 11
