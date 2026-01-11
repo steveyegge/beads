@@ -278,4 +278,4 @@ jobs:
 
 - [docs/PROTECTED_BRANCHES.md](../../docs/PROTECTED_BRANCHES.md) - Complete guide
 - [AGENTS.md](../../AGENTS.md) - Agent integration instructions
-- [commands/sync.md](../../commands/sync.md) - `bd sync` command reference
+- [commands/sync.md](../../claude-plugin/commands/sync.md) - `bd sync` command reference
