@@ -474,6 +474,7 @@ const (
 	TypeGate         IssueType = "gate"          // Async coordination gate
 	TypeAgent        IssueType = "agent"         // Agent identity bead
 	TypeRole         IssueType = "role"          // Agent role definition
+	TypeRig          IssueType = "rig"           // Rig identity bead
 	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
 	TypeEvent        IssueType = "event"         // Operational state change record
 	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
@@ -482,10 +483,18 @@ const (
 // IsValid checks if the issue type value is valid
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeConvoy, TypeEvent, TypeSlot:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot:
 		return true
 	}
 	return false
+}
+
+// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
+// Used during multi-repo hydration to determine trust:
+// - Built-in types: validate (catch typos)
+// - Custom types (!IsBuiltIn): trust from source repo
+func (t IssueType) IsBuiltIn() bool {
+	return t.IsValid()
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
