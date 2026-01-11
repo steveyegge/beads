@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS issues (
     estimated_minutes INTEGER,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by TEXT DEFAULT '',
+    owner TEXT DEFAULT '',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     closed_at DATETIME,
     closed_by_session TEXT DEFAULT '',

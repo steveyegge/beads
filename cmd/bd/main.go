@@ -143,6 +143,27 @@ func getActorWithGit() string {
 	return "unknown"
 }
 
+// getOwner returns the human owner for CV attribution.
+// Priority: GIT_AUTHOR_EMAIL env > git config user.email > "" (empty)
+// This is the foundation for HOP CV (curriculum vitae) chains per Decision 008.
+// Unlike actor (which tracks who executed), owner tracks the human responsible.
+func getOwner() string {
+	// Check GIT_AUTHOR_EMAIL first - this is set during git commit operations
+	if authorEmail := os.Getenv("GIT_AUTHOR_EMAIL"); authorEmail != "" {
+		return authorEmail
+	}
+
+	// Fall back to git config user.email - the natural default
+	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+		if gitEmail := strings.TrimSpace(string(out)); gitEmail != "" {
+			return gitEmail
+		}
+	}
+
+	// Return empty if no email found (owner is optional)
+	return ""
+}
+
 func init() {
 	// Initialize viper configuration
 	if err := config.Initialize(); err != nil {

@@ -30,6 +30,7 @@ type Issue struct {
 
 	// ===== Assignment =====
 	Assignee         string `json:"assignee,omitempty"`
+	Owner            string `json:"owner,omitempty"` // Human owner for CV attribution (git author email)
 	EstimatedMinutes *int   `json:"estimated_minutes,omitempty"`
 
 	// ===== Timestamps =====
@@ -133,6 +134,7 @@ func (i *Issue) ComputeContentHash() string {
 	w.int(i.Priority)
 	w.str(string(i.IssueType))
 	w.str(i.Assignee)
+	w.str(i.Owner)
 	w.str(i.CreatedBy)
 
 	// Optional fields

@@ -306,6 +306,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,
 		CreatedBy: createArgs.CreatedBy,
+		Owner:     createArgs.Owner,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),
 		// Agent identity fields
