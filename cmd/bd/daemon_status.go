@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -442,10 +441,4 @@ func showAllDaemonsStatus(cmd *cobra.Command) {
 	if outdatedCount > 0 || staleCount > 0 || unresponsiveCount > 0 {
 		os.Exit(1)
 	}
-}
-
-// outputStatusJSON outputs the status as JSON (helper to avoid duplicating json.Marshal)
-func outputStatusJSON(v interface{}) {
-	data, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Println(string(data))
 }

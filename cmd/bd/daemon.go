@@ -67,21 +67,23 @@ Run 'bd daemon --help' to see all subcommands.`,
 			return
 		}
 
-		// Show deprecation warnings for flag-based actions
-		if start {
-			fmt.Fprintf(os.Stderr, "Warning: --start is deprecated, use 'bd daemon start' instead\n")
-		}
-		if stop {
-			fmt.Fprintf(os.Stderr, "Warning: --stop is deprecated, use 'bd daemon stop' instead\n")
-		}
-		if stopAll {
-			fmt.Fprintf(os.Stderr, "Warning: --stop-all is deprecated, use 'bd daemon killall' instead\n")
-		}
-		if status {
-			fmt.Fprintf(os.Stderr, "Warning: --status is deprecated, use 'bd daemon status' instead\n")
-		}
-		if health {
-			fmt.Fprintf(os.Stderr, "Warning: --health is deprecated, use 'bd daemon status --all' instead\n")
+		// Show deprecation warnings for flag-based actions (skip in JSON mode for agent ergonomics)
+		if !jsonOutput {
+			if start {
+				fmt.Fprintf(os.Stderr, "Warning: --start is deprecated, use 'bd daemon start' instead\n")
+			}
+			if stop {
+				fmt.Fprintf(os.Stderr, "Warning: --stop is deprecated, use 'bd daemon stop' instead\n")
+			}
+			if stopAll {
+				fmt.Fprintf(os.Stderr, "Warning: --stop-all is deprecated, use 'bd daemon killall' instead\n")
+			}
+			if status {
+				fmt.Fprintf(os.Stderr, "Warning: --status is deprecated, use 'bd daemon status' instead\n")
+			}
+			if health {
+				fmt.Fprintf(os.Stderr, "Warning: --health is deprecated, use 'bd daemon status --all' instead\n")
+			}
 		}
 
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
