@@ -305,6 +305,60 @@ main() {
         fi
     fi
 
+    # Check if go.mod or go.sum changed since last commit
+    if git diff HEAD go.mod go.sum 2>/dev/null | grep -q .; then
+        echo ""
+        log_warning "go.mod or go.sum has uncommitted changes"
+        log_info "You may need to update vendorHash in default.nix"
+        echo ""
+        read -p "Run ./scripts/update-nix-vendorhash.sh now? [y/N] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            if [ -f "./scripts/update-nix-vendorhash.sh" ]; then
+                log_info "Running vendorHash update script..."
+                if ./scripts/update-nix-vendorhash.sh; then
+                    log_success "vendorHash updated successfully"
+                else
+                    log_warning "vendorHash update failed or was skipped"
+                fi
+                echo ""
+            else
+                log_error "scripts/update-nix-vendorhash.sh not found"
+                exit 1
+            fi
+        else
+            log_info "Skipping vendorHash update"
+            log_info "Run ./scripts/update-nix-vendorhash.sh manually if needed"
+            echo ""
+        fi
+    elif git diff HEAD~1..HEAD go.mod go.sum 2>/dev/null | grep -q .; then
+        # Check if go.mod/go.sum changed in the last commit
+        echo ""
+        log_warning "go.mod or go.sum changed in the last commit"
+        log_info "You may need to update vendorHash in default.nix"
+        echo ""
+        read -p "Run ./scripts/update-nix-vendorhash.sh now? [y/N] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            if [ -f "./scripts/update-nix-vendorhash.sh" ]; then
+                log_info "Running vendorHash update script..."
+                if ./scripts/update-nix-vendorhash.sh; then
+                    log_success "vendorHash updated successfully"
+                else
+                    log_warning "vendorHash update failed or was skipped"
+                fi
+                echo ""
+            else
+                log_error "scripts/update-nix-vendorhash.sh not found"
+                exit 1
+            fi
+        else
+            log_info "Skipping vendorHash update"
+            log_info "Run ./scripts/update-nix-vendorhash.sh manually if needed"
+            echo ""
+        fi
+    fi
+
     echo "Updating version files..."
 
     # 1. Update cmd/bd/version.go
@@ -357,7 +411,13 @@ main() {
         "\"version\": \"$CURRENT_VERSION\"" \
         "\"version\": \"$NEW_VERSION\""
 
-    # 9. Update hook templates
+    # 9. Update default.nix (Nix package definition)
+    echo "  • default.nix"
+    update_file "default.nix" \
+        "version = \"$CURRENT_VERSION\";" \
+        "version = \"$NEW_VERSION\";"
+
+    # 10. Update hook templates
     echo "  • cmd/bd/templates/hooks/*"
     HOOK_FILES=("pre-commit" "post-merge" "pre-push" "post-checkout")
     for hook in "${HOOK_FILES[@]}"; do
@@ -366,7 +426,7 @@ main() {
             "# bd-hooks-version: $NEW_VERSION"
     done
 
-    # 10. Update CHANGELOG.md
+    # 11. Update CHANGELOG.md
     echo "  • CHANGELOG.md"
     update_changelog "$NEW_VERSION"
 
@@ -389,6 +449,7 @@ main() {
         "$(grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py | sed 's/.*"\(.*\)".*/\1/')"
         "$(jq -r '.version' npm-package/package.json)"
         "$(grep '# bd-hooks-version: ' cmd/bd/templates/hooks/pre-commit | sed 's/.*: \(.*\)/\1/')"
+        "$(grep 'version = ' default.nix | sed 's/.*"\(.*\)".*/\1/')"
     )
 
     ALL_MATCH=true
