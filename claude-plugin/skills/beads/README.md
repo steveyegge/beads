@@ -107,7 +107,7 @@ NEXT: Implement rate limiting"
 
 ## Contributing
 
-This skill is maintained at [github.com/steveyegge/beads](https://github.com/steveyegge/beads) in the `skills/beads/` directory.
+This skill is maintained at [github.com/steveyegge/beads](https://github.com/steveyegge/beads) in the `claude-plugin/skills/beads/` directory.
 
 Issues and PRs welcome for:
 - Documentation improvements
