@@ -13,7 +13,7 @@ Beads provides a persistent, structured memory for coding agents. It replaces me
 ## ⚡ Quick Start
 
 ```bash
-# Install (macOS/Linux)
+# Install (macOS/Linux/FreeBSD)
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 
 # Initialize (Humans run this once)
