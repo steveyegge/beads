@@ -43,8 +43,8 @@ check_version "integrations/beads-mcp/src/beads_mcp/__init__.py" \
     "$(grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')" \
     "MCP __init__.py"
 
-check_version ".claude-plugin/plugin.json" \
-    "$(jq -r '.version' .claude-plugin/plugin.json 2>/dev/null)" \
+check_version "claude-plugin/.claude-plugin/plugin.json" \
+    "$(jq -r '.version' claude-plugin/.claude-plugin/plugin.json 2>/dev/null)" \
     "Claude plugin.json"
 
 check_version ".claude-plugin/marketplace.json" \
