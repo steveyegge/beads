@@ -45,8 +45,6 @@ CREATE TABLE IF NOT EXISTS issues (
     work_type TEXT DEFAULT 'mutex',
     -- HOP quality score field (0.0-1.0, set by Refineries on merge)
     quality_score REAL,
-    -- Work economics field (Decision 006) - compounds vs evaporates
-    crystallizes INTEGER DEFAULT 0,
     -- Federation source system field
     source_system TEXT DEFAULT '',
     -- Event fields (bd-ecmd)
