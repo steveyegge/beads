@@ -418,6 +418,11 @@ func (c *Client) CreateIssue(ctx context.Context, title, description string, pri
 		"description": description,
 	}
 
+	// Include project if configured
+	if c.ProjectID != "" {
+		input["projectId"] = c.ProjectID
+	}
+
 	if priority > 0 {
 		input["priority"] = priority
 	}
