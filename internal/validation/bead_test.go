@@ -94,7 +94,7 @@ func TestValidateIDFormat(t *testing.T) {
 		{"foo-bar", "foo", false},
 		{"nohyphen", "", true},
 
-		// GH#xxx: Hyphenated prefix support
+		// Hyphenated prefix support
 		// These test cases verify that ValidateIDFormat correctly extracts
 		// prefixes containing hyphens (e.g., "bead-me-up" not just "bead")
 		{"bead-me-up-3e9", "bead-me-up", false},           // 3-char hash suffix
