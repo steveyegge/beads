@@ -649,6 +649,7 @@ const (
 	DepAuthoredBy DependencyType = "authored-by" // Creator relationship
 	DepAssignedTo DependencyType = "assigned-to" // Assignment relationship
 	DepApprovedBy DependencyType = "approved-by" // Approval relationship
+	DepAttests    DependencyType = "attests"     // Skill attestation: X attests Y has skill Z
 
 	// Convoy tracking (non-blocking cross-project references)
 	DepTracks DependencyType = "tracks" // Convoy → issue tracking (non-blocking)
@@ -672,7 +673,7 @@ func (d DependencyType) IsWellKnown() bool {
 	switch d {
 	case DepBlocks, DepParentChild, DepConditionalBlocks, DepWaitsFor, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
-		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepTracks,
+		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepAttests, DepTracks,
 		DepUntil, DepCausedBy, DepValidates:
 		return true
 	}
@@ -700,6 +701,22 @@ const (
 	WaitsForAllChildren = "all-children" // Wait for all dynamic children to complete
 	WaitsForAnyChildren = "any-children" // Proceed when first child completes (future)
 )
+
+// AttestsMeta holds metadata for attests dependencies (skill attestations).
+// Stored as JSON in the Dependency.Metadata field.
+// Enables: Entity X attests that Entity Y has skill Z at level N.
+type AttestsMeta struct {
+	// Skill is the identifier of the skill being attested (e.g., "go", "rust", "code-review")
+	Skill string `json:"skill"`
+	// Level is the proficiency level (e.g., "beginner", "intermediate", "expert", or numeric 1-5)
+	Level string `json:"level"`
+	// Date is when the attestation was made (RFC3339 format)
+	Date string `json:"date"`
+	// Evidence is optional reference to supporting evidence (e.g., issue ID, commit, PR)
+	Evidence string `json:"evidence,omitempty"`
+	// Notes is optional free-form notes about the attestation
+	Notes string `json:"notes,omitempty"`
+}
 
 // FailureCloseKeywords are keywords that indicate an issue was closed due to failure.
 // Used by conditional-blocks dependencies to determine if the condition is met.
