@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1250,6 +1251,9 @@ func TestInitReinitWithBranch(t *testing.T) {
 // gitignore file cannot be written (prints manual instructions instead of failing).
 func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
 	t.Run("read-only file", func(t *testing.T) {
+		if runtime.GOOS == "darwin" {
+			t.Skip("macOS allows file owner to write to read-only (0444) files")
+		}
 		tmpDir := t.TempDir()
 		configDir := filepath.Join(tmpDir, ".config", "git")
 		if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -1278,6 +1282,9 @@ func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
 	})
 
 	t.Run("symlink to read-only file", func(t *testing.T) {
+		if runtime.GOOS == "darwin" {
+			t.Skip("macOS allows file owner to write to read-only (0444) files")
+		}
 		tmpDir := t.TempDir()
 
 		// Target file in a separate location
