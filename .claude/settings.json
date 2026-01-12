@@ -1,7 +1,4 @@
 {
-  "enabledPlugins": {
-    "beads@beads-marketplace": false
-  },
   "hooks": {
     "SessionStart": [
       {
