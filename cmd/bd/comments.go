@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/user"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -95,7 +95,12 @@ Examples:
 
 		fmt.Printf("\nComments on %s:\n\n", issueID)
 		for _, comment := range comments {
-			fmt.Printf("[%s] %s at %s\n", comment.Author, comment.Text, comment.CreatedAt.Format("2006-01-02 15:04"))
+			fmt.Printf("[%s] at %s\n", comment.Author, comment.CreatedAt.Format("2006-01-02 15:04"))
+			rendered := ui.RenderMarkdown(comment.Text)
+			// TrimRight removes trailing newlines that Glamour adds, preventing extra blank lines
+			for _, line := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
+				fmt.Printf("  %s\n", line)
+			}
 			fmt.Println()
 		}
 	},
@@ -132,20 +137,10 @@ Examples:
 			commentText = args[1]
 		}
 
-		// Get author from author flag, BD_ACTOR var, or system USER var
+		// Get author from author flag, or use git-aware default
 		author, _ := cmd.Flags().GetString("author")
 		if author == "" {
-			author = os.Getenv("BD_ACTOR")
-			if author == "" {
-				author = os.Getenv("USER")
-			}
-			if author == "" {
-				if u, err := user.Current(); err == nil {
-					author = u.Username
-				} else {
-					author = "unknown"
-				}
-			}
+			author = getActorWithGit()
 		}
 
 		var comment *types.Comment

@@ -35,14 +35,16 @@ The daemon will:
 - Auto-import when remote changes detected
 
 Common operations:
-  bd daemon --start              Start the daemon (background)
-  bd daemon --start --foreground Start in foreground (for systemd/supervisord)
-  bd daemon --stop               Stop a running daemon
-  bd daemon --stop-all           Stop ALL running bd daemons
-  bd daemon --status             Check if daemon is running
-  bd daemon --health             Check daemon health and metrics
+  bd daemon start                Start the daemon (background)
+  bd daemon start --foreground   Start in foreground (for systemd/supervisord)
+  bd daemon stop                 Stop current workspace daemon
+  bd daemon status               Show daemon status
+  bd daemon status --all         Show all daemons with health check
+  bd daemon logs                 View daemon logs
+  bd daemon restart              Restart daemon
+  bd daemon killall              Stop all running daemons
 
-Run 'bd daemon' with no flags to see available options.`,
+Run 'bd daemon --help' to see all subcommands.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		start, _ := cmd.Flags().GetBool("start")
 		stop, _ := cmd.Flags().GetBool("stop")
@@ -64,6 +66,25 @@ Run 'bd daemon' with no flags to see available options.`,
 		if !start && !stop && !stopAll && !status && !health && !metrics {
 			_ = cmd.Help()
 			return
+		}
+
+		// Show deprecation warnings for flag-based actions (skip in JSON mode for agent ergonomics)
+		if !jsonOutput {
+			if start {
+				fmt.Fprintf(os.Stderr, "Warning: --start is deprecated, use 'bd daemon start' instead\n")
+			}
+			if stop {
+				fmt.Fprintf(os.Stderr, "Warning: --stop is deprecated, use 'bd daemon stop' instead\n")
+			}
+			if stopAll {
+				fmt.Fprintf(os.Stderr, "Warning: --stop-all is deprecated, use 'bd daemon killall' instead\n")
+			}
+			if status {
+				fmt.Fprintf(os.Stderr, "Warning: --status is deprecated, use 'bd daemon status' instead\n")
+			}
+			if health {
+				fmt.Fprintf(os.Stderr, "Warning: --health is deprecated, use 'bd daemon status --all' instead\n")
+			}
 		}
 
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
@@ -219,16 +240,22 @@ Run 'bd daemon' with no flags to see available options.`,
 }
 
 func init() {
-	daemonCmd.Flags().Bool("start", false, "Start the daemon")
+	// Register subcommands (preferred interface)
+	daemonCmd.AddCommand(daemonStartCmd)
+	daemonCmd.AddCommand(daemonStatusCmd)
+	// Note: stop, restart, logs, killall, list, health subcommands are registered in daemons.go
+
+	// Legacy flags (deprecated - use subcommands instead)
+	daemonCmd.Flags().Bool("start", false, "Start the daemon (deprecated: use 'bd daemon start')")
 	daemonCmd.Flags().Duration("interval", 5*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
 	daemonCmd.Flags().Bool("auto-pull", false, "Automatically pull from remote (default: true when sync.branch configured)")
 	daemonCmd.Flags().Bool("local", false, "Run in local-only mode (no git required, no sync)")
-	daemonCmd.Flags().Bool("stop", false, "Stop running daemon")
-	daemonCmd.Flags().Bool("stop-all", false, "Stop all running bd daemons")
-	daemonCmd.Flags().Bool("status", false, "Show daemon status")
-	daemonCmd.Flags().Bool("health", false, "Check daemon health and metrics")
+	daemonCmd.Flags().Bool("stop", false, "Stop running daemon (deprecated: use 'bd daemon stop')")
+	daemonCmd.Flags().Bool("stop-all", false, "Stop all running bd daemons (deprecated: use 'bd daemon killall')")
+	daemonCmd.Flags().Bool("status", false, "Show daemon status (deprecated: use 'bd daemon status')")
+	daemonCmd.Flags().Bool("health", false, "Check daemon health (deprecated: use 'bd daemon status --all')")
 	daemonCmd.Flags().Bool("metrics", false, "Show detailed daemon metrics")
 	daemonCmd.Flags().String("log", "", "Log file path (default: .beads/daemon.log)")
 	daemonCmd.Flags().Bool("foreground", false, "Run in foreground (don't daemonize)")
@@ -464,7 +491,12 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// Use short socket path to avoid Unix socket path length limits (macOS: 104 chars)
+	socketPath, err := rpc.EnsureSocketDir(rpc.ShortSocketPath(workspacePath))
+	if err != nil {
+		log.Error("failed to create socket directory", "error", err)
+		return
+	}
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	defer serverCancel()
 

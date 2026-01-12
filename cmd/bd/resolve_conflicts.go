@@ -283,7 +283,7 @@ func parseConflicts(content string) ([]conflictRegion, []string, error) {
 }
 
 // resolveConflict resolves a single conflict region using merge semantics
-func resolveConflict(conflict conflictRegion, num int) ([]string, conflictResolutionInfo) {
+func resolveConflict(conflict conflictRegion, _ int) ([]string, conflictResolutionInfo) {
 	info := conflictResolutionInfo{
 		LineRange:  fmt.Sprintf("%d-%d", conflict.StartLine, conflict.EndLine),
 		LeftLabel:  conflict.LeftLabel,

@@ -466,15 +466,26 @@ func TestInitNoDbMode(t *testing.T) {
 	// Reset global state
 	origDBPath := dbPath
 	origNoDb := noDb
-	defer func() { 
+	defer func() {
 		dbPath = origDBPath
 		noDb = origNoDb
 	}()
 	dbPath = ""
 	noDb = false
-	
+
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+
+	// Set BEADS_DIR to prevent git repo detection from finding project's .beads
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
 
 	// Initialize with --no-db flag
 	rootCmd.SetArgs([]string{"init", "--no-db", "--no-daemon", "--prefix", "test", "--quiet"})

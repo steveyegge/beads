@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -800,30 +799,6 @@ func uniqueStrings(slice []string) []string {
 		}
 	}
 	return result
-}
-
-// getActorWithGit returns the actor for audit trail with git config fallback.
-// Priority: global actor var (from --actor flag or BD_ACTOR env) > git config user.name > $USER > "unknown"
-func getActorWithGit() string {
-	// If actor is already set (from flag or env), use it
-	if actor != "" && actor != "unknown" {
-		return actor
-	}
-
-	// Try git config user.name
-	cmd := exec.Command("git", "config", "user.name")
-	if output, err := cmd.Output(); err == nil {
-		if gitUser := strings.TrimSpace(string(output)); gitUser != "" {
-			return gitUser
-		}
-	}
-
-	// Fall back to USER env
-	if user := os.Getenv("USER"); user != "" {
-		return user
-	}
-
-	return "unknown"
 }
 
 func init() {

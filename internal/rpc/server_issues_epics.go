@@ -306,6 +306,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,
 		CreatedBy: createArgs.CreatedBy,
+		Owner:     createArgs.Owner,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),
 		// Agent identity fields
@@ -828,6 +829,23 @@ func (s *Server) handleClose(req *Request) Response {
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("cannot close template %s: templates are read-only", closeArgs.ID),
+		}
+	}
+
+	// Check if issue has open blockers (GH#962)
+	if !closeArgs.Force {
+		blocked, blockers, err := store.IsBlocked(ctx, closeArgs.ID)
+		if err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("failed to check blockers: %v", err),
+			}
+		}
+		if blocked && len(blockers) > 0 {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("cannot close %s: blocked by open issues %v (use --force to override)", closeArgs.ID, blockers),
+			}
 		}
 	}
 

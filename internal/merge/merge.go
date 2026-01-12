@@ -61,6 +61,8 @@ type Issue struct {
 	DeletedBy    string `json:"deleted_by,omitempty"`    // Who deleted the issue
 	DeleteReason string `json:"delete_reason,omitempty"` // Why the issue was deleted
 	OriginalType string `json:"original_type,omitempty"` // Issue type before deletion
+	// HOP quality field
+	QualityScore *float32 `json:"quality_score,omitempty"` // Aggregate quality (0.0-1.0)
 }
 
 // Dependency represents an issue dependency

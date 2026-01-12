@@ -199,6 +199,7 @@ var createCmd = &cobra.Command{
 				ExternalRef:        externalRefPtr,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				Owner:              getOwner(),
 				MolType:            molType,
 				RoleType:           roleType,
 				Rig:                agentRig,
@@ -423,6 +424,7 @@ var createCmd = &cobra.Command{
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				Owner:              getOwner(),
 				MolType:            string(molType),
 				RoleType:           roleType,
 				Rig:                agentRig,
@@ -482,6 +484,7 @@ var createCmd = &cobra.Command{
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
 			CreatedBy:          getActorWithGit(),
+			Owner:              getOwner(),
 			MolType:            molType,
 			RoleType:           roleType,
 			Rig:                agentRig,
@@ -735,8 +738,8 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		FatalError("cannot use --rig: %v", err)
 	}
 
-	// Resolve the target rig's beads directory
-	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
+	// Resolve the target rig's beads directory and prefix
+	targetBeadsDir, targetPrefix, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
 	if err != nil {
 		FatalError("%v", err)
 	}
@@ -752,6 +755,13 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
 		}
 	}()
+
+	// Prepare prefix override from routes.jsonl for cross-rig creation
+	// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
+	var prefixOverride string
+	if targetPrefix != "" {
+		prefixOverride = strings.TrimSuffix(targetPrefix, "-")
+	}
 
 	var externalRefPtr *string
 	if externalRef != "" {
@@ -808,6 +818,7 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		ExternalRef:        externalRefPtr,
 		Ephemeral:          wisp,
 		CreatedBy:          getActorWithGit(),
+		Owner:              getOwner(),
 		// Event fields (bd-xwvo fix)
 		EventKind: eventCategory,
 		Actor:     eventActor,
@@ -820,6 +831,8 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Cross-rig routing: use route prefix instead of database config
+		PrefixOverride: prefixOverride,
 	}
 
 	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {

@@ -466,21 +466,26 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			}
 
 			refCounts := countReferences(allIssues)
+			structuralScores := countStructuralRelationships(duplicateGroups)
 
 			fmt.Fprintf(os.Stderr, "Found %d duplicate group(s)\n\n", len(duplicateGroups))
 
 			for i, group := range duplicateGroups {
-				target := chooseMergeTarget(group, refCounts)
+				target := chooseMergeTarget(group, refCounts, structuralScores)
 				fmt.Fprintf(os.Stderr, "Group %d: %s\n", i+1, group[0].Title)
 
 				for _, issue := range group {
 					refs := refCounts[issue.ID]
+					depCount := 0
+					if score, ok := structuralScores[issue.ID]; ok {
+						depCount = score.dependentCount
+					}
 					marker := "  "
 					if issue.ID == target.ID {
 						marker = "→ "
 					}
-					fmt.Fprintf(os.Stderr, "  %s%s (%s, P%d, %d refs)\n",
-						marker, issue.ID, issue.Status, issue.Priority, refs)
+					fmt.Fprintf(os.Stderr, "  %s%s (%s, P%d, %d dependents, %d refs)\n",
+						marker, issue.ID, issue.Status, issue.Priority, depCount, refs)
 				}
 
 				sources := make([]string, 0, len(group)-1)

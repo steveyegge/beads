@@ -3,7 +3,7 @@
 This document explains the design decisions behind `bd sync` - why it works the way it does, and the problems each design choice solves.
 
 > **Looking for something else?**
-> - Command usage: [commands/sync.md](/commands/sync.md) (Reference)
+> - Command usage: [commands/sync.md](/claude-plugin/commands/sync.md) (Reference)
 > - Troubleshooting: [website/docs/recovery/sync-failures.md](/website/docs/recovery/sync-failures.md) (How-To)
 > - Deletion behavior: [docs/DELETIONS.md](/docs/DELETIONS.md) (Explanation)
 
@@ -174,7 +174,7 @@ For maximum reliability, ensure machine clocks are synchronized via NTP.
 | File | Purpose |
 |------|---------|
 | `.beads/issues.jsonl` | Current state (git-tracked) |
-| `.beads/sync_base.jsonl` | Last-synced state (git-tracked) |
+| `.beads/sync_base.jsonl` | Last-synced state (not tracked, per-machine) |
 | `.beads/.sync.lock` | Concurrency guard (not tracked) |
 | `.beads/beads.db` | SQLite database (not tracked) |
 

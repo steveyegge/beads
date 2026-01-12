@@ -210,7 +210,7 @@ release:
     brew install steveyegge/beads/bd
     ```
     
-    **Quick Install (macOS/Linux):**
+    **Quick Install (macOS/Linux/FreeBSD):**
     ```bash
     curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
     ```

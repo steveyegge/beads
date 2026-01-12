@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -106,6 +108,62 @@ func isReadOnlyCommand(cmdName string) bool {
 	return readOnlyCommands[cmdName]
 }
 
+// getActorWithGit returns the actor for audit trails with git config fallback.
+// Priority: --actor flag > BD_ACTOR env > BEADS_ACTOR env > git config user.name > $USER > "unknown"
+// This provides a sensible default for developers: their git identity is used unless
+// explicitly overridden
+func getActorWithGit() string {
+	// If actor is already set (from --actor flag), use it
+	if actor != "" {
+		return actor
+	}
+
+	// Check BD_ACTOR env var (primary env override)
+	if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
+		return bdActor
+	}
+
+	// Check BEADS_ACTOR env var (alias for MCP/integration compatibility)
+	if beadsActor := os.Getenv("BEADS_ACTOR"); beadsActor != "" {
+		return beadsActor
+	}
+
+	// Try git config user.name - the natural default for a git-native tool
+	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		if gitUser := strings.TrimSpace(string(out)); gitUser != "" {
+			return gitUser
+		}
+	}
+
+	// Fall back to system username
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+
+	return "unknown"
+}
+
+// getOwner returns the human owner for CV attribution.
+// Priority: GIT_AUTHOR_EMAIL env > git config user.email > "" (empty)
+// This is the foundation for HOP CV (curriculum vitae) chains per Decision 008.
+// Unlike actor (which tracks who executed), owner tracks the human responsible.
+func getOwner() string {
+	// Check GIT_AUTHOR_EMAIL first - this is set during git commit operations
+	if authorEmail := os.Getenv("GIT_AUTHOR_EMAIL"); authorEmail != "" {
+		return authorEmail
+	}
+
+	// Fall back to git config user.email - the natural default
+	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+		if gitEmail := strings.TrimSpace(string(out)); gitEmail != "" {
+			return gitEmail
+		}
+	}
+
+	// Return empty if no email found (owner is optional)
+	return ""
+}
+
 func init() {
 	// Initialize viper configuration
 	if err := config.Initialize(); err != nil {
@@ -120,7 +178,7 @@ func init() {
 
 	// Register persistent flags
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Database path (default: auto-discover .beads/*.db)")
-	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR or $USER)")
+	rootCmd.PersistentFlags().StringVar(&actor, "actor", "", "Actor name for audit trail (default: $BD_ACTOR, git user.name, $USER)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&noDaemon, "no-daemon", false, "Force direct storage mode, bypass daemon if running")
 	rootCmd.PersistentFlags().BoolVar(&noAutoFlush, "no-auto-flush", false, "Disable automatic JSONL sync after CRUD operations")
@@ -377,15 +435,7 @@ var rootCmd = &cobra.Command{
 			}
 
 			// Set actor for audit trail
-			if actor == "" {
-				if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-					actor = bdActor
-				} else if user := os.Getenv("USER"); user != "" {
-					actor = user
-				} else {
-					actor = "unknown"
-				}
-			}
+			actor = getActorWithGit()
 
 			// Skip daemon and SQLite initialization - we're in memory mode
 			return
@@ -419,15 +469,7 @@ var rootCmd = &cobra.Command{
 							os.Exit(1)
 						}
 						// Set actor for audit trail
-						if actor == "" {
-							if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-								actor = bdActor
-							} else if user := os.Getenv("USER"); user != "" {
-								actor = user
-							} else {
-								actor = "unknown"
-							}
-						}
+						actor = getActorWithGit()
 						return
 					}
 				}
@@ -442,7 +484,19 @@ var rootCmd = &cobra.Command{
 						isYamlOnlyConfigOp = true
 					}
 				}
-				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp {
+
+				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
+				// This enables `bd --no-daemon show` after cold-start when DB is missing
+				canAutoBootstrap := false
+				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
+					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+					if _, err := os.Stat(jsonlPath); err == nil {
+						canAutoBootstrap = true
+						debug.Logf("cold-start bootstrap: JSONL exists, allowing auto-create for %s", cmd.Name())
+					}
+				}
+
+				if cmd.Name() != "import" && cmd.Name() != "setup" && !isYamlOnlyConfigOp && !canAutoBootstrap {
 					// No database found - provide context-aware error message
 					fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
 
@@ -476,16 +530,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Set actor for audit trail
-		// Priority: --actor flag > BD_ACTOR env > USER env > "unknown"
-		if actor == "" {
-			if bdActor := os.Getenv("BD_ACTOR"); bdActor != "" {
-				actor = bdActor
-			} else if user := os.Getenv("USER"); user != "" {
-				actor = user
-			} else {
-				actor = "unknown"
-			}
-		}
+		actor = getActorWithGit()
 
 		// Track bd version changes
 		// Best-effort tracking - failures are silent
@@ -707,6 +752,7 @@ var rootCmd = &cobra.Command{
 
 		// Fall back to direct storage access
 		var err error
+		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
 		if useReadOnly {
 			// Read-only mode: prevents file modifications (GH#804)
 			store, err = sqlite.NewReadOnlyWithTimeout(rootCtx, dbPath, lockTimeout)
@@ -715,6 +761,7 @@ var rootCmd = &cobra.Command{
 				// This handles the case where user runs "bd list" before "bd init"
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
 				store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
+				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
 		} else {
 			store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
@@ -760,7 +807,9 @@ var rootCmd = &cobra.Command{
 		// Skip for delete command to prevent resurrection of deleted issues
 		// Skip if sync --dry-run to avoid modifying DB in dry-run mode
 		// Skip for read-only commands - they can't write anyway (GH#804)
-		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && !useReadOnly {
+		// Exception: allow auto-import for read-only commands that fell back to
+		// read-write mode due to missing DB (needsBootstrap) - fixes GH#b09
+		if cmd.Name() != "import" && cmd.Name() != "delete" && autoImportEnabled && (!useReadOnly || needsBootstrap) {
 			// Check if this is sync command with --dry-run flag
 			if cmd.Name() == "sync" {
 				if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {

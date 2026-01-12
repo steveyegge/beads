@@ -211,6 +211,58 @@ bd config set import.orphan_handling "strict"
 
 See [CONFIG.md](CONFIG.md#example-import-orphan-handling) for complete configuration documentation.
 
+### Old data returns after reset
+
+**Symptom:** After running `bd admin reset --force` and `bd init`, old issues reappear.
+
+**Cause:** `bd admin reset --force` only removes **local** beads data. Old data can return from:
+
+1. **Remote sync branch** - If you configured a sync branch (via `bd init --branch` or `bd config set sync.branch`), old JSONL data may exist on the remote
+2. **Git history** - JSONL files committed to git are preserved in history
+3. **Other machines** - Other clones may push old data after you reset
+
+**Solution for complete clean slate:**
+
+```bash
+# 1. Reset local beads
+bd admin reset --force
+
+# 2. Delete remote sync branch (if configured)
+# Check your sync branch name first:
+bd config get sync.branch
+# Then delete it from remote:
+git push origin --delete <sync-branch-name>
+# Common names: beads-sync, beads-metadata
+
+# 3. Remove JSONL from git history (optional, destructive)
+# Only do this if you want to completely erase beads history
+git filter-branch --force --index-filter \
+  'git rm --cached --ignore-unmatch .beads/issues.jsonl' \
+  --prune-empty -- --all
+git push origin --force --all
+
+# 4. Re-initialize
+bd init
+```
+
+**Less destructive alternatives:**
+
+```bash
+# Option A: Just delete the sync branch and reinit
+bd admin reset --force
+git push origin --delete beads-sync  # or your sync branch name
+bd init
+
+# Option B: Start fresh without sync branch
+bd admin reset --force
+bd init
+bd config set sync.branch ""  # Disable sync branch feature
+```
+
+**Note:** The `--hard` and `--skip-init` flags mentioned in [GH#479](https://github.com/steveyegge/beads/issues/479) were never implemented. Use the workarounds above for a complete reset.
+
+**Related:** [GH#922](https://github.com/steveyegge/beads/issues/922)
+
 ### Database corruption
 
 **Important**: Distinguish between **logical consistency issues** (ID collisions, wrong prefixes) and **physical SQLite corruption**.
@@ -721,6 +773,29 @@ The daemon listens on loopback TCP. Allow `bd.exe` through Windows Firewall:
 2. Click "Allow an app through firewall"
 3. Add `bd.exe` and enable for Private networks
 4. Or disable firewall temporarily for testing
+
+### Windows: Controlled Folder Access blocks bd init
+
+**Symptom:** `bd init` hangs indefinitely with high CPU usage, and CTRL+C doesn't work.
+
+**Cause:** Windows Controlled Folder Access is blocking `bd.exe` from creating the `.beads` directory.
+
+**Diagnosis:** Run with verbose flag to see the actual error:
+```pwsh
+bd init -v
+# Error: failed to create .beads directory: mkdir .beads: The system cannot find the file specified
+```
+
+**Solution:** Add `bd.exe` to the Controlled Folder Access whitelist:
+
+1. Open Windows Security → Virus & threat protection
+2. Click "Ransomware protection" → "Manage ransomware protection"
+3. Under "Controlled folder access", click "Allow an app through Controlled folder access"
+4. Click "Add an allowed app" → "Browse all apps"
+5. Navigate to and select `bd.exe` (typically in `%USERPROFILE%\go\bin\bd.exe`)
+6. Retry `bd init` - it should work instantly
+
+**Note:** Unlike typical blocked apps, Controlled Folder Access may not show a notification when blocking `bd init`, making this issue hard to diagnose without the `-v` flag.
 
 ### macOS: Gatekeeper blocking execution
 

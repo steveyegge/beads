@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS issues (
     estimated_minutes INTEGER,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by TEXT DEFAULT '',
+    owner TEXT DEFAULT '',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     closed_at DATETIME,
     closed_by_session TEXT DEFAULT '',
@@ -36,8 +37,16 @@ CREATE TABLE IF NOT EXISTS issues (
     pinned INTEGER DEFAULT 0,
     -- Template field (beads-1ra)
     is_template INTEGER DEFAULT 0,
+    -- Work economics field (bd-fqze8) - HOP Decision 006
+    crystallizes INTEGER DEFAULT 0,
     -- Molecule type field (bd-oxgi)
     mol_type TEXT DEFAULT '',
+    -- Work type field (Decision 006: mutex vs open_competition)
+    work_type TEXT DEFAULT 'mutex',
+    -- HOP quality score field (0.0-1.0, set by Refineries on merge)
+    quality_score REAL,
+    -- Federation source system field
+    source_system TEXT DEFAULT '',
     -- Event fields (bd-ecmd)
     event_kind TEXT DEFAULT '',
     actor TEXT DEFAULT '',

@@ -86,13 +86,14 @@ func TestFindDuplicateGroups(t *testing.T) {
 
 func TestChooseMergeTarget(t *testing.T) {
 	tests := []struct {
-		name      string
-		group     []*types.Issue
-		refCounts map[string]int
-		wantID    string
+		name             string
+		group            []*types.Issue
+		refCounts        map[string]int
+		structuralScores map[string]*issueScore
+		wantID           string
 	}{
 		{
-			name: "choose by reference count",
+			name: "choose by reference count when no structural data",
 			group: []*types.Issue{
 				{ID: "bd-2", Title: "Task"},
 				{ID: "bd-1", Title: "Task"},
@@ -101,7 +102,8 @@ func TestChooseMergeTarget(t *testing.T) {
 				"bd-1": 5,
 				"bd-2": 0,
 			},
-			wantID: "bd-1",
+			structuralScores: map[string]*issueScore{},
+			wantID:           "bd-1",
 		},
 		{
 			name: "choose by lexicographic order if same references",
@@ -113,7 +115,8 @@ func TestChooseMergeTarget(t *testing.T) {
 				"bd-1": 0,
 				"bd-2": 0,
 			},
-			wantID: "bd-1",
+			structuralScores: map[string]*issueScore{},
+			wantID:           "bd-1",
 		},
 		{
 			name: "prefer higher references even with larger ID",
@@ -125,13 +128,46 @@ func TestChooseMergeTarget(t *testing.T) {
 				"bd-1":   1,
 				"bd-100": 10,
 			},
-			wantID: "bd-100",
+			structuralScores: map[string]*issueScore{},
+			wantID:           "bd-100",
+		},
+		{
+			name: "prefer dependents over text references (GH#1022)",
+			group: []*types.Issue{
+				{ID: "HONEY-s2g1", Title: "P1 / Foundations"}, // Has 17 children
+				{ID: "HONEY-d0mw", Title: "P1 / Foundations"}, // Empty shell
+			},
+			refCounts: map[string]int{
+				"HONEY-s2g1": 0,
+				"HONEY-d0mw": 0,
+			},
+			structuralScores: map[string]*issueScore{
+				"HONEY-s2g1": {dependentCount: 17, dependsOnCount: 2, textRefs: 0},
+				"HONEY-d0mw": {dependentCount: 0, dependsOnCount: 0, textRefs: 0},
+			},
+			wantID: "HONEY-s2g1", // Should keep the one with children
+		},
+		{
+			name: "dependents beat text references",
+			group: []*types.Issue{
+				{ID: "bd-1", Title: "Task"}, // Has text refs but no deps
+				{ID: "bd-2", Title: "Task"}, // Has deps but no text refs
+			},
+			refCounts: map[string]int{
+				"bd-1": 100, // Lots of text references
+				"bd-2": 0,
+			},
+			structuralScores: map[string]*issueScore{
+				"bd-1": {dependentCount: 0, dependsOnCount: 0, textRefs: 100},
+				"bd-2": {dependentCount: 5, dependsOnCount: 0, textRefs: 0}, // 5 children/dependents
+			},
+			wantID: "bd-2", // Dependents take priority
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			target := chooseMergeTarget(tt.group, tt.refCounts)
+			target := chooseMergeTarget(tt.group, tt.refCounts, tt.structuralScores)
 			if target.ID != tt.wantID {
 				t.Errorf("chooseMergeTarget() = %v, want %v", target.ID, tt.wantID)
 			}

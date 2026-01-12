@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -21,14 +22,14 @@ type MemoryStorage struct {
 	mu sync.RWMutex // Protects all maps
 
 	// Core data
-	issues       map[string]*types.Issue       // ID -> Issue
+	issues       map[string]*types.Issue        // ID -> Issue
 	dependencies map[string][]*types.Dependency // IssueID -> Dependencies
-	labels       map[string][]string           // IssueID -> Labels
-	events       map[string][]*types.Event     // IssueID -> Events
-	comments     map[string][]*types.Comment   // IssueID -> Comments
-	config       map[string]string             // Config key-value pairs
-	metadata     map[string]string             // Metadata key-value pairs
-	counters     map[string]int                // Prefix -> Last ID
+	labels       map[string][]string            // IssueID -> Labels
+	events       map[string][]*types.Event      // IssueID -> Events
+	comments     map[string][]*types.Comment    // IssueID -> Comments
+	config       map[string]string              // Config key-value pairs
+	metadata     map[string]string              // Metadata key-value pairs
+	counters     map[string]int                 // Prefix -> Last ID
 
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
@@ -621,8 +622,10 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 		}
 
 		// ID prefix filtering (for shell completion)
-		if filter.IDPrefix != "" && !strings.HasPrefix(issue.ID, filter.IDPrefix) {
-			continue
+		if filter.IDPrefix != "" {
+			if !strings.HasPrefix(issue.ID, filter.IDPrefix) {
+				continue
+			}
 		}
 
 		// Parent filtering (bd-yqhh): filter children by parent issue
@@ -1281,6 +1284,19 @@ func (m *MemoryStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 	return results, nil
 }
 
+// IsBlocked checks if an issue is blocked by open dependencies (GH#962).
+// Returns true if the issue has open blockers, along with the list of blocker IDs.
+func (m *MemoryStorage) IsBlocked(ctx context.Context, issueID string) (bool, []string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	blockers := m.getOpenBlockers(issueID)
+	if len(blockers) == 0 {
+		return false, nil, nil
+	}
+	return true, blockers, nil
+}
+
 // getAllDescendants returns all descendant IDs of a parent issue recursively
 func (m *MemoryStorage) getAllDescendants(parentID string) map[string]bool {
 	descendants := make(map[string]bool)
@@ -1583,10 +1599,9 @@ func (m *MemoryStorage) GetNextChildID(ctx context.Context, parentID string) (st
 		return "", fmt.Errorf("parent issue %s does not exist", parentID)
 	}
 
-	// Calculate depth (count dots)
-	depth := strings.Count(parentID, ".")
-	if depth >= 3 {
-		return "", fmt.Errorf("maximum hierarchy depth (3) exceeded for parent %s", parentID)
+	// Check hierarchy depth limit (GH#995)
+	if err := types.CheckHierarchyDepth(parentID, config.GetInt("hierarchy.max-depth")); err != nil {
+		return "", err
 	}
 
 	// Get or initialize counter for this parent
@@ -1648,8 +1663,8 @@ func (m *MemoryStorage) GetCustomStatuses(ctx context.Context) ([]string, error)
 	return parseCustomStatuses(value), nil
 }
 
-// parseCommaSeparated splits a comma-separated string into a slice of trimmed values.
-func parseCommaSeparated(value string) []string {
+// parseCustomStatuses splits a comma-separated string into a slice of trimmed status names.
+func parseCustomStatuses(value string) []string {
 	if value == "" {
 		return nil
 	}
@@ -1664,11 +1679,6 @@ func parseCommaSeparated(value string) []string {
 	return result
 }
 
-// Alias for backwards compatibility in tests
-func parseCustomStatuses(value string) []string {
-	return parseCommaSeparated(value)
-}
-
 // GetCustomTypes retrieves the list of custom issue types from config.
 func (m *MemoryStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	value, err := m.GetConfig(ctx, "types.custom")
@@ -1678,7 +1688,7 @@ func (m *MemoryStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	if value == "" {
 		return nil, nil
 	}
-	return parseCommaSeparated(value), nil
+	return parseCustomStatuses(value), nil
 }
 
 // Metadata

@@ -297,6 +297,42 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.47.1",
+		Date:    "2026-01-12",
+		Changes: []string{
+			"NEW: bd list --ready flag - Show only issues with no blockers (bd-ihu31)",
+			"NEW: Markdown rendering in comments - Enhanced display for notes (#1019)",
+			"FIX: Nil pointer in wisp create - Prevent panic in molecule creation",
+			"FIX: Route prefix for rig issues - Use correct prefix when creating (#1028)",
+			"FIX: Duplicate merge target - Prefer issues with children/deps (GH#1022)",
+			"FIX: SQLite cache rebuild after rename-prefix (GH#1016)",
+			"FIX: MCP custom types - Support non-built-in types/statuses (#1023)",
+			"FIX: Hyphenated prefix validation - Support hyphens in prefixes (#1013)",
+			"FIX: Git worktree initialization - Prevent bd init in worktrees (#1026)",
+		},
+	},
+	{
+		Version: "0.47.0",
+		Date:    "2026-01-11",
+		Changes: []string{
+			"NEW: Pull-first sync with 3-way merge - Reconciles local/remote before push (#918)",
+			"NEW: bd resolve-conflicts command - Mechanical JSONL conflict resolution (bd-7e7ddffa)",
+			"NEW: bd create --dry-run - Preview issue creation without side effects (bd-0hi7)",
+			"NEW: bd ready --gated - Find molecules waiting on gates (bd-lhalq)",
+			"NEW: Gate auto-discovery - Auto-discover workflow run ID in bd gate check (bd-fbkd)",
+			"NEW: Multi-repo custom types - bd doctor discovers types across repos (bd-62g22)",
+			"NEW: Stale DB handling - Read-only commands auto-import on stale DB (#977, #982)",
+			"NEW: Linear project filter - linear.project_id config for sync (#938)",
+			"FIX: Windows infinite loop in findLocalBeadsDir (GH#996)",
+			"FIX: bd init hangs on Windows when not in git repo (#991)",
+			"FIX: Daemon socket for deep paths - Long workspace paths now work (GH#1001)",
+			"FIX: Prevent closing issues with open blockers (GH#962)",
+			"FIX: bd edit parses EDITOR with args (GH#987)",
+			"FIX: Worktree/redirect handling - Skip restore when redirected (bd-lmqhe)",
+			"CHANGE: Daemon CLI refactored to subcommands (#1006)",
+		},
+	},
+	{
 		Version: "0.46.0",
 		Date:    "2026-01-06",
 		Changes: []string{
