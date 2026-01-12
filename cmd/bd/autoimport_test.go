@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -168,8 +169,8 @@ func TestCheckAndAutoImport_EmptyDatabaseNoGit(t *testing.T) {
 	oldJsonOutput := jsonOutput
 	noAutoImport = false
 	jsonOutput = true // Suppress output
-	defer func() { 
-		noAutoImport = oldNoAutoImport 
+	defer func() {
+		noAutoImport = oldNoAutoImport
 		jsonOutput = oldJsonOutput
 	}()
 
@@ -183,6 +184,16 @@ func TestCheckAndAutoImport_EmptyDatabaseNoGit(t *testing.T) {
 }
 
 func TestFindBeadsDir(t *testing.T) {
+	// Save and clear BEADS_DIR to ensure isolation
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
 	// Create temp directory with .beads and a valid project file
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -194,8 +205,8 @@ func TestFindBeadsDir(t *testing.T) {
 		t.Fatalf("Failed to create config.yaml: %v", err)
 	}
 
-	// Change to tmpDir
-	t.Chdir(tmpDir)
+	// Set BEADS_DIR to ensure test isolation (FindBeadsDir checks this first)
+	os.Setenv("BEADS_DIR", beadsDir)
 
 	found := beads.FindBeadsDir()
 	if found == "" {
@@ -224,6 +235,16 @@ func TestFindBeadsDir_NotFound(t *testing.T) {
 }
 
 func TestFindBeadsDir_ParentDirectory(t *testing.T) {
+	// Save and clear BEADS_DIR to ensure isolation
+	originalEnv := os.Getenv("BEADS_DIR")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("BEADS_DIR", originalEnv)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
+
 	// Create structure: tmpDir/.beads and tmpDir/subdir
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -239,6 +260,9 @@ func TestFindBeadsDir_ParentDirectory(t *testing.T) {
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("Failed to create subdir: %v", err)
 	}
+
+	// Set BEADS_DIR to ensure test isolation (FindBeadsDir checks this first)
+	os.Setenv("BEADS_DIR", beadsDir)
 
 	// Change to subdir
 	t.Chdir(subDir)
@@ -280,6 +304,59 @@ func TestCheckGitForIssues_NoBeadsDir(t *testing.T) {
 	count, path, _ := checkGitForIssues()
 	if count != 0 || path != "" {
 		t.Logf("No .beads dir: count=%d, path=%s (expected 0, empty)", count, path)
+	}
+}
+
+// TestCheckGitForIssues_ParentHubNotInherited tests the GH#896 fix: when running
+// bd init in a subdirectory of a hub, the parent hub's .beads should NOT be used
+// for importing issues. This prevents contamination from parent hub issues.
+func TestCheckGitForIssues_ParentHubNotInherited(t *testing.T) {
+	// Create a structure simulating the bug scenario:
+	// tmpDir/
+	//   .beads/            <- parent hub (NOT a git repo)
+	//     issues.jsonl
+	//     config.yaml
+	//   newproject/        <- new project (IS a git repo)
+	//     .git/
+	tmpDir := t.TempDir()
+
+	// Create parent hub's .beads with issues
+	parentBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(parentBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create parent .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentBeadsDir, "config.yaml"), []byte("prefix: hub\n"), 0644); err != nil {
+		t.Fatalf("Failed to create parent config.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parentBeadsDir, "issues.jsonl"), []byte(`{"id":"hub-001","title":"Parent Issue"}`+"\n"), 0644); err != nil {
+		t.Fatalf("Failed to create parent issues.jsonl: %v", err)
+	}
+
+	// Create newproject as a git repo
+	newProject := filepath.Join(tmpDir, "newproject")
+	if err := os.MkdirAll(newProject, 0755); err != nil {
+		t.Fatalf("Failed to create newproject: %v", err)
+	}
+
+	// Initialize git repo in newproject
+	t.Chdir(newProject)
+	cmd := exec.Command("git", "init")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to git init: %v", err)
+	}
+
+	// Reset git context cache (important for test isolation)
+	git.ResetCaches()
+
+	// Now checkGitForIssues should NOT find the parent hub's issues
+	// because the parent .beads is outside the git root (newproject)
+	count, path, _ := checkGitForIssues()
+
+	if count != 0 {
+		t.Errorf("GH#896: checkGitForIssues found %d issues from parent hub (should be 0)", count)
+	}
+	if path != "" {
+		t.Errorf("GH#896: checkGitForIssues returned path %q (should be empty)", path)
 	}
 }
 
@@ -380,9 +457,9 @@ func TestIsNoDbModeConfigured(t *testing.T) {
 				}
 			}
 
-			got := config.IsNoDbModeConfigured(beadsDir)
+			got := isNoDbModeConfigured(beadsDir)
 			if got != tt.want {
-				t.Errorf("config.IsNoDbModeConfigured() = %v, want %v", got, tt.want)
+				t.Errorf("isNoDbModeConfigured() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -498,9 +575,9 @@ func TestGetLocalSyncBranch(t *testing.T) {
 				t.Setenv("BEADS_SYNC_BRANCH", tt.envVar)
 			}
 
-			got := config.GetLocalSyncBranch(beadsDir)
+			got := getLocalSyncBranch(beadsDir)
 			if got != tt.want {
-				t.Errorf("config.GetLocalSyncBranch() = %q, want %q", got, tt.want)
+				t.Errorf("getLocalSyncBranch() = %q, want %q", got, tt.want)
 			}
 		})
 	}

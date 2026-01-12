@@ -98,6 +98,9 @@ func (m *mockStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter)
 func (m *mockStorage) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	return nil, nil
 }
+func (m *mockStorage) IsBlocked(ctx context.Context, issueID string) (bool, []string, error) {
+	return false, nil, nil
+}
 func (m *mockStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
 	return nil, nil
 }
@@ -168,6 +171,9 @@ func (m *mockStorage) DeleteConfig(ctx context.Context, key string) error {
 	return nil
 }
 func (m *mockStorage) GetCustomStatuses(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetCustomTypes(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
 func (m *mockStorage) SetMetadata(ctx context.Context, key, value string) error {
@@ -358,6 +364,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		_ = s.GetAllConfig
 		_ = s.DeleteConfig
 		_ = s.GetCustomStatuses
+		_ = s.GetCustomTypes
 
 		// Verify metadata operations
 		_ = s.SetMetadata

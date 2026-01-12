@@ -1,8 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/setup"
+	"github.com/steveyegge/beads/internal/recipes"
 )
 
 var (
@@ -10,162 +17,310 @@ var (
 	setupCheck   bool
 	setupRemove  bool
 	setupStealth bool
+	setupPrint   bool
+	setupOutput  string
+	setupList    bool
+	setupAdd     string
 )
 
 var setupCmd = &cobra.Command{
-	Use:     "setup",
+	Use:     "setup [recipe]",
 	GroupID: "setup",
 	Short:   "Setup integration with AI editors",
-	Long:  `Setup integration files for AI editors like Claude Code, Cursor, Aider, and Factory.ai Droid.`,
+	Long: `Setup integration files for AI editors and coding assistants.
+
+Recipes define where beads workflow instructions are written. Built-in recipes
+include cursor, claude, gemini, aider, factory, windsurf, cody, and kilocode.
+
+Examples:
+  bd setup cursor          # Install Cursor IDE integration
+  bd setup --list          # Show all available recipes
+  bd setup --print         # Print the template to stdout
+  bd setup -o rules.md     # Write template to custom path
+  bd setup --add myeditor .myeditor/rules.md  # Add custom recipe
+
+Use 'bd setup <recipe> --check' to verify installation status.
+Use 'bd setup <recipe> --remove' to uninstall.`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runSetup,
 }
 
-var setupCursorCmd = &cobra.Command{
-	Use:   "cursor",
-	Short: "Setup Cursor IDE integration",
-	Long: `Install Beads workflow rules for Cursor IDE.
+func runSetup(cmd *cobra.Command, args []string) {
+	// Handle --list flag
+	if setupList {
+		listRecipes()
+		return
+	}
 
-Creates .cursor/rules/beads.mdc with bd workflow context.
-Uses BEGIN/END markers for safe idempotent updates.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if setupCheck {
-			setup.CheckCursor()
-			return
+	// Handle --print flag (no recipe needed)
+	if setupPrint {
+		fmt.Print(recipes.Template)
+		return
+	}
+
+	// Handle -o flag (write to arbitrary path)
+	if setupOutput != "" {
+		if err := writeToPath(setupOutput); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
+		fmt.Printf("✓ Wrote template to %s\n", setupOutput)
+		return
+	}
 
-		if setupRemove {
-			setup.RemoveCursor()
-			return
+	// Handle --add flag (save custom recipe)
+	if setupAdd != "" {
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, "Error: --add requires a path argument")
+			fmt.Fprintln(os.Stderr, "Usage: bd setup --add <name> <path>")
+			os.Exit(1)
 		}
+		if err := addRecipe(setupAdd, args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
-		setup.InstallCursor()
-	},
+	// Require a recipe name for install/check/remove
+	if len(args) == 0 {
+		_ = cmd.Help()
+		return
+	}
+
+	recipeName := strings.ToLower(args[0])
+	runRecipe(recipeName)
 }
 
-var setupAiderCmd = &cobra.Command{
-	Use:   "aider",
-	Short: "Setup Aider integration",
-	Long: `Install Beads workflow configuration for Aider.
+func listRecipes() {
+	beadsDir := findBeadsDir()
+	allRecipes, err := recipes.GetAllRecipes(beadsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading recipes: %v\n", err)
+		os.Exit(1)
+	}
 
-Creates .aider.conf.yml with bd workflow instructions.
-The AI will suggest bd commands for you to run via /run.
+	// Sort recipe names
+	names := make([]string, 0, len(allRecipes))
+	for name := range allRecipes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 
-Note: Aider requires explicit command execution - the AI cannot
-run commands autonomously. It will suggest bd commands which you
-must confirm using Aider's /run command.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if setupCheck {
-			setup.CheckAider()
-			return
+	fmt.Println("Available recipes:")
+	fmt.Println()
+	for _, name := range names {
+		r := allRecipes[name]
+		source := "built-in"
+		if !recipes.IsBuiltin(name) {
+			source = "user"
 		}
-
-		if setupRemove {
-			setup.RemoveAider()
-			return
-		}
-
-		setup.InstallAider()
-	},
+		fmt.Printf("  %-12s  %-25s  (%s)\n", name, r.Description, source)
+	}
+	fmt.Println()
+	fmt.Println("Use 'bd setup <recipe>' to install.")
+	fmt.Println("Use 'bd setup --add <name> <path>' to add a custom recipe.")
 }
 
-var setupFactoryCmd = &cobra.Command{
-	Use:   "factory",
-	Short: "Setup Factory.ai (Droid) integration",
-	Long: `Install Beads workflow configuration for Factory.ai Droid.
-
-Creates or updates AGENTS.md with bd workflow instructions.
-Factory Droids automatically read AGENTS.md on session start.
-
-AGENTS.md is the standard format used across AI coding assistants
-(Factory, Cursor, Aider, Gemini CLI, Jules, and more).`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if setupCheck {
-			setup.CheckFactory()
-			return
+func writeToPath(path string) error {
+	// Ensure parent directory exists
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
 		}
+	}
 
-		if setupRemove {
-			setup.RemoveFactory()
-			return
-		}
-
-		setup.InstallFactory()
-	},
+	if err := os.WriteFile(path, []byte(recipes.Template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
+		return fmt.Errorf("write file: %w", err)
+	}
+	return nil
 }
 
-var setupClaudeCmd = &cobra.Command{
-	Use:   "claude",
-	Short: "Setup Claude Code integration",
-	Long: `Install Claude Code hooks that auto-inject bd workflow context.
+func addRecipe(name, path string) error {
+	beadsDir := findBeadsDir()
+	if beadsDir == "" {
+		beadsDir = ".beads"
+	}
 
-By default, installs hooks globally (~/.claude/settings.json).
-Use --project flag to install only for this project.
+	if err := recipes.SaveUserRecipe(beadsDir, name, path); err != nil {
+		return err
+	}
 
-Hooks call 'bd prime' on SessionStart and PreCompact events to prevent
-agents from forgetting bd workflow after context compaction.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if setupCheck {
-			setup.CheckClaude()
-			return
-		}
-
-		if setupRemove {
-			setup.RemoveClaude(setupProject)
-			return
-		}
-
-		setup.InstallClaude(setupProject, setupStealth)
-	},
+	fmt.Printf("✓ Added recipe '%s' → %s\n", name, path)
+	fmt.Printf("  Config: %s/recipes.toml\n", beadsDir)
+	fmt.Println()
+	fmt.Printf("Install with: bd setup %s\n", name)
+	return nil
 }
 
-var setupGeminiCmd = &cobra.Command{
-	Use:   "gemini",
-	Short: "Setup Gemini CLI integration",
-	Long: `Install Gemini CLI hooks that auto-inject bd workflow context.
+func runRecipe(name string) {
+	// Check for legacy recipes that need special handling
+	switch name {
+	case "claude":
+		runClaudeRecipe()
+		return
+	case "gemini":
+		runGeminiRecipe()
+		return
+	case "factory":
+		runFactoryRecipe()
+		return
+	case "aider":
+		runAiderRecipe()
+		return
+	case "cursor":
+		runCursorRecipe()
+		return
+	}
 
-By default, installs hooks globally (~/.gemini/settings.json).
-Use --project flag to install only for this project.
+	// For all other recipes (built-in or user), use generic file-based install
+	beadsDir := findBeadsDir()
+	recipe, err := recipes.GetRecipe(name, beadsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Use 'bd setup --list' to see available recipes.")
+		os.Exit(1)
+	}
 
-Hooks call 'bd prime' on SessionStart and PreCompress events to prevent
-agents from forgetting bd workflow after context compaction.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		if setupCheck {
-			setup.CheckGemini()
-			return
+	if recipe.Type != recipes.TypeFile {
+		fmt.Fprintf(os.Stderr, "Error: recipe '%s' has type '%s' which requires special handling\n", name, recipe.Type)
+		os.Exit(1)
+	}
+
+	// Handle --check
+	if setupCheck {
+		if _, err := os.Stat(recipe.Path); os.IsNotExist(err) {
+			fmt.Printf("✗ %s integration not installed\n", recipe.Name)
+			fmt.Printf("  Run: bd setup %s\n", name)
+			os.Exit(1)
 		}
+		fmt.Printf("✓ %s integration installed: %s\n", recipe.Name, recipe.Path)
+		return
+	}
 
-		if setupRemove {
-			setup.RemoveGemini(setupProject)
-			return
+	// Handle --remove
+	if setupRemove {
+		if err := os.Remove(recipe.Path); err != nil {
+			if os.IsNotExist(err) {
+				fmt.Println("No integration file found")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
+		fmt.Printf("✓ Removed %s integration\n", recipe.Name)
+		return
+	}
 
-		setup.InstallGemini(setupProject, setupStealth)
-	},
+	// Install
+	fmt.Printf("Installing %s integration...\n", recipe.Name)
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(recipe.Path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: create directory: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if err := os.WriteFile(recipe.Path, []byte(recipes.Template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
+		fmt.Fprintf(os.Stderr, "Error: write file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n✓ %s integration installed\n", recipe.Name)
+	fmt.Printf("  File: %s\n", recipe.Path)
+}
+
+// Legacy recipe handlers that delegate to existing implementations
+
+func runCursorRecipe() {
+	if setupCheck {
+		setup.CheckCursor()
+		return
+	}
+	if setupRemove {
+		setup.RemoveCursor()
+		return
+	}
+	setup.InstallCursor()
+}
+
+func runClaudeRecipe() {
+	if setupCheck {
+		setup.CheckClaude()
+		return
+	}
+	if setupRemove {
+		setup.RemoveClaude(setupProject)
+		return
+	}
+	setup.InstallClaude(setupProject, setupStealth)
+}
+
+func runGeminiRecipe() {
+	if setupCheck {
+		setup.CheckGemini()
+		return
+	}
+	if setupRemove {
+		setup.RemoveGemini(setupProject)
+		return
+	}
+	setup.InstallGemini(setupProject, setupStealth)
+}
+
+func runFactoryRecipe() {
+	if setupCheck {
+		setup.CheckFactory()
+		return
+	}
+	if setupRemove {
+		setup.RemoveFactory()
+		return
+	}
+	setup.InstallFactory()
+}
+
+func runAiderRecipe() {
+	if setupCheck {
+		setup.CheckAider()
+		return
+	}
+	if setupRemove {
+		setup.RemoveAider()
+		return
+	}
+	setup.InstallAider()
+}
+
+func findBeadsDir() string {
+	// Check for .beads in current directory
+	if info, err := os.Stat(".beads"); err == nil && info.IsDir() {
+		return ".beads"
+	}
+	// Check for redirected beads directory
+	redirectPath := ".beads/.redirect"
+	if data, err := os.ReadFile(redirectPath); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	return ".beads"
 }
 
 func init() {
-	setupFactoryCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Factory.ai integration is installed")
-	setupFactoryCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd section from AGENTS.md")
+	// Global flags for the setup command
+	setupCmd.Flags().BoolVar(&setupList, "list", false, "List all available recipes")
+	setupCmd.Flags().BoolVar(&setupPrint, "print", false, "Print the template to stdout")
+	setupCmd.Flags().StringVarP(&setupOutput, "output", "o", "", "Write template to custom path")
+	setupCmd.Flags().StringVar(&setupAdd, "add", "", "Add a custom recipe with given name")
 
-	setupClaudeCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (not globally)")
-	setupClaudeCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Claude integration is installed")
-	setupClaudeCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd hooks from Claude settings")
-	setupClaudeCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use 'bd prime --stealth' (flush only, no git operations)")
+	// Per-recipe flags
+	setupCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if integration is installed")
+	setupCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove the integration")
+	setupCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (claude/gemini)")
+	setupCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use stealth mode (claude/gemini)")
 
-	setupCursorCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Cursor integration is installed")
-	setupCursorCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd rules from Cursor")
-
-	setupAiderCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Aider integration is installed")
-	setupAiderCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd config from Aider")
-
-	setupGeminiCmd.Flags().BoolVar(&setupProject, "project", false, "Install for this project only (not globally)")
-	setupGeminiCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if Gemini CLI integration is installed")
-	setupGeminiCmd.Flags().BoolVar(&setupRemove, "remove", false, "Remove bd hooks from Gemini CLI settings")
-	setupGeminiCmd.Flags().BoolVar(&setupStealth, "stealth", false, "Use 'bd prime --stealth' (flush only, no git operations)")
-
-	setupCmd.AddCommand(setupFactoryCmd)
-	setupCmd.AddCommand(setupClaudeCmd)
-	setupCmd.AddCommand(setupCursorCmd)
-	setupCmd.AddCommand(setupAiderCmd)
-	setupCmd.AddCommand(setupGeminiCmd)
 	rootCmd.AddCommand(setupCmd)
 }

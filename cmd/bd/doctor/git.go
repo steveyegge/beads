@@ -16,6 +16,17 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
+const (
+	hooksExamplesURL = "https://github.com/steveyegge/beads/tree/main/examples/git-hooks"
+	hooksUpgradeURL  = "https://github.com/steveyegge/beads/issues/615"
+)
+
+// bdShimMarker identifies bd shim hooks (GH#946)
+const bdShimMarker = "# bd-shim"
+
+// bdHooksRunPattern matches hooks that call bd hooks run
+var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
+
 // CheckGitHooks verifies that recommended git hooks are installed.
 func CheckGitHooks() DoctorCheck {
 	// Check if we're in a git repository using worktree-aware detection
@@ -48,6 +59,75 @@ func CheckGitHooks() DoctorCheck {
 		}
 	}
 
+	// Get repo root for external manager detection
+	repoRoot := filepath.Dir(gitDir)
+	if filepath.Base(gitDir) != ".git" {
+		// Worktree case - gitDir might be .git file content
+		if cwd, err := os.Getwd(); err == nil {
+			repoRoot = cwd
+		}
+	}
+
+	// Check for external hook managers (lefthook, husky, etc.)
+	externalManagers := fix.DetectExternalHookManagers(repoRoot)
+	if len(externalManagers) > 0 {
+		// First, check if bd shims are installed (GH#946)
+		// If the actual hooks are bd shims, they're calling bd regardless of what
+		// the external manager config says (user may have leftover config files)
+		if hasBdShims, bdHooks := areBdShimsInstalled(hooksDir); hasBdShims {
+			return DoctorCheck{
+				Name:    "Git Hooks",
+				Status:  StatusOK,
+				Message: "bd shims installed (ignoring external manager config)",
+				Detail:  fmt.Sprintf("bd hooks run: %s", strings.Join(bdHooks, ", ")),
+			}
+		}
+
+		// External manager detected - check if it's configured to call bd
+		integration := fix.CheckExternalHookManagerIntegration(repoRoot)
+		if integration != nil {
+			// Detection-only managers - we can't verify their config
+			if integration.DetectionOnly {
+				return DoctorCheck{
+					Name:    "Git Hooks",
+					Status:  StatusOK,
+					Message: fmt.Sprintf("%s detected (cannot verify bd integration)", integration.Manager),
+					Detail:  "Ensure your hook config calls 'bd hooks run <hook>'",
+				}
+			}
+
+			if integration.Configured {
+				// Check if any hooks are missing bd integration
+				if len(integration.HooksWithoutBd) > 0 {
+					return DoctorCheck{
+						Name:    "Git Hooks",
+						Status:  StatusWarning,
+						Message: fmt.Sprintf("%s hooks not calling bd", integration.Manager),
+						Detail:  fmt.Sprintf("Missing bd: %s", strings.Join(integration.HooksWithoutBd, ", ")),
+						Fix:     "Add or upgrade to 'bd hooks run <hook>'. See " + hooksUpgradeURL,
+					}
+				}
+
+				// All hooks calling bd - success
+				return DoctorCheck{
+					Name:    "Git Hooks",
+					Status:  StatusOK,
+					Message: fmt.Sprintf("All hooks via %s", integration.Manager),
+					Detail:  fmt.Sprintf("bd hooks run: %s", strings.Join(integration.HooksWithBd, ", ")),
+				}
+			}
+
+			// External manager exists but doesn't call bd at all
+			return DoctorCheck{
+				Name:    "Git Hooks",
+				Status:  StatusWarning,
+				Message: fmt.Sprintf("%s not calling bd", fix.ManagerNames(externalManagers)),
+				Detail:  "Configure hooks to call bd commands",
+				Fix:     "Add or upgrade to 'bd hooks run <hook>'. See " + hooksUpgradeURL,
+			}
+		}
+	}
+
 	if len(missingHooks) == 0 {
 		return DoctorCheck{
 			Name:    "Git Hooks",
@@ -57,7 +137,7 @@ func CheckGitHooks() DoctorCheck {
 		}
 	}
 
-	hookInstallMsg := "Install hooks with 'bd hooks install'. See https://github.com/steveyegge/beads/tree/main/examples/git-hooks for installation instructions"
+	hookInstallMsg := "Install hooks with 'bd hooks install'. See " + hooksExamplesURL
 
 	if len(installedHooks) > 0 {
 		return DoctorCheck{
@@ -76,6 +156,30 @@ func CheckGitHooks() DoctorCheck {
 		Detail:  fmt.Sprintf("Recommended: %s", strings.Join([]string{"pre-commit", "post-merge", "pre-push"}, ", ")),
 		Fix:     hookInstallMsg,
 	}
+}
+
+// areBdShimsInstalled checks if the installed hooks are bd shims or call bd hooks run.
+// This helps detect when bd hooks are installed directly but an external manager config exists.
+// Returns (true, installedHooks) if bd shims are detected, (false, nil) otherwise.
+// (GH#946)
+func areBdShimsInstalled(hooksDir string) (bool, []string) {
+	hooks := []string{"pre-commit", "post-merge", "pre-push"}
+	var bdHooks []string
+
+	for _, hookName := range hooks {
+		hookPath := filepath.Join(hooksDir, hookName)
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			continue
+		}
+		contentStr := string(content)
+		// Check for bd-shim marker or bd hooks run call
+		if strings.Contains(contentStr, bdShimMarker) || bdHooksRunPattern.MatchString(contentStr) {
+			bdHooks = append(bdHooks, hookName)
+		}
+	}
+
+	return len(bdHooks) > 0, bdHooks
 }
 
 // CheckGitWorkingTree checks if the git working tree is clean.
@@ -293,7 +397,70 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 	// Check if this is a bd hook and extract version
 	hookStr := string(hookContent)
 	if !strings.Contains(hookStr, "bd-hooks-version:") {
-		// Not a bd hook - can't determine compatibility
+		// Not a bd hook - check if it's an external hook manager
+		externalManagers := fix.DetectExternalHookManagers(path)
+		if len(externalManagers) > 0 {
+			names := fix.ManagerNames(externalManagers)
+
+			// Check if external manager has bd integration
+			integration := fix.CheckExternalHookManagerIntegration(path)
+			if integration != nil {
+				// Detection-only managers - we can't verify their config
+				if integration.DetectionOnly {
+					return DoctorCheck{
+						Name:    "Sync Branch Hook Compatibility",
+						Status:  StatusOK,
+						Message: fmt.Sprintf("Managed by %s (cannot verify bd integration)", names),
+						Detail:  "Ensure pre-push hook calls 'bd hooks run pre-push' for sync-branch",
+					}
+				}
+
+				if integration.Configured {
+					// Has bd integration - check if pre-push is covered
+					hasPrepush := false
+					for _, h := range integration.HooksWithBd {
+						if h == "pre-push" {
+							hasPrepush = true
+							break
+						}
+					}
+
+					if hasPrepush {
+						var detail string
+						// Only report hooks that ARE in config but lack bd integration
+						if len(integration.HooksWithoutBd) > 0 {
+							detail = fmt.Sprintf("Hooks without bd: %s", strings.Join(integration.HooksWithoutBd, ", "))
+						}
+						return DoctorCheck{
+							Name:    "Sync Branch Hook Compatibility",
+							Status:  StatusOK,
+							Message: fmt.Sprintf("Managed by %s with bd integration", integration.Manager),
+							Detail:  detail,
+						}
+					}
+
+					// Has bd integration but missing pre-push
+					return DoctorCheck{
+						Name:    "Sync Branch Hook Compatibility",
+						Status:  StatusWarning,
+						Message: fmt.Sprintf("Managed by %s (missing pre-push bd integration)", integration.Manager),
+						Detail:  "pre-push hook needs 'bd hooks run pre-push' for sync-branch",
+						Fix:     fmt.Sprintf("Add or upgrade to 'bd hooks run pre-push' in %s. See %s", integration.Manager, hooksExamplesURL),
+					}
+				}
+			}
+
+			// External manager detected but no bd integration found
+			return DoctorCheck{
+				Name:    "Sync Branch Hook Compatibility",
+				Status:  StatusWarning,
+				Message: fmt.Sprintf("Managed by %s (no bd integration detected)", names),
+				Detail:  fmt.Sprintf("Pre-push hook managed by %s but no 'bd hooks run' found", names),
+				Fix:     fmt.Sprintf("Add or upgrade to 'bd hooks run <hook>' in %s. See %s", names, hooksExamplesURL),
+			}
+		}
+
+		// No external manager - truly custom hook
 		return DoctorCheck{
 			Name:    "Sync Branch Hook Compatibility",
 			Status:  StatusWarning,

@@ -46,13 +46,31 @@ Tool-level settings you can configure:
 | `agents.context_budget` | - | `BD_AGENTS_CONTEXT_BUDGET` | `20000` | Max context tokens for agent sessions |
 | `agents.skill_autoload` | - | `BD_AGENTS_SKILL_AUTOLOAD` | `true` | Automatically load relevant skills |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
-| `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
+| `actor` | `--actor` | `BD_ACTOR` | `git config user.name` | Actor name for audit trail (see below) |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
 | `auto-start-daemon` | - | `BEADS_AUTO_START_DAEMON` | `true` | Auto-start daemon if not running |
 | `daemon-log-max-size` | - | `BEADS_DAEMON_LOG_MAX_SIZE` | `50` | Max daemon log size in MB before rotation |
 | `daemon-log-max-backups` | - | `BEADS_DAEMON_LOG_MAX_BACKUPS` | `7` | Max number of old log files to keep |
 | `daemon-log-max-age` | - | `BEADS_DAEMON_LOG_MAX_AGE` | `30` | Max days to keep old log files |
 | `daemon-log-compress` | - | `BEADS_DAEMON_LOG_COMPRESS` | `true` | Compress rotated log files |
+
+### Actor Identity Resolution
+
+The actor name (used for `created_by` in issues and audit trails) is resolved in this order:
+
+1. `--actor` flag (explicit override)
+2. `BD_ACTOR` environment variable
+3. `BEADS_ACTOR` environment variable (alias for MCP/integration compatibility)
+4. `git config user.name`
+5. `$USER` environment variable (system username fallback)
+6. `"unknown"` (final fallback)
+
+For most developers, no configuration is needed - beads will use your git identity automatically. This ensures your issue authorship matches your commit authorship.
+
+To override, set `BD_ACTOR` in your shell profile:
+```bash
+export BD_ACTOR="my-github-handle"
+```
 
 ### Example Config File
 

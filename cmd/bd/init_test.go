@@ -466,15 +466,26 @@ func TestInitNoDbMode(t *testing.T) {
 	// Reset global state
 	origDBPath := dbPath
 	origNoDb := noDb
-	defer func() { 
+	defer func() {
 		dbPath = origDBPath
 		noDb = origNoDb
 	}()
 	dbPath = ""
 	noDb = false
-	
+
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+
+	// Set BEADS_DIR to prevent git repo detection from finding project's .beads
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+	}()
 
 	// Initialize with --no-db flag
 	rootCmd.SetArgs([]string{"init", "--no-db", "--no-daemon", "--prefix", "test", "--quiet"})
@@ -1135,6 +1146,114 @@ func TestSetupClaudeSettings_NoExistingFile(t *testing.T) {
 
 	if !strings.Contains(string(content), "bd onboard") {
 		t.Error("File should contain bd onboard prompt")
+	}
+}
+
+// TestInitBranchPersistsToConfigYaml verifies that --branch flag persists to config.yaml
+// GH#927 Bug 3: The --branch flag sets sync.branch in database but NOT in config.yaml.
+// This matters because config.yaml is version-controlled and shared across clones,
+// while the database is local and gitignored.
+func TestInitBranchPersistsToConfigYaml(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("branch", "")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first (needed for sync branch)
+	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// Run bd init with --branch flag
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with --branch failed: %v", err)
+	}
+
+	// Read config.yaml and verify sync-branch is uncommented
+	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml: %v", err)
+	}
+
+	configStr := string(content)
+
+	// The bug: sync-branch remains commented as "# sync-branch:" instead of "sync-branch:"
+	// This test should FAIL on the current codebase to prove the bug exists
+	if strings.Contains(configStr, "# sync-branch:") && !strings.Contains(configStr, "\nsync-branch:") {
+		t.Errorf("BUG: --branch flag did not persist to config.yaml\n"+
+			"Expected uncommented 'sync-branch: \"beads-sync\"'\n"+
+			"Got commented '# sync-branch:' (only set in database, not config.yaml)")
+	}
+
+	// Verify the uncommented line exists with correct value
+	if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
+		t.Errorf("config.yaml should contain 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
+	}
+}
+
+// TestInitReinitWithBranch verifies that --branch flag works on reinit
+// GH#927: When reinitializing with --branch, config.yaml should be updated even if it exists
+func TestInitReinitWithBranch(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("branch", "")
+	initCmd.Flags().Set("force", "false")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo first
+	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+
+	// First init WITHOUT --branch (creates config.yaml with commented sync-branch)
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("First init failed: %v", err)
+	}
+
+	// Verify config.yaml has commented sync-branch initially
+	configPath := filepath.Join(tmpDir, ".beads", "config.yaml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(content), "# sync-branch:") {
+		t.Errorf("Initial config.yaml should have commented sync-branch")
+	}
+
+	// Reset Cobra flags for reinit
+	initCmd.Flags().Set("branch", "")
+	initCmd.Flags().Set("force", "false")
+
+	// Reinit WITH --branch (should update existing config.yaml)
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--force", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Reinit with --branch failed: %v", err)
+	}
+
+	// Verify config.yaml now has uncommented sync-branch
+	content, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("Failed to read config.yaml after reinit: %v", err)
+	}
+
+	configStr := string(content)
+	if !strings.Contains(configStr, "sync-branch: \"beads-sync\"") {
+		t.Errorf("After reinit with --branch, config.yaml should contain uncommented 'sync-branch: \"beads-sync\"', got:\n%s", configStr)
 	}
 }
 

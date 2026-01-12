@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/rpc"
 )
 
 // ensureBeadsDir ensures the local beads directory exists (.beads in the current workspace)
@@ -58,10 +59,18 @@ func getEnvBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
-// getSocketPathForPID determines the socket path for a given PID file
+// getSocketPathForPID determines the socket path for a given PID file.
+// If BD_SOCKET env var is set, uses that value instead.
+// Uses rpc.ShortSocketPath to avoid Unix socket path length limits (macOS: 104 chars).
 func getSocketPathForPID(pidFile string) string {
-	// Socket is in same directory as PID file
-	return filepath.Join(filepath.Dir(pidFile), "bd.sock")
+	// Check environment variable first (enables test isolation)
+	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
+		return socketPath
+	}
+	// PID file is in .beads/, so workspace is parent of that
+	beadsDir := filepath.Dir(pidFile)
+	workspacePath := filepath.Dir(beadsDir)
+	return rpc.ShortSocketPath(workspacePath)
 }
 
 // getPIDFilePath returns the path to the daemon PID file

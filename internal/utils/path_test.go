@@ -327,6 +327,35 @@ func TestNormalizePathForComparison(t *testing.T) {
 	})
 }
 
+func TestCanonicalizePathCase(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("case canonicalization test only runs on macOS")
+	}
+
+	// Create a directory with mixed case
+	tmpDir := t.TempDir()
+	mixedCaseDir := filepath.Join(tmpDir, "TestCase")
+	if err := os.MkdirAll(mixedCaseDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Access via wrong case (lowercase)
+	wrongCasePath := filepath.Join(tmpDir, "testcase")
+
+	// Verify the wrong case path exists (macOS case-insensitive)
+	if _, err := os.Stat(wrongCasePath); err != nil {
+		t.Fatalf("wrong case path should exist on macOS: %v", err)
+	}
+
+	// CanonicalizePath should return the correct case
+	result := CanonicalizePath(wrongCasePath)
+
+	// The result should have the correct case "TestCase", not "testcase"
+	if !strings.HasSuffix(result, "TestCase") {
+		t.Errorf("CanonicalizePath(%q) = %q, want path ending in 'TestCase'", wrongCasePath, result)
+	}
+}
+
 func TestPathsEqual(t *testing.T) {
 	t.Run("identical paths", func(t *testing.T) {
 		tmpDir := t.TempDir()

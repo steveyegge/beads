@@ -455,10 +455,19 @@ func recordDaemonStartFailure() {
 	// No cap needed - backoff is capped at 120s in canRetryDaemonStart
 }
 
-// getSocketPath returns the daemon socket path based on the database location
-// Returns local socket path (.beads/bd.sock relative to database)
+// getSocketPath returns the daemon socket path based on the database location.
+// If BD_SOCKET env var is set, uses that value instead (enables test isolation).
+// On Unix systems, uses rpc.ShortSocketPath to avoid exceeding socket path limits
+// (macOS: 104 chars) by relocating long paths to /tmp/beads-{hash}/ (GH#1001).
 func getSocketPath() string {
-	return filepath.Join(filepath.Dir(dbPath), "bd.sock")
+	// Check environment variable first (enables test isolation)
+	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
+		return socketPath
+	}
+	// Get workspace path (parent of .beads directory)
+	beadsDir := filepath.Dir(dbPath)
+	workspacePath := filepath.Dir(beadsDir)
+	return rpc.ShortSocketPath(workspacePath)
 }
 
 // emitVerboseWarning prints a one-line warning when falling back to direct mode

@@ -1,7 +1,6 @@
 package types
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -392,12 +391,10 @@ func TestValidateWithCustomStatuses(t *testing.T) {
 	}
 }
 
-// TestTombstoneValidation tests the tombstone invariants (bd-md2):
-// - Tombstone issues must have deleted_at timestamp
-// - Non-tombstone issues cannot have deleted_at timestamp
-func TestTombstoneValidation(t *testing.T) {
-	now := time.Now()
-
+// TestValidateForImport tests the federation trust model (bd-9ji4z):
+// - Built-in types are validated (catch typos)
+// - Non-built-in types are trusted (child repo already validated)
+func TestValidateForImport(t *testing.T) {
 	tests := []struct {
 		name    string
 		issue   Issue
@@ -405,77 +402,135 @@ func TestTombstoneValidation(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "valid tombstone with deleted_at",
+			name: "built-in type task passes",
 			issue: Issue{
-				Title:     "(deleted)",
-				Status:    StatusTombstone,
-				Priority:  0,
-				IssueType: TypeTask,
-				DeletedAt: &now,
-			},
-			wantErr: false,
-		},
-		{
-			name: "invalid tombstone without deleted_at",
-			issue: Issue{
-				Title:     "(deleted)",
-				Status:    StatusTombstone,
-				Priority:  0,
-				IssueType: TypeTask,
-				DeletedAt: nil,
-			},
-			wantErr: true,
-			errMsg:  "tombstone issues must have deleted_at timestamp",
-		},
-		{
-			name: "invalid non-tombstone with deleted_at",
-			issue: Issue{
-				Title:     "Open Issue",
+				Title:     "Test Issue",
 				Status:    StatusOpen,
 				Priority:  1,
 				IssueType: TypeTask,
-				DeletedAt: &now,
 			},
-			wantErr: true,
-			errMsg:  "non-tombstone issues cannot have deleted_at timestamp",
+			wantErr: false,
 		},
 		{
-			name: "valid open issue without deleted_at",
+			name: "built-in type bug passes",
 			issue: Issue{
-				Title:     "Open Issue",
+				Title:     "Test Issue",
 				Status:    StatusOpen,
 				Priority:  1,
-				IssueType: TypeTask,
-				DeletedAt: nil,
+				IssueType: TypeBug,
 			},
 			wantErr: false,
 		},
 		{
-			name: "valid closed issue without deleted_at",
+			name: "custom type pm is trusted (not in parent config)",
 			issue: Issue{
-				Title:     "Closed Issue",
-				Status:    StatusClosed,
+				Title:     "Test Issue",
+				Status:    StatusOpen,
 				Priority:  1,
-				IssueType: TypeTask,
-				ClosedAt:  &now,
-				DeletedAt: nil,
+				IssueType: IssueType("pm"), // Custom type from child repo
+			},
+			wantErr: false, // Should pass - federation trust model
+		},
+		{
+			name: "custom type llm is trusted",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: IssueType("llm"), // Custom type from child repo
+			},
+			wantErr: false, // Should pass - federation trust model
+		},
+		{
+			name: "built-in type agent passes",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: TypeAgent, // Gas Town built-in type
 			},
 			wantErr: false,
+		},
+		{
+			name: "empty type defaults to task (handled by SetDefaults)",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: IssueType(""), // Empty is allowed
+			},
+			wantErr: false,
+		},
+		{
+			name: "other validations still run - missing title",
+			issue: Issue{
+				Title:     "", // Missing required field
+				Status:    StatusOpen,
+				Priority:  1,
+				IssueType: IssueType("pm"),
+			},
+			wantErr: true,
+			errMsg:  "title is required",
+		},
+		{
+			name: "other validations still run - invalid priority",
+			issue: Issue{
+				Title:     "Test Issue",
+				Status:    StatusOpen,
+				Priority:  10, // Invalid
+				IssueType: IssueType("pm"),
+			},
+			wantErr: true,
+			errMsg:  "priority must be between 0 and 4",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.issue.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Validate() error = %v, expected to contain %q", err, tt.errMsg)
+			err := tt.issue.ValidateForImport(nil) // No custom statuses needed for these tests
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateForImport() expected error, got nil")
+					return
+				}
+				if tt.errMsg != "" && !contains(err.Error(), tt.errMsg) {
+					t.Errorf("ValidateForImport() error = %v, want error containing %q", err, tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateForImport() unexpected error = %v", err)
 				}
 			}
 		})
+	}
+}
+
+// TestValidateForImportVsValidateWithCustom contrasts the two validation modes
+func TestValidateForImportVsValidateWithCustom(t *testing.T) {
+	// Issue with custom type that's NOT in customTypes list
+	issue := Issue{
+		Title:     "Test Issue",
+		Status:    StatusOpen,
+		Priority:  1,
+		IssueType: IssueType("pm"), // Custom type not configured in parent
+	}
+
+	// ValidateWithCustom (normal mode): should fail without pm in customTypes
+	err := issue.ValidateWithCustom(nil, nil)
+	if err == nil {
+		t.Error("ValidateWithCustom() should fail for custom type without config")
+	}
+
+	// ValidateWithCustom: should pass with pm in customTypes
+	err = issue.ValidateWithCustom(nil, []string{"pm"})
+	if err != nil {
+		t.Errorf("ValidateWithCustom() with pm config should pass, got: %v", err)
+	}
+
+	// ValidateForImport (federation trust mode): should pass without any config
+	err = issue.ValidateForImport(nil)
+	if err != nil {
+		t.Errorf("ValidateForImport() should trust custom type, got: %v", err)
 	}
 }
 
@@ -489,6 +544,15 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeTask, true},
 		{TypeEpic, true},
 		{TypeChore, true},
+		{TypeMessage, true},
+		{TypeMergeRequest, true},
+		{TypeMolecule, true},
+		{TypeGate, true},
+		{TypeAgent, true},
+		{TypeRole, true},
+		{TypeConvoy, true},
+		{TypeEvent, true},
+		{TypeSlot, true},
 		{IssueType("invalid"), false},
 		{IssueType(""), false},
 	}
@@ -516,11 +580,9 @@ func TestIssueTypeRequiredSections(t *testing.T) {
 		{TypeMessage, 0, ""},
 		{TypeMolecule, 0, ""},
 		{TypeGate, 0, ""},
-		{TypeAgent, 0, ""},
-		{TypeRole, 0, ""},
-		{TypeConvoy, 0, ""},
 		{TypeEvent, 0, ""},
 		{TypeMergeRequest, 0, ""},
+		// Gas Town types (agent, role, rig, convoy, slot) have been removed
 	}
 
 	for _, tt := range tests {
@@ -646,6 +708,7 @@ func TestDependencyTypeIsWellKnown(t *testing.T) {
 		{DepAuthoredBy, true},
 		{DepAssignedTo, true},
 		{DepApprovedBy, true},
+		{DepAttests, true},
 		{DepTracks, true},
 		{DepUntil, true},
 		{DepCausedBy, true},
@@ -681,6 +744,7 @@ func TestDependencyTypeAffectsReadyWork(t *testing.T) {
 		{DepAuthoredBy, false},
 		{DepAssignedTo, false},
 		{DepApprovedBy, false},
+		{DepAttests, false},
 		{DepTracks, false},
 		{DepUntil, false},
 		{DepCausedBy, false},

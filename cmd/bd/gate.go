@@ -442,7 +442,7 @@ A gate is resolved when:
   - bead: target bead status=closed
 
 A gate is escalated when:
-  - gh:run: status=completed AND conclusion in (failure, cancelled)
+  - gh:run: status=completed AND conclusion in (failure, canceled)
   - gh:pr: state=CLOSED AND merged=false
 
 Examples:
@@ -638,14 +638,93 @@ type ghPRStatus struct {
 	Title  string `json:"title"`
 }
 
+// isNumericID returns true if the string contains only digits (a GitHub run ID)
+func isNumericID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// queryGitHubRunsForWorkflow queries recent runs for a specific workflow using gh CLI.
+// Returns runs sorted newest-first (GitHub API default).
+func queryGitHubRunsForWorkflow(workflow string, limit int) ([]GHWorkflowRun, error) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil, fmt.Errorf("gh CLI not found: install from https://cli.github.com")
+	}
+
+	args := []string{
+		"run", "list",
+		"--workflow", workflow,
+		"--json", "databaseId,name,status,conclusion,createdAt,workflowName",
+		"--limit", fmt.Sprintf("%d", limit),
+	}
+
+	cmd := exec.Command("gh", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh run list --workflow=%s failed: %s", workflow, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("gh run list: %w", err)
+	}
+
+	var runs []GHWorkflowRun
+	if err := json.Unmarshal(output, &runs); err != nil {
+		return nil, fmt.Errorf("parse gh output: %w", err)
+	}
+
+	return runs, nil
+}
+
+// discoverRunIDByWorkflowName queries GitHub for the most recent run of a workflow.
+// Returns (runID, error). This is ZFC-compliant: "most recent run" is deterministic.
+func discoverRunIDByWorkflowName(workflowHint string) (string, error) {
+	// Query GitHub directly for this workflow (efficient, avoids limit issues)
+	runs, err := queryGitHubRunsForWorkflow(workflowHint, 5)
+	if err != nil {
+		return "", fmt.Errorf("failed to query workflow runs: %w", err)
+	}
+
+	if len(runs) == 0 {
+		return "", fmt.Errorf("no runs found for workflow '%s'", workflowHint)
+	}
+
+	// Take the most recent run (gh returns newest-first)
+	// This is deterministic: "most recent" is a total ordering by creation time
+	return fmt.Sprintf("%d", runs[0].DatabaseID), nil
+}
+
 // checkGHRun checks a GitHub Actions workflow run gate
 func checkGHRun(gate *types.Issue) (resolved, escalated bool, reason string, err error) {
 	if gate.AwaitID == "" {
-		return false, false, "no run ID specified", nil
+		return false, false, "no run ID specified - set await_id or use workflow name hint", nil
+	}
+
+	runID := gate.AwaitID
+
+	// If await_id is a workflow name hint (non-numeric), auto-discover the run ID
+	if !isNumericID(gate.AwaitID) {
+		discoveredID, discoverErr := discoverRunIDByWorkflowName(gate.AwaitID)
+		if discoverErr != nil {
+			return false, false, fmt.Sprintf("workflow hint '%s': %v", gate.AwaitID, discoverErr), nil
+		}
+
+		// Update the gate with the discovered run ID
+		if updateErr := updateGateAwaitID(nil, gate.ID, discoveredID); updateErr != nil {
+			return false, false, "", fmt.Errorf("failed to update gate with discovered run ID: %w", updateErr)
+		}
+
+		runID = discoveredID
 	}
 
 	// Run: gh run view <id> --json status,conclusion,name
-	cmd := exec.Command("gh", "run", "view", gate.AwaitID, "--json", "status,conclusion,name")
+	cmd := exec.Command("gh", "run", "view", runID, "--json", "status,conclusion,name") // #nosec G204 -- runID is a validated GitHub run ID
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -676,8 +755,8 @@ func checkGHRun(gate *types.Issue) (resolved, escalated bool, reason string, err
 			return true, false, fmt.Sprintf("workflow '%s' succeeded", status.Name), nil
 		case "failure":
 			return false, true, fmt.Sprintf("workflow '%s' failed", status.Name), nil
-		case "cancelled":
-			return false, true, fmt.Sprintf("workflow '%s' was cancelled", status.Name), nil
+		case "cancelled", "canceled":
+			return false, true, fmt.Sprintf("workflow '%s' was canceled", status.Name), nil
 		case "skipped":
 			return true, false, fmt.Sprintf("workflow '%s' was skipped", status.Name), nil
 		default:
@@ -697,7 +776,7 @@ func checkGHPR(gate *types.Issue) (resolved, escalated bool, reason string, err 
 	}
 
 	// Run: gh pr view <id> --json state,merged,title
-	cmd := exec.Command("gh", "pr", "view", gate.AwaitID, "--json", "state,merged,title")
+	cmd := exec.Command("gh", "pr", "view", gate.AwaitID, "--json", "state,merged,title") // #nosec G204 -- gate.AwaitID is a validated GitHub PR number
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -737,7 +816,8 @@ func checkGHPR(gate *types.Issue) (resolved, escalated bool, reason string, err 
 }
 
 // checkTimer checks a timer gate for expiration
-func checkTimer(gate *types.Issue, now time.Time) (resolved, escalated bool, reason string, err error) {
+// Note: timers resolve but never escalate (escalated is always false by design)
+func checkTimer(gate *types.Issue, now time.Time) (resolved, escalated bool, reason string, err error) { //nolint:unparam // escalated intentionally always false
 	if gate.Timeout == 0 {
 		return false, false, "timer gate without timeout configured", fmt.Errorf("no timeout set")
 	}
@@ -815,7 +895,7 @@ func checkBeadGate(ctx context.Context, awaitID string) (bool, string) {
 }
 
 // closeGate closes a gate issue with the given reason
-func closeGate(ctx interface{}, gateID, reason string) error {
+func closeGate(_ interface{}, gateID, reason string) error {
 	if daemonClient != nil {
 		closeArgs := &rpc.CloseArgs{
 			ID:     gateID,
@@ -869,6 +949,11 @@ func init() {
 	gateCheckCmd.Flags().Bool("dry-run", false, "Show what would happen without making changes")
 	gateCheckCmd.Flags().BoolP("escalate", "e", false, "Escalate failed/expired gates")
 	gateCheckCmd.Flags().IntP("limit", "l", 100, "Limit results (default 100)")
+
+	// Issue ID completions
+	gateShowCmd.ValidArgsFunction = issueIDCompletion
+	gateResolveCmd.ValidArgsFunction = issueIDCompletion
+	gateAddWaiterCmd.ValidArgsFunction = issueIDCompletion
 
 	// Add subcommands
 	gateCmd.AddCommand(gateListCmd)

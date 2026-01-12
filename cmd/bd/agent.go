@@ -30,7 +30,7 @@ var agentCmd = &cobra.Command{
 	Short: "Manage agent bead state",
 	Long: `Manage state on agent beads for ZFC-compliant state reporting.
 
-Agent beads (type=agent) can self-report their state using these commands.
+Agent beads (labeled gt:agent) can self-report their state using these commands.
 This enables the Witness and other monitoring systems to track agent health.
 
 States:
@@ -207,7 +207,7 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		agent = &types.Issue{
 			ID:        agentID,
 			Title:     fmt.Sprintf("Agent: %s", agentID),
-			IssueType: types.TypeAgent,
+			IssueType: types.TypeTask, // Use task type; gt:agent label marks it as agent
 			Status:    types.StatusOpen,
 			RoleType:  roleType,
 			Rig:       rig,
@@ -218,10 +218,11 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 			createArgs := &rpc.CreateArgs{
 				ID:        agentID,
 				Title:     agent.Title,
-				IssueType: string(types.TypeAgent),
+				IssueType: string(types.TypeTask), // Use task type; gt:agent label marks it as agent
 				RoleType:  roleType,
 				Rig:       rig,
 				CreatedBy: actor,
+				Labels:    []string{"gt:agent"}, // Gas Town agent label
 			}
 			resp, err := daemonClient.Create(createArgs)
 			if err != nil {
@@ -233,6 +234,10 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		} else {
 			if err := activeStore.CreateIssue(ctx, agent, actor); err != nil {
 				return fmt.Errorf("failed to auto-create agent bead %s: %w", agentID, err)
+			}
+			// Add gt:agent label to mark as agent bead
+			if err := activeStore.AddLabel(ctx, agent.ID, "gt:agent", actor); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to add gt:agent label: %v\n", err)
 			}
 			// Add role_type and rig labels for filtering
 			if roleType != "" {
@@ -248,9 +253,12 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// Get existing agent bead to verify it's an agent
+		var labels []string
 		if routedResult != nil && routedResult.Issue != nil {
 			// Already have the issue from routed resolution
 			agent = routedResult.Issue
+			// Get labels from routed store
+			labels, _ = routedResult.Store.GetLabels(ctx, agentID)
 		} else if daemonClient != nil && !needsRouting(agentArg) {
 			resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 			if err != nil {
@@ -259,17 +267,19 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 			if err := json.Unmarshal(resp.Data, &agent); err != nil {
 				return fmt.Errorf("parsing response: %w", err)
 			}
+			labels = agent.Labels
 		} else {
 			var err error
 			agent, err = activeStore.GetIssue(ctx, agentID)
 			if err != nil || agent == nil {
 				return fmt.Errorf("agent bead not found: %s", agentID)
 			}
+			labels, _ = activeStore.GetLabels(ctx, agentID)
 		}
 
-		// Verify agent bead is actually an agent
-		if agent.IssueType != "agent" {
-			return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+		// Verify agent bead is actually an agent (check for gt:agent label)
+		if !isAgentBead(labels) {
+			return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 		}
 	}
 
@@ -362,9 +372,11 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 
 	// Get agent bead to verify it's an agent
 	var agent *types.Issue
+	var labels []string
 	if routedResult != nil && routedResult.Issue != nil {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
+		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
 	} else if daemonClient != nil && !needsRouting(agentArg) {
 		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 		if err != nil {
@@ -373,17 +385,19 @@ func runAgentHeartbeat(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp.Data, &agent); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
+		labels = agent.Labels
 	} else {
 		var err error
 		agent, err = activeStore.GetIssue(ctx, agentID)
 		if err != nil || agent == nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
 		}
+		labels, _ = activeStore.GetLabels(ctx, agentID)
 	}
 
-	// Verify agent bead is actually an agent
-	if agent.IssueType != "agent" {
-		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+	// Verify agent bead is actually an agent (check for gt:agent label)
+	if !isAgentBead(labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 	}
 
 	// Update only last_activity
@@ -464,9 +478,11 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 
 	// Get agent bead
 	var agent *types.Issue
+	var labels []string
 	if routedResult != nil && routedResult.Issue != nil {
 		// Already have the issue from routed resolution
 		agent = routedResult.Issue
+		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
 	} else if daemonClient != nil && !needsRouting(agentArg) {
 		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
 		if err != nil {
@@ -475,17 +491,19 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 		if err := json.Unmarshal(resp.Data, &agent); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
+		labels = agent.Labels
 	} else {
 		var err error
 		agent, err = store.GetIssue(ctx, agentID)
 		if err != nil || agent == nil {
 			return fmt.Errorf("agent bead not found: %s", agentID)
 		}
+		labels, _ = store.GetLabels(ctx, agentID)
 	}
 
-	// Verify agent bead is actually an agent
-	if agent.IssueType != "agent" {
-		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+	// Verify agent bead is actually an agent (check for gt:agent label)
+	if !isAgentBead(labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 	}
 
 	if jsonOutput {
@@ -565,11 +583,11 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 
 	ctx := rootCtx
 
-	// List all agent beads
+	// List all agent beads (by gt:agent label)
 	var agents []*types.Issue
 	if daemonClient != nil {
 		resp, err := daemonClient.List(&rpc.ListArgs{
-			IssueType: "agent",
+			Labels: []string{"gt:agent"},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to list agents: %w", err)
@@ -578,9 +596,8 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("parsing response: %w", err)
 		}
 	} else {
-		agentType := types.TypeAgent
 		filter := types.IssueFilter{
-			IssueType: &agentType,
+			Labels: []string{"gt:agent"},
 		}
 		var err error
 		agents, err = store.SearchIssues(ctx, "", filter)
@@ -750,6 +767,17 @@ func runAgentBackfillLabels(cmd *cobra.Command, args []string) error {
 func containsLabel(labels []string, label string) bool {
 	for _, l := range labels {
 		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
+// isAgentBead checks if an issue is an agent bead by looking for the gt:agent label.
+// This replaces the previous type-based check (issue_type='agent') for Gas Town separation.
+func isAgentBead(labels []string) bool {
+	for _, l := range labels {
+		if l == "gt:agent" {
 			return true
 		}
 	}

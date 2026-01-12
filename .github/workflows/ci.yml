@@ -30,7 +30,7 @@ jobs:
       - name: Check for .beads/issues.jsonl changes
         run: |
           if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^\.beads/issues\.jsonl$"; then
-            echo "❌ This PR includes changes to .beads/issues.jsonl"
+            echo "This PR includes changes to .beads/issues.jsonl"
             echo ""
             echo "This file is the project's issue database and should not be modified in PRs."
             echo ""
@@ -41,11 +41,25 @@ jobs:
             echo ""
             exit 1
           fi
-          echo "✅ No .beads/issues.jsonl changes detected"
+          echo "No .beads/issues.jsonl changes detected"
 
+  # Cross-platform test matrix (Linux/macOS only - Windows uses smoke tests)
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          # Linux: full test suite with coverage
+          - os: ubuntu-latest
+            coverage: true
+            test-flags: '-v -race -short -coverprofile=coverage.out'
+          # macOS: full test suite, no coverage (faster)
+          - os: macos-latest
+            coverage: false
+            test-flags: '-v -race -short'
     steps:
       - uses: actions/checkout@v6
 
@@ -63,47 +77,38 @@ jobs:
         run: go build -v ./cmd/bd
 
       - name: Test
-        run: go test -v -race -short -coverprofile=coverage.out ./...
+        run: go test ${{ matrix.test-flags }} ./...
 
       - name: Check coverage threshold
+        if: matrix.coverage
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           MIN_COVERAGE=42
           WARN_COVERAGE=55
           echo "Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ Coverage is below ${MIN_COVERAGE}% threshold"
+            echo "Coverage is below ${MIN_COVERAGE}% threshold"
             exit 1
           elif (( $(echo "$COVERAGE < $WARN_COVERAGE" | bc -l) )); then
-            echo "⚠️  Coverage is below ${WARN_COVERAGE}% (warning threshold)"
+            echo "Coverage is below ${WARN_COVERAGE}% (warning threshold)"
           else
-            echo "✅ Coverage meets threshold"
+            echo "Coverage meets threshold"
           fi
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
-        if: success()
+        if: matrix.coverage && success()
         with:
           file: ./coverage.out
           fail_ci_if_error: false
 
-  # Windows tests with Dev Drive for fast I/O (see bd-5we)
-  # Dev Drive provides ~30x faster IOPS than C: drive
+  # Windows smoke tests only - full test suite times out (see bd-bmev)
+  # Linux/macOS run comprehensive tests; Windows just verifies binary works
   test-windows:
-    name: Test (Windows)
+    name: Test (Windows - smoke)
     runs-on: windows-latest
     steps:
-      - name: Set up Dev Drive
-        uses: samypr100/setup-dev-drive@v3
-        with:
-          drive-size: 4GB
-          drive-type: Dynamic
-          drive-format: ReFS
-          drive-path: E:\
-
       - uses: actions/checkout@v6
-        with:
-          path: E:\beads
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -115,24 +120,23 @@ jobs:
           git config --global user.name "CI Bot"
           git config --global user.email "ci@beads.test"
 
-      - name: Configure environment for Dev Drive
-        run: |
-          # Point temp directories to Dev Drive for fast I/O
-          echo "TEMP=E:\temp" >> $env:GITHUB_ENV
-          echo "TMP=E:\temp" >> $env:GITHUB_ENV
-          echo "GOTMPDIR=E:\temp" >> $env:GITHUB_ENV
-          New-Item -ItemType Directory -Force -Path E:\temp | Out-Null
-
       - name: Build
-        working-directory: E:\beads
         run: go build -v -o bd.exe ./cmd/bd
 
-      - name: Test
-        working-directory: E:\beads
-        timeout-minutes: 30
+      - name: Smoke test - version
+        run: ./bd.exe version
+
+      - name: Smoke test - init and CRUD
         run: |
-          # Skip tests with known Windows issues (bd-g9z1, bd-1bac)
-          go test -v -race -short -skip "TestTrackBdVersion_NoBeadsDir|TestFindBeadsDirSkipsDaemonRegistry|TestValidateState_NoBeadsDir|TestRegistryMultipleDaemons|TestCreateBackup_PreservesPermissions" ./...
+          ./bd.exe init --quiet --prefix smoke
+          $output = ./bd.exe create --title "Windows smoke test" --type task
+          $id = ($output | Select-String -Pattern "smoke-\w+").Matches.Value
+          echo "Created issue: $id"
+          ./bd.exe list
+          ./bd.exe show $id
+          ./bd.exe update $id --status in_progress
+          ./bd.exe close $id
+          echo "All smoke tests passed!"
 
   lint:
     name: Lint
@@ -150,6 +154,7 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
@@ -170,9 +175,9 @@ jobs:
           FIRST_LINE=$(head -n 1 help.txt)
           EXPECTED="Issues chained together like beads. A lightweight issue tracker with first-class dependency support."
           if [ "$FIRST_LINE" != "$EXPECTED" ]; then
-            echo "❌ First line of help.txt doesn't match expected output"
+            echo "First line of help.txt doesn't match expected output"
             echo "Expected: $EXPECTED"
             echo "Got: $FIRST_LINE"
             exit 1
           fi
-          echo "✅ Help text first line is correct"
+          echo "Help text first line is correct"

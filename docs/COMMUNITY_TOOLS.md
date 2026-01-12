@@ -12,6 +12,10 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[beads.el](https://codeberg.org/ctietze/beads.el)** - Emacs UI to browse, edit, and manage beads. Built by [@ctietze](https://codeberg.org/ctietze). (Elisp)
 
+- **[lazybeads](https://github.com/codegangsta/lazybeads)** - Lightweight terminal UI built with Bubble Tea for browsing and managing beads issues. Built by [@codegangsta](https://github.com/codegangsta). (Go)
+
+- **[bsv](https://github.com/bglenden/bsv)** - Simple two-panel terminal (TUI) viewer with tree navigation organized by epic/task/sub-task, markdown rendering, and mouse support. Built by [@bglenden](https://github.com/bglenden). (Rust)
+
 ## Web UIs
 
 - **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates and kanban board. Run with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni). (Node.js)
@@ -31,6 +35,8 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 ## Native Apps
 
 - **[Beadster](https://github.com/beadster/beadster)** - macOS app for browsing and managing issues from `.beads/` directories in git repositories. Built by [@podviaznikov](https://github.com/podviaznikov). (Swift)
+
+-  **[Parade](https://github.com/JeremyKalmus/parade)** - Electron app for workflow orchestration with visual Kanban board, discovery wizard, and task visualization. Run with `npx parade-init`. Built by [@JeremyKalmus](https://github.com/JeremyKalmus). (Electron/React)
 
 ## Historical / Stale
 

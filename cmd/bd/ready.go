@@ -23,8 +23,18 @@ var readyCmd = &cobra.Command{
 Use --mol to filter to a specific molecule's steps:
   bd ready --mol bd-patrol   # Show ready steps within molecule
 
+Use --gated to find molecules ready for gate-resume dispatch:
+  bd ready --gated           # Find molecules where a gate closed
+
 This is useful for agents executing molecules to see which steps can run next.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Handle --gated flag (gate-resume discovery)
+		gated, _ := cmd.Flags().GetBool("gated")
+		if gated {
+			runMolReadyGated(cmd, args)
+			return
+		}
+
 		// Handle molecule-specific ready query
 		molID, _ := cmd.Flags().GetString("mol")
 		if molID != "" {
@@ -451,6 +461,7 @@ func init() {
 	readyCmd.Flags().String("mol-type", "", "Filter by molecule type: swarm, patrol, or work")
 	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
+	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)

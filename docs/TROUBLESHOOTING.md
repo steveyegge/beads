@@ -722,6 +722,29 @@ The daemon listens on loopback TCP. Allow `bd.exe` through Windows Firewall:
 3. Add `bd.exe` and enable for Private networks
 4. Or disable firewall temporarily for testing
 
+### Windows: Controlled Folder Access blocks bd init
+
+**Symptom:** `bd init` hangs indefinitely with high CPU usage, and CTRL+C doesn't work.
+
+**Cause:** Windows Controlled Folder Access is blocking `bd.exe` from creating the `.beads` directory.
+
+**Diagnosis:** Run with verbose flag to see the actual error:
+```pwsh
+bd init -v
+# Error: failed to create .beads directory: mkdir .beads: The system cannot find the file specified
+```
+
+**Solution:** Add `bd.exe` to the Controlled Folder Access whitelist:
+
+1. Open Windows Security → Virus & threat protection
+2. Click "Ransomware protection" → "Manage ransomware protection"
+3. Under "Controlled folder access", click "Allow an app through Controlled folder access"
+4. Click "Add an allowed app" → "Browse all apps"
+5. Navigate to and select `bd.exe` (typically in `%USERPROFILE%\go\bin\bd.exe`)
+6. Retry `bd init` - it should work instantly
+
+**Note:** Unlike typical blocked apps, Controlled Folder Access may not show a notification when blocking `bd init`, making this issue hard to diagnose without the `-v` flag.
+
 ### macOS: Gatekeeper blocking execution
 
 If macOS blocks bd:

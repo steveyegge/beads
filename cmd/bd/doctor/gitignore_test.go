@@ -1368,3 +1368,43 @@ func TestRequiredPatterns_ContainsRedirect(t *testing.T) {
 		t.Error("requiredPatterns should include 'redirect'")
 	}
 }
+
+// TestGitignoreTemplate_ContainsSyncStateFiles verifies that sync state files
+// introduced in PR #918 (pull-first sync with 3-way merge) are gitignored.
+// These files are machine-specific and should not be shared across clones.
+// GH#974
+func TestGitignoreTemplate_ContainsSyncStateFiles(t *testing.T) {
+	syncStateFiles := []string{
+		".sync.lock",      // Concurrency guard
+		"sync_base.jsonl", // Base state for 3-way merge (per-machine)
+	}
+
+	for _, pattern := range syncStateFiles {
+		if !strings.Contains(GitignoreTemplate, pattern) {
+			t.Errorf("GitignoreTemplate should contain '%s' pattern", pattern)
+		}
+	}
+}
+
+// TestRequiredPatterns_ContainsSyncStatePatterns verifies that bd doctor
+// validates the presence of sync state patterns in .beads/.gitignore.
+// GH#974
+func TestRequiredPatterns_ContainsSyncStatePatterns(t *testing.T) {
+	syncStatePatterns := []string{
+		".sync.lock",
+		"sync_base.jsonl",
+	}
+
+	for _, expected := range syncStatePatterns {
+		found := false
+		for _, pattern := range requiredPatterns {
+			if pattern == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("requiredPatterns should include '%s'", expected)
+		}
+	}
+}

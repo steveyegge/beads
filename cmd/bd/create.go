@@ -36,6 +36,11 @@ var createCmd = &cobra.Command{
 			if len(args) > 0 {
 				FatalError("cannot specify both title and --file flag")
 			}
+			// --dry-run not supported with --file (would need to parse and preview multiple issues)
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			if dryRun {
+				FatalError("--dry-run is not supported with --file flag")
+			}
 			createIssuesFromMarkdown(cmd, file)
 			return
 		}
@@ -171,6 +176,82 @@ var createCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "  Did you mean a future date? Use --defer=+1h or --defer=tomorrow\n")
 			}
 			deferUntil = &t
+		}
+
+		// Handle --dry-run flag (before --rig to ensure it works with cross-rig creation)
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if dryRun {
+			// Build preview issue
+			var externalRefPtr *string
+			if externalRef != "" {
+				externalRefPtr = &externalRef
+			}
+			previewIssue := &types.Issue{
+				Title:              title,
+				Description:        description,
+				Design:             design,
+				AcceptanceCriteria: acceptance,
+				Notes:              notes,
+				Status:             types.StatusOpen,
+				Priority:           priority,
+				IssueType:          types.IssueType(issueType),
+				Assignee:           assignee,
+				ExternalRef:        externalRefPtr,
+				Ephemeral:          wisp,
+				CreatedBy:          getActorWithGit(),
+				Owner:              getOwner(),
+				MolType:            molType,
+				RoleType:           roleType,
+				Rig:                agentRig,
+				DueAt:              dueAt,
+				DeferUntil:         deferUntil,
+				// Event fields
+				EventKind: eventCategory,
+				Actor:     eventActor,
+				Target:    eventTarget,
+				Payload:   eventPayload,
+			}
+			if explicitID != "" {
+				previewIssue.ID = explicitID
+			}
+
+			if jsonOutput {
+				outputJSON(previewIssue)
+			} else {
+				idDisplay := previewIssue.ID
+				if idDisplay == "" {
+					idDisplay = "(will be generated)"
+				}
+				fmt.Printf("%s [DRY RUN] Would create issue:\n", ui.RenderWarn("⚠"))
+				fmt.Printf("  ID: %s\n", idDisplay)
+				fmt.Printf("  Title: %s\n", previewIssue.Title)
+				fmt.Printf("  Type: %s\n", previewIssue.IssueType)
+				fmt.Printf("  Priority: P%d\n", previewIssue.Priority)
+				fmt.Printf("  Status: %s\n", previewIssue.Status)
+				if previewIssue.Assignee != "" {
+					fmt.Printf("  Assignee: %s\n", previewIssue.Assignee)
+				}
+				if previewIssue.Description != "" {
+					fmt.Printf("  Description: %s\n", previewIssue.Description)
+				}
+				if len(labels) > 0 {
+					fmt.Printf("  Labels: %s\n", strings.Join(labels, ", "))
+				}
+				if len(deps) > 0 {
+					fmt.Printf("  Dependencies: %s\n", strings.Join(deps, ", "))
+				}
+				if rigOverride != "" || prefixOverride != "" {
+					rig := rigOverride
+					if rig == "" {
+						rig = prefixOverride
+					}
+					fmt.Printf("  Target rig: %s\n", rig)
+				}
+				if eventCategory != "" {
+					fmt.Printf("  Event category: %s\n", eventCategory)
+				}
+			}
+			return
 		}
 
 		// Handle --rig or --prefix flag: create issue in a different rig
@@ -343,6 +424,7 @@ var createCmd = &cobra.Command{
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
+				Owner:              getOwner(),
 				MolType:            string(molType),
 				RoleType:           roleType,
 				Rig:                agentRig,
@@ -350,8 +432,8 @@ var createCmd = &cobra.Command{
 				EventActor:         eventActor,
 				EventTarget:        eventTarget,
 				EventPayload:       eventPayload,
-				DueAt:              dueStr,
-				DeferUntil:         deferStr,
+				DueAt:              formatTimeForRPC(dueAt),
+				DeferUntil:         formatTimeForRPC(deferUntil),
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -405,6 +487,7 @@ var createCmd = &cobra.Command{
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
 			CreatedBy:          getActorWithGit(),
+			Owner:              getOwner(),
 			MolType:            molType,
 			RoleType:           roleType,
 			Rig:                agentRig,
@@ -477,7 +560,15 @@ var createCmd = &cobra.Command{
 		}
 
 		// Auto-add role_type/rig labels for agent beads (enables filtering queries)
-		if issue.IssueType == types.TypeAgent {
+		// Check for gt:agent label to identify agent beads (Gas Town separation)
+		hasAgentLabel := false
+		for _, l := range labels {
+			if l == "gt:agent" {
+				hasAgentLabel = true
+				break
+			}
+		}
+		if hasAgentLabel {
 			if issue.RoleType != "" {
 				agentLabel := "role_type:" + issue.RoleType
 				if err := store.AddLabel(ctx, issue.ID, agentLabel, actor); err != nil {
@@ -600,8 +691,9 @@ func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
 	createCmd.Flags().Bool("silent", false, "Output only the issue ID (for scripting)")
+	createCmd.Flags().Bool("dry-run", false, "Preview what would be created without actually creating")
 	registerPriorityFlag(createCmd, "2")
-	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|convoy|event)")
+	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|rig|convoy|event)")
 	registerCommonIssueFlags(createCmd)
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
@@ -725,6 +817,7 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		ExternalRef:        externalRefPtr,
 		Ephemeral:          wisp,
 		CreatedBy:          getActorWithGit(),
+		Owner:              getOwner(),
 		// Event fields (bd-xwvo fix)
 		EventKind: eventCategory,
 		Actor:     eventActor,
@@ -793,4 +886,13 @@ func findTownBeadsDir() (string, error) {
 	}
 
 	return "", fmt.Errorf("no routes.jsonl found in any parent .beads directory")
+}
+
+// formatTimeForRPC converts a *time.Time to RFC3339 string for daemon RPC calls.
+// Returns empty string if t is nil, allowing the daemon to distinguish "not set" from "set to zero".
+func formatTimeForRPC(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }

@@ -592,4 +592,4 @@ bd daemons killall
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
 - [EXCLUSIVE_LOCK.md](EXCLUSIVE_LOCK.md) - External tool integration
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflow and merge strategies
-- [commands/daemons.md](../commands/daemons.md) - Daemon command reference
+- [commands/daemons.md](../claude-plugin/commands/daemons.md) - Daemon command reference

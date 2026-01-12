@@ -45,17 +45,20 @@ func TestAgentStateWithRouting(t *testing.T) {
 	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
-	// Create an agent bead in the rig database
+	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
 		ID:        "gt-testrig-polecat-test",
 		Title:     "Agent: gt-testrig-polecat-test",
-		IssueType: types.TypeAgent,
+		IssueType: types.TypeTask, // Use task type; gt:agent label marks it as agent
 		Status:    types.StatusOpen,
 		RoleType:  "polecat",
 		Rig:       "testrig",
 	}
 	if err := rigStore.CreateIssue(ctx, agentBead, "test"); err != nil {
 		t.Fatalf("Failed to create agent bead: %v", err)
+	}
+	if err := rigStore.AddLabel(ctx, agentBead.ID, "gt:agent", "test"); err != nil {
+		t.Fatalf("Failed to add gt:agent label: %v", err)
 	}
 
 	// Create routes.jsonl in town .beads directory
@@ -92,8 +95,8 @@ func TestAgentStateWithRouting(t *testing.T) {
 		t.Error("Expected result.Routed to be true for cross-repo lookup")
 	}
 
-	if result.Issue.IssueType != types.TypeAgent {
-		t.Errorf("Expected issue type %q, got %q", types.TypeAgent, result.Issue.IssueType)
+	if result.Issue.IssueType != types.TypeTask {
+		t.Errorf("Expected issue type %q, got %q", types.TypeTask, result.Issue.IssueType)
 	}
 
 	t.Logf("Successfully resolved agent %s via routing", result.Issue.ID)
@@ -136,17 +139,20 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
-	// Create an agent bead in the rig database
+	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
 		ID:        "gt-test-witness",
 		Title:     "Agent: gt-test-witness",
-		IssueType: types.TypeAgent,
+		IssueType: types.TypeTask, // Use task type; gt:agent label marks it as agent
 		Status:    types.StatusOpen,
 		RoleType:  "witness",
 		Rig:       "test",
 	}
 	if err := rigStore.CreateIssue(ctx, agentBead, "test"); err != nil {
 		t.Fatalf("Failed to create agent bead: %v", err)
+	}
+	if err := rigStore.AddLabel(ctx, agentBead.ID, "gt:agent", "test"); err != nil {
+		t.Fatalf("Failed to add gt:agent label: %v", err)
 	}
 
 	// Create routes.jsonl
@@ -207,17 +213,20 @@ func TestAgentShowWithRouting(t *testing.T) {
 	rigDBPath := filepath.Join(rigBeadsDir, "beads.db")
 	rigStore := newTestStoreWithPrefix(t, rigDBPath, "gt")
 
-	// Create an agent bead in the rig database
+	// Create an agent bead in the rig database (using task type with gt:agent label)
 	agentBead := &types.Issue{
 		ID:        "gt-myrig-crew-alice",
 		Title:     "Agent: gt-myrig-crew-alice",
-		IssueType: types.TypeAgent,
+		IssueType: types.TypeTask, // Use task type; gt:agent label marks it as agent
 		Status:    types.StatusOpen,
 		RoleType:  "crew",
 		Rig:       "myrig",
 	}
 	if err := rigStore.CreateIssue(ctx, agentBead, "test"); err != nil {
 		t.Fatalf("Failed to create agent bead: %v", err)
+	}
+	if err := rigStore.AddLabel(ctx, agentBead.ID, "gt:agent", "test"); err != nil {
+		t.Fatalf("Failed to add gt:agent label: %v", err)
 	}
 
 	// Create routes.jsonl
@@ -246,8 +255,8 @@ func TestAgentShowWithRouting(t *testing.T) {
 		t.Errorf("Expected issue ID %q, got %q", "gt-myrig-crew-alice", result.Issue.ID)
 	}
 
-	if result.Issue.IssueType != types.TypeAgent {
-		t.Errorf("Expected issue type %q, got %q", types.TypeAgent, result.Issue.IssueType)
+	if result.Issue.IssueType != types.TypeTask {
+		t.Errorf("Expected issue type %q, got %q", types.TypeTask, result.Issue.IssueType)
 	}
 
 	t.Logf("Successfully resolved agent %s via routing for show test", result.Issue.ID)

@@ -199,6 +199,138 @@ func TestCheckBeadGate_TargetClosed(t *testing.T) {
 	t.Log("Full integration testing requires routes.jsonl setup")
 }
 
+func TestIsNumericID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Numeric IDs
+		{"12345", true},
+		{"12345678901234567890", true},
+		{"0", true},
+		{"1", true},
+
+		// Non-numeric (workflow names, etc.)
+		{"", false},
+		{"release.yml", false},
+		{"CI", false},
+		{"release", false},
+		{"123abc", false},
+		{"abc123", false},
+		{"12.34", false},
+		{"-123", false},
+		{"123-456", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isNumericID(tt.input)
+			if got != tt.want {
+				t.Errorf("isNumericID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNeedsDiscovery(t *testing.T) {
+	tests := []struct {
+		name      string
+		awaitType string
+		awaitID   string
+		want      bool
+	}{
+		// gh:run gates
+		{"gh:run empty await_id", "gh:run", "", true},
+		{"gh:run workflow name hint", "gh:run", "release.yml", true},
+		{"gh:run workflow name without ext", "gh:run", "CI", true},
+		{"gh:run numeric run ID", "gh:run", "12345", false},
+		{"gh:run large numeric ID", "gh:run", "12345678901234567890", false},
+
+		// Other gate types should not need discovery
+		{"gh:pr gate", "gh:pr", "", false},
+		{"timer gate", "timer", "", false},
+		{"human gate", "human", "", false},
+		{"bead gate", "bead", "rig:id", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gate := &types.Issue{
+				AwaitType: tt.awaitType,
+				AwaitID:   tt.awaitID,
+			}
+			got := needsDiscovery(gate)
+			if got != tt.want {
+				t.Errorf("needsDiscovery(%q, %q) = %v, want %v",
+					tt.awaitType, tt.awaitID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetWorkflowNameHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		awaitID string
+		want    string
+	}{
+		{"empty", "", ""},
+		{"numeric ID", "12345", ""},
+		{"workflow name", "release.yml", "release.yml"},
+		{"workflow name yaml", "ci.yaml", "ci.yaml"},
+		{"workflow name no ext", "CI", "CI"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gate := &types.Issue{AwaitID: tt.awaitID}
+			got := getWorkflowNameHint(gate)
+			if got != tt.want {
+				t.Errorf("getWorkflowNameHint(%q) = %q, want %q", tt.awaitID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowNameMatches(t *testing.T) {
+	tests := []struct {
+		name         string
+		hint         string
+		workflowName string
+		runName      string
+		want         bool
+	}{
+		// Exact matches
+		{"exact workflow name", "Release", "Release", "release.yml", true},
+		{"exact run name", "release.yml", "Release", "release.yml", true},
+		{"case insensitive workflow", "release", "Release", "release.yml", true},
+		{"case insensitive run", "RELEASE.YML", "Release", "release.yml", true},
+
+		// Hint with suffix, match display name without
+		{"hint yml vs display name", "release.yml", "release", "ci.yml", true},
+		{"hint yaml vs display name", "release.yaml", "release", "ci.yaml", true},
+
+		// Hint without suffix, match filename with suffix
+		{"hint base vs filename yml", "release", "CI", "release.yml", true},
+		{"hint base vs filename yaml", "release", "CI", "release.yaml", true},
+
+		// No match
+		{"no match different name", "release", "CI", "ci.yml", false},
+		{"no match partial", "rel", "Release", "release.yml", false},
+		{"empty hint", "", "Release", "release.yml", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := workflowNameMatches(tt.hint, tt.workflowName, tt.runName)
+			if got != tt.want {
+				t.Errorf("workflowNameMatches(%q, %q, %q) = %v, want %v",
+					tt.hint, tt.workflowName, tt.runName, got, tt.want)
+			}
+		})
+	}
+}
+
 // gateTestContainsIgnoreCase checks if haystack contains needle (case-insensitive)
 func gateTestContainsIgnoreCase(haystack, needle string) bool {
 	return gateTestContains(gateTestLowerCase(haystack), gateTestLowerCase(needle))

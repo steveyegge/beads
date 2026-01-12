@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -42,10 +43,165 @@ func isChildOf(childID, parentID string) bool {
 	return strings.HasPrefix(childID, parentID+".")
 }
 
+// warnIfCyclesExist checks for dependency cycles and prints a warning if found.
+func warnIfCyclesExist(s storage.Storage) {
+	if s == nil {
+		return // Skip cycle check in daemon mode (daemon handles it)
+	}
+	cycles, err := s.DetectCycles(rootCtx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
+		return
+	}
+	if len(cycles) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", ui.RenderWarn("⚠"))
+	fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
+	fmt.Fprintf(os.Stderr, "Cycle path:\n")
+	for _, cycle := range cycles {
+		for j, issue := range cycle {
+			if j == 0 {
+				fmt.Fprintf(os.Stderr, "  %s", issue.ID)
+			} else {
+				fmt.Fprintf(os.Stderr, " → %s", issue.ID)
+			}
+		}
+		if len(cycle) > 0 {
+			fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+	}
+	fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
+}
+
 var depCmd = &cobra.Command{
-	Use:     "dep",
+	Use:     "dep [issue-id]",
 	GroupID: "deps",
 	Short:   "Manage dependencies",
+	Long: `Manage dependencies between issues.
+
+When called with an issue ID and --blocks flag, creates a blocking dependency:
+  bd dep <blocker-id> --blocks <blocked-id>
+
+This is equivalent to:
+  bd dep add <blocked-id> <blocker-id>
+
+Examples:
+  bd dep bd-xyz --blocks bd-abc    # bd-xyz blocks bd-abc
+  bd dep add bd-abc bd-xyz         # Same as above (bd-abc depends on bd-xyz)`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		blocksID, _ := cmd.Flags().GetString("blocks")
+
+		// If no args and no flags, show help
+		if len(args) == 0 && blocksID == "" {
+			_ = cmd.Help()
+			return
+		}
+
+		// If --blocks flag is provided, create a blocking dependency
+		if blocksID != "" {
+			if len(args) != 1 {
+				FatalErrorRespectJSON("--blocks requires exactly one issue ID argument")
+			}
+			blockerID := args[0]
+
+			CheckReadonly("dep --blocks")
+
+			ctx := rootCtx
+			depType := "blocks"
+
+			// Resolve partial IDs first
+			var fromID, toID string
+
+			if daemonClient != nil {
+				// Resolve the blocked issue ID (the one that will depend on the blocker)
+				resolveArgs := &rpc.ResolveIDArgs{ID: blocksID}
+				resp, err := daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					FatalErrorRespectJSON("resolving issue ID %s: %v", blocksID, err)
+				}
+				if err := json.Unmarshal(resp.Data, &fromID); err != nil {
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
+				}
+
+				// Resolve the blocker issue ID
+				resolveArgs = &rpc.ResolveIDArgs{ID: blockerID}
+				resp, err = daemonClient.ResolveID(resolveArgs)
+				if err != nil {
+					FatalErrorRespectJSON("resolving issue ID %s: %v", blockerID, err)
+				}
+				if err := json.Unmarshal(resp.Data, &toID); err != nil {
+					FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
+				}
+			} else {
+				var err error
+				fromID, err = utils.ResolvePartialID(ctx, store, blocksID)
+				if err != nil {
+					FatalErrorRespectJSON("resolving issue ID %s: %v", blocksID, err)
+				}
+
+				toID, err = utils.ResolvePartialID(ctx, store, blockerID)
+				if err != nil {
+					FatalErrorRespectJSON("resolving issue ID %s: %v", blockerID, err)
+				}
+			}
+
+			// Check for child→parent dependency anti-pattern
+			if isChildOf(fromID, toID) {
+				FatalErrorRespectJSON("cannot add dependency: %s is already a child of %s. Children inherit dependency on parent completion via hierarchy. Adding an explicit dependency would create a deadlock", fromID, toID)
+			}
+
+			// Add the dependency via daemon or direct mode
+			if daemonClient != nil {
+				depArgs := &rpc.DepAddArgs{
+					FromID:  fromID,
+					ToID:    toID,
+					DepType: depType,
+				}
+
+				_, err := daemonClient.AddDependency(depArgs)
+				if err != nil {
+					FatalErrorRespectJSON("%v", err)
+				}
+			} else {
+				// Direct mode
+				dep := &types.Dependency{
+					IssueID:     fromID,
+					DependsOnID: toID,
+					Type:        types.DependencyType(depType),
+				}
+
+				if err := store.AddDependency(ctx, dep, actor); err != nil {
+					FatalErrorRespectJSON("%v", err)
+				}
+
+				// Schedule auto-flush
+				markDirtyAndScheduleFlush()
+			}
+
+			// Check for cycles after adding dependency (both daemon and direct mode)
+			warnIfCyclesExist(store)
+
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"status":     "added",
+					"blocker_id": toID,
+					"blocked_id": fromID,
+					"type":       depType,
+				})
+				return
+			}
+
+			fmt.Printf("%s Added dependency: %s blocks %s\n",
+				ui.RenderPass("✓"), toID, fromID)
+			return
+		}
+
+		// If we have an arg but no --blocks flag, show help
+		_ = cmd.Help()
+	},
 }
 
 var depAddCmd = &cobra.Command{
@@ -226,28 +382,7 @@ Examples:
 		markDirtyAndScheduleFlush()
 
 		// Check for cycles after adding dependency
-		cycles, err := store.DetectCycles(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
-		} else if len(cycles) > 0 {
-			fmt.Fprintf(os.Stderr, "\n%s Warning: Dependency cycle detected!\n", ui.RenderWarn("⚠"))
-			fmt.Fprintf(os.Stderr, "This can hide issues from the ready work list and cause confusion.\n\n")
-			fmt.Fprintf(os.Stderr, "Cycle path:\n")
-			for _, cycle := range cycles {
-				for j, issue := range cycle {
-					if j == 0 {
-						fmt.Fprintf(os.Stderr, "  %s", issue.ID)
-					} else {
-						fmt.Fprintf(os.Stderr, " → %s", issue.ID)
-					}
-				}
-				if len(cycle) > 0 {
-					fmt.Fprintf(os.Stderr, " → %s", cycle[0].ID)
-				}
-				fmt.Fprintf(os.Stderr, "\n")
-			}
-			fmt.Fprintf(os.Stderr, "\nRun 'bd dep cycles' for detailed analysis.\n\n")
-		}
+		warnIfCyclesExist(store)
 
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
@@ -1017,10 +1152,12 @@ func ParseExternalRef(ref string) (project, capability string) {
 }
 
 func init() {
+	// dep command shorthand flag
+	depCmd.Flags().StringP("blocks", "b", "", "Issue ID that this issue blocks (shorthand for: bd dep add <blocked> <blocker>)")
+
 	depAddCmd.Flags().StringP("type", "t", "blocks", "Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes)")
 	depAddCmd.Flags().String("blocked-by", "", "Issue ID that blocks the first issue (alternative to positional arg)")
 	depAddCmd.Flags().String("depends-on", "", "Issue ID that the first issue depends on (alias for --blocked-by)")
-	// Note: --json flag is defined as a persistent flag in main.go, not here
 
 	depTreeCmd.Flags().Bool("show-all-paths", false, "Show all paths to nodes (no deduplication for diamond dependencies)")
 	depTreeCmd.Flags().IntP("max-depth", "d", 50, "Maximum tree depth to display (safety limit)")
@@ -1029,12 +1166,15 @@ func init() {
 	depTreeCmd.Flags().String("status", "", "Filter to only show issues with this status (open, in_progress, blocked, deferred, closed)")
 	depTreeCmd.Flags().String("format", "", "Output format: 'mermaid' for Mermaid.js flowchart")
 	depTreeCmd.Flags().StringP("type", "t", "", "Filter to only show dependencies of this type (e.g., tracks, blocks, parent-child)")
-	// Note: --json flag is defined as a persistent flag in main.go, not here
-
-	// Note: --json flag is defined as a persistent flag in main.go, not here
 
 	depListCmd.Flags().String("direction", "down", "Direction: 'down' (dependencies), 'up' (dependents)")
 	depListCmd.Flags().StringP("type", "t", "", "Filter by dependency type (e.g., tracks, blocks, parent-child)")
+
+	// Issue ID completions for dep subcommands
+	depAddCmd.ValidArgsFunction = issueIDCompletion
+	depRemoveCmd.ValidArgsFunction = issueIDCompletion
+	depListCmd.ValidArgsFunction = issueIDCompletion
+	depTreeCmd.ValidArgsFunction = issueIDCompletion
 
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)

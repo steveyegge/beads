@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/user"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -132,20 +131,10 @@ Examples:
 			commentText = args[1]
 		}
 
-		// Get author from author flag, BD_ACTOR var, or system USER var
+		// Get author from author flag, or use git-aware default
 		author, _ := cmd.Flags().GetString("author")
 		if author == "" {
-			author = os.Getenv("BD_ACTOR")
-			if author == "" {
-				author = os.Getenv("USER")
-			}
-			if author == "" {
-				if u, err := user.Current(); err == nil {
-					author = u.Username
-				} else {
-					author = "unknown"
-				}
-			}
+			author = getActorWithGit()
 		}
 
 		var comment *types.Comment
@@ -218,11 +207,16 @@ func init() {
 	commentsCmd.AddCommand(commentsAddCmd)
 	commentsAddCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentsAddCmd.Flags().StringP("author", "a", "", "Add author to comment")
-	
+
 	// Add the same flags to the alias
 	commentCmd.Flags().StringP("file", "f", "", "Read comment text from file")
 	commentCmd.Flags().StringP("author", "a", "", "Add author to comment")
-	
+
+	// Issue ID completions
+	commentsCmd.ValidArgsFunction = issueIDCompletion
+	commentsAddCmd.ValidArgsFunction = issueIDCompletion
+	commentCmd.ValidArgsFunction = issueIDCompletion
+
 	rootCmd.AddCommand(commentsCmd)
 	rootCmd.AddCommand(commentCmd)
 }

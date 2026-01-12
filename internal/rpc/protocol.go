@@ -98,6 +98,7 @@ type CreateArgs struct {
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
+	Owner     string `json:"owner,omitempty"`      // Human owner for CV attribution (git author email)
 	// Molecule type (for swarm coordination)
 	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
 	// Agent identity fields (only valid when IssueType == "agent")
@@ -174,6 +175,7 @@ type CloseArgs struct {
 	Reason      string `json:"reason,omitempty"`
 	Session     string `json:"session,omitempty"`      // Claude Code session ID that closed this issue
 	SuggestNext bool   `json:"suggest_next,omitempty"` // Return newly unblocked issues (GH#679)
+	Force       bool   `json:"force,omitempty"`        // Force close even with open blockers (GH#962)
 }
 
 // CloseResult is returned when SuggestNext is true (GH#679)
@@ -255,6 +257,9 @@ type ListArgs struct {
 	DueAfter    string `json:"due_after,omitempty"`    // ISO 8601 format
 	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
 	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
+
+	// Staleness control (bd-dpkdm)
+	AllowStale bool `json:"allow_stale,omitempty"` // Skip staleness check, return potentially stale data
 }
 
 // CountArgs represents arguments for the count operation

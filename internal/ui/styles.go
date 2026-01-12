@@ -12,9 +12,12 @@ import (
 )
 
 func init() {
-	// Disable colors when not appropriate (non-TTY, NO_COLOR, etc.)
 	if !ShouldUseColor() {
+		// Disable colors when not appropriate (non-TTY, NO_COLOR, etc.)
 		lipgloss.SetColorProfile(termenv.Ascii)
+	} else {
+		// Use TrueColor for distinct priority/status colors in modern terminals
+		lipgloss.SetColorProfile(termenv.TrueColor)
 	}
 }
 
@@ -90,25 +93,26 @@ var (
 	}
 
 	// === Priority Colors ===
-	// Only P0/P1 get color - P2/P3/P4 match standard text
+	// Only P0/P1 get color - they need attention
+	// P2/P3/P4 are neutral (medium/low/backlog don't need visual urgency)
 	ColorPriorityP0 = lipgloss.AdaptiveColor{
-		Light: "#f07171", // bright red - critical
+		Light: "#f07171", // bright red - critical, demands attention
 		Dark:  "#f07178",
 	}
 	ColorPriorityP1 = lipgloss.AdaptiveColor{
-		Light: "#ff8f40", // orange - high urgency
+		Light: "#ff8f40", // orange - high priority, needs attention soon
 		Dark:  "#ff8f40",
 	}
 	ColorPriorityP2 = lipgloss.AdaptiveColor{
-		Light: "", // standard text color
-		Dark:  "",
+		Light: "#e6b450", // muted gold - medium priority, visible but calm
+		Dark:  "#e6b450",
 	}
 	ColorPriorityP3 = lipgloss.AdaptiveColor{
-		Light: "", // standard text color
+		Light: "", // neutral - low priority
 		Dark:  "",
 	}
 	ColorPriorityP4 = lipgloss.AdaptiveColor{
-		Light: "", // standard text color
+		Light: "", // neutral - backlog
 		Dark:  "",
 	}
 
@@ -135,14 +139,8 @@ var (
 		Light: "", // standard text color
 		Dark:  "",
 	}
-	ColorTypeAgent = lipgloss.AdaptiveColor{
-		Light: "#59c2ff", // cyan - agent identity
-		Dark:  "#59c2ff",
-	}
-	ColorTypeRole = lipgloss.AdaptiveColor{
-		Light: "#7fd962", // green - role definition
-		Dark:  "#7fd962",
-	}
+	// Note: Gas Town-specific types (agent, role, rig) have been removed.
+	// Use labels (gt:agent, gt:role, gt:rig) with custom styling if needed.
 
 	// === Issue ID Color ===
 	// IDs use standard text color - subtle, not attention-grabbing
@@ -190,8 +188,7 @@ var (
 	TypeTaskStyle    = lipgloss.NewStyle().Foreground(ColorTypeTask)
 	TypeEpicStyle    = lipgloss.NewStyle().Foreground(ColorTypeEpic)
 	TypeChoreStyle   = lipgloss.NewStyle().Foreground(ColorTypeChore)
-	TypeAgentStyle   = lipgloss.NewStyle().Foreground(ColorTypeAgent)
-	TypeRoleStyle    = lipgloss.NewStyle().Foreground(ColorTypeRole)
+	// Note: Gas Town-specific type styles (agent, role, rig) have been removed.
 )
 
 // CategoryStyle for section headers - bold with accent color
@@ -205,6 +202,87 @@ const (
 	IconSkip = "-"
 	IconInfo = "ℹ"
 )
+
+// Issue status icons - used consistently across all commands
+// Design principle: icons > text labels for scannability
+// IMPORTANT: Use small Unicode symbols, NOT emoji-style icons (🔴🟠 etc.)
+// Emoji blobs cause cognitive overload and break visual consistency
+const (
+	StatusIconOpen       = "○" // available to work (hollow circle)
+	StatusIconInProgress = "◐" // active work (half-filled)
+	StatusIconBlocked    = "●" // needs attention (filled circle)
+	StatusIconClosed     = "✓" // completed (checkmark)
+	StatusIconDeferred   = "❄" // scheduled for later (snowflake)
+	StatusIconPinned     = "📌" // elevated priority
+)
+
+// Priority icon - small filled circle, colored by priority level
+// IMPORTANT: Use this small circle, NOT emoji blobs (🔴🟠🟡🔵⚪)
+const PriorityIcon = "●"
+
+// RenderStatusIcon returns the appropriate icon for a status with semantic coloring
+// This is the canonical source for status icon rendering - use this everywhere
+func RenderStatusIcon(status string) string {
+	switch status {
+	case "open":
+		return StatusIconOpen // no color - available but not urgent
+	case "in_progress":
+		return StatusInProgressStyle.Render(StatusIconInProgress)
+	case "blocked":
+		return StatusBlockedStyle.Render(StatusIconBlocked)
+	case "closed":
+		return StatusClosedStyle.Render(StatusIconClosed)
+	case "deferred":
+		return MutedStyle.Render(StatusIconDeferred)
+	case "pinned":
+		return StatusPinnedStyle.Render(StatusIconPinned)
+	default:
+		return "?" // unknown status
+	}
+}
+
+// GetStatusIcon returns just the icon character without styling
+// Useful when you need to apply custom styling or for non-TTY output
+func GetStatusIcon(status string) string {
+	switch status {
+	case "open":
+		return StatusIconOpen
+	case "in_progress":
+		return StatusIconInProgress
+	case "blocked":
+		return StatusIconBlocked
+	case "closed":
+		return StatusIconClosed
+	case "deferred":
+		return StatusIconDeferred
+	case "pinned":
+		return StatusIconPinned
+	default:
+		return "?"
+	}
+}
+
+// GetStatusStyle returns the lipgloss style for a given status
+// Use this when you need to apply the semantic color to custom text
+// Example: ui.GetStatusStyle("in_progress").Render(myCustomText)
+func GetStatusStyle(status string) lipgloss.Style {
+	switch status {
+	case "in_progress":
+		return StatusInProgressStyle
+	case "blocked":
+		return StatusBlockedStyle
+	case "closed":
+		return StatusClosedStyle
+	case "deferred":
+		return MutedStyle
+	case "pinned":
+		return StatusPinnedStyle
+	case "hooked":
+		return StatusHookedStyle
+	default: // open and others - no special styling
+		return lipgloss.NewStyle()
+	}
+}
 
 // Tree characters for hierarchical display
 const (
@@ -306,8 +384,29 @@ func RenderStatus(status string) string {
 }
 
 // RenderPriority renders a priority level with semantic styling
+// Format: ● P0 (icon + label)
 // P0/P1 get color; P2/P3/P4 use standard text
 func RenderPriority(priority int) string {
+	label := fmt.Sprintf("%s P%d", PriorityIcon, priority)
+	switch priority {
+	case 0:
+		return PriorityP0Style.Render(label)
+	case 1:
+		return PriorityP1Style.Render(label)
+	case 2:
+		return PriorityP2Style.Render(label)
+	case 3:
+		return PriorityP3Style.Render(label)
+	case 4:
+		return PriorityP4Style.Render(label)
+	default:
+		return label
+	}
+}
+
+// RenderPriorityCompact renders just the priority label without icon
+// Use when space is constrained or icon would be redundant
+func RenderPriorityCompact(priority int) string {
 	label := fmt.Sprintf("P%d", priority)
 	switch priority {
 	case 0:
@@ -326,7 +425,8 @@ func RenderPriority(priority int) string {
 }
 
 // RenderType renders an issue type with semantic styling
-// bugs get color; all other types use standard text
+// bugs and epics get color; all other types use standard text
+// Note: Gas Town-specific types (agent, role, rig) now fall through to default
 func RenderType(issueType string) string {
 	switch issueType {
 	case "bug":
@@ -339,10 +439,6 @@ func RenderType(issueType string) string {
 		return TypeEpicStyle.Render(issueType)
 	case "chore":
 		return TypeChoreStyle.Render(issueType)
-	case "agent":
-		return TypeAgentStyle.Render(issueType)
-	case "role":
-		return TypeRoleStyle.Render(issueType)
 	default:
 		return issueType
 	}

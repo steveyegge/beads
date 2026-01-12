@@ -43,6 +43,22 @@ builds:
       - -X main.Commit={{.Commit}}
       - -X main.Branch={{.Branch}}
 
+  - id: bd-android-arm64
+    main: ./cmd/bd
+    binary: bd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - android
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Build={{.ShortCommit}}
+      - -X main.Commit={{.Commit}}
+      - -X main.Branch={{.Branch}}
+
   - id: bd-darwin-amd64
     main: ./cmd/bd
     binary: bd
@@ -184,8 +200,8 @@ release:
   name_template: "v{{.Version}}"
   header: |
     ## beads v{{.Version}}
-    
-    Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), Windows (AMD64 & ARM64), and FreeBSD.
+
+    Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), Windows (AMD64 & ARM64), Android/Termux (ARM64), and FreeBSD.
     
     ### Installation
     
@@ -194,7 +210,7 @@ release:
     brew install steveyegge/beads/bd
     ```
     
-    **Quick Install (macOS/Linux):**
+    **Quick Install (macOS/Linux/FreeBSD):**
     ```bash
     curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
     ```

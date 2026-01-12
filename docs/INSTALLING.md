@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/insta
 ```
 
 The installer will:
-- Detect your platform (macOS/Linux, amd64/arm64)
+- Detect your platform (macOS/Linux/FreeBSD, amd64/arm64)
 - Install via `go install` if Go is available
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
@@ -61,6 +61,7 @@ The installer will:
 |--------|----------|---------|---------------|-------|
 | **Homebrew** | macOS/Linux users | `brew upgrade bd` | Homebrew | Recommended. Handles everything automatically |
 | **npm** | JS/Node.js projects | `npm update -g @beads/bd` | Node.js | Convenient if npm is your ecosystem |
+| **bun** | JS/Bun.js projects | `bun install -g --trust @beads/bd` | Bun.js | Convenient if bun is your ecosystem |
 | **Install script** | Quick setup, CI/CD | Re-run script | curl, bash | Good for automation and one-liners |
 | **go install** | Go developers | Re-run command | Go 1.24+ | Builds from source, always latest |
 | **From source** | Contributors, custom builds | `git pull && go build` | Go, git | Full control, can modify code |
@@ -120,6 +121,18 @@ git clone https://github.com/steveyegge/beads
 cd beads
 go build -o bd ./cmd/bd
 sudo mv bd /usr/local/bin/
+```
+
+### FreeBSD
+
+**Via Quick Install Script**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+```
+
+**Via go install**:
+```bash
+go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 ### Windows 11

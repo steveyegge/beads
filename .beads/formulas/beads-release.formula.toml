@@ -47,6 +47,7 @@ The polecat will complete Phase 1, then signal phase-complete. The gate blocks
 until release.yml finishes. A new polecat (or the same one) resumes for Phases 2-3.
 """
 type = "workflow"
+phase = "vapor"  # Ensures this runs as a wisp - bd pour will warn, gt sling --formula creates wisp
 version = 1
 
 [vars.version]
@@ -146,31 +147,165 @@ Focus on workflow-impacting changes agents need to know.
 """
 
 [[steps]]
-id = "run-bump-script"
-title = "Run bump-version.sh"
+id = "bump-version-go"
+title = "Bump version in version.go"
 needs = ["update-info-go"]
 description = """
-Update all component versions atomically.
+Update the Go version constant.
 
 ```bash
-./scripts/bump-version.sh {{version}}
+# macOS
+sed -i '' 's/Version = "[^"]*"/Version = "{{version}}"/' cmd/bd/version.go
+
+# Linux
+sed -i 's/Version = "[^"]*"/Version = "{{version}}"/' cmd/bd/version.go
 ```
 
-This updates:
-- cmd/bd/version.go
-- .claude-plugin/*.json
-- integrations/beads-mcp/pyproject.toml
-- integrations/beads-mcp/src/beads_mcp/__init__.py
-- npm-package/package.json
-- Hook templates
-- README.md
-- CHANGELOG.md (adds date)
+Verify:
+```bash
+grep 'Version = ' cmd/bd/version.go
+```
+"""
+
+[[steps]]
+id = "bump-plugin-json"
+title = "Bump version in plugin JSON files"
+needs = ["bump-version-go"]
+description = """
+Update Claude plugin manifest versions.
+
+```bash
+# macOS/Linux with jq
+jq '.version = "{{version}}"' .claude-plugin/plugin.json > tmp && mv tmp .claude-plugin/plugin.json
+jq '.plugins[0].version = "{{version}}"' .claude-plugin/marketplace.json > tmp && mv tmp .claude-plugin/marketplace.json
+```
+
+Verify:
+```bash
+jq -r '.version' .claude-plugin/plugin.json
+jq -r '.plugins[0].version' .claude-plugin/marketplace.json
+```
+"""
+
+[[steps]]
+id = "bump-mcp-python"
+title = "Bump version in MCP Python package"
+needs = ["bump-plugin-json"]
+description = """
+Update the beads-mcp Python package version.
+
+```bash
+# macOS
+sed -i '' 's/version = "[^"]*"/version = "{{version}}"/' integrations/beads-mcp/pyproject.toml
+sed -i '' 's/__version__ = "[^"]*"/__version__ = "{{version}}"/' integrations/beads-mcp/src/beads_mcp/__init__.py
+
+# Linux
+sed -i 's/version = "[^"]*"/version = "{{version}}"/' integrations/beads-mcp/pyproject.toml
+sed -i 's/__version__ = "[^"]*"/__version__ = "{{version}}"/' integrations/beads-mcp/src/beads_mcp/__init__.py
+```
+
+Verify:
+```bash
+grep 'version = ' integrations/beads-mcp/pyproject.toml | head -1
+grep '__version__ = ' integrations/beads-mcp/src/beads_mcp/__init__.py
+```
+"""
+
+[[steps]]
+id = "bump-npm-package"
+title = "Bump version in npm package"
+needs = ["bump-mcp-python"]
+description = """
+Update the npm package version.
+
+```bash
+# macOS/Linux with jq
+jq '.version = "{{version}}"' npm-package/package.json > tmp && mv tmp npm-package/package.json
+```
+
+Verify:
+```bash
+jq -r '.version' npm-package/package.json
+```
+"""
+
+[[steps]]
+id = "bump-hook-templates"
+title = "Bump version in hook templates"
+needs = ["bump-npm-package"]
+description = """
+Update version comment in git hook templates.
+
+```bash
+# macOS
+for f in cmd/bd/templates/hooks/pre-commit cmd/bd/templates/hooks/post-merge cmd/bd/templates/hooks/pre-push cmd/bd/templates/hooks/post-checkout; do
+  sed -i '' 's/# bd-hooks-version: .*/# bd-hooks-version: {{version}}/' "$f"
+done
+
+# Linux
+for f in cmd/bd/templates/hooks/pre-commit cmd/bd/templates/hooks/post-merge cmd/bd/templates/hooks/pre-push cmd/bd/templates/hooks/post-checkout; do
+  sed -i 's/# bd-hooks-version: .*/# bd-hooks-version: {{version}}/' "$f"
+done
+```
+
+Verify:
+```bash
+grep '# bd-hooks-version:' cmd/bd/templates/hooks/pre-commit
+```
+"""
+
+[[steps]]
+id = "bump-readme"
+title = "Bump version in README badge"
+needs = ["bump-hook-templates"]
+description = """
+Update the Alpha version badge in README.md.
+
+```bash
+# macOS
+sed -i '' 's/Alpha (v[^)]*)/Alpha (v{{version}})/' README.md
+
+# Linux
+sed -i 's/Alpha (v[^)]*)/Alpha (v{{version}})/' README.md
+```
+
+Verify:
+```bash
+grep 'Alpha (v' README.md
+```
+"""
+
+[[steps]]
+id = "stamp-changelog"
+title = "Stamp changelog with release date"
+needs = ["bump-readme"]
+description = """
+Add the release date to the [Unreleased] section header.
+
+```bash
+DATE=$(date +%Y-%m-%d)
+
+# macOS
+sed -i '' "s/## \\[Unreleased\\]/## [Unreleased]\\
+\\
+## [{{version}}] - $DATE/" CHANGELOG.md
+
+# Linux
+sed -i "s/## \\[Unreleased\\]/## [Unreleased]\\n\\n## [{{version}}] - $DATE/" CHANGELOG.md
+```
+
+Note: The update-changelog step handles the content; this step just adds the date stamp.
+
+Verify:
+```bash
+grep -A2 '\\[Unreleased\\]' CHANGELOG.md
+```
 """
 
 [[steps]]
 id = "verify-versions"
 title = "Verify version consistency"
-needs = ["run-bump-script"]
+needs = ["stamp-changelog"]
 description = """
 Confirm all versions match {{version}}.
 

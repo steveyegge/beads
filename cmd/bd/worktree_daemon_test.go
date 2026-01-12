@@ -86,6 +86,18 @@ func TestShouldDisableDaemonForWorktree(t *testing.T) {
 		// Reset git caches after changing directory (required for IsWorktree to re-detect)
 		git.ResetCaches()
 
+		// Set BEADS_DIR to the test's .beads directory to prevent
+		// git repo detection from finding the project's .beads
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		os.Setenv("BEADS_DIR", mainDir+"/.beads")
+		defer func() {
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+		}()
+
 		// No sync-branch configured
 		os.Unsetenv("BEADS_SYNC_BRANCH")
 
@@ -216,6 +228,18 @@ func TestShouldAutoStartDaemonWorktreeIntegration(t *testing.T) {
 
 		// Reset git caches after changing directory
 		git.ResetCaches()
+
+		// Set BEADS_DIR to the test's .beads directory to prevent
+		// git repo detection from finding the project's .beads
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		os.Setenv("BEADS_DIR", mainDir+"/.beads")
+		defer func() {
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+		}()
 
 		// Clear all daemon-related env vars
 		os.Unsetenv("BEADS_NO_DAEMON")
