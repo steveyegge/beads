@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"os"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -158,6 +159,9 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 
 	// Get prefix from config (needed for both ID generation and validation)
 	var configPrefix string
+		if env := os.Getenv("BD_ISSUE_PREFIX"); env != "" {
+			configPrefix = env
+		} else {
 	err = conn.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, "issue_prefix").Scan(&configPrefix)
 	if err == sql.ErrNoRows || configPrefix == "" {
 		// CRITICAL: Reject operation if issue_prefix config is missing
@@ -165,6 +169,7 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
 	} else if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
+		}
 	}
 
 	// Determine prefix for ID generation and validation:

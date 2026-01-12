@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"os"
 	"strings"
 )
 
@@ -17,6 +18,12 @@ func (s *SQLiteStorage) SetConfig(ctx context.Context, key, value string) error 
 
 // GetConfig gets a configuration value
 func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, error) {
+	// Check environment variable overrides for specific keys
+	if key == "issue_prefix" {
+		if env := os.Getenv("BD_ISSUE_PREFIX"); env != "" {
+			return env, nil
+		}
+	}
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
