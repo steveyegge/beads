@@ -554,3 +554,83 @@ func TestGitBranchHasUpstream(t *testing.T) {
 		}
 	})
 }
+
+// TestGetCurrentBranchOrHEAD tests getCurrentBranchOrHEAD which returns "HEAD"
+// when in detached HEAD state (e.g., jj/jujutsu) instead of failing.
+func TestGetCurrentBranchOrHEAD(t *testing.T) {
+	ctx := context.Background()
+
+	// Create temp directory for test repo
+	tmpDir, err := os.MkdirTemp("", "beads-branch-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmds := [][]string{
+		{"git", "init", "-b", "main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("Failed to run %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Create initial commit
+	testFile := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	cmds = [][]string{
+		{"git", "add", "test.txt"},
+		{"git", "commit", "-m", "initial"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("Failed to run %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Save current dir and change to test repo
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	// Test 1: Normal branch returns branch name
+	t.Run("returns branch name when on branch", func(t *testing.T) {
+		branch, err := getCurrentBranchOrHEAD(ctx)
+		if err != nil {
+			t.Errorf("getCurrentBranchOrHEAD() error = %v", err)
+		}
+		if branch != "main" {
+			t.Errorf("getCurrentBranchOrHEAD() = %q, want %q", branch, "main")
+		}
+	})
+
+	// Test 2: Detached HEAD returns "HEAD"
+	t.Run("returns HEAD when detached", func(t *testing.T) {
+		// Detach HEAD
+		cmd := exec.Command("git", "checkout", "--detach", "HEAD")
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("Failed to detach HEAD: %v\n%s", err, out)
+		}
+
+		branch, err := getCurrentBranchOrHEAD(ctx)
+		if err != nil {
+			t.Errorf("getCurrentBranchOrHEAD() error = %v", err)
+		}
+		if branch != "HEAD" {
+			t.Errorf("getCurrentBranchOrHEAD() = %q, want %q", branch, "HEAD")
+		}
+	})
+}
