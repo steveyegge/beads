@@ -738,8 +738,8 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		FatalError("cannot use --rig: %v", err)
 	}
 
-	// Resolve the target rig's beads directory
-	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
+	// Resolve the target rig's beads directory and prefix
+	targetBeadsDir, targetPrefix, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
 	if err != nil {
 		FatalError("%v", err)
 	}
@@ -755,6 +755,30 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
 		}
 	}()
+
+	// Use the prefix from routes.jsonl if different from database default
+	// This enables creating issues with the route's prefix even when the database
+	// has a different default (e.g., when using redirect to share a database)
+	if targetPrefix != "" {
+		// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
+		prefixWithoutHyphen := strings.TrimSuffix(targetPrefix, "-")
+
+		// Get original prefix to restore later
+		origPrefix, _ := targetStore.GetConfig(ctx, "issue_prefix")
+
+		// Only override if different
+		if origPrefix != prefixWithoutHyphen {
+			if err := targetStore.SetConfig(ctx, "issue_prefix", prefixWithoutHyphen); err != nil {
+				FatalError("failed to set issue prefix for rig %q: %v", rigName, err)
+			}
+			// Restore original prefix after issue creation
+			defer func() {
+				if err := targetStore.SetConfig(ctx, "issue_prefix", origPrefix); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to restore original issue prefix: %v\n", err)
+				}
+			}()
+		}
+	}
 
 	var externalRefPtr *string
 	if externalRef != "" {
