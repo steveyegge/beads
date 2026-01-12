@@ -756,28 +756,11 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		}
 	}()
 
-	// Use the prefix from routes.jsonl if different from database default
-	// This enables creating issues with the route's prefix even when the database
-	// has a different default (e.g., when using redirect to share a database)
+	// Prepare prefix override from routes.jsonl for cross-rig creation
+	// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
+	var prefixOverride string
 	if targetPrefix != "" {
-		// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
-		prefixWithoutHyphen := strings.TrimSuffix(targetPrefix, "-")
-
-		// Get original prefix to restore later
-		origPrefix, _ := targetStore.GetConfig(ctx, "issue_prefix")
-
-		// Only override if different
-		if origPrefix != prefixWithoutHyphen {
-			if err := targetStore.SetConfig(ctx, "issue_prefix", prefixWithoutHyphen); err != nil {
-				FatalError("failed to set issue prefix for rig %q: %v", rigName, err)
-			}
-			// Restore original prefix after issue creation
-			defer func() {
-				if err := targetStore.SetConfig(ctx, "issue_prefix", origPrefix); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: failed to restore original issue prefix: %v\n", err)
-				}
-			}()
-		}
+		prefixOverride = strings.TrimSuffix(targetPrefix, "-")
 	}
 
 	var externalRefPtr *string
@@ -848,6 +831,8 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Cross-rig routing: use route prefix instead of database config
+		PrefixOverride: prefixOverride,
 	}
 
 	if err := targetStore.CreateIssue(ctx, issue, actor); err != nil {
