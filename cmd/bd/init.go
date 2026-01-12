@@ -147,19 +147,30 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		if isGitRepo() {
 			isWorktree = git.IsWorktree()
 		}
-		var beadsDir string
+
+		// Prevent initialization from within a worktree
 		if isWorktree {
-			// For worktrees, .beads should be in the main repository root
 			mainRepoRoot, err := git.GetMainRepoRoot()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to get main repository root: %v\n", err)
 				os.Exit(1)
 			}
-			beadsDir = filepath.Join(mainRepoRoot, ".beads")
-		} else {
-			// For regular repos, use current directory
-			beadsDir = filepath.Join(cwd, ".beads")
+
+			fmt.Fprintf(os.Stderr, "Error: cannot run 'bd init' from within a git worktree\n\n")
+			fmt.Fprintf(os.Stderr, "Git worktrees share the .beads database from the main repository.\n")
+			fmt.Fprintf(os.Stderr, "To fix this:\n\n")
+			fmt.Fprintf(os.Stderr, "  1. Initialize beads in the main repository:\n")
+			fmt.Fprintf(os.Stderr, "     cd %s\n", mainRepoRoot)
+			fmt.Fprintf(os.Stderr, "     bd init\n\n")
+			fmt.Fprintf(os.Stderr, "  2. Then create worktrees with beads support:\n")
+			fmt.Fprintf(os.Stderr, "     bd worktree create <path> --branch <branch-name>\n\n")
+			fmt.Fprintf(os.Stderr, "For more information, see: https://github.com/steveyegge/beads/blob/main/docs/WORKTREES.md\n")
+			os.Exit(1)
 		}
+
+		var beadsDir string
+		// For regular repos, use current directory
+		beadsDir = filepath.Join(cwd, ".beads")
 
 		// Prevent nested .beads directories
 		// Check if current working directory is inside a .beads directory
