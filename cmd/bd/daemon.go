@@ -207,7 +207,7 @@ Run 'bd daemon' with no flags to see available options.`,
 
 func init() {
 	daemonCmd.Flags().Bool("start", false, "Start the daemon")
-	daemonCmd.Flags().Duration("interval", 5*time.Second, "Sync check interval")
+	daemonCmd.Flags().Duration("interval", 30*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
 	daemonCmd.Flags().Bool("auto-pull", false, "Automatically pull from remote (default: true when sync.branch configured)")
