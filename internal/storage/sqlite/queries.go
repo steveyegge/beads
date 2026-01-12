@@ -1090,12 +1090,18 @@ func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, n
 
 	// Update depends_on_id column
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE dependencies 
+		UPDATE dependencies
 		SET depends_on_id = ? || substr(depends_on_id, length(?) + 1)
 		WHERE depends_on_id LIKE ? || '%'
 	`, newPrefix, oldPrefix, oldPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to update depends_on_id in dependencies: %w", err)
+	}
+
+	// GH#1016: Rebuild blocked_issues_cache since it stores issue IDs
+	// that have now been renamed
+	if err := s.invalidateBlockedCache(ctx, nil); err != nil {
+		return fmt.Errorf("failed to rebuild blocked cache: %w", err)
 	}
 
 	return nil
