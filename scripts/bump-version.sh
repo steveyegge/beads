@@ -308,53 +308,53 @@ main() {
     # Check if go.mod or go.sum changed since last commit
     if git diff HEAD go.mod go.sum 2>/dev/null | grep -q .; then
         echo ""
-        log_warning "go.mod or go.sum has uncommitted changes"
-        log_info "You may need to update vendorHash in default.nix"
+        echo -e "${YELLOW}Warning: go.mod or go.sum has uncommitted changes${NC}"
+        echo "You may need to update vendorHash in default.nix"
         echo ""
         read -p "Run ./scripts/update-nix-vendorhash.sh now? [y/N] " -n 1 -r
         echo ""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             if [ -f "./scripts/update-nix-vendorhash.sh" ]; then
-                log_info "Running vendorHash update script..."
+                echo "Running vendorHash update script..."
                 if ./scripts/update-nix-vendorhash.sh; then
-                    log_success "vendorHash updated successfully"
+                    echo -e "${GREEN}✓ vendorHash updated successfully${NC}"
                 else
-                    log_warning "vendorHash update failed or was skipped"
+                    echo -e "${YELLOW}⚠ vendorHash update failed or was skipped${NC}"
                 fi
                 echo ""
             else
-                log_error "scripts/update-nix-vendorhash.sh not found"
+                echo -e "${RED}Error: scripts/update-nix-vendorhash.sh not found${NC}"
                 exit 1
             fi
         else
-            log_info "Skipping vendorHash update"
-            log_info "Run ./scripts/update-nix-vendorhash.sh manually if needed"
+            echo "Skipping vendorHash update"
+            echo "Run ./scripts/update-nix-vendorhash.sh manually if needed"
             echo ""
         fi
     elif git diff HEAD~1..HEAD go.mod go.sum 2>/dev/null | grep -q .; then
         # Check if go.mod/go.sum changed in the last commit
         echo ""
-        log_warning "go.mod or go.sum changed in the last commit"
-        log_info "You may need to update vendorHash in default.nix"
+        echo -e "${YELLOW}Warning: go.mod or go.sum changed in the last commit${NC}"
+        echo "You may need to update vendorHash in default.nix"
         echo ""
         read -p "Run ./scripts/update-nix-vendorhash.sh now? [y/N] " -n 1 -r
         echo ""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             if [ -f "./scripts/update-nix-vendorhash.sh" ]; then
-                log_info "Running vendorHash update script..."
+                echo "Running vendorHash update script..."
                 if ./scripts/update-nix-vendorhash.sh; then
-                    log_success "vendorHash updated successfully"
+                    echo -e "${GREEN}✓ vendorHash updated successfully${NC}"
                 else
-                    log_warning "vendorHash update failed or was skipped"
+                    echo -e "${YELLOW}⚠ vendorHash update failed or was skipped${NC}"
                 fi
                 echo ""
             else
-                log_error "scripts/update-nix-vendorhash.sh not found"
+                echo -e "${RED}Error: scripts/update-nix-vendorhash.sh not found${NC}"
                 exit 1
             fi
         else
-            log_info "Skipping vendorHash update"
-            log_info "Run ./scripts/update-nix-vendorhash.sh manually if needed"
+            echo "Skipping vendorHash update"
+            echo "Run ./scripts/update-nix-vendorhash.sh manually if needed"
             echo ""
         fi
     fi
