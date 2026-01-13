@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/routing"
@@ -405,6 +407,10 @@ var createCmd = &cobra.Command{
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
+			// Get namespace fields for RPC
+			branch := getNamespacedBranch(cmd)
+			project := getNamespacedProject(findBeadsDir())
+
 			createArgs := &rpc.CreateArgs{
 				ID:                 explicitID,
 				Parent:             parentID,
@@ -425,6 +431,8 @@ var createCmd = &cobra.Command{
 				Ephemeral:          wisp,
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
+				Project:            project,
+				Branch:             branch,
 				MolType:            string(molType),
 				RoleType:           roleType,
 				Rig:                agentRig,
@@ -495,6 +503,12 @@ var createCmd = &cobra.Command{
 			DueAt:              dueAt,
 			DeferUntil:         deferUntil,
 		}
+
+		// Populate namespace fields (BRANCH_NAMESPACING)
+		// Branch defaults to current git branch, then config default
+		issue.Branch = getNamespacedBranch(cmd)
+		// Project is from project-specific config or user config
+		issue.Project = getNamespacedProject(findBeadsDir())
 
 		ctx := rootCtx
 
@@ -681,6 +695,50 @@ var createCmd = &cobra.Command{
 	},
 }
 
+// getCurrentGitBranch returns the current git branch name.
+// Returns empty string if git is not available or not in a repo.
+func getCurrentGitBranch() string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// getNamespacedBranch determines the branch for namespace using the following priority:
+// 1. --branch flag if provided
+// 2. current git branch
+// 3. config default branch (usually "main")
+func getNamespacedBranch(cmd *cobra.Command) string {
+	// Check --branch flag
+	branchFlag, _ := cmd.Flags().GetString("branch")
+	if branchFlag != "" {
+		return branchFlag
+	}
+
+	// Try current git branch
+	if gitBranch := getCurrentGitBranch(); gitBranch != "" && gitBranch != "HEAD" {
+		return gitBranch
+	}
+
+	// Fall back to config default
+	return config.GetNamespaceDefaultBranch()
+}
+
+// getNamespacedProject determines the project for namespace.
+// Tries to load from .beads/metadata.json, falls back to config auto-detect or empty.
+func getNamespacedProject(beadsDir string) string {
+	// Try to load from project-specific config
+	cfg, err := configfile.Load(beadsDir)
+	if err == nil && cfg != nil && cfg.ProjectName != "" {
+		return cfg.ProjectName
+	}
+
+	// Fall back to user config
+	return config.GetNamespaceProjectName()
+}
+
 func init() {
 	createCmd.Flags().StringP("file", "f", "", "Create multiple issues from markdown file")
 	createCmd.Flags().String("title", "", "Issue title (alternative to positional argument)")
@@ -701,6 +759,7 @@ func init() {
 	createCmd.Flags().String("repo", "", "Target repository for issue (overrides auto-routing)")
 	createCmd.Flags().String("rig", "", "Create issue in a different rig (e.g., --rig beads)")
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
+	createCmd.Flags().String("branch", "", "Git branch for issue namespace (default: current branch or 'main')")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")

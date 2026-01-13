@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const ConfigFileName = "metadata.json"
@@ -15,6 +17,10 @@ type Config struct {
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
+
+	// Namespace configuration (BRANCH_NAMESPACING)
+	ProjectName  string `json:"project_name,omitempty"`   // Project identifier for namespacing (e.g., "beads")
+	DefaultBranch string `json:"default_branch,omitempty"` // Default branch for new issues (defaults to "main")
 
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
@@ -112,4 +118,71 @@ func (c *Config) GetDeletionsRetentionDays() int {
 		return DefaultDeletionsRetentionDays
 	}
 	return c.DeletionsRetentionDays
+}
+
+// GetProjectName returns the configured project name, or auto-detects from git if empty.
+// Returns empty string if neither is available.
+func (c *Config) GetProjectName() string {
+	if c.ProjectName != "" {
+		return c.ProjectName
+	}
+
+	// Auto-detect from git remote
+	return detectProjectFromGitRemote()
+}
+
+// GetDefaultBranch returns the configured default branch, defaulting to "main".
+func (c *Config) GetDefaultBranch() string {
+	if c.DefaultBranch != "" {
+		return c.DefaultBranch
+	}
+	return "main"
+}
+
+// detectProjectFromGitRemote is a helper to extract project name from git remote URL.
+// Returns empty string if git is not available or remote is not configured.
+func detectProjectFromGitRemote() string {
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	url := strings.TrimSpace(string(output))
+	if url == "" {
+		return ""
+	}
+
+	// Extract repository name from URL
+	// Remove .git suffix if present
+	if strings.HasSuffix(url, ".git") {
+		url = url[:len(url)-4]
+	}
+
+	// Handle SSH URLs (git@github.com:user/repo)
+	if strings.Contains(url, ":") {
+		parts := strings.SplitN(url, ":", 2)
+		if len(parts) == 2 {
+			url = parts[1]
+		}
+	}
+
+	// Handle HTTPS URLs (https://github.com/user/repo)
+	if strings.Contains(url, "://") {
+		parts := strings.SplitN(url, "://", 2)
+		if len(parts) == 2 {
+			url = parts[1]
+		}
+	}
+
+	// Extract last component (repo name)
+	if strings.Contains(url, "/") {
+		parts := strings.Split(url, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// If no slashes (local path), just use basename
+	return filepath.Base(url)
 }

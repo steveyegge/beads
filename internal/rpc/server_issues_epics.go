@@ -307,6 +307,9 @@ func (s *Server) handleCreate(req *Request) Response {
 		IDPrefix:  createArgs.IDPrefix,
 		CreatedBy: createArgs.CreatedBy,
 		Owner:     createArgs.Owner,
+		// Namespace fields (BRANCH_NAMESPACING)
+		Project: createArgs.Project,
+		Branch:  createArgs.Branch,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),
 		// Agent identity fields

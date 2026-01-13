@@ -99,6 +99,9 @@ type CreateArgs struct {
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
 	Owner     string `json:"owner,omitempty"`      // Human owner for CV attribution (git author email)
+	// Namespace fields (BRANCH_NAMESPACING)
+	Project string `json:"project,omitempty"` // Project identifier for namespacing (e.g., "beads")
+	Branch  string `json:"branch,omitempty"`  // Branch for issue (defaults to "main")
 	// Molecule type (for swarm coordination)
 	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
 	// Agent identity fields (only valid when IssueType == "agent")
