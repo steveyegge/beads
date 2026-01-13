@@ -99,6 +99,9 @@ type CreateArgs struct {
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
 	CreatedBy string `json:"created_by,omitempty"` // Who created the issue
 	Owner     string `json:"owner,omitempty"`      // Human owner for CV attribution (git author email)
+	// Namespace fields (BRANCH_NAMESPACING)
+	Project string `json:"project,omitempty"` // Project identifier for namespacing (e.g., "beads")
+	Branch  string `json:"branch,omitempty"`  // Branch for issue (defaults to "main")
 	// Molecule type (for swarm coordination)
 	MolType string `json:"mol_type,omitempty"` // swarm, patrol, or work (default)
 	// Agent identity fields (only valid when IssueType == "agent")
@@ -167,6 +170,8 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
+	// Namespace fields (BRANCH_NAMESPACING)
+	Branch *string `json:"branch,omitempty"` // Branch for issue (for promotion between branches)
 }
 
 // CloseArgs represents arguments for the close operation
@@ -257,6 +262,9 @@ type ListArgs struct {
 	DueAfter    string `json:"due_after,omitempty"`    // ISO 8601 format
 	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
 	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
+
+	// Branch filtering (namespace support)
+	Branch string `json:"branch,omitempty"` // Filter by branch name (e.g., "main", "fix-auth")
 
 	// Staleness control (bd-dpkdm)
 	AllowStale bool `json:"allow_stale,omitempty"` // Skip staleness check, return potentially stale data

@@ -156,6 +156,10 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.Holder != nil {
 		u["holder"] = *a.Holder
 	}
+	// Namespace fields (BRANCH_NAMESPACING)
+	if a.Branch != nil {
+		u["branch"] = *a.Branch
+	}
 	// Time-based scheduling fields (GH#820)
 	if a.DueAt != nil {
 		if *a.DueAt == "" {
@@ -307,6 +311,9 @@ func (s *Server) handleCreate(req *Request) Response {
 		IDPrefix:  createArgs.IDPrefix,
 		CreatedBy: createArgs.CreatedBy,
 		Owner:     createArgs.Owner,
+		// Namespace fields (BRANCH_NAMESPACING)
+		Project: createArgs.Project,
+		Branch:  createArgs.Branch,
 		// Molecule type
 		MolType: types.MolType(createArgs.MolType),
 		// Agent identity fields
@@ -1281,6 +1288,11 @@ func (s *Server) handleList(req *Request) Response {
 		filter.DueBefore = &t
 	}
 	filter.Overdue = listArgs.Overdue
+
+	// Branch filtering (namespace support)
+	if listArgs.Branch != "" {
+		filter.Branch = listArgs.Branch
+	}
 
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
