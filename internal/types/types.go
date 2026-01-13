@@ -14,6 +14,8 @@ import (
 type Issue struct {
 	// ===== Core Identification =====
 	ID          string `json:"id"`
+	Project     string `json:"project,omitempty"`      // Project namespace (e.g., "beads", "other-project")
+	Branch      string `json:"branch,omitempty"`       // Branch namespace (e.g., "main", "fix-auth")
 	ContentHash string `json:"-"` // Internal: SHA256 of canonical content - NOT exported to JSONL
 
 	// ===== Issue Content =====
