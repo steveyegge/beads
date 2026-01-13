@@ -61,6 +61,30 @@ func FlockExclusiveBlocking(f *os.File) error {
 	)
 }
 
+// FlockExclusiveNonBlocking attempts to acquire an exclusive lock on the file.
+// Returns immediately with an error if the lock is held by another process.
+func FlockExclusiveNonBlocking(f *os.File) error {
+	// LOCKFILE_EXCLUSIVE_LOCK (2) | LOCKFILE_FAIL_IMMEDIATELY (1) = 3
+	const flags = windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY
+
+	ol := &windows.Overlapped{}
+
+	err := windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		flags,
+		0,
+		0xFFFFFFFF,
+		0xFFFFFFFF,
+		ol,
+	)
+
+	if err == windows.ERROR_LOCK_VIOLATION || err == syscall.EWOULDBLOCK {
+		return errDaemonLocked
+	}
+
+	return err
+}
+
 // FlockUnlock releases a lock on the file.
 func FlockUnlock(f *os.File) error {
 	ol := &windows.Overlapped{}

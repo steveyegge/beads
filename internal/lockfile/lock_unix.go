@@ -32,6 +32,16 @@ func FlockExclusiveBlocking(f *os.File) error {
 	return unix.Flock(int(f.Fd()), unix.LOCK_EX)
 }
 
+// FlockExclusiveNonBlocking attempts to acquire an exclusive lock on the file.
+// Returns immediately with an error if the lock is held by another process.
+func FlockExclusiveNonBlocking(f *os.File) error {
+	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	if err == unix.EWOULDBLOCK {
+		return errDaemonLocked
+	}
+	return err
+}
+
 // FlockUnlock releases a lock on the file.
 func FlockUnlock(f *os.File) error {
 	return unix.Flock(int(f.Fd()), unix.LOCK_UN)
