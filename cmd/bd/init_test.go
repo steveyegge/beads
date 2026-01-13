@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1272,6 +1273,9 @@ func setupIsolatedGitConfig(t *testing.T, tmpDir string) {
 // gitignore file cannot be written (prints manual instructions instead of failing).
 func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
 	t.Run("read-only file", func(t *testing.T) {
+		if runtime.GOOS == "darwin" {
+			t.Skip("macOS allows file owner to write to read-only (0444) files")
+		}
 		tmpDir := t.TempDir()
 		setupIsolatedGitConfig(t, tmpDir)
 
@@ -1302,6 +1306,9 @@ func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
 	})
 
 	t.Run("symlink to read-only file", func(t *testing.T) {
+		if runtime.GOOS == "darwin" {
+			t.Skip("macOS allows file owner to write to read-only (0444) files")
+		}
 		tmpDir := t.TempDir()
 		setupIsolatedGitConfig(t, tmpDir)
 
