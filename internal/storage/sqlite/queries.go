@@ -305,6 +305,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
 	var owner sql.NullString
+	var project sql.NullString
+	var branch sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
@@ -315,7 +317,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until, project, branch
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -329,7 +331,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
+		&dueAt, &deferUntil, &project, &branch,
 	)
 
 	if err == sql.ErrNoRows {
@@ -458,6 +460,13 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
+	// Namespace fields
+	if project.Valid {
+		issue.Project = project.String
+	}
+	if branch.Valid {
+		issue.Branch = branch.String
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -577,6 +586,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var waiters sql.NullString
 
 	var owner sql.NullString
+	var project sql.NullString
+	var branch sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
@@ -584,7 +595,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, project, branch
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -595,7 +606,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &project, &branch,
 	)
 
 	if err == sql.ErrNoRows {
@@ -734,6 +745,8 @@ var allowedUpdateFields = map[string]bool{
 	"defer_until": true,
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
+	// Namespace fields (BRANCH_NAMESPACING)
+	"branch": true,
 }
 
 // validatePriority validates a priority value
@@ -1731,7 +1744,7 @@ func (s *SQLiteStorage) GetIssuesByBranch(ctx context.Context, project, branch s
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, project, branch
 		FROM issues
 		WHERE project = ? AND branch = ?
 		ORDER BY priority ASC, created_at DESC
