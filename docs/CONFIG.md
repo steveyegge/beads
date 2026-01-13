@@ -254,6 +254,7 @@ Use these namespaces for external integrations:
 
 - `jira.*` - Jira integration settings
 - `linear.*` - Linear integration settings
+- `shortcut.*` - Shortcut integration settings
 - `github.*` - GitHub integration settings
 - `custom.*` - Custom integration settings
 
@@ -537,6 +538,106 @@ bd linear status
 
 The `linear.last_sync` config key is automatically updated after each sync, enabling incremental sync (only fetch issues updated since last sync).
 
+### Example: Shortcut Integration
+
+Shortcut integration provides bidirectional sync between bd and Shortcut via REST API.
+
+**Required configuration:**
+
+```bash
+# API Token (can also use SHORTCUT_API_TOKEN environment variable)
+bd config set shortcut.api_token "YOUR_API_TOKEN"
+
+# Team ID (UUID format - find via 'bd shortcut teams')
+bd config set shortcut.team_id "5e330b96-ac5f-44b1-9c7e-a034627c81c8"
+```
+
+**Getting your Shortcut credentials:**
+
+1. **API Token**: Go to Shortcut → Settings → API Tokens → Generate token
+2. **Team ID**: Run `bd shortcut teams` to list teams with their UUIDs
+
+**Priority mapping (Shortcut strings → Beads 0-4):**
+
+Shortcut uses string priorities, Beads uses 0-4:
+- Shortcut: "urgent", "high", "medium", "low", "none" (or empty)
+- Beads: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+
+Default mapping (configurable):
+
+```bash
+bd config set shortcut.priority_map.urgent 0    # Urgent -> Critical
+bd config set shortcut.priority_map.high 1      # High -> High
+bd config set shortcut.priority_map.medium 2    # Medium -> Medium
+bd config set shortcut.priority_map.low 3       # Low -> Low
+bd config set shortcut.priority_map.none 4      # No priority -> Backlog
+```
+
+**State mapping (Shortcut state types → Beads statuses):**
+
+Map Shortcut workflow state types to Beads statuses:
+
+```bash
+bd config set shortcut.state_map.unstarted open
+bd config set shortcut.state_map.started in_progress
+bd config set shortcut.state_map.done closed
+
+# For custom workflow states, use lowercase state name:
+bd config set shortcut.state_map.in_review in_progress
+bd config set shortcut.state_map.blocked blocked
+bd config set shortcut.state_map.ready_for_dev open
+```
+
+**Story type mapping:**
+
+Map Shortcut story types to bd issue types:
+
+```bash
+bd config set shortcut.type_map.feature feature
+bd config set shortcut.type_map.bug bug
+bd config set shortcut.type_map.chore task
+```
+
+**Relation type mapping (Shortcut story links → Beads dependencies):**
+
+```bash
+bd config set shortcut.relation_map.blocks blocks
+bd config set "shortcut.relation_map.is blocked by" blocks
+bd config set shortcut.relation_map.duplicates duplicates
+bd config set "shortcut.relation_map.relates to" related
+```
+
+**Sync commands:**
+
+```bash
+# Bidirectional sync (pull then push, with conflict resolution)
+bd shortcut sync
+
+# Pull only (import from Shortcut)
+bd shortcut sync --pull
+
+# Push only (export to Shortcut)
+bd shortcut sync --push
+
+# Dry run (preview without changes)
+bd shortcut sync --dry-run
+
+# Conflict resolution options
+bd shortcut sync --prefer-local      # Local version wins on conflicts
+bd shortcut sync --prefer-shortcut   # Shortcut version wins on conflicts
+# Default: newer timestamp wins
+
+# Check sync status
+bd shortcut status
+
+# List available teams
+bd shortcut teams
+```
+
+**Automatic sync tracking:**
+
+The `shortcut.last_sync` config key is automatically updated after each sync, enabling incremental sync (only fetch stories updated since last sync).
+
 ### Example: GitHub Integration
 
 ```bash
@@ -593,7 +694,7 @@ jira_project = get_config("jira.project")
 
 ## Best Practices
 
-1. **Use namespaces**: Prefix keys with integration name (e.g., `jira.*`, `linear.*`)
+1. **Use namespaces**: Prefix keys with integration name (e.g., `jira.*`, `linear.*`, `shortcut.*`)
 2. **Hierarchical keys**: Use dots for structure (e.g., `jira.status_map.open`)
 3. **Document your keys**: Add comments in integration scripts
 4. **Security**: Store tokens in config, but add `.beads/*.db` to `.gitignore` (bd does this automatically)
