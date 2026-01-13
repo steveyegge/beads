@@ -369,14 +369,16 @@ func BuildStateCache(ctx context.Context, client *Client) (*StateCache, error) {
 	}
 
 	cache := &StateCache{
-		Workflows:  workflows,
-		StatesByID: make(map[int64]WorkflowState),
+		Workflows:         workflows,
+		StatesByID:        make(map[int64]WorkflowState),
+		WorkflowByStateID: make(map[int64]int64),
 	}
 
 	var backlogStateID int64
 	for _, wf := range workflows {
 		for _, state := range wf.States {
 			cache.StatesByID[state.ID] = state
+			cache.WorkflowByStateID[state.ID] = wf.ID
 			// Prefer "unstarted" over "backlog" for OpenStateID (more actionable)
 			if state.Type == "unstarted" && cache.OpenStateID == 0 {
 				cache.OpenStateID = state.ID

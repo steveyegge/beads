@@ -441,7 +441,9 @@ func BeadsToStoryParams(issue *types.Issue, stateCache *StateCache, config *Mapp
 }
 
 // BeadsToStoryUpdateParams converts a Beads issue to Shortcut story update parameters.
-func BeadsToStoryUpdateParams(issue *types.Issue, stateCache *StateCache, config *MappingConfig) *UpdateStoryParams {
+// currentWorkflowStateID is the story's current workflow state ID, used to find
+// a compatible state in the same workflow (different teams may have different workflows).
+func BeadsToStoryUpdateParams(issue *types.Issue, stateCache *StateCache, config *MappingConfig, currentWorkflowStateID int64) *UpdateStoryParams {
 	params := &UpdateStoryParams{
 		Name:        &issue.Title,
 		Description: &issue.Description,
@@ -451,8 +453,9 @@ func BeadsToStoryUpdateParams(issue *types.Issue, stateCache *StateCache, config
 	params.StoryType = &storyType
 
 	// Set workflow state if we have a state cache
+	// Use the workflow-aware lookup to stay within the same workflow as the current state
 	if stateCache != nil {
-		stateID := stateCache.FindStateForBeadsStatus(string(issue.Status))
+		stateID := stateCache.FindStateForBeadsStatusInWorkflow(string(issue.Status), currentWorkflowStateID)
 		params.WorkflowStateID = &stateID
 	}
 

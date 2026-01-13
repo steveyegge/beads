@@ -218,27 +218,31 @@ type DependencyInfo struct {
 
 // StateCache caches workflow states to avoid repeated API calls.
 type StateCache struct {
-	Workflows   []Workflow
-	StatesByID  map[int64]WorkflowState
-	OpenStateID int64 // First "unstarted" state
-	DoneStateID int64 // First "done" state
+	Workflows          []Workflow
+	StatesByID         map[int64]WorkflowState
+	WorkflowByStateID  map[int64]int64 // Maps state ID to workflow ID
+	OpenStateID        int64           // First "unstarted" state
+	DoneStateID        int64           // First "done" state
+}
+
+// beadsStatusToStateType maps a beads status to a Shortcut state type.
+func beadsStatusToStateType(status string) string {
+	switch status {
+	case "open", "blocked", "deferred":
+		return "unstarted"
+	case "in_progress", "hooked", "pinned":
+		return "started"
+	case "closed":
+		return "done"
+	default:
+		return "unstarted"
+	}
 }
 
 // FindStateForBeadsStatus finds a Shortcut workflow state ID for a given beads status.
+// This returns the first matching state across all workflows.
 func (sc *StateCache) FindStateForBeadsStatus(status string) int64 {
-	// Map beads status to Shortcut state type
-	// For "open" beads status, prefer "unstarted" over "backlog" (more actionable)
-	var targetType string
-	switch status {
-	case "open", "blocked", "deferred":
-		targetType = "unstarted"
-	case "in_progress", "hooked", "pinned":
-		targetType = "started"
-	case "closed":
-		targetType = "done"
-	default:
-		targetType = "unstarted"
-	}
+	targetType := beadsStatusToStateType(status)
 
 	// Find a matching state
 	for _, state := range sc.StatesByID {
@@ -249,4 +253,44 @@ func (sc *StateCache) FindStateForBeadsStatus(status string) int64 {
 
 	// Fall back to open state (which could be backlog or unstarted)
 	return sc.OpenStateID
+}
+
+// FindStateForBeadsStatusInWorkflow finds a Shortcut workflow state ID for a given
+// beads status, staying within the same workflow as the provided current state.
+// This is used when updating stories to ensure the new state is compatible with the team.
+func (sc *StateCache) FindStateForBeadsStatusInWorkflow(status string, currentStateID int64) int64 {
+	targetType := beadsStatusToStateType(status)
+
+	// Find the workflow that contains the current state
+	workflowID, ok := sc.WorkflowByStateID[currentStateID]
+	if !ok {
+		// Fall back to global search if we can't find the workflow
+		return sc.FindStateForBeadsStatus(status)
+	}
+
+	// Find the workflow and search within its states
+	for _, wf := range sc.Workflows {
+		if wf.ID != workflowID {
+			continue
+		}
+
+		// First pass: find exact type match
+		for _, state := range wf.States {
+			if state.Type == targetType {
+				return state.ID
+			}
+		}
+
+		// Second pass: fall back to backlog if looking for unstarted
+		if targetType == "unstarted" {
+			for _, state := range wf.States {
+				if state.Type == "backlog" {
+					return state.ID
+				}
+			}
+		}
+	}
+
+	// Fall back to global search
+	return sc.FindStateForBeadsStatus(status)
 }

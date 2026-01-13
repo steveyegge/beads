@@ -324,7 +324,9 @@ func doPushToShortcut(ctx context.Context, dryRun bool, createOnly bool, updateR
 				continue
 			}
 
-			params := shortcut.BeadsToStoryUpdateParams(issue, stateCache, mappingConfig)
+			// Pass the story's current workflow_state_id to find a compatible state
+			// in the same workflow (different teams may have different workflows)
+			params := shortcut.BeadsToStoryUpdateParams(issue, stateCache, mappingConfig, story.WorkflowStateID)
 
 			updatedStory, err := client.UpdateStory(ctx, storyID, params)
 			if err != nil {

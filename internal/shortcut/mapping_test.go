@@ -403,9 +403,25 @@ func TestBeadsToStoryParams(t *testing.T) {
 func TestBeadsToStoryUpdateParams(t *testing.T) {
 	config := DefaultMappingConfig()
 	stateCache := &StateCache{
+		Workflows: []Workflow{
+			{
+				ID:   1,
+				Name: "Default",
+				States: []WorkflowState{
+					{ID: 99, Name: "Ready", Type: "unstarted"},
+					{ID: 100, Name: "Done", Type: "done"},
+				},
+			},
+		},
 		StatesByID: map[int64]WorkflowState{
+			99:  {ID: 99, Name: "Ready", Type: "unstarted"},
 			100: {ID: 100, Name: "Done", Type: "done"},
 		},
+		WorkflowByStateID: map[int64]int64{
+			99:  1,
+			100: 1,
+		},
+		OpenStateID: 99,
 		DoneStateID: 100,
 	}
 
@@ -417,7 +433,8 @@ func TestBeadsToStoryUpdateParams(t *testing.T) {
 		Assignee:    "new-user",
 	}
 
-	params := BeadsToStoryUpdateParams(issue, stateCache, config)
+	// Pass current workflow state ID (99 - Ready) to find compatible state in same workflow
+	params := BeadsToStoryUpdateParams(issue, stateCache, config, 99)
 
 	if params.Name == nil || *params.Name != "Updated Title" {
 		t.Errorf("Name = %v, want %q", params.Name, "Updated Title")
