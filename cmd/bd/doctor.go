@@ -572,6 +572,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, persistentMolCheck)
 	// Don't fail overall check for persistent mol issues, just warn
 
+	// Check 26c: Legacy merge queue files (gastown mrqueue remnants)
+	staleMQFilesCheck := convertDoctorCheck(doctor.CheckStaleMQFiles(path))
+	result.Checks = append(result.Checks, staleMQFilesCheck)
+	// Don't fail overall check for legacy MQ files, just warn
+
 	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))
 	result.Checks = append(result.Checks, tombstonesExpiredCheck)

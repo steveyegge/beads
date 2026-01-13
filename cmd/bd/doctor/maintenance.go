@@ -392,3 +392,56 @@ func CheckPersistentMolIssues(path string) DoctorCheck {
 		Category: CategoryMaintenance,
 	}
 }
+
+// CheckStaleMQFiles detects legacy .beads/mq/*.json files from gastown.
+// These files are LOCAL ONLY (not committed) and represent stale merge queue
+// entries from the old mrqueue implementation. They are safe to delete since
+// gt done already creates merge-request wisps in beads.
+func CheckStaleMQFiles(path string) DoctorCheck {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	mqDir := filepath.Join(beadsDir, "mq")
+
+	if _, err := os.Stat(mqDir); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	files, err := filepath.Glob(filepath.Join(mqDir, "*.json"))
+	if err != nil || len(files) == 0 {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	return DoctorCheck{
+		Name:     "Legacy MQ Files",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d stale .beads/mq/*.json file(s)", len(files)),
+		Detail:   "Legacy gastown merge queue files (local only, safe to delete)",
+		Fix:      "Run 'bd doctor --fix' to delete, or 'rm -rf .beads/mq/'",
+		Category: CategoryMaintenance,
+	}
+}
+
+// FixStaleMQFiles removes the legacy .beads/mq/ directory and all its contents.
+func FixStaleMQFiles(path string) error {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	mqDir := filepath.Join(beadsDir, "mq")
+
+	if _, err := os.Stat(mqDir); os.IsNotExist(err) {
+		return nil // Nothing to do
+	}
+
+	if err := os.RemoveAll(mqDir); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", mqDir, err)
+	}
+
+	return nil
+}

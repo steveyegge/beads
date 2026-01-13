@@ -310,6 +310,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			// No auto-fix: pruning deletes data, must be user-controlled
 			fmt.Printf("  ⚠ Run 'bd cleanup --older-than 90' to prune old closed issues\n")
 			continue
+		case "Legacy MQ Files":
+			err = doctor.FixStaleMQFiles(path)
 		default:
 			fmt.Printf("  ⚠ No automatic fix available for %s\n", check.Name)
 			fmt.Printf("  Manual fix: %s\n", check.Fix)
