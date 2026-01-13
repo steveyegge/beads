@@ -227,6 +227,8 @@ func applyFixList(path string, fixes []doctorCheck) {
 			err = doctor.FixGitignore()
 		case "Redirect Tracking":
 			err = doctor.FixRedirectTracking()
+		case "Last-Touched Tracking":
+			err = doctor.FixLastTouchedTracking()
 		case "Git Hooks":
 			err = fix.GitHooks(path)
 		case "Daemon Health":
