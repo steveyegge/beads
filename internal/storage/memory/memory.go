@@ -452,6 +452,10 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			if v, ok := value.(string); ok {
 				issue.ClosedBySession = v
 			}
+		case "branch":
+			if v, ok := value.(string); ok {
+				issue.Branch = v
+			}
 		}
 	}
 
