@@ -86,6 +86,7 @@ type Storage interface {
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
+	GetIssuesByBranch(ctx context.Context, project, branch string) ([]*types.Issue, error) // BRANCH_NAMESPACING
 
 	// Dependencies
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error

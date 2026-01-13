@@ -886,6 +886,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var awaitID sql.NullString
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
+		// Namespace fields
+		var project sql.NullString
+		var branch sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -894,7 +897,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-			&awaitType, &awaitID, &timeoutNs, &waiters,
+			&awaitType, &awaitID, &timeoutNs, &waiters, &project, &branch,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -966,6 +969,13 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if waiters.Valid && waiters.String != "" {
 			issue.Waiters = parseJSONStringArray(waiters.String)
+		}
+		// Namespace fields
+		if project.Valid {
+			issue.Project = project.String
+		}
+		if branch.Valid {
+			issue.Branch = branch.String
 		}
 
 		issues = append(issues, &issue)
