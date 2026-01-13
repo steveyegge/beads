@@ -670,6 +670,37 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 	return results, nil
 }
 
+// GetIssuesByBranch retrieves all issues for a specific branch and project (BRANCH_NAMESPACING)
+func (m *MemoryStorage) GetIssuesByBranch(ctx context.Context, project, branch string) ([]*types.Issue, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var results []*types.Issue
+
+	for _, issue := range m.issues {
+		if issue.Project == project && issue.Branch == branch {
+			issueCopy := *issue
+			if deps, ok := m.dependencies[issue.ID]; ok {
+				issueCopy.Dependencies = deps
+			}
+			if labels, ok := m.labels[issue.ID]; ok {
+				issueCopy.Labels = labels
+			}
+			results = append(results, &issueCopy)
+		}
+	}
+
+	// Sort by priority, then by created_at (descending)
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Priority != results[j].Priority {
+			return results[i].Priority < results[j].Priority
+		}
+		return results[i].CreatedAt.After(results[j].CreatedAt)
+	})
+
+	return results, nil
+}
+
 // AddDependency adds a dependency between issues
 func (m *MemoryStorage) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	m.mu.Lock()

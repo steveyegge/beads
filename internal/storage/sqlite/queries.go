@@ -1715,6 +1715,35 @@ func (s *SQLiteStorage) findAllDependentsRecursive(ctx context.Context, tx *sql.
 	return result, nil
 }
 
+// GetIssuesByBranch retrieves all issues for a specific branch and project (BRANCH_NAMESPACING)
+func (s *SQLiteStorage) GetIssuesByBranch(ctx context.Context, project, branch string) ([]*types.Issue, error) {
+	// Check for external database file modifications (daemon mode)
+	s.checkFreshness()
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
+		       status, priority, issue_type, assignee, estimated_minutes,
+		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       deleted_at, deleted_by, delete_reason, original_type,
+		       sender, ephemeral, pinned, is_template, crystallizes,
+		       await_type, await_id, timeout_ns, waiters
+		FROM issues
+		WHERE project = ? AND branch = ?
+		ORDER BY priority ASC, created_at DESC
+	`, project, branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query issues by branch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return s.scanIssues(ctx, rows)
+}
+
 // SearchIssues finds issues matching query and filters
 func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
 	// Check for external database file modifications (daemon mode)
