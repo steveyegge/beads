@@ -31,18 +31,19 @@ Environment variables (alternative to config):
 
 Data Mapping (optional, sensible defaults provided):
   Priority mapping (Shortcut priority to Beads 0-4):
-    bd config set shortcut.priority_map.none 4      # No priority -> Backlog
     bd config set shortcut.priority_map.urgent 0    # Urgent -> Critical
     bd config set shortcut.priority_map.high 1      # High -> High
     bd config set shortcut.priority_map.medium 2    # Medium -> Medium
     bd config set shortcut.priority_map.low 3       # Low -> Low
+    bd config set shortcut.priority_map.none 4      # No priority -> Backlog
 
-  State mapping (Shortcut workflow state to Beads status):
-    bd config set shortcut.state_map.Backlog open
-    bd config set shortcut.state_map."Ready for Dev" open
-    bd config set shortcut.state_map."In Progress" in_progress
+  State mapping (Shortcut state types: backlog, unstarted, started, done):
+    bd config set shortcut.state_map.backlog open        # Backlog states
+    bd config set shortcut.state_map.unstarted open      # Ready for work
+    bd config set shortcut.state_map.started in_progress # In progress
+    bd config set shortcut.state_map.done closed         # Completed/Cancelled
+    # Custom state names also work:
     bd config set shortcut.state_map."In Review" in_progress
-    bd config set shortcut.state_map.Done closed
 
   Type mapping (Shortcut story type to Beads issue type):
     bd config set shortcut.type_map.feature feature

@@ -124,7 +124,7 @@ type WorkflowState struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Type        string `json:"type"` // "unstarted", "started", "done"
+	Type        string `json:"type"` // "backlog", "unstarted", "started", "done"
 	Position    int    `json:"position"`
 }
 
@@ -226,6 +226,7 @@ type StateCache struct {
 // FindStateForBeadsStatus finds a Shortcut workflow state ID for a given beads status.
 func (sc *StateCache) FindStateForBeadsStatus(status string) int64 {
 	// Map beads status to Shortcut state type
+	// For "open" beads status, prefer "unstarted" over "backlog" (more actionable)
 	var targetType string
 	switch status {
 	case "open", "blocked", "deferred":
@@ -245,6 +246,6 @@ func (sc *StateCache) FindStateForBeadsStatus(status string) int64 {
 		}
 	}
 
-	// Fall back to open state
+	// Fall back to open state (which could be backlog or unstarted)
 	return sc.OpenStateID
 }

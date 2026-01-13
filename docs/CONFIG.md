@@ -575,10 +575,11 @@ bd config set shortcut.priority_map.none 4      # No priority -> Backlog
 
 **State mapping (Shortcut state types → Beads statuses):**
 
-Map Shortcut workflow state types to Beads statuses:
+Map Shortcut's 4 workflow state types to Beads statuses:
 
 ```bash
-bd config set shortcut.state_map.unstarted open
+bd config set shortcut.state_map.backlog open      # Backlog → Open
+bd config set shortcut.state_map.unstarted open    # Ready to work → Open
 bd config set shortcut.state_map.started in_progress
 bd config set shortcut.state_map.done closed
 

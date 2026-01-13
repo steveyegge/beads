@@ -47,8 +47,9 @@ func DefaultMappingConfig() *MappingConfig {
 			"high":   1, // High -> High
 			"urgent": 0, // Urgent -> Critical
 		},
-		// Default state mapping (users should configure their workflow states)
+		// Default state mapping based on Shortcut's 4 state types
 		StateMap: map[string]string{
+			"backlog":   "open",
 			"unstarted": "open",
 			"started":   "in_progress",
 			"done":      "closed",
@@ -242,7 +243,7 @@ func StateToBeadsStatus(state *WorkflowState, config *MappingConfig) types.Statu
 
 	// Default based on type
 	switch stateType {
-	case "unstarted":
+	case "backlog", "unstarted":
 		return types.StatusOpen
 	case "started":
 		return types.StatusInProgress
