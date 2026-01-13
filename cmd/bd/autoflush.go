@@ -210,6 +210,28 @@ func autoImportIfNewer() {
 				return
 			}
 			debug.Logf("auto-import: initialized database with prefix '%s'", detectedPrefix)
+
+			// Set repo_id to prevent "LEGACY DATABASE DETECTED" warning
+			// This mirrors what bd init does for fresh databases
+			if repoID, err := beads.ComputeRepoID(); err == nil {
+				if setErr := store.SetMetadata(ctx, "repo_id", repoID); setErr != nil {
+					debug.Logf("auto-import: failed to set repo_id: %v", setErr)
+				} else {
+					debug.Logf("auto-import: set repo_id=%s", repoID[:8])
+				}
+			}
+
+			// Set clone_id for multi-clone tracking
+			if cloneID, err := beads.GetCloneID(); err == nil {
+				if setErr := store.SetMetadata(ctx, "clone_id", cloneID); setErr != nil {
+					debug.Logf("auto-import: failed to set clone_id: %v", setErr)
+				}
+			}
+
+			// Set bd_version for version tracking
+			if setErr := store.SetMetadata(ctx, "bd_version", Version); setErr != nil {
+				debug.Logf("auto-import: failed to set bd_version: %v", setErr)
+			}
 		}
 	}
 
@@ -277,7 +299,7 @@ func autoImportIfNewer() {
 	if err := store.ClearAllExportHashes(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
 	}
-	
+
 	// Use shared import logic
 	opts := ImportOptions{
 		DryRun:               false,
@@ -424,12 +446,12 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("failed to get stored JSONL hash: %w", err)
 	}
-	
+
 	// If no hash stored, this is first export - skip validation
 	if storedHash == "" {
 		return false, nil
 	}
-	
+
 	// Read current JSONL file
 	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
@@ -447,12 +469,12 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		}
 		return false, fmt.Errorf("failed to read JSONL file: %w", err)
 	}
-	
+
 	// Compute current JSONL hash
 	hasher := sha256.New()
 	hasher.Write(jsonlData)
 	currentHash := hex.EncodeToString(hasher.Sum(nil))
-	
+
 	// Compare hashes
 	if currentHash != storedHash {
 		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected\n")
@@ -469,7 +491,7 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		}
 		return true, nil // Signal full export needed
 	}
-	
+
 	return false, nil
 }
 
@@ -498,15 +520,15 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	encoder := json.NewEncoder(f)
 	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
-	
+
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
 		 return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
-		
+
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
-	
+
 	// Report skipped issues if any (helps debugging)
 	if skippedCount > 0 {
 		debug.Logf("auto-flush skipped %d issue(s) with timestamp-only changes", skippedCount)
