@@ -137,77 +137,69 @@ func (c *Client) GetStory(ctx context.Context, storyID int64) (*Story, error) {
 	return &story, nil
 }
 
-// SearchStories searches for stories matching the given criteria.
-func (c *Client) SearchStories(ctx context.Context, query string, pageToken *string) (*SearchResults, error) {
-	searchParams := map[string]interface{}{
-		"query":     query,
-		"page_size": MaxPageSize,
-	}
-	if pageToken != nil {
-		searchParams["next"] = *pageToken
-	}
+// SearchStoriesParams holds the parameters for searching stories.
+type SearchStoriesParams struct {
+	GroupID            string   `json:"group_id,omitempty"`
+	WorkflowStateTypes []string `json:"workflow_state_types,omitempty"`
+	Archived           *bool    `json:"archived,omitempty"`
+	UpdatedAtStart     string   `json:"updated_at_start,omitempty"`
+	Next               string   `json:"next,omitempty"`
+}
 
-	respBody, err := c.doRequest(ctx, "POST", "/search/stories", searchParams)
+// SearchStories searches for stories matching the given criteria.
+// The /stories/search endpoint returns an array of StorySlim directly.
+func (c *Client) SearchStories(ctx context.Context, params *SearchStoriesParams) ([]StorySlim, error) {
+	respBody, err := c.doRequest(ctx, "POST", "/stories/search", params)
 	if err != nil {
 		return nil, err
 	}
 
-	var results SearchResults
-	if err := json.Unmarshal(respBody, &results); err != nil {
+	var stories []StorySlim
+	if err := json.Unmarshal(respBody, &stories); err != nil {
 		return nil, fmt.Errorf("failed to parse search results: %w", err)
 	}
 
-	return &results, nil
+	return stories, nil
 }
 
 // FetchStories retrieves stories from Shortcut for the configured team.
 // state can be: "open" (unstarted/started), "closed" (done), or "all".
 func (c *Client) FetchStories(ctx context.Context, state string) ([]Story, error) {
 	var allStories []Story
-	var pageToken *string
 
-	// Build search query
-	var queryParts []string
+	// Build search parameters
+	params := &SearchStoriesParams{}
 
-	// Filter by team if configured (use mention name for search queries)
+	// Filter by team if configured
 	if c.TeamID != "" {
-		mentionName := c.GetTeamMentionName(ctx, c.TeamID)
-		queryParts = append(queryParts, fmt.Sprintf("team:%s", mentionName))
+		params.GroupID = c.TeamID
 	}
 
-	// Filter by state
+	// Filter by state using workflow_state_types
 	switch state {
 	case "open":
-		queryParts = append(queryParts, "is:unstarted OR is:started")
+		params.WorkflowStateTypes = []string{"backlog", "unstarted", "started"}
 	case "closed":
-		queryParts = append(queryParts, "is:done")
+		params.WorkflowStateTypes = []string{"done"}
 	}
 
 	// Don't include archived by default
-	queryParts = append(queryParts, "is:unarchived")
+	archived := false
+	params.Archived = &archived
 
-	query := strings.Join(queryParts, " ")
+	slimStories, err := c.SearchStories(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search stories: %w", err)
+	}
 
-	for {
-		results, err := c.SearchStories(ctx, query, pageToken)
+	// Fetch full story details for each result
+	for _, slim := range slimStories {
+		story, err := c.GetStory(ctx, slim.ID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to search stories: %w", err)
+			// Log warning but continue
+			continue
 		}
-
-		// Fetch full story details for each result
-		for _, slim := range results.Data {
-			story, err := c.GetStory(ctx, slim.ID)
-			if err != nil {
-				// Log warning but continue
-				continue
-			}
-			allStories = append(allStories, *story)
-		}
-
-		if results.NextPageToken == nil {
-			break
-		}
-		pageToken = results.NextPageToken
+		allStories = append(allStories, *story)
 	}
 
 	return allStories, nil
@@ -216,47 +208,41 @@ func (c *Client) FetchStories(ctx context.Context, state string) ([]Story, error
 // FetchStoriesSince retrieves stories updated since the given timestamp.
 func (c *Client) FetchStoriesSince(ctx context.Context, state string, since time.Time) ([]Story, error) {
 	var allStories []Story
-	var pageToken *string
 
-	// Build search query with updated filter
-	var queryParts []string
+	// Build search parameters
+	params := &SearchStoriesParams{}
 
-	// Filter by team if configured (use mention name for search queries)
+	// Filter by team if configured
 	if c.TeamID != "" {
-		mentionName := c.GetTeamMentionName(ctx, c.TeamID)
-		queryParts = append(queryParts, fmt.Sprintf("team:%s", mentionName))
+		params.GroupID = c.TeamID
 	}
 
+	// Filter by state using workflow_state_types
 	switch state {
 	case "open":
-		queryParts = append(queryParts, "is:unstarted OR is:started")
+		params.WorkflowStateTypes = []string{"backlog", "unstarted", "started"}
 	case "closed":
-		queryParts = append(queryParts, "is:done")
+		params.WorkflowStateTypes = []string{"done"}
 	}
 
-	queryParts = append(queryParts, "is:unarchived")
-	queryParts = append(queryParts, fmt.Sprintf("updated:%s..*", since.Format("2006-01-02")))
+	// Don't include archived by default
+	archived := false
+	params.Archived = &archived
 
-	query := strings.Join(queryParts, " ")
+	// Filter by updated_at
+	params.UpdatedAtStart = since.Format(time.RFC3339)
 
-	for {
-		results, err := c.SearchStories(ctx, query, pageToken)
+	slimStories, err := c.SearchStories(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search stories: %w", err)
+	}
+
+	for _, slim := range slimStories {
+		story, err := c.GetStory(ctx, slim.ID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to search stories: %w", err)
+			continue
 		}
-
-		for _, slim := range results.Data {
-			story, err := c.GetStory(ctx, slim.ID)
-			if err != nil {
-				continue
-			}
-			allStories = append(allStories, *story)
-		}
-
-		if results.NextPageToken == nil {
-			break
-		}
-		pageToken = results.NextPageToken
+		allStories = append(allStories, *story)
 	}
 
 	return allStories, nil

@@ -116,7 +116,7 @@ type Workflow struct {
 	ID          int64           `json:"id"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
-	TeamID      string          `json:"team_id"`
+	TeamID      *int64          `json:"team_id,omitempty"`
 	States      []WorkflowState `json:"states"`
 }
 
