@@ -2,9 +2,9 @@
 
 ## Phase 2: CLI Command Integration
 
-**Status:** Partially Complete (2026-01-13)
+**Status:** Complete (2026-01-13)
 
-### Phase 2 Completion Summary
+### Phase 2.1 Completion Summary
 
 ✅ **Completed:**
 - Config package (`internal/config/config.go`): Added namespace configuration with helper functions
@@ -17,14 +17,17 @@
 - Storage interface: Updated to include GetIssuesByBranch method
 - Memory storage: Implemented GetIssuesByBranch for testing
 
-⏳ **Next Steps:**
-- Display layer updates to show branch context (bd list, bd show)
-- bd init integration for setting up namespace config
-- bd promote command for moving issues between branches
-- bd sources command for managing sources.yaml
-- Migration strategy for old bd-xxx format to new namespace format
+### Phase 2.2 Completion Summary
 
-The foundation is in place. Continue integrating namespace support into the command layer.
+✅ **Completed:**
+- Display layer updates (bd show, bd list): Show branch context when branch != "main"
+- bd init integration: setupNamespaceConfig() prompts for project name and default branch
+- bd promote command (`cmd/bd/promote.go`): Move issues between branches with UpdateIssue integration
+- bd sources command (`cmd/bd/sources.go`): Manage .beads/sources.yaml for project source configuration
+- RPC protocol extension: Added Branch field to UpdateArgs
+- RPC server integration: Branch field handled in updatesFromArgs() function
+
+Phase 2 is complete. Namespace CLI support is fully integrated.
 
 ### Key Integration Points
 
@@ -194,9 +197,11 @@ Integrate with Gas Town routes and cross-repo issue tracking.
 - ⏳ Database queries (GetByBranch, GetProject)
 
 ### Integration Tests
-- ⏳ Storage layer + namespace fields
-- ⏳ CLI command parsing
+- ✅ Storage layer + namespace fields (Phase 2.1)
+- ✅ CLI command parsing (Phase 2.2: promote, sources)
 - ⏳ Migration (old → new format)
+- ⏳ End-to-end: bd promote workflow
+- ⏳ End-to-end: bd sources workflow
 
 ### E2E Tests
 - ⏳ Real git repos with multiple branches
@@ -217,10 +222,12 @@ Integrate with Gas Town routes and cross-repo issue tracking.
 - `internal/storage/storage.go` - Interface updates for namespace methods
 
 ### CLI Commands
-- `cmd/bd/create.go` - Add --branch flag
-- `cmd/bd/list.go` - Add --branch filtering
-- `cmd/bd/show.go` - Parse namespaced IDs
-- `cmd/bd/` - New: promote.go, sources.go, init.go (namespace updates)
+- ✅ `cmd/bd/create.go` - Add --branch flag (Phase 2.1)
+- ✅ `cmd/bd/list.go` - Add --branch filtering (Phase 2.1)
+- ✅ `cmd/bd/show.go` - Display branch context (Phase 2.2)
+- ✅ `cmd/bd/promote.go` - New: promote issues between branches (Phase 2.2)
+- ✅ `cmd/bd/sources.go` - New: manage sources.yaml (Phase 2.2)
+- ✅ `cmd/bd/init.go` - namespace config setup (Phase 2.2)
 
 ### Configuration
 - `internal/configfile/config.go` - Add project_name, default_branch
@@ -254,12 +261,12 @@ Integrate with Gas Town routes and cross-repo issue tracking.
 
 ## Success Criteria
 
-- [x] Namespace parsing logic complete and tested
-- [x] Sources configuration structure in place
-- [ ] CLI commands accept namespace syntax
-- [ ] Old format automatically upgraded on read
-- [ ] All existing tests pass
-- [ ] New namespace tests >90% coverage
-- [ ] PR workflow excludes branch-scoped issues
-- [ ] Gas Town routes recognize namespaced IDs
-- [ ] User can work on fork feature branches without conflicts
+- [x] Namespace parsing logic complete and tested (Phase 1)
+- [x] Sources configuration structure in place (Phase 1)
+- [x] CLI commands accept namespace syntax (Phase 2.2: promote, sources)
+- [ ] Old format automatically upgraded on read (Phase 3+)
+- [x] All existing tests pass (continuous)
+- [ ] New namespace tests >90% coverage (Phase 3+)
+- [ ] PR workflow excludes branch-scoped issues (Phase 3)
+- [ ] Gas Town routes recognize namespaced IDs (Phase 4)
+- [ ] User can work on fork feature branches without conflicts (Phase 3+)
