@@ -108,6 +108,7 @@ type Team struct {
 	Name        string `json:"name"`
 	MentionName string `json:"mention_name"`
 	Description string `json:"description"`
+	Archived    bool   `json:"archived"`
 }
 
 // Workflow represents a workflow in Shortcut.

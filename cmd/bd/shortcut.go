@@ -98,12 +98,14 @@ var shortcutStatusCmd = &cobra.Command{
 var shortcutTeamsCmd = &cobra.Command{
 	Use:   "teams",
 	Short: "List available Shortcut teams",
-	Long: `List all teams (groups) accessible with your Shortcut API token.
+	Long: `List active teams (groups) accessible with your Shortcut API token.
 
 Use this to find the team UUID needed for configuration.
+By default, only active (non-archived) teams are shown.
 
 Example:
-  bd shortcut teams
+  bd shortcut teams           # Show active teams only
+  bd shortcut teams --all     # Show all teams including archived
   bd config set shortcut.team_id "5e330b96-ac5f-44b1-9c7e-a034627c81c8"`,
 	Run: runShortcutTeams,
 }
@@ -117,6 +119,8 @@ func init() {
 	shortcutSyncCmd.Flags().Bool("create-only", false, "Only create new issues, don't update existing")
 	shortcutSyncCmd.Flags().Bool("update-refs", true, "Update external_ref after creating Shortcut stories")
 	shortcutSyncCmd.Flags().String("state", "all", "Story state to sync: open, closed, all")
+
+	shortcutTeamsCmd.Flags().Bool("all", false, "Show all teams including archived")
 
 	shortcutCmd.AddCommand(shortcutSyncCmd)
 	shortcutCmd.AddCommand(shortcutStatusCmd)
@@ -428,6 +432,7 @@ func runShortcutStatus(cmd *cobra.Command, args []string) {
 
 func runShortcutTeams(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
+	showAll, _ := cmd.Flags().GetBool("all")
 
 	apiToken, apiTokenSource := getShortcutConfig(ctx, "shortcut.api_token")
 	if apiToken == "" {
@@ -441,10 +446,24 @@ func runShortcutTeams(cmd *cobra.Command, args []string) {
 
 	client := shortcut.NewClient(apiToken, "")
 
-	teams, err := client.GetTeams(ctx)
+	allTeams, err := client.GetTeams(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching teams: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Filter out archived teams unless --all is specified
+	var teams []shortcut.Team
+	var archivedCount int
+	for _, team := range allTeams {
+		if team.Archived {
+			archivedCount++
+			if showAll {
+				teams = append(teams, team)
+			}
+		} else {
+			teams = append(teams, team)
+		}
 	}
 
 	if len(teams) == 0 {
@@ -457,17 +476,36 @@ func runShortcutTeams(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Println("Available Shortcut Teams")
+	if showAll {
+		fmt.Println("All Shortcut Teams (including archived)")
+	} else {
+		fmt.Println("Active Shortcut Teams")
+	}
 	fmt.Println("========================")
 	fmt.Println()
-	fmt.Printf("%-40s  %-20s  %s\n", "ID (use this for team_id)", "Mention Name", "Name")
-	fmt.Printf("%-40s  %-20s  %s\n", "----------------------------------------", "--------------------", "----")
-	for _, team := range teams {
-		fmt.Printf("%-40s  %-20s  %s\n", team.ID, team.MentionName, team.Name)
+	if showAll {
+		fmt.Printf("%-40s  %-20s  %-8s  %s\n", "ID (use this for team_id)", "Mention Name", "Status", "Name")
+		fmt.Printf("%-40s  %-20s  %-8s  %s\n", "----------------------------------------", "--------------------", "--------", "----")
+		for _, team := range teams {
+			status := "active"
+			if team.Archived {
+				status = "archived"
+			}
+			fmt.Printf("%-40s  %-20s  %-8s  %s\n", team.ID, team.MentionName, status, team.Name)
+		}
+	} else {
+		fmt.Printf("%-40s  %-20s  %s\n", "ID (use this for team_id)", "Mention Name", "Name")
+		fmt.Printf("%-40s  %-20s  %s\n", "----------------------------------------", "--------------------", "----")
+		for _, team := range teams {
+			fmt.Printf("%-40s  %-20s  %s\n", team.ID, team.MentionName, team.Name)
+		}
 	}
 	fmt.Println()
 	fmt.Println("To configure, use the ID (UUID) from above:")
 	fmt.Println("  bd config set shortcut.team_id \"<ID>\"")
+	if !showAll && archivedCount > 0 {
+		fmt.Printf("\n(%d archived teams hidden, use --all to show)\n", archivedCount)
+	}
 }
 
 // shortcutUUIDRegex matches valid UUID format (with or without hyphens).
