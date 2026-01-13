@@ -607,10 +607,7 @@ func TestGetCurrentBranchOrHEAD(t *testing.T) {
 
 	// Test 1: Normal branch returns branch name
 	t.Run("returns branch name when on branch", func(t *testing.T) {
-		branch, err := getCurrentBranchOrHEAD(ctx)
-		if err != nil {
-			t.Errorf("getCurrentBranchOrHEAD() error = %v", err)
-		}
+		branch := getCurrentBranchOrHEAD(ctx)
 		if branch != "main" {
 			t.Errorf("getCurrentBranchOrHEAD() = %q, want %q", branch, "main")
 		}
@@ -625,10 +622,7 @@ func TestGetCurrentBranchOrHEAD(t *testing.T) {
 			t.Fatalf("Failed to detach HEAD: %v\n%s", err, out)
 		}
 
-		branch, err := getCurrentBranchOrHEAD(ctx)
-		if err != nil {
-			t.Errorf("getCurrentBranchOrHEAD() error = %v", err)
-		}
+		branch := getCurrentBranchOrHEAD(ctx)
 		if branch != "HEAD" {
 			t.Errorf("getCurrentBranchOrHEAD() = %q, want %q", branch, "HEAD")
 		}

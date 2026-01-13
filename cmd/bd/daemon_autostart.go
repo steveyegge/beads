@@ -398,9 +398,10 @@ func setupDaemonIO(cmd *exec.Cmd) {
 	}
 }
 
-// getPIDFileForSocket returns the PID file path for a given socket path
-func getPIDFileForSocket(socketPath string) string {
-	// PID file is in .beads directory, not socket directory (socket may be in /tmp for short paths)
+// getPIDFileForSocket returns the PID file path.
+// Note: socketPath parameter is unused - PID file is always in .beads directory
+// (not socket directory, which may be in /tmp for short paths).
+func getPIDFileForSocket(_ string) string {
 	dir := filepath.Dir(dbPath)
 	return filepath.Join(dir, "daemon.pid")
 }
