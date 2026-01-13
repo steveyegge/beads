@@ -912,6 +912,11 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 
 	// Process each issue to get its children
 	processIssue := func(issueID string, issueStore storage.Storage) error {
+		// Initialize entry so "no children" message can be shown
+		if _, exists := allChildren[issueID]; !exists {
+			allChildren[issueID] = []*types.IssueWithDependencyMetadata{}
+		}
+
 		sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
 		if !ok {
 			// Fallback: try to get dependents without metadata
