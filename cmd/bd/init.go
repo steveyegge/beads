@@ -227,6 +227,13 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 				// Create metadata.json for --no-db mode
 				cfg := configfile.DefaultConfig()
+
+				// Setup namespace configuration (Phase 2.2)
+				if !quiet {
+					fmt.Printf("\n%s Namespace Configuration (optional):\n", ui.RenderBold("»"))
+				}
+				cfg = setupNamespaceConfig(cfg, beadsDir, !quiet)
+
 				if err := cfg.Save(beadsDir); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 					// Non-fatal - continue anyway
@@ -361,6 +368,13 @@ With --stealth: configures per-repository git settings for invisible beads usage
 					}
 				}
 			}
+
+			// Setup namespace configuration (Phase 2.2)
+			if !quiet {
+				fmt.Printf("\n%s Namespace Configuration (optional):\n", ui.RenderBold("»"))
+			}
+			cfg = setupNamespaceConfig(cfg, beadsDir, !quiet)
+
 			if err := cfg.Save(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway
@@ -739,4 +753,51 @@ Aborting.`, ui.RenderWarn("⚠"), dbPath, ui.RenderAccent("bd list"), prefix)
 	// "bd doctor --fix" but doctor couldn't create a database (bd-4h9).
 
 	return nil // No database found, safe to init
+}
+
+// setupNamespaceConfig sets up project name and default branch for namespace support (Phase 2.2)
+func setupNamespaceConfig(cfg *configfile.Config, beadsDir string, interactive bool) *configfile.Config {
+	if !interactive {
+		return cfg
+	}
+
+	// Try to auto-detect project name from git remote
+	projectName := config.DetectProjectFromGitRemote()
+	if projectName == "" {
+		// Fallback: use directory name
+		cwd, err := os.Getwd()
+		if err == nil {
+			projectName = filepath.Base(cwd)
+		}
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
+	// Prompt for project name
+	fmt.Printf("  Project name [%s]: ", projectName)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input != "" {
+		projectName = input
+	}
+	cfg.ProjectName = projectName
+
+	// Prompt for default branch (default: main)
+	defaultBranch := "main"
+	if cfg.DefaultBranch != "" {
+		defaultBranch = cfg.DefaultBranch
+	}
+	fmt.Printf("  Default branch for new issues [%s]: ", defaultBranch)
+	input, _ = reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input != "" {
+		defaultBranch = input
+	}
+	cfg.DefaultBranch = defaultBranch
+
+	if !strings.HasPrefix(projectName, ".") && projectName != "" {
+		fmt.Printf("  ✓ Namespace: %s:%s\n", ui.RenderAccent(projectName), ui.RenderAccent(defaultBranch))
+	}
+
+	return cfg
 }
