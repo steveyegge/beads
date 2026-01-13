@@ -170,6 +170,8 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
+	// Namespace fields (BRANCH_NAMESPACING)
+	Branch *string `json:"branch,omitempty"` // Branch for issue (for promotion between branches)
 }
 
 // CloseArgs represents arguments for the close operation

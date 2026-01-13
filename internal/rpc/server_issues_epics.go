@@ -156,6 +156,10 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.Holder != nil {
 		u["holder"] = *a.Holder
 	}
+	// Namespace fields (BRANCH_NAMESPACING)
+	if a.Branch != nil {
+		u["branch"] = *a.Branch
+	}
 	// Time-based scheduling fields (GH#820)
 	if a.DueAt != nil {
 		if *a.DueAt == "" {
