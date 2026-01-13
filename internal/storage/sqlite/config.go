@@ -8,6 +8,11 @@ import (
 
 // SetConfig sets a configuration value
 func (s *SQLiteStorage) SetConfig(ctx context.Context, key, value string) error {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO config (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value
@@ -17,6 +22,11 @@ func (s *SQLiteStorage) SetConfig(ctx context.Context, key, value string) error 
 
 // GetConfig gets a configuration value
 func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
@@ -27,6 +37,11 @@ func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, erro
 
 // GetAllConfig gets all configuration key-value pairs
 func (s *SQLiteStorage) GetAllConfig(ctx context.Context) (map[string]string, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM config ORDER BY key`)
 	if err != nil {
 		return nil, wrapDBError("query all config", err)
@@ -46,6 +61,11 @@ func (s *SQLiteStorage) GetAllConfig(ctx context.Context) (map[string]string, er
 
 // DeleteConfig deletes a configuration value
 func (s *SQLiteStorage) DeleteConfig(ctx context.Context, key string) error {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	_, err := s.db.ExecContext(ctx, `DELETE FROM config WHERE key = ?`, key)
 	return wrapDBError("delete config", err)
 }
@@ -78,6 +98,11 @@ func (s *SQLiteStorage) GetOrphanHandling(ctx context.Context) OrphanHandling {
 
 // SetMetadata sets a metadata value (for internal state like import hashes)
 func (s *SQLiteStorage) SetMetadata(ctx context.Context, key, value string) error {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO metadata (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value
@@ -87,6 +112,11 @@ func (s *SQLiteStorage) SetMetadata(ctx context.Context, key, value string) erro
 
 // GetMetadata gets a metadata value (for internal state like import hashes)
 func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {

@@ -5,12 +5,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/ui"
 )
+
+// preCommitFrameworkPattern matches pre-commit or prek framework hooks.
+// Uses same patterns as hookManagerPatterns in doctor/fix/hooks.go for consistency.
+// Includes all detection patterns: pre-commit run, prek run/hook-impl, config file refs, and pre-commit env vars.
+var preCommitFrameworkPattern = regexp.MustCompile(`(?i)(pre-commit\s+run|prek\s+run|prek\s+hook-impl|\.pre-commit-config|INSTALL_PYTHON|PRE_COMMIT)`)
 
 // hooksInstalled checks if bd git hooks are installed
 func hooksInstalled() bool {
@@ -64,12 +70,12 @@ func hooksInstalled() bool {
 
 // hookInfo contains information about an existing hook
 type hookInfo struct {
-	name        string
-	path        string
-	exists      bool
-	isBdHook    bool
-	isPreCommit bool
-	content     string
+	name                 string
+	path                 string
+	exists               bool
+	isBdHook             bool
+	isPreCommitFramework bool // true for pre-commit or prek
+	content              string
 }
 
 // detectExistingHooks scans for existing git hooks
@@ -91,10 +97,10 @@ func detectExistingHooks() []hookInfo {
 			hooks[i].exists = true
 			hooks[i].content = string(content)
 			hooks[i].isBdHook = strings.Contains(hooks[i].content, "bd (beads)")
-			// Only detect pre-commit framework if not a bd hook
+			// Only detect pre-commit/prek framework if not a bd hook
+			// Use regex for consistency with DetectActiveHookManager patterns
 			if !hooks[i].isBdHook {
-				hooks[i].isPreCommit = strings.Contains(hooks[i].content, "pre-commit run") ||
-					strings.Contains(hooks[i].content, ".pre-commit-config")
+				hooks[i].isPreCommitFramework = preCommitFrameworkPattern.MatchString(hooks[i].content)
 			}
 		}
 	}
@@ -108,8 +114,8 @@ func promptHookAction(existingHooks []hookInfo) string {
 	for _, hook := range existingHooks {
 		if hook.exists && !hook.isBdHook {
 			hookType := "custom script"
-			if hook.isPreCommit {
-				hookType = "pre-commit framework"
+			if hook.isPreCommitFramework {
+				hookType = "pre-commit/prek framework"
 			}
 			fmt.Printf("  - %s (%s)\n", hook.name, hookType)
 		}
