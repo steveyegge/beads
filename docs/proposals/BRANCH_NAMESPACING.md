@@ -1,7 +1,7 @@
 # Proposal: Branch-Based Issue Namespacing
 
 **Status:** Draft  
-**Author:** Discussion between mhwilkie and AI assistant  
+**Author:** Discussion between matt and AI assistant  
 **Date:** 2026-01-13  
 **Related Issues:** Fork workflow friction, PR conflicts on issues.jsonl
 
@@ -68,7 +68,7 @@ Like `go.mod` or `package.json`, source is configured separately:
 sources:
   beads:
     upstream: github.com/steveyegge/beads
-    fork: github.com/mhwilkie/beads  # Optional
+    fork: github.com/matt/beads  # Optional
     
   other-project:
     upstream: github.com/other/project
@@ -77,7 +77,7 @@ sources:
 This mirrors how modules work:
 ```go
 // go.mod
-replace github.com/steveyegge/beads => github.com/mhwilkie/beads v0.0.0-fix-auth
+replace github.com/steveyegge/beads => github.com/matt/beads v0.0.0-fix-auth
 ```
 
 ## Grammar
@@ -101,7 +101,7 @@ name           := [a-zA-Z0-9_-]+         # Identifier characters
 
 ## Resolution Rules
 
-Given context: Working in `mhwilkie/beads` fork on branch `fix-auth`
+Given context: Working in `matt/beads` fork on branch `fix-auth`
 
 | Input | Resolves To | Explanation |
 |-------|-------------|-------------|
@@ -279,8 +279,8 @@ When feature branch merges to main, what happens to branch-scoped issues?
 How to reference issues in other forks?
 
 **Options:**
-- A: Configure fork as additional source: `bd show beads:main-a3f2 --source mhwilkie`
-- B: Full URL syntax: `bd show github.com/mhwilkie/beads:main-a3f2`
+- A: Configure fork as additional source: `bd show beads:main-a3f2 --source matt`
+- B: Full URL syntax: `bd show github.com/matt/beads:main-a3f2`
 - C: Named remotes like git: `bd show fork:main-a3f2`
 
 ## Benefits Summary
