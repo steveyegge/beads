@@ -951,6 +951,9 @@ type IssueFilter struct {
 	DueAfter    *time.Time // Filter issues with due_at > this time
 	DueBefore   *time.Time // Filter issues with due_at < this time
 	Overdue     bool       // Filter issues where due_at < now AND status != closed
+
+	// Branch filtering (namespace support)
+	Branch string // Filter by branch name (e.g., "main", "fix-auth")
 }
 
 // SortPolicy determines how ready work is ordered

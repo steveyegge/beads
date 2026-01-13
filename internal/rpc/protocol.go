@@ -261,6 +261,9 @@ type ListArgs struct {
 	DueBefore   string `json:"due_before,omitempty"`   // ISO 8601 format
 	Overdue     bool   `json:"overdue,omitempty"`      // Filter issues where due_at < now
 
+	// Branch filtering (namespace support)
+	Branch string `json:"branch,omitempty"` // Filter by branch name (e.g., "main", "fix-auth")
+
 	// Staleness control (bd-dpkdm)
 	AllowStale bool `json:"allow_stale,omitempty"` // Skip staleness check, return potentially stale data
 }

@@ -1972,6 +1972,12 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, time.Now().Format(time.RFC3339), types.StatusClosed)
 	}
 
+	// Branch filtering (namespace support)
+	if filter.Branch != "" {
+		whereClauses = append(whereClauses, "branch = ?")
+		args = append(args, filter.Branch)
+	}
+
 	whereSQL := ""
 	if len(whereClauses) > 0 {
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
@@ -1990,7 +1996,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, project, branch
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

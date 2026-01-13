@@ -520,7 +520,7 @@ var showCmd = &cobra.Command{
 
 
 // formatShortIssue returns a compact one-line representation of an issue
-// Format: STATUS_ICON ID PRIORITY [Type] Title
+// Format: STATUS_ICON ID PRIORITY [Type] Title [Branch]
 func formatShortIssue(issue *types.Issue) string {
 	statusIcon := ui.RenderStatusIcon(string(issue.Status))
 	priorityTag := ui.RenderPriority(issue.Priority)
@@ -534,17 +534,24 @@ func formatShortIssue(issue *types.Issue) string {
 		typeBadge = ui.TypeBugStyle.Render("[bug]") + " "
 	}
 
+	// Branch indicator if present and not main
+	branchSuffix := ""
+	if issue.Branch != "" && issue.Branch != "main" {
+		branchSuffix = " " + ui.RenderMuted(fmt.Sprintf("[%s]", issue.Branch))
+	}
+
 	// Closed issues: entire line is muted
 	if issue.Status == types.StatusClosed {
-		return fmt.Sprintf("%s %s %s %s%s",
+		return fmt.Sprintf("%s %s %s %s%s%s",
 			statusIcon,
 			ui.RenderMuted(issue.ID),
 			ui.RenderMuted(fmt.Sprintf("● P%d", issue.Priority)),
 			ui.RenderMuted(string(issue.IssueType)),
-			ui.RenderMuted(" "+issue.Title))
+			ui.RenderMuted(" "+issue.Title),
+			branchSuffix)
 	}
 
-	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title)
+	return fmt.Sprintf("%s %s %s %s%s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title, branchSuffix)
 }
 
 // formatIssueHeader returns the Tufte-aligned header line
@@ -590,7 +597,7 @@ func formatIssueHeader(issue *types.Issue) string {
 func formatIssueMetadata(issue *types.Issue) string {
 	var lines []string
 
-	// Line 1: Owner/Assignee · Type
+	// Line 1: Owner/Assignee · Type · Branch (if relevant)
 	metaParts := []string{}
 	if issue.CreatedBy != "" {
 		metaParts = append(metaParts, fmt.Sprintf("Owner: %s", issue.CreatedBy))
@@ -608,6 +615,11 @@ func formatIssueMetadata(issue *types.Issue) string {
 		typeStr = ui.TypeBugStyle.Render("bug")
 	}
 	metaParts = append(metaParts, fmt.Sprintf("Type: %s", typeStr))
+
+	// Show branch context if present and not main (main is default, no need to show)
+	if issue.Branch != "" && issue.Branch != "main" {
+		metaParts = append(metaParts, fmt.Sprintf("Branch: %s", ui.RenderAccent(issue.Branch)))
+	}
 
 	if len(metaParts) > 0 {
 		lines = append(lines, strings.Join(metaParts, " · "))

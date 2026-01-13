@@ -1285,6 +1285,11 @@ func (s *Server) handleList(req *Request) Response {
 	}
 	filter.Overdue = listArgs.Overdue
 
+	// Branch filtering (namespace support)
+	if listArgs.Branch != "" {
+		filter.Branch = listArgs.Branch
+	}
+
 	// Guard against excessive ID lists to avoid SQLite parameter limits
 	const maxIDs = 1000
 	if len(filter.IDs) > maxIDs {

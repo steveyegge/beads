@@ -513,6 +513,9 @@ var listCmd = &cobra.Command{
 		// Ready filter (bd-ihu31)
 		readyFlag, _ := cmd.Flags().GetBool("ready")
 
+		// Branch filtering (namespace support)
+		branchFilter, _ := cmd.Flags().GetString("branch")
+
 		// Watch mode implies pretty format
 		if watchMode {
 			prettyFormat = true
@@ -757,6 +760,11 @@ var listCmd = &cobra.Command{
 			filter.Overdue = true
 		}
 
+		// Branch filtering (namespace support)
+		if branchFilter != "" {
+			filter.Branch = branchFilter
+		}
+
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
@@ -875,6 +883,11 @@ var listCmd = &cobra.Command{
 				listArgs.DueBefore = filter.DueBefore.Format(time.RFC3339)
 			}
 			listArgs.Overdue = filter.Overdue
+
+			// Branch filtering (namespace support)
+			if filter.Branch != "" {
+				listArgs.Branch = filter.Branch
+			}
 
 			// Pass through --allow-stale flag for resilient queries (bd-dpkdm)
 			listArgs.AllowStale = allowStale
@@ -1176,6 +1189,9 @@ func init() {
 
 	// Ready filter: show only issues ready to be worked on (bd-ihu31)
 	listCmd.Flags().Bool("ready", false, "Show only ready issues (status=open, excludes hooked/in_progress/blocked/deferred)")
+
+	// Branch filtering (namespace support)
+	listCmd.Flags().String("branch", "", "Filter by branch (e.g., 'main', 'fix-auth'). Shows only issues on this branch")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
