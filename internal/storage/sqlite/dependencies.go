@@ -324,6 +324,11 @@ func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []stri
 		return make(map[string]*types.DependencyCounts), nil
 	}
 
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	// Build placeholders for the IN clause
 	placeholders := make([]string, len(issueIDs))
 	args := make([]interface{}, len(issueIDs)*2)
@@ -394,6 +399,11 @@ func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []stri
 
 // GetDependencyRecords returns raw dependency records for an issue
 func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by,
 		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
@@ -430,6 +440,11 @@ func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string
 // GetAllDependencyRecords returns all dependency records grouped by issue ID
 // This is optimized for bulk export operations to avoid N+1 queries
 func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by,
 		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
@@ -469,6 +484,11 @@ func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 // When showAllPaths is true, all paths are shown with duplicate nodes at different depths.
 // When reverse is true, shows dependent tree (what was discovered from this) instead of dependency tree (what blocks this).
 func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	if maxDepth <= 0 {
 		maxDepth = 50
 	}
@@ -721,6 +741,11 @@ func parseExternalRefParts(ref string) (project, capability string) {
 // loadDependencyGraph loads all non-relates-to dependencies as an adjacency list.
 // This is used by DetectCycles for O(V+E) cycle detection instead of the O(2^n) SQL CTE.
 func (s *SQLiteStorage) loadDependencyGraph(ctx context.Context) (map[string][]string, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	deps := make(map[string][]string)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id
