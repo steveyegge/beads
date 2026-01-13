@@ -215,6 +215,11 @@ func isDaemonHealthy(socketPath string) bool {
 }
 
 func acquireStartLock(lockPath, socketPath string) bool {
+	if err := ensureLockDirectory(lockPath); err != nil {
+		debugLog("failed to ensure lock directory: %v", err)
+		return false
+	}
+
 	// nolint:gosec // G304: lockPath is derived from secure beads directory
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -307,6 +312,21 @@ func handleExistingSocket(socketPath string) bool {
 
 func determineSocketPath(socketPath string) string {
 	return socketPath
+}
+
+// ensureLockDirectory ensures the parent directory exists for the lock file.
+// Needed when ShortSocketPath routes sockets into /tmp/beads-*/bd.sock.
+func ensureLockDirectory(lockPath string) error {
+	dir := filepath.Dir(lockPath)
+	if dir == "" {
+		return fmt.Errorf("lock directory missing for %s", lockPath)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(dir, 0o700)
 }
 
 func startDaemonProcess(socketPath string) bool {

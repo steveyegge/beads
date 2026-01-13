@@ -127,6 +127,24 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "missing", "bd.sock")
+	lockPath := socketPath + ".startlock"
+
+	if _, err := os.Stat(filepath.Dir(lockPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected lock dir to be missing before test, got: %v", err)
+	}
+
+	if !acquireStartLock(lockPath, socketPath) {
+		t.Fatalf("expected acquireStartLock to succeed when directory missing")
+	}
+
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lock file to exist, stat error: %v", err)
+	}
+}
+
 func TestDaemonAutostart_SocketHealthAndReadiness(t *testing.T) {
 	socketPath, cleanup := startTestRPCServer(t)
 	defer cleanup()
