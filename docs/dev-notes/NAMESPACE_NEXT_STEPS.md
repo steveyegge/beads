@@ -2,7 +2,29 @@
 
 ## Phase 2: CLI Command Integration
 
-The foundation is in place. Now integrate namespace support into the command layer.
+**Status:** Partially Complete (2026-01-13)
+
+### Phase 2 Completion Summary
+
+✅ **Completed:**
+- Config package (`internal/config/config.go`): Added namespace configuration with helper functions
+- Configfile package (`internal/configfile/configfile.go`): Added ProjectName and DefaultBranch fields, auto-detection from git remote
+- CLI commands (`cmd/bd/create.go`): Added --branch flag with smart defaults (current git branch → config default → main)
+- Issue creation: Updated CreateIssue to populate Project and Branch fields from context
+- RPC protocol: Extended CreateArgs to support Project and Branch fields
+- RPC server: Updated handler to propagate namespace fields to database
+- Database queries: Added GetIssuesByBranch() for filtering by project/branch pair
+- Storage interface: Updated to include GetIssuesByBranch method
+- Memory storage: Implemented GetIssuesByBranch for testing
+
+⏳ **Next Steps:**
+- Display layer updates to show branch context (bd list, bd show)
+- bd init integration for setting up namespace config
+- bd promote command for moving issues between branches
+- bd sources command for managing sources.yaml
+- Migration strategy for old bd-xxx format to new namespace format
+
+The foundation is in place. Continue integrating namespace support into the command layer.
 
 ### Key Integration Points
 
