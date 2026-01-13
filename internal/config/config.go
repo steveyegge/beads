@@ -139,6 +139,15 @@ func Initialize() error {
 	// Maps project names to paths for resolving external: blocked_by references
 	v.SetDefault("external_projects", map[string]string{})
 
+	// Namespace configuration defaults (BRANCH_NAMESPACING)
+	// Project name for issue IDs (e.g., "beads", "other-project")
+	// Auto-detected from git remote if not set
+	v.SetDefault("namespace.project-name", "")
+	// Default branch for issue creation (e.g., "main")
+	v.SetDefault("namespace.default-branch", "main")
+	// Auto-detect project name from git remote during initialization
+	v.SetDefault("namespace.auto-detect-project", true)
+
 	// Read config file if it was found
 	if configFileSet {
 		if err := v.ReadInConfig(); err != nil {
@@ -502,4 +511,93 @@ func GetIdentity(flagValue string) string {
 	}
 
 	return "unknown"
+}
+
+// GetNamespaceProjectName returns the configured project name for issue namespacing.
+// Returns empty string if not configured (caller should use auto-detection or default).
+func GetNamespaceProjectName() string {
+	return GetString("namespace.project-name")
+}
+
+// SetNamespaceProjectName sets the project name in the current viper instance.
+// This does NOT persist to disk - use config file or environment variable for persistence.
+func SetNamespaceProjectName(name string) {
+	if v != nil {
+		v.Set("namespace.project-name", name)
+	}
+}
+
+// GetNamespaceDefaultBranch returns the default branch for issue creation.
+// Defaults to "main" if not configured.
+func GetNamespaceDefaultBranch() string {
+	branch := GetString("namespace.default-branch")
+	if branch == "" {
+		return "main"
+	}
+	return branch
+}
+
+// SetNamespaceDefaultBranch sets the default branch in the current viper instance.
+// This does NOT persist to disk - use config file or environment variable for persistence.
+func SetNamespaceDefaultBranch(branch string) {
+	if v != nil {
+		v.Set("namespace.default-branch", branch)
+	}
+}
+
+// GetNamespaceAutoDetectProject returns whether to auto-detect project from git remote.
+func GetNamespaceAutoDetectProject() bool {
+	return GetBool("namespace.auto-detect-project")
+}
+
+// DetectProjectFromGitRemote attempts to extract project name from git remote URL.
+// Returns empty string if git is not available or remote is not configured.
+// Examples:
+//   github.com/steveyegge/beads      → beads
+//   github.com/steveyegge/beads.git  → beads
+//   /home/user/repos/my-project      → my-project
+func DetectProjectFromGitRemote() string {
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	url := strings.TrimSpace(string(output))
+	if url == "" {
+		return ""
+	}
+
+	// Extract repository name from URL
+	// Remove .git suffix if present
+	if strings.HasSuffix(url, ".git") {
+		url = url[:len(url)-4]
+	}
+
+	// Handle SSH URLs (git@github.com:user/repo)
+	if strings.Contains(url, ":") {
+		parts := strings.SplitN(url, ":", 2)
+		if len(parts) == 2 {
+			url = parts[1]
+		}
+	}
+
+	// Handle HTTPS URLs (https://github.com/user/repo)
+	if strings.Contains(url, "://") {
+		parts := strings.SplitN(url, "://", 2)
+		if len(parts) == 2 {
+			url = parts[1]
+		}
+	}
+
+	// Extract last component (repo name)
+	if strings.Contains(url, "/") {
+		parts := strings.Split(url, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// If no slashes (local path), just use basename
+	return filepath.Base(url)
 }
