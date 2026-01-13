@@ -14,6 +14,8 @@ import (
 type Issue struct {
 	// ===== Core Identification =====
 	ID          string `json:"id"`
+	Project     string `json:"project,omitempty"`      // Project namespace (e.g., "beads", "other-project")
+	Branch      string `json:"branch,omitempty"`       // Branch namespace (e.g., "main", "fix-auth")
 	ContentHash string `json:"-"` // Internal: SHA256 of canonical content - NOT exported to JSONL
 
 	// ===== Issue Content =====
@@ -949,6 +951,9 @@ type IssueFilter struct {
 	DueAfter    *time.Time // Filter issues with due_at > this time
 	DueBefore   *time.Time // Filter issues with due_at < this time
 	Overdue     bool       // Filter issues where due_at < now AND status != closed
+
+	// Branch filtering (namespace support)
+	Branch string // Filter by branch name (e.g., "main", "fix-auth")
 }
 
 // SortPolicy determines how ready work is ordered
