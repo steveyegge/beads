@@ -156,6 +156,7 @@ func CheckLegacyJSONLFilename(repoPath string) DoctorCheck {
 			name == "deletions.jsonl" ||
 			name == "interactions.jsonl" ||
 			name == "molecules.jsonl" ||
+			name == "sync_base.jsonl" ||
 			// Git merge conflict artifacts (e.g., issues.base.jsonl, issues.left.jsonl)
 			strings.Contains(lowerName, ".base.jsonl") ||
 			strings.Contains(lowerName, ".left.jsonl") ||

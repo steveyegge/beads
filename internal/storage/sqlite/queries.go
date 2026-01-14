@@ -167,10 +167,14 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Use IDPrefix override if set, combined with config prefix
-	// e.g., configPrefix="bd" + IDPrefix="wisp" → "bd-wisp"
+	// Determine prefix for ID generation and validation:
+	// 1. PrefixOverride completely replaces config prefix (for cross-rig creation)
+	// 2. IDPrefix appends to config prefix (e.g., "bd" + "wisp" → "bd-wisp")
+	// 3. Otherwise use config prefix as-is
 	prefix := configPrefix
-	if issue.IDPrefix != "" {
+	if issue.PrefixOverride != "" {
+		prefix = issue.PrefixOverride
+	} else if issue.IDPrefix != "" {
 		prefix = configPrefix + "-" + issue.IDPrefix
 	}
 
@@ -1090,12 +1094,18 @@ func (s *SQLiteStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, n
 
 	// Update depends_on_id column
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE dependencies 
+		UPDATE dependencies
 		SET depends_on_id = ? || substr(depends_on_id, length(?) + 1)
 		WHERE depends_on_id LIKE ? || '%'
 	`, newPrefix, oldPrefix, oldPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to update depends_on_id in dependencies: %w", err)
+	}
+
+	// GH#1016: Rebuild blocked_issues_cache since it stores issue IDs
+	// that have now been renamed
+	if err := s.invalidateBlockedCache(ctx, nil); err != nil {
+		return fmt.Errorf("failed to rebuild blocked cache: %w", err)
 	}
 
 	return nil

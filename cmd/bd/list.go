@@ -510,6 +510,9 @@ var listCmd = &cobra.Command{
 		// Pager control (bd-jdz3)
 		noPager, _ := cmd.Flags().GetBool("no-pager")
 
+		// Ready filter (bd-ihu31)
+		readyFlag, _ := cmd.Flags().GetBool("ready")
+
 		// Watch mode implies pretty format
 		if watchMode {
 			prettyFormat = true
@@ -541,13 +544,18 @@ var listCmd = &cobra.Command{
 		filter := types.IssueFilter{
 			Limit: effectiveLimit,
 		}
-		if status != "" && status != "all" {
+
+		// --ready flag: show only open issues (excludes hooked/in_progress/blocked/deferred) (bd-ihu31)
+		if readyFlag {
+			s := types.StatusOpen
+			filter.Status = &s
+		} else if status != "" && status != "all" {
 			s := types.Status(status)
 			filter.Status = &s
 		}
 
 		// Default to non-closed issues unless --all or explicit --status (GH#788)
-		if status == "" && !allFlag {
+		if status == "" && !allFlag && !readyFlag {
 			filter.ExcludeStatus = []types.Status{types.StatusClosed}
 		}
 		// Use Changed() to properly handle P0 (priority=0)
@@ -761,8 +769,13 @@ var listCmd = &cobra.Command{
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
+			// Determine effective status for RPC (--ready overrides to "open")
+			effectiveStatus := status
+			if readyFlag {
+				effectiveStatus = "open"
+			}
 			listArgs := &rpc.ListArgs{
-				Status:    status,
+				Status:    effectiveStatus,
 				IssueType: issueType,
 				Assignee:  assignee,
 				Limit:     effectiveLimit,
@@ -1160,6 +1173,9 @@ func init() {
 
 	// Pager control (bd-jdz3)
 	listCmd.Flags().Bool("no-pager", false, "Disable pager output")
+
+	// Ready filter: show only issues ready to be worked on (bd-ihu31)
+	listCmd.Flags().Bool("ready", false, "Show only ready issues (status=open, excludes hooked/in_progress/blocked/deferred)")
 
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
