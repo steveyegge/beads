@@ -104,11 +104,13 @@ type Member struct {
 
 // Team represents a team (group) in Shortcut.
 type Team struct {
-	ID          string `json:"id"` // UUID
-	Name        string `json:"name"`
-	MentionName string `json:"mention_name"`
-	Description string `json:"description"`
-	Archived    bool   `json:"archived"`
+	ID                string  `json:"id"` // UUID
+	Name              string  `json:"name"`
+	MentionName       string  `json:"mention_name"`
+	Description       string  `json:"description"`
+	Archived          bool    `json:"archived"`
+	DefaultWorkflowID *int64  `json:"default_workflow_id,omitempty"`
+	WorkflowIDs       []int64 `json:"workflow_ids,omitempty"`
 }
 
 // Workflow represents a workflow in Shortcut.
@@ -218,11 +220,12 @@ type DependencyInfo struct {
 
 // StateCache caches workflow states to avoid repeated API calls.
 type StateCache struct {
-	Workflows          []Workflow
-	StatesByID         map[int64]WorkflowState
-	WorkflowByStateID  map[int64]int64 // Maps state ID to workflow ID
-	OpenStateID        int64           // First "unstarted" state
-	DoneStateID        int64           // First "done" state
+	Workflows             []Workflow
+	StatesByID            map[int64]WorkflowState
+	WorkflowByStateID     map[int64]int64  // Maps state ID to workflow ID
+	TeamDefaultWorkflowID map[string]int64 // Maps team ID (UUID) to default workflow ID
+	OpenStateID           int64            // First "unstarted" state
+	DoneStateID           int64            // First "done" state
 }
 
 // beadsStatusToStateType maps a beads status to a Shortcut state type.
@@ -293,4 +296,40 @@ func (sc *StateCache) FindStateForBeadsStatusInWorkflow(status string, currentSt
 
 	// Fall back to global search
 	return sc.FindStateForBeadsStatus(status)
+}
+
+// FindInitialStateForTeam finds the initial (unstarted or backlog) state for a team's
+// default workflow. This is used when creating new stories to ensure the state is
+// compatible with the team's workflow.
+func (sc *StateCache) FindInitialStateForTeam(teamID string) int64 {
+	// Look up the team's default workflow
+	workflowID, ok := sc.TeamDefaultWorkflowID[teamID]
+	if !ok {
+		// Fall back to global open state
+		return sc.OpenStateID
+	}
+
+	// Find the workflow and get its initial state
+	for _, wf := range sc.Workflows {
+		if wf.ID != workflowID {
+			continue
+		}
+
+		// First pass: prefer "unstarted" states (more actionable)
+		for _, state := range wf.States {
+			if state.Type == "unstarted" {
+				return state.ID
+			}
+		}
+
+		// Second pass: fall back to "backlog" states
+		for _, state := range wf.States {
+			if state.Type == "backlog" {
+				return state.ID
+			}
+		}
+	}
+
+	// Fall back to global open state
+	return sc.OpenStateID
 }

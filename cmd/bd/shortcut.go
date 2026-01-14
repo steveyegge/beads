@@ -41,7 +41,7 @@ Data Mapping (optional, sensible defaults provided):
     bd config set shortcut.state_map.backlog open        # Backlog states
     bd config set shortcut.state_map.unstarted open      # Ready for work
     bd config set shortcut.state_map.started in_progress # In progress
-    bd config set shortcut.state_map.done closed         # Completed/Cancelled
+    bd config set shortcut.state_map.done closed         # Completed/Canceled
     # Custom state names also work:
     bd config set shortcut.state_map."In Review" in_progress
 

@@ -361,10 +361,28 @@ func TestStoryToBeadsWithStoryLinks(t *testing.T) {
 
 func TestBeadsToStoryParams(t *testing.T) {
 	config := DefaultMappingConfig()
+	teamID := "team-uuid-123"
 	stateCache := &StateCache{
+		Workflows: []Workflow{
+			{
+				ID:   1,
+				Name: "Engineering",
+				States: []WorkflowState{
+					{ID: 100, Name: "Todo", Type: "unstarted"},
+					{ID: 200, Name: "In Progress", Type: "started"},
+				},
+			},
+		},
 		StatesByID: map[int64]WorkflowState{
 			100: {ID: 100, Name: "Todo", Type: "unstarted"},
 			200: {ID: 200, Name: "In Progress", Type: "started"},
+		},
+		WorkflowByStateID: map[int64]int64{
+			100: 1,
+			200: 1,
+		},
+		TeamDefaultWorkflowID: map[string]int64{
+			teamID: 1,
 		},
 		OpenStateID: 100,
 	}
@@ -378,7 +396,7 @@ func TestBeadsToStoryParams(t *testing.T) {
 		Labels:      []string{"urgent", "backend"},
 	}
 
-	params := BeadsToStoryParams(issue, stateCache, config)
+	params := BeadsToStoryParams(issue, stateCache, config, teamID)
 
 	if params.Name != "Test Issue" {
 		t.Errorf("Name = %q, want %q", params.Name, "Test Issue")
@@ -389,8 +407,9 @@ func TestBeadsToStoryParams(t *testing.T) {
 	if params.StoryType != "bug" {
 		t.Errorf("StoryType = %q, want %q", params.StoryType, "bug")
 	}
+	// WorkflowStateID should be set to the initial state from the team's workflow
 	if params.WorkflowStateID != 100 {
-		t.Errorf("WorkflowStateID = %d, want %d", params.WorkflowStateID, 100)
+		t.Errorf("WorkflowStateID = %d, want 100", params.WorkflowStateID)
 	}
 	if len(params.OwnerIDs) != 1 || params.OwnerIDs[0] != "user-uuid" {
 		t.Errorf("OwnerIDs = %v, want [user-uuid]", params.OwnerIDs)

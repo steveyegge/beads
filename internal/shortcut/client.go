@@ -361,17 +361,30 @@ func (c *Client) GetMembers(ctx context.Context) ([]Member, error) {
 	return members, nil
 }
 
-// BuildStateCache fetches workflows and builds a state cache for quick lookups.
+// BuildStateCache fetches workflows and teams, and builds a state cache for quick lookups.
 func BuildStateCache(ctx context.Context, client *Client) (*StateCache, error) {
 	workflows, err := client.GetWorkflows(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch workflows: %w", err)
 	}
 
+	teams, err := client.GetTeams(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch teams: %w", err)
+	}
+
 	cache := &StateCache{
-		Workflows:         workflows,
-		StatesByID:        make(map[int64]WorkflowState),
-		WorkflowByStateID: make(map[int64]int64),
+		Workflows:             workflows,
+		StatesByID:            make(map[int64]WorkflowState),
+		WorkflowByStateID:     make(map[int64]int64),
+		TeamDefaultWorkflowID: make(map[string]int64),
+	}
+
+	// Map team IDs to their default workflow IDs
+	for _, team := range teams {
+		if team.DefaultWorkflowID != nil {
+			cache.TeamDefaultWorkflowID[team.ID] = *team.DefaultWorkflowID
+		}
 	}
 
 	var backlogStateID int64

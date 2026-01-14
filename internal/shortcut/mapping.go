@@ -415,16 +415,19 @@ func StoryToBeads(story *Story, stateCache *StateCache, config *MappingConfig) *
 }
 
 // BeadsToStoryParams converts a Beads issue to Shortcut story creation parameters.
-func BeadsToStoryParams(issue *types.Issue, stateCache *StateCache, config *MappingConfig) *CreateStoryParams {
+// teamID is the UUID of the team to create the story in - used to find the correct
+// initial state from the team's default workflow.
+func BeadsToStoryParams(issue *types.Issue, stateCache *StateCache, config *MappingConfig, teamID string) *CreateStoryParams {
 	params := &CreateStoryParams{
 		Name:        issue.Title,
 		Description: issue.Description,
 		StoryType:   TypeToShortcut(issue.IssueType),
 	}
 
-	// Set workflow state if we have a state cache
-	if stateCache != nil {
-		params.WorkflowStateID = stateCache.FindStateForBeadsStatus(string(issue.Status))
+	// Set workflow state using the team's default workflow to avoid
+	// "Story Team and Workflow not compatible" errors
+	if stateCache != nil && teamID != "" {
+		params.WorkflowStateID = stateCache.FindInitialStateForTeam(teamID)
 	}
 
 	// Set owner

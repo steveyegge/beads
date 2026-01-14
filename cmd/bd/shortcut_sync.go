@@ -238,7 +238,8 @@ func doPushToShortcut(ctx context.Context, dryRun bool, createOnly bool, updateR
 			continue
 		}
 
-		params := shortcut.BeadsToStoryParams(issue, stateCache, mappingConfig)
+		// Pass team ID to find the correct initial state from the team's workflow
+		params := shortcut.BeadsToStoryParams(issue, stateCache, mappingConfig, client.TeamID)
 
 		story, err := client.CreateStory(ctx, params)
 		if err != nil {
