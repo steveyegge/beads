@@ -183,10 +183,11 @@ func hasClaudeHooks() bool {
 		return false
 	}
 
-	globalSettings := filepath.Join(home, ".claude/settings.json")
-	projectSettings := ".claude/settings.local.json"
+	globalSettings := filepath.Join(home, ".claude", "settings.json")
+	projectSettings := filepath.Join(".claude", "settings.json")
+	projectLocalSettings := filepath.Join(".claude", "settings.local.json")
 
-	return hasBeadsHooks(globalSettings) || hasBeadsHooks(projectSettings)
+	return hasBeadsHooks(globalSettings) || hasBeadsHooks(projectSettings) || hasBeadsHooks(projectLocalSettings)
 }
 
 // hasBeadsHooks checks if a settings file has bd prime hooks

@@ -246,6 +246,76 @@ func TestHasClaudeHooks(t *testing.T) {
 	}
 }
 
+func TestHasClaudeHooksProjectLevel(t *testing.T) {
+	hooksContent := `{
+		"hooks": {
+			"SessionStart": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "bd prime"}]}
+			]
+		}
+	}`
+
+	// Test that hooks are detected in each project-level settings file
+	for _, filename := range []string{"settings.json", "settings.local.json"} {
+		t.Run(filename, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+
+			if err := os.MkdirAll(".claude", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(".claude", filename), []byte(hooksContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if !hasClaudeHooks() {
+				t.Errorf("expected to detect hooks in .claude/%s", filename)
+			}
+		})
+	}
+
+	// Test negative cases
+	t.Run("no hooks section", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"enabledPlugins":{}}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if hasClaudeHooks() {
+			t.Error("expected NOT to detect hooks when hooks section missing")
+		}
+	})
+
+	t.Run("hooks but not bd prime", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{
+			"hooks": {
+				"SessionStart": [
+					{"matcher": "", "hooks": [{"type": "command", "command": "echo hello"}]}
+				]
+			}
+		}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if hasClaudeHooks() {
+			t.Error("expected NOT to detect hooks when bd prime not present")
+		}
+	})
+}
+
 func TestCheckClaude(t *testing.T) {
 	// Verify CheckClaude returns a valid DoctorCheck
 	check := CheckClaude()
