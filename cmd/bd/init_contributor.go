@@ -19,6 +19,25 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println("This wizard will configure beads for OSS contribution.")
 	fmt.Println()
 
+	// Early check: BEADS_DIR takes precedence over routing
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		fmt.Printf("%s BEADS_DIR is set: %s\n", ui.RenderWarn("⚠"), beadsDir)
+		fmt.Println("\n  BEADS_DIR takes precedence over contributor routing.")
+		fmt.Println("  If you're using the ACF pattern (external tracking repo),")
+		fmt.Println("  you likely don't need --contributor.")
+		fmt.Println()
+		fmt.Print("Continue anyway? [y/N]: ")
+		reader := bufio.NewReader(os.Stdin)
+		response, _ := reader.ReadString('\n')
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		if response != "y" && response != "yes" {
+			fmt.Println("Setup canceled.")
+			return nil
+		}
+		fmt.Println()
+	}
+
 	// Step 1: Detect fork relationship
 	fmt.Printf("%s Detecting git repository setup...\n", ui.RenderAccent("▶"))
 
@@ -162,14 +181,12 @@ Created by: bd init --contributor
 	// Step 4: Configure contributor routing
 	fmt.Printf("\n%s Configuring contributor auto-routing...\n", ui.RenderAccent("▶"))
 
-	// Set contributor.planning_repo config
-	if err := store.SetConfig(ctx, "contributor.planning_repo", planningPath); err != nil {
-		return fmt.Errorf("failed to set planning repo config: %w", err)
+	// Set routing config (canonical namespace per internal/config/config.go)
+	if err := store.SetConfig(ctx, "routing.mode", "auto"); err != nil {
+		return fmt.Errorf("failed to set routing mode: %w", err)
 	}
-
-	// Set contributor.auto_route to true
-	if err := store.SetConfig(ctx, "contributor.auto_route", "true"); err != nil {
-		return fmt.Errorf("failed to enable auto-routing: %w", err)
+	if err := store.SetConfig(ctx, "routing.contributor", planningPath); err != nil {
+		return fmt.Errorf("failed to set routing contributor path: %w", err)
 	}
 
 	fmt.Printf("%s Auto-routing enabled\n", ui.RenderPass("✓"))

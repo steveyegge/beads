@@ -313,11 +313,25 @@ var createCmd = &cobra.Command{
 				debug.Logf("Warning: failed to detect user role: %v\n", err)
 			}
 
+			// Build routing config with backward compatibility for legacy contributor.* keys
+			routingMode := config.GetString("routing.mode")
+			contributorRepo := config.GetString("routing.contributor")
+
+			// NFR-001: Backward compatibility - fall back to legacy contributor.* keys
+			if routingMode == "" {
+				if config.GetString("contributor.auto_route") == "true" {
+					routingMode = "auto"
+				}
+			}
+			if contributorRepo == "" {
+				contributorRepo = config.GetString("contributor.planning_repo")
+			}
+
 			routingConfig := &routing.RoutingConfig{
-				Mode:             config.GetString("routing.mode"),
+				Mode:             routingMode,
 				DefaultRepo:      config.GetString("routing.default"),
 				MaintainerRepo:   config.GetString("routing.maintainer"),
-				ContributorRepo:  config.GetString("routing.contributor"),
+				ContributorRepo:  contributorRepo,
 				ExplicitOverride: repoOverride,
 			}
 
