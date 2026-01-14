@@ -392,3 +392,131 @@ func CheckPersistentMolIssues(path string) DoctorCheck {
 		Category: CategoryMaintenance,
 	}
 }
+
+// CheckStaleMQFiles detects legacy .beads/mq/*.json files from gastown.
+// These files are LOCAL ONLY (not committed) and represent stale merge queue
+// entries from the old mrqueue implementation. They are safe to delete since
+// gt done already creates merge-request wisps in beads.
+func CheckStaleMQFiles(path string) DoctorCheck {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	mqDir := filepath.Join(beadsDir, "mq")
+
+	if _, err := os.Stat(mqDir); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	files, err := filepath.Glob(filepath.Join(mqDir, "*.json"))
+	if err != nil || len(files) == 0 {
+		return DoctorCheck{
+			Name:     "Legacy MQ Files",
+			Status:   StatusOK,
+			Message:  "No legacy merge queue files",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	return DoctorCheck{
+		Name:     "Legacy MQ Files",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d stale .beads/mq/*.json file(s)", len(files)),
+		Detail:   "Legacy gastown merge queue files (local only, safe to delete)",
+		Fix:      "Run 'bd doctor --fix' to delete, or 'rm -rf .beads/mq/'",
+		Category: CategoryMaintenance,
+	}
+}
+
+// FixStaleMQFiles removes the legacy .beads/mq/ directory and all its contents.
+func FixStaleMQFiles(path string) error {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	mqDir := filepath.Join(beadsDir, "mq")
+
+	if _, err := os.Stat(mqDir); os.IsNotExist(err) {
+		return nil // Nothing to do
+	}
+
+	if err := os.RemoveAll(mqDir); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", mqDir, err)
+	}
+
+	return nil
+}
+
+// CheckMisclassifiedWisps detects wisp-patterned issues that lack the ephemeral flag.
+// Issues with IDs containing "-wisp-" should always have Ephemeral=true.
+// If they're in JSONL without the ephemeral flag, they'll pollute bd ready.
+func CheckMisclassifiedWisps(path string) DoctorCheck {
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		return DoctorCheck{
+			Name:     "Misclassified Wisps",
+			Status:   StatusOK,
+			Message:  "N/A (no JSONL file)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	// Read JSONL and find wisp-patterned issues without ephemeral flag
+	file, err := os.Open(jsonlPath) // #nosec G304 - path constructed safely
+	if err != nil {
+		return DoctorCheck{
+			Name:     "Misclassified Wisps",
+			Status:   StatusOK,
+			Message:  "N/A (unable to read JSONL)",
+			Category: CategoryMaintenance,
+		}
+	}
+	defer file.Close()
+
+	var wispCount int
+	var wispIDs []string
+	decoder := json.NewDecoder(file)
+
+	for {
+		var issue types.Issue
+		if err := decoder.Decode(&issue); err != nil {
+			break
+		}
+		// Skip deleted issues (tombstones)
+		if issue.DeletedAt != nil {
+			continue
+		}
+		// Look for wisp pattern without ephemeral flag
+		// These shouldn't be in JSONL at all (wisps are ephemeral)
+		if strings.Contains(issue.ID, "-wisp-") && !issue.Ephemeral {
+			wispCount++
+			if len(wispIDs) < 3 {
+				wispIDs = append(wispIDs, issue.ID)
+			}
+		}
+	}
+
+	if wispCount == 0 {
+		return DoctorCheck{
+			Name:     "Misclassified Wisps",
+			Status:   StatusOK,
+			Message:  "No misclassified wisps found",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	detail := fmt.Sprintf("Example: %v", wispIDs)
+	if wispCount > 3 {
+		detail += fmt.Sprintf(" (+%d more)", wispCount-3)
+	}
+
+	return DoctorCheck{
+		Name:     "Misclassified Wisps",
+		Status:   StatusWarning,
+		Message:  fmt.Sprintf("%d wisp issue(s) in JSONL missing ephemeral flag", wispCount),
+		Detail:   detail,
+		Fix:      "Remove from JSONL: grep -v '\"id\":\"<id>\"' issues.jsonl > tmp && mv tmp issues.jsonl",
+		Category: CategoryMaintenance,
+	}
+}

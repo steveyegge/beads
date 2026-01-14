@@ -101,7 +101,7 @@ By default, shows only open gates. Use --all to include closed gates.`,
 				return
 			}
 
-			displayGates(issues)
+			displayGates(issues, allFlag)
 			return
 		}
 
@@ -117,54 +117,84 @@ By default, shows only open gates. Use --all to include closed gates.`,
 			return
 		}
 
-		displayGates(issues)
+		displayGates(issues, allFlag)
 	},
 }
 
-// displayGates formats and displays gate issues
-func displayGates(gates []*types.Issue) {
+// displayGates formats and displays gate issues, separating open and closed gates
+func displayGates(gates []*types.Issue, showAll bool) {
 	if len(gates) == 0 {
 		fmt.Println("No gates found.")
 		return
 	}
 
-	fmt.Printf("\n%s Open Gates (%d):\n\n", ui.RenderAccent("⏳"), len(gates))
-
+	// Separate open and closed gates
+	var openGates, closedGates []*types.Issue
 	for _, gate := range gates {
-		statusSym := "○"
 		if gate.Status == types.StatusClosed {
-			statusSym = "●"
+			closedGates = append(closedGates, gate)
+		} else {
+			openGates = append(openGates, gate)
 		}
+	}
 
-		// Format gate info
-		gateInfo := gate.AwaitType
-		if gate.AwaitID != "" {
-			gateInfo = fmt.Sprintf("%s %s", gate.AwaitType, gate.AwaitID)
+	// Display open gates
+	if len(openGates) > 0 {
+		fmt.Printf("\n%s Open Gates (%d):\n\n", ui.RenderAccent("⏳"), len(openGates))
+		for _, gate := range openGates {
+			displaySingleGate(gate)
 		}
+	}
 
-		// Format timeout if present
-		timeoutStr := ""
-		if gate.Timeout > 0 {
-			timeoutStr = fmt.Sprintf(" (timeout: %s)", gate.Timeout)
+	// Display closed gates only if --all was used
+	if showAll && len(closedGates) > 0 {
+		fmt.Printf("\n%s Closed Gates (%d):\n\n", ui.RenderMuted("●"), len(closedGates))
+		for _, gate := range closedGates {
+			displaySingleGate(gate)
 		}
+	}
 
-		// Find blocked step from ID (gate ID format: parent.gate-stepid)
-		blockedStep := ""
-		if strings.Contains(gate.ID, ".gate-") {
-			parts := strings.Split(gate.ID, ".gate-")
-			if len(parts) == 2 {
-				blockedStep = fmt.Sprintf("%s.%s", parts[0], parts[1])
-			}
-		}
-
-		fmt.Printf("%s %s - %s%s\n", statusSym, ui.RenderID(gate.ID), gateInfo, timeoutStr)
-		if blockedStep != "" {
-			fmt.Printf("  Blocks: %s\n", blockedStep)
-		}
-		fmt.Println()
+	if len(openGates) == 0 && (!showAll || len(closedGates) == 0) {
+		fmt.Println("No gates found.")
+		return
 	}
 
 	fmt.Printf("To resolve a gate: bd close <gate-id>\n")
+}
+
+// displaySingleGate formats and displays a single gate issue
+func displaySingleGate(gate *types.Issue) {
+	statusSym := "○"
+	if gate.Status == types.StatusClosed {
+		statusSym = "●"
+	}
+
+	// Format gate info
+	gateInfo := gate.AwaitType
+	if gate.AwaitID != "" {
+		gateInfo = fmt.Sprintf("%s %s", gate.AwaitType, gate.AwaitID)
+	}
+
+	// Format timeout if present
+	timeoutStr := ""
+	if gate.Timeout > 0 {
+		timeoutStr = fmt.Sprintf(" (timeout: %s)", gate.Timeout)
+	}
+
+	// Find blocked step from ID (gate ID format: parent.gate-stepid)
+	blockedStep := ""
+	if strings.Contains(gate.ID, ".gate-") {
+		parts := strings.Split(gate.ID, ".gate-")
+		if len(parts) == 2 {
+			blockedStep = fmt.Sprintf("%s.%s", parts[0], parts[1])
+		}
+	}
+
+	fmt.Printf("%s %s - %s%s\n", statusSym, ui.RenderID(gate.ID), gateInfo, timeoutStr)
+	if blockedStep != "" {
+		fmt.Printf("  Blocks: %s\n", blockedStep)
+	}
+	fmt.Println()
 }
 
 // gateAddWaiterCmd adds a waiter to a gate

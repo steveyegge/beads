@@ -2108,9 +2108,9 @@ func (s *Server) handleGateList(req *Request) Response {
 	filter := types.IssueFilter{
 		IssueType: &gateType,
 	}
+	// By default, exclude closed gates (consistent with CLI behavior)
 	if !args.All {
-		openStatus := types.StatusOpen
-		filter.Status = &openStatus
+		filter.ExcludeStatus = []types.Status{types.StatusClosed}
 	}
 
 	gates, err := store.SearchIssues(ctx, "", filter)

@@ -215,6 +215,11 @@ func isDaemonHealthy(socketPath string) bool {
 }
 
 func acquireStartLock(lockPath, socketPath string) bool {
+	if err := ensureLockDirectory(lockPath); err != nil {
+		debugLog("failed to ensure lock directory: %v", err)
+		return false
+	}
+
 	// nolint:gosec // G304: lockPath is derived from secure beads directory
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -230,7 +235,7 @@ func acquireStartLock(lockPath, socketPath string) bool {
 
 		// PID is alive - but is daemon actually running/starting?
 		// Use flock-based check as authoritative source (immune to PID reuse)
-		beadsDir := filepath.Dir(socketPath)
+		beadsDir := filepath.Dir(dbPath)
 		if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 			// Daemon lock not held - the start attempt failed or process was reused
 			debugLog("startlock PID %d alive but daemon lock not held, cleaning up", lockPID)
@@ -262,7 +267,7 @@ func handleStaleLock(lockPath, socketPath string) bool {
 	}
 
 	// PID is alive - but check daemon lock as authoritative source (immune to PID reuse)
-	beadsDir := filepath.Dir(socketPath)
+	beadsDir := filepath.Dir(dbPath)
 	if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 		debugLog("lock PID %d alive but daemon lock not held, removing and retrying", lockPID)
 		_ = os.Remove(lockPath)
@@ -286,7 +291,7 @@ func handleExistingSocket(socketPath string) bool {
 
 	// Use flock-based check as authoritative source (immune to PID reuse)
 	// If daemon lock is not held, daemon is definitely dead regardless of PID file
-	beadsDir := filepath.Dir(socketPath)
+	beadsDir := filepath.Dir(dbPath)
 	if running, pid := lockfile.TryDaemonLock(beadsDir); running {
 		debugLog("daemon lock held (PID %d), waiting for socket", pid)
 		return waitForSocketReadiness(socketPath, 5*time.Second)
@@ -307,6 +312,21 @@ func handleExistingSocket(socketPath string) bool {
 
 func determineSocketPath(socketPath string) string {
 	return socketPath
+}
+
+// ensureLockDirectory ensures the parent directory exists for the lock file.
+// Needed when ShortSocketPath routes sockets into /tmp/beads-*/bd.sock.
+func ensureLockDirectory(lockPath string) error {
+	dir := filepath.Dir(lockPath)
+	if dir == "" {
+		return fmt.Errorf("lock directory missing for %s", lockPath)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(dir, 0o700)
 }
 
 func startDaemonProcess(socketPath string) bool {
@@ -378,10 +398,11 @@ func setupDaemonIO(cmd *exec.Cmd) {
 	}
 }
 
-// getPIDFileForSocket returns the PID file path for a given socket path
-func getPIDFileForSocket(socketPath string) string {
-	// PID file is in same directory as socket, named daemon.pid
-	dir := filepath.Dir(socketPath)
+// getPIDFileForSocket returns the PID file path.
+// Note: socketPath parameter is unused - PID file is always in .beads directory
+// (not socket directory, which may be in /tmp for short paths).
+func getPIDFileForSocket(_ string) string {
+	dir := filepath.Dir(dbPath)
 	return filepath.Join(dir, "daemon.pid")
 }
 

@@ -102,6 +102,11 @@ func (s *SQLiteStorage) ImportIssueComment(ctx context.Context, issueID, author,
 
 // GetIssueComments retrieves all comments for an issue
 func (s *SQLiteStorage) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, issue_id, author, text, created_at
 		FROM comments
@@ -136,6 +141,11 @@ func (s *SQLiteStorage) GetCommentsForIssues(ctx context.Context, issueIDs []str
 	if len(issueIDs) == 0 {
 		return make(map[string][]*types.Comment), nil
 	}
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
 
 	// Build placeholders for IN clause
 	placeholders := make([]interface{}, len(issueIDs))

@@ -98,7 +98,7 @@ var readOnlyCommands = map[string]bool{
 	"graph":      true,
 	"duplicates": true,
 	"comments":   true, // list comments (not add)
-	"export":     true, // export only reads
+	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
 // isReadOnlyCommand returns true if the command only reads from the database.

@@ -626,6 +626,13 @@ func fetchAndMergeIssues(ctx context.Context, s storage.Storage, dirtyIDs []stri
 		}
 		issue.Dependencies = deps
 
+		// Get comments for this issue
+		comments, err := s.GetIssueComments(ctx, issueID)
+		if err != nil {
+			return fmt.Errorf("failed to get comments for %s: %w", issueID, err)
+		}
+		issue.Comments = comments
+
 		// Update map
 		issueMap[issueID] = issue
 	}

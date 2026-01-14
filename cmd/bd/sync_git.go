@@ -57,9 +57,17 @@ func gitHasUpstream() bool {
 	}
 	branch := strings.TrimSpace(string(branchOutput))
 
-	// Check if remote and merge refs are configured
-	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) //nolint:gosec // G204: branch from git symbolic-ref
-	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))   //nolint:gosec // G204: branch from git symbolic-ref
+	return gitBranchHasUpstream(branch)
+}
+
+// gitBranchHasUpstream checks if a specific branch has an upstream configured.
+// Unlike gitHasUpstream(), this works even when HEAD is detached (e.g., jj/jujutsu).
+// This is critical for sync-branch workflows where the sync branch has upstream
+// tracking but the main working copy may be in detached HEAD state.
+func gitBranchHasUpstream(branch string) bool {
+	// Check if remote and merge refs are configured for the branch
+	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) //nolint:gosec // G204: branch from caller
+	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))   //nolint:gosec // G204: branch from caller
 
 	remoteErr := remoteCmd.Run()
 	mergeErr := mergeCmd.Run()
@@ -201,10 +209,21 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 		return fmt.Errorf("no .beads directory found")
 	}
 
-	// Get the repository root (handles worktrees properly)
-	repoRoot := getRepoRootForWorktree(ctx)
-	if repoRoot == "" {
-		return fmt.Errorf("cannot determine repository root")
+	// Determine the repository root
+	// When beads directory is redirected (bd-arjb), we need to run git commands
+	// from the directory containing the actual .beads/, not the current working directory
+	var repoRoot string
+	redirectInfo := beads.GetRedirectInfo()
+	if redirectInfo.IsRedirected {
+		// beadsDir is the target (e.g., /path/to/mayor/rig/.beads)
+		// We need to run git from the parent of .beads (e.g., /path/to/mayor/rig)
+		repoRoot = filepath.Dir(beadsDir)
+	} else {
+		// Get the repository root (handles worktrees properly)
+		repoRoot = getRepoRootForWorktree(ctx)
+		if repoRoot == "" {
+			return fmt.Errorf("cannot determine repository root")
+		}
 	}
 
 	// Stage only the specific sync-related files

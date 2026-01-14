@@ -81,6 +81,9 @@ func (s *SQLiteStorage) RemoveLabel(ctx context.Context, issueID, label, actor s
 }
 
 // GetLabels returns all labels for an issue
+// Note: This method is called from GetIssue which already holds reconnectMu.RLock(),
+// so we don't acquire the lock here to avoid deadlock. Callers must ensure
+// appropriate locking when calling directly.
 func (s *SQLiteStorage) GetLabels(ctx context.Context, issueID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT label FROM labels WHERE issue_id = ? ORDER BY label
@@ -108,6 +111,11 @@ func (s *SQLiteStorage) GetLabelsForIssues(ctx context.Context, issueIDs []strin
 	if len(issueIDs) == 0 {
 		return make(map[string][]string), nil
 	}
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
 
 	// Build placeholders for IN clause
 	placeholders := make([]interface{}, len(issueIDs))
@@ -154,6 +162,11 @@ func buildPlaceholders(count int) string {
 
 // GetIssuesByLabel returns issues with a specific label
 func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
