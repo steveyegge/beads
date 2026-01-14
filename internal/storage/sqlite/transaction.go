@@ -30,15 +30,23 @@ type sqliteTxStorage struct {
 // preventing deadlocks when multiple goroutines compete for the same lock.
 //
 // Transaction lifecycle:
-//  1. Acquire dedicated connection from pool
-//  2. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
-//  3. Execute user function with Transaction interface
-//  4. On success: COMMIT
-//  5. On error or panic: ROLLBACK
+//  1. Increment active transaction counter (blocks reconnect during active transactions)
+//  2. Acquire dedicated connection from pool
+//  3. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
+//  4. Execute user function with Transaction interface
+//  5. On success: COMMIT
+//  6. On error or panic: ROLLBACK
+//  7. Decrement active transaction counter (via defer)
 //
 // Panic safety: If the callback panics, the transaction is rolled back
 // and the panic is re-raised to the caller.
 func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	// Increment active transaction count BEFORE acquiring connection.
+	// This blocks reconnect() from closing the connection while we're using it.
+	// The counter is decremented via defer to ensure it always happens.
+	s.activeTxCount.Add(1)
+	defer s.activeTxCount.Add(-1)
+
 	// Acquire a dedicated connection for the transaction.
 	// This ensures all operations in the transaction use the same connection.
 	conn, err := s.db.Conn(ctx)

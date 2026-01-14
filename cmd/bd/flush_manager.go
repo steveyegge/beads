@@ -15,7 +15,9 @@ const (
 	shutdownBufferSize  = 1  // Single-slot buffer for shutdown requests
 
 	// Timeouts
-	shutdownTimeout = 30 * time.Second // Maximum time to wait for graceful shutdown
+	// Large databases (1000+ issues) may take > 30s to flush
+	// 120s provides ample time while still catching genuine hangs
+	shutdownTimeout = 120 * time.Second
 )
 
 // FlushManager coordinates auto-flush operations using an event-driven architecture.
@@ -149,7 +151,6 @@ func (fm *FlushManager) Shutdown() error {
 			shutdownErr = err
 		case <-time.After(shutdownTimeout):
 			// Timeout waiting for shutdown
-			// Most flushes complete in <1s
 			// Large databases with thousands of issues may take longer
 			// If this timeout fires, we risk losing unflushed data
 			fm.cancel()
@@ -257,6 +258,7 @@ func (fm *FlushManager) run() {
 
 // performFlush executes the actual flush operation.
 // Called only from the run() goroutine, so no concurrency issues.
+// Passes the FlushManager's context for cancellation support during long writes.
 func (fm *FlushManager) performFlush(fullExport bool) {
 	// Check if store is still active
 	storeMutex.Lock()
@@ -266,9 +268,10 @@ func (fm *FlushManager) performFlush(fullExport bool) {
 	}
 	storeMutex.Unlock()
 
-	// Call the actual flush implementation with explicit state
-	// This avoids race conditions with global isDirty/needsFullExport flags
-	flushToJSONLWithState(flushState{
+	// Call the context-aware flush implementation
+	// This enables cancellation support and progress logging for large databases
+	// (fixes SECURITY_AUDIT.md Issue #7: shutdown timeout losing pending writes)
+	flushToJSONLWithStateAndContext(fm.ctx, flushState{
 		forceDirty:      true, // We know we're dirty (we wouldn't be here otherwise)
 		forceFullExport: fullExport,
 	})

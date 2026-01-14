@@ -298,6 +298,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 				if err := os.WriteFile(errFile, []byte(crashReport), 0644); err != nil {
 					log.Warn("could not write crash report", "error", err)
 				}
+
+				// Clean up lock file (best-effort, flock is released on process exit anyway)
+				// This helps prevent stale lock files if the panic handler runs
+				cleanupDaemonLockFile(beadsDir)
 			}
 
 			// Clean up PID file

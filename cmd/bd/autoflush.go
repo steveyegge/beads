@@ -24,6 +24,14 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// Progress logging thresholds for long-running flush operations
+const (
+	// Log progress every N issues during large exports
+	progressLogInterval = 1000
+	// Check for context cancellation every N issues
+	cancellationCheckInterval = 100
+)
+
 // outputJSON outputs data as pretty-printed JSON
 func outputJSON(v interface{}) {
 	encoder := json.NewEncoder(os.Stdout)
@@ -139,6 +147,10 @@ func detectPrefixFromJSONL(jsonlData []byte) string {
 // Hash-based comparison is git-proof (mtime comparison fails after git pull).
 // Uses collision detection to prevent silently overwriting local changes.
 // Defense-in-depth check to respect --no-auto-import flag.
+//
+// Thread-safety: Acquires a shared JSONL lock to prevent reading while another
+// process is writing. This fixes the race condition where auto-import could read
+// a partially-written JSONL file during export (SECURITY_AUDIT.md Issue #3).
 func autoImportIfNewer() {
 	// Defense-in-depth: always check noAutoImport flag directly
 	// This ensures auto-import is disabled even if caller forgot to check autoImportEnabled
@@ -149,6 +161,27 @@ func autoImportIfNewer() {
 
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
+	if jsonlPath == "" {
+		debug.Logf("auto-import skipped, JSONL path not found")
+		return
+	}
+
+	beadsDir := filepath.Dir(jsonlPath)
+
+	// Acquire shared lock before reading JSONL to prevent reading during write
+	// This fixes the race condition where auto-import could read partially-written JSONL
+	lock := newJSONLLock(beadsDir)
+	locked, err := lock.TryAcquireShared()
+	if err != nil {
+		debug.Logf("auto-import skipped, failed to acquire shared lock: %v", err)
+		return
+	}
+	if !locked {
+		// Another process is writing - skip auto-import, will retry on next command
+		debug.Logf("auto-import skipped, JSONL lock held by another process (export in progress)")
+		return
+	}
+	defer func() { _ = lock.Release() }()
 
 	// Read JSONL file
 	jsonlData, err := os.ReadFile(jsonlPath)
@@ -196,7 +229,6 @@ func autoImportIfNewer() {
 			detectedPrefix := detectPrefixFromJSONL(jsonlData)
 			if detectedPrefix == "" {
 				// Fallback: detect from directory name
-				beadsDir := filepath.Dir(jsonlPath)
 				parentDir := filepath.Dir(beadsDir)
 				detectedPrefix = filepath.Base(parentDir)
 				if detectedPrefix == "." || detectedPrefix == "/" {
@@ -379,8 +411,6 @@ func autoImportIfNewer() {
 	}
 }
 
-
-
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a debounced
 // export to JSONL. Uses FlushManager's event-driven architecture.
@@ -423,20 +453,6 @@ func clearAutoFlushState() {
 	flushMutex.Unlock()
 }
 
-// writeJSONLAtomic writes issues to a JSONL file atomically using temp file + rename.
-// This is the common implementation used by flushToJSONLWithState (SQLite mode) and
-// writeIssuesToJSONL (--no-db mode).
-//
-// Atomic write pattern:
-//
-//	1. Create temp file with PID suffix: issues.jsonl.tmp.12345
-//	2. Write all issues as JSONL to temp file
-//	3. Close temp file
-//	4. Atomic rename: temp → target
-//	5. Set file permissions to 0644
-//
-// Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
-// Thread-safe: No shared state access. Safe to call from multiple goroutines.
 // validateJSONLIntegrity checks if JSONL file hash matches stored hash.
 // If mismatch detected, clears export_hashes and logs warning.
 // Returns (needsFullExport, error) where needsFullExport=true if export_hashes was cleared.
@@ -495,7 +511,38 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	return false, nil
 }
 
+// writeJSONLAtomic writes issues to a JSONL file atomically using temp file + rename.
+// This is the common implementation used by flushToJSONLWithState (SQLite mode) and
+// writeIssuesToJSONL (--no-db mode).
+//
+// Atomic write pattern:
+//
+//	1. Create temp file with PID suffix: issues.jsonl.tmp.12345
+//	2. Write all issues as JSONL to temp file
+//	3. Close temp file
+//	4. Atomic rename: temp → target
+//	5. Set file permissions to 0644
+//
+// Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
+// Thread-safe: No shared state access. Safe to call from multiple goroutines.
 func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error) {
+	// Delegate to context-aware version with background context (no cancellation)
+	return writeJSONLAtomicWithContext(context.Background(), jsonlPath, issues)
+}
+
+// writeJSONLAtomicWithContext writes issues to a JSONL file atomically with context support.
+// This version supports cancellation and progress logging for large exports.
+//
+// Context cancellation:
+//
+//	Checks ctx.Done() every cancellationCheckInterval issues. If cancelled,
+//	cleans up the temp file and returns ctx.Err().
+//
+// Progress logging:
+//
+//	Logs progress every progressLogInterval issues for large exports, so
+//	users know the flush is making progress during shutdown.
+func writeJSONLAtomicWithContext(ctx context.Context, jsonlPath string, issues []*types.Issue) ([]string, error) {
 	// Sort issues by ID for consistent output
 	slices.SortFunc(issues, func(a, b *types.Issue) int {
 		return cmp.Compare(a.ID, b.ID)
@@ -516,22 +563,51 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 		}
 	}()
 
-	// Write all issues as JSONL (timestamp-only deduplication DISABLED)
+	// Write all issues as JSONL
 	encoder := json.NewEncoder(f)
-	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
+	totalIssues := len(issues)
+	startTime := time.Now()
 
-	for _, issue := range issues {
+	// Log start for large exports
+	if totalIssues >= progressLogInterval {
+		fmt.Fprintf(os.Stderr, "Flushing %d issues to JSONL...\n", totalIssues)
+	}
+
+	for i, issue := range issues {
+		// Check for context cancellation periodically
+		if i > 0 && i%cancellationCheckInterval == 0 {
+			select {
+			case <-ctx.Done():
+				// Context cancelled - clean up and return error
+				// defer will handle closing and removing the temp file
+				return nil, fmt.Errorf("flush cancelled: %w", ctx.Err())
+			default:
+				// Continue processing
+			}
+		}
+
+		// Log progress for large exports
+		if i > 0 && i%progressLogInterval == 0 {
+			elapsed := time.Since(startTime)
+			remaining := totalIssues - i
+			rate := float64(i) / elapsed.Seconds()
+			eta := time.Duration(float64(remaining)/rate) * time.Second
+			fmt.Fprintf(os.Stderr, "  Flushed %d/%d issues (%.0f/sec, ~%v remaining)...\n",
+				i, totalIssues, rate, eta.Round(time.Second))
+		}
+
 		if err := encoder.Encode(issue); err != nil {
-		 return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
 
-	// Report skipped issues if any (helps debugging)
-	if skippedCount > 0 {
-		debug.Logf("auto-flush skipped %d issue(s) with timestamp-only changes", skippedCount)
+	// Log completion for large exports
+	if totalIssues >= progressLogInterval {
+		elapsed := time.Since(startTime)
+		fmt.Fprintf(os.Stderr, "  Flushed %d issues in %v\n", totalIssues, elapsed.Round(time.Millisecond))
 	}
 
 	// Close temp file before renaming
@@ -762,6 +838,7 @@ type flushState struct {
 //
 // Thread-safety:
 //   - Checks storeActive flag (via storeMutex) to prevent use-after-close
+//   - Acquires exclusive JSONL lock to prevent concurrent writes (SECURITY_AUDIT.md Issue #1)
 //   - Does NOT modify global isDirty/needsFullExport flags
 //   - Safe to call from multiple goroutines
 //
@@ -769,7 +846,16 @@ type flushState struct {
 //   - Store already closed (storeActive=false)
 //   - Database not dirty (isDirty=false) AND forceDirty=false
 //   - No dirty issues found (incremental mode only)
+//   - Cannot acquire JSONL lock (another process is syncing)
 func flushToJSONLWithState(state flushState) {
+	// Delegate to context-aware version with background context
+	flushToJSONLWithStateAndContext(context.Background(), state)
+}
+
+// flushToJSONLWithStateAndContext performs the flush with context for cancellation support.
+// This version is used by FlushManager.performFlush() to support shutdown cancellation
+// and progress logging for large databases.
+func flushToJSONLWithStateAndContext(ctx context.Context, state flushState) {
 	// Check if store is still active (not closed) and not nil
 	storeMutex.Lock()
 	if !storeActive || store == nil {
@@ -779,6 +865,29 @@ func flushToJSONLWithState(state flushState) {
 	storeMutex.Unlock()
 
 	jsonlPath := findJSONLPath()
+	if jsonlPath == "" {
+		debug.Logf("auto-flush skipped, JSONL path not found")
+		return
+	}
+
+	beadsDir := filepath.Dir(jsonlPath)
+
+	// Acquire exclusive lock before writing to prevent race condition with sync export
+	// This fixes the critical race condition where daemon auto-flush and sync export
+	// could write simultaneously, causing data loss (SECURITY_AUDIT.md Issue #1)
+	lock := newJSONLLock(beadsDir)
+	locked, err := lock.TryAcquireExclusive()
+	if err != nil {
+		recordFlushFailure(fmt.Errorf("failed to acquire JSONL lock: %w", err))
+		return
+	}
+	if !locked {
+		// Another process (likely bd sync) has the lock - skip this flush
+		// The sync will write the JSONL, so our flush would be redundant anyway
+		debug.Logf("auto-flush skipped, JSONL lock held by another process (sync in progress)")
+		return
+	}
+	defer func() { _ = lock.Release() }()
 
 	// Double-check store is still active before accessing
 	storeMutex.Lock()
@@ -788,11 +897,11 @@ func flushToJSONLWithState(state flushState) {
 	}
 	storeMutex.Unlock()
 
-	ctx := rootCtx
+	dbCtx := rootCtx
 
 	// Validate JSONL integrity BEFORE checking isDirty
 	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)
-	integrityNeedsFullExport, err := validateJSONLIntegrity(ctx, jsonlPath)
+	integrityNeedsFullExport, err := validateJSONLIntegrity(dbCtx, jsonlPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			recordFlushFailure(err)
@@ -811,7 +920,7 @@ func flushToJSONLWithState(state flushState) {
 	fullExport := state.forceFullExport || integrityNeedsFullExport
 
 	// Determine which issues to export
-	dirtyIDs, err := getIssuesToExport(ctx, fullExport)
+	dirtyIDs, err := getIssuesToExport(dbCtx, fullExport)
 	if err != nil {
 		recordFlushFailure(err)
 		return
@@ -834,7 +943,7 @@ func flushToJSONLWithState(state flushState) {
 	}
 
 	// Fetch dirty issues from DB and merge into map
-	if err := fetchAndMergeIssues(ctx, store, dirtyIDs, issueMap); err != nil {
+	if err := fetchAndMergeIssues(dbCtx, store, dirtyIDs, issueMap); err != nil {
 		recordFlushFailure(err)
 		return
 	}
@@ -843,10 +952,10 @@ func flushToJSONLWithState(state flushState) {
 	issues := filterWisps(issueMap)
 
 	// Filter by prefix in multi-repo mode
-	issues = filterByMultiRepoPrefix(ctx, store, issues)
+	issues = filterByMultiRepoPrefix(dbCtx, store, issues)
 
-	// Write atomically
-	exportedIDs, err := writeJSONLAtomic(jsonlPath, issues)
+	// Write atomically with context for cancellation support
+	exportedIDs, err := writeJSONLAtomicWithContext(ctx, jsonlPath, issues)
 	if err != nil {
 		recordFlushFailure(err)
 		return
@@ -854,13 +963,13 @@ func flushToJSONLWithState(state flushState) {
 
 	// Clear dirty issues that were exported
 	if len(exportedIDs) > 0 {
-		if err := store.ClearDirtyIssuesByID(ctx, exportedIDs); err != nil {
+		if err := store.ClearDirtyIssuesByID(dbCtx, exportedIDs); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty issues: %v\n", err)
 		}
 	}
 
 	// Update metadata (hashes, timestamps)
-	updateFlushExportMetadata(ctx, store, jsonlPath)
+	updateFlushExportMetadata(dbCtx, store, jsonlPath)
 
 	recordFlushSuccess()
 }

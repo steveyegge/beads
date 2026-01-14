@@ -290,6 +290,8 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	fmt.Printf("→ Loaded %d local issues from database\n", len(localIssues))
 
 	// Acquire exclusive lock to prevent concurrent sync corruption
+	// GH#6: Lock is held for the ENTIRE sync operation including git pull/push
+	// to prevent race conditions where concurrent syncs load the same base state
 	lockPath := filepath.Join(beadsDir, ".sync.lock")
 	lock := flock.New(lockPath)
 	locked, err := lock.TryLock()
@@ -299,7 +301,16 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	if !locked {
 		return fmt.Errorf("another sync is in progress")
 	}
-	defer func() { _ = lock.Unlock() }()
+	debug.Logf("sync: acquired lock at %s", lockPath)
+
+	// Track if we still hold the lock for deferred cleanup on panic/early return
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			debug.Logf("sync: releasing lock via defer (error path or panic)")
+			_ = lock.Unlock()
+		}
+	}()
 
 	// Step 2: Load base state (last successful sync)
 	fmt.Println("→ Loading base state...")
@@ -443,15 +454,25 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		_ = ClearSyncState(bd)
 	}
 
+	// Explicitly release lock after all operations complete successfully
+	debug.Logf("sync: releasing lock after successful completion")
+	if err := lock.Unlock(); err != nil {
+		return fmt.Errorf("releasing sync lock: %w", err)
+	}
+	lockHeld = false
+
 	fmt.Println("\n✓ Sync complete")
 	return nil
 }
 
 // doExportOnlySync handles the --no-pull case: just export, commit, and push
+// GH#6: The sync lock is held for the ENTIRE sync operation including git
+// commit/push to prevent race conditions.
 func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, message string) error {
 	beadsDir := filepath.Dir(jsonlPath)
 
 	// Acquire exclusive lock to prevent concurrent sync corruption
+	// GH#6: Lock is held for the ENTIRE sync operation including git commit/push
 	lockPath := filepath.Join(beadsDir, ".sync.lock")
 	lock := flock.New(lockPath)
 	locked, err := lock.TryLock()
@@ -461,7 +482,16 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 	if !locked {
 		return fmt.Errorf("another sync is in progress")
 	}
-	defer func() { _ = lock.Unlock() }()
+	debug.Logf("sync: acquired lock at %s (export-only)", lockPath)
+
+	// Track if we still hold the lock for deferred cleanup on panic/early return
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			debug.Logf("sync: releasing lock via defer (error path or panic)")
+			_ = lock.Unlock()
+		}
+	}()
 
 	// Pre-export integrity checks
 	if err := ensureStoreActive(); err == nil && store != nil {
@@ -515,6 +545,13 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 	if bd := beads.FindBeadsDir(); bd != "" {
 		_ = ClearSyncState(bd)
 	}
+
+	// Explicitly release lock after all operations complete successfully
+	debug.Logf("sync: releasing lock after successful completion (export-only)")
+	if err := lock.Unlock(); err != nil {
+		return fmt.Errorf("releasing sync lock: %w", err)
+	}
+	lockHeld = false
 
 	fmt.Println("\n✓ Sync complete")
 	return nil
