@@ -179,6 +179,63 @@ func TestIsBeadsPluginInstalled(t *testing.T) {
 	}
 }
 
+func TestIsBeadsPluginInstalledProjectLevel(t *testing.T) {
+	// Test that plugin is detected in each project-level settings file
+	for _, filename := range []string{"settings.json", "settings.local.json"} {
+		t.Run(filename, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+
+			if err := os.MkdirAll(".claude", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			content := `{"enabledPlugins":{"beads@beads-marketplace":true}}`
+			if err := os.WriteFile(filepath.Join(".claude", filename), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if !isBeadsPluginInstalled() {
+				t.Errorf("expected to detect plugin in .claude/%s", filename)
+			}
+		})
+	}
+
+	// Test negative cases - plugin should NOT be detected
+	t.Run("plugin disabled", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"enabledPlugins":{"beads@beads-marketplace":false}}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if isBeadsPluginInstalled() {
+			t.Error("expected NOT to detect plugin when explicitly disabled")
+		}
+	})
+
+	t.Run("no plugin section", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"hooks":{}}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if isBeadsPluginInstalled() {
+			t.Error("expected NOT to detect plugin when enabledPlugins section missing")
+		}
+	})
+}
+
 func TestHasClaudeHooks(t *testing.T) {
 	// Sanity check for hooks detection
 	result := hasClaudeHooks()
