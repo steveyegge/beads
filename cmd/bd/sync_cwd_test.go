@@ -361,6 +361,14 @@ func TestSyncModePathResolution(t *testing.T) {
 
 	// T050: Normal sync mode path resolution
 	t.Run("T050_normal_sync_mode", func(t *testing.T) {
+		// Restore CWD at end of subtest to prevent interference with subsequent tests.
+		// t.TempDir() cleanup happens after subtest returns, so CWD must be restored first.
+		subtestWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get subtest working directory: %v", err)
+		}
+		defer func() { _ = os.Chdir(subtestWd) }()
+
 		tmpDir, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
 			t.Fatalf("eval symlinks failed: %v", err)
@@ -451,6 +459,13 @@ func TestSyncModePathResolution(t *testing.T) {
 
 	// T051: Sync-branch mode with daemon context
 	t.Run("T051_sync_branch_mode", func(t *testing.T) {
+		// Restore CWD at end of subtest to prevent interference with subsequent tests.
+		subtestWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get subtest working directory: %v", err)
+		}
+		defer func() { _ = os.Chdir(subtestWd) }()
+
 		tmpDir, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
 			t.Fatalf("eval symlinks failed: %v", err)
@@ -554,6 +569,13 @@ repos:
 
 	// T052: External BEADS_DIR mode
 	t.Run("T052_external_beads_dir_mode", func(t *testing.T) {
+		// Restore CWD at end of subtest to prevent interference with subsequent tests.
+		subtestWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get subtest working directory: %v", err)
+		}
+		defer func() { _ = os.Chdir(subtestWd) }()
+
 		// Create main project repo
 		projectDir, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
