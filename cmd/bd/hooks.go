@@ -387,11 +387,13 @@ func installHooks(embeddedHooks map[string]string, force bool, shared bool, chai
 
 func configureSharedHooksPath() error {
 	// Set git config core.hooksPath to .beads-hooks
-	rc, err := beads.GetRepoContext()
-	if err != nil {
-		return fmt.Errorf("failed to get repo context: %w", err)
+	// Note: This may run before .beads exists, so it uses git.GetRepoRoot() directly
+	repoRoot := git.GetRepoRoot()
+	if repoRoot == "" {
+		return fmt.Errorf("not in a git repository")
 	}
-	cmd := rc.GitCmdCWD(context.Background(), "config", "core.hooksPath", ".beads-hooks")
+	cmd := exec.Command("git", "config", "core.hooksPath", ".beads-hooks")
+	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git config failed: %w (output: %s)", err, string(output))
 	}
