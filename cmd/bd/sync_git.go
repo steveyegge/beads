@@ -116,17 +116,6 @@ func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
 	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
-// getRepoRootForWorktree returns the main repository root for running git commands
-// This is always the main repository root, never the worktree root
-func getRepoRootForWorktree(_ context.Context) string {
-	repoRoot, err := git.GetMainRepoRoot()
-	if err != nil {
-		// Fallback to current directory if GetMainRepoRoot fails
-		return "."
-	}
-	return repoRoot
-}
-
 // gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes.
 // Uses RepoContext to ensure git commands run in the correct repository.
 // RepoContext handles worktrees (GH#827) and redirected beads directories (bd-arjb).

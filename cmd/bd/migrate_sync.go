@@ -123,11 +123,8 @@ func runMigrateSync(ctx context.Context, branchName string, dryRun, force bool) 
 		fmt.Println("⚠ Warning: No git remote configured. Sync branch will only exist locally.")
 	}
 
-	// Get repo root
-	repoRoot, err := syncbranch.GetRepoRoot(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get repository root: %w", err)
-	}
+	// Get repo root (rc already initialized above)
+	repoRoot := rc.RepoRoot
 
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
