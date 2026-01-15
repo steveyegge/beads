@@ -169,6 +169,64 @@ func TestIsMCPServerInstalled(t *testing.T) {
 	}
 }
 
+func TestIsMCPServerInstalledProjectLevel(t *testing.T) {
+	mcpContent := `{"mcpServers":{"beads":{"command":"beads-mcp"}}}`
+
+	// Test that MCP server is detected in each project-level settings file
+	for _, filename := range []string{"settings.json", "settings.local.json"} {
+		t.Run(filename, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+
+			if err := os.MkdirAll(".claude", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(".claude", filename), []byte(mcpContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if !isMCPServerInstalled() {
+				t.Errorf("expected to detect MCP server in .claude/%s", filename)
+			}
+		})
+	}
+
+	// Test negative cases
+	t.Run("no mcpServers section", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"hooks":{}}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if isMCPServerInstalled() {
+			t.Error("expected NOT to detect MCP server when mcpServers section missing")
+		}
+	})
+
+	t.Run("mcpServers but not beads", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+
+		if err := os.MkdirAll(".claude", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"mcpServers":{"other-server":{"command":"other"}}}`
+		if err := os.WriteFile(filepath.Join(".claude", "settings.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if isMCPServerInstalled() {
+			t.Error("expected NOT to detect MCP server when beads not present")
+		}
+	})
+}
+
 func TestIsBeadsPluginInstalled(t *testing.T) {
 	// Similar sanity check for plugin detection
 	result := isBeadsPluginInstalled()

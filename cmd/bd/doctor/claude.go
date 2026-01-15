@@ -142,15 +142,39 @@ func checkPluginInSettings(settingsPath string) bool {
 	return false
 }
 
-// isMCPServerInstalled checks if MCP server is configured
+// isMCPServerInstalled checks if MCP server is configured.
+// It checks user-level (~/.claude/settings.json) and project-level settings
+// (.claude/settings.json and .claude/settings.local.json).
 func isMCPServerInstalled() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false
 	}
 
-	settingsPath := filepath.Join(home, ".claude/settings.json")
-	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is constructed from user home dir, not user input
+	// Check user-level settings
+	userSettings := filepath.Join(home, ".claude", "settings.json")
+	if checkMCPInSettings(userSettings) {
+		return true
+	}
+
+	// Check project-level settings
+	projectSettings := filepath.Join(".claude", "settings.json")
+	if checkMCPInSettings(projectSettings) {
+		return true
+	}
+
+	// Check project-level local settings (gitignored)
+	projectLocalSettings := filepath.Join(".claude", "settings.local.json")
+	if checkMCPInSettings(projectLocalSettings) {
+		return true
+	}
+
+	return false
+}
+
+// checkMCPInSettings checks if beads MCP server is configured in a settings file
+func checkMCPInSettings(settingsPath string) bool {
+	data, err := os.ReadFile(settingsPath) // #nosec G304 -- settingsPath is constructed from known safe locations, not user input
 	if err != nil {
 		return false
 	}
