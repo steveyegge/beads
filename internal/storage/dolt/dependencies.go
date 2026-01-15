@@ -40,59 +40,76 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 
 // GetDependencies retrieves issues that this issue depends on
 func (s *DoltStore) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id FROM issues i
-		JOIN dependencies d ON i.id = d.depends_on_id
-		WHERE d.issue_id = ?
-		ORDER BY i.priority ASC, i.created_at DESC
-	`, issueID)
+	// Use GetDependenciesWithMetadata to get full issue data in a single query
+	// This avoids nested database calls that can deadlock with Dolt's embedded driver
+	issuesWithMeta, err := s.GetDependenciesWithMetadata(ctx, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	// Convert to plain Issue slice
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issueCopy := iwm.Issue
+		issues[i] = &issueCopy
+	}
+	return issues, nil
 }
 
 // GetDependents retrieves issues that depend on this issue
 func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id FROM issues i
-		JOIN dependencies d ON i.id = d.issue_id
-		WHERE d.depends_on_id = ?
-		ORDER BY i.priority ASC, i.created_at DESC
-	`, issueID)
+	// Use GetDependentsWithMetadata to get full issue data in a single query
+	// This avoids nested database calls that can deadlock with Dolt's embedded driver
+	issuesWithMeta, err := s.GetDependentsWithMetadata(ctx, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependents: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	// Convert to plain Issue slice
+	issues := make([]*types.Issue, len(issuesWithMeta))
+	for i, iwm := range issuesWithMeta {
+		issueCopy := iwm.Issue
+		issues[i] = &issueCopy
+	}
+	return issues, nil
 }
 
 // GetDependenciesWithMetadata returns dependencies with metadata
 func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	// First, collect all dependency IDs and types in a single query
+	// This avoids nested database calls that can deadlock with Dolt's embedded driver
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
+		SELECT d.depends_on_id, d.type
 		FROM dependencies d
 		WHERE d.issue_id = ?
 	`, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies with metadata: %w", err)
 	}
-	defer rows.Close()
 
-	var results []*types.IssueWithDependencyMetadata
+	type depInfo struct {
+		id      string
+		depType types.DependencyType
+	}
+	var deps []depInfo
 	for rows.Next() {
-		var depID, depType, createdBy string
-		var createdAt sql.NullTime
-		var metadata, threadID sql.NullString
-
-		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
+		var info depInfo
+		if err := rows.Scan(&info.id, &info.depType); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan dependency: %w", err)
 		}
+		deps = append(deps, info)
+	}
+	rows.Close() // Close first result set before making more queries
 
-		issue, err := s.GetIssue(ctx, depID)
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Now fetch each issue - this is safe because the first query is closed
+	var results []*types.IssueWithDependencyMetadata
+	for _, dep := range deps {
+		issue, err := s.GetIssue(ctx, dep.id)
 		if err != nil {
 			return nil, err
 		}
@@ -102,36 +119,49 @@ func (s *DoltStore) GetDependenciesWithMetadata(ctx context.Context, issueID str
 
 		result := &types.IssueWithDependencyMetadata{
 			Issue:          *issue,
-			DependencyType: types.DependencyType(depType),
+			DependencyType: dep.depType,
 		}
 		results = append(results, result)
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetDependentsWithMetadata returns dependents with metadata
 func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID string) ([]*types.IssueWithDependencyMetadata, error) {
+	// First, collect all dependent IDs and types in a single query
+	// This avoids nested database calls that can deadlock with Dolt's embedded driver
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.issue_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id
+		SELECT d.issue_id, d.type
 		FROM dependencies d
 		WHERE d.depends_on_id = ?
 	`, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependents with metadata: %w", err)
 	}
-	defer rows.Close()
 
-	var results []*types.IssueWithDependencyMetadata
+	type depInfo struct {
+		id      string
+		depType types.DependencyType
+	}
+	var deps []depInfo
 	for rows.Next() {
-		var depID, depType, createdBy string
-		var createdAt sql.NullTime
-		var metadata, threadID sql.NullString
-
-		if err := rows.Scan(&depID, &depType, &createdAt, &createdBy, &metadata, &threadID); err != nil {
+		var info depInfo
+		if err := rows.Scan(&info.id, &info.depType); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan dependent: %w", err)
 		}
+		deps = append(deps, info)
+	}
+	rows.Close() // Close first result set before making more queries
 
-		issue, err := s.GetIssue(ctx, depID)
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Now fetch each issue - this is safe because the first query is closed
+	var results []*types.IssueWithDependencyMetadata
+	for _, dep := range deps {
+		issue, err := s.GetIssue(ctx, dep.id)
 		if err != nil {
 			return nil, err
 		}
@@ -141,11 +171,11 @@ func (s *DoltStore) GetDependentsWithMetadata(ctx context.Context, issueID strin
 
 		result := &types.IssueWithDependencyMetadata{
 			Issue:          *issue,
-			DependencyType: types.DependencyType(depType),
+			DependencyType: dep.depType,
 		}
 		results = append(results, result)
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetDependencyRecords returns raw dependency records for an issue
@@ -447,12 +477,25 @@ func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID 
 // Helper functions
 
 func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
-	var issues []*types.Issue
+	// First, collect all IDs
+	// This avoids nested database calls that can deadlock with Dolt's embedded driver
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("failed to scan issue id: %w", err)
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// rows is closed by caller's defer, but explicitly close to release connection
+	rows.Close()
+
+	// Now fetch each issue - this is safe because the first query is closed
+	var issues []*types.Issue
+	for _, id := range ids {
 		issue, err := s.GetIssue(ctx, id)
 		if err != nil {
 			return nil, err
@@ -461,7 +504,7 @@ func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.
 			issues = append(issues, issue)
 		}
 	}
-	return issues, rows.Err()
+	return issues, nil
 }
 
 func scanDependencyRows(rows *sql.Rows) ([]*types.Dependency, error) {

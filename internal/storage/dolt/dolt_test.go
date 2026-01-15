@@ -3,17 +3,36 @@ package dolt
 import (
 	"context"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// execLookPath wraps exec.LookPath for test use
+func execLookPath(file string) (string, error) {
+	return exec.LookPath(file)
+}
+
 // skipIfNoDolt skips the test if Dolt is not installed
 func skipIfNoDolt(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat("/usr/local/bin/dolt"); os.IsNotExist(err) {
-		t.Skip("Dolt not installed, skipping test")
+	// Check common Dolt installation paths
+	paths := []string{
+		"/usr/local/bin/dolt",     // Standard Linux/Intel Mac
+		"/opt/homebrew/bin/dolt",  // Apple Silicon Mac
+		"/usr/bin/dolt",           // System package manager
 	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return // Found Dolt
+		}
+	}
+	// Also try finding via PATH
+	if _, err := execLookPath("dolt"); err == nil {
+		return // Found in PATH
+	}
+	t.Skip("Dolt not installed, skipping test")
 }
 
 // setupTestStore creates a test store with a temporary directory
