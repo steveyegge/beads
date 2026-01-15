@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,7 @@ type Config struct {
 	CommitterEmail string // Git-style committer email
 	Remote         string // Default remote name (e.g., "origin")
 	Database       string // Database name within Dolt (default: "beads")
+	ReadOnly       bool   // Open in read-only mode (skip schema init)
 }
 
 // New creates a new Dolt storage backend
@@ -85,8 +87,25 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// Build Dolt connection string
-	// Format: file:///path/to/db?commitname=Name&commitemail=email&database=dbname
+	// First, connect without specifying a database to create it if needed
+	initConnStr := fmt.Sprintf(
+		"file://%s?commitname=%s&commitemail=%s",
+		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
+
+	initDB, err := sql.Open("dolt", initConnStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Dolt for initialization: %w", err)
+	}
+
+	// Create the database if it doesn't exist
+	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+	if err != nil {
+		initDB.Close()
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+	initDB.Close()
+
+	// Now connect with the database specified
 	connStr := fmt.Sprintf(
 		"file://%s?commitname=%s&commitemail=%s&database=%s",
 		cfg.Path, cfg.CommitterName, cfg.CommitterEmail, cfg.Database)
@@ -121,11 +140,14 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		committerEmail: cfg.CommitterEmail,
 		remote:         cfg.Remote,
 		branch:         "main",
+		readOnly:       cfg.ReadOnly,
 	}
 
-	// Initialize schema
-	if err := store.initSchema(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+	// Initialize schema (skip for read-only mode)
+	if !cfg.ReadOnly {
+		if err := store.initSchema(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize schema: %w", err)
+		}
 	}
 
 	return store, nil
@@ -133,14 +155,34 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 
 // initSchema creates all tables if they don't exist
 func (s *DoltStore) initSchema(ctx context.Context) error {
-	// Execute schema creation
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("failed to create schema: %w", err)
+	// Execute schema creation - split into individual statements
+	// because MySQL/Dolt doesn't support multiple statements in one Exec
+	for _, stmt := range splitStatements(schema) {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		// Skip pure comment-only statements, but execute statements that start with comments
+		if isOnlyComments(stmt) {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create schema: %w\nStatement: %s", err, truncateForError(stmt))
+		}
 	}
 
 	// Insert default config values
-	if _, err := s.db.ExecContext(ctx, defaultConfig); err != nil {
-		return fmt.Errorf("failed to insert default config: %w", err)
+	for _, stmt := range splitStatements(defaultConfig) {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if isOnlyComments(stmt) {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to insert default config: %w", err)
+		}
 	}
 
 	// Create views
@@ -152,6 +194,74 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// splitStatements splits a SQL script into individual statements
+func splitStatements(script string) []string {
+	var statements []string
+	var current strings.Builder
+	inString := false
+	stringChar := byte(0)
+
+	for i := 0; i < len(script); i++ {
+		c := script[i]
+
+		if inString {
+			current.WriteByte(c)
+			if c == stringChar && (i == 0 || script[i-1] != '\\') {
+				inString = false
+			}
+			continue
+		}
+
+		if c == '\'' || c == '"' || c == '`' {
+			inString = true
+			stringChar = c
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == ';' {
+			stmt := strings.TrimSpace(current.String())
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			current.Reset()
+			continue
+		}
+
+		current.WriteByte(c)
+	}
+
+	// Handle last statement without semicolon
+	stmt := strings.TrimSpace(current.String())
+	if stmt != "" {
+		statements = append(statements, stmt)
+	}
+
+	return statements
+}
+
+// truncateForError truncates a string for use in error messages
+func truncateForError(s string) string {
+	if len(s) > 100 {
+		return s[:100] + "..."
+	}
+	return s
+}
+
+// isOnlyComments returns true if the statement contains only SQL comments
+func isOnlyComments(stmt string) bool {
+	lines := strings.Split(stmt, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "--") {
+			continue
+		}
+		// Found a non-comment, non-empty line
+		return false
+	}
+	return true
 }
 
 // Close closes the database connection

@@ -215,7 +215,9 @@ func findLocalBeadsDir() string {
 
 // findDatabaseInBeadsDir searches for a database file within a .beads directory.
 // It implements the standard search order:
-// 1. Check config.json first (single source of truth)
+// 1. Check metadata.json first (single source of truth)
+//    - For SQLite backend: returns path to .db file
+//    - For Dolt backend: returns path to dolt/ directory
 // 2. Fall back to canonical beads.db
 // 3. Search for *.db files, filtering out backups and vc.db
 //
@@ -225,11 +227,21 @@ func findLocalBeadsDir() string {
 //
 // Returns empty string if no database is found.
 func findDatabaseInBeadsDir(beadsDir string, warnOnIssues bool) string {
-	// Check for config.json first (single source of truth)
+	// Check for metadata.json first (single source of truth)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
-		dbPath := cfg.DatabasePath(beadsDir)
-		if _, err := os.Stat(dbPath); err == nil {
-			return dbPath
+		backend := cfg.GetBackend()
+		if backend == configfile.BackendDolt {
+			// For Dolt, check if the dolt directory exists
+			doltPath := filepath.Join(beadsDir, "dolt")
+			if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+				return doltPath
+			}
+		} else {
+			// For SQLite, check if the .db file exists
+			dbPath := cfg.DatabasePath(beadsDir)
+			if _, err := os.Stat(dbPath); err == nil {
+				return dbPath
+			}
 		}
 	}
 

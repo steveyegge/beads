@@ -15,6 +15,8 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -43,6 +45,7 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		branch, _ := cmd.Flags().GetString("branch")
+		backend, _ := cmd.Flags().GetString("backend")
 		contributor, _ := cmd.Flags().GetBool("contributor")
 		team, _ := cmd.Flags().GetBool("team")
 		stealth, _ := cmd.Flags().GetBool("stealth")
@@ -50,6 +53,15 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
+
+		// Validate backend flag
+		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
+			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
+			os.Exit(1)
+		}
+		if backend == "" {
+			backend = configfile.BackendSQLite // Default to SQLite
+		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
 		if err := config.Initialize(); err != nil {
@@ -280,9 +292,20 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		}
 
 		ctx := rootCtx
-		store, err := sqlite.New(ctx, initDBPath)
+
+		// Create storage backend based on --backend flag
+		var storagePath string
+		var store storage.Storage
+		if backend == configfile.BackendDolt {
+			// Dolt uses a directory, not a file
+			storagePath = filepath.Join(beadsDir, "dolt")
+			store, err = dolt.New(ctx, &dolt.Config{Path: storagePath})
+		} else {
+			storagePath = initDBPath
+			store, err = sqlite.New(ctx, storagePath)
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create database: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
 			os.Exit(1)
 		}
 
@@ -361,6 +384,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 					}
 				}
 			}
+
+			// Save backend choice (only store if non-default to keep metadata.json clean)
+			if backend != configfile.BackendSQLite {
+				cfg.Backend = backend
+			}
+
 			if err := cfg.Save(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 				// Non-fatal - continue anyway
@@ -508,7 +537,8 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		}
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
-		fmt.Printf("  Database: %s\n", ui.RenderAccent(initDBPath))
+		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
+		fmt.Printf("  Database: %s\n", ui.RenderAccent(storagePath))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
 		fmt.Printf("Run %s to get started.\n\n", ui.RenderAccent("bd quickstart"))
@@ -540,6 +570,7 @@ func init() {
 	initCmd.Flags().StringP("prefix", "p", "", "Issue prefix (default: current directory name)")
 	initCmd.Flags().BoolP("quiet", "q", false, "Suppress output (quiet mode)")
 	initCmd.Flags().StringP("branch", "b", "", "Git branch for beads commits (default: current branch)")
+	initCmd.Flags().String("backend", "", "Storage backend: sqlite (default) or dolt (version-controlled)")
 	initCmd.Flags().Bool("contributor", false, "Run OSS contributor setup wizard")
 	initCmd.Flags().Bool("team", false, "Run team workflow setup wizard")
 	initCmd.Flags().Bool("stealth", false, "Enable stealth mode: global gitattributes and gitignore, no local repo tracking")
