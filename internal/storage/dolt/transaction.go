@@ -1,0 +1,325 @@
+package dolt
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
+)
+
+// doltTransaction implements storage.Transaction for Dolt
+type doltTransaction struct {
+	tx    *sql.Tx
+	store *DoltStore
+}
+
+// RunInTransaction executes a function within a database transaction
+func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	sqlTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	tx := &doltTransaction{tx: sqlTx, store: s}
+
+	defer func() {
+		if r := recover(); r != nil {
+			_ = sqlTx.Rollback()
+			panic(r)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		_ = sqlTx.Rollback()
+		return err
+	}
+
+	return sqlTx.Commit()
+}
+
+// CreateIssue creates an issue within the transaction
+func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
+	now := time.Now()
+	if issue.CreatedAt.IsZero() {
+		issue.CreatedAt = now
+	}
+	if issue.UpdatedAt.IsZero() {
+		issue.UpdatedAt = now
+	}
+	if issue.ContentHash == "" {
+		issue.ContentHash = issue.ComputeContentHash()
+	}
+
+	return insertIssueTx(ctx, t.tx, issue)
+}
+
+// CreateIssues creates multiple issues within the transaction
+func (t *doltTransaction) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	for _, issue := range issues {
+		if err := t.CreateIssue(ctx, issue, actor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetIssue retrieves an issue within the transaction
+func (t *doltTransaction) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	return scanIssueTx(ctx, t.tx, id)
+}
+
+// SearchIssues searches for issues within the transaction
+func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
+	// Simplified search for transaction context
+	whereClauses := []string{}
+	args := []interface{}{}
+
+	if query != "" {
+		whereClauses = append(whereClauses, "(title LIKE ? OR description LIKE ? OR id LIKE ?)")
+		pattern := "%" + query + "%"
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	if filter.Status != nil {
+		whereClauses = append(whereClauses, "status = ?")
+		args = append(args, *filter.Status)
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	rows, err := t.tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT id FROM issues %s ORDER BY priority ASC, created_at DESC
+	`, whereSQL), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var issues []*types.Issue
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		issue, err := t.GetIssue(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if issue != nil {
+			issues = append(issues, issue)
+		}
+	}
+	return issues, rows.Err()
+}
+
+// UpdateIssue updates an issue within the transaction
+func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
+	setClauses := []string{"updated_at = ?"}
+	args := []interface{}{time.Now()}
+
+	for key, value := range updates {
+		if !isAllowedUpdateField(key) {
+			return fmt.Errorf("invalid field for update: %s", key)
+		}
+		columnName := key
+		if key == "wisp" {
+			columnName = "ephemeral"
+		}
+		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
+		args = append(args, value)
+	}
+
+	args = append(args, id)
+	query := fmt.Sprintf("UPDATE issues SET %s WHERE id = ?", strings.Join(setClauses, ", "))
+	_, err := t.tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+// CloseIssue closes an issue within the transaction
+func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
+	now := time.Now()
+	_, err := t.tx.ExecContext(ctx, `
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
+		WHERE id = ?
+	`, types.StatusClosed, now, now, reason, session, id)
+	return err
+}
+
+// DeleteIssue deletes an issue within the transaction
+func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
+	_, err := t.tx.ExecContext(ctx, "DELETE FROM issues WHERE id = ?", id)
+	return err
+}
+
+// AddDependency adds a dependency within the transaction
+func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, thread_id)
+		VALUES (?, ?, ?, NOW(), ?, ?)
+		ON DUPLICATE KEY UPDATE type = VALUES(type)
+	`, dep.IssueID, dep.DependsOnID, dep.Type, actor, dep.ThreadID)
+	return err
+}
+
+// RemoveDependency removes a dependency within the transaction
+func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
+	`, issueID, dependsOnID)
+	return err
+}
+
+// AddLabel adds a label within the transaction
+func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
+	`, issueID, label)
+	return err
+}
+
+// RemoveLabel removes a label within the transaction
+func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		DELETE FROM labels WHERE issue_id = ? AND label = ?
+	`, issueID, label)
+	return err
+}
+
+// SetConfig sets a config value within the transaction
+func (t *doltTransaction) SetConfig(ctx context.Context, key, value string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		INSERT INTO config (`+"`key`"+`, value) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE value = VALUES(value)
+	`, key, value)
+	return err
+}
+
+// GetConfig gets a config value within the transaction
+func (t *doltTransaction) GetConfig(ctx context.Context, key string) (string, error) {
+	var value string
+	err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+// SetMetadata sets a metadata value within the transaction
+func (t *doltTransaction) SetMetadata(ctx context.Context, key, value string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		INSERT INTO metadata (`+"`key`"+`, value) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE value = VALUES(value)
+	`, key, value)
+	return err
+}
+
+// GetMetadata gets a metadata value within the transaction
+func (t *doltTransaction) GetMetadata(ctx context.Context, key string) (string, error) {
+	var value string
+	err := t.tx.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+// AddComment adds a comment within the transaction
+func (t *doltTransaction) AddComment(ctx context.Context, issueID, actor, comment string) error {
+	_, err := t.tx.ExecContext(ctx, `
+		INSERT INTO events (issue_id, event_type, actor, comment)
+		VALUES (?, ?, ?, ?)
+	`, issueID, types.EventCommented, actor, comment)
+	return err
+}
+
+// Helper functions for transaction context
+
+func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO issues (
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, created_by, owner, updated_at, closed_at,
+			sender, ephemeral, pinned, is_template, crystallizes
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?
+		)
+	`,
+		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
+		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
+		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
+		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+	)
+	return err
+}
+
+func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, error) {
+	var issue types.Issue
+	var closedAt sql.NullTime
+	var estimatedMinutes sql.NullInt64
+	var assignee, owner, contentHash sql.NullString
+	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
+		       status, priority, issue_type, assignee, estimated_minutes,
+		       created_at, created_by, owner, updated_at, closed_at,
+		       ephemeral, pinned, is_template, crystallizes
+		FROM issues
+		WHERE id = ?
+	`, id).Scan(
+		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
+		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
+		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
+		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt,
+		&ephemeral, &pinned, &isTemplate, &crystallizes,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if contentHash.Valid {
+		issue.ContentHash = contentHash.String
+	}
+	if closedAt.Valid {
+		issue.ClosedAt = &closedAt.Time
+	}
+	if estimatedMinutes.Valid {
+		mins := int(estimatedMinutes.Int64)
+		issue.EstimatedMinutes = &mins
+	}
+	if assignee.Valid {
+		issue.Assignee = assignee.String
+	}
+	if owner.Valid {
+		issue.Owner = owner.String
+	}
+	if ephemeral.Valid && ephemeral.Int64 != 0 {
+		issue.Ephemeral = true
+	}
+	if pinned.Valid && pinned.Int64 != 0 {
+		issue.Pinned = true
+	}
+	if isTemplate.Valid && isTemplate.Int64 != 0 {
+		issue.IsTemplate = true
+	}
+	if crystallizes.Valid && crystallizes.Int64 != 0 {
+		issue.Crystallizes = true
+	}
+
+	return &issue, nil
+}
