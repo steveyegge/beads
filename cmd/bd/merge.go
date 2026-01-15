@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/merge"
 )
 
@@ -105,6 +106,16 @@ func cleanupMergeArtifacts(outputPath string, debug bool) {
 		fmt.Fprintf(os.Stderr, "Cleaning up artifacts in: %s\n", beadsDir)
 	}
 
+	// Get RepoContext for git operations (provides security via hook disabling)
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		if debug {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get repo context: %v\n", err)
+		}
+		return
+	}
+	ctx := context.Background()
+
 	// 1. Find and remove any files with "backup" in the name
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
@@ -125,8 +136,7 @@ func cleanupMergeArtifacts(outputPath string, debug bool) {
 			// #nosec G204 -- fullPath is safely constructed via filepath.Join from entry.Name()
 			// from os.ReadDir. exec.Command does NOT use shell interpretation - arguments
 			// are passed directly to git binary. See TestCleanupMergeArtifacts_CommandInjectionPrevention
-			gitRmCmd := exec.Command("git", "rm", "-f", "--quiet", fullPath)
-			gitRmCmd.Dir = filepath.Dir(beadsDir)
+			gitRmCmd := rc.GitCmd(ctx, "rm", "-f", "--quiet", fullPath)
 			_ = gitRmCmd.Run() // Ignore errors, file may not be tracked
 
 			// Also remove from filesystem if git rm didn't work
@@ -139,8 +149,8 @@ func cleanupMergeArtifacts(outputPath string, debug bool) {
 	}
 
 	// 2. Run git clean -f in .beads/ directory to remove untracked files
-	cleanCmd := exec.Command("git", "clean", "-f")
-	cleanCmd.Dir = beadsDir
+	cleanCmd := rc.GitCmd(ctx, "clean", "-f")
+	cleanCmd.Dir = beadsDir // Override to target .beads/ subdirectory specifically
 	if debug {
 		cleanCmd.Stderr = os.Stderr
 		cleanCmd.Stdout = os.Stderr
