@@ -552,6 +552,7 @@ func runPreCommitHook() int {
 					gitAdd = rc.GitCmdCWD(ctx, "add", f)
 				} else {
 					// Fallback if RepoContext unavailable
+					// #nosec G204 -- f comes from jsonlFiles (controlled, hardcoded paths)
 					gitAdd = exec.Command("git", "add", f)
 				}
 				_ = gitAdd.Run() // Ignore errors - file may not exist
