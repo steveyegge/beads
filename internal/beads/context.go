@@ -207,6 +207,20 @@ func isPathInSafeBoundary(path string) bool {
 	if err != nil {
 		return false
 	}
+
+	// Allow OS-designated temp directories (e.g., /var/folders on macOS)
+	// On macOS, TempDir() returns paths under /var/folders which symlinks to /private/var/folders
+	tempDir := os.TempDir()
+	resolvedTemp, _ := filepath.EvalSymlinks(tempDir)
+	resolvedPath, _ := filepath.EvalSymlinks(absPath)
+	if resolvedTemp != "" && strings.HasPrefix(resolvedPath, resolvedTemp) {
+		return true
+	}
+	// Also check unresolved paths (in case symlink resolution fails)
+	if strings.HasPrefix(absPath, tempDir) {
+		return true
+	}
+
 	for _, prefix := range unsafePrefixes {
 		if strings.HasPrefix(absPath, prefix+"/") || absPath == prefix {
 			return false
@@ -224,13 +238,23 @@ func isPathInSafeBoundary(path string) bool {
 
 // GetRepoContextForWorkspace returns a fresh RepoContext for a specific workspace.
 //
-// Unlike GetRepoContext(), this function does NOT cache results. It is designed
-// for long-running processes like the daemon that need to handle multiple
-// workspaces or detect context changes (DMN-001).
+// Unlike GetRepoContext(), this function:
+//   - Does NOT cache results (daemon handles multiple workspaces)
+//   - Does NOT respect BEADS_DIR (workspace path is explicit)
+//   - Resolves worktree relationships correctly
+//
+// This is designed for long-running processes like the daemon that need to handle
+// multiple workspaces or detect context changes (DMN-001).
 //
 // The function temporarily changes to the workspace directory to resolve paths,
 // then restores the original directory.
 func GetRepoContextForWorkspace(workspacePath string) (*RepoContext, error) {
+	// Normalize workspace path
+	absWorkspace, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve workspace path %s: %w", workspacePath, err)
+	}
+
 	// Change to workspace directory temporarily
 	originalDir, err := os.Getwd()
 	if err != nil {
@@ -238,15 +262,71 @@ func GetRepoContextForWorkspace(workspacePath string) (*RepoContext, error) {
 	}
 	defer func() { _ = os.Chdir(originalDir) }()
 
-	if err := os.Chdir(workspacePath); err != nil {
-		return nil, fmt.Errorf("cannot access workspace %s: %w", workspacePath, err)
+	if err := os.Chdir(absWorkspace); err != nil {
+		return nil, fmt.Errorf("cannot access workspace %s: %w", absWorkspace, err)
 	}
 
 	// Clear git caches for fresh resolution
 	git.ResetCaches()
 
-	// Build context fresh (no sync.Once caching)
-	return buildRepoContext()
+	// Build context fresh, specifically for this workspace (ignores BEADS_DIR)
+	return buildRepoContextForWorkspace(absWorkspace)
+}
+
+// buildRepoContextForWorkspace constructs RepoContext for a specific workspace.
+// Unlike buildRepoContext(), this ignores BEADS_DIR env var since the workspace
+// path is explicitly provided (used by daemon).
+func buildRepoContextForWorkspace(workspacePath string) (*RepoContext, error) {
+	// 1. Determine if we're in a worktree and find the main repo root
+	var repoRoot string
+	var isWorktree bool
+
+	if git.IsWorktree() {
+		isWorktree = true
+		var err error
+		repoRoot, err = git.GetMainRepoRoot()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine main repository root: %w", err)
+		}
+	} else {
+		isWorktree = false
+		repoRoot = git.GetRepoRoot()
+		if repoRoot == "" {
+			return nil, fmt.Errorf("workspace %s is not in a git repository", workspacePath)
+		}
+	}
+
+	// 2. Find .beads directory in the appropriate location
+	beadsDir := filepath.Join(repoRoot, ".beads")
+
+	// Check if .beads exists
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("no .beads directory found at %s", beadsDir)
+	}
+
+	// 3. Follow redirect if present
+	beadsDir = FollowRedirect(beadsDir)
+
+	// 4. Security: Validate path boundary (SEC-003)
+	if !isPathInSafeBoundary(beadsDir) {
+		return nil, fmt.Errorf("beads directory in unsafe location: %s", beadsDir)
+	}
+
+	// 5. Validate directory contains actual project files
+	if !hasBeadsProjectFiles(beadsDir) {
+		return nil, fmt.Errorf("beads directory missing required files: %s", beadsDir)
+	}
+
+	// 6. Get CWD's repo root (same as workspace in this case)
+	cwdRepoRoot := git.GetRepoRoot()
+
+	return &RepoContext{
+		BeadsDir:     beadsDir,
+		RepoRoot:     repoRoot,
+		CWDRepoRoot:  cwdRepoRoot,
+		IsRedirected: false, // Workspace-specific context is never "redirected"
+		IsWorktree:   isWorktree,
+	}, nil
 }
 
 // Validate checks if the cached context is still valid.
