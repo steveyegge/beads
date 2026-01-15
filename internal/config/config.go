@@ -153,6 +153,13 @@ func Initialize() error {
 	return nil
 }
 
+// ResetForTesting clears the config state, allowing Initialize() to be called again.
+// This is intended for tests that need to change config.yaml between test steps.
+// WARNING: Not thread-safe. Only call from single-threaded test contexts.
+func ResetForTesting() {
+	v = nil
+}
+
 // ConfigSource represents where a configuration value came from
 type ConfigSource string
 

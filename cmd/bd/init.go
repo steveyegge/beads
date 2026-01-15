@@ -244,8 +244,8 @@ With --stealth: configures per-repository git settings for invisible beads usage
 					// Non-fatal - continue anyway
 				}
 
-				// Create config.yaml with no-db: true
-				if err := createConfigYaml(beadsDir, true); err != nil {
+				// Create config.yaml with no-db: true and the prefix
+				if err := createConfigYaml(beadsDir, true, prefix); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 					// Non-fatal - continue anyway
 				}
@@ -395,8 +395,8 @@ With --stealth: configures per-repository git settings for invisible beads usage
 				// Non-fatal - continue anyway
 			}
 
-			// Create config.yaml template
-			if err := createConfigYaml(beadsDir, false); err != nil {
+			// Create config.yaml template (prefix is stored in DB, not config.yaml)
+			if err := createConfigYaml(beadsDir, false, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create config.yaml: %v\n", err)
 				// Non-fatal - continue anyway
 			}
