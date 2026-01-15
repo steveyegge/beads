@@ -216,17 +216,39 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 	// Summary
 	fmt.Println()
 	fmt.Println(strings.Repeat("-", 80))
-	openCount := 0
-	inProgressCount := 0
+
+	counts := make(map[types.Status]int)
 	for _, issue := range issues {
-		switch issue.Status {
-		case "open":
-			openCount++
-		case "in_progress":
-			inProgressCount++
+		counts[issue.Status]++
+	}
+
+	var details []string
+	// Order: open, in_progress, blocked, deferred, closed, pinned, hooked
+	displayOrder := []types.Status{
+		types.StatusOpen,
+		types.StatusInProgress,
+		types.StatusBlocked,
+		types.StatusDeferred,
+		types.StatusClosed,
+		types.StatusPinned,
+		types.StatusHooked,
+	}
+
+	for _, s := range displayOrder {
+		if c := counts[s]; c > 0 {
+			// Get styled icon for this status
+			icon := ui.RenderStatusIcon(string(s))
+			// Replace underscore in status name with space for better readability
+			name := strings.ReplaceAll(string(s), "_", " ")
+			details = append(details, fmt.Sprintf("%s %d %s", icon, c, name))
 		}
 	}
-	fmt.Printf("Total: %d issues (%d open, %d in progress)\n", len(issues), openCount, inProgressCount)
+
+	summary := fmt.Sprintf("Total: %d issues", len(issues))
+	if len(details) > 0 {
+		summary += fmt.Sprintf(" (%s)", strings.Join(details, ", "))
+	}
+	fmt.Println(summary)
 	fmt.Println()
 	fmt.Println("Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred")
 }
