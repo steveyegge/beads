@@ -285,9 +285,15 @@ func gitCommitBeadsDir(ctx context.Context, message string) error {
 	return nil
 }
 
-// hasGitRemote checks if a git remote exists in the repository
+// hasGitRemote checks if a git remote exists in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository
+// regardless of current working directory.
 func hasGitRemote(ctx context.Context) bool {
-	cmd := exec.CommandContext(ctx, "git", "remote")
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false
+	}
+	cmd := rc.GitCmd(ctx, "remote")
 	output, err := cmd.Output()
 	if err != nil {
 		return false
