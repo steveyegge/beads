@@ -1,7 +1,5 @@
 # Repository Context
 
-> **Status**: Draft outline for Phase 7 documentation
-
 This document explains how beads resolves repository context when commands run from
 different directories than where `.beads/` lives.
 
@@ -41,6 +39,22 @@ output, err := cmd.Output()
 | `GitCmdCWD()` | Git commands for user's working repo | `git status` (show user's changes) |
 | `RelPath()` | Convert absolute path to repo-relative | Display paths in output |
 
+### GitCmd() vs GitCmdCWD()
+
+The distinction matters when `BEADS_DIR` points to a different repository:
+
+```go
+rc, _ := beads.GetRepoContext()
+
+// GitCmd: runs in the beads repository
+// Use for: committing .beads/, pushing/pulling beads data
+cmd := rc.GitCmd(ctx, "add", ".beads/issues.jsonl")
+
+// GitCmdCWD: runs in user's current repository
+// Use for: checking user's uncommitted changes, status display
+cmd := rc.GitCmdCWD(ctx, "status", "--porcelain")
+```
+
 ## Scenarios
 
 ### Normal Repository
@@ -68,6 +82,11 @@ $ export BEADS_DIR=/repo-b/.beads
 $ bd sync
 # GitCmd() runs in /repo-b (correct, not /repo-a)
 ```
+
+This pattern is common for:
+- Fork contribution tracking (your tracker in separate repo)
+- Shared team databases
+- Monorepo setups
 
 ### Git Worktree
 
@@ -106,6 +125,69 @@ $ bd sync
 | `IsRedirected` | True if BEADS_DIR points to different repo than CWD |
 | `IsWorktree` | True if CWD is in a git worktree |
 
+## Security
+
+### Git Hooks Disabled
+
+`GitCmd()` disables git hooks and templates to prevent code execution in
+potentially malicious repositories:
+
+```go
+cmd.Env = append(os.Environ(),
+    "GIT_HOOKS_PATH=",   // Disable hooks
+    "GIT_TEMPLATE_DIR=", // Disable templates
+)
+```
+
+This protects against scenarios where `BEADS_DIR` points to an untrusted
+repository that contains malicious `.git/hooks/` scripts.
+
+### Path Boundary Validation
+
+`GetRepoContext()` validates that `BEADS_DIR` does not point to sensitive
+system directories:
+
+- `/etc`, `/usr`, `/var`, `/root` (Unix system directories)
+- `/System`, `/Library` (macOS system directories)
+- Other users' home directories
+
+Temporary directories (e.g., `/var/folders` on macOS) are explicitly allowed
+for test environments.
+
+## Daemon Handling
+
+### CLI vs Daemon Context
+
+For CLI commands, `GetRepoContext()` caches the result via `sync.Once` because:
+- CWD doesn't change during command execution
+- BEADS_DIR doesn't change during command execution
+- Repeated filesystem access would be wasteful
+
+For the daemon (long-running process), this caching is inappropriate:
+- User may create new worktrees
+- BEADS_DIR may change via direnv
+- Multiple workspaces may be active simultaneously
+
+### Workspace-Specific API
+
+The daemon uses `GetRepoContextForWorkspace()` for fresh resolution:
+
+```go
+// For daemon: fresh resolution per-operation (no caching)
+rc, err := beads.GetRepoContextForWorkspace(workspacePath)
+
+// Validation hook for detecting stale contexts
+if err := rc.Validate(); err != nil {
+    // Context is stale, need fresh resolution
+}
+```
+
+This function:
+- Does NOT cache results
+- Does NOT respect BEADS_DIR (workspace path is explicit)
+- Resolves worktree relationships correctly
+- Validates that paths still exist
+
 ## Migration Guide
 
 ### Before (scattered resolution)
@@ -139,6 +221,12 @@ func doGitOperation(ctx context.Context) error {
 }
 ```
 
+### Key Changes for Contributors
+
+1. **Replace direct exec.Command**: Use `rc.GitCmd()` or `rc.GitCmdCWD()`
+2. **Remove manual path resolution**: RepoContext handles all scenarios
+3. **Clear caches in tests**: Call `beads.ResetCaches()` in test cleanup
+
 ## Testing
 
 Tests use `beads.ResetCaches()` to clear cached context between test cases:
@@ -158,9 +246,11 @@ func TestSomething(t *testing.T) {
 - [WORKTREES.md](WORKTREES.md) - Git worktree integration
 - [ROUTING.md](ROUTING.md) - Multi-repository routing
 - [CONFIG.md](CONFIG.md) - BEADS_DIR and environment variables
+- [DAEMON.md](DAEMON.md) - Daemon architecture and workspace handling
 
 ## Implementation Notes
 
-- Result is cached via `sync.Once` for efficiency
+- Result is cached via `sync.Once` for CLI efficiency
 - CWD and BEADS_DIR don't change during command execution
 - Uses `cmd.Dir` pattern (not `-C` flag) for Go-idiomatic execution
+- Security mitigations implemented for git hooks and path traversal
