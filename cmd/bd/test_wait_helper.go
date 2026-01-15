@@ -63,7 +63,7 @@ func setupGitRepo(t *testing.T) (repoPath string, cleanup func()) {
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte{}, 0600); err != nil {
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to write issues.jsonl: %v", err)
 	}
@@ -125,7 +125,7 @@ func setupGitRepoWithBranch(t *testing.T, branch string) (repoPath string, clean
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte{}, 0600); err != nil {
 		_ = os.Chdir(originalWd)
 		t.Fatalf("failed to write issues.jsonl: %v", err)
 	}
