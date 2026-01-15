@@ -291,7 +291,7 @@ type IssueDiff struct {
 // GetConflicts returns any merge conflicts in the current state
 func (s *DoltStore) GetConflicts(ctx context.Context) ([]*Conflict, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT table_name, num_conflicts FROM dolt_conflicts
+		SELECT ` + "`table`" + `, num_conflicts FROM dolt_conflicts
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conflicts: %w", err)
