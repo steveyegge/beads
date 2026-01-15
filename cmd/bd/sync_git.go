@@ -14,15 +14,25 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 )
 
-// isGitRepo checks if the current directory is in a git repository
+// isGitRepo checks if the current working directory is in a git repository.
+// NOTE: This intentionally checks CWD, not the beads repo. It's used as a guard
+// before calling other git functions to prevent hangs on Windows (GH#727).
+// Does not use RepoContext because it's a prerequisite check for git availability.
 func isGitRepo() bool {
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
 	return cmd.Run() == nil
 }
 
-// gitHasUnmergedPaths checks for unmerged paths or merge in progress
+// gitHasUnmergedPaths checks for unmerged paths or merge in progress in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository.
 func gitHasUnmergedPaths() (bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false, fmt.Errorf("getting repo context: %w", err)
+	}
+
+	ctx := context.Background()
+	cmd := rc.GitCmd(ctx, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
@@ -39,18 +49,26 @@ func gitHasUnmergedPaths() (bool, error) {
 	}
 
 	// Check if MERGE_HEAD exists (merge in progress)
-	if exec.Command("git", "rev-parse", "-q", "--verify", "MERGE_HEAD").Run() == nil {
+	mergeCmd := rc.GitCmd(ctx, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	if mergeCmd.Run() == nil {
 		return true, nil
 	}
 
 	return false, nil
 }
 
-// gitHasUpstream checks if the current branch has an upstream configured
-// Uses git config directly for compatibility with Git for Windows
+// gitHasUpstream checks if the current branch has an upstream configured in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository.
+// Uses git config directly for compatibility with Git for Windows.
 func gitHasUpstream() bool {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false
+	}
+
+	ctx := context.Background()
 	// Get current branch name
-	branchCmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	branchCmd := rc.GitCmd(ctx, "symbolic-ref", "--short", "HEAD")
 	branchOutput, err := branchCmd.Output()
 	if err != nil {
 		return false
@@ -64,10 +82,17 @@ func gitHasUpstream() bool {
 // Unlike gitHasUpstream(), this works even when HEAD is detached (e.g., jj/jujutsu).
 // This is critical for sync-branch workflows where the sync branch has upstream
 // tracking but the main working copy may be in detached HEAD state.
+// Uses RepoContext to ensure git commands run in the correct repository.
 func gitBranchHasUpstream(branch string) bool {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false
+	}
+
+	ctx := context.Background()
 	// Check if remote and merge refs are configured for the branch
-	remoteCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) //nolint:gosec // G204: branch from caller
-	mergeCmd := exec.Command("git", "config", "--get", fmt.Sprintf("branch.%s.merge", branch))   //nolint:gosec // G204: branch from caller
+	remoteCmd := rc.GitCmd(ctx, "config", "--get", fmt.Sprintf("branch.%s.remote", branch)) //nolint:gosec // G204: branch from caller
+	mergeCmd := rc.GitCmd(ctx, "config", "--get", fmt.Sprintf("branch.%s.merge", branch))   //nolint:gosec // G204: branch from caller
 
 	remoteErr := remoteCmd.Run()
 	mergeErr := mergeCmd.Run()
@@ -75,9 +100,15 @@ func gitBranchHasUpstream(branch string) bool {
 	return remoteErr == nil && mergeErr == nil
 }
 
-// gitHasChanges checks if the specified file has uncommitted changes
+// gitHasChanges checks if the specified file has uncommitted changes in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository.
 func gitHasChanges(ctx context.Context, filePath string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", filePath)
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false, fmt.Errorf("getting repo context: %w", err)
+	}
+
+	cmd := rc.GitCmd(ctx, "status", "--porcelain", filePath)
 	output, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
@@ -96,44 +127,23 @@ func getRepoRootForWorktree(_ context.Context) string {
 	return repoRoot
 }
 
-// gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes
-// This function is worktree-aware and handles bare repo worktree setups (GH#827).
-// It also handles redirected beads directories (bd-arjb) by running git commands
-// from the directory containing the actual .beads/.
+// gitHasBeadsChanges checks if any tracked files in .beads/ have uncommitted changes.
+// Uses RepoContext to ensure git commands run in the correct repository.
+// RepoContext handles worktrees (GH#827) and redirected beads directories (bd-arjb).
 func gitHasBeadsChanges(ctx context.Context) (bool, error) {
-	// Get the absolute path to .beads directory
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return false, fmt.Errorf("no .beads directory found")
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false, fmt.Errorf("getting repo context: %w", err)
 	}
 
-	// Check if beads directory is redirected (bd-arjb)
-	// When redirected, beadsDir points outside the current repo, so we need to
-	// run git commands from the directory containing the actual .beads/
-	redirectInfo := beads.GetRedirectInfo()
-	if redirectInfo.IsRedirected {
-		// beadsDir is the target (e.g., /path/to/mayor/rig/.beads)
-		// We need to run git from the parent of .beads (e.g., /path/to/mayor/rig)
-		targetRepoDir := filepath.Dir(beadsDir)
-		statusCmd := exec.CommandContext(ctx, "git", "-C", targetRepoDir, "status", "--porcelain", beadsDir) //nolint:gosec // G204: beadsDir from beads.FindBeadsDir()
-		statusOutput, err := statusCmd.Output()
-		if err != nil {
-			return false, fmt.Errorf("git status failed: %w", err)
-		}
-		return len(strings.TrimSpace(string(statusOutput))) > 0, nil
-	}
-
-	// Run git status with absolute path from current directory.
-	// This is more robust than using -C with a repo root, because:
-	// 1. In bare repo worktree setups, GetMainRepoRoot() returns the parent
-	//    of the bare repo, which isn't a valid working tree (GH#827)
-	// 2. Git will find the repository from cwd, which is always valid
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", beadsDir) //nolint:gosec // G204: beadsDir from beads.FindBeadsDir()
-	statusOutput, err := statusCmd.Output()
+	// rc.GitCmd runs in rc.RepoRoot which is the repo containing .beads/
+	// This works for both normal and redirected scenarios.
+	cmd := rc.GitCmd(ctx, "status", "--porcelain", rc.BeadsDir)
+	output, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
 	}
-	return len(strings.TrimSpace(string(statusOutput))) > 0, nil
+	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
 // buildGitCommitArgs returns git commit args with config-based author and signing options (GH#600)
@@ -322,10 +332,17 @@ func isInRebase() bool {
 	return false
 }
 
-// hasJSONLConflict checks if the beads JSONL file has a merge conflict
-// Returns true only if the JSONL file (issues.jsonl or beads.jsonl) is the only file in conflict
+// hasJSONLConflict checks if the beads JSONL file has a merge conflict in the beads repository.
+// Returns true only if the JSONL file (issues.jsonl or beads.jsonl) is the only file in conflict.
+// Uses RepoContext to ensure git commands run in the correct repository.
 func hasJSONLConflict() bool {
-	cmd := exec.Command("git", "status", "--porcelain")
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false
+	}
+
+	ctx := context.Background()
+	cmd := rc.GitCmd(ctx, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -343,10 +360,10 @@ func hasJSONLConflict() bool {
 		status := line[:2]
 		if status == "UU" || status == "AA" || status == "DD" ||
 			status == "AU" || status == "UA" || status == "DU" || status == "UD" {
-			filepath := strings.TrimSpace(line[3:])
+			filePath := strings.TrimSpace(line[3:])
 
 			// Check for beads JSONL files (issues.jsonl or beads.jsonl in .beads/)
-			if strings.HasSuffix(filepath, "issues.jsonl") || strings.HasSuffix(filepath, "beads.jsonl") {
+			if strings.HasSuffix(filePath, "issues.jsonl") || strings.HasSuffix(filePath, "beads.jsonl") {
 				hasJSONLConflict = true
 			} else {
 				hasOtherConflict = true
@@ -449,9 +466,17 @@ func gitPush(ctx context.Context, configuredRemote string) error {
 	return nil
 }
 
+// checkMergeDriverConfig checks if the merge driver is misconfigured in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository.
 func checkMergeDriverConfig() {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return // No beads context, skip check
+	}
+
+	ctx := context.Background()
 	// Get current merge driver configuration
-	cmd := exec.Command("git", "config", "merge.beads.driver")
+	cmd := rc.GitCmd(ctx, "config", "merge.beads.driver")
 	output, err := cmd.Output()
 	if err != nil {
 		// No merge driver configured - this is OK, user may not need it
@@ -502,31 +527,18 @@ func restoreBeadsDirFromBranch(ctx context.Context) error {
 // This detects the failure mode where a previous sync exported but failed before commit.
 // Returns true if the JSONL file has staged or unstaged changes (M or A status).
 // GH#885: Pre-flight safety check to detect incomplete sync operations.
-// Also handles redirected beads directories (bd-arjb).
+// Uses RepoContext to ensure git commands run in the correct repository (handles redirects).
 func gitHasUncommittedBeadsChanges(ctx context.Context) (bool, error) {
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return false, nil // No beads dir, nothing to check
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return false, nil // No beads context, nothing to check
 	}
 
-	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	jsonlPath := filepath.Join(rc.BeadsDir, "issues.jsonl")
 
-	// Check if beads directory is redirected (bd-arjb)
-	// When redirected, beadsDir points outside the current repo, so we need to
-	// run git commands from the directory containing the actual .beads/
-	redirectInfo := beads.GetRedirectInfo()
-	if redirectInfo.IsRedirected {
-		targetRepoDir := filepath.Dir(beadsDir)
-		cmd := exec.CommandContext(ctx, "git", "-C", targetRepoDir, "status", "--porcelain", jsonlPath) //nolint:gosec // G204: jsonlPath from internal beads.FindBeadsDir()
-		output, err := cmd.Output()
-		if err != nil {
-			return false, fmt.Errorf("git status failed: %w", err)
-		}
-		return parseGitStatusForBeadsChanges(string(output)), nil
-	}
-
-	// Check git status for the JSONL file specifically
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", jsonlPath) //nolint:gosec // G204: jsonlPath from internal beads.FindBeadsDir()
+	// rc.GitCmd runs in rc.RepoRoot which is the repo containing .beads/
+	// This works for both normal and redirected scenarios.
+	cmd := rc.GitCmd(ctx, "status", "--porcelain", jsonlPath)
 	output, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
@@ -558,17 +570,24 @@ func parseGitStatusForBeadsChanges(statusOutput string) bool {
 	return false
 }
 
-// getDefaultBranch returns the default branch name (main or master) for origin remote
-// Checks remote HEAD first, then falls back to checking if main/master exist
+// getDefaultBranch returns the default branch name (main or master) for origin remote.
+// Uses RepoContext to ensure git commands run in the correct repository.
+// Checks remote HEAD first, then falls back to checking if main/master exist.
 func getDefaultBranch(ctx context.Context) string {
 	return getDefaultBranchForRemote(ctx, "origin")
 }
 
-// getDefaultBranchForRemote returns the default branch name for a specific remote
-// Checks remote HEAD first, then falls back to checking if main/master exist
+// getDefaultBranchForRemote returns the default branch name for a specific remote in the beads repository.
+// Uses RepoContext to ensure git commands run in the correct repository.
+// Checks remote HEAD first, then falls back to checking if main/master exist.
 func getDefaultBranchForRemote(ctx context.Context, remote string) string {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return "main" // Default fallback if context unavailable
+	}
+
 	// Try to get default branch from remote
-	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", fmt.Sprintf("refs/remotes/%s/HEAD", remote)) //nolint:gosec // G204: remote from git config
+	cmd := rc.GitCmd(ctx, "symbolic-ref", fmt.Sprintf("refs/remotes/%s/HEAD", remote)) //nolint:gosec // G204: remote from git config
 	output, err := cmd.Output()
 	if err == nil {
 		ref := strings.TrimSpace(string(output))
@@ -580,12 +599,14 @@ func getDefaultBranchForRemote(ctx context.Context, remote string) string {
 	}
 
 	// Fallback: check if <remote>/main exists
-	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", fmt.Sprintf("%s/main", remote)).Run() == nil { //nolint:gosec // G204: remote from git config
+	mainCmd := rc.GitCmd(ctx, "rev-parse", "--verify", fmt.Sprintf("%s/main", remote)) //nolint:gosec // G204: remote from git config
+	if mainCmd.Run() == nil {
 		return "main"
 	}
 
 	// Fallback: check if <remote>/master exists
-	if exec.CommandContext(ctx, "git", "rev-parse", "--verify", fmt.Sprintf("%s/master", remote)).Run() == nil { //nolint:gosec // G204: remote from git config
+	masterCmd := rc.GitCmd(ctx, "rev-parse", "--verify", fmt.Sprintf("%s/master", remote)) //nolint:gosec // G204: remote from git config
+	if masterCmd.Run() == nil {
 		return "master"
 	}
 
