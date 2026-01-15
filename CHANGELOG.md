@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.2] - 2026-01-14
+
+### Added
+
+- **Dolt backend (experimental)** - Version-controlled issue storage with time-travel
+  - `bd init --backend=dolt` enables Dolt-based storage
+  - Full version history for issues with branch/merge semantics
+  - See docs/DOLT.md for migration guide
+
+- **`bd show --children` flag** - Display child issues inline with parent
+  - Shows hierarchical structure in issue details
+
+- **Comprehensive NixOS support** - Improved Nix flake and home-manager integration
+  - Better daemon handling in Nix environments
+  - Updated flake.nix with proper dependencies
+
+### Changed
+
+- **Release workflow modernized** - bump-version.sh replaced with molecule pointer
+  - Use `bd mol wisp beads-release --var version=X.Y.Z` for releases
+  - New `scripts/update-versions.sh` for quick local version bumps
+
+### Fixed
+
+- **Redirect + sync-branch incompatibility** - bd sync works correctly in redirected repos (bd-wayc3)
+  - Worktree git status failures resolved
+  - Proper handling of .beads/redirect during sync operations
+
+- **Doctor project-level settings** - Detects plugins/hooks/MCP in .claude/settings.json
+  - No longer misses project-scoped configurations
+
+- **Contributor routing** - `bd init --contributor` correctly sets up routing (#1088)
+  - Fork workflows now properly configure sync.remote=upstream
+
+### Documentation
+
+- **EXTENDING.md deprecated** - Custom SQLite tables approach deprecated for Dolt migration
+  - External tools pattern recommended for integrations
+
 ## [0.47.1] - 2026-01-12
 
 ### Added

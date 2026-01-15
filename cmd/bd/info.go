@@ -297,6 +297,20 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.47.2",
+		Date:    "2026-01-14",
+		Changes: []string{
+			"NEW: Dolt backend (experimental) - bd init --backend=dolt for version-controlled storage",
+			"NEW: bd show --children flag - Display child issues inline with parent",
+			"NEW: Comprehensive NixOS support - Improved flake and home-manager integration",
+			"FIX: Redirect + sync-branch incompatibility - bd sync works in redirected repos (bd-wayc3)",
+			"FIX: Doctor project-level settings - Detects plugins/hooks/MCP in .claude/settings.json",
+			"FIX: Contributor routing - bd init --contributor correctly sets up routing (#1088)",
+			"CHANGED: Release workflow modernized - bump-version.sh replaced with molecule pointer",
+			"DOCS: EXTENDING.md deprecated - Custom SQLite tables approach deprecated for Dolt migration",
+		},
+	},
+	{
 		Version: "0.47.1",
 		Date:    "2026-01-12",
 		Changes: []string{
