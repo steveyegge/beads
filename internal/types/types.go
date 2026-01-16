@@ -64,6 +64,7 @@ type Issue struct {
 	Labels       []string      `json:"labels,omitempty"`
 	Dependencies []*Dependency `json:"dependencies,omitempty"`
 	Comments     []*Comment    `json:"comments,omitempty"`
+	Commits      []string      `json:"commits,omitempty"` // Linked git commit SHAs
 
 	// ===== Tombstone Fields (soft-delete support) =====
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When deleted
