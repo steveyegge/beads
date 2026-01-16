@@ -21,7 +21,7 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		UPDATE issues
 		SET id = ?, title = ?, description = ?, design = ?, acceptance_criteria = ?, notes = ?, updated_at = ?
 		WHERE id = ?
-	`, newID, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes, time.Now(), oldID)
+	`, newID, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes, time.Now().UTC(), oldID)
 	if err != nil {
 		return fmt.Errorf("failed to update issue ID: %w", err)
 	}
@@ -68,7 +68,7 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
-	`, newID, time.Now())
+	`, newID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}

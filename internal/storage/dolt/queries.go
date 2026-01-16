@@ -198,7 +198,7 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	}
 	if filter.Overdue {
 		whereClauses = append(whereClauses, "due_at IS NOT NULL AND due_at < ? AND status != ?")
-		args = append(args, time.Now().Format(time.RFC3339), types.StatusClosed)
+		args = append(args, time.Now().UTC().Format(time.RFC3339), types.StatusClosed)
 	}
 
 	whereSQL := ""
@@ -402,7 +402,7 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 
 // GetStaleIssues returns issues that haven't been updated recently
 func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
-	cutoff := time.Now().AddDate(0, 0, -filter.Days)
+	cutoff := time.Now().UTC().AddDate(0, 0, -filter.Days)
 
 	statusClause := "status IN ('open', 'in_progress')"
 	if filter.Status != "" {
