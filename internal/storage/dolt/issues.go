@@ -24,7 +24,7 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	}
 
 	// Set timestamps
-	now := time.Now()
+	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
 	}
@@ -136,7 +136,7 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 	defer func() { _ = tx.Rollback() }()
 
 	for _, issue := range issues {
-		now := time.Now()
+		now := time.Now().UTC()
 		if issue.CreatedAt.IsZero() {
 			issue.CreatedAt = now
 		}
@@ -239,7 +239,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 
 	// Build update query
 	setClauses := []string{"updated_at = ?"}
-	args := []interface{}{time.Now()}
+	args := []interface{}{time.Now().UTC()}
 
 	for key, value := range updates {
 		if !isAllowedUpdateField(key) {
@@ -289,7 +289,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 
 // CloseIssue closes an issue with a reason
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -597,7 +597,7 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
-	`, issueID, time.Now())
+	`, issueID, time.Now().UTC())
 	return err
 }
 
@@ -645,7 +645,7 @@ func manageClosedAt(oldIssue *types.Issue, updates map[string]interface{}, setCl
 	}
 
 	if newStatus == string(types.StatusClosed) {
-		now := time.Now()
+		now := time.Now().UTC()
 		setClauses = append(setClauses, "closed_at = ?")
 		args = append(args, now)
 	} else if oldIssue.Status == types.StatusClosed {

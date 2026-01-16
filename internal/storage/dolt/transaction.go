@@ -43,7 +43,7 @@ func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Tra
 
 // CreateIssue creates an issue within the transaction
 func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, actor string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
 		issue.CreatedAt = now
 	}
@@ -122,7 +122,7 @@ func (t *doltTransaction) SearchIssues(ctx context.Context, query string, filter
 // UpdateIssue updates an issue within the transaction
 func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error {
 	setClauses := []string{"updated_at = ?"}
-	args := []interface{}{time.Now()}
+	args := []interface{}{time.Now().UTC()}
 
 	for key, value := range updates {
 		if !isAllowedUpdateField(key) {
@@ -145,7 +145,7 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 
 // CloseIssue closes an issue within the transaction
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	_, err := t.tx.ExecContext(ctx, `
 		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
 		WHERE id = ?

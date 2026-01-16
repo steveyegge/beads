@@ -68,7 +68,7 @@ func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text s
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO comments (issue_id, author, text, created_at)
 		VALUES (?, ?, ?, ?)
-	`, issueID, author, text, time.Now())
+	`, issueID, author, text, time.Now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("failed to add comment: %w", err)
 	}
@@ -83,7 +83,7 @@ func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text s
 		IssueID:   issueID,
 		Author:    author,
 		Text:      text,
-		CreatedAt: time.Now(),
+		CreatedAt: time.Now().UTC(),
 	}, nil
 }
 
