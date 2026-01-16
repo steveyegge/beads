@@ -145,6 +145,35 @@ func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_AcquireStartLock_FailsWhenRemoveFails(t *testing.T) {
+	// This test verifies that acquireStartLock returns false (instead of
+	// recursing infinitely) when os.Remove fails on a stale lock file.
+	// See: https://github.com/steveyegge/beads/issues/XXX
+
+	oldRemove := removeFileFn
+	defer func() { removeFileFn = oldRemove }()
+
+	// Stub removeFileFn to always fail
+	removeFileFn = func(path string) error {
+		return os.ErrPermission
+	}
+
+	tmpDir := t.TempDir()
+	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
+	socketPath := filepath.Join(tmpDir, "bd.sock")
+
+	// Create a stale lock file with PID 0 (will be detected as dead)
+	if err := os.WriteFile(lockPath, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// acquireStartLock should return false since it can't remove the stale lock
+	// Previously, this would cause infinite recursion and stack overflow
+	if acquireStartLock(lockPath, socketPath) {
+		t.Fatalf("expected acquireStartLock to fail when remove fails")
+	}
+}
+
 func TestDaemonAutostart_SocketHealthAndReadiness(t *testing.T) {
 	socketPath, cleanup := startTestRPCServer(t)
 	defer cleanup()
