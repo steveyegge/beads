@@ -108,20 +108,20 @@ var hookManagerPatterns = []hookManagerPattern{
 // DetectActiveHookManager reads the git hooks to determine which manager installed them.
 // This is more reliable than just checking for config files when multiple managers exist.
 func DetectActiveHookManager(path string) string {
-	// Get git dir
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	// Get common git dir (hooks are shared across worktrees)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = path
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	gitDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
+	gitCommonDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitCommonDir) {
+		gitCommonDir = filepath.Join(path, gitCommonDir)
 	}
 
 	// Check for custom hooks path (core.hooksPath)
-	hooksDir := filepath.Join(gitDir, "hooks")
+	hooksDir := filepath.Join(gitCommonDir, "hooks")
 	hooksPathCmd := exec.Command("git", "config", "--get", "core.hooksPath")
 	hooksPathCmd.Dir = path
 	if hooksPathOutput, err := hooksPathCmd.Output(); err == nil {

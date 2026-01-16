@@ -21,12 +21,12 @@ var preCommitFrameworkPattern = regexp.MustCompile(`(?i)(pre-commit\s+run|prek\s
 
 // hooksInstalled checks if bd git hooks are installed
 func hooksInstalled() bool {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return false
 	}
-	preCommit := filepath.Join(gitDir, "hooks", "pre-commit")
-	postMerge := filepath.Join(gitDir, "hooks", "post-merge")
+	preCommit := filepath.Join(hooksDir, "pre-commit")
+	postMerge := filepath.Join(hooksDir, "post-merge")
 
 	// Check if both hooks exist
 	_, err1 := os.Stat(preCommit)
@@ -81,11 +81,10 @@ type hookInfo struct {
 
 // detectExistingHooks scans for existing git hooks
 func detectExistingHooks() []hookInfo {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return nil
 	}
-	hooksDir := filepath.Join(gitDir, "hooks")
 	hooks := []hookInfo{
 		{name: "pre-commit", path: filepath.Join(hooksDir, "pre-commit")},
 		{name: "post-merge", path: filepath.Join(hooksDir, "post-merge")},
@@ -137,11 +136,10 @@ func promptHookAction(existingHooks []hookInfo) string {
 
 // installGitHooks installs git hooks inline (no external dependencies)
 func installGitHooks() error {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return err
 	}
-	hooksDir := filepath.Join(gitDir, "hooks")
 
 	// Ensure hooks directory exists
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {

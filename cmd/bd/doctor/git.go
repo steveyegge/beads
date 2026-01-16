@@ -30,7 +30,7 @@ var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
 // CheckGitHooks verifies that recommended git hooks are installed.
 func CheckGitHooks() DoctorCheck {
 	// Check if we're in a git repository using worktree-aware detection
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Git Hooks",
@@ -45,8 +45,6 @@ func CheckGitHooks() DoctorCheck {
 		"post-merge": "Imports updated JSONL after git pull/merge",
 		"pre-push":   "Exports database to JSONL before push",
 	}
-
-	hooksDir := filepath.Join(gitDir, "hooks")
 	var missingHooks []string
 	var installedHooks []string
 
@@ -60,13 +58,7 @@ func CheckGitHooks() DoctorCheck {
 	}
 
 	// Get repo root for external manager detection
-	repoRoot := filepath.Dir(gitDir)
-	if filepath.Base(gitDir) != ".git" {
-		// Worktree case - gitDir might be .git file content
-		if cwd, err := os.Getwd(); err == nil {
-			repoRoot = cwd
-		}
-	}
+	repoRoot := git.GetRepoRoot()
 
 	// Check for external hook managers (lefthook, husky, etc.)
 	externalManagers := fix.DetectExternalHookManagers(repoRoot)
@@ -364,8 +356,8 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 	}
 
 	// sync-branch is configured - check pre-push hook version
-	// Get actual git directory (handles worktrees where .git is a file)
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	// Get common git directory for hooks (shared across worktrees)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = path
 	output, err := cmd.Output()
 	if err != nil {
@@ -375,14 +367,13 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 			Message: "N/A (not a git repository)",
 		}
 	}
-	gitDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
+	gitCommonDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitCommonDir) {
+		gitCommonDir = filepath.Join(path, gitCommonDir)
 	}
 
-	// Use standard .git/hooks location for consistency with CheckGitHooks (issue #799)
-	// Note: core.hooksPath is intentionally NOT checked here to match CheckGitHooks behavior.
-	hookPath := filepath.Join(gitDir, "hooks", "pre-push")
+	// Hooks are shared across worktrees and live in the common git directory
+	hookPath := filepath.Join(gitCommonDir, "hooks", "pre-push")
 
 	hookContent, err := os.ReadFile(hookPath) // #nosec G304 - path is controlled
 	if err != nil {
