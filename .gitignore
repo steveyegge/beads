@@ -131,3 +131,7 @@ state.json
 .agents/
 output
 bd_test
+
+# Claude temp files
+tmpclaude-*
+nul
