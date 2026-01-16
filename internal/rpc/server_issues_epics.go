@@ -187,6 +187,10 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 			}
 		}
 	}
+	// Git commit tracking field
+	if a.Commits != nil {
+		u["commits"] = *a.Commits
+	}
 	return u, nil
 }
 

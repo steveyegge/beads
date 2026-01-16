@@ -167,6 +167,8 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
+	// Git commit tracking field
+	Commits *string `json:"commits,omitempty"` // JSON array of linked commit SHAs
 }
 
 // CloseArgs represents arguments for the close operation

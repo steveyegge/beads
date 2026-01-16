@@ -758,6 +758,8 @@ var allowedUpdateFields = map[string]bool{
 	"rig":           true,
 	// Molecule type field
 	"mol_type": true,
+	// Git commit tracking field
+	"commits": true,
 	// Event fields
 	"event_category": true,
 	"event_actor":    true,

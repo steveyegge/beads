@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS issues (
     actor TEXT DEFAULT '',
     target TEXT DEFAULT '',
     payload TEXT DEFAULT '',
+    -- Git commit tracking (bd-hvg)
+    commits TEXT DEFAULT '',
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     -- closed_at constraint: closed issues must have it, tombstones may retain it from before deletion
