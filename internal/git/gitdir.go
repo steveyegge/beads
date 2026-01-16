@@ -118,13 +118,15 @@ func GetGitCommonDir() (string, error) {
 }
 
 // GetGitHooksDir returns the path to the Git hooks directory.
-// This function is worktree-aware and handles both regular repos and worktrees.
+// This function is worktree-aware: hooks are shared across all worktrees
+// and live in the common git directory (e.g., /repo/.git/hooks), not in
+// the worktree-specific directory (e.g., /repo/.git/worktrees/feature/hooks).
 func GetGitHooksDir() (string, error) {
-	gitDir, err := GetGitDir()
+	commonDir, err := GetGitCommonDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(gitDir, "hooks"), nil
+	return filepath.Join(commonDir, "hooks"), nil
 }
 
 // GetGitRefsDir returns the path to the Git refs directory.

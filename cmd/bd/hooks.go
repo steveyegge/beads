@@ -51,8 +51,8 @@ func CheckGitHooks() []HookStatus {
 	hooks := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 	statuses := make([]HookStatus, 0, len(hooks))
 
-	// Get actual git directory (handles worktrees)
-	gitDir, err := git.GetGitDir()
+	// Get hooks directory from common git dir (hooks are shared across worktrees)
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		// Not a git repo - return all hooks as not installed
 		for _, hookName := range hooks {
@@ -67,7 +67,7 @@ func CheckGitHooks() []HookStatus {
 		}
 
 		// Check if hook exists
-		hookPath := filepath.Join(gitDir, "hooks", hookName)
+		hookPath := filepath.Join(hooksDir, hookName)
 		versionInfo, err := getHookVersion(hookPath)
 		if err != nil {
 			// Hook doesn't exist or couldn't be read
@@ -319,19 +319,17 @@ var hooksListCmd = &cobra.Command{
 }
 
 func installHooks(embeddedHooks map[string]string, force bool, shared bool, chain bool) error {
-	// Get actual git directory (handles worktrees where .git is a file)
-	gitDir, err := git.GetGitDir()
-	if err != nil {
-		return err
-	}
-
 	var hooksDir string
 	if shared {
 		// Use versioned directory for shared hooks
 		hooksDir = ".beads-hooks"
 	} else {
-		// Use standard .git/hooks directory
-		hooksDir = filepath.Join(gitDir, "hooks")
+		// Use common git directory for hooks (shared across worktrees)
+		var err error
+		hooksDir, err = git.GetGitHooksDir()
+		if err != nil {
+			return err
+		}
 	}
 
 	// Create hooks directory if it doesn't exist
@@ -401,12 +399,11 @@ func configureSharedHooksPath() error {
 }
 
 func uninstallHooks() error {
-	// Get actual git directory (handles worktrees)
-	gitDir, err := git.GetGitDir()
+	// Get hooks directory from common git dir (hooks are shared across worktrees)
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return err
 	}
-	hooksDir := filepath.Join(gitDir, "hooks")
 	hookNames := []string{"pre-commit", "post-merge", "pre-push", "post-checkout", "prepare-commit-msg"}
 
 	for _, hookName := range hookNames {
@@ -442,13 +439,13 @@ func uninstallHooks() error {
 // runChainedHook runs a .old hook if it exists. Returns the exit code.
 // If the hook doesn't exist, returns 0 (success).
 func runChainedHook(hookName string, args []string) int {
-	// Get the hooks directory
-	gitDir, err := git.GetGitDir()
+	// Get the hooks directory from common dir (hooks are shared across worktrees)
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return 0 // Not a git repo, nothing to chain
 	}
 
-	oldHookPath := filepath.Join(gitDir, "hooks", hookName+".old")
+	oldHookPath := filepath.Join(hooksDir, hookName+".old")
 
 	// Check if the .old hook exists and is executable
 	info, err := os.Stat(oldHookPath)
