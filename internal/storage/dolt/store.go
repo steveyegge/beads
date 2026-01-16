@@ -361,6 +361,15 @@ func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
 	return branch, nil
 }
 
+// DeleteBranch deletes a branch (used to clean up import branches)
+func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
+	if err != nil {
+		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
+	}
+	return nil
+}
+
 // Log returns recent commit history
 func (s *DoltStore) Log(ctx context.Context, limit int) ([]CommitInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `

@@ -553,6 +553,7 @@ func hookPostMergeDolt(beadsDir string) int {
 		Merge(ctx context.Context, branch string) error
 		Commit(ctx context.Context, message string) error
 		CurrentBranch(ctx context.Context) (string, error)
+		DeleteBranch(ctx context.Context, branch string) error
 	})
 	if !ok {
 		// Not a Dolt store with version control, use regular import
@@ -613,7 +614,11 @@ func hookPostMergeDolt(beadsDir string) int {
 		// This is expected, not an error
 	}
 
-	// TODO: Delete import branch (need to add DeleteBranch method to DoltStore)
+	// Clean up import branch
+	if err := doltStore.DeleteBranch(ctx, importBranch); err != nil {
+		// Non-fatal - branch cleanup is best-effort
+		fmt.Fprintf(os.Stderr, "Warning: could not delete import branch %s: %v\n", importBranch, err)
+	}
 
 	return 0
 }
