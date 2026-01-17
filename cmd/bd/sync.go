@@ -115,11 +115,11 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 
 		// If resolve mode, resolve conflicts
 		if resolve {
-			strategy := "newest" // default
+			strategy := config.GetConflictStrategy() // use configured default
 			if resolveOurs {
-				strategy = "ours"
+				strategy = config.ConflictStrategyOurs
 			} else if resolveTheirs {
-				strategy = "theirs"
+				strategy = config.ConflictStrategyTheirs
 			}
 			if err := resolveSyncConflicts(ctx, jsonlPath, strategy, dryRun); err != nil {
 				FatalError("%v", err)
@@ -681,8 +681,23 @@ func showSyncStateStatus(ctx context.Context, jsonlPath string) error {
 
 	beadsDir := filepath.Dir(jsonlPath)
 
-	// Sync mode
-	fmt.Println("Sync mode: git-portable")
+	// Sync mode (from config)
+	syncCfg := config.GetSyncConfig()
+	fmt.Printf("Sync mode: %s\n", syncCfg.Mode)
+	fmt.Printf("  Export on: %s, Import on: %s\n", syncCfg.ExportOn, syncCfg.ImportOn)
+
+	// Conflict strategy
+	conflictCfg := config.GetConflictConfig()
+	fmt.Printf("Conflict strategy: %s\n", conflictCfg.Strategy)
+
+	// Federation config (if set)
+	fedCfg := config.GetFederationConfig()
+	if fedCfg.Remote != "" {
+		fmt.Printf("Federation remote: %s\n", fedCfg.Remote)
+		if fedCfg.Sovereignty != "" {
+			fmt.Printf("  Sovereignty: %s\n", fedCfg.Sovereignty)
+		}
+	}
 
 	// Last export time
 	lastExport, err := store.GetMetadata(ctx, "last_import_time")
@@ -876,11 +891,15 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 
 		var winner string
 		switch strategy {
-		case "ours":
+		case config.ConflictStrategyOurs:
 			winner = "local"
-		case "theirs":
+		case config.ConflictStrategyTheirs:
 			winner = "remote"
-		case "newest":
+		case config.ConflictStrategyManual:
+			// Manual mode should not reach here - conflicts are handled interactively
+			fmt.Printf("⚠ %s: requires manual resolution\n", conflict.IssueID)
+			continue
+		case config.ConflictStrategyNewest:
 			fallthrough
 		default:
 			// Compare updated_at timestamps
@@ -898,7 +917,7 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 		}
 
 		fmt.Printf("✓ %s: kept %s", conflict.IssueID, winner)
-		if strategy == "newest" {
+		if strategy == config.ConflictStrategyNewest {
 			fmt.Print(" (newer)")
 		}
 		fmt.Println()
