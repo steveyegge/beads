@@ -529,11 +529,16 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 }
 
 // Normalize maps issue type aliases to their canonical form.
-// For example, "enhancement" -> "feature".
+// For example, "enhancement" -> "feature", "mr" -> "merge-request".
+// Case-insensitive to match util.NormalizeIssueType behavior.
 func (t IssueType) Normalize() IssueType {
-	switch t {
-	case "enhancement":
+	switch strings.ToLower(string(t)) {
+	case "enhancement", "feat":
 		return TypeFeature
+	case "mr":
+		return TypeMergeRequest
+	case "mol":
+		return TypeMolecule
 	default:
 		return t
 	}
