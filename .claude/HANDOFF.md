@@ -2,7 +2,7 @@
 
 **Date**: 2026-01-17
 **Branch**: `feat/plugin-based-issue-tracker-integration`
-**Commit**: `88ff5d23`
+**Commit**: `2fca8279`
 
 ---
 
@@ -19,6 +19,9 @@ Added comprehensive unit tests for all tracker sync CLI commands using mock Issu
 
 ### Phase 4: Azure DevOps Projects Command (commit `88ff5d23`)
 Implemented `bd azuredevops projects` command to list all projects in the organization.
+
+### Phase 5: E2E Integration Tests (commit `2fca8279`)
+Added comprehensive E2E integration tests with mock HTTP servers for Jira and Azure DevOps clients.
 
 ### Phase 1 Files Created (18 total, ~4100 lines)
 
@@ -63,6 +66,10 @@ Implemented `bd azuredevops projects` command to list all projects in the organi
 - ✅ All existing `internal/linear` tests pass (28 tests)
 - ✅ New framework tests pass (5 tests)
 - ✅ New CLI sync tests created (4 files, ~1650 lines)
+- ✅ New E2E integration tests pass (47 tests total)
+  - Jira E2E: 15 tests
+  - Azure DevOps E2E: 21 tests
+  - Sync E2E: 11 tests
 - ✅ Go build succeeds for all tracker packages
 - ⚠️ Full project build has pre-existing gozstd dependency issue on Windows (unrelated)
 
@@ -78,19 +85,26 @@ internal/tracker/
 ├── stats.go        # Shared types
 ├── config.go       # Config wrapper
 ├── registry.go     # Plugin registry
+├── sync_e2e_test.go # E2E tests (integration tag)
 ├── linear/         # Linear plugin
 │   ├── linear.go   # IssueTracker impl
 │   └── mapper.go   # LinearMapper
 ├── jira/           # Jira plugin (Go-native)
 │   ├── jira.go     # IssueTracker impl
-│   ├── client.go   # REST client
+│   ├── client.go   # REST client (+WithEndpoint, +WithHTTPClient)
 │   ├── mapper.go   # JiraMapper
-│   └── types.go    # API types
-└── azuredevops/    # Azure DevOps plugin
-    ├── azuredevops.go
-    ├── client.go
-    ├── mapper.go
-    └── types.go
+│   ├── types.go    # API types
+│   └── e2e_test.go # E2E tests (integration tag)
+├── azuredevops/    # Azure DevOps plugin
+│   ├── azuredevops.go
+│   ├── client.go   # REST client (+WithEndpoint, +WithHTTPClient)
+│   ├── mapper.go
+│   ├── types.go
+│   └── e2e_test.go # E2E tests (integration tag)
+└── testutil/       # Mock servers for E2E tests
+    ├── mockserver.go       # Base MockTrackerServer
+    ├── jira_mock.go        # JiraMockServer
+    └── azuredevops_mock.go # AzureDevOpsMockServer
 ```
 
 ---
@@ -141,13 +155,48 @@ internal/tracker/
 
 ---
 
+### Phase 5 Files Created (commit `2fca8279`)
+
+**Mock Server Infrastructure** (`internal/tracker/testutil/`):
+| File | Purpose | Lines |
+|------|---------|-------|
+| `mockserver.go` | Base MockTrackerServer with request recording, response configuration, error simulation | ~220 |
+| `jira_mock.go` | JiraMockServer with Jira-specific helpers (SetIssues, SetCreateIssueResponse, SetAuthError) | ~190 |
+| `azuredevops_mock.go` | AzureDevOpsMockServer with ADO helpers (SetWorkItems, SetProjects, WIQL handling) | ~260 |
+
+**E2E Tests**:
+| File | Purpose | Tests |
+|------|---------|-------|
+| `internal/tracker/jira/e2e_test.go` | Jira client E2E tests | 15 tests |
+| `internal/tracker/azuredevops/e2e_test.go` | Azure DevOps client E2E tests | 21 tests |
+| `internal/tracker/sync_e2e_test.go` | Sync engine E2E tests with in-memory store | 11 tests |
+
+**Client Modifications**:
+| File | Changes |
+|------|---------|
+| `internal/tracker/jira/client.go` | +25 lines: `WithEndpoint()`, `WithHTTPClient()` builder methods |
+| `internal/tracker/azuredevops/client.go` | +25 lines: `WithEndpoint()`, `WithHTTPClient()` builder methods |
+
+**Test Coverage**:
+- Fetch issues (empty, with data, pagination)
+- Create/update issues
+- Error handling (401 auth, 429 rate limit, 500 server error)
+- Full bidirectional sync cycle
+- Conflict detection and resolution (local/external/timestamp)
+- Request header validation
+- ADF text conversion (Jira-specific)
+
+Run E2E tests with: `go test -tags=integration ./internal/tracker/... -run E2E -v`
+
+---
+
 ## What's Next
 
-Phases 1-4 are complete. Potential follow-up work:
+Phases 1-5 are complete. Potential follow-up work:
 
 1. ~~**Add tests for CLI commands**~~ ✅ Done in Phase 3
 2. ~~**Implement `bd azuredevops projects`**~~ ✅ Done in Phase 4
-3. **End-to-end integration tests** - Test actual sync operations with mock servers
+3. ~~**End-to-end integration tests**~~ ✅ Done in Phase 5
 4. **Documentation** - Update user docs with new Azure DevOps commands
 
 ---
