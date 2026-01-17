@@ -2,15 +2,19 @@
 
 **Date**: 2026-01-17
 **Branch**: `feat/plugin-based-issue-tracker-integration`
-**Commit**: `1b9dc633`
+**Commit**: `748b5e69`
 
 ---
 
 ## What Was Completed
 
-Implemented the full plugin-based architecture for issue tracker integrations per the plan in the previous session.
+### Phase 1: Framework Implementation (commit `1b9dc633`)
+Implemented the full plugin-based architecture for issue tracker integrations.
 
-### Files Created (18 total, ~4100 lines)
+### Phase 2: CLI Integration (commit `748b5e69`)
+Refactored CLI commands to use the new SyncEngine, dramatically simplifying the sync code.
+
+### Phase 1 Files Created (18 total, ~4100 lines)
 
 **Core Framework** (`internal/tracker/`):
 | File | Purpose |
@@ -84,30 +88,29 @@ internal/tracker/
 
 ---
 
-## What's Next (Phase 2: CLI Integration)
+### Phase 2 Files Changed (commit `748b5e69`)
 
-The framework is complete. Next phase is updating the CLI commands to use SyncEngine.
+| File | Action | Lines |
+|------|--------|-------|
+| `cmd/bd/tracker_helpers.go` | CREATE | +140 |
+| `cmd/bd/azuredevops.go` | CREATE | +397 |
+| `cmd/bd/linear.go` | MODIFY | refactored runLinearSync() |
+| `cmd/bd/jira.go` | MODIFY | added --use-python flag |
+| `cmd/bd/linear_sync.go` | DELETE | -383 |
+| `cmd/bd/linear_conflict.go` | DELETE | -190 |
 
-### 1. Update `cmd/bd/linear.go`
-```go
-// Before: ~650 lines with inline sync logic
-// After: ~200 lines delegating to SyncEngine
+**Net impact**: 745 insertions, 902 deletions (-157 lines while adding Azure DevOps CLI)
 
-tracker := &linear.LinearTracker{}
-tracker.Init(ctx, config)
-engine := tracker.NewSyncEngine(tracker, config, store, actor)
-result, err := engine.Sync(ctx, tracker.SyncOptions{...})
-```
+---
 
-**Files to delete after refactor:**
-- `cmd/bd/linear_sync.go` (383 lines → moves to SyncEngine)
-- `cmd/bd/linear_conflict.go` (190 lines → moves to SyncEngine)
+## What's Next
 
-### 2. Update `cmd/bd/jira.go`
-Same pattern. Keep Python scripts as `--use-python` fallback for transition.
+Phase 1 and Phase 2 are complete. Potential follow-up work:
 
-### 3. Add `cmd/bd/azuredevops.go`
-New command: `bd azuredevops sync --pull/--push`
+1. **Add tests for CLI commands** - Unit tests for runLinearSync, runJiraSyncNative, runAzureDevOpsSync
+2. **Implement `bd azuredevops projects`** - Currently a placeholder, needs client.ListProjects()
+3. **End-to-end integration tests** - Test actual sync operations with mock servers
+4. **Documentation** - Update user docs with new Azure DevOps commands
 
 ---
 
@@ -119,8 +122,31 @@ New command: `bd azuredevops sync --pull/--push`
 | `internal/tracker/sync.go:182-245` | DetectConflicts() implementation |
 | `internal/tracker/sync.go:247-340` | doPull() - import logic |
 | `internal/tracker/sync.go:342-440` | doPush() - export logic |
-| `internal/tracker/linear/linear.go` | Example IssueTracker implementation |
-| `cmd/bd/linear.go:140-361` | Current CLI to refactor (runLinearSync) |
+| `internal/tracker/linear/linear.go` | IssueTracker implementation example |
+| `cmd/bd/linear.go:144-222` | Refactored runLinearSync() using SyncEngine |
+| `cmd/bd/jira.go:139-186` | runJiraSyncNative() using SyncEngine |
+| `cmd/bd/azuredevops.go:97-178` | runAzureDevOpsSync() using SyncEngine |
+| `cmd/bd/tracker_helpers.go` | syncStoreAdapter and printSyncResult |
+
+---
+
+## CLI Interface
+
+All existing flags work unchanged:
+
+```bash
+# Linear
+bd linear sync --pull --push --dry-run --prefer-local --prefer-linear
+
+# Jira (Go-native by default, Python fallback available)
+bd jira sync --pull --push --dry-run --prefer-local --prefer-jira
+bd jira sync --use-python  # Legacy Python scripts
+
+# Azure DevOps (NEW)
+bd azuredevops sync --pull --push --dry-run --prefer-local --prefer-ado
+bd ado sync  # Short alias
+bd ado status
+```
 
 ---
 
@@ -129,3 +155,4 @@ New command: `bd azuredevops sync --pull/--push`
 - The `bd sync --from-main` failed due to a pre-existing database migration issue, not related to this work
 - All new code follows existing patterns from `internal/linear/` and `internal/storage/`
 - Plugins auto-register via init() - just import the package to enable
+- Full build has pre-existing gozstd dependency issue on Windows (unrelated to this work)
