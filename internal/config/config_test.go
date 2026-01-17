@@ -1134,10 +1134,10 @@ func TestIsSyncModeValid(t *testing.T) {
 		mode  string
 		valid bool
 	}{
-		{SyncModeGitPortable, true},
-		{SyncModeRealtime, true},
-		{SyncModeDoltNative, true},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
 		{"invalid-mode", false},
 		{"", false},
 	}
@@ -1156,10 +1156,10 @@ func TestIsConflictStrategyValid(t *testing.T) {
 		strategy string
 		valid    bool
 	}{
-		{ConflictStrategyNewest, true},
-		{ConflictStrategyOurs, true},
-		{ConflictStrategyTheirs, true},
-		{ConflictStrategyManual, true},
+		{string(ConflictStrategyNewest), true},
+		{string(ConflictStrategyOurs), true},
+		{string(ConflictStrategyTheirs), true},
+		{string(ConflictStrategyManual), true},
 		{"invalid-strategy", false},
 		{"", false},
 	}
@@ -1178,10 +1178,10 @@ func TestIsSovereigntyValid(t *testing.T) {
 		sovereignty string
 		valid       bool
 	}{
-		{SovereigntyT1, true},
-		{SovereigntyT2, true},
-		{SovereigntyT3, true},
-		{SovereigntyT4, true},
+		{string(SovereigntyT1), true},
+		{string(SovereigntyT2), true},
+		{string(SovereigntyT3), true},
+		{string(SovereigntyT4), true},
 		{"", true}, // Empty is valid (means no restriction)
 		{"T5", false},
 		{"invalid", false},
@@ -1313,10 +1313,10 @@ func TestNeedsDoltRemote(t *testing.T) {
 		mode        string
 		needsRemote bool
 	}{
-		{SyncModeGitPortable, false},
-		{SyncModeRealtime, false},
-		{SyncModeDoltNative, true},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), false},
+		{string(SyncModeRealtime), false},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
@@ -1342,10 +1342,10 @@ func TestNeedsJSONL(t *testing.T) {
 		mode       string
 		needsJSONL bool
 	}{
-		{SyncModeGitPortable, true},
-		{SyncModeRealtime, true},
-		{SyncModeDoltNative, false},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), false},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
