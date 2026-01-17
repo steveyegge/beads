@@ -119,3 +119,21 @@ type PatchOperation struct {
 
 // WorkItemCreateResponse is the response from creating a work item.
 type WorkItemCreateResponse = WorkItem
+
+// Project represents an Azure DevOps project.
+type Project struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description,omitempty"`
+	URL            string         `json:"url"`
+	State          string         `json:"state"` // wellFormed, deleting, new, etc.
+	Revision       int            `json:"revision"`
+	Visibility     string         `json:"visibility"` // private, public
+	LastUpdateTime string         `json:"lastUpdateTime,omitempty"`
+}
+
+// ProjectListResponse is the response from listing projects.
+type ProjectListResponse struct {
+	Count int       `json:"count"`
+	Value []Project `json:"value"`
+}

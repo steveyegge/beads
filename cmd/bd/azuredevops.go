@@ -8,10 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/tracker"
+	"github.com/steveyegge/beads/internal/tracker/azuredevops"
 	"github.com/steveyegge/beads/internal/types"
-
-	// Import the azuredevops tracker plugin to register it
-	_ "github.com/steveyegge/beads/internal/tracker/azuredevops"
 )
 
 // azuredevopsCmd is the root command for Azure DevOps integration.
@@ -280,12 +278,7 @@ func runAzureDevOpsStatus(cmd *cobra.Command, args []string) {
 func runAzureDevOpsProjects(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
-	if err := ensureStoreActive(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Validate config
+	// Validate config - only need PAT and organization for listing projects
 	pat, _ := getAzureDevOpsConfig(ctx, "azuredevops.pat")
 	if pat == "" {
 		fmt.Fprintf(os.Stderr, "Error: Azure DevOps PAT not configured\n")
@@ -302,28 +295,36 @@ func runAzureDevOpsProjects(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Create tracker to use its client
-	adoTracker, err := tracker.NewTracker("azuredevops")
+	// Create client directly (don't need full tracker for listing projects)
+	client := azuredevops.NewClient(organization, "", pat)
+
+	projects, err := client.ListProjects(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to create Azure DevOps tracker: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error fetching projects: %v\n", err)
 		os.Exit(1)
 	}
 
-	cfg := tracker.NewConfig(ctx, "azuredevops", newConfigStoreAdapter(store))
-	// Set a placeholder project for initialization (will list all projects anyway)
-	_ = cfg.Set("project", "_placeholder")
-	if err := adoTracker.Init(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to initialize Azure DevOps tracker: %v\n", err)
-		os.Exit(1)
+	if len(projects) == 0 {
+		fmt.Println("No projects found (check your PAT permissions)")
+		return
 	}
-	defer func() { _ = adoTracker.Close() }()
+
+	if jsonOutput {
+		outputJSON(projects)
+		return
+	}
 
 	fmt.Println("Available Azure DevOps Projects")
 	fmt.Println("================================")
 	fmt.Println()
-	fmt.Println("Note: Project listing is not yet implemented in the Azure DevOps client.")
-	fmt.Println("Please configure your project manually:")
-	fmt.Println("  bd config set azuredevops.project \"MyProject\"")
+	fmt.Printf("%-40s  %-12s  %s\n", "Name (use for azuredevops.project)", "State", "Visibility")
+	fmt.Printf("%-40s  %-12s  %s\n", "----------------------------------------", "------------", "----------")
+	for _, project := range projects {
+		fmt.Printf("%-40s  %-12s  %s\n", project.Name, project.State, project.Visibility)
+	}
+	fmt.Println()
+	fmt.Println("To configure:")
+	fmt.Println("  bd config set azuredevops.project \"<Name>\"")
 }
 
 // validateAzureDevOpsConfig checks that required Azure DevOps configuration is present.

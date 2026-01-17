@@ -262,3 +262,22 @@ func ParseWorkItemID(url string) (int, bool) {
 	}
 	return id, true
 }
+
+// ListProjects retrieves all projects accessible in the organization.
+func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
+	// Core API is at org level, not project level
+	// GET https://dev.azure.com/{organization}/_apis/projects
+	path := "/_apis/projects?$top=100"
+
+	respBody, err := c.doRequest(ctx, "GET", path, nil, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+
+	var resp ProjectListResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse projects response: %w", err)
+	}
+
+	return resp.Value, nil
+}
