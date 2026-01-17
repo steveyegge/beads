@@ -24,6 +24,10 @@ const (
 // bdShimMarker identifies bd shim hooks (GH#946)
 const bdShimMarker = "# bd-shim"
 
+// bdInlineHookMarker identifies inline hooks created by bd init (GH#1120)
+// These hooks have the logic embedded directly rather than calling bd hooks run
+const bdInlineHookMarker = "# bd (beads)"
+
 // bdHooksRunPattern matches hooks that call bd hooks run
 var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
 
@@ -150,10 +154,11 @@ func CheckGitHooks() DoctorCheck {
 	}
 }
 
-// areBdShimsInstalled checks if the installed hooks are bd shims or call bd hooks run.
+// areBdShimsInstalled checks if the installed hooks are bd shims, call bd hooks run,
+// or are inline bd hooks created by bd init.
 // This helps detect when bd hooks are installed directly but an external manager config exists.
-// Returns (true, installedHooks) if bd shims are detected, (false, nil) otherwise.
-// (GH#946)
+// Returns (true, installedHooks) if bd hooks are detected, (false, nil) otherwise.
+// (GH#946, GH#1120)
 func areBdShimsInstalled(hooksDir string) (bool, []string) {
 	hooks := []string{"pre-commit", "post-merge", "pre-push"}
 	var bdHooks []string
@@ -165,8 +170,10 @@ func areBdShimsInstalled(hooksDir string) (bool, []string) {
 			continue
 		}
 		contentStr := string(content)
-		// Check for bd-shim marker or bd hooks run call
-		if strings.Contains(contentStr, bdShimMarker) || bdHooksRunPattern.MatchString(contentStr) {
+		// Check for bd-shim marker, bd hooks run call, or inline bd hook marker (from bd init)
+		if strings.Contains(contentStr, bdShimMarker) ||
+			strings.Contains(contentStr, bdInlineHookMarker) ||
+			bdHooksRunPattern.MatchString(contentStr) {
 			bdHooks = append(bdHooks, hookName)
 		}
 	}
