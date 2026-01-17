@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/formula"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -52,11 +53,16 @@ Search paths (in order of priority):
 
 Formulas in earlier paths shadow those with the same name in later paths.
 
+Use --all to discover formulas across all rigs in a Gas Town workspace.
+This reads routes from $GT_ROOT/.beads/routes.jsonl and scans each rig's
+.beads/formulas/ directory, grouping results by source.
+
 Examples:
   bd formula list
   bd formula list --json
   bd formula list --type workflow
-  bd formula list --type aspect`,
+  bd formula list --type aspect
+  bd formula list --all`,
 	Run: runFormulaList,
 }
 
@@ -93,6 +99,11 @@ type FormulaListEntry struct {
 
 func runFormulaList(cmd *cobra.Command, args []string) {
 	typeFilter, _ := cmd.Flags().GetString("type")
+
+	if listAllRigs {
+		runFormulaListAll(typeFilter)
+		return
+	}
 
 	// Get all search paths
 	searchPaths := getFormulaSearchPaths()
@@ -176,6 +187,202 @@ func runFormulaList(cmd *cobra.Command, args []string) {
 			fmt.Printf("  %-25s %s%s\n", e.Name, e.Description, varInfo)
 		}
 		fmt.Println()
+	}
+}
+
+// RigFormulaGroup holds formulas for a single rig.
+type RigFormulaGroup struct {
+	RigName  string             // e.g., "town", "local", "fhc"
+	Path     string             // Path to the formulas directory
+	Formulas []FormulaListEntry // Formulas in this rig
+}
+
+// runFormulaListAll lists formulas across all rigs using routes.jsonl.
+func runFormulaListAll(typeFilter string) {
+	gtRoot := os.Getenv("GT_ROOT")
+	if gtRoot == "" {
+		fmt.Fprintf(os.Stderr, "Error: --all requires GT_ROOT to be set\n")
+		fmt.Fprintf(os.Stderr, "This flag discovers formulas across all rigs in a Gas Town workspace.\n")
+		os.Exit(1)
+	}
+
+	// Load routes from town-level beads
+	townBeadsDir := filepath.Join(gtRoot, ".beads")
+	routes, err := routing.LoadRoutes(townBeadsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading routes: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(routes) == 0 {
+		fmt.Fprintf(os.Stderr, "No routes found in %s/routes.jsonl\n", townBeadsDir)
+		os.Exit(1)
+	}
+
+	var groups []RigFormulaGroup
+
+	// First, add town-level formulas (from $GT_ROOT/.beads/formulas)
+	townFormulasDir := filepath.Join(townBeadsDir, "formulas")
+	if formulas, err := scanFormulaDir(townFormulasDir); err == nil && len(formulas) > 0 {
+		var entries []FormulaListEntry
+		for _, f := range formulas {
+			if typeFilter != "" && string(f.Type) != typeFilter {
+				continue
+			}
+			entries = append(entries, FormulaListEntry{
+				Name:        f.Formula,
+				Type:        string(f.Type),
+				Description: truncateDescription(f.Description, 60),
+				Source:      f.Source,
+				Steps:       countSteps(f.Steps),
+				Vars:        len(f.Vars),
+			})
+		}
+		if len(entries) > 0 {
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].Name < entries[j].Name
+			})
+			groups = append(groups, RigFormulaGroup{
+				RigName:  "town",
+				Path:     townFormulasDir,
+				Formulas: entries,
+			})
+		}
+	}
+
+	// Then scan each rig from routes
+	for _, route := range routes {
+		if route.Path == "." {
+			continue // Skip town-level (already handled above)
+		}
+
+		rigName := routing.ExtractProjectFromPath(route.Path)
+		if rigName == "" {
+			rigName = route.Prefix
+		}
+
+		// Construct path to rig's formulas directory
+		rigFormulasDir := filepath.Join(gtRoot, route.Path, ".beads", "formulas")
+
+		formulas, err := scanFormulaDir(rigFormulasDir)
+		if err != nil || len(formulas) == 0 {
+			continue // Skip rigs without formulas
+		}
+
+		var entries []FormulaListEntry
+		for _, f := range formulas {
+			if typeFilter != "" && string(f.Type) != typeFilter {
+				continue
+			}
+			entries = append(entries, FormulaListEntry{
+				Name:        f.Formula,
+				Type:        string(f.Type),
+				Description: truncateDescription(f.Description, 60),
+				Source:      f.Source,
+				Steps:       countSteps(f.Steps),
+				Vars:        len(f.Vars),
+			})
+		}
+
+		if len(entries) > 0 {
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].Name < entries[j].Name
+			})
+			groups = append(groups, RigFormulaGroup{
+				RigName:  rigName,
+				Path:     rigFormulasDir,
+				Formulas: entries,
+			})
+		}
+	}
+
+	// Also check user-level formulas
+	if home, err := os.UserHomeDir(); err == nil {
+		userFormulasDir := filepath.Join(home, ".beads", "formulas")
+		if formulas, err := scanFormulaDir(userFormulasDir); err == nil && len(formulas) > 0 {
+			var entries []FormulaListEntry
+			for _, f := range formulas {
+				if typeFilter != "" && string(f.Type) != typeFilter {
+					continue
+				}
+				entries = append(entries, FormulaListEntry{
+					Name:        f.Formula,
+					Type:        string(f.Type),
+					Description: truncateDescription(f.Description, 60),
+					Source:      f.Source,
+					Steps:       countSteps(f.Steps),
+					Vars:        len(f.Vars),
+				})
+			}
+			if len(entries) > 0 {
+				sort.Slice(entries, func(i, j int) bool {
+					return entries[i].Name < entries[j].Name
+				})
+				groups = append(groups, RigFormulaGroup{
+					RigName:  "user",
+					Path:     userFormulasDir,
+					Formulas: entries,
+				})
+			}
+		}
+	}
+
+	// Calculate total
+	total := 0
+	for _, g := range groups {
+		total += len(g.Formulas)
+	}
+
+	if jsonOutput {
+		outputJSON(groups)
+		return
+	}
+
+	if total == 0 {
+		fmt.Println("No formulas found across any rigs.")
+		return
+	}
+
+	fmt.Printf("📜 Formulas (%d found)\n\n", total)
+
+	for _, g := range groups {
+		fmt.Printf("[%s] (%d)\n", g.RigName, len(g.Formulas))
+
+		// Collect formula names for compact display
+		names := make([]string, len(g.Formulas))
+		for i, f := range g.Formulas {
+			names[i] = f.Name
+		}
+
+		// Print in compact format with wrapping
+		printWrappedNames(names, "  ", 80)
+		fmt.Println()
+	}
+}
+
+// printWrappedNames prints formula names with word wrapping.
+func printWrappedNames(names []string, indent string, maxWidth int) {
+	if len(names) == 0 {
+		return
+	}
+
+	line := indent
+	for i, name := range names {
+		suffix := ", "
+		if i == len(names)-1 {
+			suffix = ""
+		}
+
+		addition := name + suffix
+		if len(line)+len(addition) > maxWidth && line != indent {
+			fmt.Println(line)
+			line = indent + addition
+		} else {
+			line += addition
+		}
+	}
+	if line != indent {
+		fmt.Println(line)
 	}
 }
 
@@ -506,6 +713,7 @@ var (
 	convertAll    bool
 	convertDelete bool
 	convertStdout bool
+	listAllRigs   bool
 )
 
 func runFormulaConvert(cmd *cobra.Command, args []string) {
@@ -764,6 +972,7 @@ func fixIntegerFields(m map[string]interface{}) {
 
 func init() {
 	formulaListCmd.Flags().String("type", "", "Filter by type (workflow, expansion, aspect)")
+	formulaListCmd.Flags().BoolVar(&listAllRigs, "all", false, "Discover formulas across all rigs (requires GT_ROOT)")
 	formulaConvertCmd.Flags().BoolVar(&convertAll, "all", false, "Convert all JSON formulas")
 	formulaConvertCmd.Flags().BoolVar(&convertDelete, "delete", false, "Delete JSON file after conversion")
 	formulaConvertCmd.Flags().BoolVar(&convertStdout, "stdout", false, "Print TOML to stdout instead of file")
