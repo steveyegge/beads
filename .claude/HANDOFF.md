@@ -2,7 +2,7 @@
 
 **Date**: 2026-01-17
 **Branch**: `feat/plugin-based-issue-tracker-integration`
-**Commit**: `748b5e69`
+**Commit**: `213a46d7`
 
 ---
 
@@ -13,6 +13,9 @@ Implemented the full plugin-based architecture for issue tracker integrations.
 
 ### Phase 2: CLI Integration (commit `748b5e69`)
 Refactored CLI commands to use the new SyncEngine, dramatically simplifying the sync code.
+
+### Phase 3: CLI Tests (commit `213a46d7`)
+Added comprehensive unit tests for all tracker sync CLI commands using mock IssueTracker.
 
 ### Phase 1 Files Created (18 total, ~4100 lines)
 
@@ -56,8 +59,9 @@ Refactored CLI commands to use the new SyncEngine, dramatically simplifying the 
 
 - ✅ All existing `internal/linear` tests pass (28 tests)
 - ✅ New framework tests pass (5 tests)
+- ✅ New CLI sync tests created (4 files, ~1650 lines)
 - ✅ Go build succeeds for all tracker packages
-- ⚠️ Full project build has pre-existing gozstd dependency issue (unrelated)
+- ⚠️ Full project build has pre-existing gozstd dependency issue on Windows (unrelated)
 
 ---
 
@@ -103,11 +107,32 @@ internal/tracker/
 
 ---
 
+### Phase 3 Files Created (commit `213a46d7`)
+
+| File | Purpose | Lines |
+|------|---------|-------|
+| `cmd/bd/tracker_sync_test.go` | Shared test infrastructure: mockTracker, mockFieldMapper, setupTrackerSyncTest() | ~320 |
+| `cmd/bd/linear_sync_test.go` | Linear sync tests (pull, push, dry-run, conflicts, incremental) | ~430 |
+| `cmd/bd/jira_sync_test.go` | Jira sync tests (same coverage as Linear) | ~430 |
+| `cmd/bd/azuredevops_sync_test.go` | Azure DevOps sync tests + work item type tests | ~470 |
+
+**Test coverage includes**:
+- Pull-only, push-only, bidirectional sync
+- Dry run mode (no changes made)
+- Create-only mode (no updates to existing)
+- Conflict resolution (local, external, timestamp)
+- Incremental sync with last_sync timestamp
+- State filtering (open, closed, all)
+- External reference updates after creation
+- Error handling
+
+---
+
 ## What's Next
 
-Phase 1 and Phase 2 are complete. Potential follow-up work:
+Phases 1-3 are complete. Potential follow-up work:
 
-1. **Add tests for CLI commands** - Unit tests for runLinearSync, runJiraSyncNative, runAzureDevOpsSync
+1. ~~**Add tests for CLI commands**~~ ✅ Done in Phase 3
 2. **Implement `bd azuredevops projects`** - Currently a placeholder, needs client.ListProjects()
 3. **End-to-end integration tests** - Test actual sync operations with mock servers
 4. **Documentation** - Update user docs with new Azure DevOps commands
