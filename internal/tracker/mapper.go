@@ -86,7 +86,6 @@ func DefaultBaseMappingConfig() *BaseMappingConfig {
 			"completed": "closed",
 			"done":      "closed",
 			"canceled":  "closed",
-			"cancelled": "closed",
 		},
 
 		// Default label-to-type mapping

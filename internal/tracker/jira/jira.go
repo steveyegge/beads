@@ -2,6 +2,7 @@ package jira
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -261,7 +262,7 @@ func parseJiraTimestamp(ts string) (time.Time, error) {
 		}
 	}
 
-	return time.Time{}, nil
+	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", ts)
 }
 
 // Client returns the underlying Jira client for advanced operations.

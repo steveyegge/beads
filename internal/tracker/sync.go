@@ -723,7 +723,7 @@ func (e *SyncEngine) createDependencies(ctx context.Context, deps []DependencyIn
 }
 
 // log sends a message to the OnMessage callback or does nothing.
-func (e *SyncEngine) log(ctx context.Context, dryRun bool, format string, args ...interface{}) {
+func (e *SyncEngine) log(_ context.Context, dryRun bool, format string, args ...interface{}) {
 	if e.OnMessage != nil {
 		prefix := ""
 		if dryRun {

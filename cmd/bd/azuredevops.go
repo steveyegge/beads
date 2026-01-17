@@ -195,8 +195,8 @@ func runAzureDevOpsStatus(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	organization, _ := getAzureDevOpsConfig(ctx, "azuredevops.organization")
-	project, _ := getAzureDevOpsConfig(ctx, "azuredevops.project")
+	organization := getAzureDevOpsConfig(ctx, "azuredevops.organization")
+	project := getAzureDevOpsConfig(ctx, "azuredevops.project")
 	lastSync, _ := store.GetConfig(ctx, "azuredevops.last_sync")
 
 	configured := organization != "" && project != ""
@@ -219,7 +219,7 @@ func runAzureDevOpsStatus(cmd *cobra.Command, args []string) {
 
 	if jsonOutput {
 		hasPAT := false
-		pat, _ := getAzureDevOpsConfig(ctx, "azuredevops.pat")
+		pat := getAzureDevOpsConfig(ctx, "azuredevops.pat")
 		if pat != "" {
 			hasPAT = true
 		}
@@ -255,7 +255,7 @@ func runAzureDevOpsStatus(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	pat, _ := getAzureDevOpsConfig(ctx, "azuredevops.pat")
+	pat := getAzureDevOpsConfig(ctx, "azuredevops.pat")
 	fmt.Printf("Organization: %s\n", organization)
 	fmt.Printf("Project:      %s\n", project)
 	fmt.Printf("PAT:          %s\n", maskAPIKey(pat))
@@ -279,7 +279,7 @@ func runAzureDevOpsProjects(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	// Validate config - only need PAT and organization for listing projects
-	pat, _ := getAzureDevOpsConfig(ctx, "azuredevops.pat")
+	pat := getAzureDevOpsConfig(ctx, "azuredevops.pat")
 	if pat == "" {
 		fmt.Fprintf(os.Stderr, "Error: Azure DevOps PAT not configured\n")
 		fmt.Fprintf(os.Stderr, "Run: bd config set azuredevops.pat \"YOUR_PAT\"\n")
@@ -287,7 +287,7 @@ func runAzureDevOpsProjects(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	organization, _ := getAzureDevOpsConfig(ctx, "azuredevops.organization")
+	organization := getAzureDevOpsConfig(ctx, "azuredevops.organization")
 	if organization == "" {
 		fmt.Fprintf(os.Stderr, "Error: Azure DevOps organization not configured\n")
 		fmt.Fprintf(os.Stderr, "Run: bd config set azuredevops.organization \"myorg\"\n")
@@ -335,17 +335,17 @@ func validateAzureDevOpsConfig() error {
 
 	ctx := rootCtx
 
-	organization, _ := getAzureDevOpsConfig(ctx, "azuredevops.organization")
+	organization := getAzureDevOpsConfig(ctx, "azuredevops.organization")
 	if organization == "" {
 		return fmt.Errorf("azuredevops.organization not configured\nRun: bd config set azuredevops.organization \"myorg\"\nOr: export AZURE_DEVOPS_ORGANIZATION=myorg")
 	}
 
-	project, _ := getAzureDevOpsConfig(ctx, "azuredevops.project")
+	project := getAzureDevOpsConfig(ctx, "azuredevops.project")
 	if project == "" {
 		return fmt.Errorf("azuredevops.project not configured\nRun: bd config set azuredevops.project \"myproject\"\nOr: export AZURE_DEVOPS_PROJECT=myproject")
 	}
 
-	pat, _ := getAzureDevOpsConfig(ctx, "azuredevops.pat")
+	pat := getAzureDevOpsConfig(ctx, "azuredevops.pat")
 	if pat == "" {
 		return fmt.Errorf("Azure DevOps PAT not configured\nRun: bd config set azuredevops.pat \"YOUR_PAT\"\nOr: export AZURE_DEVOPS_PAT=YOUR_PAT")
 	}
@@ -354,27 +354,24 @@ func validateAzureDevOpsConfig() error {
 }
 
 // getAzureDevOpsConfig reads an Azure DevOps configuration value, handling both
-// project config and environment variables. Returns the value and its source.
+// project config and environment variables. Returns the value.
 // Priority: project config > environment variable.
-func getAzureDevOpsConfig(ctx context.Context, key string) (value string, source string) {
+func getAzureDevOpsConfig(ctx context.Context, key string) string {
 	// Try to read from store
 	if store != nil {
-		value, _ = store.GetConfig(ctx, key)
+		value, _ := store.GetConfig(ctx, key)
 		if value != "" {
-			return value, "project config (bd config)"
+			return value
 		}
 	}
 
 	// Fall back to environment variable
 	envKey := azureDevOpsConfigToEnvVar(key)
 	if envKey != "" {
-		value = os.Getenv(envKey)
-		if value != "" {
-			return value, fmt.Sprintf("environment variable (%s)", envKey)
-		}
+		return os.Getenv(envKey)
 	}
 
-	return "", ""
+	return ""
 }
 
 // azureDevOpsConfigToEnvVar maps Azure DevOps config keys to their environment variable names.
