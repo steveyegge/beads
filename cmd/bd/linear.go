@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/tracker"
 	"github.com/steveyegge/beads/internal/types"
+
+	// Import the linear tracker plugin to register it
+	_ "github.com/steveyegge/beads/internal/tracker/linear"
 )
 
 // linearCmd is the root command for Linear integration.
@@ -138,6 +140,7 @@ func init() {
 }
 
 func runLinearSync(cmd *cobra.Command, args []string) {
+	// 1. Parse flags
 	pull, _ := cmd.Flags().GetBool("pull")
 	push, _ := cmd.Flags().GetBool("push")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -147,6 +150,7 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 	updateRefs, _ := cmd.Flags().GetBool("update-refs")
 	state, _ := cmd.Flags().GetString("state")
 
+	// 2. Validation
 	if !dryRun {
 		CheckReadonly("linear sync")
 	}
@@ -166,198 +170,54 @@ func runLinearSync(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if !pull && !push {
-		pull = true
-		push = true
-	}
-
 	ctx := rootCtx
-	result := &linear.SyncResult{Success: true}
-	var forceUpdateIDs map[string]bool
-	var skipUpdateIDs map[string]bool
-	var prePullConflicts []linear.Conflict
-	var prePullSkipLinearIDs map[string]bool
 
-	if pull {
-		if preferLocal || preferLinear {
-			conflicts, err := detectLinearConflicts(ctx)
-			if err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
-			} else if len(conflicts) > 0 {
-				prePullConflicts = conflicts
-				if preferLocal {
-					prePullSkipLinearIDs = make(map[string]bool, len(conflicts))
-					forceUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						prePullSkipLinearIDs[conflict.LinearIdentifier] = true
-						forceUpdateIDs[conflict.IssueID] = true
-					}
-				} else if preferLinear {
-					skipUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						skipUpdateIDs[conflict.IssueID] = true
-					}
-				}
-			}
-		}
+	// 3. Create tracker and engine using the plugin framework
+	linearTracker, err := tracker.NewTracker("linear")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create Linear tracker: %v\n", err)
+		os.Exit(1)
+	}
 
-		if dryRun {
-			fmt.Println("→ [DRY RUN] Would pull issues from Linear")
+	cfg := tracker.NewConfig(ctx, "linear", newConfigStoreAdapter(store))
+	if err := linearTracker.Init(ctx, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to initialize Linear tracker: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = linearTracker.Close() }()
+
+	engine := tracker.NewSyncEngine(linearTracker, cfg, newSyncStoreAdapter(store), actor)
+	engine.OnMessage = func(msg string) { fmt.Println("->", msg) }
+	engine.OnWarning = func(msg string) { fmt.Fprintln(os.Stderr, "Warning:", msg) }
+
+	// 4. Build SyncOptions from flags
+	opts := tracker.SyncOptions{
+		Pull:       pull,
+		Push:       push,
+		DryRun:     dryRun,
+		CreateOnly: createOnly,
+		UpdateRefs: updateRefs,
+		State:      state,
+	}
+	if preferLocal {
+		opts.ConflictResolution = tracker.ConflictResolutionLocal
+	} else if preferLinear {
+		opts.ConflictResolution = tracker.ConflictResolutionExternal
+	}
+
+	// 5. Execute sync
+	result, err := engine.Sync(ctx, opts)
+	if err != nil {
+		if jsonOutput {
+			outputJSON(result)
 		} else {
-			fmt.Println("→ Pulling issues from Linear...")
+			fmt.Fprintf(os.Stderr, "Error: sync failed: %v\n", err)
 		}
-
-		pullStats, err := doPullFromLinear(ctx, dryRun, state, prePullSkipLinearIDs)
-		if err != nil {
-			result.Success = false
-			result.Error = err.Error()
-			if jsonOutput {
-				outputJSON(result)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error pulling from Linear: %v\n", err)
-			}
-			os.Exit(1)
-		}
-
-		result.Stats.Pulled = pullStats.Created + pullStats.Updated
-		result.Stats.Created += pullStats.Created
-		result.Stats.Updated += pullStats.Updated
-		result.Stats.Skipped += pullStats.Skipped
-
-		if !dryRun {
-			fmt.Printf("✓ Pulled %d issues (%d created, %d updated)\n",
-				result.Stats.Pulled, pullStats.Created, pullStats.Updated)
-		}
+		os.Exit(1)
 	}
 
-	if pull && push {
-		conflicts := prePullConflicts
-		var err error
-		if conflicts == nil {
-			conflicts, err = detectLinearConflicts(ctx)
-		}
-		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("conflict detection failed: %v", err))
-		} else if len(conflicts) > 0 {
-			result.Stats.Conflicts = len(conflicts)
-			if dryRun {
-				if preferLocal {
-					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (preferring local)\n", len(conflicts))
-					forceUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						forceUpdateIDs[conflict.IssueID] = true
-					}
-				} else if preferLinear {
-					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (preferring Linear)\n", len(conflicts))
-					skipUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						skipUpdateIDs[conflict.IssueID] = true
-					}
-				} else {
-					fmt.Printf("→ [DRY RUN] Would resolve %d conflicts (newer wins)\n", len(conflicts))
-					var linearWins []linear.Conflict
-					var localWins []linear.Conflict
-					for _, conflict := range conflicts {
-						if conflict.LinearUpdated.After(conflict.LocalUpdated) {
-							linearWins = append(linearWins, conflict)
-						} else {
-							localWins = append(localWins, conflict)
-						}
-					}
-					if len(localWins) > 0 {
-						forceUpdateIDs = make(map[string]bool, len(localWins))
-						for _, conflict := range localWins {
-							forceUpdateIDs[conflict.IssueID] = true
-						}
-					}
-					if len(linearWins) > 0 {
-						skipUpdateIDs = make(map[string]bool, len(linearWins))
-						for _, conflict := range linearWins {
-							skipUpdateIDs[conflict.IssueID] = true
-						}
-					}
-				}
-			} else if preferLocal {
-				fmt.Printf("→ Resolving %d conflicts (preferring local)\n", len(conflicts))
-				if forceUpdateIDs == nil {
-					forceUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						forceUpdateIDs[conflict.IssueID] = true
-					}
-				}
-			} else if preferLinear {
-				fmt.Printf("→ Resolving %d conflicts (preferring Linear)\n", len(conflicts))
-				if skipUpdateIDs == nil {
-					skipUpdateIDs = make(map[string]bool, len(conflicts))
-					for _, conflict := range conflicts {
-						skipUpdateIDs[conflict.IssueID] = true
-					}
-				}
-				if prePullConflicts == nil {
-					if err := reimportLinearConflicts(ctx, conflicts); err != nil {
-						result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
-					}
-				}
-			} else {
-				fmt.Printf("→ Resolving %d conflicts (newer wins)\n", len(conflicts))
-				if err := resolveLinearConflictsByTimestamp(ctx, conflicts); err != nil {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("conflict resolution failed: %v", err))
-				}
-			}
-		}
-	}
-
-	if push {
-		if dryRun {
-			fmt.Println("→ [DRY RUN] Would push issues to Linear")
-		} else {
-			fmt.Println("→ Pushing issues to Linear...")
-		}
-
-		pushStats, err := doPushToLinear(ctx, dryRun, createOnly, updateRefs, forceUpdateIDs, skipUpdateIDs)
-		if err != nil {
-			result.Success = false
-			result.Error = err.Error()
-			if jsonOutput {
-				outputJSON(result)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error pushing to Linear: %v\n", err)
-			}
-			os.Exit(1)
-		}
-
-		result.Stats.Pushed = pushStats.Created + pushStats.Updated
-		result.Stats.Created += pushStats.Created
-		result.Stats.Updated += pushStats.Updated
-		result.Stats.Skipped += pushStats.Skipped
-		result.Stats.Errors += pushStats.Errors
-
-		if !dryRun {
-			fmt.Printf("✓ Pushed %d issues (%d created, %d updated)\n",
-				result.Stats.Pushed, pushStats.Created, pushStats.Updated)
-		}
-	}
-
-	if !dryRun && result.Success {
-		result.LastSync = time.Now().Format(time.RFC3339)
-		if err := store.SetConfig(ctx, "linear.last_sync", result.LastSync); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to update last_sync: %v", err))
-		}
-	}
-
-	if jsonOutput {
-		outputJSON(result)
-	} else if dryRun {
-		fmt.Println("\n✓ Dry run complete (no changes made)")
-	} else {
-		fmt.Println("\n✓ Linear sync complete")
-		if len(result.Warnings) > 0 {
-			fmt.Println("\nWarnings:")
-			for _, w := range result.Warnings {
-				fmt.Printf("  - %s\n", w)
-			}
-		}
-	}
+	// 6. Output results
+	printSyncResult(result, dryRun, "Linear")
 }
 
 func runLinearStatus(cmd *cobra.Command, args []string) {
@@ -595,52 +455,3 @@ func getLinearClient(ctx context.Context) (*linear.Client, error) {
 
 	return client, nil
 }
-
-// storeConfigLoader adapts the store to the linear.ConfigLoader interface.
-type storeConfigLoader struct {
-	ctx context.Context
-}
-
-func (l *storeConfigLoader) GetAllConfig() (map[string]string, error) {
-	return store.GetAllConfig(l.ctx)
-}
-
-// loadLinearMappingConfig loads mapping configuration from beads config.
-func loadLinearMappingConfig(ctx context.Context) *linear.MappingConfig {
-	if store == nil {
-		return linear.DefaultMappingConfig()
-	}
-	return linear.LoadMappingConfig(&storeConfigLoader{ctx: ctx})
-}
-
-// getLinearIDMode returns the configured ID mode for Linear imports.
-// Supported values: "hash" (default) or "db".
-func getLinearIDMode(ctx context.Context) string {
-	mode, _ := getLinearConfig(ctx, "linear.id_mode")
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return "hash"
-	}
-	return mode
-}
-
-// getLinearHashLength returns the configured hash length for Linear imports.
-// Values are clamped to the supported range 3-8.
-func getLinearHashLength(ctx context.Context) int {
-	raw, _ := getLinearConfig(ctx, "linear.hash_length")
-	if raw == "" {
-		return 6
-	}
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 6
-	}
-	if value < 3 {
-		return 3
-	}
-	if value > 8 {
-		return 8
-	}
-	return value
-}
-
