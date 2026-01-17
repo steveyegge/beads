@@ -42,6 +42,30 @@ func NewClient(organization, project, pat string) *Client {
 	}
 }
 
+// WithEndpoint returns a new client configured to use the specified endpoint.
+// This is useful for testing with mock servers or connecting to self-hosted instances.
+func (c *Client) WithEndpoint(endpoint string) *Client {
+	return &Client{
+		Organization: c.Organization,
+		Project:      c.Project,
+		PAT:          c.PAT,
+		BaseURL:      endpoint,
+		HTTPClient:   c.HTTPClient,
+	}
+}
+
+// WithHTTPClient returns a new client configured to use the specified HTTP client.
+// This is useful for testing or customizing timeouts and transport settings.
+func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
+	return &Client{
+		Organization: c.Organization,
+		Project:      c.Project,
+		PAT:          c.PAT,
+		BaseURL:      c.BaseURL,
+		HTTPClient:   httpClient,
+	}
+}
+
 // doRequest performs an HTTP request with authentication.
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}, contentType string) ([]byte, error) {
 	var reqBody io.Reader
