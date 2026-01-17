@@ -175,6 +175,11 @@ func mergeSyncBranch(ctx context.Context, dryRun bool) error {
 		return fmt.Errorf("uncommitted changes detected - commit or stash them first")
 	}
 
+	// GH#1103: Skip-worktree conflict handling removed.
+	// The architectural fix ensures daemon/bd writes ONLY to the worktree JSONL
+	// when sync-branch is configured, so main's JSONL never has uncommitted changes
+	// that would conflict with merge. See autoflush.go:findJSONLPath()
+
 	fmt.Printf("Merging sync branch '%s' into '%s'...\n", syncBranch, currentBranch)
 
 	if dryRun {
@@ -277,6 +282,11 @@ func getRepoRootFromPath(ctx context.Context, path string) (string, error) {
 	}
 	return strings.TrimSpace(string(output)), nil
 }
+
+// detectAndClearSkipWorktree and restoreSkipWorktree were removed in GH#1103.
+// The architectural fix ensures daemon/bd writes ONLY to the worktree JSONL
+// when sync-branch is configured, eliminating the need for skip-worktree manipulation.
+// See autoflush.go:findJSONLPath() for the implementation.
 
 // commitToExternalBeadsRepo commits changes directly to an external beads repo.
 // Used when BEADS_DIR points to a different git repository than cwd.

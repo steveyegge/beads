@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -57,6 +58,12 @@ func outputJSONError(err error, code string) {
 // the parent directory exists. Uses beads.FindJSONLPath() for discovery (checking
 // BEADS_JSONL env var first, then using .beads/issues.jsonl next to the database).
 //
+// GH#1103: When sync-branch is configured, returns the worktree JSONL path instead
+// of the main repo JSONL. This ensures all writes go only to the worktree, and the
+// main repo's JSONL is only updated via merges from the sync branch. This fixes
+// "local changes would be overwritten by merge" errors caused by daemon writes to
+// main's JSONL while skip-worktree is set.
+//
 // Creates the .beads directory if it doesn't exist (important for new databases).
 // If directory creation fails, returns the path anyway - the subsequent write will
 // fail with a clearer error message.
@@ -80,6 +87,14 @@ func findJSONLPath() string {
 		jsonlPath = utils.FindJSONLInDir(beadsDir)
 	}
 
+	// GH#1103: If sync-branch is configured, redirect to worktree JSONL path.
+	// This ensures writes go ONLY to the worktree, not the main repo.
+	// getWorktreeJSONLPath returns "" if sync-branch isn't configured or worktree doesn't exist.
+	worktreePath := getWorktreeJSONLPath(jsonlPath)
+	if worktreePath != "" {
+		jsonlPath = worktreePath
+	}
+
 	// Ensure the directory exists (important for new databases)
 	// This is the only difference from the public API - we create the directory
 	dbDir := filepath.Dir(jsonlPath)
@@ -90,6 +105,62 @@ func findJSONLPath() string {
 	}
 
 	return utils.CanonicalizeIfRelative(jsonlPath)
+}
+
+// getWorktreeJSONLPath converts a main repo JSONL path to its worktree equivalent.
+// Returns empty string if worktree path cannot be determined or worktree doesn't exist.
+// GH#1103: Used by findJSONLPath to redirect writes to the worktree when sync-branch configured.
+func getWorktreeJSONLPath(mainJSONLPath string) string {
+	ctx := context.Background()
+
+	// Get sync branch name
+	syncBranch := syncbranch.GetFromYAML()
+	if syncBranch == "" {
+		return ""
+	}
+
+	// Get repo context to determine repo root
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		// Can't get repo context - not in a git repo or other error
+		return ""
+	}
+
+	// Important: Check if the main JSONL path is actually within this repo.
+	// In tests, the JSONL might be in a temp dir that's not part of the CWD's repo.
+	if !strings.HasPrefix(mainJSONLPath, rc.RepoRoot) {
+		// JSONL is outside this repo - don't redirect to worktree
+		return ""
+	}
+
+	// Get worktree path for sync branch
+	// Use same logic as syncbranch.getBeadsWorktreePath
+	cmd := rc.GitCmd(ctx, "rev-parse", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	gitCommonDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitCommonDir) {
+		gitCommonDir = filepath.Join(rc.RepoRoot, gitCommonDir)
+	}
+	worktreePath := filepath.Join(gitCommonDir, "beads-worktrees", syncBranch)
+
+	// Check if worktree exists (it should be created by sync branch operations)
+	// If it doesn't exist, fall back to main repo JSONL
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		return ""
+	}
+
+	// Convert main JSONL path to relative path from repo root
+	jsonlRelPath, err := filepath.Rel(rc.RepoRoot, mainJSONLPath)
+	if err != nil {
+		return ""
+	}
+
+	// Construct worktree JSONL path
+	return filepath.Join(worktreePath, jsonlRelPath)
 }
 
 // detectPrefixFromJSONL extracts the issue prefix from JSONL data.
