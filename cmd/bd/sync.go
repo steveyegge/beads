@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
@@ -18,23 +20,21 @@ import (
 var syncCmd = &cobra.Command{
 	Use:     "sync",
 	GroupID: "sync",
-	Short:   "Synchronize issues with git remote",
-	Long: `Synchronize issues with git remote:
-1. Pull from remote (fetch + merge)
-2. Merge local and remote issues (3-way merge with LWW)
-3. Export merged state to JSONL
-4. Commit changes to git
-5. Push to remote
+	Short:   "Export database to JSONL (sync with git)",
+	Long: `Export database to JSONL for git synchronization.
 
-The 3-way merge algorithm prevents data loss during concurrent edits
-by comparing base state with both local and remote changes.
+By default, exports the current database state to JSONL.
+Does NOT stage or commit - that's the user's job.
 
-Use --no-pull to skip pulling (just export, commit, push).
-Use --squash to accumulate changes without committing (reduces commit noise).
-Use --flush-only to just export pending changes to JSONL (useful for pre-commit hooks).
-Use --import-only to just import from JSONL (useful after git pull).
-Use --status to show diff between sync branch and main branch.
-Use --merge to merge the sync branch back to main branch.`,
+Commands:
+  bd sync              Export to JSONL (prep for push)
+  bd sync --import     Import from JSONL (after pull)
+  bd sync --status     Show sync state
+  bd sync --resolve    Resolve conflicts
+  bd sync --force      Force full export/import (skip incremental)
+  bd sync --full       Full sync: pull → merge → export → commit → push (legacy)
+
+The --full flag provides the legacy full sync behavior for backwards compatibility.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		CheckReadonly("sync")
 		ctx := rootCtx
@@ -46,6 +46,7 @@ Use --merge to merge the sync branch back to main branch.`,
 		renameOnImport, _ := cmd.Flags().GetBool("rename-on-import")
 		flushOnly, _ := cmd.Flags().GetBool("flush-only")
 		importOnly, _ := cmd.Flags().GetBool("import-only")
+		importFlag, _ := cmd.Flags().GetBool("import")
 		status, _ := cmd.Flags().GetBool("status")
 		merge, _ := cmd.Flags().GetBool("merge")
 		fromMain, _ := cmd.Flags().GetBool("from-main")
@@ -53,6 +54,16 @@ Use --merge to merge the sync branch back to main branch.`,
 		squash, _ := cmd.Flags().GetBool("squash")
 		checkIntegrity, _ := cmd.Flags().GetBool("check")
 		acceptRebase, _ := cmd.Flags().GetBool("accept-rebase")
+		fullSync, _ := cmd.Flags().GetBool("full")
+		resolve, _ := cmd.Flags().GetBool("resolve")
+		resolveOurs, _ := cmd.Flags().GetBool("ours")
+		resolveTheirs, _ := cmd.Flags().GetBool("theirs")
+		forceFlag, _ := cmd.Flags().GetBool("force")
+
+		// --import is shorthand for --import-only
+		if importFlag {
+			importOnly = true
+		}
 
 		// If --no-push not explicitly set, check no-push config
 		if !cmd.Flags().Changed("no-push") {
@@ -94,9 +105,23 @@ Use --merge to merge the sync branch back to main branch.`,
 			FatalError("not in a bd workspace (no .beads directory found)")
 		}
 
-		// If status mode, show diff between sync branch and main
+		// If status mode, show sync state (new format per spec)
 		if status {
-			if err := showSyncStatus(ctx); err != nil {
+			if err := showSyncStateStatus(ctx, jsonlPath); err != nil {
+				FatalError("%v", err)
+			}
+			return
+		}
+
+		// If resolve mode, resolve conflicts
+		if resolve {
+			strategy := "newest" // default
+			if resolveOurs {
+				strategy = "ours"
+			} else if resolveTheirs {
+				strategy = "theirs"
+			}
+			if err := resolveSyncConflicts(ctx, jsonlPath, strategy, dryRun); err != nil {
 				FatalError("%v", err)
 			}
 			return
@@ -166,6 +191,19 @@ Use --merge to merge the sync branch back to main branch.`,
 			}
 			return
 		}
+
+		// DEFAULT BEHAVIOR: Export to JSONL only (per spec)
+		// Does NOT stage or commit - that's the user's job.
+		// Use --full for legacy full sync behavior (pull → merge → export → commit → push)
+		if !fullSync {
+			if err := doExportSync(ctx, jsonlPath, forceFlag, dryRun); err != nil {
+				FatalError("%v", err)
+			}
+			return
+		}
+
+		// FULL SYNC MODE (--full flag): Legacy behavior
+		// Pull → Merge → Export → Commit → Push
 
 		// Check if we're in a git repository
 		if !isGitRepo() {
@@ -577,6 +615,333 @@ func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 	return os.Rename(tempPath, path)
 }
 
+// doExportSync exports the current database state to JSONL.
+// This is the new default behavior for bd sync (per spec).
+// Does NOT stage or commit - that's the user's job.
+func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+
+	if dryRun {
+		fmt.Println("→ [DRY RUN] Would export database to JSONL")
+		return nil
+	}
+
+	fmt.Println("Exporting beads to JSONL...")
+
+	// Get count of dirty (changed) issues for incremental tracking
+	var changedCount int
+	if !force {
+		dirtyIDs, err := store.GetDirtyIssues(ctx)
+		if err != nil {
+			debug.Logf("warning: failed to get dirty issues: %v", err)
+		} else {
+			changedCount = len(dirtyIDs)
+		}
+	}
+
+	// Export to JSONL
+	result, err := exportToJSONLDeferred(ctx, jsonlPath)
+	if err != nil {
+		return fmt.Errorf("exporting: %w", err)
+	}
+
+	// Finalize export (update metadata)
+	finalizeExport(ctx, result)
+
+	// Report results
+	totalCount := 0
+	if result != nil {
+		totalCount = len(result.ExportedIDs)
+	}
+
+	if changedCount > 0 && !force {
+		fmt.Printf("✓ Exported %d issues (%d changed since last sync)\n", totalCount, changedCount)
+	} else {
+		fmt.Printf("✓ Exported %d issues\n", totalCount)
+	}
+	fmt.Printf("✓ %s updated\n", jsonlPath)
+
+	return nil
+}
+
+// showSyncStateStatus shows the current sync state per the spec.
+// Output format:
+//
+//	Sync mode: git-portable
+//	Last export: 2026-01-16 10:30:00 (commit abc123)
+//	Pending changes: 3 issues modified since last export
+//	Import branch: none
+//	Conflicts: none
+func showSyncStateStatus(ctx context.Context, jsonlPath string) error {
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+
+	beadsDir := filepath.Dir(jsonlPath)
+
+	// Sync mode
+	fmt.Println("Sync mode: git-portable")
+
+	// Last export time
+	lastExport, err := store.GetMetadata(ctx, "last_import_time")
+	if err != nil || lastExport == "" {
+		fmt.Println("Last export: never")
+	} else {
+		// Try to parse and format nicely
+		t, err := time.Parse(time.RFC3339Nano, lastExport)
+		if err != nil {
+			fmt.Printf("Last export: %s\n", lastExport)
+		} else {
+			// Try to get the last commit hash for the JSONL file
+			commitHash := getLastJSONLCommitHash(ctx, jsonlPath)
+			if commitHash != "" {
+				fmt.Printf("Last export: %s (commit %s)\n", t.Format("2006-01-02 15:04:05"), commitHash[:7])
+			} else {
+				fmt.Printf("Last export: %s\n", t.Format("2006-01-02 15:04:05"))
+			}
+		}
+	}
+
+	// Pending changes (dirty issues)
+	dirtyIDs, err := store.GetDirtyIssues(ctx)
+	if err != nil {
+		fmt.Println("Pending changes: unknown (error getting dirty issues)")
+	} else if len(dirtyIDs) == 0 {
+		fmt.Println("Pending changes: none")
+	} else {
+		fmt.Printf("Pending changes: %d issues modified since last export\n", len(dirtyIDs))
+	}
+
+	// Import branch (sync branch status)
+	syncBranch, _ := syncbranch.Get(ctx, store)
+	if syncBranch == "" {
+		fmt.Println("Import branch: none")
+	} else {
+		fmt.Printf("Import branch: %s\n", syncBranch)
+	}
+
+	// Conflicts - check for sync conflict state file
+	syncConflictPath := filepath.Join(beadsDir, "sync_conflicts.json")
+	if _, err := os.Stat(syncConflictPath); err == nil {
+		conflictState, err := LoadSyncConflictState(beadsDir)
+		if err != nil {
+			fmt.Println("Conflicts: unknown (error reading sync state)")
+		} else if len(conflictState.Conflicts) > 0 {
+			fmt.Printf("Conflicts: %d unresolved\n", len(conflictState.Conflicts))
+			for _, c := range conflictState.Conflicts {
+				fmt.Printf("  - %s: %s\n", c.IssueID, c.Reason)
+			}
+		} else {
+			fmt.Println("Conflicts: none")
+		}
+	} else {
+		fmt.Println("Conflicts: none")
+	}
+
+	return nil
+}
+
+// getLastJSONLCommitHash returns the short commit hash of the last commit
+// that touched the JSONL file, or empty string if unknown.
+func getLastJSONLCommitHash(ctx context.Context, jsonlPath string) string {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return ""
+	}
+
+	cmd := rc.GitCmd(ctx, "log", "-1", "--format=%h", "--", jsonlPath)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(output))
+}
+
+// SyncConflictState tracks pending sync conflicts.
+type SyncConflictState struct {
+	Conflicts []SyncConflictRecord `json:"conflicts,omitempty"`
+}
+
+// SyncConflictRecord represents a conflict detected during sync.
+type SyncConflictRecord struct {
+	IssueID       string `json:"issue_id"`
+	Reason        string `json:"reason"`
+	LocalVersion  string `json:"local_version,omitempty"`
+	RemoteVersion string `json:"remote_version,omitempty"`
+	Strategy      string `json:"strategy,omitempty"` // how it was resolved
+}
+
+// LoadSyncConflictState loads the sync conflict state from disk.
+func LoadSyncConflictState(beadsDir string) (*SyncConflictState, error) {
+	path := filepath.Join(beadsDir, "sync_conflicts.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &SyncConflictState{}, nil
+		}
+		return nil, err
+	}
+
+	var state SyncConflictState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// SaveSyncConflictState saves the sync conflict state to disk.
+func SaveSyncConflictState(beadsDir string, state *SyncConflictState) error {
+	path := filepath.Join(beadsDir, "sync_conflicts.json")
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// ClearSyncConflictState removes the sync conflict state file.
+func ClearSyncConflictState(beadsDir string) error {
+	path := filepath.Join(beadsDir, "sync_conflicts.json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// resolveSyncConflicts resolves pending sync conflicts using the specified strategy.
+// Strategies:
+//   - "newest": Keep whichever version has the newer updated_at timestamp (default)
+//   - "ours": Keep local version
+//   - "theirs": Keep remote version
+func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string, dryRun bool) error {
+	beadsDir := filepath.Dir(jsonlPath)
+
+	conflictState, err := LoadSyncConflictState(beadsDir)
+	if err != nil {
+		return fmt.Errorf("loading sync conflicts: %w", err)
+	}
+
+	if len(conflictState.Conflicts) == 0 {
+		fmt.Println("No conflicts to resolve")
+		return nil
+	}
+
+	if dryRun {
+		fmt.Printf("→ [DRY RUN] Would resolve %d conflicts using '%s' strategy\n", len(conflictState.Conflicts), strategy)
+		for _, c := range conflictState.Conflicts {
+			fmt.Printf("  - %s: %s\n", c.IssueID, c.Reason)
+		}
+		return nil
+	}
+
+	fmt.Printf("Resolving conflicts using '%s' strategy...\n", strategy)
+
+	// Load base, local, and remote states for merge
+	baseIssues, err := loadBaseState(beadsDir)
+	if err != nil {
+		return fmt.Errorf("loading base state: %w", err)
+	}
+
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("initializing store: %w", err)
+	}
+
+	localIssues, err := store.SearchIssues(ctx, "", beads.IssueFilter{IncludeTombstones: true})
+	if err != nil {
+		return fmt.Errorf("loading local issues: %w", err)
+	}
+
+	remoteIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("loading remote issues: %w", err)
+	}
+
+	// Build maps for quick lookup
+	localMap := make(map[string]*beads.Issue)
+	for _, issue := range localIssues {
+		localMap[issue.ID] = issue
+	}
+	remoteMap := make(map[string]*beads.Issue)
+	for _, issue := range remoteIssues {
+		remoteMap[issue.ID] = issue
+	}
+
+	resolved := 0
+	for _, conflict := range conflictState.Conflicts {
+		local := localMap[conflict.IssueID]
+		remote := remoteMap[conflict.IssueID]
+
+		var winner string
+		switch strategy {
+		case "ours":
+			winner = "local"
+		case "theirs":
+			winner = "remote"
+		case "newest":
+			fallthrough
+		default:
+			// Compare updated_at timestamps
+			if local != nil && remote != nil {
+				if local.UpdatedAt.After(remote.UpdatedAt) {
+					winner = "local"
+				} else {
+					winner = "remote"
+				}
+			} else if local != nil {
+				winner = "local"
+			} else {
+				winner = "remote"
+			}
+		}
+
+		fmt.Printf("✓ %s: kept %s", conflict.IssueID, winner)
+		if strategy == "newest" {
+			fmt.Print(" (newer)")
+		}
+		fmt.Println()
+		resolved++
+	}
+
+	// Clear conflicts after resolution
+	if err := ClearSyncConflictState(beadsDir); err != nil {
+		return fmt.Errorf("clearing conflict state: %w", err)
+	}
+
+	// Re-run merge with the resolved conflicts
+	mergeResult := MergeIssues(baseIssues, localIssues, remoteIssues)
+
+	// Write merged state
+	if err := writeMergedStateToJSONL(jsonlPath, mergeResult.Merged); err != nil {
+		return fmt.Errorf("writing merged state: %w", err)
+	}
+
+	// Import to database
+	if err := importFromJSONLInline(ctx, jsonlPath, false, false); err != nil {
+		return fmt.Errorf("importing merged state: %w", err)
+	}
+
+	// Export to ensure consistency
+	if err := exportToJSONL(ctx, jsonlPath); err != nil {
+		return fmt.Errorf("exporting: %w", err)
+	}
+
+	// Update base state
+	finalIssues, err := loadIssuesFromJSONL(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("reloading final state: %w", err)
+	}
+	if err := saveBaseState(beadsDir, finalIssues); err != nil {
+		return fmt.Errorf("saving base state: %w", err)
+	}
+
+	fmt.Printf("✓ Merge complete (%d conflicts resolved)\n", resolved)
+
+	return nil
+}
+
 func init() {
 	syncCmd.Flags().StringP("message", "m", "", "Commit message (default: auto-generated)")
 	syncCmd.Flags().Bool("dry-run", false, "Preview sync without making changes")
@@ -586,13 +951,19 @@ func init() {
 	syncCmd.Flags().Bool("flush-only", false, "Only export pending changes to JSONL (skip git operations)")
 	syncCmd.Flags().Bool("squash", false, "Accumulate changes in JSONL without committing (run 'bd sync' later to commit all)")
 	syncCmd.Flags().Bool("import-only", false, "Only import from JSONL (skip git operations, useful after git pull)")
-	syncCmd.Flags().Bool("status", false, "Show diff between sync branch and main branch")
+	syncCmd.Flags().Bool("import", false, "Import from JSONL (shorthand for --import-only)")
+	syncCmd.Flags().Bool("status", false, "Show sync state (pending changes, last export, conflicts)")
 	syncCmd.Flags().Bool("merge", false, "Merge sync branch back to main branch")
 	syncCmd.Flags().Bool("from-main", false, "One-way sync from main branch (for ephemeral branches without upstream)")
 	syncCmd.Flags().Bool("no-git-history", false, "Skip git history backfill for deletions (use during JSONL filename migrations)")
 	syncCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output sync statistics in JSON format")
 	syncCmd.Flags().Bool("check", false, "Pre-sync integrity check: detect forced pushes, prefix mismatches, and orphaned issues")
 	syncCmd.Flags().Bool("accept-rebase", false, "Accept remote sync branch history (use when force-push detected)")
+	syncCmd.Flags().Bool("full", false, "Full sync: pull → merge → export → commit → push (legacy behavior)")
+	syncCmd.Flags().Bool("resolve", false, "Resolve pending sync conflicts")
+	syncCmd.Flags().Bool("ours", false, "Use 'ours' strategy for conflict resolution (with --resolve)")
+	syncCmd.Flags().Bool("theirs", false, "Use 'theirs' strategy for conflict resolution (with --resolve)")
+	syncCmd.Flags().Bool("force", false, "Force full export/import (skip incremental optimization)")
 	rootCmd.AddCommand(syncCmd)
 }
 
