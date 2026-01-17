@@ -37,6 +37,10 @@ func getEmbeddedHooks() (map[string]string, error) {
 const hookVersionPrefix = "# bd-hooks-version: "
 const shimVersionPrefix = "# bd-shim "
 
+// inlineHookMarker identifies inline hooks created by bd init (GH#1120)
+// These hooks have the logic embedded directly rather than using shims
+const inlineHookMarker = "# bd (beads)"
+
 // HookStatus represents the status of a single git hook
 type HookStatus struct {
 	Name      string
@@ -92,8 +96,9 @@ func CheckGitHooks() []HookStatus {
 
 // hookVersionInfo contains version information extracted from a hook file
 type hookVersionInfo struct {
-	Version string // bd version (for legacy hooks) or shim version
-	IsShim  bool   // true if this is a thin shim
+	Version  string // bd version (for legacy hooks) or shim version
+	IsShim   bool   // true if this is a thin shim
+	IsBdHook bool   // true if this is any type of bd hook (shim or inline)
 }
 
 // getHookVersion extracts the version from a hook file
@@ -106,24 +111,33 @@ func getHookVersion(path string) (hookVersionInfo, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	// Read first few lines looking for version marker
+	// Read first few lines looking for version marker or bd hook marker
 	lineCount := 0
-	for scanner.Scan() && lineCount < 10 {
+	var content strings.Builder
+	for scanner.Scan() && lineCount < 15 {
 		line := scanner.Text()
+		content.WriteString(line)
+		content.WriteString("\n")
 		// Check for thin shim marker first
 		if strings.HasPrefix(line, shimVersionPrefix) {
 			version := strings.TrimSpace(strings.TrimPrefix(line, shimVersionPrefix))
-			return hookVersionInfo{Version: version, IsShim: true}, nil
+			return hookVersionInfo{Version: version, IsShim: true, IsBdHook: true}, nil
 		}
 		// Check for legacy version marker
 		if strings.HasPrefix(line, hookVersionPrefix) {
 			version := strings.TrimSpace(strings.TrimPrefix(line, hookVersionPrefix))
-			return hookVersionInfo{Version: version, IsShim: false}, nil
+			return hookVersionInfo{Version: version, IsShim: false, IsBdHook: true}, nil
 		}
 		lineCount++
 	}
 
-	// No version found (old hook)
+	// Check if it's an inline bd hook (from bd init) - GH#1120
+	// These don't have version markers but have "# bd (beads)" comment
+	if strings.Contains(content.String(), inlineHookMarker) {
+		return hookVersionInfo{IsBdHook: true}, nil
+	}
+
+	// No version found and not a bd hook
 	return hookVersionInfo{}, nil
 }
 
@@ -363,17 +377,26 @@ func installHooksWithOptions(embeddedHooks map[string]string, force bool, shared
 		if _, err := os.Stat(hookPath); err == nil {
 			if chain {
 				// Chain mode - rename to .old so bd hooks run can call it
-				// But skip if existing hook is already a bd shim - renaming it would
-				// cause infinite recursion. See: https://github.com/steveyegge/beads/issues/843
+				// But skip if existing hook is already a bd hook (shim or inline) - renaming it would
+				// cause infinite recursion or destroy user's original hook. See: GH#843, GH#1120
 				versionInfo, verr := getHookVersion(hookPath)
-				if verr != nil || !versionInfo.IsShim {
-					// Not a bd shim - safe to rename for chaining
+				if verr != nil || !versionInfo.IsBdHook {
+					// Not a bd hook - safe to rename for chaining
 					oldPath := hookPath + ".old"
-					if err := os.Rename(hookPath, oldPath); err != nil {
-						return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
+					// Safety check: don't overwrite existing .old file (GH#1120)
+					// This prevents destroying user's original hook if bd hooks install --chain
+					// is run multiple times or after bd init already created .old
+					if _, oldErr := os.Stat(oldPath); oldErr == nil {
+						// .old already exists - the user's original hook is there
+						// Just overwrite the current hook without renaming
+						// (the existing .old will be chained by the new hook)
+					} else {
+						if err := os.Rename(hookPath, oldPath); err != nil {
+							return fmt.Errorf("failed to rename %s to .old for chaining: %w", hookName, err)
+						}
 					}
 				}
-				// If it IS a bd shim, just overwrite it (no rename needed)
+				// If it IS a bd hook, just overwrite it (no rename needed)
 			} else if !force {
 				// Default mode - back it up
 				backupPath := hookPath + ".backup"
@@ -492,12 +515,12 @@ func runChainedHook(hookName string, args []string) int {
 		return 0 // Not executable
 	}
 
-	// Check if .old is itself a bd shim - skip to prevent infinite recursion
+	// Check if .old is itself a bd hook (shim or inline) - skip to prevent infinite recursion
 	// This can happen if user runs `bd hooks install --chain` multiple times,
-	// renaming an existing bd shim to .old. See: https://github.com/steveyegge/beads/issues/843
+	// renaming an existing bd hook to .old. See: GH#843, GH#1120
 	versionInfo, err := getHookVersion(oldHookPath)
-	if err == nil && versionInfo.IsShim {
-		// Skip execution - .old is a bd shim which would call us again
+	if err == nil && versionInfo.IsBdHook {
+		// Skip execution - .old is a bd hook which would call us again
 		return 0
 	}
 
