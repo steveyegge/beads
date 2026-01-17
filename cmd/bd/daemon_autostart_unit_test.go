@@ -361,6 +361,41 @@ func TestDaemonAutostart_StartDaemonProcess_NoGitRepo(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_StartDaemonProcess_NoGitRepo_Quiet(t *testing.T) {
+	// Test that startDaemonProcess suppresses the note when quietFlag is true
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	oldQuiet := quietFlag
+	defer func() {
+		_ = os.Chdir(oldDir)
+		quietFlag = oldQuiet
+	}()
+
+	// Change to a temp directory that is NOT a git repo
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	// Enable quiet mode
+	quietFlag = true
+
+	// Capture stderr to verify the message is suppressed
+	output := captureStderr(t, func() {
+		result := startDaemonProcess(filepath.Join(tmpDir, "bd.sock"))
+		if result {
+			t.Errorf("expected startDaemonProcess to return false when not in git repo")
+		}
+	})
+
+	// Verify the message is NOT shown in quiet mode
+	if strings.Contains(output, "No git repository initialized") {
+		t.Errorf("expected no output in quiet mode, got: %q", output)
+	}
+}
+
 func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 	oldExec := execCommandFn
 	oldWait := waitForSocketReadinessFn
