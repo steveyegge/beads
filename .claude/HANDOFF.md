@@ -2,7 +2,7 @@
 
 **Date**: 2026-01-17
 **Branch**: `feat/plugin-based-issue-tracker-integration`
-**Commit**: `213a46d7`
+**Commit**: `88ff5d23`
 
 ---
 
@@ -16,6 +16,9 @@ Refactored CLI commands to use the new SyncEngine, dramatically simplifying the 
 
 ### Phase 3: CLI Tests (commit `213a46d7`)
 Added comprehensive unit tests for all tracker sync CLI commands using mock IssueTracker.
+
+### Phase 4: Azure DevOps Projects Command (commit `88ff5d23`)
+Implemented `bd azuredevops projects` command to list all projects in the organization.
 
 ### Phase 1 Files Created (18 total, ~4100 lines)
 
@@ -128,12 +131,22 @@ internal/tracker/
 
 ---
 
+### Phase 4 Files Changed (commit `88ff5d23`)
+
+| File | Action | Lines |
+|------|--------|-------|
+| `internal/tracker/azuredevops/types.go` | MODIFY | +17 (Project, ProjectListResponse types) |
+| `internal/tracker/azuredevops/client.go` | MODIFY | +18 (ListProjects() method) |
+| `cmd/bd/azuredevops.go` | MODIFY | refactored runAzureDevOpsProjects() |
+
+---
+
 ## What's Next
 
-Phases 1-3 are complete. Potential follow-up work:
+Phases 1-4 are complete. Potential follow-up work:
 
 1. ~~**Add tests for CLI commands**~~ ✅ Done in Phase 3
-2. **Implement `bd azuredevops projects`** - Currently a placeholder, needs client.ListProjects()
+2. ~~**Implement `bd azuredevops projects`**~~ ✅ Done in Phase 4
 3. **End-to-end integration tests** - Test actual sync operations with mock servers
 4. **Documentation** - Update user docs with new Azure DevOps commands
 
@@ -171,6 +184,8 @@ bd jira sync --use-python  # Legacy Python scripts
 bd azuredevops sync --pull --push --dry-run --prefer-local --prefer-ado
 bd ado sync  # Short alias
 bd ado status
+bd ado projects  # List all projects in organization
+bd ado projects --json  # JSON output
 ```
 
 ---
