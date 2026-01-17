@@ -233,18 +233,58 @@ bd ado projects
 bd config set azuredevops.project "MyProject"
 ```
 
-### Work Item Type Mapping
+### Field Mapping
 
-Azure DevOps work item types are mapped to beads issue types:
+Azure DevOps fields are mapped to beads fields with sensible defaults. Override with config:
+
+**Priority mapping** (Azure DevOps 1-4 to Beads 0-4):
+```bash
+bd config set azuredevops.priority_map.1 1    # High -> High
+bd config set azuredevops.priority_map.2 2    # Medium -> Medium
+bd config set azuredevops.priority_map.3 3    # Low -> Low
+bd config set azuredevops.priority_map.4 4    # Backlog -> Backlog
+```
+
+Note: Beads priority 0 (Critical) maps to Azure DevOps priority 1 (High) since Azure DevOps doesn't have a Critical level.
+
+**Status mapping** (Azure DevOps state to beads status):
+```bash
+bd config set azuredevops.status_map.new open
+bd config set azuredevops.status_map.active in_progress
+bd config set azuredevops.status_map.resolved in_progress
+bd config set azuredevops.status_map.closed closed
+bd config set azuredevops.status_map.done closed
+bd config set azuredevops.status_map.removed closed
+bd config set azuredevops.status_map."to do" open
+bd config set azuredevops.status_map.doing in_progress
+bd config set azuredevops.status_map.approved open
+bd config set azuredevops.status_map.committed in_progress
+```
+
+**Work item type mapping** (Azure DevOps type to beads type):
+```bash
+bd config set azuredevops.type_map.bug bug
+bd config set azuredevops.type_map."user story" feature
+bd config set azuredevops.type_map.feature feature
+bd config set azuredevops.type_map."product backlog item" feature
+bd config set azuredevops.type_map.task task
+bd config set azuredevops.type_map.epic epic
+bd config set azuredevops.type_map.issue task
+bd config set azuredevops.type_map.impediment bug
+```
+
+### Default Type Mappings
 
 | Azure DevOps | Beads |
 |--------------|-------|
 | Bug | bug |
 | User Story | feature |
+| Product Backlog Item | feature |
+| Feature | feature |
 | Task | task |
 | Epic | epic |
-| Feature | feature |
 | Issue | task |
+| Impediment | bug |
 
 ### Example Workflow
 
