@@ -178,20 +178,33 @@ func tryAutoStartDaemon(socketPath string) bool {
 		return false
 	}
 
+	// Quick check before taking the lock - if daemon is already healthy, skip locking
 	if isDaemonHealthy(socketPath) {
 		debugLog("daemon already running and healthy")
 		return true
 	}
 
+	// Use flock-based coordination to prevent race conditions.
+	// The startlock file + flock ensures only one process attempts daemon startup at a time.
 	lockPath := socketPath + ".startlock"
-	if !acquireStartLock(lockPath, socketPath) {
+	lockFile, err := acquireStartLockFlock(lockPath)
+	if err != nil {
+		debugLog("failed to acquire start lock: %v", err)
 		return false
 	}
 	defer func() {
+		_ = lockFile.Close()
+		// Clean up lock file - safe because we hold the flock
 		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
 			debugLog("failed to remove lock file: %v", err)
 		}
 	}()
+
+	// Re-check after acquiring lock - another process may have started daemon while we waited
+	if isDaemonHealthy(socketPath) {
+		debugLog("daemon started by another process while waiting for lock")
+		return true
+	}
 
 	if handleExistingSocket(socketPath) {
 		return true
@@ -214,90 +227,58 @@ func isDaemonHealthy(socketPath string) bool {
 	return false
 }
 
-func acquireStartLock(lockPath, socketPath string) bool {
+// acquireStartLockFlock acquires an exclusive flock on the startlock file.
+// This provides atomic coordination for daemon startup - only one process
+// can hold this lock at a time. Uses blocking flock with timeout to wait
+// for other startup attempts to complete.
+//
+// Returns the locked file handle (caller must close) or error if lock cannot be acquired.
+func acquireStartLockFlock(lockPath string) (*os.File, error) {
 	if err := ensureLockDirectory(lockPath); err != nil {
-		debugLog("failed to ensure lock directory: %v", err)
-		return false
+		return nil, fmt.Errorf("ensure lock directory: %w", err)
 	}
 
-	// Bounded retry loop to prevent infinite recursion when lock cleanup fails
-	const maxRetries = 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// nolint:gosec // G304: lockPath is derived from secure beads directory
-		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err == nil {
-			// Successfully acquired lock
-			_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
-			_ = lockFile.Close() // Best-effort close during startup
-			return true
-		}
-
-		// Lock file exists - check if daemon is actually starting
-		lockPID, pidErr := readPIDFromFile(lockPath)
-		if pidErr != nil || !isPIDAlive(lockPID) {
-			// Stale lock from crashed process - clean up immediately (avoids 5s wait)
-			debugLog("startlock is stale (PID %d dead or unreadable), cleaning up", lockPID)
-			if rmErr := removeFileFn(lockPath); rmErr != nil {
-				debugLog("failed to remove stale lock file: %v", rmErr)
-				return false // Can't acquire lock if we can't clean up
-			}
-			// Continue to next iteration to retry lock acquisition
-			continue
-		}
-
-		// PID is alive - but is daemon actually running/starting?
-		// Use flock-based check as authoritative source (immune to PID reuse)
-		beadsDir := filepath.Dir(dbPath)
-		if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
-			// Daemon lock not held - the start attempt failed or process was reused
-			debugLog("startlock PID %d alive but daemon lock not held, cleaning up", lockPID)
-			if rmErr := removeFileFn(lockPath); rmErr != nil {
-				debugLog("failed to remove orphaned lock file: %v", rmErr)
-				return false // Can't acquire lock if we can't clean up
-			}
-			// Continue to next iteration to retry lock acquisition
-			continue
-		}
-
-		// Daemon lock is held - daemon is legitimately starting, wait for socket
-		debugLog("another process (PID %d) is starting daemon, waiting for readiness", lockPID)
-		if waitForSocketReadiness(socketPath, 5*time.Second) {
-			return true
-		}
-		return handleStaleLock(lockPath, socketPath)
+	// Open or create the lock file
+	// nolint:gosec // G304: lockPath is derived from secure beads directory
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 
-	debugLog("failed to acquire start lock after %d attempts", maxRetries)
-	return false
-}
-
-func handleStaleLock(lockPath, socketPath string) bool {
-	lockPID, err := readPIDFromFile(lockPath)
-
-	// Check if PID is dead
-	if err != nil || !isPIDAlive(lockPID) {
-		debugLog("lock is stale (PID %d dead or unreadable), removing and retrying", lockPID)
-		if rmErr := removeFileFn(lockPath); rmErr != nil {
-			debugLog("failed to remove stale lock in handleStaleLock: %v", rmErr)
-			return false
-		}
-		return tryAutoStartDaemon(socketPath)
+	// Try non-blocking flock first for the fast path
+	if err := lockfile.FlockExclusiveNonBlocking(lockFile); err == nil {
+		// Got the lock immediately - write our PID for debugging
+		_ = lockFile.Truncate(0)
+		_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
+		return lockFile, nil
 	}
 
-	// PID is alive - but check daemon lock as authoritative source (immune to PID reuse)
-	beadsDir := filepath.Dir(dbPath)
-	if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
-		debugLog("lock PID %d alive but daemon lock not held, removing and retrying", lockPID)
-		if rmErr := removeFileFn(lockPath); rmErr != nil {
-			debugLog("failed to remove orphaned lock in handleStaleLock: %v", rmErr)
-			return false
-		}
-		return tryAutoStartDaemon(socketPath)
-	}
+	// Lock is held by another process - wait with timeout
+	// Use a goroutine with channel to implement timeout on blocking flock
+	debugLog("startlock held by another process, waiting up to 10s")
 
-	// Daemon lock is held - daemon is genuinely running but socket isn't ready
-	// This shouldn't happen normally, but don't clean up a legitimate lock
-	return false
+	done := make(chan error, 1)
+	go func() {
+		done <- lockfile.FlockExclusiveBlocking(lockFile)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			_ = lockFile.Close()
+			return nil, fmt.Errorf("flock: %w", err)
+		}
+		// Got the lock after waiting - write our PID
+		_ = lockFile.Truncate(0)
+		_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
+		return lockFile, nil
+	case <-time.After(10 * time.Second):
+		// Timeout - the blocking flock goroutine will be orphaned but will
+		// eventually complete (or be cleaned up when the process exits).
+		// Close our handle to avoid resource leak in the main path.
+		_ = lockFile.Close()
+		return nil, fmt.Errorf("timeout waiting for start lock (10s)")
+	}
 }
 
 func handleExistingSocket(socketPath string) bool {
