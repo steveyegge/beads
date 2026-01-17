@@ -1,7 +1,7 @@
 # CLI Command Reference
 
 **For:** AI agents and developers using bd command-line interface
-**Version:** 0.21.0+
+**Version:** 0.47.0+
 
 ## Quick Navigation
 
@@ -33,6 +33,10 @@ bd info --json
 ```bash
 # Find ready work (no blockers)
 bd ready --json
+bd list --ready --json                        # Same, integrated into list (v0.47.1+)
+
+# Find molecules waiting on gates for resume (v0.47.0+)
+bd ready --gated --json                       # Gate-resume discovery
 
 # Find stale issues (not updated recently)
 bd stale --days 30 --json                    # Default: 30 days
@@ -71,6 +75,9 @@ bd create "Tests" -p 1 --json                        # Auto-assigned: bd-a3f8e9.
 
 # Create and link discovered work (one command)
 bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
+
+# Preview creation without side effects (v0.47.0+)
+bd create "Issue title" -t task -p 1 --dry-run --json  # Shows what would be created
 ```
 
 ### Update Issues
@@ -431,6 +438,11 @@ bd sync
 # 3. Pull from remote
 # 4. Import any updates
 # 5. Push to remote
+
+# Resolve JSONL merge conflict markers (v0.47.0+)
+bd resolve-conflicts                          # Resolve in mechanical mode
+bd resolve-conflicts --dry-run --json         # Preview resolution
+# Mechanical mode rules: updated_at wins, closed beats open, higher priority wins
 ```
 
 ## Issue Types

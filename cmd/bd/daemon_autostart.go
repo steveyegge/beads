@@ -125,7 +125,7 @@ func restartDaemonForVersionMismatch() bool {
 		return false
 	}
 
-	args := []string{"daemon", "--start"}
+	args := []string{"daemon", "start"}
 	cmd := execCommandFn(exe, args...)
 	cmd.Env = append(os.Environ(), "BD_DAEMON_FOREGROUND=1")
 
@@ -220,27 +220,43 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		return false
 	}
 
-	// nolint:gosec // G304: lockPath is derived from secure beads directory
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
+	// Bounded retry loop to prevent infinite recursion when lock cleanup fails
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// nolint:gosec // G304: lockPath is derived from secure beads directory
+		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			// Successfully acquired lock
+			_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
+			_ = lockFile.Close() // Best-effort close during startup
+			return true
+		}
+
 		// Lock file exists - check if daemon is actually starting
 		lockPID, pidErr := readPIDFromFile(lockPath)
 		if pidErr != nil || !isPIDAlive(lockPID) {
 			// Stale lock from crashed process - clean up immediately (avoids 5s wait)
 			debugLog("startlock is stale (PID %d dead or unreadable), cleaning up", lockPID)
-			_ = os.Remove(lockPath)
-			// Retry lock acquisition after cleanup
-			return acquireStartLock(lockPath, socketPath)
+			if rmErr := removeFileFn(lockPath); rmErr != nil {
+				debugLog("failed to remove stale lock file: %v", rmErr)
+				return false // Can't acquire lock if we can't clean up
+			}
+			// Continue to next iteration to retry lock acquisition
+			continue
 		}
 
 		// PID is alive - but is daemon actually running/starting?
 		// Use flock-based check as authoritative source (immune to PID reuse)
-		beadsDir := filepath.Dir(socketPath)
+		beadsDir := filepath.Dir(dbPath)
 		if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 			// Daemon lock not held - the start attempt failed or process was reused
 			debugLog("startlock PID %d alive but daemon lock not held, cleaning up", lockPID)
-			_ = os.Remove(lockPath)
-			return acquireStartLock(lockPath, socketPath)
+			if rmErr := removeFileFn(lockPath); rmErr != nil {
+				debugLog("failed to remove orphaned lock file: %v", rmErr)
+				return false // Can't acquire lock if we can't clean up
+			}
+			// Continue to next iteration to retry lock acquisition
+			continue
 		}
 
 		// Daemon lock is held - daemon is legitimately starting, wait for socket
@@ -251,9 +267,8 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		return handleStaleLock(lockPath, socketPath)
 	}
 
-	_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
-	_ = lockFile.Close() // Best-effort close during startup
-	return true
+	debugLog("failed to acquire start lock after %d attempts", maxRetries)
+	return false
 }
 
 func handleStaleLock(lockPath, socketPath string) bool {
@@ -262,15 +277,21 @@ func handleStaleLock(lockPath, socketPath string) bool {
 	// Check if PID is dead
 	if err != nil || !isPIDAlive(lockPID) {
 		debugLog("lock is stale (PID %d dead or unreadable), removing and retrying", lockPID)
-		_ = os.Remove(lockPath)
+		if rmErr := removeFileFn(lockPath); rmErr != nil {
+			debugLog("failed to remove stale lock in handleStaleLock: %v", rmErr)
+			return false
+		}
 		return tryAutoStartDaemon(socketPath)
 	}
 
 	// PID is alive - but check daemon lock as authoritative source (immune to PID reuse)
-	beadsDir := filepath.Dir(socketPath)
+	beadsDir := filepath.Dir(dbPath)
 	if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 		debugLog("lock PID %d alive but daemon lock not held, removing and retrying", lockPID)
-		_ = os.Remove(lockPath)
+		if rmErr := removeFileFn(lockPath); rmErr != nil {
+			debugLog("failed to remove orphaned lock in handleStaleLock: %v", rmErr)
+			return false
+		}
 		return tryAutoStartDaemon(socketPath)
 	}
 
@@ -291,7 +312,7 @@ func handleExistingSocket(socketPath string) bool {
 
 	// Use flock-based check as authoritative source (immune to PID reuse)
 	// If daemon lock is not held, daemon is definitely dead regardless of PID file
-	beadsDir := filepath.Dir(socketPath)
+	beadsDir := filepath.Dir(dbPath)
 	if running, pid := lockfile.TryDaemonLock(beadsDir); running {
 		debugLog("daemon lock held (PID %d), waiting for socket", pid)
 		return waitForSocketReadiness(socketPath, 5*time.Second)
@@ -343,7 +364,7 @@ func startDaemonProcess(socketPath string) bool {
 		binPath = os.Args[0]
 	}
 
-	args := []string{"daemon", "--start"}
+	args := []string{"daemon", "start"}
 
 	cmd := execCommandFn(binPath, args...)
 	setupDaemonIO(cmd)
@@ -398,10 +419,11 @@ func setupDaemonIO(cmd *exec.Cmd) {
 	}
 }
 
-// getPIDFileForSocket returns the PID file path for a given socket path
-func getPIDFileForSocket(socketPath string) string {
-	// PID file is in same directory as socket, named daemon.pid
-	dir := filepath.Dir(socketPath)
+// getPIDFileForSocket returns the PID file path.
+// Note: socketPath parameter is unused - PID file is always in .beads directory
+// (not socket directory, which may be in /tmp for short paths).
+func getPIDFileForSocket(_ string) string {
+	dir := filepath.Dir(dbPath)
 	return filepath.Join(dir, "daemon.pid")
 }
 
@@ -494,13 +516,13 @@ func getSocketPath() string {
 func emitVerboseWarning() {
 	switch daemonStatus.FallbackReason {
 	case FallbackConnectFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon --status\n", daemonStatus.SocketPath)
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon status\n", daemonStatus.SocketPath)
 	case FallbackHealthFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon --health\n")
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon status --all\n")
 	case FallbackAutoStartDisabled:
 		fmt.Fprintf(os.Stderr, "Warning: Auto-start disabled (BEADS_AUTO_START_DAEMON=false). Running in direct mode. Hint: bd daemon\n")
 	case FallbackAutoStartFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon --status\n")
+		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon status\n")
 	case FallbackDaemonUnsupported:
 		fmt.Fprintf(os.Stderr, "Warning: Daemon does not support this command yet. Running in direct mode. Hint: update daemon or use local mode.\n")
 	case FallbackWorktreeSafety:

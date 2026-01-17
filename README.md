@@ -57,7 +57,7 @@ Beads supports hierarchical IDs for epics:
 * **Homebrew:** `brew install steveyegge/beads/bd`
 * **Go:** `go install github.com/steveyegge/beads/cmd/bd@latest`
 
-**Requirements:** Linux (glibc 2.32+), FreeBSD, macOS, or Windows.
+**Requirements:** Linux, FreeBSD, macOS, or Windows.
 
 ## 🌐 Community Tools
 

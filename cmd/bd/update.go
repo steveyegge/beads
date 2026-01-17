@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -103,7 +104,8 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("type") {
 			issueType, _ := cmd.Flags().GetString("type")
-			// Validate issue type
+			// Normalize aliases (e.g., "enhancement" -> "feature") before validating
+			issueType = util.NormalizeIssueType(issueType)
 			if !types.IssueType(issueType).IsValid() {
 				FatalErrorRespectJSON("invalid issue type %q. Valid types: bug, feature, task, epic, chore, merge-request, molecule, gate, agent, role, rig, convoy, event, slot", issueType)
 			}
@@ -124,14 +126,6 @@ create, update, show, or close operation).`,
 		if cmd.Flags().Changed("parent") {
 			parent, _ := cmd.Flags().GetString("parent")
 			updates["parent"] = parent
-		}
-		if cmd.Flags().Changed("type") {
-			issueType, _ := cmd.Flags().GetString("type")
-			// Validate issue type
-			if _, err := validation.ParseIssueType(issueType); err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-			updates["issue_type"] = issueType
 		}
 		// Gate fields (bd-z6kw)
 		if cmd.Flags().Changed("await-id") {

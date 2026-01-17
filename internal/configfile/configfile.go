@@ -12,6 +12,7 @@ const ConfigFileName = "metadata.json"
 type Config struct {
 	Database    string `json:"database"`
 	JSONLExport string `json:"jsonl_export,omitempty"`
+	Backend     string `json:"backend,omitempty"` // "sqlite" (default) or "dolt"
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
@@ -112,4 +113,18 @@ func (c *Config) GetDeletionsRetentionDays() int {
 		return DefaultDeletionsRetentionDays
 	}
 	return c.DeletionsRetentionDays
+}
+
+// Backend constants
+const (
+	BackendSQLite = "sqlite"
+	BackendDolt   = "dolt"
+)
+
+// GetBackend returns the configured backend type, defaulting to SQLite.
+func (c *Config) GetBackend() string {
+	if c.Backend == "" {
+		return BackendSQLite
+	}
+	return c.Backend
 }

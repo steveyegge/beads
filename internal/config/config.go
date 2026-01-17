@@ -153,6 +153,13 @@ func Initialize() error {
 	return nil
 }
 
+// ResetForTesting clears the config state, allowing Initialize() to be called again.
+// This is intended for tests that need to change config.yaml between test steps.
+// WARNING: Not thread-safe. Only call from single-threaded test contexts.
+func ResetForTesting() {
+	v = nil
+}
+
 // ConfigSource represents where a configuration value came from
 type ConfigSource string
 
@@ -361,6 +368,16 @@ func AllSettings() map[string]interface{} {
 	return v.AllSettings()
 }
 
+// ConfigFileUsed returns the path to the config file that was loaded.
+// Returns empty string if no config file was found or viper is not initialized.
+// This is useful for resolving relative paths from the config file's directory.
+func ConfigFileUsed() string {
+	if v == nil {
+		return ""
+	}
+	return v.ConfigFileUsed()
+}
+
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {
 	if v == nil {
@@ -452,13 +469,23 @@ func ResolveExternalProjectPath(projectName string) string {
 		return ""
 	}
 
-	// Expand relative paths from config file location or cwd
+	// Resolve relative paths from repo root (parent of .beads/), NOT CWD.
+	// This ensures paths like "../beads" in config resolve correctly
+	// when running from different directories or in daemon context.
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return ""
+		// Config is at .beads/config.yaml, so go up twice to get repo root
+		configFile := ConfigFileUsed()
+		if configFile != "" {
+			repoRoot := filepath.Dir(filepath.Dir(configFile)) // .beads/config.yaml -> repo/
+			path = filepath.Join(repoRoot, path)
+		} else {
+			// Fallback: resolve from CWD (legacy behavior)
+			cwd, err := os.Getwd()
+			if err != nil {
+				return ""
+			}
+			path = filepath.Join(cwd, path)
 		}
-		path = filepath.Join(cwd, path)
 	}
 
 	// Verify path exists

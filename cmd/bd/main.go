@@ -18,13 +18,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/memory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -354,6 +355,8 @@ var rootCmd = &cobra.Command{
 		// Skip database initialization for commands that don't need a database
 		noDbCommands := []string{
 			cmdDaemon,
+			"__complete",       // Cobra's internal completion command (shell completions work without db)
+			"__completeNoDesc", // Cobra's completion without descriptions (used by fish)
 			"bash",
 			"completion",
 			"doctor",
@@ -753,22 +756,36 @@ var rootCmd = &cobra.Command{
 		// Fall back to direct storage access
 		var err error
 		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
-		if useReadOnly {
-			// Read-only mode: prevents file modifications (GH#804)
-			store, err = sqlite.NewReadOnlyWithTimeout(rootCtx, dbPath, lockTimeout)
-			if err != nil {
+		beadsDir := filepath.Dir(dbPath)
+
+		// Detect backend from metadata.json
+		backend := factory.GetBackendFromConfig(beadsDir)
+
+		// Create storage with appropriate options
+		opts := factory.Options{
+			ReadOnly:    useReadOnly,
+			LockTimeout: lockTimeout,
+		}
+
+		if backend == configfile.BackendDolt {
+			// For Dolt, use the dolt subdirectory
+			doltPath := filepath.Join(beadsDir, "dolt")
+			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
+		} else {
+			// SQLite backend
+			store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
+			if err != nil && useReadOnly {
 				// If read-only fails (e.g., DB doesn't exist), fall back to read-write
 				// This handles the case where user runs "bd list" before "bd init"
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
-				store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
+				opts.ReadOnly = false
+				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
 				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
-		} else {
-			store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
 		}
+
 		if err != nil {
 			// Check for fresh clone scenario
-			beadsDir := filepath.Dir(dbPath)
 			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
 			}

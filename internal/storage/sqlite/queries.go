@@ -216,6 +216,40 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 		}
 	}
 
+	// bd-0gm4r: Handle tombstone collision for explicit IDs
+	// If the user explicitly specifies an ID that matches an existing tombstone,
+	// delete the tombstone first so the new issue can be created.
+	// This enables re-creating issues after hard deletion (e.g., polecat respawn).
+	if issue.ID != "" {
+		var existingStatus string
+		err := conn.QueryRowContext(ctx, `SELECT status FROM issues WHERE id = ?`, issue.ID).Scan(&existingStatus)
+		if err == nil && existingStatus == string(types.StatusTombstone) {
+			// Delete the tombstone record to allow re-creation
+			// Also clean up related tables (events, labels, dependencies, comments, dirty_issues)
+			if _, err := conn.ExecContext(ctx, `DELETE FROM events WHERE issue_id = ?`, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone events: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM labels WHERE issue_id = ?`, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone labels: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM dependencies WHERE issue_id = ? OR depends_on_id = ?`, issue.ID, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone dependencies: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM comments WHERE issue_id = ?`, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone comments: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone dirty marker: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM issues WHERE id = ?`, issue.ID); err != nil {
+				return fmt.Errorf("failed to delete tombstone: %w", err)
+			}
+			// Note: Tombstone is now gone, proceed with normal creation
+		} else if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("failed to check for existing tombstone: %w", err)
+		}
+	}
+
 	// Insert issue using strict mode (fails on duplicates)
 	// GH#956: Use insertIssueStrict instead of insertIssue to prevent FK constraint errors
 	// from silent INSERT OR IGNORE failures under concurrent load.

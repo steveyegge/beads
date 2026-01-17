@@ -1,6 +1,6 @@
 # Agent Instructions
 
-See [CLAUDE.md](CLAUDE.md) for full instructions.
+See [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) for full instructions.
 
 This file exists for compatibility with tools that look for AGENTS.md.
 
@@ -19,6 +19,19 @@ This file exists for compatibility with tools that look for AGENTS.md.
 - Priority: `● P0` (filled circle with color)
 
 See CLAUDE.md "Visual Design System" section for full guidance.
+
+## Agent Warning: Interactive Commands
+
+**DO NOT use `bd edit`** - it opens an interactive editor ($EDITOR) which AI agents cannot use.
+
+Use `bd update` with flags instead:
+```bash
+bd update <id> --description "new description"
+bd update <id> --title "new title"
+bd update <id> --design "design notes"
+bd update <id> --notes "additional notes"
+bd update <id> --acceptance "acceptance criteria"
+```
 
 ## Landing the Plane (Session Completion)
 

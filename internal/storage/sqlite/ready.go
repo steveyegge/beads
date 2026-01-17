@@ -19,6 +19,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 	whereClauses := []string{
 		"i.pinned = 0",                             // Exclude pinned issues
 		"(i.ephemeral = 0 OR i.ephemeral IS NULL)", // Exclude wisps
+		"i.id NOT LIKE '%-wisp-%'",                 // Defense in depth: exclude wisp IDs even if ephemeral flag missing
 	}
 	args := []interface{}{}
 
@@ -42,7 +43,9 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		// - molecule: workflow containers
 		// - message: mail/communication items
 		// - agent: identity/state tracking beads
-		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent')")
+		// - role: agent role definitions (reference metadata)
+		// - rig: rig identity beads (reference metadata)
+		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
 	}
 
 	if filter.Priority != nil {

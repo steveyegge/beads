@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -153,7 +154,7 @@ Run 'bd daemon --help' to see all subcommands.`,
 					// If we can check version and it's compatible, exit
 					if healthErr == nil && health.Compatible {
 						fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
-						fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop' to stop it first\n")
+						fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
 						os.Exit(1)
 					}
 
@@ -167,7 +168,7 @@ Run 'bd daemon --help' to see all subcommands.`,
 				} else {
 					// Can't check version - assume incompatible
 					fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
-					fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop' to stop it first\n")
+					fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
 					os.Exit(1)
 				}
 			}
@@ -403,17 +404,22 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("could not remove daemon-error file", "error", err)
 	}
 
-	store, err := sqlite.New(ctx, daemonDBPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run
 	}
 	defer func() { _ = store.Close() }()
 
-	// Enable freshness checking to detect external database file modifications
+	// Enable freshness checking for SQLite backend to detect external database file modifications
 	// (e.g., when git merge replaces the database file)
-	store.EnableFreshnessChecking()
-	log.Info("database opened", "path", daemonDBPath, "freshness_checking", true)
+	// Dolt doesn't need this since it handles versioning natively.
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		sqliteStore.EnableFreshnessChecking()
+		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
+	} else {
+		log.Info("database opened", "path", store.Path(), "backend", "dolt")
+	}
 
 	// Auto-upgrade .beads/.gitignore if outdated
 	gitignoreCheck := doctor.CheckGitignore()
@@ -426,14 +432,16 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		}
 	}
 
-	// Hydrate from multi-repo if configured
-	if results, err := store.HydrateFromMultiRepo(ctx); err != nil {
-		log.Error("multi-repo hydration failed", "error", err)
-		return // Use return instead of os.Exit to allow defers to run
-	} else if results != nil {
-		log.Info("multi-repo hydration complete")
-		for repo, count := range results {
-			log.Info("hydrated issues", "repo", repo, "count", count)
+	// Hydrate from multi-repo if configured (SQLite only)
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		if results, err := sqliteStore.HydrateFromMultiRepo(ctx); err != nil {
+			log.Error("multi-repo hydration failed", "error", err)
+			return // Use return instead of os.Exit to allow defers to run
+		} else if results != nil {
+			log.Info("multi-repo hydration complete")
+			for repo, count := range results {
+				log.Info("hydrated issues", "repo", repo, "count", count)
+			}
 		}
 	}
 
@@ -618,13 +626,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 // Note: The individual auto-commit/auto-push settings are deprecated.
 // Use auto-sync for read/write mode, auto-pull for read-only mode.
 func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull bool) (bool, bool, bool) {
-	dbPath := beads.FindDatabasePath()
-	if dbPath == "" {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
 		return autoCommit, autoPush, autoPull
 	}
 
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return autoCommit, autoPush, autoPull
 	}

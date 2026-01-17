@@ -24,6 +24,7 @@ var showCmd = &cobra.Command{
 		showThread, _ := cmd.Flags().GetBool("thread")
 		shortMode, _ := cmd.Flags().GetBool("short")
 		showRefs, _ := cmd.Flags().GetBool("refs")
+		showChildren, _ := cmd.Flags().GetBool("children")
 		ctx := rootCtx
 
 		// Check database freshness before reading
@@ -80,6 +81,12 @@ var showCmd = &cobra.Command{
 		// Handle --refs flag: show issues that reference this issue
 		if showRefs {
 			showIssueRefs(ctx, args, resolvedIDs, routedArgs, jsonOutput)
+			return
+		}
+
+		// Handle --children flag: show only children of this issue
+		if showChildren {
+			showIssueChildren(ctx, args, resolvedIDs, routedArgs, jsonOutput, shortMode)
 			return
 		}
 
@@ -898,6 +905,130 @@ func getRefTypeEmoji(depType types.DependencyType) string {
 	}
 }
 
+// showIssueChildren displays only the children of the specified issue(s)
+func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string, routedArgs []string, jsonOut bool, shortMode bool) {
+	// Collect all children for all issues
+	allChildren := make(map[string][]*types.IssueWithDependencyMetadata)
+
+	// Process each issue to get its children
+	processIssue := func(issueID string, issueStore storage.Storage) error {
+		// Initialize entry so "no children" message can be shown
+		if _, exists := allChildren[issueID]; !exists {
+			allChildren[issueID] = []*types.IssueWithDependencyMetadata{}
+		}
+
+		sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+		if !ok {
+			// Fallback: try to get dependents without metadata
+			dependents, err := issueStore.GetDependents(ctx, issueID)
+			if err != nil {
+				return err
+			}
+			// Filter for parent-child relationships (can't filter without metadata)
+			for _, dep := range dependents {
+				allChildren[issueID] = append(allChildren[issueID], &types.IssueWithDependencyMetadata{Issue: *dep})
+			}
+			return nil
+		}
+
+		// Get all dependents with metadata so we can filter for children
+		refs, err := sqliteStore.GetDependentsWithMetadata(ctx, issueID)
+		if err != nil {
+			return err
+		}
+		// Filter for only parent-child relationships
+		for _, ref := range refs {
+			if ref.DependencyType == types.DepParentChild {
+				allChildren[issueID] = append(allChildren[issueID], ref)
+			}
+		}
+		return nil
+	}
+
+	// Handle routed IDs via direct mode
+	for _, id := range routedArgs {
+		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+			continue
+		}
+		if result == nil || result.Issue == nil {
+			if result != nil {
+				result.Close()
+			}
+			fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+			continue
+		}
+		if err := processIssue(result.ResolvedID, result.Store); err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+		}
+		result.Close()
+	}
+
+	// Handle resolved IDs (daemon mode)
+	if daemonClient != nil {
+		for _, id := range resolvedIDs {
+			// Need to open direct connection for GetDependentsWithMetadata
+			dbStore, err := sqlite.New(ctx, dbPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+				continue
+			}
+			if err := processIssue(id, dbStore); err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+			}
+			_ = dbStore.Close()
+		}
+	} else {
+		// Direct mode - process each arg
+		for _, id := range args {
+			if containsStr(routedArgs, id) {
+				continue // Already processed above
+			}
+			result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving %s: %v\n", id, err)
+				continue
+			}
+			if result == nil || result.Issue == nil {
+				if result != nil {
+					result.Close()
+				}
+				fmt.Fprintf(os.Stderr, "Issue %s not found\n", id)
+				continue
+			}
+			if err := processIssue(result.ResolvedID, result.Store); err != nil {
+				fmt.Fprintf(os.Stderr, "Error getting children for %s: %v\n", id, err)
+			}
+			result.Close()
+		}
+	}
+
+	// Output results
+	if jsonOut {
+		outputJSON(allChildren)
+		return
+	}
+
+	// Display children
+	for issueID, children := range allChildren {
+		if len(children) == 0 {
+			fmt.Printf("%s: No children found\n", ui.RenderAccent(issueID))
+			continue
+		}
+
+		fmt.Printf("%s Children of %s (%d):\n", ui.RenderAccent("↳"), issueID, len(children))
+		for _, child := range children {
+			if shortMode {
+				fmt.Printf("  %s\n", formatShortIssue(&child.Issue))
+			} else {
+				fmt.Println(formatDependencyLine("↳", child))
+			}
+		}
+		fmt.Println()
+	}
+}
+
 // containsStr checks if a string slice contains a value
 func containsStr(slice []string, val string) bool {
 	for _, s := range slice {
@@ -912,6 +1043,7 @@ func init() {
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
 	showCmd.Flags().Bool("refs", false, "Show issues that reference this issue (reverse lookup)")
+	showCmd.Flags().Bool("children", false, "Show only the children of this issue")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }

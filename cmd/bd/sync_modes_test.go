@@ -681,6 +681,9 @@ func TestExportOnlySync(t *testing.T) {
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
+	// Remove pre-existing issues.jsonl from setupGitRepo (we want a clean slate)
+	_ = os.Remove(jsonlPath)
+
 	// Setup: Create .beads directory
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("failed to create .beads dir: %v", err)

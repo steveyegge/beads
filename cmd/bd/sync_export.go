@@ -69,6 +69,12 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 			// is unavailable. This ensures export operations always succeed even if metadata storage fails.
 			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_content_hash: %v\n", err)
 		}
+		// Also update jsonl_file_hash for integrity validation (bd-160)
+		// This ensures validateJSONLIntegrity() won't see a hash mismatch after
+		// bd sync --flush-only runs (e.g., from pre-commit hook).
+		if err := store.SetJSONLFileHash(ctx, result.ContentHash); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash: %v\n", err)
+		}
 	}
 
 	// Update last_import_time

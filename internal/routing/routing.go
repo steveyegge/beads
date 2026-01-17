@@ -1,7 +1,9 @@
 package routing
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -101,4 +103,29 @@ func DetermineTargetRepo(config *RoutingConfig, userRole UserRole, repoPath stri
 
 	// No routing configured - use current repo
 	return "."
+}
+
+// ExpandPath expands ~ to home directory and resolves relative paths to absolute.
+// Returns the original path if expansion fails.
+func ExpandPath(path string) string {
+	if path == "" || path == "." {
+		return path
+	}
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+
+	// Convert relative paths to absolute
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+	}
+
+	return path
 }

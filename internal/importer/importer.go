@@ -99,6 +99,15 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Auto-detect wisps by ID pattern and set ephemeral flag
+	// This prevents orphaned wisp entries in JSONL from polluting bd ready
+	// Pattern: *-wisp-* indicates ephemeral patrol/workflow instances
+	for _, issue := range issues {
+		if strings.Contains(issue.ID, "-wisp-") && !issue.Ephemeral {
+			issue.Ephemeral = true
+		}
+	}
+
 	// Get or create SQLite store
 	sqliteStore, needCloseStore, err := getOrCreateStore(ctx, dbPath, store)
 	if err != nil {
