@@ -335,6 +335,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Git commit tracking field
+	var commits sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -349,7 +351,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until, commits
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -363,7 +365,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
+		&dueAt, &deferUntil, &commits,
 	)
 
 	if err == sql.ErrNoRows {
@@ -491,6 +493,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
+	}
+	// Git commit tracking field
+	if commits.Valid && commits.String != "" {
+		issue.Commits = parseJSONStringArray(commits.String)
 	}
 
 	// Fetch labels for this issue

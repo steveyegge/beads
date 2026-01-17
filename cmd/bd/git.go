@@ -24,7 +24,8 @@ var gitCmd = &cobra.Command{
 Track which commits are associated with which issues:
   bd git link <issue-id> <commit-sha>    Link a commit to an issue
   bd git unlink <issue-id> <commit-sha>  Remove a commit link
-  bd git scan <issue-id>                 Auto-link commits mentioning [issue-id]`,
+  bd git scan <issue-id>                 Auto-link commits mentioning [issue-id]
+  bd git status <issue-id>               Show linked commits for an issue`,
 }
 
 var gitLinkCmd = &cobra.Command{
@@ -393,11 +394,11 @@ Examples:
 			if len(out) == 0 {
 				if jsonOutput {
 					outputJSON(map[string]interface{}{
-						"issue_id":    resolvedID,
-						"found":       0,
-						"linked":      0,
-						"already":     0,
-						"commits":     []string{},
+						"issue_id": resolvedID,
+						"found":    0,
+						"linked":   0,
+						"already":  0,
+						"commits":  []string{},
 					})
 				} else {
 					fmt.Printf("No commits found referencing [%s]\n", resolvedID)
@@ -420,11 +421,11 @@ Examples:
 		if len(foundSHAs) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"issue_id":    resolvedID,
-					"found":       0,
-					"linked":      0,
-					"already":     0,
-					"commits":     []string{},
+					"issue_id": resolvedID,
+					"found":    0,
+					"linked":   0,
+					"already":  0,
+					"commits":  []string{},
 				})
 			} else {
 				fmt.Printf("No commits found referencing [%s]\n", resolvedID)
@@ -446,12 +447,12 @@ Examples:
 		if dryRun {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"issue_id":    resolvedID,
-					"dry_run":     true,
-					"found":       len(foundSHAs),
-					"would_link":  len(newSHAs),
-					"already":     len(alreadyLinked),
-					"commits":     newSHAs,
+					"issue_id":   resolvedID,
+					"dry_run":    true,
+					"found":      len(foundSHAs),
+					"would_link": len(newSHAs),
+					"already":    len(alreadyLinked),
+					"commits":    newSHAs,
 				})
 			} else {
 				fmt.Printf("Found %d commit(s) referencing [%s]\n", len(foundSHAs), resolvedID)
@@ -481,11 +482,11 @@ Examples:
 		if len(newSHAs) == 0 {
 			if jsonOutput {
 				outputJSON(map[string]interface{}{
-					"issue_id":    resolvedID,
-					"found":       len(foundSHAs),
-					"linked":      0,
-					"already":     len(alreadyLinked),
-					"commits":     []string{},
+					"issue_id": resolvedID,
+					"found":    len(foundSHAs),
+					"linked":   0,
+					"already":  len(alreadyLinked),
+					"commits":  []string{},
 				})
 			} else {
 				fmt.Printf("Found %d commit(s), all already linked to %s\n", len(foundSHAs), resolvedID)
@@ -518,11 +519,11 @@ Examples:
 
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
-				"issue_id":    resolvedID,
-				"found":       len(foundSHAs),
-				"linked":      len(newSHAs),
-				"already":     len(alreadyLinked),
-				"commits":     newSHAs,
+				"issue_id": resolvedID,
+				"found":    len(foundSHAs),
+				"linked":   len(newSHAs),
+				"already":  len(alreadyLinked),
+				"commits":  newSHAs,
 			})
 		} else {
 			fmt.Printf("%s Linked %d commit(s) to %s\n", ui.RenderPass("✓"), len(newSHAs), resolvedID)
@@ -543,12 +544,128 @@ Examples:
 	},
 }
 
+var gitStatusCmd = &cobra.Command{
+	Use:   "status <issue-id>",
+	Short: "Show git commits linked to an issue",
+	Long: `Show all git commits that have been linked to an issue.
+
+Displays each linked commit with its short SHA and, if available,
+the commit subject line, author, and date.
+
+Examples:
+  bd git status bd-abc       # Show linked commits for issue
+  bd git status bd-abc --json  # Output as JSON`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		issueID := args[0]
+		ctx := rootCtx
+
+		var commits []string
+		var resolvedID string
+
+		// Handle daemon mode
+		if daemonClient != nil {
+			resolveArgs := &rpc.ResolveIDArgs{ID: issueID}
+			resp, err := daemonClient.ResolveID(resolveArgs)
+			if err != nil {
+				FatalErrorRespectJSON("resolving ID %s: %v", issueID, err)
+			}
+			if err := json.Unmarshal(resp.Data, &resolvedID); err != nil {
+				FatalErrorRespectJSON("unmarshaling resolved ID: %v", err)
+			}
+
+			// Get issue to read commits
+			showArgs := &rpc.ShowArgs{ID: resolvedID}
+			showResp, err := daemonClient.Show(showArgs)
+			if err != nil {
+				FatalErrorRespectJSON("getting issue %s: %v", resolvedID, err)
+			}
+			var issue types.Issue
+			if err := json.Unmarshal(showResp.Data, &issue); err != nil {
+				FatalErrorRespectJSON("unmarshaling issue: %v", err)
+			}
+			commits = issue.Commits
+		} else {
+			// Direct mode
+			result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+			if err != nil {
+				FatalErrorRespectJSON("resolving %s: %v", issueID, err)
+			}
+			if result == nil || result.Issue == nil {
+				FatalErrorRespectJSON("issue %s not found", issueID)
+			}
+			defer result.Close()
+
+			commits = result.Issue.Commits
+			resolvedID = result.ResolvedID
+		}
+
+		// Build commit details
+		type commitInfo struct {
+			SHA     string `json:"sha"`
+			Short   string `json:"short"`
+			Subject string `json:"subject,omitempty"`
+			Author  string `json:"author,omitempty"`
+			Date    string `json:"date,omitempty"`
+		}
+
+		var commitDetails []commitInfo
+		for _, sha := range commits {
+			info := commitInfo{
+				SHA:   sha,
+				Short: sha[:min(7, len(sha))],
+			}
+
+			// Try to get commit details from git
+			out, err := exec.Command("git", "log", "-1", "--format=%s|%an|%as", sha).Output()
+			if err == nil {
+				parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 3)
+				if len(parts) >= 1 {
+					info.Subject = parts[0]
+				}
+				if len(parts) >= 2 {
+					info.Author = parts[1]
+				}
+				if len(parts) >= 3 {
+					info.Date = parts[2]
+				}
+			}
+			commitDetails = append(commitDetails, info)
+		}
+
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"issue_id": resolvedID,
+				"count":    len(commits),
+				"commits":  commitDetails,
+			})
+			return
+		}
+
+		// Text output
+		if len(commits) == 0 {
+			fmt.Printf("No commits linked to %s\n", resolvedID)
+			return
+		}
+
+		fmt.Printf("Commits linked to %s (%d):\n", resolvedID, len(commits))
+		for _, info := range commitDetails {
+			if info.Subject != "" {
+				fmt.Printf("  %s %s (%s, %s)\n", info.Short, info.Subject, info.Author, info.Date)
+			} else {
+				fmt.Printf("  %s\n", info.Short)
+			}
+		}
+	},
+}
+
 func init() {
 	gitScanCmd.Flags().Bool("dry-run", false, "Show what would be linked without linking")
 
 	gitCmd.AddCommand(gitLinkCmd)
 	gitCmd.AddCommand(gitUnlinkCmd)
 	gitCmd.AddCommand(gitScanCmd)
+	gitCmd.AddCommand(gitStatusCmd)
 	rootCmd.AddCommand(gitCmd)
 }
 
