@@ -117,3 +117,33 @@ func AsVersioned(s Storage) (VersionedStorage, bool) {
 	vs, ok := s.(VersionedStorage)
 	return vs, ok
 }
+
+// RemoteStorage extends VersionedStorage with remote synchronization capabilities.
+// This interface is implemented by storage backends that support push/pull to
+// remote repositories (e.g., Dolt with DoltHub remotes).
+type RemoteStorage interface {
+	VersionedStorage
+
+	// Push pushes commits to the configured remote.
+	Push(ctx context.Context) error
+
+	// Pull pulls changes from the configured remote.
+	Pull(ctx context.Context) error
+
+	// AddRemote adds a new remote with the given name and URL.
+	AddRemote(ctx context.Context, name, url string) error
+}
+
+// IsRemote checks if a storage instance supports remote synchronization.
+// Returns true if the storage implements RemoteStorage.
+func IsRemote(s Storage) bool {
+	_, ok := s.(RemoteStorage)
+	return ok
+}
+
+// AsRemote attempts to cast a Storage to RemoteStorage.
+// Returns the RemoteStorage and true if successful, nil and false otherwise.
+func AsRemote(s Storage) (RemoteStorage, bool) {
+	rs, ok := s.(RemoteStorage)
+	return rs, ok
+}
