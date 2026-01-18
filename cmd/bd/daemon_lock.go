@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 var ErrDaemonLocked = errors.New("daemon lock already held by another process")
@@ -43,7 +44,8 @@ func (l *DaemonLock) Close() error {
 // Returns ErrDaemonLocked if another daemon is already running
 // dbPath is the full path to the database file (e.g., /path/to/.beads/beads.db)
 func acquireDaemonLock(beadsDir string, dbPath string) (*DaemonLock, error) {
-	lockPath := filepath.Join(beadsDir, "daemon.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockPath := beads.VarPath(beadsDir, "daemon.lock", "")
 
 	// Open or create the lock file
 	// #nosec G304 - controlled path from config
@@ -78,7 +80,8 @@ func acquireDaemonLock(beadsDir string, dbPath string) (*DaemonLock, error) {
 	_ = f.Sync()                   // Best-effort sync to disk
 
 	// Also write PID file for Windows compatibility (can't read locked files on Windows)
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0600) // Best-effort PID write
 
 	return &DaemonLock{file: f, path: lockPath}, nil
@@ -88,7 +91,8 @@ func acquireDaemonLock(beadsDir string, dbPath string) (*DaemonLock, error) {
 // to check if a daemon is running. Returns true if daemon is running.
 // Falls back to PID file check for backward compatibility with pre-lock daemons.
 func tryDaemonLock(beadsDir string) (running bool, pid int) {
-	lockPath := filepath.Join(beadsDir, "daemon.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockPath := beads.VarPath(beadsDir, "daemon.lock", "")
 
 	// Open lock file with read-write access (required for LockFileEx on Windows)
 	// #nosec G304 - controlled path from config
@@ -136,7 +140,8 @@ func tryDaemonLock(beadsDir string) (running bool, pid int) {
 // readDaemonLockInfo reads and parses the daemon lock file
 // Returns lock info if available, or error if file doesn't exist or can't be parsed
 func readDaemonLockInfo(beadsDir string) (*DaemonLockInfo, error) {
-	lockPath := filepath.Join(beadsDir, "daemon.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockPath := beads.VarPath(beadsDir, "daemon.lock", "")
 	
 	// #nosec G304 - controlled path from config
 	data, err := os.ReadFile(lockPath)
@@ -186,7 +191,8 @@ func validateDaemonLock(beadsDir string, expectedDB string) error {
 // checkPIDFile checks if a daemon is running by reading the PID file.
 // This is used for backward compatibility with pre-lock daemons.
 func checkPIDFile(beadsDir string) (running bool, pid int) {
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 	// #nosec G304 - controlled path from config
 	data, err := os.ReadFile(pidFile)
 	if err != nil {

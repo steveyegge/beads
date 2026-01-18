@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
@@ -89,7 +90,7 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 	// This prevents validatePreExport from incorrectly blocking on next export
 	if result.JSONLPath != "" {
 		beadsDir := filepath.Dir(result.JSONLPath)
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbPath := beads.VarPath(beadsDir, "beads.db", "")
 		if err := TouchDatabaseFile(dbPath, result.JSONLPath); err != nil {
 			// Non-fatal warning
 			fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)

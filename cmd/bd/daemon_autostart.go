@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/lockfile"
@@ -326,7 +327,8 @@ func handleExistingSocket(socketPath string) bool {
 		_ = os.Remove(pidFile) // Best-effort cleanup, file may not exist
 	}
 	// Also clean up daemon.lock file (contains stale metadata)
-	lockFile := filepath.Join(beadsDir, "daemon.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockFile := beads.VarPath(beadsDir, "daemon.lock", "")
 	_ = os.Remove(lockFile) // Best-effort cleanup
 	return false
 }
@@ -426,7 +428,8 @@ func setupDaemonIO(cmd *exec.Cmd) {
 // (not socket directory, which may be in /tmp for short paths).
 func getPIDFileForSocket(_ string) string {
 	dir := filepath.Dir(dbPath)
-	return filepath.Join(dir, "daemon.pid")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	return beads.VarPath(dir, "daemon.pid", "")
 }
 
 // readPIDFromFile reads a PID from a file

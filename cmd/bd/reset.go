@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -95,7 +96,8 @@ func collectResetItems(gitCommonDir, beadsDir string) []resetItem {
 	var items []resetItem
 
 	// Check for running daemon
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 	if _, err := os.Stat(pidFile); err == nil {
 		if isRunning, pid := isDaemonRunning(pidFile); isRunning {
 			items = append(items, resetItem{
@@ -233,7 +235,8 @@ func performReset(items []resetItem, _, beadsDir string) {
 	for _, item := range items {
 		switch item.Type {
 		case "daemon":
-			pidFile := filepath.Join(beadsDir, "daemon.pid")
+			// VarPath checks var/ first, then root for var/ layout compatibility
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 			stopDaemonQuiet(pidFile)
 			if !jsonOutput {
 				fmt.Printf("%s Stopped daemon\n", ui.RenderPass("✓"))

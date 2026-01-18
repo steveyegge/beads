@@ -315,7 +315,8 @@ func CleanupStaleSockets(daemons []DaemonInfo) (int, error) {
 
 			// Also remove associated PID file if it exists
 			socketDir := filepath.Dir(daemon.SocketPath)
-			pidFile := filepath.Join(socketDir, "daemon.pid")
+			// VarPath checks var/ first, then root for var/ layout compatibility
+			pidFile := beads.VarPath(socketDir, "daemon.pid", "")
 			if err := os.Remove(pidFile); err != nil {
 				// Ignore errors for PID file - it may not exist
 				if !os.IsNotExist(err) {

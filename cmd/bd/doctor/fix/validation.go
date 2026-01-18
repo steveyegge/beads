@@ -10,6 +10,8 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // MergeArtifacts removes temporary git merge files from .beads directory.
@@ -106,7 +108,8 @@ func OrphanedDependencies(path string, verbose bool) error {
 	}
 
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 	// Open database
 	db, err := openDB(dbPath)
@@ -179,7 +182,8 @@ func ChildParentDependencies(path string, verbose bool) error {
 	}
 
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 	// Open database
 	db, err := openDB(dbPath)
