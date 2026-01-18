@@ -75,6 +75,26 @@ func DetectPendingMigrations(path string) []PendingMigration {
 		})
 	}
 
+	// Check for stray files in wrong location (var/ layout active but files at root)
+	if files := FilesInWrongLocation(beadsDir); len(files) > 0 {
+		pending = append(pending, PendingMigration{
+			Name:        "stray-files",
+			Description: fmt.Sprintf("%d volatile file(s) at root should be in var/", len(files)),
+			Command:     "bd doctor --fix",
+			Priority:    2, // Warning - fixable
+		})
+	}
+
+	// Check for optional var/ layout migration (legacy layout with volatile files)
+	if needsVarMigration(beadsDir) {
+		pending = append(pending, PendingMigration{
+			Name:        "var-layout",
+			Description: "Recommended: migrate to var/ layout (legacy layout is deprecated)",
+			Command:     "bd migrate layout",
+			Priority:    2, // Warning - deprecated layout
+		})
+	}
+
 	return pending
 }
 
@@ -231,6 +251,58 @@ func hasGitRemote(repoPath string) bool {
 		return false
 	}
 	return len(strings.TrimSpace(string(output))) > 0
+}
+
+// needsVarMigration returns true if using legacy layout and volatile files exist at root.
+// This indicates the user could benefit from migrating to var/ layout.
+func needsVarMigration(beadsDir string) bool {
+	// Get layout from metadata
+	layout := getLayoutFromMetadata(beadsDir)
+
+	// If already using var/ layout, no migration needed
+	if beads.IsVarLayout(beadsDir, layout) {
+		return false
+	}
+
+	// Check if any volatile files exist at root (legacy location)
+	for _, f := range beads.VolatileFiles {
+		rootPath := filepath.Join(beadsDir, f)
+		if _, err := os.Stat(rootPath); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// FilesInWrongLocation returns volatile files at root when var/ layout is active.
+// These are files that should be in var/ but are in the root directory.
+func FilesInWrongLocation(beadsDir string) []string {
+	// Get layout from metadata
+	layout := getLayoutFromMetadata(beadsDir)
+
+	// Not using var/ layout - no "wrong" location
+	if !beads.IsVarLayout(beadsDir, layout) {
+		return nil
+	}
+
+	var wrongLocation []string
+	for _, f := range beads.VolatileFiles {
+		rootPath := filepath.Join(beadsDir, f)
+		if _, err := os.Stat(rootPath); err == nil {
+			wrongLocation = append(wrongLocation, f)
+		}
+	}
+	return wrongLocation
+}
+
+// getLayoutFromMetadata reads the layout field from metadata.json.
+// Returns empty string if metadata cannot be read.
+func getLayoutFromMetadata(beadsDir string) string {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.Layout
 }
 
 // checkDatabaseVersionMismatch returns a description if database version is old

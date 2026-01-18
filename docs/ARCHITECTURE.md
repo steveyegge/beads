@@ -313,6 +313,38 @@ Each issue in `.beads/issues.jsonl` is a JSON object with the following fields. 
 
 ## Directory Structure
 
+bd supports two directory layouts. New installations use the var/ layout by default; existing installations continue to work with the legacy layout.
+
+### Var/ Layout (Default, v0.49+)
+
+Volatile files (machine-local, gitignored) live in `var/` subdirectory. Persistent files (git-tracked) remain at root:
+
+```
+.beads/
+├── var/                      # VOLATILE (gitignored via single "var/" pattern)
+│   ├── beads.db              # SQLite database
+│   ├── daemon.lock           # Daemon flock
+│   ├── daemon.log            # Daemon logs
+│   ├── daemon.pid            # Daemon PID
+│   ├── bd.sock               # Unix socket
+│   ├── sync_base.jsonl       # Sync merge base
+│   ├── sync-state.json       # Sync backoff state
+│   └── export_hashes.db      # Export tracking
+├── issues.jsonl              # PERSISTENT (git-tracked)
+├── interactions.jsonl        # PERSISTENT (git-tracked)
+├── metadata.json             # CONFIG (git-tracked, includes "layout": "v2")
+└── .gitignore                # SIMPLIFIED: just "var/"
+```
+
+**Benefits:**
+- **Simpler .gitignore**: Single `var/` pattern instead of many file patterns
+- **Clear separation**: Volatile files visually distinct from persistent ones
+- **Future-proof**: New volatile files auto-gitignored when added to var/
+
+### Legacy Layout (Pre-v0.49)
+
+All files at `.beads/` root:
+
 ```
 .beads/
 ├── beads.db          # SQLite database (gitignored)
@@ -322,6 +354,20 @@ Each issue in `.beads/issues.jsonl` is a JSON object with the following fields. 
 ├── config.yaml       # Project config (optional)
 └── export_hashes.db  # Export tracking (gitignored)
 ```
+
+### Migration and Compatibility
+
+> **Note**: Legacy flat layout is deprecated. While still supported for backward
+> compatibility, new installations use var/ layout by default. Run `bd migrate layout`
+> to upgrade existing installations.
+
+- **Existing installations**: Continue to work unchanged (backward compatible)
+- **New installations**: Use var/ layout by default (`layout: "v2"` in metadata.json)
+- **Explicit legacy mode**: `bd init --legacy` creates legacy layout (deprecated)
+- **Migration**: Run `bd migrate layout` to upgrade existing installation
+- **Detection**: `bd doctor` recommends migration for legacy installations
+- **Read-both pattern**: VarPath() checks var/ first, falls back to root (handles edge cases)
+- **Emergency fallback**: Set `BD_LEGACY_LAYOUT=1` to force legacy paths
 
 ## Key Code Paths
 

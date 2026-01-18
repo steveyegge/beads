@@ -140,6 +140,220 @@ func TestDetectPendingMigrations(t *testing.T) {
 	})
 }
 
+func TestNeedsVarMigration(t *testing.T) {
+	t.Run("already using var layout returns false", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		varDir := filepath.Join(beadsDir, "var")
+		if err := os.MkdirAll(varDir, 0755); err != nil {
+			t.Fatalf("failed to create var/: %v", err)
+		}
+
+		// Create volatile file in var/ (correct location)
+		if err := os.WriteFile(filepath.Join(varDir, "beads.db"), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create beads.db: %v", err)
+		}
+
+		if needsVarMigration(beadsDir) {
+			t.Error("expected false when already using var/ layout")
+		}
+	})
+
+	t.Run("legacy layout with volatile files returns true", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+
+		// Create volatile file at root (legacy location)
+		if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create beads.db: %v", err)
+		}
+
+		if !needsVarMigration(beadsDir) {
+			t.Error("expected true when legacy layout has volatile files")
+		}
+	})
+
+	t.Run("empty beads directory returns false", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+
+		if needsVarMigration(beadsDir) {
+			t.Error("expected false for empty beads directory")
+		}
+	})
+}
+
+func TestFilesInWrongLocation(t *testing.T) {
+	t.Run("not using var layout returns nil", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+
+		// Create file at root (legacy layout)
+		if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create beads.db: %v", err)
+		}
+
+		files := FilesInWrongLocation(beadsDir)
+		if files != nil {
+			t.Errorf("expected nil for legacy layout, got %v", files)
+		}
+	})
+
+	t.Run("var layout with files at root returns them", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		varDir := filepath.Join(beadsDir, "var")
+		if err := os.MkdirAll(varDir, 0755); err != nil {
+			t.Fatalf("failed to create var/: %v", err)
+		}
+
+		// Create file at root (wrong location for var/ layout)
+		if err := os.WriteFile(filepath.Join(beadsDir, "daemon.pid"), []byte("123"), 0644); err != nil {
+			t.Fatalf("failed to create daemon.pid: %v", err)
+		}
+
+		files := FilesInWrongLocation(beadsDir)
+		if len(files) != 1 || files[0] != "daemon.pid" {
+			t.Errorf("expected [daemon.pid], got %v", files)
+		}
+	})
+
+	t.Run("var layout with no files at root returns empty", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		varDir := filepath.Join(beadsDir, "var")
+		if err := os.MkdirAll(varDir, 0755); err != nil {
+			t.Fatalf("failed to create var/: %v", err)
+		}
+
+		// Create file in var/ (correct location)
+		if err := os.WriteFile(filepath.Join(varDir, "beads.db"), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create beads.db: %v", err)
+		}
+
+		files := FilesInWrongLocation(beadsDir)
+		if len(files) != 0 {
+			t.Errorf("expected empty slice, got %v", files)
+		}
+	})
+}
+
+func TestDetectPendingMigrations_VarLayout(t *testing.T) {
+	t.Run("legacy layout with volatile files suggests var migration", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("failed to create .beads: %v", err)
+		}
+
+		// Create volatile file at root
+		if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create beads.db: %v", err)
+		}
+
+		migrations := DetectPendingMigrations(tmpDir)
+
+		var foundVar bool
+		for _, m := range migrations {
+			if m.Name == "var-layout" {
+				foundVar = true
+				if m.Priority != 2 {
+					t.Errorf("var-layout priority = %d, want 2 (warning)", m.Priority)
+				}
+				if m.Command != "bd migrate layout" {
+					t.Errorf("var-layout command = %q, want %q", m.Command, "bd migrate layout")
+				}
+			}
+		}
+
+		if !foundVar {
+			t.Error("expected var-layout migration to be detected")
+		}
+	})
+
+	t.Run("var layout with stray files detects them", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "bd-doctor-var-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		varDir := filepath.Join(beadsDir, "var")
+		if err := os.MkdirAll(varDir, 0755); err != nil {
+			t.Fatalf("failed to create var/: %v", err)
+		}
+
+		// Create stray file at root (wrong location)
+		if err := os.WriteFile(filepath.Join(beadsDir, "daemon.pid"), []byte("123"), 0644); err != nil {
+			t.Fatalf("failed to create daemon.pid: %v", err)
+		}
+
+		migrations := DetectPendingMigrations(tmpDir)
+
+		var foundStray bool
+		for _, m := range migrations {
+			if m.Name == "stray-files" {
+				foundStray = true
+				if m.Priority != 2 {
+					t.Errorf("stray-files priority = %d, want 2 (warning)", m.Priority)
+				}
+				if m.Command != "bd doctor --fix" {
+					t.Errorf("stray-files command = %q, want %q", m.Command, "bd doctor --fix")
+				}
+			}
+		}
+
+		if !foundStray {
+			t.Error("expected stray-files migration to be detected")
+		}
+	})
+}
+
 func TestNeedsTombstonesMigration(t *testing.T) {
 	t.Run("no deletions.jsonl returns false", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "bd-doctor-migration-*")

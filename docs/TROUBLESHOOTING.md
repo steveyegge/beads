@@ -7,6 +7,7 @@ Common issues and solutions for bd users.
 - [Installation Issues](#installation-issues)
 - [Antivirus False Positives](#antivirus-false-positives)
 - [Database Issues](#database-issues)
+- [Var Layout Migration](#var-layout-migration)
 - [Git and Sync Issues](#git-and-sync-issues)
 - [Ready Work and Dependencies](#ready-work-and-dependencies)
 - [Performance Issues](#performance-issues)
@@ -342,6 +343,95 @@ This means bd found multiple `.beads` directories in your directory hierarchy. T
    ```
 
 **Note**: The warning only appears when bd detects multiple databases. If you see this consistently and want to suppress it, you're using the correct database (marked with `▶`).
+
+## Var Layout Migration
+
+Starting with v0.49, bd uses a `var/` subdirectory for volatile files (database, daemon, sync state). **The legacy flat layout is deprecated.** Existing installations continue to work but should migrate for a cleaner directory structure and simplified gitignore.
+
+### Detecting if migration is needed
+
+Run `bd doctor` to see if migration is recommended:
+
+```bash
+bd doctor
+
+# Output may include:
+# Pending Migrations: 1 available
+#   • var-layout: Recommended: migrate to var/ layout (legacy layout is deprecated) [warning]
+#   Fix: bd migrate layout
+```
+
+### Migrating to var/ layout
+
+1. **Preview the migration** (dry run):
+   ```bash
+   bd migrate layout --dry-run
+   # Shows what files will be moved without making changes
+   ```
+
+2. **Run the migration**:
+   ```bash
+   bd migrate layout
+   # Auto-stops daemon if running, creates .beads/var/,
+   # moves volatile files, sets layout: "v2" in metadata.json
+   ```
+
+3. **Verify sync works** (recommended):
+   ```bash
+   bd sync
+   # Ensures sync operations work with the new layout
+   ```
+
+4. **Update .gitignore** (optional):
+   ```bash
+   # After migration, you can simplify .gitignore from many patterns to:
+   var/
+   ```
+
+**Interrupted migration**
+If migration was interrupted (var/ exists but layout not set to v2), just re-run:
+```bash
+bd migrate layout
+# Detects partial migration and completes it
+```
+
+**Stray files after migration**
+If volatile files appear at root after migration (e.g., from old daemon restarting), `bd doctor` will detect them:
+```bash
+bd doctor --fix
+# Moves stray volatile files from root to var/
+```
+
+### Mixed-layout sync between machines
+
+When syncing between machines with different layouts (one legacy, one var/):
+
+1. **JSONL files are layout-agnostic** - Only volatile files differ in location
+2. **VarPath() read-both pattern** - bd automatically finds files in either location
+3. **No special action needed** - `bd sync` works regardless of layout mismatch
+
+**Manual verification:**
+```bash
+# On legacy layout machine
+ls -la .beads/beads.db  # Should exist at root
+
+# On var/ layout machine
+ls -la .beads/var/beads.db  # Should exist in var/
+
+# Both machines
+bd sync  # Works normally - JSONL is the source of truth
+```
+
+### Reverting to legacy layout
+
+If you need to revert (not recommended):
+
+1. Set environment variable: `export BD_LEGACY_LAYOUT=1`
+2. Stop daemon and move files manually
+3. Remove `var/` directory
+4. Edit metadata.json to remove `layout` field or set it to `"v1"`
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#directory-structure) for layout details.
 
 ## Git and Sync Issues
 

@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // SyncState tracks daemon sync health for backoff and user hints.
@@ -42,6 +43,7 @@ var (
 
 // LoadSyncState loads the sync state from .beads/sync-state.json.
 // Returns empty state if file doesn't exist or is stale.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func LoadSyncState(beadsDir string) SyncState {
 	syncStateMu.Lock()
 	defer syncStateMu.Unlock()
@@ -50,8 +52,10 @@ func LoadSyncState(beadsDir string) SyncState {
 
 // loadSyncStateUnlocked loads sync state without acquiring lock.
 // Caller must hold syncStateMu.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func loadSyncStateUnlocked(beadsDir string) SyncState {
-	statePath := filepath.Join(beadsDir, syncStateFile)
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	statePath := beads.VarPath(beadsDir, syncStateFile, "")
 	data, err := os.ReadFile(statePath) // #nosec G304 - path constructed from beadsDir
 	if err != nil {
 		return SyncState{}
@@ -72,6 +76,7 @@ func loadSyncStateUnlocked(beadsDir string) SyncState {
 }
 
 // SaveSyncState saves the sync state to .beads/sync-state.json.
+// Uses VarPathForWrite to respect layout preference.
 func SaveSyncState(beadsDir string, state SyncState) error {
 	syncStateMu.Lock()
 	defer syncStateMu.Unlock()
@@ -80,8 +85,10 @@ func SaveSyncState(beadsDir string, state SyncState) error {
 
 // saveSyncStateUnlocked saves sync state without acquiring lock.
 // Caller must hold syncStateMu.
+// Uses VarPathForWrite to respect layout preference.
 func saveSyncStateUnlocked(beadsDir string, state SyncState) error {
-	statePath := filepath.Join(beadsDir, syncStateFile)
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	statePath := beads.VarPathForWrite(beadsDir, syncStateFile, "")
 
 	// If state is empty/reset, remove the file
 	if state.FailureCount == 0 && !state.NeedsManualSync {
@@ -98,11 +105,13 @@ func saveSyncStateUnlocked(beadsDir string, state SyncState) error {
 }
 
 // ClearSyncState removes the sync state file.
+// Uses VarPath to find the file in either location.
 func ClearSyncState(beadsDir string) error {
 	syncStateMu.Lock()
 	defer syncStateMu.Unlock()
 
-	statePath := filepath.Join(beadsDir, syncStateFile)
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	statePath := beads.VarPath(beadsDir, syncStateFile, "")
 	err := os.Remove(statePath)
 	if os.IsNotExist(err) {
 		return nil

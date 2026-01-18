@@ -73,16 +73,19 @@ func getSocketPathForPID(pidFile string) string {
 	return rpc.ShortSocketPath(workspacePath)
 }
 
-// getPIDFilePath returns the path to the daemon PID file
+// getPIDFilePath returns the path to the daemon PID file.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func getPIDFilePath() (string, error) {
 	beadsDir, err := ensureBeadsDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(beadsDir, "daemon.pid"), nil
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	return beads.VarPath(beadsDir, "daemon.pid", ""), nil
 }
 
-// getLogFilePath returns the path to the daemon log file
+// getLogFilePath returns the path to the daemon log file.
+// Uses VarPathForWrite since daemon creates/writes this file.
 func getLogFilePath(userPath string) (string, error) {
 	if userPath != "" {
 		return userPath, nil
@@ -92,5 +95,6 @@ func getLogFilePath(userPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(beadsDir, "daemon.log"), nil
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	return beads.VarPathForWrite(beadsDir, "daemon.log", ""), nil
 }
