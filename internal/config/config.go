@@ -100,7 +100,11 @@ func Initialize() error {
 	v.SetDefault("remote-sync-interval", "30s")
 
 	// Routing configuration defaults
-	v.SetDefault("routing.mode", "auto")
+	// NOTE: routing.mode must default to "" (disabled) not "auto" to prevent
+	// accidental routing when contributor routing isn't explicitly configured.
+	// See GH#1088 regression where auto-routing to ~/.beads-planning broke
+	// all issue creation for users detected as contributors.
+	v.SetDefault("routing.mode", "")
 	v.SetDefault("routing.default", ".")
 	v.SetDefault("routing.maintainer", ".")
 	v.SetDefault("routing.contributor", "~/.beads-planning")
