@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // DatabaseCorruptionRecovery recovers a corrupted database from JSONL backup.
@@ -16,7 +18,8 @@ func DatabaseCorruptionRecovery(path string) error {
 	}
 
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 	// Check if database exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -96,7 +99,8 @@ func DatabaseCorruptionRecoveryWithOptions(path string, force bool, source strin
 	}
 
 	beadsDir := filepath.Join(path, ".beads")
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 	// Check if database exists
 	dbExists := false

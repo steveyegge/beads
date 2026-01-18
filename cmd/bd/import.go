@@ -267,7 +267,8 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		// GH#865: Use timestamp-aware protection - only protect if local is newer than incoming
 		if protectLeftSnapshot && input != "" {
 			beadsDir := filepath.Dir(input)
-			leftSnapshotPath := filepath.Join(beadsDir, "beads.left.jsonl")
+			// VarPath checks var/ first, then root for var/ layout compatibility
+			leftSnapshotPath := beads.VarPath(beadsDir, "beads.left.jsonl", "")
 			if _, err := os.Stat(leftSnapshotPath); err == nil {
 				sm := NewSnapshotManager(input)
 				leftTimestamps, err := sm.BuildIDToTimestampMap(leftSnapshotPath)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/lockfile"
 )
@@ -483,7 +484,8 @@ func (c *Client) MolStale(args *MolStaleArgs) (*MolStaleResponse, error) {
 // This prevents stale artifacts from accumulating after daemon crashes.
 // Only removes pid file - lock file is managed by OS (released on process exit).
 func cleanupStaleDaemonArtifacts(beadsDir string) {
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 	
 	// Check if pid file exists
 	if _, err := os.Stat(pidFile); err != nil {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -50,7 +51,8 @@ func CheckDaemonStatus(path string, cliVersion string) DoctorCheck {
 	// Check for stale socket directly (catches cases where RPC failed so WorkspacePath is empty)
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 	if _, err := os.Stat(socketPath); err == nil {
 		// Socket exists - try to connect
 		if len(workspaceDaemons) == 0 {
@@ -168,7 +170,8 @@ func CheckGitSyncSetup(path string) DoctorCheck {
 // sync-branch is configured. Missing auto-sync slows down agent workflows.
 func CheckDaemonAutoSync(path string) DoctorCheck {
 	_, beadsDir := getBackendAndBeadsDir(path)
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 
 	// Check if daemon is running
 	if _, err := os.Stat(socketPath); os.IsNotExist(err) {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 )
@@ -71,7 +72,8 @@ func showDaemonStatus(pidFile string) {
 		// Try to get detailed status from daemon via RPC
 		var rpcStatus *rpc.StatusResponse
 		beadsDir := filepath.Dir(pidFile)
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		// VarPath checks var/ first, then root for var/ layout compatibility
+		socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 		if client, err := rpc.TryConnectWithTimeout(socketPath, 1*time.Second); err == nil && client != nil {
 			if status, err := client.Status(); err == nil {
 				rpcStatus = status
@@ -132,7 +134,8 @@ func showDaemonHealth() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {
@@ -189,7 +192,8 @@ func showDaemonMetrics() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil {

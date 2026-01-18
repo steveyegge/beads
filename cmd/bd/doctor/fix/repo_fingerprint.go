@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // readLineUnbuffered reads a line from stdin without buffering.
@@ -92,7 +94,8 @@ func RepoFingerprint(path string) error {
 
 		// Remove database and reinitialize
 		beadsDir := filepath.Join(path, ".beads")
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		// VarPath checks var/ first, then root for var/ layout compatibility
+		dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 		fmt.Printf("  → Removing %s...\n", dbPath)
 		if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {

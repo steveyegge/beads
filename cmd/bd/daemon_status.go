@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/ui"
@@ -144,7 +145,8 @@ func showCurrentDaemonStatus() {
 	}
 
 	beadsDir := filepath.Dir(pidFile)
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 	workspacePath := filepath.Dir(beadsDir)
 
 	// Check if daemon is running
@@ -197,7 +199,8 @@ func showCurrentDaemonStatus() {
 	}
 
 	// Get log path
-	logPath := filepath.Join(beadsDir, "daemon.log")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	logPath := beads.VarPath(beadsDir, "daemon.log", "")
 	if _, err := os.Stat(logPath); err != nil {
 		logPath = ""
 	}

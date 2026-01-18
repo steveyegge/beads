@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
@@ -351,8 +352,8 @@ func CheckRedirectTargetValid() DoctorCheck {
 		}
 	}
 
-	// Check for valid beads database in target
-	dbPath := filepath.Join(resolvedTarget, "beads.db")
+	// Check for valid beads database in target (checks var/ first for var/ layout)
+	dbPath := beads.VarPath(resolvedTarget, "beads.db", "")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Also check for any .db file
 		matches, _ := filepath.Glob(filepath.Join(resolvedTarget, "*.db"))

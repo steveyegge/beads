@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // Daemon fixes daemon issues (stale sockets, version mismatches, duplicates)
@@ -15,7 +17,8 @@ func Daemon(path string) error {
 	}
 
 	beadsDir := filepath.Join(path, ".beads")
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 
 	// Check if there's actually a socket or daemon issue to fix
 	hasSocket := false

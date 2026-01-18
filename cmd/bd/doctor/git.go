@@ -12,6 +12,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -791,8 +792,8 @@ func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
 		return []OrphanIssue{}, nil
 	}
 
-	// Get database path
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// Get database path (checks var/ first, then root for var/ layout compatibility)
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return []OrphanIssue{}, nil
 	}
@@ -925,8 +926,8 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Get database path from config or use canonical name
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// Get database path (checks var/ first, then root for var/ layout compatibility)
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return DoctorCheck{
 			Name:     "Orphaned Issues",

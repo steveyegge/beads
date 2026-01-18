@@ -26,7 +26,8 @@ var isDaemonAutoSyncing = func() bool {
 		return false
 	}
 
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	socketPath := internalbeads.VarPath(beadsDir, "bd.sock", "")
 	client, err := rpc.TryConnect(socketPath)
 	if err != nil || client == nil {
 		return false

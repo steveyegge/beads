@@ -388,8 +388,8 @@ Supports tail mode (last N lines) and follow mode (like tail -f).`,
 			}
 			os.Exit(1)
 		}
-		// Determine log file path
-		logPath := filepath.Join(filepath.Dir(targetDaemon.SocketPath), "daemon.log")
+		// Determine log file path (VarPath checks var/ first for var/ layout)
+		logPath := beads.VarPath(filepath.Dir(targetDaemon.SocketPath), "daemon.log", "")
 		// Check if log file exists
 		if _, err := os.Stat(logPath); err != nil {
 			if jsonOutput {

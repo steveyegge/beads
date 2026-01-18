@@ -12,6 +12,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -82,8 +83,8 @@ func runRepair(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Find database file
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// Find database file (checks var/ first, then root for var/ layout compatibility)
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		if repairJSON {
 			outputJSONAndExit(repairResult{

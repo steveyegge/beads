@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
@@ -957,11 +958,12 @@ func formatTimeForRPC(t *time.Time) string {
 // the same prefix as the source store (T010, T012: prefix inheritance).
 func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore storage.Storage) error {
 	beadsDir := filepath.Join(targetPath, ".beads")
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// Use VarPath to check both var/ and root locations (handles var/ layout)
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 
 	// Check if beads directory already exists
 	if _, err := os.Stat(beadsDir); err == nil {
-		// Directory exists, check if database exists
+		// Directory exists, check if database exists (VarPath checks both locations)
 		if _, err := os.Stat(dbPath); err == nil {
 			// Database exists, nothing to do
 			return nil
@@ -972,6 +974,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		return fmt.Errorf("cannot create .beads directory: %w", err)
 	}
+
+	// Create var/ subdirectory for volatile files (new installations use v2 layout)
+	if err := beads.EnsureVarDir(beadsDir); err != nil {
+		return fmt.Errorf("cannot create .beads/var directory: %w", err)
+	}
+	// Update dbPath to use var/ layout for new database
+	dbPath = beads.VarPathForWrite(beadsDir, "beads.db", beads.LayoutV2)
 
 	// Create issues.jsonl if it doesn't exist
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")

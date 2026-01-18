@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 const (
@@ -60,16 +62,18 @@ func (sm *SnapshotManager) GetStats() SnapshotStats {
 // getSnapshotPaths returns paths for base and left snapshot files
 func (sm *SnapshotManager) getSnapshotPaths() (basePath, leftPath string) {
 	dir := filepath.Dir(sm.jsonlPath)
-	basePath = filepath.Join(dir, "beads.base.jsonl")
-	leftPath = filepath.Join(dir, "beads.left.jsonl")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	basePath = beads.VarPath(dir, "beads.base.jsonl", "")
+	leftPath = beads.VarPath(dir, "beads.left.jsonl", "")
 	return
 }
 
 // getSnapshotMetadataPaths returns paths for metadata files
 func (sm *SnapshotManager) getSnapshotMetadataPaths() (baseMeta, leftMeta string) {
 	dir := filepath.Dir(sm.jsonlPath)
-	baseMeta = filepath.Join(dir, "beads.base.meta.json")
-	leftMeta = filepath.Join(dir, "beads.left.meta.json")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	baseMeta = beads.VarPath(dir, "beads.base.meta.json", "")
+	leftMeta = beads.VarPath(dir, "beads.left.meta.json", "")
 	return
 }
 
