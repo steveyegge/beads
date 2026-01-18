@@ -231,6 +231,106 @@ func TestInitWithSyncBranch(t *testing.T) {
 	}
 }
 
+// TestInitWithSyncBranchSetsGitExclude verifies that init with --branch sets up
+// .git/info/exclude to hide untracked JSONL files from git status.
+// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
+func TestInitWithSyncBranchSetsGitExclude(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("branch", "")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo
+	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+	// Configure git user for commits
+	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
+	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
+
+	// Run bd init with --branch flag
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with --branch failed: %v", err)
+	}
+
+	// Verify .git/info/exclude contains the JSONL patterns
+	// (On fresh init, files are untracked so they go to exclude instead of index flags)
+	// Note: issues.jsonl only exists after first export, but interactions.jsonl is always created
+	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
+	content, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("Failed to read .git/info/exclude: %v", err)
+	}
+
+	excludeContent := string(content)
+	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
+		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl', got:\n%s", excludeContent)
+	}
+}
+
+// TestInitWithExistingSyncBranchConfig verifies that init without --branch flag
+// still sets git index flags when sync-branch is already configured in config.yaml.
+// This is the "fresh clone" scenario where config.yaml exists from the clone.
+func TestInitWithExistingSyncBranchConfig(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("branch", "")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Initialize git repo
+	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
+		t.Fatalf("Failed to init git: %v", err)
+	}
+	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
+	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
+
+	// Create .beads directory with config.yaml containing sync-branch (simulating a clone)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+	configYaml := `sync-branch: "beads-sync"
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYaml), 0644); err != nil {
+		t.Fatalf("Failed to write config.yaml: %v", err)
+	}
+	// Create interactions.jsonl (normally exists in cloned repos)
+	if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte{}, 0644); err != nil {
+		t.Fatalf("Failed to write interactions.jsonl: %v", err)
+	}
+
+	// Run bd init WITHOUT --branch flag (sync-branch already in config.yaml)
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--force"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Verify .git/info/exclude contains the JSONL patterns
+	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
+	content, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("Failed to read .git/info/exclude: %v", err)
+	}
+
+	excludeContent := string(content)
+	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
+		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl' when sync-branch is in config.yaml, got:\n%s", excludeContent)
+	}
+}
+
 // TestInitWithoutBranchFlag verifies that sync.branch is NOT auto-set when --branch is omitted
 // GH#807: This was the root cause - init was auto-detecting current branch (e.g., main)
 func TestInitWithoutBranchFlag(t *testing.T) {
