@@ -48,7 +48,7 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 		cmp := semver.Compare(serverVer, clientVer)
 		if cmp < 0 {
 			// Daemon is older - needs upgrade
-			return fmt.Errorf("incompatible major versions: client %s, daemon %s. Daemon is older; upgrade and restart daemon: 'bd daemon --stop && bd daemon'",
+			return fmt.Errorf("incompatible major versions: client %s, daemon %s. Daemon is older; upgrade and restart daemon: 'bd daemon stop && bd daemon start'",
 				clientVersion, ServerVersion)
 		}
 		// Daemon is newer - client needs upgrade
@@ -259,8 +259,13 @@ func (s *Server) handleRequest(req *Request) Response {
 }
 
 // Adapter helpers
+
+// reqCtx returns a context with the server's request timeout applied.
+// This prevents request handlers from hanging indefinitely if database
+// operations or other internal calls stall (GH#bd-p76kv).
 func (s *Server) reqCtx(_ *Request) context.Context {
-	return context.Background()
+	ctx, _ := context.WithTimeout(context.Background(), s.requestTimeout)
+	return ctx
 }
 
 func (s *Server) reqActor(req *Request) string {

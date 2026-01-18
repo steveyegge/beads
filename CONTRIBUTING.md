@@ -178,6 +178,56 @@ go test -race -coverprofile=coverage.out ./...
 - Use `t.Run()` for subtests to organize related test cases
 - Mark slow tests with `if testing.Short() { t.Skip("slow test") }`
 
+### Dual-Mode Testing Pattern
+
+**IMPORTANT**: bd supports two execution modes: *direct mode* (SQLite access) and *daemon mode* (RPC via background process). Commands must work identically in both modes. To prevent bugs like GH#719, GH#751, and bd-fu83, use the dual-mode test framework for testing commands.
+
+```go
+// cmd/bd/dual_mode_test.go provides the framework
+
+func TestMyCommand(t *testing.T) {
+    // This test runs TWICE: once in direct mode, once with a live daemon
+    RunDualModeTest(t, "my_test", func(t *testing.T, env *DualModeTestEnv) {
+        // Create test data using mode-agnostic helpers
+        issue := &types.Issue{
+            Title:     "Test issue",
+            IssueType: types.TypeTask,
+            Status:    types.StatusOpen,
+            Priority:  2,
+        }
+        if err := env.CreateIssue(issue); err != nil {
+            t.Fatalf("[%s] CreateIssue failed: %v", env.Mode(), err)
+        }
+
+        // Verify behavior - works in both modes
+        got, err := env.GetIssue(issue.ID)
+        if err != nil {
+            t.Fatalf("[%s] GetIssue failed: %v", env.Mode(), err)
+        }
+        if got.Title != "Test issue" {
+            t.Errorf("[%s] wrong title: got %q", env.Mode(), got.Title)
+        }
+    })
+}
+```
+
+Available `DualModeTestEnv` helper methods:
+- `CreateIssue(issue)` - Create an issue
+- `GetIssue(id)` - Retrieve an issue by ID
+- `UpdateIssue(id, updates)` - Update issue fields
+- `DeleteIssue(id, force)` - Delete (tombstone) an issue
+- `AddDependency(from, to, type)` - Add a dependency
+- `ListIssues(filter)` - List issues matching filter
+- `GetReadyWork()` - Get issues ready for work
+- `AddLabel(id, label)` - Add a label to an issue
+- `Mode()` - Returns "direct" or "daemon" for error messages
+
+Run dual-mode tests:
+```bash
+# Run dual-mode tests (requires integration tag)
+go test -v -tags integration -run "TestDualMode" ./cmd/bd/
+```
+
 Example:
 
 ```go

@@ -77,7 +77,7 @@ bd config set sync.branch ""
 
 # Stop and restart daemon
 bd daemon stop
-bd daemon --start
+bd daemon start
 
 # Clean up existing worktrees
 rm -rf .git/beads-worktrees
@@ -521,6 +521,7 @@ No daemon conflicts, no branch confusion - all worktrees see the same issues bec
 
 ## See Also
 
+- [REPO_CONTEXT.md](REPO_CONTEXT.md) - RepoContext API for contributors
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - General git integration guide
 - [AGENTS.md](../AGENTS.md) - Agent usage instructions
 - [README.md](../README.md) - Main project documentation

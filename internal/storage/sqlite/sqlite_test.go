@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,14 @@ func setupTestDB(t *testing.T) (*SQLiteStorage, func()) {
 		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	// Configure Gas Town custom types for test compatibility (bd-find4)
+	// These types are no longer built-in but many tests use them
+	if err := store.SetConfig(ctx, "types.custom", "message,merge-request,molecule,gate,agent,role,rig,convoy,event,slot"); err != nil {
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to set types.custom: %v", err)
 	}
 
 	cleanup := func() {
@@ -136,6 +145,48 @@ func TestCreateIssueValidation(t *testing.T) {
 				t.Errorf("CreateIssue() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestCreateIssueDuplicateID verifies that CreateIssue properly rejects duplicate IDs.
+// GH#956: This test ensures that insertIssueStrict (used by CreateIssue) properly fails
+// on duplicate IDs instead of silently ignoring them (which would cause FK constraint
+// errors when recording the creation event).
+func TestCreateIssueDuplicateID(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create first issue
+	issue1 := &types.Issue{
+		Title:     "First issue",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	err := store.CreateIssue(ctx, issue1, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue failed for first issue: %v", err)
+	}
+
+	// Try to create second issue with same explicit ID - should fail
+	issue2 := &types.Issue{
+		ID:        issue1.ID, // Use same ID as first issue
+		Title:     "Second issue with duplicate ID",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}
+	err = store.CreateIssue(ctx, issue2, "test-user")
+	if err == nil {
+		t.Error("CreateIssue should have failed for duplicate ID, but succeeded")
+	}
+
+	// Verify the error mentions constraint or duplicate
+	errStr := err.Error()
+	if !strings.Contains(errStr, "UNIQUE constraint") && !strings.Contains(errStr, "already exists") {
+		t.Errorf("Expected error to mention constraint or duplicate, got: %v", err)
 	}
 }
 
@@ -1475,16 +1526,19 @@ func TestConvoyReactiveCompletion(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a convoy
+	// Create a convoy (using task type with gt:convoy label)
 	convoy := &types.Issue{
 		Title:     "Test Convoy",
 		Status:    types.StatusOpen,
 		Priority:  2,
-		IssueType: types.TypeConvoy,
+		IssueType: types.TypeTask, // Use task type; gt:convoy label marks it as convoy
 	}
 	err := store.CreateIssue(ctx, convoy, "test-user")
 	if err != nil {
 		t.Fatalf("CreateIssue convoy failed: %v", err)
+	}
+	if err := store.AddLabel(ctx, convoy.ID, "gt:convoy", "test-user"); err != nil {
+		t.Fatalf("Failed to add gt:convoy label: %v", err)
 	}
 
 	// Create two issues to track

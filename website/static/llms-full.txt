@@ -30,6 +30,9 @@ Traditional issue trackers (Jira, GitHub Issues) weren't designed for AI agents.
 brew tap steveyegge/beads
 brew install bd
 
+# Or quick install (macOS/Linux/FreeBSD)
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+
 # Initialize in your project
 cd your-project
 bd init --quiet
@@ -277,7 +280,7 @@ curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/insta
 ```
 
 The installer will:
-- Detect your platform (macOS/Linux, amd64/arm64)
+- Detect your platform (macOS/Linux/FreeBSD, amd64/arm64)
 - Install via `go install` if Go is available
 - Fall back to building from source if needed
 - Guide you through PATH setup if necessary
@@ -319,6 +322,18 @@ brew install bd
 yay -S beads-git
 # or
 paru -S beads-git
+```
+
+**Via go install**:
+```bash
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+### FreeBSD
+
+**Via quick install script**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 ```
 
 **Via go install**:
@@ -2417,6 +2432,9 @@ bd create <title> [flags]
 --type, -t        Issue type (bug|feature|task|epic|chore)
 --priority, -p    Priority 0-4
 --description, -d Detailed description
+--design          Design notes
+--acceptance      Acceptance criteria
+--notes           Additional notes
 --labels, -l      Comma-separated labels
 --parent          Parent issue ID
 --deps            Dependencies (type:id format)
@@ -2432,6 +2450,13 @@ bd create "Login fails with special chars" -t bug -p 1
 # Feature with description
 bd create "Add export to PDF" -t feature -p 2 \
   --description="Users want to export reports as PDF files"
+
+# Feature with design, acceptance, and notes
+bd create "Implement user authentication" -t feature -p 1 \
+  --description="Add JWT-based authentication" \
+  --design="Use bcrypt for password hashing, JWT for sessions" \
+  --acceptance="All tests pass, security audit complete" \
+  --notes="Consider rate limiting for login attempts"
 
 # Task with labels
 bd create "Update CI config" -t task -l "ci,infrastructure"

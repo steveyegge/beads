@@ -39,6 +39,10 @@ create, update, show, or close operation).`,
 			reason, _ = cmd.Flags().GetString("resolution")
 		}
 		if reason == "" {
+			// Check -m alias (git commit convention)
+			reason, _ = cmd.Flags().GetString("message")
+		}
+		if reason == "" {
 			reason = "Closed"
 		}
 		force, _ := cmd.Flags().GetBool("force")
@@ -122,6 +126,7 @@ create, update, show, or close operation).`,
 					Reason:      reason,
 					Session:     session,
 					SuggestNext: suggestNext,
+					Force:       force,
 				}
 				resp, err := daemonClient.CloseIssue(closeArgs)
 				if err != nil {
@@ -191,6 +196,21 @@ create, update, show, or close operation).`,
 					continue
 				}
 
+				// Check if issue has open blockers (GH#962)
+				if !force {
+					blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
+					if err != nil {
+						result.Close()
+						fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+						continue
+					}
+					if blocked && len(blockers) > 0 {
+						result.Close()
+						fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+						continue
+					}
+				}
+
 				if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
 					result.Close()
 					fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
@@ -240,6 +260,19 @@ create, update, show, or close operation).`,
 				continue
 			}
 
+			// Check if issue has open blockers (GH#962)
+			if !force {
+				blocked, blockers, err := store.IsBlocked(ctx, id)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+					continue
+				}
+				if blocked && len(blockers) > 0 {
+					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+					continue
+				}
+			}
+
 			if err := store.CloseIssue(ctx, id, reason, actor, session); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing %s: %v\n", id, err)
 				continue
@@ -281,6 +314,21 @@ create, update, show, or close operation).`,
 				result.Close()
 				fmt.Fprintf(os.Stderr, "%s\n", err)
 				continue
+			}
+
+			// Check if issue has open blockers (GH#962)
+			if !force {
+				blocked, blockers, err := result.Store.IsBlocked(ctx, result.ResolvedID)
+				if err != nil {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "Error checking blockers for %s: %v\n", id, err)
+					continue
+				}
+				if blocked && len(blockers) > 0 {
+					result.Close()
+					fmt.Fprintf(os.Stderr, "cannot close %s: blocked by open issues %v (use --force to override)\n", id, blockers)
+					continue
+				}
 			}
 
 			if err := result.Store.CloseIssue(ctx, result.ResolvedID, reason, actor, session); err != nil {
@@ -359,10 +407,13 @@ func init() {
 	closeCmd.Flags().StringP("reason", "r", "", "Reason for closing")
 	closeCmd.Flags().String("resolution", "", "Alias for --reason (Jira CLI convention)")
 	_ = closeCmd.Flags().MarkHidden("resolution") // Hidden alias for agent/CLI ergonomics
+	closeCmd.Flags().StringP("message", "m", "", "Alias for --reason (git commit convention)")
+	_ = closeCmd.Flags().MarkHidden("message") // Hidden alias for agent/CLI ergonomics
 	closeCmd.Flags().BoolP("force", "f", false, "Force close pinned issues")
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
+	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)
 }

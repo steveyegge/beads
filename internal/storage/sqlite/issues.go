@@ -20,7 +20,9 @@ func isUniqueConstraintError(err error) bool {
 		strings.Contains(errMsg, "constraint failed: UNIQUE")
 }
 
-// insertIssue inserts a single issue into the database
+// insertIssue inserts a single issue into the database.
+// Uses INSERT OR IGNORE for backward compatibility with imports.
+// For fresh issue creation, use insertIssueStrict instead.
 func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error {
 	sourceRepo := issue.SourceRepo
 	if sourceRepo == "" {
@@ -39,26 +41,30 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 	if issue.IsTemplate {
 		isTemplate = 1
 	}
+	crystallizes := 0
+	if issue.Crystallizes {
+		crystallizes = 1
+	}
 
 	_, err := conn.ExecContext(ctx, `
 		INSERT OR IGNORE INTO issues (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, updated_at, closed_at, external_ref, source_repo, close_reason,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template,
+			sender, ephemeral, pinned, is_template, crystallizes,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
 		issue.Priority, issue.IssueType, issue.Assignee,
-		issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.UpdatedAt,
+		issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, wisp, pinned, isTemplate,
+		issue.Sender, wisp, pinned, isTemplate, crystallizes,
 		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
@@ -75,19 +81,76 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 	return nil
 }
 
+// insertIssueStrict inserts a single issue into the database, failing on duplicates.
+// This is used for fresh issue creation (CreateIssue) where duplicates indicate a bug.
+// For imports where duplicates are expected, use insertIssue instead.
+// GH#956: Using plain INSERT prevents FK constraint errors from silent INSERT OR IGNORE failures.
+func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) error {
+	sourceRepo := issue.SourceRepo
+	if sourceRepo == "" {
+		sourceRepo = "." // Default to primary repo
+	}
+
+	wisp := 0
+	if issue.Ephemeral {
+		wisp = 1
+	}
+	pinned := 0
+	if issue.Pinned {
+		pinned = 1
+	}
+	isTemplate := 0
+	if issue.IsTemplate {
+		isTemplate = 1
+	}
+	crystallizes := 0
+	if issue.Crystallizes {
+		crystallizes = 1
+	}
+
+	_, err := conn.ExecContext(ctx, `
+		INSERT INTO issues (
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
+			deleted_at, deleted_by, delete_reason, original_type,
+			sender, ephemeral, pinned, is_template, crystallizes,
+			await_type, await_id, timeout_ns, waiters, mol_type,
+			event_kind, actor, target, payload,
+			due_at, defer_until
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
+		issue.AcceptanceCriteria, issue.Notes, issue.Status,
+		issue.Priority, issue.IssueType, issue.Assignee,
+		issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
+		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
+		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
+		issue.Sender, wisp, pinned, isTemplate, crystallizes,
+		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
+		string(issue.MolType),
+		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
+		issue.DueAt, issue.DeferUntil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert issue: %w", err)
+	}
+	return nil
+}
+
 // insertIssues bulk inserts multiple issues using a prepared statement
 func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
 	stmt, err := conn.PrepareContext(ctx, `
 		INSERT OR IGNORE INTO issues (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, updated_at, closed_at, external_ref, source_repo, close_reason,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template,
+			sender, ephemeral, pinned, is_template, crystallizes,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -112,15 +175,19 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 		if issue.IsTemplate {
 			isTemplate = 1
 		}
+		crystallizes := 0
+		if issue.Crystallizes {
+			crystallizes = 1
+		}
 
 		_, err = stmt.ExecContext(ctx,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 			issue.AcceptanceCriteria, issue.Notes, issue.Status,
 			issue.Priority, issue.IssueType, issue.Assignee,
-			issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.UpdatedAt,
+			issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, wisp, pinned, isTemplate,
+			issue.Sender, wisp, pinned, isTemplate, crystallizes,
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
@@ -133,6 +200,71 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 				return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 			}
 			// Duplicate ID detected and ignored (INSERT OR IGNORE succeeded)
+		}
+	}
+	return nil
+}
+
+// insertIssuesStrict bulk inserts multiple issues using plain INSERT (no OR IGNORE).
+// This is used for fresh batch issue creation (CreateIssues) where duplicates indicate a bug.
+// For imports where duplicates are expected, use insertIssues instead.
+// GH#956: Using plain INSERT prevents FK constraint errors from silent INSERT OR IGNORE failures.
+func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Issue) error {
+	stmt, err := conn.PrepareContext(ctx, `
+		INSERT INTO issues (
+			id, content_hash, title, description, design, acceptance_criteria, notes,
+			status, priority, issue_type, assignee, estimated_minutes,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
+			deleted_at, deleted_by, delete_reason, original_type,
+			sender, ephemeral, pinned, is_template, crystallizes,
+			await_type, await_id, timeout_ns, waiters, mol_type,
+			event_kind, actor, target, payload,
+			due_at, defer_until
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, issue := range issues {
+		sourceRepo := issue.SourceRepo
+		if sourceRepo == "" {
+			sourceRepo = "." // Default to primary repo
+		}
+
+		wisp := 0
+		if issue.Ephemeral {
+			wisp = 1
+		}
+		pinned := 0
+		if issue.Pinned {
+			pinned = 1
+		}
+		isTemplate := 0
+		if issue.IsTemplate {
+			isTemplate = 1
+		}
+		crystallizes := 0
+		if issue.Crystallizes {
+			crystallizes = 1
+		}
+
+		_, err = stmt.ExecContext(ctx,
+			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
+			issue.AcceptanceCriteria, issue.Notes, issue.Status,
+			issue.Priority, issue.IssueType, issue.Assignee,
+			issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
+			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
+			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
+			issue.Sender, wisp, pinned, isTemplate, crystallizes,
+			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
+			string(issue.MolType),
+			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
+			issue.DueAt, issue.DeferUntil,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
 	}
 	return nil

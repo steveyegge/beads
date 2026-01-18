@@ -45,6 +45,9 @@ func isChildOf(childID, parentID string) bool {
 
 // warnIfCyclesExist checks for dependency cycles and prints a warning if found.
 func warnIfCyclesExist(s storage.Storage) {
+	if s == nil {
+		return // Skip cycle check in daemon mode (daemon handles it)
+	}
 	cycles, err := s.DetectCycles(rootCtx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to check for cycles: %v\n", err)
@@ -1166,6 +1169,12 @@ func init() {
 
 	depListCmd.Flags().String("direction", "down", "Direction: 'down' (dependencies), 'up' (dependents)")
 	depListCmd.Flags().StringP("type", "t", "", "Filter by dependency type (e.g., tracks, blocks, parent-child)")
+
+	// Issue ID completions for dep subcommands
+	depAddCmd.ValidArgsFunction = issueIDCompletion
+	depRemoveCmd.ValidArgsFunction = issueIDCompletion
+	depListCmd.ValidArgsFunction = issueIDCompletion
+	depTreeCmd.ValidArgsFunction = issueIDCompletion
 
 	depCmd.AddCommand(depAddCmd)
 	depCmd.AddCommand(depRemoveCmd)

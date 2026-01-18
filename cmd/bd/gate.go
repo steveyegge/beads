@@ -101,7 +101,7 @@ By default, shows only open gates. Use --all to include closed gates.`,
 				return
 			}
 
-			displayGates(issues)
+			displayGates(issues, allFlag)
 			return
 		}
 
@@ -117,54 +117,84 @@ By default, shows only open gates. Use --all to include closed gates.`,
 			return
 		}
 
-		displayGates(issues)
+		displayGates(issues, allFlag)
 	},
 }
 
-// displayGates formats and displays gate issues
-func displayGates(gates []*types.Issue) {
+// displayGates formats and displays gate issues, separating open and closed gates
+func displayGates(gates []*types.Issue, showAll bool) {
 	if len(gates) == 0 {
 		fmt.Println("No gates found.")
 		return
 	}
 
-	fmt.Printf("\n%s Open Gates (%d):\n\n", ui.RenderAccent("⏳"), len(gates))
-
+	// Separate open and closed gates
+	var openGates, closedGates []*types.Issue
 	for _, gate := range gates {
-		statusSym := "○"
 		if gate.Status == types.StatusClosed {
-			statusSym = "●"
+			closedGates = append(closedGates, gate)
+		} else {
+			openGates = append(openGates, gate)
 		}
+	}
 
-		// Format gate info
-		gateInfo := gate.AwaitType
-		if gate.AwaitID != "" {
-			gateInfo = fmt.Sprintf("%s %s", gate.AwaitType, gate.AwaitID)
+	// Display open gates
+	if len(openGates) > 0 {
+		fmt.Printf("\n%s Open Gates (%d):\n\n", ui.RenderAccent("⏳"), len(openGates))
+		for _, gate := range openGates {
+			displaySingleGate(gate)
 		}
+	}
 
-		// Format timeout if present
-		timeoutStr := ""
-		if gate.Timeout > 0 {
-			timeoutStr = fmt.Sprintf(" (timeout: %s)", gate.Timeout)
+	// Display closed gates only if --all was used
+	if showAll && len(closedGates) > 0 {
+		fmt.Printf("\n%s Closed Gates (%d):\n\n", ui.RenderMuted("●"), len(closedGates))
+		for _, gate := range closedGates {
+			displaySingleGate(gate)
 		}
+	}
 
-		// Find blocked step from ID (gate ID format: parent.gate-stepid)
-		blockedStep := ""
-		if strings.Contains(gate.ID, ".gate-") {
-			parts := strings.Split(gate.ID, ".gate-")
-			if len(parts) == 2 {
-				blockedStep = fmt.Sprintf("%s.%s", parts[0], parts[1])
-			}
-		}
-
-		fmt.Printf("%s %s - %s%s\n", statusSym, ui.RenderID(gate.ID), gateInfo, timeoutStr)
-		if blockedStep != "" {
-			fmt.Printf("  Blocks: %s\n", blockedStep)
-		}
-		fmt.Println()
+	if len(openGates) == 0 && (!showAll || len(closedGates) == 0) {
+		fmt.Println("No gates found.")
+		return
 	}
 
 	fmt.Printf("To resolve a gate: bd close <gate-id>\n")
+}
+
+// displaySingleGate formats and displays a single gate issue
+func displaySingleGate(gate *types.Issue) {
+	statusSym := "○"
+	if gate.Status == types.StatusClosed {
+		statusSym = "●"
+	}
+
+	// Format gate info
+	gateInfo := gate.AwaitType
+	if gate.AwaitID != "" {
+		gateInfo = fmt.Sprintf("%s %s", gate.AwaitType, gate.AwaitID)
+	}
+
+	// Format timeout if present
+	timeoutStr := ""
+	if gate.Timeout > 0 {
+		timeoutStr = fmt.Sprintf(" (timeout: %s)", gate.Timeout)
+	}
+
+	// Find blocked step from ID (gate ID format: parent.gate-stepid)
+	blockedStep := ""
+	if strings.Contains(gate.ID, ".gate-") {
+		parts := strings.Split(gate.ID, ".gate-")
+		if len(parts) == 2 {
+			blockedStep = fmt.Sprintf("%s.%s", parts[0], parts[1])
+		}
+	}
+
+	fmt.Printf("%s %s - %s%s\n", statusSym, ui.RenderID(gate.ID), gateInfo, timeoutStr)
+	if blockedStep != "" {
+		fmt.Printf("  Blocks: %s\n", blockedStep)
+	}
+	fmt.Println()
 }
 
 // gateAddWaiterCmd adds a waiter to a gate
@@ -638,14 +668,93 @@ type ghPRStatus struct {
 	Title  string `json:"title"`
 }
 
+// isNumericID returns true if the string contains only digits (a GitHub run ID)
+func isNumericID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// queryGitHubRunsForWorkflow queries recent runs for a specific workflow using gh CLI.
+// Returns runs sorted newest-first (GitHub API default).
+func queryGitHubRunsForWorkflow(workflow string, limit int) ([]GHWorkflowRun, error) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return nil, fmt.Errorf("gh CLI not found: install from https://cli.github.com")
+	}
+
+	args := []string{
+		"run", "list",
+		"--workflow", workflow,
+		"--json", "databaseId,name,status,conclusion,createdAt,workflowName",
+		"--limit", fmt.Sprintf("%d", limit),
+	}
+
+	cmd := exec.Command("gh", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh run list --workflow=%s failed: %s", workflow, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("gh run list: %w", err)
+	}
+
+	var runs []GHWorkflowRun
+	if err := json.Unmarshal(output, &runs); err != nil {
+		return nil, fmt.Errorf("parse gh output: %w", err)
+	}
+
+	return runs, nil
+}
+
+// discoverRunIDByWorkflowName queries GitHub for the most recent run of a workflow.
+// Returns (runID, error). This is ZFC-compliant: "most recent run" is deterministic.
+func discoverRunIDByWorkflowName(workflowHint string) (string, error) {
+	// Query GitHub directly for this workflow (efficient, avoids limit issues)
+	runs, err := queryGitHubRunsForWorkflow(workflowHint, 5)
+	if err != nil {
+		return "", fmt.Errorf("failed to query workflow runs: %w", err)
+	}
+
+	if len(runs) == 0 {
+		return "", fmt.Errorf("no runs found for workflow '%s'", workflowHint)
+	}
+
+	// Take the most recent run (gh returns newest-first)
+	// This is deterministic: "most recent" is a total ordering by creation time
+	return fmt.Sprintf("%d", runs[0].DatabaseID), nil
+}
+
 // checkGHRun checks a GitHub Actions workflow run gate
 func checkGHRun(gate *types.Issue) (resolved, escalated bool, reason string, err error) {
 	if gate.AwaitID == "" {
-		return false, false, "no run ID specified", nil
+		return false, false, "no run ID specified - set await_id or use workflow name hint", nil
+	}
+
+	runID := gate.AwaitID
+
+	// If await_id is a workflow name hint (non-numeric), auto-discover the run ID
+	if !isNumericID(gate.AwaitID) {
+		discoveredID, discoverErr := discoverRunIDByWorkflowName(gate.AwaitID)
+		if discoverErr != nil {
+			return false, false, fmt.Sprintf("workflow hint '%s': %v", gate.AwaitID, discoverErr), nil
+		}
+
+		// Update the gate with the discovered run ID
+		if updateErr := updateGateAwaitID(nil, gate.ID, discoveredID); updateErr != nil {
+			return false, false, "", fmt.Errorf("failed to update gate with discovered run ID: %w", updateErr)
+		}
+
+		runID = discoveredID
 	}
 
 	// Run: gh run view <id> --json status,conclusion,name
-	cmd := exec.Command("gh", "run", "view", gate.AwaitID, "--json", "status,conclusion,name") // #nosec G204 -- gate.AwaitID is a validated GitHub run ID
+	cmd := exec.Command("gh", "run", "view", runID, "--json", "status,conclusion,name") // #nosec G204 -- runID is a validated GitHub run ID
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -870,6 +979,11 @@ func init() {
 	gateCheckCmd.Flags().Bool("dry-run", false, "Show what would happen without making changes")
 	gateCheckCmd.Flags().BoolP("escalate", "e", false, "Escalate failed/expired gates")
 	gateCheckCmd.Flags().IntP("limit", "l", 100, "Limit results (default 100)")
+
+	// Issue ID completions
+	gateShowCmd.ValidArgsFunction = issueIDCompletion
+	gateResolveCmd.ValidArgsFunction = issueIDCompletion
+	gateAddWaiterCmd.ValidArgsFunction = issueIDCompletion
 
 	// Add subcommands
 	gateCmd.AddCommand(gateListCmd)

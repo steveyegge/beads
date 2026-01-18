@@ -247,9 +247,9 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
-		       i.sender, i.ephemeral, i.pinned, i.is_template,
+		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       d.type
 		FROM issues i
@@ -270,9 +270,9 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.content_hash, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
 		       i.status, i.priority, i.issue_type, i.assignee, i.estimated_minutes,
-		       i.created_at, i.created_by, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
+		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
-		       i.sender, i.ephemeral, i.pinned, i.is_template,
+		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
 		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
 		       d.type
 		FROM issues i
@@ -323,6 +323,11 @@ func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []stri
 	if len(issueIDs) == 0 {
 		return make(map[string]*types.DependencyCounts), nil
 	}
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
 
 	// Build placeholders for the IN clause
 	placeholders := make([]string, len(issueIDs))
@@ -394,6 +399,11 @@ func (s *SQLiteStorage) GetDependencyCounts(ctx context.Context, issueIDs []stri
 
 // GetDependencyRecords returns raw dependency records for an issue
 func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by,
 		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
@@ -430,6 +440,11 @@ func (s *SQLiteStorage) GetDependencyRecords(ctx context.Context, issueID string
 // GetAllDependencyRecords returns all dependency records grouped by issue ID
 // This is optimized for bulk export operations to avoid N+1 queries
 func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string][]*types.Dependency, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id, type, created_at, created_by,
 		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
@@ -469,6 +484,11 @@ func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 // When showAllPaths is true, all paths are shown with duplicate nodes at different depths.
 // When reverse is true, shows dependent tree (what was discovered from this) instead of dependency tree (what blocks this).
 func (s *SQLiteStorage) GetDependencyTree(ctx context.Context, issueID string, maxDepth int, showAllPaths bool, reverse bool) ([]*types.TreeNode, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	if maxDepth <= 0 {
 		maxDepth = 50
 	}
@@ -721,6 +741,11 @@ func parseExternalRefParts(ref string) (project, capability string) {
 // loadDependencyGraph loads all non-relates-to dependencies as an adjacency list.
 // This is used by DetectCycles for O(V+E) cycle detection instead of the O(2^n) SQL CTE.
 func (s *SQLiteStorage) loadDependencyGraph(ctx context.Context) (map[string][]string, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	deps := make(map[string][]string)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT issue_id, depends_on_id
@@ -864,6 +889,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
+		var owner sql.NullString
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
 		var closeReason sql.NullString
@@ -878,6 +904,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var pinned sql.NullInt64
 		// Template field
 		var isTemplate sql.NullInt64
+		// Crystallizes field (work economics)
+		var crystallizes sql.NullInt64
 		// Gate fields
 		var awaitType sql.NullString
 		var awaitID sql.NullString
@@ -888,9 +916,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &wisp, &pinned, &isTemplate,
+			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
 		)
 		if err != nil {
@@ -909,6 +937,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if assignee.Valid {
 			issue.Assignee = assignee.String
+		}
+		if owner.Valid {
+			issue.Owner = owner.String
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
@@ -943,6 +974,10 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Template field
 		if isTemplate.Valid && isTemplate.Int64 != 0 {
 			issue.IsTemplate = true
+		}
+		// Crystallizes field (work economics)
+		if crystallizes.Valid && crystallizes.Int64 != 0 {
+			issue.Crystallizes = true
 		}
 		// Gate fields
 		if awaitType.Valid {
@@ -987,6 +1022,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
+		var owner sql.NullString
 		var externalRef sql.NullString
 		var sourceRepo sql.NullString
 		var deletedAt sql.NullString // TEXT column, not DATETIME - must parse manually
@@ -1000,6 +1036,8 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var pinned sql.NullInt64
 		// Template field
 		var isTemplate sql.NullInt64
+		// Crystallizes field (work economics)
+		var crystallizes sql.NullInt64
 		// Gate fields
 		var awaitType sql.NullString
 		var awaitID sql.NullString
@@ -1011,9 +1049,9 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
-			&sender, &wisp, &pinned, &isTemplate,
+			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
 			&depType,
 		)
@@ -1033,6 +1071,9 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if assignee.Valid {
 			issue.Assignee = assignee.String
+		}
+		if owner.Valid {
+			issue.Owner = owner.String
 		}
 		if externalRef.Valid {
 			issue.ExternalRef = &externalRef.String
@@ -1064,6 +1105,10 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		// Template field
 		if isTemplate.Valid && isTemplate.Int64 != 0 {
 			issue.IsTemplate = true
+		}
+		// Crystallizes field (work economics)
+		if crystallizes.Valid && crystallizes.Int64 != 0 {
+			issue.Crystallizes = true
 		}
 		// Gate fields
 		if awaitType.Valid {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -466,21 +467,26 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			}
 
 			refCounts := countReferences(allIssues)
+			structuralScores := countStructuralRelationships(duplicateGroups)
 
 			fmt.Fprintf(os.Stderr, "Found %d duplicate group(s)\n\n", len(duplicateGroups))
 
 			for i, group := range duplicateGroups {
-				target := chooseMergeTarget(group, refCounts)
+				target := chooseMergeTarget(group, refCounts, structuralScores)
 				fmt.Fprintf(os.Stderr, "Group %d: %s\n", i+1, group[0].Title)
 
 				for _, issue := range group {
 					refs := refCounts[issue.ID]
+					depCount := 0
+					if score, ok := structuralScores[issue.ID]; ok {
+						depCount = score.dependentCount
+					}
 					marker := "  "
 					if issue.ID == target.ID {
 						marker = "→ "
 					}
-					fmt.Fprintf(os.Stderr, "  %s%s (%s, P%d, %d refs)\n",
-						marker, issue.ID, issue.Status, issue.Priority, refs)
+					fmt.Fprintf(os.Stderr, "  %s%s (%s, P%d, %d dependents, %d refs)\n",
+						marker, issue.ID, issue.Status, issue.Priority, depCount, refs)
 				}
 
 				sources := make([]string, 0, len(group)-1)
@@ -630,20 +636,27 @@ func countLinesInGitHEAD(filePath string, workDir string) int {
 	return lines
 }
 
-// attemptAutoMerge attempts to resolve git conflicts using bd merge 3-way merge
+// attemptAutoMerge attempts to resolve git conflicts using bd merge 3-way merge.
+// GH#1110: Now uses RepoContext to ensure we operate on the beads repo.
 func attemptAutoMerge(conflictedPath string) error {
 	// Validate inputs
 	if conflictedPath == "" {
 		return fmt.Errorf("no file path provided for merge")
 	}
 
-	// Get git repository root
-	gitRootCmd := exec.Command("git", "rev-parse", "--show-toplevel") // #nosec G204 -- fixed git invocation for repo root discovery
-	gitRootOutput, err := gitRootCmd.Output()
-	if err != nil {
-		return fmt.Errorf("not in a git repository: %w", err)
+	// Get git repository root from RepoContext
+	var gitRoot string
+	if rc, err := beads.GetRepoContext(); err == nil {
+		gitRoot = rc.RepoRoot
+	} else {
+		// Fallback to CWD-based lookup
+		gitRootCmd := exec.Command("git", "rev-parse", "--show-toplevel") // #nosec G204 -- fixed git invocation for repo root discovery
+		gitRootOutput, err := gitRootCmd.Output()
+		if err != nil {
+			return fmt.Errorf("not in a git repository: %w", err)
+		}
+		gitRoot = strings.TrimSpace(string(gitRootOutput))
 	}
-	gitRoot := strings.TrimSpace(string(gitRootOutput))
 
 	// Convert conflicted path to absolute path relative to git root
 	absConflictedPath := conflictedPath

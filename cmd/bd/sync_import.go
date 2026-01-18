@@ -1,10 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/debug"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // importFromJSONL imports the JSONL file by running the import command
@@ -55,6 +62,91 @@ func importFromJSONL(ctx context.Context, jsonlPath string, renameOnImport bool,
 	return nil
 }
 
+// importFromJSONLInline imports the JSONL file directly without spawning a subprocess.
+// This avoids path resolution issues when running from directories with .beads/redirect.
+// The parent process's store and dbPath are used, ensuring consistent path resolution.
+// (bd-ysal fix)
+func importFromJSONLInline(ctx context.Context, jsonlPath string, renameOnImport bool, _ /* noGitHistory */ bool) error {
+	// Verify we have an active store
+	if store == nil {
+		return fmt.Errorf("no database store available for inline import")
+	}
+
+	// Read and parse the JSONL file
+	// #nosec G304 - jsonlPath is from findJSONLPath() which uses trusted paths
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("failed to open JSONL file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var allIssues []*types.Issue
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			return fmt.Errorf("error parsing line %d: %w", lineNum, err)
+		}
+		issue.SetDefaults()
+		allIssues = append(allIssues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading JSONL: %w", err)
+	}
+
+	// Import using shared logic
+	opts := ImportOptions{
+		RenameOnImport: renameOnImport,
+	}
+	result, err := importIssuesCore(ctx, dbPath, store, allIssues, opts)
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
+
+	// Update staleness metadata (same as import.go lines 386-411)
+	// This is critical: without this, CheckStaleness will still report stale
+	if currentHash, hashErr := computeJSONLHash(jsonlPath); hashErr == nil {
+		if err := store.SetMetadata(ctx, "jsonl_content_hash", currentHash); err != nil {
+			debug.Logf("Warning: failed to update jsonl_content_hash: %v", err)
+		}
+		if err := store.SetJSONLFileHash(ctx, currentHash); err != nil {
+			debug.Logf("Warning: failed to update jsonl_file_hash: %v", err)
+		}
+		importTime := time.Now().Format(time.RFC3339Nano)
+		if err := store.SetMetadata(ctx, "last_import_time", importTime); err != nil {
+			debug.Logf("Warning: failed to update last_import_time: %v", err)
+		}
+	} else {
+		debug.Logf("Warning: failed to compute JSONL hash: %v", hashErr)
+	}
+
+	// Update database mtime
+	if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
+		debug.Logf("Warning: failed to update database mtime: %v", err)
+	}
+
+	// Print summary
+	fmt.Fprintf(os.Stderr, "Import complete: %d created, %d updated", result.Created, result.Updated)
+	if result.Unchanged > 0 {
+		fmt.Fprintf(os.Stderr, ", %d unchanged", result.Unchanged)
+	}
+	if result.Skipped > 0 {
+		fmt.Fprintf(os.Stderr, ", %d skipped", result.Skipped)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+
+	return nil
+}
+
 // resolveNoGitHistoryForFromMain returns the resolved noGitHistory value for sync operations.
 // When syncing from main (--from-main), noGitHistory is forced to true to prevent creating
 // incorrect deletion records for locally-created beads that don't exist on main.
@@ -71,6 +163,7 @@ func resolveNoGitHistoryForFromMain(fromMain, noGitHistory bool) bool {
 // This fetches beads from main and imports them, discarding local beads changes.
 // If sync.remote is configured (e.g., "upstream" for fork workflows), uses that remote
 // instead of "origin".
+// GH#1110: Now uses RepoContext to ensure git commands run in beads repo.
 func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, dryRun bool, noGitHistory bool) error {
 	// Determine which remote to use (default: origin, but can be configured via sync.remote)
 	remote := "origin"
@@ -99,8 +192,14 @@ func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, 
 		return fmt.Errorf("no git remote configured")
 	}
 
+	// Get RepoContext for beads repo
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return fmt.Errorf("failed to get repo context: %w", err)
+	}
+
 	// Verify the configured remote exists
-	checkRemoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", remote)
+	checkRemoteCmd := rc.GitCmd(ctx, "remote", "get-url", remote)
 	if err := checkRemoteCmd.Run(); err != nil {
 		return fmt.Errorf("configured sync.remote '%s' does not exist (run 'git remote add %s <url>')", remote, remote)
 	}
@@ -109,14 +208,14 @@ func doSyncFromMain(ctx context.Context, jsonlPath string, renameOnImport bool, 
 
 	// Step 1: Fetch from main
 	fmt.Printf("→ Fetching from %s/%s...\n", remote, defaultBranch)
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, defaultBranch) //nolint:gosec // remote and defaultBranch from config
+	fetchCmd := rc.GitCmd(ctx, "fetch", remote, defaultBranch)
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git fetch %s %s failed: %w\n%s", remote, defaultBranch, err, output)
 	}
 
 	// Step 2: Checkout .beads/ directory from main
 	fmt.Printf("→ Checking out beads from %s/%s...\n", remote, defaultBranch)
-	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", fmt.Sprintf("%s/%s", remote, defaultBranch), "--", ".beads/") //nolint:gosec // remote and defaultBranch from config
+	checkoutCmd := rc.GitCmd(ctx, "checkout", fmt.Sprintf("%s/%s", remote, defaultBranch), "--", ".beads/")
 	if output, err := checkoutCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout .beads/ from %s/%s failed: %w\n%s", remote, defaultBranch, err, output)
 	}

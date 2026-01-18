@@ -30,7 +30,7 @@ jobs:
       - name: Check for .beads/issues.jsonl changes
         run: |
           if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^\.beads/issues\.jsonl$"; then
-            echo "❌ This PR includes changes to .beads/issues.jsonl"
+            echo "This PR includes changes to .beads/issues.jsonl"
             echo ""
             echo "This file is the project's issue database and should not be modified in PRs."
             echo ""
@@ -41,11 +41,25 @@ jobs:
             echo ""
             exit 1
           fi
-          echo "✅ No .beads/issues.jsonl changes detected"
+          echo "No .beads/issues.jsonl changes detected"
 
+  # Cross-platform test matrix (Linux/macOS only - Windows uses smoke tests)
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          # Linux: full test suite with coverage
+          - os: ubuntu-latest
+            coverage: true
+            test-flags: '-v -race -short -coverprofile=coverage.out'
+          # macOS: full test suite, no coverage (faster)
+          - os: macos-latest
+            coverage: false
+            test-flags: '-v -race -short'
     steps:
       - uses: actions/checkout@v6
 
@@ -63,32 +77,33 @@ jobs:
         run: go build -v ./cmd/bd
 
       - name: Test
-        run: go test -v -race -short -coverprofile=coverage.out ./...
+        run: go test ${{ matrix.test-flags }} ./...
 
       - name: Check coverage threshold
+        if: matrix.coverage
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           MIN_COVERAGE=42
           WARN_COVERAGE=55
           echo "Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ Coverage is below ${MIN_COVERAGE}% threshold"
+            echo "Coverage is below ${MIN_COVERAGE}% threshold"
             exit 1
           elif (( $(echo "$COVERAGE < $WARN_COVERAGE" | bc -l) )); then
-            echo "⚠️  Coverage is below ${WARN_COVERAGE}% (warning threshold)"
+            echo "Coverage is below ${WARN_COVERAGE}% (warning threshold)"
           else
-            echo "✅ Coverage meets threshold"
+            echo "Coverage meets threshold"
           fi
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
-        if: success()
+        if: matrix.coverage && success()
         with:
           file: ./coverage.out
           fail_ci_if_error: false
 
   # Windows smoke tests only - full test suite times out (see bd-bmev)
-  # Linux runs comprehensive tests; Windows just verifies binary works
+  # Linux/macOS run comprehensive tests; Windows just verifies binary works
   test-windows:
     name: Test (Windows - smoke)
     runs-on: windows-latest
@@ -139,6 +154,7 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
   test-nix:
     name: Test Nix Flake
     runs-on: ubuntu-latest
@@ -159,9 +175,9 @@ jobs:
           FIRST_LINE=$(head -n 1 help.txt)
           EXPECTED="Issues chained together like beads. A lightweight issue tracker with first-class dependency support."
           if [ "$FIRST_LINE" != "$EXPECTED" ]; then
-            echo "❌ First line of help.txt doesn't match expected output"
+            echo "First line of help.txt doesn't match expected output"
             echo "Expected: $EXPECTED"
             echo "Got: $FIRST_LINE"
             exit 1
           fi
-          echo "✅ Help text first line is correct"
+          echo "Help text first line is correct"

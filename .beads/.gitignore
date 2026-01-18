@@ -11,6 +11,7 @@ daemon.log
 daemon.pid
 bd.sock
 sync-state.json
+last-touched
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
@@ -36,3 +37,4 @@ beads.right.meta.json
 # contributors to accidentally commit upstream issue databases.
 # The JSONL files (issues.jsonl, interactions.jsonl) and config files
 # are tracked by git by default since no pattern above ignores them.
+metadata.json

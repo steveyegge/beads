@@ -27,6 +27,8 @@ type hookManagerConfig struct {
 
 // hookManagerConfigs defines external hook managers in priority order.
 // See https://lefthook.dev/configuration/ for lefthook config options.
+// Note: prek (https://prek.j178.dev) uses the same config files as pre-commit
+// but is a faster Rust-based alternative. We detect both from the same config.
 var hookManagerConfigs = []hookManagerConfig{
 	{"lefthook", []string{
 		// YAML variants
@@ -38,6 +40,7 @@ var hookManagerConfigs = []hookManagerConfig{
 		"lefthook.json", ".lefthook.json", ".config/lefthook.json",
 	}},
 	{"husky", []string{".husky"}},
+	// pre-commit and prek share the same config files; we detect which is active from git hooks
 	{"pre-commit", []string{".pre-commit-config.yaml", ".pre-commit-config.yml"}},
 	{"overcommit", []string{".overcommit.yml"}},
 	{"yorkie", []string{".yorkie"}},
@@ -92,9 +95,12 @@ type hookManagerPattern struct {
 }
 
 // hookManagerPatterns identifies which hook manager installed a git hook (in priority order).
+// Note: prek must come before pre-commit since prek hooks may also contain "pre-commit" in paths.
 var hookManagerPatterns = []hookManagerPattern{
 	{"lefthook", regexp.MustCompile(`(?i)lefthook`)},
 	{"husky", regexp.MustCompile(`(?i)(\.husky|husky\.sh)`)},
+	// prek (https://prek.j178.dev) - faster Rust-based pre-commit alternative
+	{"prek", regexp.MustCompile(`(?i)(prek\s+run|prek\s+hook-impl)`)},
 	{"pre-commit", regexp.MustCompile(`(?i)(pre-commit\s+run|\.pre-commit-config|INSTALL_PYTHON|PRE_COMMIT)`)},
 	{"simple-git-hooks", regexp.MustCompile(`(?i)simple-git-hooks`)},
 }
@@ -102,20 +108,20 @@ var hookManagerPatterns = []hookManagerPattern{
 // DetectActiveHookManager reads the git hooks to determine which manager installed them.
 // This is more reliable than just checking for config files when multiple managers exist.
 func DetectActiveHookManager(path string) string {
-	// Get git dir
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	// Get common git dir (hooks are shared across worktrees)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = path
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	gitDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
+	gitCommonDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitCommonDir) {
+		gitCommonDir = filepath.Join(path, gitCommonDir)
 	}
 
 	// Check for custom hooks path (core.hooksPath)
-	hooksDir := filepath.Join(gitDir, "hooks")
+	hooksDir := filepath.Join(gitCommonDir, "hooks")
 	hooksPathCmd := exec.Command("git", "config", "--get", "core.hooksPath")
 	hooksPathCmd.Dir = path
 	if hooksPathOutput, err := hooksPathCmd.Output(); err == nil {
@@ -222,45 +228,58 @@ func CheckLefthookBdIntegration(path string) *HookIntegrationStatus {
 }
 
 // hasBdInCommands checks if any command's "run" field contains bd hooks run.
-// Walks the lefthook structure: hookSection.commands.*.run
+// Walks the lefthook structure for both syntaxes:
+// - commands (map-based, older): hookSection.commands.*.run
+// - jobs (array-based, v1.10.0+): hookSection.jobs[*].run
 func hasBdInCommands(hookSection interface{}) bool {
 	sectionMap, ok := hookSection.(map[string]interface{})
 	if !ok {
 		return false
 	}
 
-	commands, ok := sectionMap["commands"]
-	if !ok {
-		return false
+	// Check "commands" syntax (map-based, older)
+	if commands, ok := sectionMap["commands"]; ok {
+		if commandsMap, ok := commands.(map[string]interface{}); ok {
+			for _, cmdConfig := range commandsMap {
+				if hasBdInRunField(cmdConfig) {
+					return true
+				}
+			}
+		}
 	}
 
-	commandsMap, ok := commands.(map[string]interface{})
-	if !ok {
-		return false
-	}
-
-	for _, cmdConfig := range commandsMap {
-		cmdMap, ok := cmdConfig.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		runVal, ok := cmdMap["run"]
-		if !ok {
-			continue
-		}
-
-		runStr, ok := runVal.(string)
-		if !ok {
-			continue
-		}
-
-		if bdHookPattern.MatchString(runStr) {
-			return true
+	// Check "jobs" syntax (array-based, v1.10.0+)
+	if jobs, ok := sectionMap["jobs"]; ok {
+		if jobsList, ok := jobs.([]interface{}); ok {
+			for _, job := range jobsList {
+				if hasBdInRunField(job) {
+					return true
+				}
+			}
 		}
 	}
 
 	return false
+}
+
+// hasBdInRunField checks if a command/job config has bd hooks run in its "run" field.
+func hasBdInRunField(config interface{}) bool {
+	configMap, ok := config.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	runVal, ok := configMap["run"]
+	if !ok {
+		return false
+	}
+
+	runStr, ok := runVal.(string)
+	if !ok {
+		return false
+	}
+
+	return bdHookPattern.MatchString(runStr)
 }
 
 // precommitConfigFiles lists pre-commit config files.
@@ -457,8 +476,13 @@ func checkManagerBdIntegration(name, path string) *HookIntegrationStatus {
 		return CheckLefthookBdIntegration(path)
 	case "husky":
 		return CheckHuskyBdIntegration(path)
-	case "pre-commit":
-		return CheckPrecommitBdIntegration(path)
+	case "pre-commit", "prek":
+		// prek uses the same config format as pre-commit
+		status := CheckPrecommitBdIntegration(path)
+		if status != nil {
+			status.Manager = name // Use the actual detected manager name
+		}
+		return status
 	default:
 		return nil
 	}

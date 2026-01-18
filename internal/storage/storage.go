@@ -110,6 +110,7 @@ type Storage interface {
 	// Ready Work & Blocking
 	GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error)
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
+	IsBlocked(ctx context.Context, issueID string) (bool, []string, error) // GH#962: Check if issue has open blockers
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
 	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) // GH#679
@@ -152,6 +153,7 @@ type Storage interface {
 	GetAllConfig(ctx context.Context) (map[string]string, error)
 	DeleteConfig(ctx context.Context, key string) error
 	GetCustomStatuses(ctx context.Context) ([]string, error) // Custom status states from status.custom config
+	GetCustomTypes(ctx context.Context) ([]string, error)    // Custom issue types from types.custom config
 
 	// Metadata (for internal state like import hashes)
 	SetMetadata(ctx context.Context, key, value string) error

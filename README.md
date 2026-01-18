@@ -13,7 +13,7 @@ Beads provides a persistent, structured memory for coding agents. It replaces me
 ## ⚡ Quick Start
 
 ```bash
-# Install (macOS/Linux)
+# Install (macOS/Linux/FreeBSD)
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 
 # Initialize (Humans run this once)
@@ -57,7 +57,7 @@ Beads supports hierarchical IDs for epics:
 * **Homebrew:** `brew install steveyegge/beads/bd`
 * **Go:** `go install github.com/steveyegge/beads/cmd/bd@latest`
 
-**Requirements:** Linux (glibc 2.32+), macOS, or Windows.
+**Requirements:** Linux, FreeBSD, macOS, or Windows.
 
 ## 🌐 Community Tools
 

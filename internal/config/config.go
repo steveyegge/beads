@@ -12,6 +12,67 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 )
 
+// Sync mode constants define how beads syncs with git/remotes.
+const (
+	// SyncModeGitPortable exports JSONL on push, imports on pull (default).
+	// This is the standard git-based workflow where JSONL is committed.
+	SyncModeGitPortable = "git-portable"
+
+	// SyncModeRealtime exports JSONL on every database change.
+	// Legacy behavior, more frequent writes but higher I/O.
+	SyncModeRealtime = "realtime"
+
+	// SyncModeDoltNative uses Dolt remotes directly (dolthub://, gs://, s3://).
+	// No JSONL export needed - Dolt handles sync.
+	SyncModeDoltNative = "dolt-native"
+
+	// SyncModeBeltAndSuspenders uses both Dolt remote AND JSONL backup.
+	// Maximum redundancy for critical data.
+	SyncModeBeltAndSuspenders = "belt-and-suspenders"
+)
+
+// Sync trigger constants define when sync operations occur.
+const (
+	// SyncTriggerPush triggers sync on git push operations.
+	SyncTriggerPush = "push"
+
+	// SyncTriggerChange triggers sync on every database change.
+	SyncTriggerChange = "change"
+
+	// SyncTriggerPull triggers import on git pull operations.
+	SyncTriggerPull = "pull"
+)
+
+// Conflict strategy constants define how sync conflicts are resolved.
+const (
+	// ConflictStrategyNewest keeps whichever version has the newer updated_at timestamp.
+	ConflictStrategyNewest = "newest"
+
+	// ConflictStrategyOurs keeps the local version on conflict.
+	ConflictStrategyOurs = "ours"
+
+	// ConflictStrategyTheirs keeps the remote version on conflict.
+	ConflictStrategyTheirs = "theirs"
+
+	// ConflictStrategyManual requires manual resolution of conflicts.
+	ConflictStrategyManual = "manual"
+)
+
+// Federation sovereignty tiers define data sovereignty levels.
+const (
+	// SovereigntyT1 - Full sovereignty: data never leaves controlled infrastructure.
+	SovereigntyT1 = "T1"
+
+	// SovereigntyT2 - Regional sovereignty: data stays within region/jurisdiction.
+	SovereigntyT2 = "T2"
+
+	// SovereigntyT3 - Provider sovereignty: data with trusted cloud provider.
+	SovereigntyT3 = "T3"
+
+	// SovereigntyT4 - No restrictions: data can be anywhere (e.g., DoltHub public).
+	SovereigntyT4 = "T4"
+)
+
 var v *viper.Viper
 
 // Initialize sets up the viper configuration singleton
@@ -69,7 +130,7 @@ func Initialize() error {
 	// Environment variables take precedence over config file
 	// E.g., BD_JSON, BD_NO_DAEMON, BD_ACTOR, BD_DB
 	v.SetEnvPrefix("BD")
-	
+
 	// Replace hyphens and dots with underscores for env var mapping
 	// This allows BD_NO_DAEMON to map to "no-daemon" config key
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
@@ -85,20 +146,20 @@ func Initialize() error {
 	v.SetDefault("actor", "")
 	v.SetDefault("issue-prefix", "")
 	v.SetDefault("lock-timeout", "30s")
-	
+
 	// Additional environment variables (not prefixed with BD_)
 	// These are bound explicitly for backward compatibility
 	_ = v.BindEnv("flush-debounce", "BEADS_FLUSH_DEBOUNCE")
 	_ = v.BindEnv("auto-start-daemon", "BEADS_AUTO_START_DAEMON")
 	_ = v.BindEnv("identity", "BEADS_IDENTITY")
 	_ = v.BindEnv("remote-sync-interval", "BEADS_REMOTE_SYNC_INTERVAL")
-	
+
 	// Set defaults for additional settings
 	v.SetDefault("flush-debounce", "30s")
 	v.SetDefault("auto-start-daemon", true)
 	v.SetDefault("identity", "")
 	v.SetDefault("remote-sync-interval", "30s")
-	
+
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "auto")
 	v.SetDefault("routing.default", ".")
@@ -107,6 +168,19 @@ func Initialize() error {
 
 	// Sync configuration defaults (bd-4u8)
 	v.SetDefault("sync.require_confirmation_on_mass_delete", false)
+
+	// Sync mode configuration (hq-ew1mbr.3)
+	// See docs/CONFIG.md for detailed documentation
+	v.SetDefault("sync.mode", SyncModeGitPortable)      // git-portable | realtime | dolt-native | belt-and-suspenders
+	v.SetDefault("sync.export_on", SyncTriggerPush)     // push | change
+	v.SetDefault("sync.import_on", SyncTriggerPull)     // pull | change
+
+	// Conflict resolution configuration
+	v.SetDefault("conflict.strategy", ConflictStrategyNewest) // newest | ours | theirs | manual
+
+	// Federation configuration (optional Dolt remote)
+	v.SetDefault("federation.remote", "")       // e.g., dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
+	v.SetDefault("federation.sovereignty", "")  // T1 | T2 | T3 | T4 (empty = no restriction)
 
 	// Push configuration defaults
 	v.SetDefault("no-push", false)
@@ -122,8 +196,13 @@ func Initialize() error {
 	v.SetDefault("validation.on-create", "none")
 	v.SetDefault("validation.on-sync", "none")
 
+	// Hierarchy configuration defaults (GH#995)
+	// Maximum nesting depth for hierarchical IDs (e.g., bd-abc.1.2.3)
+	// Default matches types.MaxHierarchyDepth constant
+	v.SetDefault("hierarchy.max-depth", 3)
+
 	// Git configuration defaults (GH#600)
-	v.SetDefault("git.author", "")        // Override commit author (e.g., "beads-bot <beads@example.com>")
+	v.SetDefault("git.author", "")         // Override commit author (e.g., "beads-bot <beads@example.com>")
 	v.SetDefault("git.no-gpg-sign", false) // Disable GPG signing for beads commits
 
 	// Directory-aware label scoping (GH#541)
@@ -146,6 +225,13 @@ func Initialize() error {
 	}
 
 	return nil
+}
+
+// ResetForTesting clears the config state, allowing Initialize() to be called again.
+// This is intended for tests that need to change config.yaml between test steps.
+// WARNING: Not thread-safe. Only call from single-threaded test contexts.
+func ResetForTesting() {
+	v = nil
 }
 
 // ConfigSource represents where a configuration value came from
@@ -200,7 +286,10 @@ func GetValueSource(key string) ConfigSource {
 // CheckOverrides checks for configuration overrides and returns a list of detected overrides.
 // This is useful for informing users when env vars or flags override config file values.
 // flagOverrides is a map of key -> (flagValue, flagWasSet) for flags that were explicitly set.
-func CheckOverrides(flagOverrides map[string]struct{ Value interface{}; WasSet bool }) []ConfigOverride {
+func CheckOverrides(flagOverrides map[string]struct {
+	Value  interface{}
+	WasSet bool
+}) []ConfigOverride {
 	var overrides []ConfigOverride
 
 	for key, flagInfo := range flagOverrides {
@@ -353,6 +442,16 @@ func AllSettings() map[string]interface{} {
 	return v.AllSettings()
 }
 
+// ConfigFileUsed returns the path to the config file that was loaded.
+// Returns empty string if no config file was found or viper is not initialized.
+// This is useful for resolving relative paths from the config file's directory.
+func ConfigFileUsed() string {
+	if v == nil {
+		return ""
+	}
+	return v.ConfigFileUsed()
+}
+
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {
 	if v == nil {
@@ -444,13 +543,23 @@ func ResolveExternalProjectPath(projectName string) string {
 		return ""
 	}
 
-	// Expand relative paths from config file location or cwd
+	// Resolve relative paths from repo root (parent of .beads/), NOT CWD.
+	// This ensures paths like "../beads" in config resolve correctly
+	// when running from different directories or in daemon context.
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return ""
+		// Config is at .beads/config.yaml, so go up twice to get repo root
+		configFile := ConfigFileUsed()
+		if configFile != "" {
+			repoRoot := filepath.Dir(filepath.Dir(configFile)) // .beads/config.yaml -> repo/
+			path = filepath.Join(repoRoot, path)
+		} else {
+			// Fallback: resolve from CWD (legacy behavior)
+			cwd, err := os.Getwd()
+			if err != nil {
+				return ""
+			}
+			path = filepath.Join(cwd, path)
 		}
-		path = filepath.Join(cwd, path)
 	}
 
 	// Verify path exists
@@ -494,4 +603,143 @@ func GetIdentity(flagValue string) string {
 	}
 
 	return "unknown"
+}
+
+// SyncConfig holds the sync mode configuration.
+type SyncConfig struct {
+	Mode     string // git-portable, realtime, dolt-native, belt-and-suspenders
+	ExportOn string // push, change
+	ImportOn string // pull, change
+}
+
+// GetSyncConfig returns the current sync configuration.
+func GetSyncConfig() SyncConfig {
+	return SyncConfig{
+		Mode:     GetSyncMode(),
+		ExportOn: GetString("sync.export_on"),
+		ImportOn: GetString("sync.import_on"),
+	}
+}
+
+// GetSyncMode returns the configured sync mode.
+// Returns git-portable if not configured or invalid.
+func GetSyncMode() string {
+	mode := GetString("sync.mode")
+	if mode == "" {
+		return SyncModeGitPortable
+	}
+	// Validate mode
+	switch mode {
+	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
+		return mode
+	default:
+		return SyncModeGitPortable
+	}
+}
+
+// IsSyncModeValid checks if the given sync mode is valid.
+func IsSyncModeValid(mode string) bool {
+	switch mode {
+	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
+		return true
+	default:
+		return false
+	}
+}
+
+// ConflictConfig holds the conflict resolution configuration.
+type ConflictConfig struct {
+	Strategy string // newest, ours, theirs, manual
+}
+
+// GetConflictConfig returns the current conflict resolution configuration.
+func GetConflictConfig() ConflictConfig {
+	return ConflictConfig{
+		Strategy: GetConflictStrategy(),
+	}
+}
+
+// GetConflictStrategy returns the configured conflict resolution strategy.
+// Returns newest if not configured or invalid.
+func GetConflictStrategy() string {
+	strategy := GetString("conflict.strategy")
+	if strategy == "" {
+		return ConflictStrategyNewest
+	}
+	// Validate strategy
+	switch strategy {
+	case ConflictStrategyNewest, ConflictStrategyOurs, ConflictStrategyTheirs, ConflictStrategyManual:
+		return strategy
+	default:
+		return ConflictStrategyNewest
+	}
+}
+
+// IsConflictStrategyValid checks if the given conflict strategy is valid.
+func IsConflictStrategyValid(strategy string) bool {
+	switch strategy {
+	case ConflictStrategyNewest, ConflictStrategyOurs, ConflictStrategyTheirs, ConflictStrategyManual:
+		return true
+	default:
+		return false
+	}
+}
+
+// FederationConfig holds the federation (Dolt remote) configuration.
+type FederationConfig struct {
+	Remote      string // dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
+	Sovereignty string // T1, T2, T3, T4
+}
+
+// GetFederationConfig returns the current federation configuration.
+func GetFederationConfig() FederationConfig {
+	return FederationConfig{
+		Remote:      GetString("federation.remote"),
+		Sovereignty: GetSovereignty(),
+	}
+}
+
+// GetSovereignty returns the configured data sovereignty tier.
+// Returns empty string if not configured.
+func GetSovereignty() string {
+	sovereignty := GetString("federation.sovereignty")
+	// Validate sovereignty tier
+	switch sovereignty {
+	case SovereigntyT1, SovereigntyT2, SovereigntyT3, SovereigntyT4:
+		return sovereignty
+	default:
+		return ""
+	}
+}
+
+// IsSovereigntyValid checks if the given sovereignty tier is valid.
+func IsSovereigntyValid(sovereignty string) bool {
+	switch sovereignty {
+	case "", SovereigntyT1, SovereigntyT2, SovereigntyT3, SovereigntyT4:
+		return true
+	default:
+		return false
+	}
+}
+
+// ShouldExportOnChange returns true if sync.export_on is set to "change".
+func ShouldExportOnChange() bool {
+	return GetString("sync.export_on") == SyncTriggerChange
+}
+
+// ShouldImportOnChange returns true if sync.import_on is set to "change".
+func ShouldImportOnChange() bool {
+	return GetString("sync.import_on") == SyncTriggerChange
+}
+
+// NeedsDoltRemote returns true if the sync mode requires a Dolt remote.
+func NeedsDoltRemote() bool {
+	mode := GetSyncMode()
+	return mode == SyncModeDoltNative || mode == SyncModeBeltAndSuspenders
+}
+
+// NeedsJSONL returns true if the sync mode requires JSONL export.
+func NeedsJSONL() bool {
+	mode := GetSyncMode()
+	return mode == SyncModeGitPortable || mode == SyncModeRealtime || mode == SyncModeBeltAndSuspenders
 }

@@ -342,7 +342,12 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, configValuesCheck)
 	// Don't fail overall check for config value warnings, just warn
 
-	// Check 7b: JSONL integrity (malformed lines, missing IDs)
+	// Check 7b: Multi-repo custom types discovery (bd-9ji4z)
+	multiRepoTypesCheck := convertWithCategory(doctor.CheckMultiRepoTypes(path), doctor.CategoryData)
+	result.Checks = append(result.Checks, multiRepoTypesCheck)
+	// Don't fail overall check for multi-repo types, just informational
+
+	// Check 7c: JSONL integrity (malformed lines, missing IDs)
 	jsonlIntegrityCheck := convertWithCategory(doctor.CheckJSONLIntegrity(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, jsonlIntegrityCheck)
 	if jsonlIntegrityCheck.Status == statusWarning || jsonlIntegrityCheck.Status == statusError {
@@ -360,6 +365,16 @@ func runDiagnostics(path string) doctorResult {
 	if daemonCheck.Status == statusWarning || daemonCheck.Status == statusError {
 		result.OverallOK = false
 	}
+
+	// Check 8b: Daemon auto-sync (only warn, don't fail overall)
+	autoSyncCheck := convertWithCategory(doctor.CheckDaemonAutoSync(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, autoSyncCheck)
+	// Note: Don't set OverallOK = false for this - it's a performance hint, not a failure
+
+	// Check 8c: Legacy daemon config (warn about deprecated options)
+	legacyDaemonConfigCheck := convertWithCategory(doctor.CheckLegacyDaemonConfig(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
+	// Note: Don't set OverallOK = false for this - deprecated options still work
 
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
@@ -434,6 +449,31 @@ func runDiagnostics(path string) doctorResult {
 	redirectTrackingCheck := convertWithCategory(doctor.CheckRedirectNotTracked(), doctor.CategoryGit)
 	result.Checks = append(result.Checks, redirectTrackingCheck)
 	// Don't fail overall check for redirect tracking, just warn
+
+	// Check 14c: redirect target validity (target exists and has valid db)
+	redirectTargetCheck := convertWithCategory(doctor.CheckRedirectTargetValid(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, redirectTargetCheck)
+	// Don't fail overall check for redirect target, just warn
+
+	// Check 14d: redirect target sync worktree (target has beads-sync if needed)
+	redirectTargetSyncCheck := convertWithCategory(doctor.CheckRedirectTargetSyncWorktree(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, redirectTargetSyncCheck)
+	// Don't fail overall check for redirect target sync, just warn
+
+	// Check 14e: vestigial sync worktrees (unused worktrees in redirected repos)
+	vestigialWorktreesCheck := convertWithCategory(doctor.CheckNoVestigialSyncWorktrees(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, vestigialWorktreesCheck)
+	// Don't fail overall check for vestigial worktrees, just warn
+
+	// Check 14f: redirect + sync-branch conflict (bd-wayc3)
+	redirectSyncBranchCheck := convertDoctorCheck(doctor.CheckRedirectSyncBranchConflict(path))
+	result.Checks = append(result.Checks, redirectSyncBranchCheck)
+	// Don't fail overall check for redirect+sync-branch conflict, just warn
+
+	// Check 14g: last-touched file tracking (runtime state shouldn't be committed)
+	lastTouchedTrackingCheck := convertWithCategory(doctor.CheckLastTouchedNotTracked(), doctor.CategoryGit)
+	result.Checks = append(result.Checks, lastTouchedTrackingCheck)
+	// Don't fail overall check for last-touched tracking, just warn
 
 	// Check 15: Git merge driver configuration
 	mergeDriverCheck := convertWithCategory(doctor.CheckMergeDriver(path), doctor.CategoryGit)
@@ -536,6 +576,15 @@ func runDiagnostics(path string) doctorResult {
 	persistentMolCheck := convertDoctorCheck(doctor.CheckPersistentMolIssues(path))
 	result.Checks = append(result.Checks, persistentMolCheck)
 	// Don't fail overall check for persistent mol issues, just warn
+
+	// Check 26c: Legacy merge queue files (gastown mrqueue remnants)
+	staleMQFilesCheck := convertDoctorCheck(doctor.CheckStaleMQFiles(path))
+	result.Checks = append(result.Checks, staleMQFilesCheck)
+	// Don't fail overall check for legacy MQ files, just warn
+
+	// Note: Check 26d (misclassified wisps) was referenced but never implemented.
+	// The commit f703237c added importer-based auto-detection instead.
+	// Removing the undefined reference to fix build.
 
 	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))

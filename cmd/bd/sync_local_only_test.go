@@ -19,15 +19,15 @@ func TestLocalOnlyMode(t *testing.T) {
 
 	// Create temp directory for local-only repo
 	tempDir := t.TempDir()
-	
+
 	// Initialize local git repo without remote
 	runGitCmd(t, tempDir, "init")
 	runGitCmd(t, tempDir, "config", "user.email", "test@example.com")
 	runGitCmd(t, tempDir, "config", "user.name", "Test User")
-	
+
 	// Change to temp directory so git commands run in the test repo
 	t.Chdir(tempDir)
-	
+
 	// Verify no remote exists
 	cmd := exec.Command("git", "remote")
 	output, err := cmd.Output()
@@ -39,19 +39,19 @@ func TestLocalOnlyMode(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	
+
 	// Test hasGitRemote returns false
 	if hasGitRemote(ctx) {
 		t.Error("Expected hasGitRemote to return false for local-only repo")
 	}
 
 	// Test gitPull returns nil (no error)
-	if err := gitPull(ctx); err != nil {
+	if err := gitPull(ctx, ""); err != nil {
 		t.Errorf("gitPull should gracefully skip when no remote, got error: %v", err)
 	}
 
 	// Test gitPush returns nil (no error)
-	if err := gitPush(ctx); err != nil {
+	if err := gitPush(ctx, ""); err != nil {
 		t.Errorf("gitPush should gracefully skip when no remote, got error: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestLocalOnlyMode(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0750); err != nil {
 		t.Fatalf("Failed to create .beads dir: %v", err)
 	}
-	
+
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test"}`+"\n"), 0644); err != nil {
 		t.Fatalf("Failed to write JSONL: %v", err)
@@ -102,7 +102,7 @@ func TestWithRemote(t *testing.T) {
 
 	// Clone it
 	runGitCmd(t, tempDir, "clone", remoteDir, cloneDir)
-	
+
 	// Change to clone directory
 	t.Chdir(cloneDir)
 
@@ -116,5 +116,5 @@ func TestWithRemote(t *testing.T) {
 	// Verify git pull doesn't error (even with empty remote)
 	// Note: pull might fail with "couldn't find remote ref", but that's different
 	// from the fatal "'origin' does not appear to be a git repository" error
-	gitPull(ctx) // Just verify it doesn't panic
+	_ = gitPull(ctx, "") // Just verify it doesn't panic
 }

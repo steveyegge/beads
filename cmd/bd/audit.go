@@ -160,6 +160,9 @@ func init() {
 	auditLabelCmd.Flags().StringVar(&auditLabelValue, "label", "", `Label value (e.g. "good" or "bad")`)
 	auditLabelCmd.Flags().StringVar(&auditLabelReason, "reason", "", "Reason for label")
 
+	// Issue ID completions
+	auditCmd.ValidArgsFunction = issueIDCompletion
+
 	auditCmd.AddCommand(auditRecordCmd)
 	auditCmd.AddCommand(auditLabelCmd)
 	rootCmd.AddCommand(auditCmd)

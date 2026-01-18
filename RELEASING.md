@@ -134,7 +134,7 @@ This updates:
 - `cmd/bd/version.go` - CLI version constant
 - `integrations/beads-mcp/pyproject.toml` - MCP server version
 - `integrations/beads-mcp/src/beads_mcp/__init__.py` - MCP Python version
-- `.claude-plugin/plugin.json` - Plugin version
+- `claude-plugin/.claude-plugin/plugin.json` - Plugin version
 - `.claude-plugin/marketplace.json` - Marketplace version
 - `npm-package/package.json` - npm package version
 - `cmd/bd/templates/hooks/*` - Git hook versions
@@ -338,11 +338,11 @@ Update the Claude Code marketplace metadata files:
 # Change version to match current release
 vim .claude-plugin/marketplace.json
 
-# Update .claude-plugin/plugin.json if needed
-vim .claude-plugin/plugin.json
+# Update claude-plugin/.claude-plugin/plugin.json if needed
+vim claude-plugin/.claude-plugin/plugin.json
 
 # Commit changes
-git add .claude-plugin/
+git add .claude-plugin/ claude-plugin/.claude-plugin/
 git commit -m "chore: Update Claude Code marketplace to v0.22.0"
 ```
 

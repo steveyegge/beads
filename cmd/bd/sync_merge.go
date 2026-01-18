@@ -1,0 +1,597 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
+)
+
+// MergeResult contains the outcome of a 3-way merge
+type MergeResult struct {
+	Merged    []*beads.Issue    // Final merged state
+	Conflicts int               // Number of true conflicts resolved
+	Strategy  map[string]string // Per-issue: "local", "remote", "merged", "same"
+}
+
+// MergeStrategy constants for describing how each issue was merged
+const (
+	StrategyLocal  = "local"  // Only local changed
+	StrategyRemote = "remote" // Only remote changed
+	StrategyMerged = "merged" // True conflict, LWW applied
+	StrategySame   = "same"   // Both made identical change (or no change)
+)
+
+// FieldMergeRule defines how a specific field is merged in conflicts
+type FieldMergeRule string
+
+const (
+	RuleLWW    FieldMergeRule = "lww"    // Last-Write-Wins by updated_at
+	RuleUnion  FieldMergeRule = "union"  // Set union (OR-Set)
+	RuleAppend FieldMergeRule = "append" // Append-only merge
+)
+
+// FieldRules maps field names to merge rules
+// Scalar fields use LWW, collection fields use union/append
+var FieldRules = map[string]FieldMergeRule{
+	// Scalar fields - LWW by updated_at
+	"status":      RuleLWW,
+	"priority":    RuleLWW,
+	"assignee":    RuleLWW,
+	"title":       RuleLWW,
+	"description": RuleLWW,
+	"design":      RuleLWW,
+	"issue_type":  RuleLWW,
+	"notes":       RuleLWW,
+
+	// Set fields - union (no data loss)
+	"labels":       RuleUnion,
+	"dependencies": RuleUnion,
+
+	// Append-only fields
+	"comments": RuleAppend,
+}
+
+// mergeFieldLevel performs field-by-field merge for true conflicts.
+// Returns a new issue with:
+// - Scalar fields: from the newer issue (LWW by updated_at, remote wins on tie)
+// - Labels: union of both
+// - Dependencies: union of both (by DependsOnID+Type)
+// - Comments: append from both (deduplicated by ID or content)
+func mergeFieldLevel(_base, local, remote *beads.Issue) *beads.Issue {
+	// Determine which is newer for LWW scalars
+	localNewer := local.UpdatedAt.After(remote.UpdatedAt)
+
+	// Clock skew detection: warn if timestamps differ by more than 24 hours
+	timeDiff := local.UpdatedAt.Sub(remote.UpdatedAt)
+	if timeDiff < 0 {
+		timeDiff = -timeDiff
+	}
+	if timeDiff > 24*time.Hour {
+		fmt.Fprintf(os.Stderr, "Warning: Issue %s has %v timestamp difference (possible clock skew)\n",
+			local.ID, timeDiff.Round(time.Hour))
+	}
+
+	// Start with a copy of the newer issue for scalar fields
+	var merged beads.Issue
+	if localNewer {
+		merged = *local
+	} else {
+		merged = *remote
+	}
+
+	// Union merge: Labels
+	merged.Labels = mergeLabels(local.Labels, remote.Labels)
+
+	// Union merge: Dependencies (by DependsOnID+Type key)
+	merged.Dependencies = mergeDependencies(local.Dependencies, remote.Dependencies)
+
+	// Append merge: Comments (deduplicated)
+	merged.Comments = mergeComments(local.Comments, remote.Comments)
+
+	return &merged
+}
+
+// mergeLabels performs set union on labels
+func mergeLabels(local, remote []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	// Add all local labels
+	for _, label := range local {
+		if !seen[label] {
+			seen[label] = true
+			result = append(result, label)
+		}
+	}
+
+	// Add remote labels not in local
+	for _, label := range remote {
+		if !seen[label] {
+			seen[label] = true
+			result = append(result, label)
+		}
+	}
+
+	// Sort for deterministic output
+	sort.Strings(result)
+	return result
+}
+
+// dependencyKey creates a unique key for deduplication
+// Uses DependsOnID + Type as the identity (same target+type = same dependency)
+func dependencyKey(d *beads.Dependency) string {
+	if d == nil {
+		return ""
+	}
+	return d.DependsOnID + ":" + string(d.Type)
+}
+
+// mergeDependencies performs set union on dependencies
+func mergeDependencies(local, remote []*beads.Dependency) []*beads.Dependency {
+	seen := make(map[string]*beads.Dependency)
+
+	// Add all local dependencies
+	for _, dep := range local {
+		if dep == nil {
+			continue
+		}
+		key := dependencyKey(dep)
+		seen[key] = dep
+	}
+
+	// Add remote dependencies not in local (or with newer timestamp)
+	for _, dep := range remote {
+		if dep == nil {
+			continue
+		}
+		key := dependencyKey(dep)
+		if existing, ok := seen[key]; ok {
+			// Keep the one with newer CreatedAt
+			if dep.CreatedAt.After(existing.CreatedAt) {
+				seen[key] = dep
+			}
+		} else {
+			seen[key] = dep
+		}
+	}
+
+	// Collect and sort by key for deterministic output
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]*beads.Dependency, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, seen[k])
+	}
+
+	return result
+}
+
+// commentKey creates a unique key for deduplication
+// Uses ID if present, otherwise content hash
+func commentKey(c *beads.Comment) string {
+	if c == nil {
+		return ""
+	}
+	if c.ID != 0 {
+		return fmt.Sprintf("id:%d", c.ID)
+	}
+	// Fallback to content-based key for comments without ID
+	return fmt.Sprintf("content:%s:%s", c.Author, c.Text)
+}
+
+// mergeComments performs append-merge on comments with deduplication
+func mergeComments(local, remote []*beads.Comment) []*beads.Comment {
+	seen := make(map[string]*beads.Comment)
+
+	// Add all local comments
+	for _, c := range local {
+		if c == nil {
+			continue
+		}
+		key := commentKey(c)
+		seen[key] = c
+	}
+
+	// Add remote comments not in local
+	for _, c := range remote {
+		if c == nil {
+			continue
+		}
+		key := commentKey(c)
+		if _, ok := seen[key]; !ok {
+			seen[key] = c
+		}
+	}
+
+	// Collect all comments
+	result := make([]*beads.Comment, 0, len(seen))
+	for _, c := range seen {
+		result = append(result, c)
+	}
+
+	// Sort by CreatedAt for chronological order
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+
+	return result
+}
+
+// MergeIssues performs 3-way merge: base x local x remote -> merged
+//
+// Algorithm:
+// 1. Build lookup maps for base, local, and remote by issue ID
+// 2. Collect all unique issue IDs across all three sets
+// 3. For each ID, apply MergeIssue to determine final state
+// 4. Return merged result with per-issue strategy annotations
+func MergeIssues(base, local, remote []*beads.Issue) *MergeResult {
+	// Build lookup maps by issue ID
+	baseMap := buildIssueMap(base)
+	localMap := buildIssueMap(local)
+	remoteMap := buildIssueMap(remote)
+
+	// Collect all unique issue IDs
+	allIDs := collectUniqueIDs(baseMap, localMap, remoteMap)
+
+	result := &MergeResult{
+		Merged:   make([]*beads.Issue, 0, len(allIDs)),
+		Strategy: make(map[string]string),
+	}
+
+	for _, id := range allIDs {
+		baseIssue := baseMap[id]
+		localIssue := localMap[id]
+		remoteIssue := remoteMap[id]
+
+		merged, strategy := MergeIssue(baseIssue, localIssue, remoteIssue)
+
+		// Always record strategy (even for deletions, for logging/debugging)
+		result.Strategy[id] = strategy
+
+		if merged != nil {
+			result.Merged = append(result.Merged, merged)
+			if strategy == StrategyMerged {
+				result.Conflicts++
+			}
+		}
+		// If merged is nil, the issue was deleted (present in base but not in local/remote)
+	}
+
+	return result
+}
+
+// MergeIssue merges a single issue using 3-way algorithm
+//
+// Cases:
+// - base=nil: First sync (no common ancestor)
+//   - local=nil, remote=nil: impossible (would not be in allIDs)
+//   - local=nil: return remote (new from remote)
+//   - remote=nil: return local (new from local)
+//   - both exist: LWW by updated_at (both added independently)
+//
+// - base!=nil: Standard 3-way merge
+//   - base=local=remote: no changes (same)
+//   - base=local, remote differs: only remote changed (remote)
+//   - base=remote, local differs: only local changed (local)
+//   - local=remote (but differs from base): both made identical change (same)
+//   - all three differ: true conflict, LWW by updated_at (merged)
+//
+// - Deletion handling:
+//   - local=nil (deleted locally): if remote unchanged from base, delete; else keep remote
+//   - remote=nil (deleted remotely): if local unchanged from base, delete; else keep local
+func MergeIssue(base, local, remote *beads.Issue) (*beads.Issue, string) {
+	// Case: no base state (first sync)
+	if base == nil {
+		if local == nil && remote == nil {
+			// Should not happen (would not be in allIDs)
+			return nil, StrategySame
+		}
+		if local == nil {
+			return remote, StrategyRemote
+		}
+		if remote == nil {
+			return local, StrategyLocal
+		}
+		// Both exist with no base: treat as conflict, use field-level merge
+		// This allows labels/comments to be union-merged even in first sync
+		return mergeFieldLevel(nil, local, remote), StrategyMerged
+	}
+
+	// Case: local deleted
+	if local == nil {
+		// If remote unchanged from base, honor the local deletion
+		if issueEqual(base, remote) {
+			return nil, StrategyLocal
+		}
+		// Remote changed after local deleted: keep remote (remote wins conflict)
+		return remote, StrategyMerged
+	}
+
+	// Case: remote deleted
+	if remote == nil {
+		// If local unchanged from base, honor the remote deletion
+		if issueEqual(base, local) {
+			return nil, StrategyRemote
+		}
+		// Local changed after remote deleted: keep local (local wins conflict)
+		return local, StrategyMerged
+	}
+
+	// Standard 3-way cases (all three exist)
+	if issueEqual(base, local) && issueEqual(base, remote) {
+		// No changes anywhere
+		return local, StrategySame
+	}
+
+	if issueEqual(base, local) {
+		// Only remote changed
+		return remote, StrategyRemote
+	}
+
+	if issueEqual(base, remote) {
+		// Only local changed
+		return local, StrategyLocal
+	}
+
+	if issueEqual(local, remote) {
+		// Both made identical change
+		return local, StrategySame
+	}
+
+	// True conflict: use field-level merge
+	// - Scalar fields use LWW (remote wins on tie)
+	// - Labels use union (no data loss)
+	// - Dependencies use union (no data loss)
+	// - Comments use append (deduplicated)
+	return mergeFieldLevel(base, local, remote), StrategyMerged
+}
+
+// issueEqual compares two issues for equality (content-level, not pointer)
+// Compares all merge-relevant fields: content, status, workflow, assignment
+func issueEqual(a, b *beads.Issue) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+
+	// Core identification
+	if a.ID != b.ID {
+		return false
+	}
+
+	// Issue content
+	if a.Title != b.Title ||
+		a.Description != b.Description ||
+		a.Design != b.Design ||
+		a.AcceptanceCriteria != b.AcceptanceCriteria ||
+		a.Notes != b.Notes {
+		return false
+	}
+
+	// Status & workflow
+	if a.Status != b.Status ||
+		a.Priority != b.Priority ||
+		a.IssueType != b.IssueType {
+		return false
+	}
+
+	// Assignment
+	if a.Assignee != b.Assignee {
+		return false
+	}
+	if !intPtrEqual(a.EstimatedMinutes, b.EstimatedMinutes) {
+		return false
+	}
+
+	// Timestamps (updated_at is crucial for LWW)
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return false
+	}
+
+	// Closed state
+	if !timePtrEqual(a.ClosedAt, b.ClosedAt) ||
+		a.CloseReason != b.CloseReason {
+		return false
+	}
+
+	// Time-based scheduling
+	if !timePtrEqual(a.DueAt, b.DueAt) ||
+		!timePtrEqual(a.DeferUntil, b.DeferUntil) {
+		return false
+	}
+
+	// External reference
+	if !stringPtrEqual(a.ExternalRef, b.ExternalRef) {
+		return false
+	}
+
+	// Tombstone fields
+	if !timePtrEqual(a.DeletedAt, b.DeletedAt) ||
+		a.DeletedBy != b.DeletedBy ||
+		a.DeleteReason != b.DeleteReason {
+		return false
+	}
+
+	// Labels (order-independent comparison)
+	if !stringSliceEqual(a.Labels, b.Labels) {
+		return false
+	}
+
+	return true
+}
+
+// buildIssueMap creates a lookup map from issue ID to issue pointer
+func buildIssueMap(issues []*beads.Issue) map[string]*beads.Issue {
+	m := make(map[string]*beads.Issue, len(issues))
+	for _, issue := range issues {
+		if issue != nil {
+			m[issue.ID] = issue
+		}
+	}
+	return m
+}
+
+// collectUniqueIDs gathers all unique issue IDs from the three maps
+// Returns sorted for deterministic output
+func collectUniqueIDs(base, local, remote map[string]*beads.Issue) []string {
+	seen := make(map[string]bool)
+	for id := range base {
+		seen[id] = true
+	}
+	for id := range local {
+		seen[id] = true
+	}
+	for id := range remote {
+		seen[id] = true
+	}
+
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// Helper functions for pointer comparison
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func timePtrEqual(a, b *time.Time) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equal(*b)
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Sort copies for order-independent comparison
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Base state storage functions for sync_base.jsonl
+
+const syncBaseFileName = "sync_base.jsonl"
+
+// loadBaseState loads the last-synced state from .beads/sync_base.jsonl
+// Returns empty slice if file doesn't exist (first sync scenario)
+func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
+	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+
+	// Check if file exists
+	if _, err := os.Stat(baseStatePath); os.IsNotExist(err) {
+		// First sync: no base state
+		return nil, nil
+	}
+
+	// Read and parse JSONL file
+	file, err := os.Open(baseStatePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var issues []*beads.Issue
+	scanner := bufio.NewScanner(file)
+	// Increase buffer for large issues
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var issue beads.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Skipping malformed line %d in sync_base.jsonl: %v\n", lineNum, err)
+			continue
+		}
+		issues = append(issues, &issue)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return issues, nil
+}
+
+// saveBaseState writes the merged state to .beads/sync_base.jsonl
+// This becomes the base for the next 3-way merge
+func saveBaseState(beadsDir string, issues []*beads.Issue) error {
+	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+
+	// Write to temp file first for atomicity
+	tempPath := baseStatePath + ".tmp"
+	file, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			_ = file.Close() // Best-effort cleanup
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath) // Best-effort cleanup
+		return err
+	}
+
+	// Atomic rename
+	return os.Rename(tempPath, baseStatePath)
+}

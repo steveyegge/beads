@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/util"
 	"github.com/steveyegge/beads/internal/validation"
 )
 
@@ -103,9 +104,10 @@ create, update, show, or close operation).`,
 		}
 		if cmd.Flags().Changed("type") {
 			issueType, _ := cmd.Flags().GetString("type")
-			// Validate issue type
+			// Normalize aliases (e.g., "enhancement" -> "feature") before validating
+			issueType = util.NormalizeIssueType(issueType)
 			if !types.IssueType(issueType).IsValid() {
-				FatalErrorRespectJSON("invalid issue type %q. Valid types: bug, feature, task, epic, chore, merge-request, molecule, gate", issueType)
+				FatalErrorRespectJSON("invalid issue type %q. Valid types: bug, feature, task, epic, chore, merge-request, molecule, gate, agent, role, rig, convoy, event, slot", issueType)
 			}
 			updates["issue_type"] = issueType
 		}
@@ -124,14 +126,6 @@ create, update, show, or close operation).`,
 		if cmd.Flags().Changed("parent") {
 			parent, _ := cmd.Flags().GetString("parent")
 			updates["parent"] = parent
-		}
-		if cmd.Flags().Changed("type") {
-			issueType, _ := cmd.Flags().GetString("type")
-			// Validate issue type
-			if _, err := validation.ParseIssueType(issueType); err != nil {
-				FatalErrorRespectJSON("%v", err)
-			}
-			updates["issue_type"] = issueType
 		}
 		// Gate fields (bd-z6kw)
 		if cmd.Flags().Changed("await-id") {
@@ -595,7 +589,7 @@ func init() {
 	updateCmd.Flags().StringP("status", "s", "", "New status")
 	registerPriorityFlag(updateCmd, "")
 	updateCmd.Flags().String("title", "", "New title")
-	updateCmd.Flags().StringP("type", "t", "", "New type (bug|feature|task|epic|chore|merge-request|molecule|gate)")
+	updateCmd.Flags().StringP("type", "t", "", "New type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|rig|convoy|event|slot)")
 	registerCommonIssueFlags(updateCmd)
 	updateCmd.Flags().String("acceptance-criteria", "", "DEPRECATED: use --acceptance")
 	_ = updateCmd.Flags().MarkHidden("acceptance-criteria") // Only fails if flag missing (caught in tests)
@@ -619,5 +613,6 @@ func init() {
 	updateCmd.Flags().String("defer", "", "Defer until date (empty to clear). Issue hidden from bd ready until then")
 	// Gate fields (bd-z6kw)
 	updateCmd.Flags().String("await-id", "", "Set gate await_id (e.g., GitHub run ID for gh:run gates)")
+	updateCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(updateCmd)
 }

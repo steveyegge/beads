@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -71,8 +72,8 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 
 		fmt.Printf("\n%s Sync branch set to: %s\n", ui.RenderPass("✓"), syncBranch)
 
-		// Set sync.branch config
-		if err := store.SetConfig(ctx, "sync.branch", syncBranch); err != nil {
+		// Set sync.branch config (GH#923: use syncbranch.Set for validation)
+		if err := syncbranch.Set(ctx, store, syncBranch); err != nil {
 			return fmt.Errorf("failed to set sync branch: %w", err)
 		}
 
@@ -119,16 +120,16 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 
 	if autoSync {
 		// GH#871: Write to config.yaml for team-wide settings (version controlled)
-		if err := config.SetYamlConfig("daemon.auto_commit", "true"); err != nil {
-			return fmt.Errorf("failed to enable auto-commit: %w", err)
-		}
-
-		if err := config.SetYamlConfig("daemon.auto_push", "true"); err != nil {
-			return fmt.Errorf("failed to enable auto-push: %w", err)
+		// Use unified auto-sync config (replaces individual auto_commit/auto_push/auto_pull)
+		if err := config.SetYamlConfig("daemon.auto-sync", "true"); err != nil {
+			return fmt.Errorf("failed to enable auto-sync: %w", err)
 		}
 
 		fmt.Printf("%s Auto-sync enabled\n", ui.RenderPass("✓"))
 	} else {
+		if err := config.SetYamlConfig("daemon.auto-sync", "false"); err != nil {
+			return fmt.Errorf("failed to disable auto-sync: %w", err)
+		}
 		fmt.Printf("%s Auto-sync disabled (manual sync with 'bd sync')\n", ui.RenderWarn("⚠"))
 	}
 
@@ -172,7 +173,7 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 	fmt.Println()
 	fmt.Printf("Try it: %s\n", ui.RenderAccent("bd create \"Team planning issue\" -p 2"))
 	fmt.Println()
-	
+
 	if protectedMain {
 		fmt.Println("Next steps:")
 		fmt.Printf("  1. %s\n", "Share the "+syncBranch+" branch with your team")
@@ -186,8 +187,14 @@ func runTeamWizard(ctx context.Context, store storage.Storage) error {
 
 // getGitBranch returns the current git branch name
 // Uses symbolic-ref instead of rev-parse to work in fresh repos without commits (bd-flil)
+// Uses CWD repo context since this is for user's project configuration
 func getGitBranch() (string, error) {
-	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return "", err
+	}
+
+	cmd := rc.GitCmdCWD(context.Background(), "symbolic-ref", "--short", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -197,26 +204,34 @@ func getGitBranch() (string, error) {
 }
 
 // createSyncBranch creates a new branch for beads sync
+// Uses CWD repo context since this is for user's project configuration
 func createSyncBranch(branchName string) error {
+	rc, err := beads.GetRepoContext()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
 	// Check if branch already exists
-	cmd := exec.Command("git", "rev-parse", "--verify", branchName)
+	cmd := rc.GitCmdCWD(ctx, "rev-parse", "--verify", branchName)
 	if err := cmd.Run(); err == nil {
 		// Branch exists, nothing to do
 		return nil
 	}
-	
+
 	// Create new branch from current HEAD
-	cmd = exec.Command("git", "checkout", "-b", branchName)
+	cmd = rc.GitCmdCWD(ctx, "checkout", "-b", branchName)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	
+
 	// Switch back to original branch
 	currentBranch, err := getGitBranch()
 	if err == nil && currentBranch != branchName {
-		cmd = exec.Command("git", "checkout", "-")
+		cmd = rc.GitCmdCWD(ctx, "checkout", "-")
 		_ = cmd.Run() // Ignore error, branch creation succeeded
 	}
-	
+
 	return nil
 }

@@ -12,7 +12,7 @@ import (
 )
 
 var molBurnCmd = &cobra.Command{
-	Use:   "burn <molecule-id>",
+	Use:   "burn <molecule-id> [molecule-id...]",
 	Short: "Delete a molecule without creating a digest",
 	Long: `Burn a molecule, deleting it without creating a digest.
 
@@ -32,8 +32,9 @@ permanently lost. If you want to preserve a summary, use 'bd mol squash'.
 Example:
   bd mol burn bd-abc123              # Delete molecule with no trace
   bd mol burn bd-abc123 --dry-run    # Preview what would be deleted
-  bd mol burn bd-abc123 --force      # Skip confirmation`,
-	Args: cobra.ExactArgs(1),
+  bd mol burn bd-abc123 --force      # Skip confirmation
+  bd mol burn bd-a1 bd-b2 bd-c3      # Batch delete multiple wisps`,
+	Args: cobra.MinimumNArgs(1),
 	Run:  runMolBurn,
 }
 
@@ -42,6 +43,13 @@ type BurnResult struct {
 	MoleculeID   string   `json:"molecule_id"`
 	DeletedIDs   []string `json:"deleted_ids"`
 	DeletedCount int      `json:"deleted_count"`
+}
+
+// BatchBurnResult holds aggregated results when burning multiple molecules
+type BatchBurnResult struct {
+	Results      []BurnResult `json:"results"`
+	TotalDeleted int          `json:"total_deleted"`
+	FailedCount  int          `json:"failed_count"`
 }
 
 func runMolBurn(cmd *cobra.Command, args []string) {
@@ -59,8 +67,18 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
 
-	moleculeID := args[0]
+	// Single ID: use original logic for backward compatibility
+	if len(args) == 1 {
+		burnSingleMolecule(ctx, args[0], dryRun, force)
+		return
+	}
 
+	// Multiple IDs: batch mode for efficiency
+	burnMultipleMolecules(ctx, args, dryRun, force)
+}
+
+// burnSingleMolecule handles the single molecule case (original behavior)
+func burnSingleMolecule(ctx context.Context, moleculeID string, dryRun, force bool) {
 	// Resolve molecule ID in main store
 	resolvedID, err := utils.ResolvePartialID(ctx, store, moleculeID)
 	if err != nil {
@@ -82,6 +100,145 @@ func runMolBurn(cmd *cobra.Command, args []string) {
 	} else {
 		// Mol: cascade delete with tombstones
 		burnPersistentMolecule(ctx, resolvedID, dryRun, force)
+	}
+}
+
+// burnMultipleMolecules handles batch deletion of multiple molecules efficiently
+func burnMultipleMolecules(ctx context.Context, moleculeIDs []string, dryRun, force bool) {
+	var wispIDs []string
+	var persistentIDs []string
+	var failedResolve []string
+
+	// First pass: resolve and categorize all IDs
+	for _, moleculeID := range moleculeIDs {
+		resolvedID, err := utils.ResolvePartialID(ctx, store, moleculeID)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: failed to resolve %s: %v\n", moleculeID, err)
+			}
+			failedResolve = append(failedResolve, moleculeID)
+			continue
+		}
+
+		issue, err := store.GetIssue(ctx, resolvedID)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: failed to load %s: %v\n", resolvedID, err)
+			}
+			failedResolve = append(failedResolve, moleculeID)
+			continue
+		}
+
+		if issue.Ephemeral {
+			wispIDs = append(wispIDs, resolvedID)
+		} else {
+			persistentIDs = append(persistentIDs, resolvedID)
+		}
+	}
+
+	if len(wispIDs) == 0 && len(persistentIDs) == 0 {
+		if jsonOutput {
+			outputJSON(BatchBurnResult{FailedCount: len(failedResolve)})
+		} else {
+			fmt.Println("No valid molecules to burn")
+		}
+		return
+	}
+
+	if dryRun {
+		if !jsonOutput {
+			fmt.Printf("\nDry run: would burn %d wisp(s) and %d persistent molecule(s)\n", len(wispIDs), len(persistentIDs))
+			if len(wispIDs) > 0 {
+				fmt.Printf("\nWisps to delete:\n")
+				for _, id := range wispIDs {
+					fmt.Printf("  - %s\n", id)
+				}
+			}
+			if len(persistentIDs) > 0 {
+				fmt.Printf("\nPersistent molecules to delete (will create tombstones):\n")
+				for _, id := range persistentIDs {
+					fmt.Printf("  - %s\n", id)
+				}
+			}
+			if len(failedResolve) > 0 {
+				fmt.Printf("\nFailed to resolve (%d):\n", len(failedResolve))
+				for _, id := range failedResolve {
+					fmt.Printf("  - %s\n", id)
+				}
+			}
+		}
+		return
+	}
+
+	// Confirm unless --force
+	if !force && !jsonOutput {
+		fmt.Printf("About to burn %d wisp(s) and %d persistent molecule(s)\n", len(wispIDs), len(persistentIDs))
+		fmt.Printf("This will permanently delete all molecule data with no digest.\n")
+		fmt.Printf("\nContinue? [y/N] ")
+
+		var response string
+		_, _ = fmt.Scanln(&response)
+		if response != "y" && response != "Y" {
+			fmt.Println("Canceled.")
+			return
+		}
+	}
+
+	batchResult := BatchBurnResult{
+		Results:     make([]BurnResult, 0),
+		FailedCount: len(failedResolve),
+	}
+
+	// Batch delete all wisps in one call
+	if len(wispIDs) > 0 {
+		result, err := burnWisps(ctx, store, wispIDs)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Error burning wisps: %v\n", err)
+			}
+		} else {
+			batchResult.TotalDeleted += result.DeletedCount
+			batchResult.Results = append(batchResult.Results, *result)
+		}
+	}
+
+	// Handle persistent molecules individually (they need subgraph loading)
+	for _, id := range persistentIDs {
+		subgraph, err := loadTemplateSubgraph(ctx, store, id)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "Warning: failed to load subgraph for %s: %v\n", id, err)
+			}
+			batchResult.FailedCount++
+			continue
+		}
+
+		var issueIDs []string
+		for _, issue := range subgraph.Issues {
+			issueIDs = append(issueIDs, issue.ID)
+		}
+
+		// Use deleteBatch for persistent molecules
+		deleteBatch(nil, issueIDs, true, false, false, false, false, "mol burn")
+		batchResult.TotalDeleted += len(issueIDs)
+		batchResult.Results = append(batchResult.Results, BurnResult{
+			MoleculeID:   id,
+			DeletedIDs:   issueIDs,
+			DeletedCount: len(issueIDs),
+		})
+	}
+
+	// Schedule auto-flush
+	markDirtyAndScheduleFlush()
+
+	if jsonOutput {
+		outputJSON(batchResult)
+		return
+	}
+
+	fmt.Printf("%s Burned %d molecule(s): %d issues deleted\n", ui.RenderPass("✓"), len(wispIDs)+len(persistentIDs), batchResult.TotalDeleted)
+	if batchResult.FailedCount > 0 {
+		fmt.Printf("  %d failed\n", batchResult.FailedCount)
 	}
 }
 

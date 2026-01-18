@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,12 +16,41 @@ func TestMain(m *testing.M) {
 	// This ensures backward compatibility with tests that manipulate globals directly.
 	enableTestModeGlobals()
 
+	// Prevent daemon auto-start and ensure tests don't interact with any running daemon.
+	// This prevents false positives in the test guard when a background daemon touches
+	// .beads files (like issues.jsonl via auto-sync) during test execution.
+	origNoDaemon := os.Getenv("BEADS_NO_DAEMON")
+	os.Setenv("BEADS_NO_DAEMON", "1")
+	defer func() {
+		if origNoDaemon != "" {
+			os.Setenv("BEADS_NO_DAEMON", origNoDaemon)
+		} else {
+			os.Unsetenv("BEADS_NO_DAEMON")
+		}
+	}()
+
+	// Clear BEADS_DIR to prevent tests from accidentally picking up the project's
+	// .beads directory via git repo detection when there's a redirect file.
+	// Each test that needs a .beads directory should set BEADS_DIR explicitly.
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DIR")
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		}
+	}()
+
 	if os.Getenv("BEADS_TEST_GUARD_DISABLE") != "" {
 		os.Exit(m.Run())
 	}
 
+	// Stop any running daemon for this repo to prevent false positives in the guard.
+	// The daemon auto-syncs and touches files like issues.jsonl, which would trigger
+	// the guard even though tests didn't cause the change.
 	repoRoot := findRepoRoot()
-	if repoRoot == "" {
+	if repoRoot != "" {
+		stopRepoDaemon(repoRoot)
+	} else {
 		os.Exit(m.Run())
 	}
 
@@ -90,14 +120,11 @@ func diffSnapshots(before, after map[string]fileSnap) string {
 		if !b.exists {
 			continue
 		}
-		if b.size != a.size || b.modUnix != a.modUnix {
-			out += fmt.Sprintf("- %s: size %d → %d, mtime %s → %s\n",
-				name,
-				b.size,
-				a.size,
-				time.Unix(0, b.modUnix).UTC().Format(time.RFC3339Nano),
-				time.Unix(0, a.modUnix).UTC().Format(time.RFC3339Nano),
-			)
+		// Only report size changes (actual content modification).
+		// Ignore mtime-only changes - SQLite shm/wal files can have mtime updated
+		// from read-only operations (config loading, etc.) which is not pollution.
+		if b.size != a.size {
+			out += fmt.Sprintf("- %s: size %d → %d\n", name, b.size, a.size)
 		}
 	}
 	return out
@@ -119,4 +146,29 @@ func findRepoRoot() string {
 		wd = parent
 	}
 	return ""
+}
+
+// stopRepoDaemon stops any running daemon for the given repository.
+// This prevents false positives in the test guard when a background daemon
+// touches .beads files during test execution. Uses exec to avoid import cycles.
+func stopRepoDaemon(repoRoot string) {
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+
+	// Check if socket exists (quick check before shelling out)
+	if _, err := os.Stat(socketPath); err != nil {
+		return // no daemon running
+	}
+
+	// Shell out to bd daemon stop. We can't call the daemon functions directly
+	// from TestMain because they have complex dependencies. Using exec is cleaner.
+	cmd := exec.Command("bd", "daemon", "stop")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+
+	// Best-effort stop - ignore errors (daemon may not be running)
+	_ = cmd.Run()
+
+	// Give daemon time to shutdown gracefully
+	time.Sleep(500 * time.Millisecond)
 }

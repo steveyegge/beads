@@ -14,9 +14,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
@@ -36,14 +36,16 @@ The daemon will:
 - Auto-import when remote changes detected
 
 Common operations:
-  bd daemon --start              Start the daemon (background)
-  bd daemon --start --foreground Start in foreground (for systemd/supervisord)
-  bd daemon --stop               Stop a running daemon
-  bd daemon --stop-all           Stop ALL running bd daemons
-  bd daemon --status             Check if daemon is running
-  bd daemon --health             Check daemon health and metrics
+  bd daemon start                Start the daemon (background)
+  bd daemon start --foreground   Start in foreground (for systemd/supervisord)
+  bd daemon stop                 Stop current workspace daemon
+  bd daemon status               Show daemon status
+  bd daemon status --all         Show all daemons with health check
+  bd daemon logs                 View daemon logs
+  bd daemon restart              Restart daemon
+  bd daemon killall              Stop all running daemons
 
-Run 'bd daemon' with no flags to see available options.`,
+Run 'bd daemon --help' to see all subcommands.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		start, _ := cmd.Flags().GetBool("start")
 		stop, _ := cmd.Flags().GetBool("stop")
@@ -67,72 +69,31 @@ Run 'bd daemon' with no flags to see available options.`,
 			return
 		}
 
+		// Show deprecation warnings for flag-based actions (skip in JSON mode for agent ergonomics)
+		if !jsonOutput {
+			if start {
+				fmt.Fprintf(os.Stderr, "Warning: --start is deprecated, use 'bd daemon start' instead\n")
+			}
+			if stop {
+				fmt.Fprintf(os.Stderr, "Warning: --stop is deprecated, use 'bd daemon stop' instead\n")
+			}
+			if stopAll {
+				fmt.Fprintf(os.Stderr, "Warning: --stop-all is deprecated, use 'bd daemon killall' instead\n")
+			}
+			if status {
+				fmt.Fprintf(os.Stderr, "Warning: --status is deprecated, use 'bd daemon status' instead\n")
+			}
+			if health {
+				fmt.Fprintf(os.Stderr, "Warning: --health is deprecated, use 'bd daemon status --all' instead\n")
+			}
+		}
+
 		// If auto-commit/auto-push flags weren't explicitly provided, read from config
 		// GH#871: Read from config.yaml first (team-shared), then fall back to SQLite (legacy)
 		// (skip if --stop, --status, --health, --metrics)
 		if start && !stop && !status && !health && !metrics {
-			if !cmd.Flags().Changed("auto-commit") {
-				// Check config.yaml first (GH#871: team-wide settings)
-				if config.GetBool("daemon.auto_commit") {
-					autoCommit = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_commit"); err == nil && configVal == "true" {
-							autoCommit = true
-						}
-						_ = store.Close()
-					}
-				}
-			}
-			if !cmd.Flags().Changed("auto-push") {
-				// Check config.yaml first (GH#871: team-wide settings)
-				if config.GetBool("daemon.auto_push") {
-					autoPush = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_push"); err == nil && configVal == "true" {
-							autoPush = true
-						}
-						_ = store.Close()
-					}
-				}
-			}
-			if !cmd.Flags().Changed("auto-pull") {
-				// Check environment variable first
-				if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
-					autoPull = envVal == "true" || envVal == "1"
-				} else if config.GetBool("daemon.auto_pull") {
-					// Check config.yaml (GH#871: team-wide settings)
-					autoPull = true
-				} else if dbPath := beads.FindDatabasePath(); dbPath != "" {
-					// Fall back to SQLite for backwards compatibility
-					ctx := context.Background()
-					store, err := sqlite.New(ctx, dbPath)
-					if err == nil {
-						if configVal, err := store.GetConfig(ctx, "daemon.auto_pull"); err == nil {
-							if configVal == "true" {
-								autoPull = true
-							} else if configVal == "false" {
-								autoPull = false
-							}
-						} else {
-							// Default: auto_pull is true when sync-branch is configured
-							// Use syncbranch.IsConfigured() which checks env var and config.yaml
-							// (the common case), not just SQLite (legacy)
-							if syncbranch.IsConfigured() {
-								autoPull = true
-							}
-						}
-						_ = store.Close()
-					}
-				}
-			}
+			// Load auto-commit/push/pull defaults from env vars, config, or sync-branch
+			autoCommit, autoPush, autoPull = loadDaemonAutoSettings(cmd, autoCommit, autoPush, autoPull)
 		}
 
 		if interval <= 0 {
@@ -193,7 +154,7 @@ Run 'bd daemon' with no flags to see available options.`,
 					// If we can check version and it's compatible, exit
 					if healthErr == nil && health.Compatible {
 						fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d, version %s)\n", pid, health.Version)
-						fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop' to stop it first\n")
+						fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
 						os.Exit(1)
 					}
 
@@ -207,7 +168,7 @@ Run 'bd daemon' with no flags to see available options.`,
 				} else {
 					// Can't check version - assume incompatible
 					fmt.Fprintf(os.Stderr, "Error: daemon already running (PID %d)\n", pid)
-					fmt.Fprintf(os.Stderr, "Use 'bd daemon --stop' to stop it first\n")
+					fmt.Fprintf(os.Stderr, "Use 'bd daemon stop' to stop it first\n")
 					os.Exit(1)
 				}
 			}
@@ -235,10 +196,22 @@ Run 'bd daemon' with no flags to see available options.`,
 		}
 
 		// Check for upstream if auto-push enabled
-		if autoPush && !gitHasUpstream() {
-			fmt.Fprintf(os.Stderr, "Error: no upstream configured (required for --auto-push)\n")
-			fmt.Fprintf(os.Stderr, "Hint: git push -u origin <branch-name>\n")
-			os.Exit(1)
+		// When sync-branch is configured, check that branch's upstream instead of current HEAD.
+		// This fixes compatibility with jj/jujutsu which always operates in detached HEAD mode.
+		if autoPush {
+			hasUpstream := false
+			if syncBranch := syncbranch.GetFromYAML(); syncBranch != "" {
+				// sync-branch configured: check that branch's upstream
+				hasUpstream = gitBranchHasUpstream(syncBranch)
+			} else {
+				// No sync-branch: check current HEAD's upstream (original behavior)
+				hasUpstream = gitHasUpstream()
+			}
+			if !hasUpstream {
+				fmt.Fprintf(os.Stderr, "Error: no upstream configured (required for --auto-push)\n")
+				fmt.Fprintf(os.Stderr, "Hint: git push -u origin <branch-name>\n")
+				os.Exit(1)
+			}
 		}
 
 		// Warn if starting daemon in a git worktree
@@ -268,16 +241,22 @@ Run 'bd daemon' with no flags to see available options.`,
 }
 
 func init() {
-	daemonCmd.Flags().Bool("start", false, "Start the daemon")
+	// Register subcommands (preferred interface)
+	daemonCmd.AddCommand(daemonStartCmd)
+	daemonCmd.AddCommand(daemonStatusCmd)
+	// Note: stop, restart, logs, killall, list, health subcommands are registered in daemons.go
+
+	// Legacy flags (deprecated - use subcommands instead)
+	daemonCmd.Flags().Bool("start", false, "Start the daemon (deprecated: use 'bd daemon start')")
 	daemonCmd.Flags().Duration("interval", 5*time.Second, "Sync check interval")
 	daemonCmd.Flags().Bool("auto-commit", false, "Automatically commit changes")
 	daemonCmd.Flags().Bool("auto-push", false, "Automatically push commits")
 	daemonCmd.Flags().Bool("auto-pull", false, "Automatically pull from remote (default: true when sync.branch configured)")
 	daemonCmd.Flags().Bool("local", false, "Run in local-only mode (no git required, no sync)")
-	daemonCmd.Flags().Bool("stop", false, "Stop running daemon")
-	daemonCmd.Flags().Bool("stop-all", false, "Stop all running bd daemons")
-	daemonCmd.Flags().Bool("status", false, "Show daemon status")
-	daemonCmd.Flags().Bool("health", false, "Check daemon health and metrics")
+	daemonCmd.Flags().Bool("stop", false, "Stop running daemon (deprecated: use 'bd daemon stop')")
+	daemonCmd.Flags().Bool("stop-all", false, "Stop all running bd daemons (deprecated: use 'bd daemon killall')")
+	daemonCmd.Flags().Bool("status", false, "Show daemon status (deprecated: use 'bd daemon status')")
+	daemonCmd.Flags().Bool("health", false, "Check daemon health (deprecated: use 'bd daemon status --all')")
 	daemonCmd.Flags().Bool("metrics", false, "Show detailed daemon metrics")
 	daemonCmd.Flags().String("log", "", "Log file path (default: .beads/daemon.log)")
 	daemonCmd.Flags().Bool("foreground", false, "Run in foreground (don't daemonize)")
@@ -425,17 +404,22 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("could not remove daemon-error file", "error", err)
 	}
 
-	store, err := sqlite.New(ctx, daemonDBPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run
 	}
 	defer func() { _ = store.Close() }()
 
-	// Enable freshness checking to detect external database file modifications
+	// Enable freshness checking for SQLite backend to detect external database file modifications
 	// (e.g., when git merge replaces the database file)
-	store.EnableFreshnessChecking()
-	log.Info("database opened", "path", daemonDBPath, "freshness_checking", true)
+	// Dolt doesn't need this since it handles versioning natively.
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		sqliteStore.EnableFreshnessChecking()
+		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
+	} else {
+		log.Info("database opened", "path", store.Path(), "backend", "dolt")
+	}
 
 	// Auto-upgrade .beads/.gitignore if outdated
 	gitignoreCheck := doctor.CheckGitignore()
@@ -448,14 +432,16 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		}
 	}
 
-	// Hydrate from multi-repo if configured
-	if results, err := store.HydrateFromMultiRepo(ctx); err != nil {
-		log.Error("multi-repo hydration failed", "error", err)
-		return // Use return instead of os.Exit to allow defers to run
-	} else if results != nil {
-		log.Info("multi-repo hydration complete")
-		for repo, count := range results {
-			log.Info("hydrated issues", "repo", repo, "count", count)
+	// Hydrate from multi-repo if configured (SQLite only)
+	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
+		if results, err := sqliteStore.HydrateFromMultiRepo(ctx); err != nil {
+			log.Error("multi-repo hydration failed", "error", err)
+			return // Use return instead of os.Exit to allow defers to run
+		} else if results != nil {
+			log.Info("multi-repo hydration complete")
+			for repo, count := range results {
+				log.Info("hydrated issues", "repo", repo, "count", count)
+			}
 		}
 	}
 
@@ -513,7 +499,12 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	// Get workspace path (.beads directory) - beadsDir already defined above
 	// Get actual workspace root (parent of .beads)
 	workspacePath := filepath.Dir(beadsDir)
-	socketPath := filepath.Join(beadsDir, "bd.sock")
+	// Use short socket path to avoid Unix socket path length limits (macOS: 104 chars)
+	socketPath, err := rpc.EnsureSocketDir(rpc.ShortSocketPath(workspacePath))
+	if err != nil {
+		log.Error("failed to create socket directory", "error", err)
+		return
+	}
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	defer serverCancel()
 
@@ -601,4 +592,145 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("unknown BEADS_DAEMON_MODE, defaulting to poll", "mode", daemonMode, "valid", "poll, events")
 		runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 	}
+}
+
+// loadDaemonAutoSettings loads daemon sync mode settings.
+//
+// # Two Sync Modes
+//
+// Read/Write Mode (full sync):
+//
+//	daemon.auto-sync: true  (or BEADS_AUTO_SYNC=true)
+//
+// Enables auto-commit, auto-push, AND auto-pull. Full bidirectional sync
+// with team. Eliminates need for manual `bd sync`. This is the default
+// when sync-branch is configured.
+//
+// Read-Only Mode:
+//
+//	daemon.auto-pull: true  (or BEADS_AUTO_PULL=true)
+//
+// Only enables auto-pull (receive updates from team). Does NOT auto-publish
+// your changes. Useful for experimental work or manual review before sharing.
+//
+// # Precedence
+//
+// 1. auto-sync=true → Read/Write mode (all three ON, no exceptions)
+// 2. auto-sync=false → Write-side OFF, auto-pull can still be enabled
+// 3. auto-sync not set → Legacy compat mode:
+//   - If either BEADS_AUTO_COMMIT/daemon.auto_commit or BEADS_AUTO_PUSH/daemon.auto_push
+//     is enabled, treat as auto-sync=true (full read/write)
+//   - Otherwise check auto-pull for read-only mode
+// 4. Fallback: all default to true when sync-branch configured
+//
+// Note: The individual auto-commit/auto-push settings are deprecated.
+// Use auto-sync for read/write mode, auto-pull for read-only mode.
+func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull bool) (bool, bool, bool) {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return autoCommit, autoPush, autoPull
+	}
+
+	ctx := context.Background()
+	store, err := factory.NewFromConfig(ctx, beadsDir)
+	if err != nil {
+		return autoCommit, autoPush, autoPull
+	}
+	defer func() { _ = store.Close() }()
+
+	// Check if sync-branch is configured (used for defaults)
+	syncBranch, _ := store.GetConfig(ctx, "sync.branch")
+	hasSyncBranch := syncBranch != ""
+
+	// Check unified auto-sync setting first (controls auto-commit + auto-push)
+	unifiedAutoSync := ""
+	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
+		unifiedAutoSync = envVal
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
+		unifiedAutoSync = configVal
+	}
+
+	// Handle unified auto-sync setting
+	if unifiedAutoSync != "" {
+		enabled := unifiedAutoSync == "true" || unifiedAutoSync == "1"
+		if enabled {
+			// auto-sync=true: MASTER CONTROL, forces all three ON
+			// Individual CLI flags are ignored - you said "full sync"
+			autoCommit = true
+			autoPush = true
+			autoPull = true
+			return autoCommit, autoPush, autoPull
+		}
+		// auto-sync=false: Write-side (commit/push) locked OFF
+		// Only auto-pull can be individually enabled (for read-only mode)
+		autoCommit = false
+		autoPush = false
+		// Auto-pull can still be enabled via CLI flag or individual config
+		if cmd.Flags().Changed("auto-pull") {
+			// Use the CLI flag value (already in autoPull)
+		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
+			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if hasSyncBranch {
+			// Default auto-pull to true when sync-branch configured
+			autoPull = true
+		} else {
+			autoPull = false
+		}
+		return autoCommit, autoPush, autoPull
+	}
+
+	// No unified setting - check legacy individual settings for backward compat
+	// If either legacy auto-commit or auto-push is enabled, treat as auto-sync=true
+	legacyCommit := false
+	legacyPush := false
+
+	// Check legacy auto-commit (env var or config)
+	if envVal := os.Getenv("BEADS_AUTO_COMMIT"); envVal != "" {
+		legacyCommit = envVal == "true" || envVal == "1"
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_commit"); configVal != "" {
+		legacyCommit = configVal == "true"
+	}
+
+	// Check legacy auto-push (env var or config)
+	if envVal := os.Getenv("BEADS_AUTO_PUSH"); envVal != "" {
+		legacyPush = envVal == "true" || envVal == "1"
+	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_push"); configVal != "" {
+		legacyPush = configVal == "true"
+	}
+
+	// If either legacy write-side option is enabled, enable full auto-sync
+	// (backward compat: user wanted writes, so give them full sync)
+	if legacyCommit || legacyPush {
+		autoCommit = true
+		autoPush = true
+		autoPull = true
+		return autoCommit, autoPush, autoPull
+	}
+
+	// Neither legacy write option enabled - check auto-pull for read-only mode
+	if !cmd.Flags().Changed("auto-pull") {
+		if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
+			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
+			autoPull = configVal == "true"
+		} else if hasSyncBranch {
+			// Default auto-pull to true when sync-branch configured
+			autoPull = true
+		}
+	}
+
+	// Fallback: if sync-branch configured and no explicit settings, default to full sync
+	if hasSyncBranch && !cmd.Flags().Changed("auto-commit") && !cmd.Flags().Changed("auto-push") {
+		autoCommit = true
+		autoPush = true
+		autoPull = true
+	}
+
+	return autoCommit, autoPush, autoPull
 }

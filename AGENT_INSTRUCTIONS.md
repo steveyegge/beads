@@ -191,6 +191,15 @@ bd show bd-44 --json
 
 ## Agent Session Workflow
 
+**WARNING: DO NOT use `bd edit`** - it opens an interactive editor ($EDITOR) which AI agents cannot use. Use `bd update` with flags instead:
+```bash
+bd update <id> --description "new description"
+bd update <id> --title "new title"
+bd update <id> --design "design notes"
+bd update <id> --notes "additional notes"
+bd update <id> --acceptance "acceptance criteria"
+```
+
 **IMPORTANT for AI agents:** When you finish making issue changes, always run:
 
 ```bash
@@ -343,7 +352,7 @@ git push origin main
 **Files updated automatically:**
 
 - `cmd/bd/version.go` - CLI version
-- `.claude-plugin/plugin.json` - Plugin version
+- `claude-plugin/.claude-plugin/plugin.json` - Plugin version
 - `.claude-plugin/marketplace.json` - Marketplace version
 - `integrations/beads-mcp/pyproject.toml` - MCP server version
 - `README.md` - Documentation version

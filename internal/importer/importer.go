@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/linear"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -97,6 +99,15 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 	// Always recompute to avoid stale/incorrect JSONL hashes
 	for _, issue := range issues {
 		issue.ContentHash = issue.ComputeContentHash()
+	}
+
+	// Auto-detect wisps by ID pattern and set ephemeral flag
+	// This prevents orphaned wisp entries in JSONL from polluting bd ready
+	// Pattern: *-wisp-* indicates ephemeral patrol/workflow instances
+	for _, issue := range issues {
+		if strings.Contains(issue.ID, "-wisp-") && !issue.Ephemeral {
+			issue.Ephemeral = true
+		}
 	}
 
 	// Get or create SQLite store
@@ -219,8 +230,12 @@ func handlePrefixMismatch(ctx context.Context, sqliteStore *sqlite.SQLiteStorage
 	// Read allowed_prefixes config for additional valid prefixes (e.g., mol-*)
 	allowedPrefixesConfig, _ := sqliteStore.GetConfig(ctx, "allowed_prefixes")
 
+	// Get beads directory from database path for route lookup
+	beadsDir := filepath.Dir(sqliteStore.Path())
+
 	// GH#686: In multi-repo mode, allow all prefixes (nil = allow all)
-	allowedPrefixes := buildAllowedPrefixSet(configuredPrefix, allowedPrefixesConfig)
+	// Also include prefixes from routes.jsonl for multi-rig setups (Gas Town)
+	allowedPrefixes := buildAllowedPrefixSet(configuredPrefix, allowedPrefixesConfig, beadsDir)
 	if allowedPrefixes == nil {
 		return issues, nil
 	}
@@ -1020,7 +1035,8 @@ func validateNoDuplicateExternalRefs(issues []*types.Issue, clearDuplicates bool
 // buildAllowedPrefixSet returns allowed prefixes, or nil to allow all (GH#686).
 // In multi-repo mode, additional repos have their own prefixes - allow all.
 // Also accepts allowedPrefixesConfig (comma-separated list like "gt-,mol-").
-func buildAllowedPrefixSet(primaryPrefix string, allowedPrefixesConfig string) map[string]bool {
+// Also loads prefixes from routes.jsonl for multi-rig setups (Gas Town).
+func buildAllowedPrefixSet(primaryPrefix string, allowedPrefixesConfig string, beadsDir string) map[string]bool {
 	if config.GetMultiRepoConfig() != nil {
 		return nil // Multi-repo: allow all prefixes
 	}
@@ -1037,6 +1053,20 @@ func buildAllowedPrefixSet(primaryPrefix string, allowedPrefixesConfig string) m
 			// Normalize: remove trailing - if present (we match without it)
 			prefix = strings.TrimSuffix(prefix, "-")
 			allowed[prefix] = true
+		}
+	}
+
+	// Load prefixes from routes.jsonl for multi-rig setups (Gas Town)
+	// This allows issues from other rigs to coexist in the same JSONL
+	// Use LoadTownRoutes to find routes at town level (~/gt/.beads/routes.jsonl)
+	if beadsDir != "" {
+		routes, _ := routing.LoadTownRoutes(beadsDir)
+		for _, route := range routes {
+			// Normalize: remove trailing - if present
+			prefix := strings.TrimSuffix(route.Prefix, "-")
+			if prefix != "" {
+				allowed[prefix] = true
+			}
 		}
 	}
 

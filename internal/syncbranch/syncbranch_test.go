@@ -3,6 +3,7 @@ package syncbranch
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -438,6 +439,18 @@ func TestIsConfiguredWithDB(t *testing.T) {
 		// This tests the code path where dbPath is empty
 		tmpDir, _ := os.MkdirTemp("", "test-no-beads-*")
 		defer os.RemoveAll(tmpDir)
+
+		// Set BEADS_DIR to a nonexistent path to prevent git repo detection
+		// from finding the project's .beads directory
+		origBeadsDir := os.Getenv("BEADS_DIR")
+		os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
+		defer func() {
+			if origBeadsDir != "" {
+				os.Setenv("BEADS_DIR", origBeadsDir)
+			} else {
+				os.Unsetenv("BEADS_DIR")
+			}
+		}()
 
 		origWd, _ := os.Getwd()
 		os.Chdir(tmpDir)

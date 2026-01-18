@@ -314,6 +314,11 @@ var labelListAllCmd = &cobra.Command{
 	},
 }
 func init() {
+	// Issue ID completions
+	labelAddCmd.ValidArgsFunction = issueIDCompletion
+	labelRemoveCmd.ValidArgsFunction = issueIDCompletion
+	labelListCmd.ValidArgsFunction = issueIDCompletion
+
 	labelCmd.AddCommand(labelAddCmd)
 	labelCmd.AddCommand(labelRemoveCmd)
 	labelCmd.AddCommand(labelListCmd)

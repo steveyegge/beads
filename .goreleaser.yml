@@ -13,7 +13,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
@@ -29,9 +29,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=aarch64-linux-gnu-gcc
-      - CXX=aarch64-linux-gnu-g++
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
@@ -210,7 +208,7 @@ release:
     brew install steveyegge/beads/bd
     ```
     
-    **Quick Install (macOS/Linux):**
+    **Quick Install (macOS/Linux/FreeBSD):**
     ```bash
     curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
     ```

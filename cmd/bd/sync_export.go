@@ -69,6 +69,12 @@ func finalizeExport(ctx context.Context, result *ExportResult) {
 			// is unavailable. This ensures export operations always succeed even if metadata storage fails.
 			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_content_hash: %v\n", err)
 		}
+		// Also update jsonl_file_hash for integrity validation (bd-160)
+		// This ensures validateJSONLIntegrity() won't see a hash mismatch after
+		// bd sync --flush-only runs (e.g., from pre-commit hook).
+		if err := store.SetJSONLFileHash(ctx, result.ContentHash); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update jsonl_file_hash: %v\n", err)
+		}
 	}
 
 	// Update last_import_time
@@ -140,9 +146,9 @@ func exportToJSONLDeferred(ctx context.Context, jsonlPath string) (*ExportResult
 	}
 
 	// Safety check: prevent exporting empty database over non-empty JSONL
-	// Note: The main bd-53c protection is the reverse ZFC check earlier in sync.go
-	// which runs BEFORE export. Here we only block the most catastrophic case (empty DB)
-	// to allow legitimate deletions.
+	// This blocks the catastrophic case where an empty/corrupted DB would overwrite
+	// a valid JSONL. For staleness handling, use --pull-first which provides
+	// structural protection via 3-way merge.
 	if len(issues) == 0 {
 		existingCount, countErr := countIssuesInJSONL(jsonlPath)
 		if countErr != nil {

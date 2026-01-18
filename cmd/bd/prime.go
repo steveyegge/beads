@@ -1,18 +1,46 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
+	internalbeads "github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/syncbranch"
 )
+
+// isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
+// Returns false if daemon is not running or check fails (fail-safe to show full protocol).
+// This is a variable to allow stubbing in tests.
+var isDaemonAutoSyncing = func() bool {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return false
+	}
+
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+	client, err := rpc.TryConnect(socketPath)
+	if err != nil || client == nil {
+		return false
+	}
+	defer func() { _ = client.Close() }()
+
+	status, err := client.Status()
+	if err != nil {
+		return false
+	}
+
+	// Only check auto-commit and auto-push (auto-pull is separate)
+	return status.AutoCommit && status.AutoPush
+}
 
 var (
 	primeFullMode    bool
@@ -148,9 +176,17 @@ func isMCPActive() bool {
 var isEphemeralBranch = func() bool {
 	// git rev-parse --abbrev-ref --symbolic-full-name @{u}
 	// Returns error code 128 if no upstream configured
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	err := cmd.Run()
-	return err != nil
+	rc, err := internalbeads.GetRepoContext()
+	if err != nil {
+		return true // Default to ephemeral if we can't determine context
+	}
+	cmd := rc.GitCmdCWD(context.Background(), "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	return cmd.Run() != nil
+}
+
+// primeHasGitRemote detects if any git remote is configured (stubbable for tests)
+var primeHasGitRemote = func() bool {
+	return syncbranch.HasGitRemote(context.Background())
 }
 
 // getRedirectNotice returns a notice string if beads is redirected
@@ -181,11 +217,16 @@ func outputPrimeContext(w io.Writer, mcpMode bool, stealthMode bool) error {
 func outputMCPContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
+	autoSync := isDaemonAutoSyncing()
+	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
-	if stealthMode {
-		// Stealth mode: only flush to JSONL as there's nothing to commit.
+	if stealthMode || localOnly {
+		// Stealth mode or local-only: only flush to JSONL, no git operations
 		closeProtocol = "Before saying \"done\": bd sync --flush-only"
+	} else if autoSync && !ephemeral && !noPush {
+		// Daemon is auto-syncing - no bd sync needed
+		closeProtocol = "Before saying \"done\": git status → git add → git commit → git push (beads auto-synced by daemon)"
 	} else if ephemeral {
 		closeProtocol = "Before saying \"done\": git status → git add → bd sync --from-main → git commit (no push - ephemeral branch)"
 	} else if noPush {
@@ -217,14 +258,17 @@ Start: Check ` + "`ready`" + ` tool for available work.
 func outputCLIContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
 	noPush := config.GetBool("no-push")
+	autoSync := isDaemonAutoSyncing()
+	localOnly := !primeHasGitRemote()
 
 	var closeProtocol string
 	var closeNote string
 	var syncSection string
 	var completingWorkflow string
+	var gitWorkflowRule string
 
-	if stealthMode {
-		// Stealth mode: only flush to JSONL, no git operations
+	if stealthMode || localOnly {
+		// Stealth mode or local-only: only flush to JSONL, no git operations
 		closeProtocol = `[ ] bd sync --flush-only    (export beads to JSONL only)`
 		syncSection = `### Sync & Collaboration
 - ` + "`bd sync --flush-only`" + ` - Export to JSONL`
@@ -233,6 +277,29 @@ func outputCLIContext(w io.Writer, stealthMode bool) error {
 bd close <id1> <id2> ...    # Close all completed issues at once
 bd sync --flush-only        # Export to JSONL
 ` + "```"
+		// Only show local-only note if not in stealth mode (stealth is explicit user choice)
+		if localOnly && !stealthMode {
+			closeNote = "**Note:** No git remote configured. Issues are saved locally only."
+			gitWorkflowRule = "Git workflow: local-only (no git remote)"
+		} else {
+			gitWorkflowRule = "Git workflow: stealth mode (no git ops)"
+		}
+	} else if autoSync && !ephemeral && !noPush {
+		// Daemon is auto-syncing - simplified protocol (no bd sync needed)
+		closeProtocol = `[ ] 1. git status              (check what changed)
+[ ] 2. git add <files>         (stage code changes)
+[ ] 3. git commit -m "..."     (commit code)
+[ ] 4. git push                (push to remote)`
+		closeNote = "**Note:** Daemon is auto-syncing beads changes. No manual `bd sync` needed."
+		syncSection = `### Sync & Collaboration
+- Daemon handles beads sync automatically (auto-commit + auto-push + auto-pull enabled)
+- ` + "`bd sync --status`" + ` - Check sync status`
+		completingWorkflow = `**Completing work:**
+` + "```bash" + `
+bd close <id1> <id2> ...    # Close all completed issues at once
+git push                    # Push to remote (beads auto-synced by daemon)
+` + "```"
+		gitWorkflowRule = "Git workflow: daemon auto-syncs beads changes"
 	} else if ephemeral {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
@@ -249,6 +316,7 @@ bd sync --from-main         # Pull latest beads from main
 git add . && git commit -m "..."  # Commit your changes
 # Merge to main when ready (local merge, not push)
 ` + "```"
+		gitWorkflowRule = "Git workflow: run `bd sync --from-main` at session end"
 	} else if noPush {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
@@ -265,6 +333,7 @@ bd close <id1> <id2> ...    # Close all completed issues at once
 bd sync                     # Sync beads (push disabled)
 # git push                  # Run manually when ready
 ` + "```"
+		gitWorkflowRule = "Git workflow: run `bd sync` at session end (push disabled)"
 	} else {
 		closeProtocol = `[ ] 1. git status              (check what changed)
 [ ] 2. git add <files>         (stage code changes)
@@ -281,6 +350,7 @@ bd sync                     # Sync beads (push disabled)
 bd close <id1> <id2> ...    # Close all completed issues at once
 bd sync                     # Push to remote
 ` + "```"
+		gitWorkflowRule = "Git workflow: hooks auto-sync, run `bd sync` at session end"
 	}
 
 	redirectNotice := getRedirectNotice(true)
@@ -304,7 +374,7 @@ bd sync                     # Push to remote
 - Track strategic work in beads (multi-session, dependencies, discovered work)
 - Use ` + "`bd create`" + ` for issues, TodoWrite for simple single-session execution
 - When in doubt, prefer bd—persistence you don't need beats lost context
-- Git workflow: hooks auto-sync, run ` + "`bd sync`" + ` at session end
+- ` + gitWorkflowRule + `
 - Session management: check ` + "`bd ready`" + ` for available work
 
 ## Essential Commands
@@ -320,10 +390,12 @@ bd sync                     # Push to remote
   - Priority: 0-4 or P0-P4 (0=critical, 2=medium, 4=backlog). NOT "high"/"medium"/"low"
 - ` + "`bd update <id> --status=in_progress`" + ` - Claim work
 - ` + "`bd update <id> --assignee=username`" + ` - Assign to someone
+- ` + "`bd update <id> --title/--description/--notes/--design`" + ` - Update fields inline
 - ` + "`bd close <id>`" + ` - Mark complete
 - ` + "`bd close <id1> <id2> ...`" + ` - Close multiple issues at once (more efficient)
 - ` + "`bd close <id> --reason=\"explanation\"`" + ` - Close with reason
 - **Tip**: When creating multiple issues/tasks/epics, use parallel subagents for efficiency
+- **WARNING**: Do NOT use ` + "`bd edit`" + ` - it opens $EDITOR (vim/nano) which blocks agents
 
 ### Dependencies & Blocking
 - ` + "`bd dep add <issue> <depends-on>`" + ` - Add dependency (issue depends on depends-on)

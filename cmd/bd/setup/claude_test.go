@@ -281,6 +281,94 @@ func TestRemoveHookCommand(t *testing.T) {
 	}
 }
 
+// TestRemoveHookCommandNoNull verifies that removing all hooks deletes the key
+// instead of setting it to null. GH#955: null values in hooks cause Claude Code to fail.
+func TestRemoveHookCommandNoNull(t *testing.T) {
+	hooks := map[string]interface{}{
+		"SessionStart": []interface{}{
+			map[string]interface{}{
+				"matcher": "",
+				"hooks": []interface{}{
+					map[string]interface{}{
+						"type":    "command",
+						"command": "bd prime",
+					},
+				},
+			},
+		},
+	}
+
+	removeHookCommand(hooks, "SessionStart", "bd prime")
+
+	// Key should be deleted, not set to null or empty array
+	if _, exists := hooks["SessionStart"]; exists {
+		t.Error("Expected SessionStart key to be deleted after removing all hooks")
+	}
+
+	// Verify JSON serialization doesn't produce null
+	data, err := json.Marshal(hooks)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "null") {
+		t.Errorf("JSON contains null: %s", data)
+	}
+}
+
+// TestInstallClaudeCleanupNullHooks verifies that install cleans up existing null values.
+// GH#955: null values left by previous buggy removal cause Claude Code to fail.
+func TestInstallClaudeCleanupNullHooks(t *testing.T) {
+	env, stdout, _ := newClaudeTestEnv(t)
+
+	// Create settings file with null hooks (simulating the bug)
+	settingsPath := globalSettingsPath(env.homeDir)
+	writeSettings(t, settingsPath, map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"SessionStart": nil,
+			"PreCompact":   nil,
+		},
+	})
+
+	// Install should clean up null values and add proper hooks
+	err := installClaude(env, false, false)
+	if err != nil {
+		t.Fatalf("install failed: %v", err)
+	}
+
+	// Verify hooks were properly added
+	if !strings.Contains(stdout.String(), "Registered SessionStart hook") {
+		t.Error("Expected SessionStart hook to be registered")
+	}
+
+	// Read back the file and verify no null values
+	data, err := env.readFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if strings.Contains(string(data), "null") {
+		t.Errorf("Settings file still contains null: %s", data)
+	}
+
+	// Verify it parses as valid Claude settings
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings: %v", err)
+	}
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("hooks section missing")
+	}
+	for _, event := range []string{"SessionStart", "PreCompact"} {
+		eventHooks, ok := hooks[event].([]interface{})
+		if !ok {
+			t.Errorf("%s should be an array, not nil or missing", event)
+		}
+		if len(eventHooks) == 0 {
+			t.Errorf("%s should have hooks", event)
+		}
+	}
+}
+
 func TestHasBeadsHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 

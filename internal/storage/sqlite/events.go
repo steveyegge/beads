@@ -55,6 +55,11 @@ func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment 
 
 // GetEvents returns the event history for an issue
 func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	args := []interface{}{issueID}
 	limitSQL := ""
 	if limit > 0 {
@@ -108,6 +113,11 @@ func (s *SQLiteStorage) GetEvents(ctx context.Context, issueID string, limit int
 
 // GetStatistics returns aggregate statistics
 func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	var stats types.Statistics
 
 	// Get counts (bd-nyt: exclude tombstones from TotalIssues, report separately)
@@ -211,6 +221,11 @@ func (s *SQLiteStorage) GetStatistics(ctx context.Context) (*types.Statistics, e
 // GetMoleculeProgress returns efficient progress stats for a molecule.
 // Uses indexed queries on dependencies table instead of loading all steps.
 func (s *SQLiteStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
 	// First get the molecule's title
 	var title string
 	err := s.db.QueryRowContext(ctx, `SELECT title FROM issues WHERE id = ?`, moleculeID).Scan(&title)

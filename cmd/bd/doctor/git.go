@@ -21,10 +21,20 @@ const (
 	hooksUpgradeURL  = "https://github.com/steveyegge/beads/issues/615"
 )
 
+// bdShimMarker identifies bd shim hooks (GH#946)
+const bdShimMarker = "# bd-shim"
+
+// bdInlineHookMarker identifies inline hooks created by bd init (GH#1120)
+// These hooks have the logic embedded directly rather than calling bd hooks run
+const bdInlineHookMarker = "# bd (beads)"
+
+// bdHooksRunPattern matches hooks that call bd hooks run
+var bdHooksRunPattern = regexp.MustCompile(`\bbd\s+hooks\s+run\b`)
+
 // CheckGitHooks verifies that recommended git hooks are installed.
 func CheckGitHooks() DoctorCheck {
 	// Check if we're in a git repository using worktree-aware detection
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Git Hooks",
@@ -39,8 +49,6 @@ func CheckGitHooks() DoctorCheck {
 		"post-merge": "Imports updated JSONL after git pull/merge",
 		"pre-push":   "Exports database to JSONL before push",
 	}
-
-	hooksDir := filepath.Join(gitDir, "hooks")
 	var missingHooks []string
 	var installedHooks []string
 
@@ -54,17 +62,23 @@ func CheckGitHooks() DoctorCheck {
 	}
 
 	// Get repo root for external manager detection
-	repoRoot := filepath.Dir(gitDir)
-	if filepath.Base(gitDir) != ".git" {
-		// Worktree case - gitDir might be .git file content
-		if cwd, err := os.Getwd(); err == nil {
-			repoRoot = cwd
-		}
-	}
+	repoRoot := git.GetRepoRoot()
 
 	// Check for external hook managers (lefthook, husky, etc.)
 	externalManagers := fix.DetectExternalHookManagers(repoRoot)
 	if len(externalManagers) > 0 {
+		// First, check if bd shims are installed (GH#946)
+		// If the actual hooks are bd shims, they're calling bd regardless of what
+		// the external manager config says (user may have leftover config files)
+		if hasBdShims, bdHooks := areBdShimsInstalled(hooksDir); hasBdShims {
+			return DoctorCheck{
+				Name:    "Git Hooks",
+				Status:  StatusOK,
+				Message: "bd shims installed (ignoring external manager config)",
+				Detail:  fmt.Sprintf("bd hooks run: %s", strings.Join(bdHooks, ", ")),
+			}
+		}
+
 		// External manager detected - check if it's configured to call bd
 		integration := fix.CheckExternalHookManagerIntegration(repoRoot)
 		if integration != nil {
@@ -138,6 +152,33 @@ func CheckGitHooks() DoctorCheck {
 		Detail:  fmt.Sprintf("Recommended: %s", strings.Join([]string{"pre-commit", "post-merge", "pre-push"}, ", ")),
 		Fix:     hookInstallMsg,
 	}
+}
+
+// areBdShimsInstalled checks if the installed hooks are bd shims, call bd hooks run,
+// or are inline bd hooks created by bd init.
+// This helps detect when bd hooks are installed directly but an external manager config exists.
+// Returns (true, installedHooks) if bd hooks are detected, (false, nil) otherwise.
+// (GH#946, GH#1120)
+func areBdShimsInstalled(hooksDir string) (bool, []string) {
+	hooks := []string{"pre-commit", "post-merge", "pre-push"}
+	var bdHooks []string
+
+	for _, hookName := range hooks {
+		hookPath := filepath.Join(hooksDir, hookName)
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			continue
+		}
+		contentStr := string(content)
+		// Check for bd-shim marker, bd hooks run call, or inline bd hook marker (from bd init)
+		if strings.Contains(contentStr, bdShimMarker) ||
+			strings.Contains(contentStr, bdInlineHookMarker) ||
+			bdHooksRunPattern.MatchString(contentStr) {
+			bdHooks = append(bdHooks, hookName)
+		}
+	}
+
+	return len(bdHooks) > 0, bdHooks
 }
 
 // CheckGitWorkingTree checks if the git working tree is clean.
@@ -322,8 +363,8 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 	}
 
 	// sync-branch is configured - check pre-push hook version
-	// Get actual git directory (handles worktrees where .git is a file)
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	// Get common git directory for hooks (shared across worktrees)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir = path
 	output, err := cmd.Output()
 	if err != nil {
@@ -333,14 +374,13 @@ func CheckSyncBranchHookCompatibility(path string) DoctorCheck {
 			Message: "N/A (not a git repository)",
 		}
 	}
-	gitDir := strings.TrimSpace(string(output))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
+	gitCommonDir := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(gitCommonDir) {
+		gitCommonDir = filepath.Join(path, gitCommonDir)
 	}
 
-	// Use standard .git/hooks location for consistency with CheckGitHooks (issue #799)
-	// Note: core.hooksPath is intentionally NOT checked here to match CheckGitHooks behavior.
-	hookPath := filepath.Join(gitDir, "hooks", "pre-push")
+	// Hooks are shared across worktrees and live in the common git directory
+	hookPath := filepath.Join(gitCommonDir, "hooks", "pre-push")
 
 	hookContent, err := os.ReadFile(hookPath) // #nosec G304 - path is controlled
 	if err != nil {
@@ -706,64 +746,9 @@ func CheckSyncBranchHealth(path string) DoctorCheck {
 		}
 	}
 
-	// Check 2: Is sync branch far behind main on source files?
-	// Get the main branch name
-	mainBranch := "main"
-	cmd = exec.Command("git", "rev-parse", "--verify", "main")
-	cmd.Dir = path
-	if err := cmd.Run(); err != nil {
-		// Try "master" as fallback
-		cmd = exec.Command("git", "rev-parse", "--verify", "master")
-		cmd.Dir = path
-		if err := cmd.Run(); err != nil {
-			// Can't determine main branch
-			return DoctorCheck{
-				Name:    "Sync Branch Health",
-				Status:  StatusOK,
-				Message: "OK",
-			}
-		}
-		mainBranch = "master"
-	}
-
-	// Count commits main is ahead of sync branch
-	cmd = exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", syncBranch, mainBranch)) // #nosec G204 - branches from config/hardcoded
-	cmd.Dir = path
-	aheadOutput, err := cmd.Output()
-	if err != nil {
-		return DoctorCheck{
-			Name:    "Sync Branch Health",
-			Status:  StatusOK,
-			Message: "OK",
-		}
-	}
-	aheadCount := strings.TrimSpace(string(aheadOutput))
-
-	// Check if there are non-.beads/ file differences (stale source code)
-	cmd = exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..%s", syncBranch, mainBranch), "--", ":(exclude).beads/") // #nosec G204 - branches from config/hardcoded
-	cmd.Dir = path
-	diffOutput, _ := cmd.Output()
-	diffFiles := strings.TrimSpace(string(diffOutput))
-
-	if diffFiles != "" && aheadCount != "0" {
-		// Count the number of different files
-		fileCount := len(strings.Split(diffFiles, "\n"))
-		// Parse ahead count as int for comparison
-		aheadCountInt := 0
-		_, _ = fmt.Sscanf(aheadCount, "%d", &aheadCountInt)
-
-		// Only warn if significantly behind (20+ commits AND 50+ source files)
-		// Small drift is normal between bd sync operations
-		if fileCount > 50 && aheadCountInt > 20 {
-			return DoctorCheck{
-				Name:    "Sync Branch Health",
-				Status:  StatusWarning,
-				Message: fmt.Sprintf("Sync branch %s commits behind %s on source files", aheadCount, mainBranch),
-				Detail:  fmt.Sprintf("%d source files differ between %s and %s. The sync branch has stale code.", fileCount, syncBranch, mainBranch),
-				Fix:     "Run 'bd doctor --fix' to reset sync branch to main",
-			}
-		}
-	}
+	// Note: We intentionally do NOT check if sync branch differs from main on source files.
+	// The sync branch only tracks .beads/ data - source file differences are expected behavior.
+	// See GH#1062 for why the previous check was removed (it caused destructive --fix behavior).
 
 	return DoctorCheck{
 		Name:    "Sync Branch Health",

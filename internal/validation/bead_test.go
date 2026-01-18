@@ -93,6 +93,16 @@ func TestValidateIDFormat(t *testing.T) {
 		{"bd-a3f8e9.1", "bd", false},
 		{"foo-bar", "foo", false},
 		{"nohyphen", "", true},
+
+		// Hyphenated prefix support
+		// These test cases verify that ValidateIDFormat correctly extracts
+		// prefixes containing hyphens (e.g., "bead-me-up" not just "bead")
+		{"bead-me-up-3e9", "bead-me-up", false},           // 3-char hash suffix
+		{"bead-me-up-3e9.1", "bead-me-up", false},         // hierarchical child
+		{"bead-me-up-3e9.1.2", "bead-me-up", false},       // deeply nested child
+		{"web-app-a3f8e9", "web-app", false},              // 6-char hash suffix
+		{"my-cool-project-1a2b", "my-cool-project", false}, // 4-char hash suffix
+		{"document-intelligence-0sa", "document-intelligence", false}, // 3-char hash
 	}
 
 	for _, tt := range tests {
@@ -109,6 +119,90 @@ func TestValidateIDFormat(t *testing.T) {
 	}
 }
 
+// TestValidateIDFormat_ParentChildFlow tests the exact scenario that fails with --parent flag:
+// When creating a child of a parent with a hyphenated prefix, the generated child ID
+// (e.g., "bead-me-up-3e9.1") should have its prefix correctly extracted as "bead-me-up",
+// not "bead". This test simulates the create.go flow at lines 352-391.
+func TestValidateIDFormat_ParentChildFlow(t *testing.T) {
+	tests := []struct {
+		name         string
+		parentID     string
+		childSuffix  string
+		dbPrefix     string
+		wantPrefix   string
+		shouldMatch  bool
+	}{
+		{
+			name:        "simple prefix - child creation works",
+			parentID:    "bd-a3f8e9",
+			childSuffix: ".1",
+			dbPrefix:    "bd",
+			wantPrefix:  "bd",
+			shouldMatch: true,
+		},
+		{
+			name:        "hyphenated prefix - child creation FAILS with current impl",
+			parentID:    "bead-me-up-3e9",
+			childSuffix: ".1",
+			dbPrefix:    "bead-me-up",
+			wantPrefix:  "bead-me-up", // Current impl returns "bead" - THIS IS THE BUG
+			shouldMatch: true,
+		},
+		{
+			name:        "hyphenated prefix - deeply nested child",
+			parentID:    "bead-me-up-3e9.1",
+			childSuffix: ".2",
+			dbPrefix:    "bead-me-up",
+			wantPrefix:  "bead-me-up",
+			shouldMatch: true,
+		},
+		{
+			name:        "multi-hyphen prefix - web-app style",
+			parentID:    "web-app-abc123",
+			childSuffix: ".1",
+			dbPrefix:    "web-app",
+			wantPrefix:  "web-app",
+			shouldMatch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the child ID generation that happens in create.go:352
+			childID := tt.parentID + tt.childSuffix
+
+			// Simulate the validation flow from create.go:361
+			extractedPrefix, err := ValidateIDFormat(childID)
+			if err != nil {
+				t.Fatalf("ValidateIDFormat(%q) unexpected error: %v", childID, err)
+			}
+
+			// Check that extracted prefix matches expected
+			if extractedPrefix != tt.wantPrefix {
+				t.Errorf("ValidateIDFormat(%q) extracted prefix = %q, want %q",
+					childID, extractedPrefix, tt.wantPrefix)
+			}
+
+			// Simulate the prefix validation from create.go:389
+			// This is where the "prefix mismatch" error occurs
+			err = ValidatePrefix(extractedPrefix, tt.dbPrefix, false)
+			prefixMatches := (err == nil)
+
+			if prefixMatches != tt.shouldMatch {
+				if tt.shouldMatch {
+					t.Errorf("--parent %s flow: prefix validation failed unexpectedly: %v\n"+
+						"  Child ID: %s\n"+
+						"  Extracted prefix: %q\n"+
+						"  Database prefix: %q",
+						tt.parentID, err, childID, extractedPrefix, tt.dbPrefix)
+				} else {
+					t.Errorf("--parent %s flow: expected prefix mismatch but validation passed", tt.parentID)
+				}
+			}
+		})
+	}
+}
+
 func TestParseIssueType(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -117,18 +211,18 @@ func TestParseIssueType(t *testing.T) {
 		wantError    bool
 		errorContains string
 	}{
-		// Valid issue types
+		// Core work types (always valid)
 		{"bug type", "bug", types.TypeBug, false, ""},
 		{"feature type", "feature", types.TypeFeature, false, ""},
 		{"task type", "task", types.TypeTask, false, ""},
 		{"epic type", "epic", types.TypeEpic, false, ""},
 		{"chore type", "chore", types.TypeChore, false, ""},
-		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
-		{"molecule type", "molecule", types.TypeMolecule, false, ""},
-		{"gate type", "gate", types.TypeGate, false, ""},
-		{"agent type", "agent", types.TypeAgent, false, ""},
-		{"role type", "role", types.TypeRole, false, ""},
-		{"message type", "message", types.TypeMessage, false, ""},
+		// Gas Town types require types.custom configuration (invalid without config)
+		{"merge-request type", "merge-request", types.TypeTask, true, "invalid issue type"},
+		{"molecule type", "molecule", types.TypeTask, true, "invalid issue type"},
+		{"gate type", "gate", types.TypeTask, true, "invalid issue type"},
+		{"event type", "event", types.TypeTask, true, "invalid issue type"},
+		{"message type", "message", types.TypeTask, true, "invalid issue type"},
 
 		// Case sensitivity (function is case-sensitive)
 		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},
@@ -305,6 +399,46 @@ func TestValidateAgentID(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.errorContains) {
 					t.Errorf("ValidateAgentID(%q) error = %q, should contain %q", tt.id, err.Error(), tt.errorContains)
 				}
+			}
+		})
+	}
+}
+
+func TestExtractAgentPrefix(t *testing.T) {
+	tests := []struct {
+		name       string
+		id         string
+		wantPrefix string
+	}{
+		// Town-level agents
+		{"mayor", "gt-mayor", "gt"},
+		{"deacon", "gt-deacon", "gt"},
+		{"bd mayor", "bd-mayor", "bd"},
+
+		// Per-rig agents
+		{"witness", "gt-gastown-witness", "gt"},
+		{"refinery", "bd-beads-refinery", "bd"},
+
+		// Named agents - the bug case
+		{"polecat 3-char name", "nx-nexus-polecat-nux", "nx"},
+		{"polecat regular", "gt-gastown-polecat-phoenix", "gt"},
+		{"crew", "gt-beads-crew-dave", "gt"},
+
+		// Hyphenated rig names
+		{"hyphenated rig", "gt-my-project-witness", "gt"},
+		{"multi-hyphen rig polecat", "bd-my-cool-app-polecat-bob", "bd"},
+
+		// Edge cases
+		{"no hyphen", "nohyphen", ""},
+		{"empty", "", ""},
+		{"just prefix", "gt-", "gt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractAgentPrefix(tt.id)
+			if got != tt.wantPrefix {
+				t.Errorf("ExtractAgentPrefix(%q) = %q, want %q", tt.id, got, tt.wantPrefix)
 			}
 		})
 	}

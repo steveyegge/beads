@@ -127,6 +127,52 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "missing", "bd.sock")
+	lockPath := socketPath + ".startlock"
+
+	if _, err := os.Stat(filepath.Dir(lockPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected lock dir to be missing before test, got: %v", err)
+	}
+
+	if !acquireStartLock(lockPath, socketPath) {
+		t.Fatalf("expected acquireStartLock to succeed when directory missing")
+	}
+
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lock file to exist, stat error: %v", err)
+	}
+}
+
+func TestDaemonAutostart_AcquireStartLock_FailsWhenRemoveFails(t *testing.T) {
+	// This test verifies that acquireStartLock returns false (instead of
+	// recursing infinitely) when os.Remove fails on a stale lock file.
+
+	oldRemove := removeFileFn
+	defer func() { removeFileFn = oldRemove }()
+
+	// Stub removeFileFn to always fail
+	removeFileFn = func(path string) error {
+		return os.ErrPermission
+	}
+
+	tmpDir := t.TempDir()
+	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
+	socketPath := filepath.Join(tmpDir, "bd.sock")
+
+	// Create a stale lock file with PID 0 (will be detected as dead)
+	if err := os.WriteFile(lockPath, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// acquireStartLock should return false since it can't remove the stale lock
+	// Previously, this would cause infinite recursion and stack overflow
+	if acquireStartLock(lockPath, socketPath) {
+		t.Fatalf("expected acquireStartLock to fail when remove fails")
+	}
+}
+
 func TestDaemonAutostart_SocketHealthAndReadiness(t *testing.T) {
 	socketPath, cleanup := startTestRPCServer(t)
 	defer cleanup()
@@ -314,6 +360,41 @@ func TestDaemonAutostart_StartDaemonProcess_NoGitRepo(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_StartDaemonProcess_NoGitRepo_Quiet(t *testing.T) {
+	// Test that startDaemonProcess suppresses the note when quietFlag is true
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	oldQuiet := quietFlag
+	defer func() {
+		_ = os.Chdir(oldDir)
+		quietFlag = oldQuiet
+	}()
+
+	// Change to a temp directory that is NOT a git repo
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	// Enable quiet mode
+	quietFlag = true
+
+	// Capture stderr to verify the message is suppressed
+	output := captureStderr(t, func() {
+		result := startDaemonProcess(filepath.Join(tmpDir, "bd.sock"))
+		if result {
+			t.Errorf("expected startDaemonProcess to return false when not in git repo")
+		}
+	})
+
+	// Verify the message is NOT shown in quiet mode
+	if strings.Contains(output, "No git repository initialized") {
+		t.Errorf("expected no output in quiet mode, got: %q", output)
+	}
+}
+
 func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 	oldExec := execCommandFn
 	oldWait := waitForSocketReadinessFn
@@ -340,6 +421,11 @@ func TestDaemonAutostart_RestartDaemonForVersionMismatch_Stubbed(t *testing.T) {
 		t.Fatalf("getPIDFilePath: %v", err)
 	}
 	sock := getSocketPath()
+	// Create socket directory if needed (GH#1001 - socket may be in /tmp/beads-{hash}/)
+	sockDir := filepath.Dir(sock)
+	if err := os.MkdirAll(sockDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll sockDir: %v", err)
+	}
 	if err := os.WriteFile(pidFile, []byte("999999\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile pid: %v", err)
 	}

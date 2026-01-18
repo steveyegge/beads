@@ -81,6 +81,11 @@ func TestLoader_LoadAll(t *testing.T) {
 		t.Fatalf("Failed to set prefix: %v", err)
 	}
 
+	// Configure custom types for Gas Town types (bd-find4)
+	if err := store.SetConfig(ctx, "types.custom", "molecule"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
+
 	// Create a project-level molecules.jsonl
 	moleculesPath := filepath.Join(beadsDir, "molecules.jsonl")
 	content := `{"id":"mol-feature","title":"Feature Template","issue_type":"molecule","status":"open","description":"Standard feature workflow"}
@@ -148,6 +153,11 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 	// Set issue prefix
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Configure custom types for Gas Town types (bd-find4)
+	if err := store.SetConfig(ctx, "types.custom", "molecule"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Pre-create a molecule in the database (skip prefix validation for mol-* IDs)

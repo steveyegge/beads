@@ -726,7 +726,9 @@ func commitInWorktree(ctx context.Context, worktreePath, jsonlRelPath, message s
 	// Stage the entire .beads directory
 	beadsRelDir := filepath.Dir(jsonlRelPath)
 
-	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", beadsRelDir)
+	// Use -f (force) to add files even if they're gitignored
+	// In contributor mode, .beads/ is excluded in .git/info/exclude but needs to be tracked in sync branch
+	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "-f", beadsRelDir)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed in worktree: %w", err)
 	}
@@ -970,6 +972,10 @@ func getRemoteForBranch(ctx context.Context, worktreePath, branch string) string
 // GetRepoRoot returns the git repository root directory
 // For worktrees, this returns the main repository root (not the worktree root)
 // The returned path is canonicalized to fix case on case-insensitive filesystems (GH#880)
+//
+// Deprecated: Use beads.GetRepoContext().RepoRoot instead. GetRepoContext provides
+// a unified API that correctly handles BEADS_DIR, worktrees, and redirects.
+// This function will be removed in a future release.
 func GetRepoRoot(ctx context.Context) (string, error) {
 	var repoRoot string
 
@@ -985,8 +991,9 @@ func GetRepoRoot(ctx context.Context) (string, error) {
 			line := strings.TrimSpace(string(content))
 			if strings.HasPrefix(line, "gitdir: ") {
 				gitDir := strings.TrimPrefix(line, "gitdir: ")
-				// Remove /worktrees/* part
-				if idx := strings.Index(gitDir, "/worktrees/"); idx > 0 {
+				// Remove /worktrees/* part - use LastIndex to handle user paths containing "worktrees"
+				// e.g., /Users/foo/worktrees/project/.bare/worktrees/main should strip at .bare/worktrees/
+				if idx := strings.LastIndex(gitDir, "/worktrees/"); idx > 0 {
 					gitDir = gitDir[:idx]
 				}
 				repoRoot = filepath.Dir(gitDir)

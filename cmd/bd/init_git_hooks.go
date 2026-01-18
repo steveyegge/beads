@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,14 +13,20 @@ import (
 	"github.com/steveyegge/beads/internal/ui"
 )
 
+
+// preCommitFrameworkPattern matches pre-commit or prek framework hooks.
+// Uses same patterns as hookManagerPatterns in doctor/fix/hooks.go for consistency.
+// Includes all detection patterns: pre-commit run, prek run/hook-impl, config file refs, and pre-commit env vars.
+var preCommitFrameworkPattern = regexp.MustCompile(`(?i)(pre-commit\s+run|prek\s+run|prek\s+hook-impl|\.pre-commit-config|INSTALL_PYTHON|PRE_COMMIT)`)
+
 // hooksInstalled checks if bd git hooks are installed
 func hooksInstalled() bool {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return false
 	}
-	preCommit := filepath.Join(gitDir, "hooks", "pre-commit")
-	postMerge := filepath.Join(gitDir, "hooks", "post-merge")
+	preCommit := filepath.Join(hooksDir, "pre-commit")
+	postMerge := filepath.Join(hooksDir, "post-merge")
 
 	// Check if both hooks exist
 	_, err1 := os.Stat(preCommit)
@@ -64,21 +71,20 @@ func hooksInstalled() bool {
 
 // hookInfo contains information about an existing hook
 type hookInfo struct {
-	name        string
-	path        string
-	exists      bool
-	isBdHook    bool
-	isPreCommit bool
-	content     string
+	name                 string
+	path                 string
+	exists               bool
+	isBdHook             bool
+	isPreCommitFramework bool // true for pre-commit or prek
+	content              string
 }
 
 // detectExistingHooks scans for existing git hooks
 func detectExistingHooks() []hookInfo {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return nil
 	}
-	hooksDir := filepath.Join(gitDir, "hooks")
 	hooks := []hookInfo{
 		{name: "pre-commit", path: filepath.Join(hooksDir, "pre-commit")},
 		{name: "post-merge", path: filepath.Join(hooksDir, "post-merge")},
@@ -91,10 +97,10 @@ func detectExistingHooks() []hookInfo {
 			hooks[i].exists = true
 			hooks[i].content = string(content)
 			hooks[i].isBdHook = strings.Contains(hooks[i].content, "bd (beads)")
-			// Only detect pre-commit framework if not a bd hook
+			// Only detect pre-commit/prek framework if not a bd hook
+			// Use regex for consistency with DetectActiveHookManager patterns
 			if !hooks[i].isBdHook {
-				hooks[i].isPreCommit = strings.Contains(hooks[i].content, "pre-commit run") ||
-					strings.Contains(hooks[i].content, ".pre-commit-config")
+				hooks[i].isPreCommitFramework = preCommitFrameworkPattern.MatchString(hooks[i].content)
 			}
 		}
 	}
@@ -108,8 +114,8 @@ func promptHookAction(existingHooks []hookInfo) string {
 	for _, hook := range existingHooks {
 		if hook.exists && !hook.isBdHook {
 			hookType := "custom script"
-			if hook.isPreCommit {
-				hookType = "pre-commit framework"
+			if hook.isPreCommitFramework {
+				hookType = "pre-commit/prek framework"
 			}
 			fmt.Printf("  - %s (%s)\n", hook.name, hookType)
 		}
@@ -130,11 +136,10 @@ func promptHookAction(existingHooks []hookInfo) string {
 
 // installGitHooks installs git hooks inline (no external dependencies)
 func installGitHooks() error {
-	gitDir, err := git.GetGitDir()
+	hooksDir, err := git.GetGitHooksDir()
 	if err != nil {
 		return err
 	}
-	hooksDir := filepath.Join(gitDir, "hooks")
 
 	// Ensure hooks directory exists
 	if err := os.MkdirAll(hooksDir, 0750); err != nil {
@@ -403,8 +408,9 @@ exit 0
 }
 
 // mergeDriverInstalled checks if bd merge driver is configured correctly
+// Note: This runs during bd init BEFORE .beads exists, so it runs git in CWD.
 func mergeDriverInstalled() bool {
-	// Check git config for merge driver
+	// Check git config for merge driver (runs in CWD)
 	cmd := exec.Command("git", "config", "merge.beads.driver")
 	output, err := cmd.Output()
 	if err != nil || len(output) == 0 {
@@ -435,8 +441,9 @@ func mergeDriverInstalled() bool {
 }
 
 // installMergeDriver configures git to use bd merge for JSONL files
+// Note: This runs during bd init BEFORE .beads exists, so it runs git in CWD.
 func installMergeDriver() error {
-	// Configure git merge driver
+	// Configure git merge driver (runs in CWD)
 	cmd := exec.Command("git", "config", "merge.beads.driver", "bd merge %A %O %A %B")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure git merge driver: %w\n%s", err, output)

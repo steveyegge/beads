@@ -35,6 +35,12 @@ Tool-level settings you can configure:
 | `no-auto-flush` | `--no-auto-flush` | `BD_NO_AUTO_FLUSH` | `false` | Disable auto JSONL export |
 | `no-auto-import` | `--no-auto-import` | `BD_NO_AUTO_IMPORT` | `false` | Disable auto JSONL import |
 | `no-push` | `--no-push` | `BD_NO_PUSH` | `false` | Skip pushing to remote in bd sync |
+| `sync.mode` | - | `BD_SYNC_MODE` | `git-portable` | Sync mode (see below) |
+| `sync.export_on` | - | `BD_SYNC_EXPORT_ON` | `push` | When to export: `push`, `change` |
+| `sync.import_on` | - | `BD_SYNC_IMPORT_ON` | `pull` | When to import: `pull`, `change` |
+| `conflict.strategy` | - | `BD_CONFLICT_STRATEGY` | `newest` | Conflict resolution: `newest`, `ours`, `theirs`, `manual` |
+| `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
+| `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
 | `validation.on-create` | - | `BD_VALIDATION_ON_CREATE` | `none` | Template validation on create: `none`, `warn`, `error` |
 | `validation.on-sync` | - | `BD_VALIDATION_ON_SYNC` | `none` | Template validation before sync: `none`, `warn`, `error` |
@@ -43,13 +49,98 @@ Tool-level settings you can configure:
 | `directory.labels` | - | - | (none) | Map directories to labels for automatic filtering |
 | `external_projects` | - | - | (none) | Map project names to paths for cross-project deps |
 | `db` | `--db` | `BD_DB` | (auto-discover) | Database path |
-| `actor` | `--actor` | `BD_ACTOR` | `$USER` | Actor name for audit trail |
+| `actor` | `--actor` | `BD_ACTOR` | `git config user.name` | Actor name for audit trail (see below) |
 | `flush-debounce` | - | `BEADS_FLUSH_DEBOUNCE` | `5s` | Debounce time for auto-flush |
 | `auto-start-daemon` | - | `BEADS_AUTO_START_DAEMON` | `true` | Auto-start daemon if not running |
 | `daemon-log-max-size` | - | `BEADS_DAEMON_LOG_MAX_SIZE` | `50` | Max daemon log size in MB before rotation |
 | `daemon-log-max-backups` | - | `BEADS_DAEMON_LOG_MAX_BACKUPS` | `7` | Max number of old log files to keep |
 | `daemon-log-max-age` | - | `BEADS_DAEMON_LOG_MAX_AGE` | `30` | Max days to keep old log files |
 | `daemon-log-compress` | - | `BEADS_DAEMON_LOG_COMPRESS` | `true` | Compress rotated log files |
+
+### Actor Identity Resolution
+
+The actor name (used for `created_by` in issues and audit trails) is resolved in this order:
+
+1. `--actor` flag (explicit override)
+2. `BD_ACTOR` environment variable
+3. `BEADS_ACTOR` environment variable (alias for MCP/integration compatibility)
+4. `git config user.name`
+5. `$USER` environment variable (system username fallback)
+6. `"unknown"` (final fallback)
+
+For most developers, no configuration is needed - beads will use your git identity automatically. This ensures your issue authorship matches your commit authorship.
+
+To override, set `BD_ACTOR` in your shell profile:
+```bash
+export BD_ACTOR="my-github-handle"
+```
+
+### Sync Mode Configuration
+
+The sync mode controls how beads synchronizes data with git and/or Dolt remotes.
+
+#### Sync Modes
+
+| Mode | Description |
+|------|-------------|
+| `git-portable` | (default) Export JSONL on push, import on pull. Standard git-based workflow. |
+| `realtime` | Export JSONL on every database change. Legacy behavior, higher I/O. |
+| `dolt-native` | Use Dolt remotes directly. No JSONL needed - Dolt handles sync. |
+| `belt-and-suspenders` | Both Dolt remote AND JSONL backup. Maximum redundancy. |
+
+#### Sync Triggers
+
+Control when sync operations occur:
+
+- `sync.export_on`: `push` (default) or `change`
+- `sync.import_on`: `pull` (default) or `change`
+
+#### Conflict Resolution Strategies
+
+When merging conflicting changes:
+
+| Strategy | Description |
+|----------|-------------|
+| `newest` | (default) Keep the version with the newer `updated_at` timestamp |
+| `ours` | Always keep the local version |
+| `theirs` | Always keep the remote version |
+| `manual` | Require interactive resolution for each conflict |
+
+#### Federation Configuration
+
+For Dolt-native or belt-and-suspenders modes:
+
+- `federation.remote`: Dolt remote URL (e.g., `dolthub://org/beads`, `gs://bucket/beads`, `s3://bucket/beads`)
+- `federation.sovereignty`: Data sovereignty tier:
+  - `T1`: Full sovereignty - data never leaves controlled infrastructure
+  - `T2`: Regional sovereignty - data stays within region/jurisdiction
+  - `T3`: Provider sovereignty - data with trusted cloud provider
+  - `T4`: No restrictions - data can be anywhere
+
+#### Example Sync Configuration
+
+```yaml
+# .beads/config.yaml
+sync:
+  mode: git-portable    # git-portable | realtime | dolt-native | belt-and-suspenders
+  export_on: push       # push | change
+  import_on: pull       # pull | change
+
+conflict:
+  strategy: newest      # newest | ours | theirs | manual
+
+# Optional: Dolt federation for dolt-native or belt-and-suspenders modes
+federation:
+  remote: dolthub://myorg/beads
+  sovereignty: T2
+```
+
+#### When to Use Each Mode
+
+- **git-portable** (default): Best for most teams. JSONL is committed to git, works with any git hosting.
+- **realtime**: Use when you need instant JSONL updates (e.g., file watchers, CI triggers on JSONL changes).
+- **dolt-native**: Use when you have Dolt infrastructure and want database-level sync without JSONL.
+- **belt-and-suspenders**: Use for critical data where you want both Dolt sync AND git-portable backup.
 
 ### Example Config File
 
