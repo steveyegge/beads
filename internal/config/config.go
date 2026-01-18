@@ -12,66 +12,9 @@ import (
 	"github.com/steveyegge/beads/internal/debug"
 )
 
-// Sync mode constants define how beads syncs with git/remotes.
-const (
-	// SyncModeGitPortable exports JSONL on push, imports on pull (default).
-	// This is the standard git-based workflow where JSONL is committed.
-	SyncModeGitPortable = "git-portable"
-
-	// SyncModeRealtime exports JSONL on every database change.
-	// Legacy behavior, more frequent writes but higher I/O.
-	SyncModeRealtime = "realtime"
-
-	// SyncModeDoltNative uses Dolt remotes directly (dolthub://, gs://, s3://).
-	// No JSONL export needed - Dolt handles sync.
-	SyncModeDoltNative = "dolt-native"
-
-	// SyncModeBeltAndSuspenders uses both Dolt remote AND JSONL backup.
-	// Maximum redundancy for critical data.
-	SyncModeBeltAndSuspenders = "belt-and-suspenders"
-)
-
-// Sync trigger constants define when sync operations occur.
-const (
-	// SyncTriggerPush triggers sync on git push operations.
-	SyncTriggerPush = "push"
-
-	// SyncTriggerChange triggers sync on every database change.
-	SyncTriggerChange = "change"
-
-	// SyncTriggerPull triggers import on git pull operations.
-	SyncTriggerPull = "pull"
-)
-
-// Conflict strategy constants define how sync conflicts are resolved.
-const (
-	// ConflictStrategyNewest keeps whichever version has the newer updated_at timestamp.
-	ConflictStrategyNewest = "newest"
-
-	// ConflictStrategyOurs keeps the local version on conflict.
-	ConflictStrategyOurs = "ours"
-
-	// ConflictStrategyTheirs keeps the remote version on conflict.
-	ConflictStrategyTheirs = "theirs"
-
-	// ConflictStrategyManual requires manual resolution of conflicts.
-	ConflictStrategyManual = "manual"
-)
-
-// Federation sovereignty tiers define data sovereignty levels.
-const (
-	// SovereigntyT1 - Full sovereignty: data never leaves controlled infrastructure.
-	SovereigntyT1 = "T1"
-
-	// SovereigntyT2 - Regional sovereignty: data stays within region/jurisdiction.
-	SovereigntyT2 = "T2"
-
-	// SovereigntyT3 - Provider sovereignty: data with trusted cloud provider.
-	SovereigntyT3 = "T3"
-
-	// SovereigntyT4 - No restrictions: data can be anywhere (e.g., DoltHub public).
-	SovereigntyT4 = "T4"
-)
+// Note: Sync mode, conflict strategy, and sovereignty constants are defined in sync.go
+// to avoid duplication. Those typed constants (SyncMode, ConflictStrategy, Sovereignty)
+// are used throughout this package.
 
 var v *viper.Viper
 
@@ -615,32 +558,16 @@ type SyncConfig struct {
 // GetSyncConfig returns the current sync configuration.
 func GetSyncConfig() SyncConfig {
 	return SyncConfig{
-		Mode:     GetSyncMode(),
+		Mode:     string(GetSyncMode()),
 		ExportOn: GetString("sync.export_on"),
 		ImportOn: GetString("sync.import_on"),
-	}
-}
-
-// GetSyncMode returns the configured sync mode.
-// Returns git-portable if not configured or invalid.
-func GetSyncMode() string {
-	mode := GetString("sync.mode")
-	if mode == "" {
-		return SyncModeGitPortable
-	}
-	// Validate mode
-	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
-		return mode
-	default:
-		return SyncModeGitPortable
 	}
 }
 
 // IsSyncModeValid checks if the given sync mode is valid.
 func IsSyncModeValid(mode string) bool {
 	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
+	case string(SyncModeGitPortable), string(SyncModeRealtime), string(SyncModeDoltNative), string(SyncModeBeltAndSuspenders):
 		return true
 	default:
 		return false
@@ -655,30 +582,14 @@ type ConflictConfig struct {
 // GetConflictConfig returns the current conflict resolution configuration.
 func GetConflictConfig() ConflictConfig {
 	return ConflictConfig{
-		Strategy: GetConflictStrategy(),
-	}
-}
-
-// GetConflictStrategy returns the configured conflict resolution strategy.
-// Returns newest if not configured or invalid.
-func GetConflictStrategy() string {
-	strategy := GetString("conflict.strategy")
-	if strategy == "" {
-		return ConflictStrategyNewest
-	}
-	// Validate strategy
-	switch strategy {
-	case ConflictStrategyNewest, ConflictStrategyOurs, ConflictStrategyTheirs, ConflictStrategyManual:
-		return strategy
-	default:
-		return ConflictStrategyNewest
+		Strategy: string(GetConflictStrategy()),
 	}
 }
 
 // IsConflictStrategyValid checks if the given conflict strategy is valid.
 func IsConflictStrategyValid(strategy string) bool {
 	switch strategy {
-	case ConflictStrategyNewest, ConflictStrategyOurs, ConflictStrategyTheirs, ConflictStrategyManual:
+	case string(ConflictStrategyNewest), string(ConflictStrategyOurs), string(ConflictStrategyTheirs), string(ConflictStrategyManual):
 		return true
 	default:
 		return false
@@ -695,27 +606,14 @@ type FederationConfig struct {
 func GetFederationConfig() FederationConfig {
 	return FederationConfig{
 		Remote:      GetString("federation.remote"),
-		Sovereignty: GetSovereignty(),
-	}
-}
-
-// GetSovereignty returns the configured data sovereignty tier.
-// Returns empty string if not configured.
-func GetSovereignty() string {
-	sovereignty := GetString("federation.sovereignty")
-	// Validate sovereignty tier
-	switch sovereignty {
-	case SovereigntyT1, SovereigntyT2, SovereigntyT3, SovereigntyT4:
-		return sovereignty
-	default:
-		return ""
+		Sovereignty: string(GetSovereignty()),
 	}
 }
 
 // IsSovereigntyValid checks if the given sovereignty tier is valid.
 func IsSovereigntyValid(sovereignty string) bool {
 	switch sovereignty {
-	case "", SovereigntyT1, SovereigntyT2, SovereigntyT3, SovereigntyT4:
+	case "", string(SovereigntyT1), string(SovereigntyT2), string(SovereigntyT3), string(SovereigntyT4):
 		return true
 	default:
 		return false
