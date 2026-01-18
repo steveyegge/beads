@@ -31,6 +31,16 @@ var validSyncModes = map[SyncMode]bool{
 	SyncModeBeltAndSuspenders: true,
 }
 
+// Sync trigger constants define when sync operations occur.
+const (
+	// SyncTriggerPush triggers sync on git push operations.
+	SyncTriggerPush = "push"
+	// SyncTriggerChange triggers sync on every database change.
+	SyncTriggerChange = "change"
+	// SyncTriggerPull triggers import on git pull operations.
+	SyncTriggerPull = "pull"
+)
+
 // ConflictStrategy represents the conflict resolution strategy
 type ConflictStrategy string
 
