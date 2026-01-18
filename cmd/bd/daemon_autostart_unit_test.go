@@ -92,7 +92,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
+func TestDaemonAutostart_AcquireStartLockFlock_CreatesLock(t *testing.T) {
 	tmpDir := t.TempDir()
 	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
 	pid, err := readPIDFromFile(lockPath)
@@ -100,9 +100,12 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 		// lock doesn't exist yet; expect read to fail.
 	}
 
-	if !acquireStartLock(lockPath, filepath.Join(tmpDir, "bd.sock")) {
-		t.Fatalf("expected acquireStartLock to succeed")
+	lockFile, err := acquireStartLockFlock(lockPath)
+	if err != nil {
+		t.Fatalf("expected acquireStartLockFlock to succeed: %v", err)
 	}
+	defer lockFile.Close()
+
 	got, err := readPIDFromFile(lockPath)
 	if err != nil {
 		t.Fatalf("readPIDFromFile: %v", err)
@@ -110,24 +113,9 @@ func TestDaemonAutostart_AcquireStartLock_CreatesAndCleansStale(t *testing.T) {
 	if got != os.Getpid() {
 		t.Fatalf("expected lock PID %d, got %d", os.Getpid(), got)
 	}
-
-	// Stale lock: dead/unreadable PID should be removed and recreated.
-	if err := os.WriteFile(lockPath, []byte("0\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if !acquireStartLock(lockPath, filepath.Join(tmpDir, "bd.sock")) {
-		t.Fatalf("expected acquireStartLock to succeed on stale lock")
-	}
-	got, err = readPIDFromFile(lockPath)
-	if err != nil {
-		t.Fatalf("readPIDFromFile: %v", err)
-	}
-	if got != os.Getpid() {
-		t.Fatalf("expected recreated lock PID %d, got %d", os.Getpid(), got)
-	}
 }
 
-func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
+func TestDaemonAutostart_AcquireStartLockFlock_CreatesMissingDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "missing", "bd.sock")
 	lockPath := socketPath + ".startlock"
@@ -136,40 +124,63 @@ func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
 		t.Fatalf("expected lock dir to be missing before test, got: %v", err)
 	}
 
-	if !acquireStartLock(lockPath, socketPath) {
-		t.Fatalf("expected acquireStartLock to succeed when directory missing")
+	lockFile, err := acquireStartLockFlock(lockPath)
+	if err != nil {
+		t.Fatalf("expected acquireStartLockFlock to succeed when directory missing: %v", err)
 	}
+	defer lockFile.Close()
 
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatalf("expected lock file to exist, stat error: %v", err)
 	}
 }
 
-func TestDaemonAutostart_AcquireStartLock_FailsWhenRemoveFails(t *testing.T) {
-	// This test verifies that acquireStartLock returns false (instead of
-	// recursing infinitely) when os.Remove fails on a stale lock file.
-
-	oldRemove := removeFileFn
-	defer func() { removeFileFn = oldRemove }()
-
-	// Stub removeFileFn to always fail
-	removeFileFn = func(path string) error {
-		return os.ErrPermission
-	}
-
+func TestDaemonAutostart_AcquireStartLockFlock_BlocksAndAcquires(t *testing.T) {
+	// This test verifies that when one process holds the flock, another
+	// process will block until the first releases it.
 	tmpDir := t.TempDir()
 	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
-	socketPath := filepath.Join(tmpDir, "bd.sock")
 
-	// Create a stale lock file with PID 0 (will be detected as dead)
-	if err := os.WriteFile(lockPath, []byte("0\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	// First process acquires the lock
+	lockFile1, err := acquireStartLockFlock(lockPath)
+	if err != nil {
+		t.Fatalf("first lock acquisition failed: %v", err)
 	}
 
-	// acquireStartLock should return false since it can't remove the stale lock
-	// Previously, this would cause infinite recursion and stack overflow
-	if acquireStartLock(lockPath, socketPath) {
-		t.Fatalf("expected acquireStartLock to fail when remove fails")
+	// Try to acquire from a goroutine - it should block
+	acquired := make(chan bool, 1)
+	go func() {
+		lockFile2, err := acquireStartLockFlock(lockPath)
+		if err != nil {
+			acquired <- false
+			return
+		}
+		lockFile2.Close()
+		acquired <- true
+	}()
+
+	// Give the goroutine time to start blocking
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify nothing has been acquired yet (goroutine is blocked)
+	select {
+	case <-acquired:
+		t.Fatalf("second lock should have blocked")
+	default:
+		// Expected - goroutine is blocked
+	}
+
+	// Release first lock
+	lockFile1.Close()
+
+	// Now second acquisition should complete
+	select {
+	case success := <-acquired:
+		if !success {
+			t.Fatalf("second lock acquisition failed after first was released")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("second lock acquisition timed out")
 	}
 }
 
