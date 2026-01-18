@@ -215,14 +215,21 @@ func ValidateAgentID(id string) error {
 		return fmt.Errorf("agent ID must include content after prefix (got %q)", id)
 	}
 
-	// Case 1: Single part after prefix - must be town-level role
+	// Case 1: Single part after prefix
 	if len(parts) == 1 {
 		role := parts[0]
 		if isTownLevelRole(role) {
-			return nil // Valid town-level agent
+			return nil // Valid town-level agent (gt-mayor, gt-deacon)
 		}
-		if isValidRole(role) {
-			return fmt.Errorf("agent role %q requires rig: <prefix>-<rig>-%s (got %q)", role, role, id)
+		// Support deduplicated format: <prefix>-<role> where prefix == rig
+		// This handles cases like "spa-witness" for spa rig with spa- prefix
+		// (Gas Town deduplicates to avoid "spa-spa-witness")
+		if isRigLevelRole(role) {
+			return nil // Valid deduplicated rig-level singleton
+		}
+		if isNamedRole(role) {
+			// Named roles still need a name even in deduplicated format
+			return fmt.Errorf("agent role %q requires name: <prefix>-%s-<name> (got %q)", role, role, id)
 		}
 		return fmt.Errorf("invalid agent role %q (valid: %s)", role, strings.Join(ValidAgentRoles, ", "))
 	}
@@ -266,8 +273,15 @@ func ValidateAgentID(id string) error {
 	}
 
 	if isNamedRole(role) {
+		// Support deduplicated format: <prefix>-<role>-<name> where prefix == rig
+		// This handles cases like "spa-crew-ubuntu" for spa rig with spa- prefix
+		// (Gas Town deduplicates to avoid "spa-spa-crew-ubuntu")
 		if rig == "" {
-			return fmt.Errorf("rig name cannot be empty in %q", id)
+			// In deduplicated format, name must still be present
+			if name == "" {
+				return fmt.Errorf("agent role %q requires name: <prefix>-%s-<name> (got %q)", role, role, id)
+			}
+			return nil // Valid deduplicated named agent (prefix == rig)
 		}
 		if name == "" {
 			return fmt.Errorf("agent role %q requires name: <prefix>-<rig>-%s-<name> (got %q)", role, role, id)
