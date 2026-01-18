@@ -15,6 +15,14 @@ var gitCommandRunner = func(repoPath string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
+// HasUpstreamRemote checks if the repository has an "upstream" remote configured.
+// The presence of an upstream remote is a strong signal that this is a fork,
+// indicating the user is likely a contributor rather than a maintainer.
+func HasUpstreamRemote(repoPath string) bool {
+	_, err := gitCommandRunner(repoPath, "remote", "get-url", "upstream")
+	return err == nil
+}
+
 // UserRole represents whether the user is a maintainer or contributor
 type UserRole string
 
@@ -26,10 +34,11 @@ const (
 // DetectUserRole determines if the user is a maintainer or contributor
 // based on git configuration and repository permissions.
 //
-// Detection strategy:
-// 1. Check if user has push access to origin (git remote -v shows write URL)
-// 2. Check git config for beads.role setting (explicit override)
-// 3. Fall back to contributor if uncertain
+// Detection strategy (in priority order):
+// 1. Check git config for beads.role setting (explicit override)
+// 2. Check for upstream remote (fork signal - implies contributor)
+// 3. Check push URL pattern (SSH/HTTPS with credentials → maintainer)
+// 4. Fall back to contributor if uncertain
 func DetectUserRole(repoPath string) (UserRole, error) {
 	// First check for explicit role in git config
 	output, err := gitCommandRunner(repoPath, "config", "--get", "beads.role")
@@ -41,6 +50,11 @@ func DetectUserRole(repoPath string) (UserRole, error) {
 		if role == string(Contributor) {
 			return Contributor, nil
 		}
+	}
+
+	// Check for upstream remote - presence indicates a fork (contributor)
+	if HasUpstreamRemote(repoPath) {
+		return Contributor, nil
 	}
 
 	// Check push access by examining remote URL

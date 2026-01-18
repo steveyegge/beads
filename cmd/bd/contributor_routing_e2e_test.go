@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -842,6 +843,173 @@ func TestExplicitRoleOverride(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpstreamRemoteDetection verifies that the presence of an "upstream" remote
+// correctly signals a fork/contributor scenario, fixing GH#1174.
+func TestUpstreamRemoteDetection(t *testing.T) {
+	// Create a temporary git repository to test real git operations
+	tmpDir := t.TempDir()
+
+	// Initialize git repo
+	initGit := func(dir string) {
+		t.Helper()
+		cmd := exec.Command("git", "init")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init failed: %v\n%s", err, out)
+		}
+		// Set required git config for commits
+		cmd = exec.Command("git", "config", "user.email", "test@example.com")
+		cmd.Dir = dir
+		cmd.Run() //nolint:errcheck // ignore error in test setup
+		cmd = exec.Command("git", "config", "user.name", "Test User")
+		cmd.Dir = dir
+		cmd.Run() //nolint:errcheck // ignore error in test setup
+	}
+
+	t.Run("no_upstream_ssh_origin_is_maintainer", func(t *testing.T) {
+		repoDir := filepath.Join(tmpDir, "no-upstream")
+		if err := os.MkdirAll(repoDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		initGit(repoDir)
+
+		// Add SSH origin (would normally indicate maintainer)
+		cmd := exec.Command("git", "remote", "add", "origin", "git@github.com:owner/repo.git")
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add failed: %v\n%s", err, out)
+		}
+
+		// Verify HasUpstreamRemote returns false
+		if routing.HasUpstreamRemote(repoDir) {
+			t.Error("HasUpstreamRemote() should return false when no upstream exists")
+		}
+
+		// Verify DetectUserRole returns Maintainer (SSH origin, no upstream)
+		role, err := routing.DetectUserRole(repoDir)
+		if err != nil {
+			t.Fatalf("DetectUserRole() error = %v", err)
+		}
+		if role != routing.Maintainer {
+			t.Errorf("DetectUserRole() = %v, want %v (SSH origin without upstream)", role, routing.Maintainer)
+		}
+	})
+
+	t.Run("upstream_exists_ssh_origin_is_contributor", func(t *testing.T) {
+		repoDir := filepath.Join(tmpDir, "with-upstream")
+		if err := os.MkdirAll(repoDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		initGit(repoDir)
+
+		// Add SSH origin (user's fork)
+		cmd := exec.Command("git", "remote", "add", "origin", "git@github.com:contributor/fork.git")
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add origin failed: %v\n%s", err, out)
+		}
+
+		// Add upstream (original repo)
+		cmd = exec.Command("git", "remote", "add", "upstream", "https://github.com/owner/repo.git")
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add upstream failed: %v\n%s", err, out)
+		}
+
+		// Verify HasUpstreamRemote returns true
+		if !routing.HasUpstreamRemote(repoDir) {
+			t.Error("HasUpstreamRemote() should return true when upstream exists")
+		}
+
+		// Verify DetectUserRole returns Contributor (upstream takes precedence over SSH)
+		role, err := routing.DetectUserRole(repoDir)
+		if err != nil {
+			t.Fatalf("DetectUserRole() error = %v", err)
+		}
+		if role != routing.Contributor {
+			t.Errorf("DetectUserRole() = %v, want %v (upstream exists, should override SSH)", role, routing.Contributor)
+		}
+	})
+
+	t.Run("config_overrides_upstream", func(t *testing.T) {
+		repoDir := filepath.Join(tmpDir, "config-override")
+		if err := os.MkdirAll(repoDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		initGit(repoDir)
+
+		// Add upstream (would normally indicate contributor)
+		cmd := exec.Command("git", "remote", "add", "upstream", "https://github.com/owner/repo.git")
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add upstream failed: %v\n%s", err, out)
+		}
+
+		// Set explicit maintainer config (overrides upstream detection)
+		cmd = exec.Command("git", "config", "beads.role", "maintainer")
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v\n%s", err, out)
+		}
+
+		// Verify DetectUserRole returns Maintainer (config overrides upstream)
+		role, err := routing.DetectUserRole(repoDir)
+		if err != nil {
+			t.Fatalf("DetectUserRole() error = %v", err)
+		}
+		if role != routing.Maintainer {
+			t.Errorf("DetectUserRole() = %v, want %v (config should override upstream)", role, routing.Maintainer)
+		}
+	})
+
+	t.Run("routing_with_upstream_detection", func(t *testing.T) {
+		// Verify that upstream-detected contributor role correctly routes to planning repo
+		env := setupContributorRoutingEnv(t)
+		defer env.cleanup()
+
+		// Set up a git repo with upstream in the project directory
+		initGit(env.projectDir)
+		cmd := exec.Command("git", "remote", "add", "origin", "git@github.com:contributor/fork.git")
+		cmd.Dir = env.projectDir
+		cmd.Run() //nolint:errcheck // ignore error in test
+		cmd = exec.Command("git", "remote", "add", "upstream", "https://github.com/owner/repo.git")
+		cmd.Dir = env.projectDir
+		cmd.Run() //nolint:errcheck // ignore error in test
+
+		projectStore := env.initProjectStore("direct")
+		defer projectStore.Close()
+
+		planningStore := env.initPlanningStore()
+		defer planningStore.Close()
+
+		// Detect role using actual git commands
+		role, err := routing.DetectUserRole(env.projectDir)
+		if err != nil {
+			t.Fatalf("DetectUserRole() error = %v", err)
+		}
+		if role != routing.Contributor {
+			t.Fatalf("expected Contributor role due to upstream, got %v", role)
+		}
+
+		// Build routing config
+		mode, _ := projectStore.GetConfig(env.ctx, "routing.mode")
+		contributorPath, _ := projectStore.GetConfig(env.ctx, "routing.contributor")
+
+		routingConfig := &routing.RoutingConfig{
+			Mode:            mode,
+			ContributorRepo: contributorPath,
+			MaintainerRepo:  ".",
+		}
+
+		// Verify routing to planning repo
+		targetRepo := routing.DetermineTargetRepo(routingConfig, role, env.projectDir)
+		if targetRepo != env.planningDir {
+			t.Errorf("upstream-detected contributor should route to planning repo: got %q, want %q",
+				targetRepo, env.planningDir)
+		}
+	})
 }
 
 // TestRoutingWithAllSyncModes is a table-driven test covering all sync mode combinations
