@@ -31,6 +31,16 @@ func TestAgentStateWithRouting(t *testing.T) {
 		t.Fatalf("Failed to create town beads dir: %v", err)
 	}
 
+	// Create mayor/town.json to mark this as a town root
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	townJSON := filepath.Join(mayorDir, "town.json")
+	if err := os.WriteFile(townJSON, []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create town.json: %v", err)
+	}
+
 	// Create rig .beads directory
 	rigBeadsDir := filepath.Join(tmpDir, "rig", ".beads")
 	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
@@ -72,6 +82,16 @@ func TestAgentStateWithRouting(t *testing.T) {
 	oldDbPath := dbPath
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
+
+	// Change to tmpDir so findTownRootFromCWD() finds the test's town root
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldCwd) })
 
 	// Test the routed resolution
 	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-testrig-polecat-test")
@@ -126,6 +146,16 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 		t.Fatalf("Failed to create town beads dir: %v", err)
 	}
 
+	// Create mayor/town.json to mark this as a town root
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	townJSON := filepath.Join(mayorDir, "town.json")
+	if err := os.WriteFile(townJSON, []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create town.json: %v", err)
+	}
+
 	// Create rig .beads directory
 	rigBeadsDir := filepath.Join(tmpDir, "rig", ".beads")
 	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
@@ -167,6 +197,16 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
 
+	// Change to tmpDir so findTownRootFromCWD() finds the test's town root
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldCwd) })
+
 	// Test that we can resolve the agent from the town directory
 	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-test-witness")
 	if err != nil {
@@ -198,6 +238,16 @@ func TestAgentShowWithRouting(t *testing.T) {
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create town beads dir: %v", err)
+	}
+
+	// Create mayor/town.json to mark this as a town root
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	townJSON := filepath.Join(mayorDir, "town.json")
+	if err := os.WriteFile(townJSON, []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create town.json: %v", err)
 	}
 
 	// Create rig .beads directory
@@ -240,6 +290,16 @@ func TestAgentShowWithRouting(t *testing.T) {
 	oldDbPath := dbPath
 	dbPath = townDBPath
 	t.Cleanup(func() { dbPath = oldDbPath })
+
+	// Change to tmpDir so findTownRootFromCWD() finds the test's town root
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldCwd) })
 
 	// Test that we can resolve the agent from the town directory
 	result, err := resolveAndGetIssueWithRouting(ctx, townStore, "gt-myrig-crew-alice")
