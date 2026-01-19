@@ -225,9 +225,9 @@ func TestGetSovereignty(t *testing.T) {
 		expectsWarning bool
 	}{
 		{
-			name:           "empty returns default",
+			name:           "empty returns empty",
 			configValue:    "",
-			expectedTier:   SovereigntyT1,
+			expectedTier:   "",
 			expectsWarning: false,
 		},
 		{
@@ -267,21 +267,21 @@ func TestGetSovereignty(t *testing.T) {
 			expectsWarning: false,
 		},
 		{
-			name:           "invalid value returns default with warning",
+			name:           "invalid value returns empty with warning",
 			configValue:    "T5",
-			expectedTier:   SovereigntyT1,
+			expectedTier:   "",
 			expectsWarning: true,
 		},
 		{
-			name:           "invalid tier 0 returns default with warning",
+			name:           "invalid tier 0 returns empty with warning",
 			configValue:    "T0",
-			expectedTier:   SovereigntyT1,
+			expectedTier:   "",
 			expectsWarning: true,
 		},
 		{
-			name:           "word tier returns default with warning",
+			name:           "word tier returns empty with warning",
 			configValue:    "public",
-			expectedTier:   SovereigntyT1,
+			expectedTier:   "",
 			expectsWarning: true,
 		},
 	}

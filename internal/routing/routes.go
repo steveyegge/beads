@@ -266,11 +266,17 @@ func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (stri
 
 					// Verify the target exists
 					if info, err := os.Stat(targetPath); err == nil && info.IsDir() {
+						// Check if target is same as current (no routing needed)
+						routed := targetPath != currentBeadsDir
 						// Debug logging
 						if os.Getenv("BD_DEBUG_ROUTING") != "" {
-							fmt.Fprintf(os.Stderr, "[routing] ID %s matched prefix %s -> %s (townRoot=%s)\n", id, prefix, targetPath, townRoot)
+							if routed {
+								fmt.Fprintf(os.Stderr, "[routing] ID %s matched prefix %s -> %s (townRoot=%s, routing needed)\n", id, prefix, targetPath, townRoot)
+							} else {
+								fmt.Fprintf(os.Stderr, "[routing] ID %s matched prefix %s -> %s (townRoot=%s, same as current, no routing)\n", id, prefix, targetPath, townRoot)
+							}
 						}
-						return targetPath, true, nil
+						return targetPath, routed, nil
 					} else if os.Getenv("BD_DEBUG_ROUTING") != "" {
 						fmt.Fprintf(os.Stderr, "[routing] ID %s matched prefix %s but target %s not found: %v\n", id, prefix, targetPath, err)
 					}

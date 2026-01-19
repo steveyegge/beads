@@ -118,7 +118,7 @@ func GetConflictStrategy() ConflictStrategy {
 }
 
 // GetSovereignty retrieves the federation sovereignty tier configuration.
-// Returns the configured tier, or SovereigntyT1 (default) if not set or invalid.
+// Returns the configured tier, or empty string if not set or invalid.
 // Logs a warning to stderr if an invalid value is configured.
 //
 // Config key: federation.sovereignty
@@ -126,14 +126,14 @@ func GetConflictStrategy() ConflictStrategy {
 func GetSovereignty() Sovereignty {
 	value := GetString("federation.sovereignty")
 	if value == "" {
-		return SovereigntyT1 // Default
+		return "" // Not configured - return empty
 	}
 
 	// Normalize to uppercase for comparison (T1, T2, etc.)
 	tier := Sovereignty(strings.ToUpper(strings.TrimSpace(value)))
 	if !validSovereigntyTiers[tier] {
-		fmt.Fprintf(os.Stderr, "Warning: invalid federation.sovereignty %q in config (valid: T1, T2, T3, T4), using default 'T1'\n", value)
-		return SovereigntyT1
+		fmt.Fprintf(os.Stderr, "Warning: invalid federation.sovereignty %q in config (valid: T1, T2, T3, T4), using default ''\n", value)
+		return "" // Invalid - return empty
 	}
 
 	return tier
