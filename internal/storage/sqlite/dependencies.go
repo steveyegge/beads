@@ -1039,6 +1039,11 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		issueIDs = append(issueIDs, issue.ID)
 	}
 
+	// Check for errors during iteration (e.g., connection issues, context cancellation)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating issue rows: %w", err)
+	}
+
 	// Second pass: batch-load labels for all issues
 	labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
 	if err != nil {
@@ -1178,6 +1183,11 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			DependencyType: depType,
 		}
 		results = append(results, result)
+	}
+
+	// Check for errors during iteration (e.g., connection issues, context cancellation)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating issue rows with dependency type: %w", err)
 	}
 
 	return results, nil
