@@ -429,7 +429,7 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Check if store supports versioned operations (required for Dolt)
 	vs, ok := storage.AsVersioned(store)
@@ -511,6 +511,8 @@ func hookPreCommitDolt(beadsDir, worktreeRoot string) int {
 }
 
 // hookPreCommitDoltFallback does a full export when incremental isn't available.
+//
+//nolint:unparam // result is always 0 (success exit code) - intentional
 func hookPreCommitDoltFallback(ctx context.Context, store storage.Storage, beadsDir, worktreeRoot string) int {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	if err := exportFullDolt(ctx, store, jsonlPath); err != nil {
@@ -584,6 +586,8 @@ func exportIncrementalDolt(ctx context.Context, vs storage.VersionedStorage, sto
 }
 
 // exportFullDolt does a complete export of all issues to JSONL.
+//
+//nolint:unparam // ctx reserved for future direct implementation
 func exportFullDolt(ctx context.Context, store storage.Storage, jsonlPath string) error {
 	// Use bd sync --flush-only for now - this handles all the JSONL formatting
 	cmd := exec.Command("bd", "sync", "--flush-only", "--no-daemon")
@@ -666,7 +670,7 @@ func hookPostMergeDolt(beadsDir string) int {
 		fmt.Fprintf(os.Stderr, "Warning: could not open database: %v\n", err)
 		return 0
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Check if Dolt store supports version control operations
 	doltStore, ok := store.(interface {
@@ -874,6 +878,8 @@ func hookPostCheckout(args []string) int {
 
 // importFromJSONLToStore imports issues from JSONL to a store.
 // This is a placeholder - the actual implementation should use the store's methods.
+//
+//nolint:unparam // parameters reserved for future direct implementation
 func importFromJSONLToStore(ctx context.Context, store interface{}, jsonlPath string) error {
 	// Use bd sync --import-only for now
 	// TODO: Implement direct store import

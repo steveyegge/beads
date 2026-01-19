@@ -13,6 +13,7 @@
 - [Molecular Chemistry](#molecular-chemistry)
 - [Database Management](#database-management)
 - [Editor Integration](#editor-integration)
+- [External Trackers](#external-trackers)
 
 ## Basic Operations
 
@@ -783,11 +784,36 @@ See also:
 - [AIDER_INTEGRATION.md](AIDER_INTEGRATION.md) - Detailed Aider guide
 - [CLAUDE_INTEGRATION.md](CLAUDE_INTEGRATION.md) - Claude integration design
 
+## External Trackers
+
+Beads integrates with external issue trackers for bidirectional sync.
+
+```bash
+# Linear
+bd linear sync --pull              # Import from Linear
+bd linear sync --push              # Export to Linear
+bd linear status                   # Show sync status
+
+# Jira
+bd jira sync --pull                # Import from Jira
+bd jira sync --push                # Export to Jira
+bd jira status                     # Show sync status
+
+# Azure DevOps
+bd azuredevops sync --pull         # Import from Azure DevOps
+bd ado sync --push                 # Export (short alias)
+bd ado status                      # Show sync status
+bd ado projects                    # List available projects
+```
+
+See [TRACKERS.md](TRACKERS.md) for full configuration and usage documentation.
+
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
 - [MOLECULES.md](MOLECULES.md) - Molecular chemistry metaphor (protos, pour, bond, squash, burn)
 - [DAEMON.md](DAEMON.md) - Daemon management and event-driven mode
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflows and merge strategies
+- [TRACKERS.md](TRACKERS.md) - External tracker integrations (Linear, Jira, Azure DevOps)
 - [LABELS.md](../LABELS.md) - Label system guide
 - [README.md](../README.md) - User documentation

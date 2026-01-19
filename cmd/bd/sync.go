@@ -900,7 +900,7 @@ type SyncConflictRecord struct {
 // LoadSyncConflictState loads the sync conflict state from disk.
 func LoadSyncConflictState(beadsDir string) (*SyncConflictState, error) {
 	path := filepath.Join(beadsDir, "sync_conflicts.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed from controlled beadsDir + hardcoded filename
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &SyncConflictState{}, nil
@@ -940,7 +940,7 @@ func ClearSyncConflictState(beadsDir string) error {
 //   - "ours": Keep local version
 //   - "theirs": Keep remote version
 //   - "manual": Interactive resolution with user prompts
-func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string, dryRun bool) error {
+func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config.ConflictStrategy, dryRun bool) error {
 	beadsDir := filepath.Dir(jsonlPath)
 
 	conflictState, err := LoadSyncConflictState(beadsDir)
@@ -1076,6 +1076,8 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 }
 
 // resolveSyncConflictsManually handles manual conflict resolution with interactive prompts.
+//
+//nolint:unparam // baseIssues reserved for 3-way diff display
 func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir string, conflictState *SyncConflictState,
 	baseMap, localMap, remoteMap map[string]*beads.Issue,
 	baseIssues, localIssues, remoteIssues []*beads.Issue) error {

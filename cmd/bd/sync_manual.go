@@ -318,6 +318,7 @@ func valueOrNone(s string) string {
 	return s
 }
 
+//nolint:unparam // maxLen kept for flexibility even though currently always 60
 func truncateText(s string, maxLen int) string {
 	if s == "" {
 		return "(empty)"
