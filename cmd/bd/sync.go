@@ -273,6 +273,17 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 		}
 		hasSyncBranchConfig := syncBranchName != ""
 
+		// GH#1166: Block sync if currently on the sync branch
+		// This must happen BEFORE worktree operations - after entering a worktree,
+		// GetCurrentBranch() would return the worktree's branch, not the original.
+		if hasSyncBranchConfig {
+			if syncbranch.IsSyncBranchSameAsCurrent(ctx, syncBranchName) {
+				FatalError("Cannot sync to '%s': it's your current branch. "+
+					"Checkout a different branch first, or use a dedicated sync branch like 'beads-sync'.",
+					syncBranchName)
+			}
+		}
+
 		// bd-wayc3: Check for redirect + sync-branch incompatibility
 		// Redirect and sync-branch are mutually exclusive:
 		// - Redirect says: "My database is in another repo (I am a client)"
