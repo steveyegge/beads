@@ -87,17 +87,29 @@ func ValidatePrefix(requestedPrefix, dbPrefix string, force bool) error {
 // - dbPrefix is empty
 // - requestedPrefix matches dbPrefix
 // - requestedPrefix is in the comma-separated allowedPrefixes list
+// - requestedPrefix is a prefix of any entry in allowedPrefixes (GH#1135)
+//
+// The prefix-of-allowed check handles cases where ExtractIssuePrefix returns
+// a shorter prefix than intended. For example, "hq-cv-test" extracts as "hq"
+// (because "test" is word-like), but if "hq-cv" is in allowedPrefixes, we
+// should accept "hq" since it's clearly intended to be part of "hq-cv".
 // Returns an error if none of these conditions are met.
 func ValidatePrefixWithAllowed(requestedPrefix, dbPrefix, allowedPrefixes string, force bool) error {
 	if force || dbPrefix == "" || dbPrefix == requestedPrefix {
 		return nil
 	}
 
-	// Check if requestedPrefix is in the allowed list
+	// Check if requestedPrefix is in the allowed list or is a prefix of an allowed entry
 	if allowedPrefixes != "" {
 		for _, allowed := range strings.Split(allowedPrefixes, ",") {
 			allowed = strings.TrimSpace(allowed)
 			if allowed == requestedPrefix {
+				return nil
+			}
+			// GH#1135: Also accept if requestedPrefix is a prefix of an allowed entry.
+			// This handles IDs like "hq-cv-test" where extraction yields "hq" but
+			// the user configured "hq-cv" in allowed_prefixes.
+			if strings.HasPrefix(allowed, requestedPrefix+"-") {
 				return nil
 			}
 		}

@@ -314,6 +314,14 @@ func TestValidatePrefixWithAllowed(t *testing.T) {
 		{"allowed with spaces", "gt", "hq", "gt, hmc, foo", false, false},
 		{"empty allowed list", "gt", "hq", "", false, true},
 		{"single allowed prefix", "gt", "hq", "gt", false, false},
+
+		// GH#1135: prefix-of-allowed cases
+		// When ExtractIssuePrefix returns "hq" from "hq-cv-test", but "hq-cv" is allowed
+		{"GH#1135 prefix-of-allowed hq->hq-cv", "hq", "djdefi-ops", "djdefi-ops,hq-cv", false, false},
+		{"GH#1135 prefix-of-allowed with multiple", "hq", "djdefi-ops", "hq-cv,hq-other,foo", false, false},
+		{"GH#1135 exact match still works", "hq-cv", "djdefi-ops", "hq-cv", false, false},
+		{"GH#1135 no false positive for unrelated prefix", "bar", "djdefi-ops", "hq-cv", false, true},
+		{"GH#1135 no false positive for partial overlap", "hq", "djdefi-ops", "hqx-cv", false, true},
 	}
 
 	for _, tt := range tests {
