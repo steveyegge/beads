@@ -4,26 +4,29 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
-// Sync mode constants define how beads synchronizes data with git.
+// Sync mode constants - re-exported from internal/config for backward compatibility.
+// These are used with storage.Storage (database) while config.SyncMode* are used
+// with viper (config.yaml).
 const (
 	// SyncModeGitPortable exports to JSONL on push, imports on pull.
 	// This is the default mode - works with standard git workflows.
-	SyncModeGitPortable = "git-portable"
+	SyncModeGitPortable = string(config.SyncModeGitPortable)
 
 	// SyncModeRealtime exports to JSONL on every database mutation.
 	// Provides immediate persistence but more git noise.
-	SyncModeRealtime = "realtime"
+	SyncModeRealtime = string(config.SyncModeRealtime)
 
 	// SyncModeDoltNative uses Dolt remotes for sync, skipping JSONL.
 	// Requires Dolt backend and configured Dolt remote.
-	SyncModeDoltNative = "dolt-native"
+	SyncModeDoltNative = string(config.SyncModeDoltNative)
 
 	// SyncModeBeltAndSuspenders uses both Dolt remotes AND JSONL.
 	// Maximum redundancy - Dolt for versioning, JSONL for git portability.
-	SyncModeBeltAndSuspenders = "belt-and-suspenders"
+	SyncModeBeltAndSuspenders = string(config.SyncModeBeltAndSuspenders)
 
 	// SyncModeConfigKey is the database config key for sync mode.
 	SyncModeConfigKey = "sync.mode"
@@ -45,32 +48,29 @@ const (
 	TriggerChange = "change"
 )
 
-// GetSyncMode returns the configured sync mode, defaulting to git-portable.
+// GetSyncMode returns the configured sync mode from the database, defaulting to git-portable.
+// This reads from storage.Storage (database), not config.yaml.
+// For config.yaml access, use config.GetSyncMode() instead.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
 	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
 	if err != nil || mode == "" {
 		return SyncModeGitPortable
 	}
 
-	// Validate mode
-	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
-		return mode
-	default:
-		// Invalid mode, return default
+	// Validate mode using the shared validation
+	if !config.IsValidSyncMode(mode) {
 		return SyncModeGitPortable
 	}
+
+	return mode
 }
 
-// SetSyncMode sets the sync mode configuration.
+// SetSyncMode sets the sync mode configuration in the database.
 func SetSyncMode(ctx context.Context, s storage.Storage, mode string) error {
-	// Validate mode
-	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
-		// Valid
-	default:
-		return fmt.Errorf("invalid sync mode: %s (valid: %s, %s, %s, %s)",
-			mode, SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders)
+	// Validate mode using the shared validation
+	if !config.IsValidSyncMode(mode) {
+		return fmt.Errorf("invalid sync mode: %s (valid: %s)",
+			mode, fmt.Sprintf("%v", config.ValidSyncModes()))
 	}
 
 	return s.SetConfig(ctx, SyncModeConfigKey, mode)
