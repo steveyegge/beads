@@ -263,17 +263,21 @@ var createCmd = &cobra.Command{
 		if explicitID != "" && rigOverride == "" && prefixOverride == "" {
 			prefix := routing.ExtractPrefix(explicitID)
 			if prefix != "" {
-				// Load routes from town level
-				routes, err := routing.LoadTownRoutes(beadsDir)
-				if err == nil && len(routes) > 0 {
-					// Check if this prefix matches a route to a different rig
-					for _, route := range routes {
-						if route.Prefix == prefix && route.Path != "" && route.Path != "." {
-							// Found a matching route - auto-route to that rig
-							rigName := routing.ExtractProjectFromPath(route.Path)
-							if rigName != "" {
-								createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
-								return
+				// Find town-level beads directory (where routes.jsonl lives)
+				townBeadsDir, err := findTownBeadsDir()
+				if err == nil {
+					// Load routes from town level
+					routes, err := routing.LoadRoutes(townBeadsDir)
+					if err == nil && len(routes) > 0 {
+						// Check if this prefix matches a route to a different rig
+						for _, route := range routes {
+							if route.Prefix == prefix && route.Path != "" && route.Path != "." {
+								// Found a matching route - auto-route to that rig
+								rigName := routing.ExtractProjectFromPath(route.Path)
+								if rigName != "" {
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+									return
+								}
 							}
 						}
 					}

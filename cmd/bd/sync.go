@@ -137,7 +137,7 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 			} else if resolveManual {
 				strategy = config.ConflictStrategyManual
 			}
-			if err := resolveSyncConflicts(ctx, jsonlPath, strategy, dryRun); err != nil {
+			if err := resolveSyncConflicts(ctx, jsonlPath, string(strategy), dryRun); err != nil {
 				FatalError("%v", err)
 			}
 			return
@@ -906,7 +906,7 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 	}
 
 	// Handle manual strategy with interactive resolution
-	if strategy == config.ConflictStrategyManual {
+	if strategy == string(config.ConflictStrategyManual) {
 		return resolveSyncConflictsManually(ctx, jsonlPath, beadsDir, conflictState, baseMap, localMap, remoteMap, baseIssues, localIssues, remoteIssues)
 	}
 
@@ -917,11 +917,11 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 
 		var winner string
 		switch strategy {
-		case config.ConflictStrategyOurs:
+		case string(config.ConflictStrategyOurs):
 			winner = "local"
-		case config.ConflictStrategyTheirs:
+		case string(config.ConflictStrategyTheirs):
 			winner = "remote"
-		case config.ConflictStrategyNewest:
+		case string(config.ConflictStrategyNewest):
 			fallthrough
 		default:
 			// Compare updated_at timestamps
@@ -939,7 +939,7 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string
 		}
 
 		fmt.Printf("✓ %s: kept %s", conflict.IssueID, winner)
-		if strategy == config.ConflictStrategyNewest {
+		if strategy == string(config.ConflictStrategyNewest) {
 			fmt.Print(" (newer)")
 		}
 		fmt.Println()
