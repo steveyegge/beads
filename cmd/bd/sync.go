@@ -49,35 +49,34 @@ func getSyncBranchContext(ctx context.Context) *SyncBranchContext {
 // commitAndPushBeads commits and pushes .beads changes using the appropriate method.
 // When sync-branch is configured, uses worktree-based commit/push.
 // Otherwise, uses standard git commit/push on the current branch.
-// Returns true if changes were committed.
-func commitAndPushBeads(ctx context.Context, sbc *SyncBranchContext, jsonlPath string, noPush bool, message string) (bool, error) {
+func commitAndPushBeads(ctx context.Context, sbc *SyncBranchContext, jsonlPath string, noPush bool, message string) error {
 	if sbc.IsConfigured() {
 		fmt.Printf("→ Committing to sync branch '%s'...\n", sbc.Branch)
 		commitResult, err := syncbranch.CommitToSyncBranch(ctx, sbc.RepoRoot, sbc.Branch, jsonlPath, !noPush)
 		if err != nil {
-			return false, fmt.Errorf("committing to sync branch: %w", err)
+			return fmt.Errorf("committing to sync branch: %w", err)
 		}
 		if commitResult.Committed {
 			fmt.Printf("  Committed: %s\n", commitResult.Message)
 			if commitResult.Pushed {
 				fmt.Println("  Pushed to remote")
 			}
-			return true, nil
+		} else {
+			fmt.Println("→ No changes to commit")
 		}
-		fmt.Println("→ No changes to commit")
-		return false, nil
+		return nil
 	}
 
 	// Standard git workflow
 	hasChanges, err := gitHasBeadsChanges(ctx)
 	if err != nil {
-		return false, fmt.Errorf("checking git status: %w", err)
+		return fmt.Errorf("checking git status: %w", err)
 	}
 
 	if hasChanges {
 		fmt.Println("→ Committing changes...")
 		if err := gitCommitBeadsDir(ctx, message); err != nil {
-			return false, fmt.Errorf("committing: %w", err)
+			return fmt.Errorf("committing: %w", err)
 		}
 	} else {
 		fmt.Println("→ No changes to commit")
@@ -87,11 +86,11 @@ func commitAndPushBeads(ctx context.Context, sbc *SyncBranchContext, jsonlPath s
 	if !noPush && hasChanges {
 		fmt.Println("→ Pushing to remote...")
 		if err := gitPush(ctx, ""); err != nil {
-			return false, fmt.Errorf("pushing: %w", err)
+			return fmt.Errorf("pushing: %w", err)
 		}
 	}
 
-	return hasChanges, nil
+	return nil
 }
 
 var syncCmd = &cobra.Command{
@@ -579,7 +578,7 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	}
 
 	// Step 8 & 9: Commit and push changes
-	if _, err := commitAndPushBeads(ctx, sbc, jsonlPath, noPush, message); err != nil {
+	if err := commitAndPushBeads(ctx, sbc, jsonlPath, noPush, message); err != nil {
 		return err
 	}
 
@@ -650,7 +649,7 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 	}
 
 	// Commit and push using the appropriate method (sync-branch worktree or regular git)
-	if _, err := commitAndPushBeads(ctx, sbc, jsonlPath, noPush, message); err != nil {
+	if err := commitAndPushBeads(ctx, sbc, jsonlPath, noPush, message); err != nil {
 		return err
 	}
 
