@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -440,11 +441,17 @@ func GetRoutedStorageForID(ctx context.Context, id, currentBeadsDir string) (*Ro
 		return nil, nil // No routing needed, caller should use existing storage
 	}
 
-	// Open storage for the routed directory
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	store, err := sqlite.New(ctx, dbPath)
+	// Open storage for the routed directory using the factory to respect backend type
+	// This supports both SQLite and Dolt backends based on metadata.json
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
-		return nil, err
+		// Fallback to SQLite for backwards compatibility if factory fails
+		// (e.g., missing metadata.json)
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		store, err = sqlite.New(ctx, dbPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &RoutedStorage{
