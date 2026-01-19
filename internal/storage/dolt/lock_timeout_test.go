@@ -706,3 +706,119 @@ func TestFileBasedLockUnlock(t *testing.T) {
 	// Clean up
 	os.Remove(lockPath)
 }
+
+// =============================================================================
+// Lock Retry Tests (rig-358fc7)
+// =============================================================================
+
+// TestLockRetryConfiguration tests that retry configuration is properly applied
+func TestLockRetryConfiguration(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "dolt-retry-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ctx := context.Background()
+
+	// Test with custom retry configuration
+	cfg := &Config{
+		Path:           tmpDir,
+		Database:       "test",
+		LockRetries:    5,
+		LockRetryDelay: 50 * time.Millisecond,
+	}
+
+	store, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Verify store was created successfully
+	if store == nil {
+		t.Fatal("store should not be nil")
+	}
+}
+
+// TestLockRetryDefaults tests that default retry values are applied
+func TestLockRetryDefaults(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "dolt-retry-defaults-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ctx := context.Background()
+
+	// Create store without specifying retry config
+	cfg := &Config{
+		Path:     tmpDir,
+		Database: "test",
+	}
+
+	store, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Verify defaults were applied (no direct way to check, but creation should succeed)
+	if store == nil {
+		t.Fatal("store should not be nil")
+	}
+}
+
+// TestIsLockError tests the lock error detection function
+func TestIsLockError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "database is read only",
+			err:      fmt.Errorf("database is read only"),
+			expected: true,
+		},
+		{
+			name:     "database is locked",
+			err:      fmt.Errorf("database is locked"),
+			expected: true,
+		},
+		{
+			name:     "lock timeout",
+			err:      fmt.Errorf("lock timeout exceeded"),
+			expected: true,
+		},
+		{
+			name:     "lock contention",
+			err:      fmt.Errorf("lock contention detected"),
+			expected: true,
+		},
+		{
+			name:     "unrelated error",
+			err:      fmt.Errorf("connection refused"),
+			expected: false,
+		},
+		{
+			name:     "uppercase lock error",
+			err:      fmt.Errorf("DATABASE IS LOCKED"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isLockError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isLockError(%v) = %v, expected %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
