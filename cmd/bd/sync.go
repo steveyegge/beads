@@ -614,31 +614,64 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 		return err
 	}
 
+	// GH#1173: Detect sync-branch configuration
+	// When sync.branch is configured, changes are written to the worktree, not main repo.
+	// We must use CommitToSyncBranch which operates on the worktree.
+	var syncBranchName, syncBranchRepoRoot string
+	if err := ensureStoreActive(); err == nil && store != nil {
+		if sb, _ := syncbranch.Get(ctx, store); sb != "" {
+			syncBranchName = sb
+			if rc, err := beads.GetRepoContext(); err == nil {
+				syncBranchRepoRoot = rc.RepoRoot
+			}
+		}
+	}
+	hasSyncBranchConfig := syncBranchName != ""
+
 	fmt.Println("→ Exporting pending changes to JSONL...")
 	if err := exportToJSONL(ctx, jsonlPath); err != nil {
 		return fmt.Errorf("exporting: %w", err)
 	}
 
-	// Check for changes and commit
-	hasChanges, err := gitHasBeadsChanges(ctx)
-	if err != nil {
-		return fmt.Errorf("checking git status: %w", err)
-	}
-
-	if hasChanges {
-		fmt.Println("→ Committing changes...")
-		if err := gitCommitBeadsDir(ctx, message); err != nil {
-			return fmt.Errorf("committing: %w", err)
+	// GH#1173: When sync-branch is configured, use worktree-based commit/push
+	// gitHasBeadsChanges checks the main repo, but with sync-branch the changes
+	// are in the worktree. CommitToSyncBranch handles this correctly.
+	if hasSyncBranchConfig {
+		fmt.Printf("→ Committing to sync branch '%s'...\n", syncBranchName)
+		commitResult, err := syncbranch.CommitToSyncBranch(ctx, syncBranchRepoRoot, syncBranchName, jsonlPath, !noPush)
+		if err != nil {
+			return fmt.Errorf("committing to sync branch: %w", err)
+		}
+		if commitResult.Committed {
+			fmt.Printf("  Committed: %s\n", commitResult.Message)
+			if commitResult.Pushed {
+				fmt.Println("  Pushed to remote")
+			}
+		} else {
+			fmt.Println("→ No changes to commit")
 		}
 	} else {
-		fmt.Println("→ No changes to commit")
-	}
+		// Check for changes and commit (standard git workflow)
+		hasChanges, err := gitHasBeadsChanges(ctx)
+		if err != nil {
+			return fmt.Errorf("checking git status: %w", err)
+		}
 
-	// Push to remote
-	if !noPush && hasChanges {
-		fmt.Println("→ Pushing to remote...")
-		if err := gitPush(ctx, ""); err != nil {
-			return fmt.Errorf("pushing: %w", err)
+		if hasChanges {
+			fmt.Println("→ Committing changes...")
+			if err := gitCommitBeadsDir(ctx, message); err != nil {
+				return fmt.Errorf("committing: %w", err)
+			}
+		} else {
+			fmt.Println("→ No changes to commit")
+		}
+
+		// Push to remote
+		if !noPush && hasChanges {
+			fmt.Println("→ Pushing to remote...")
+			if err := gitPush(ctx, ""); err != nil {
+				return fmt.Errorf("pushing: %w", err)
+			}
 		}
 	}
 
