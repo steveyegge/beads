@@ -45,7 +45,9 @@ The --manual flag shows a diff for each conflict and prompts you to choose:
   l/local  - Keep local version
   r/remote - Keep remote version
   m/merge  - Auto-merge (LWW for scalars, union for collections)
-  s/skip   - Skip and leave unresolved
+  s/skip   - Skip (keep local, conflict remains for later)
+  a/all    - Accept auto-merge for all remaining conflicts
+  q/quit   - Quit and skip all remaining conflicts
   d/diff   - Show full JSON diff
 
 The --full flag provides the legacy full sync behavior for backwards compatibility.`,
@@ -1149,22 +1151,14 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 	var mergedIssues []*beads.Issue
 	for id := range allIDSet {
 		if conflictIDSet[id] {
-			// This was a conflict - use the resolved version if available
+			// This was a conflict
 			if resolved, ok := resolvedMap[id]; ok {
+				// User resolved this conflict - use their choice
 				mergedIssues = append(mergedIssues, resolved)
-			}
-			// If not in resolvedMap, it was skipped - use the automatic merge result
-			if _, ok := resolvedMap[id]; !ok {
-				// Fall back to field-level merge for skipped conflicts
-				local := localMap[id]
-				remote := remoteMap[id]
-				base := baseMap[id]
-				if local != nil && remote != nil {
-					mergedIssues = append(mergedIssues, mergeFieldLevel(base, local, remote))
-				} else if local != nil {
+			} else {
+				// Skipped - keep local version in output, conflict remains for later
+				if local := localMap[id]; local != nil {
 					mergedIssues = append(mergedIssues, local)
-				} else if remote != nil {
-					mergedIssues = append(mergedIssues, remote)
 				}
 			}
 		} else {
