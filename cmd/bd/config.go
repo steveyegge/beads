@@ -445,7 +445,10 @@ func findBeadsRepoRoot(startPath string) string {
 	for {
 		beadsDir := path + "/.beads"
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			return path
+			// Skip temporary directories - they're not valid repo roots
+			if !isTemporaryDir(path) {
+				return path
+			}
 		}
 		parent := path[:strings.LastIndex(path, "/")]
 		if parent == path || parent == "" {
@@ -453,6 +456,11 @@ func findBeadsRepoRoot(startPath string) string {
 		}
 		path = parent
 	}
+}
+
+// isTemporaryDir checks if a path is a temporary directory that shouldn't be a repo root
+func isTemporaryDir(path string) bool {
+	return path == "/tmp" || path == "/var/tmp"
 }
 
 func init() {
