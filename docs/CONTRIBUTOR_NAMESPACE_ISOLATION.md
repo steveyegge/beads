@@ -146,6 +146,26 @@ accordingly:
    - `docs/ROUTING.md` - Auto-routing mechanics
    - `docs/MULTI_REPO_MIGRATION.md` - Contributor workflow guide
 
+6. **GitHub API Detection** (`internal/routing/github_client.go`):
+   ```go
+   type GitHubChecker interface {
+       CheckRepo(ctx context.Context, owner, repo string) (GitHubCheckResult, error)
+   }
+   ```
+   - Queries GitHub API for fork status and push permissions
+   - Authoritative detection when token is available
+   - Graceful fallback to heuristic on rate limit or missing token
+
+7. **Token Discovery** (`internal/routing/token_discovery.go`):
+   ```go
+   type TokenDiscoverer interface {
+       DiscoverToken() string
+   }
+   ```
+   - Discovers GitHub tokens from multiple sources (see Token Discovery Order below)
+   - Passive discovery - never prompts, just checks sources
+   - Returns empty string if no token found (graceful degradation)
+
 ### What's NOT Implemented (Gaps)
 
 1. **Actual Routing in `bd create`** (bd-6x6g):
@@ -398,6 +418,54 @@ bd config set routing.mode auto
 bd config set routing.contributor ~/.beads-planning
 ```
 
+### GitHub API Rate Limited
+
+**Symptom**: Log message "WARNING: GitHub API rate limited, falling back to heuristic detection"
+
+**Explanation**: GitHub API has rate limits (60 requests/hour unauthenticated, 5000/hour with token).
+When rate limited, beads falls back to the SSH/HTTPS heuristic which may be less accurate for edge cases.
+
+**Solutions**:
+1. **Add a GitHub token** (increases limit to 5000/hour):
+   ```bash
+   # Option 1: Set environment variable
+   export GITHUB_TOKEN="ghp_your_token_here"
+
+   # Option 2: Log in with GitHub CLI
+   gh auth login
+   ```
+2. **Wait for rate limit reset** (resets hourly)
+3. **Set explicit role** to avoid API calls entirely:
+   ```bash
+   git config beads.role contributor  # or maintainer
+   ```
+
+### No GitHub Token Found
+
+**Symptom**: API detection skipped, using heuristic fallback
+
+**Explanation**: Token discovery checked all sources but found nothing. This is normal for:
+- First-time users who haven't authenticated with GitHub
+- CI environments without credentials configured
+- Local development without gh CLI or credential helper
+
+**Solutions** (in order of preference):
+1. **Use GitHub CLI** (recommended):
+   ```bash
+   gh auth login
+   ```
+2. **Set environment variable**:
+   ```bash
+   export GITHUB_TOKEN="ghp_your_token_here"
+   ```
+3. **Configure git credential helper**:
+   ```bash
+   git config --global credential.helper store
+   # Then authenticate once with git push/pull
+   ```
+4. **Accept heuristic detection** - it's accurate for most cases. API detection is only
+   needed for edge cases like fork+SSH or maintainer+HTTPS.
+
 ## Pollution Detection Heuristics
 
 For `bd preflight`, we can detect pollution by checking:
@@ -448,18 +516,46 @@ This design enables:
 
 ## Appendix: Role Detection Algorithm
 
+The detection strategy uses a 4-tier approach with early exit on match:
+
 ```
-1. Check git config beads.role
+1. Check git config beads.role (explicit override)
    - If "maintainer" → Maintainer
    - If "contributor" → Contributor
 
-2. Get push URL: git remote get-url --push origin
+2. Check for upstream remote (fork signal)
+   - If `git remote get-url upstream` succeeds → Contributor
+   - This is a strong signal the repo is a fork
+
+3. Query GitHub API (if token available)
+   - If repo.fork == true → Contributor
+   - If permissions.push == true → Maintainer
+   - If permissions.push == false → Contributor
+   - If rate limited or no token → continue to step 4
+
+4. Heuristic: Get push URL: git remote get-url --push origin
    - If starts with git@ or ssh:// → Maintainer (SSH access implies write)
    - If contains @ (credentials) → Maintainer
    - If HTTPS without credentials → Contributor
 
-3. Default → Contributor (safe fallback)
+5. Default → Contributor (safe fallback)
 ```
 
 This algorithm prioritizes safety: when in doubt, route to personal database
 to avoid accidental pollution.
+
+### Token Discovery Order
+
+The `TokenDiscoverer` checks these sources in order (first found wins):
+
+```
+1. GITHUB_TOKEN environment variable (most explicit)
+2. GH_TOKEN environment variable (GitHub CLI convention)
+3. gh auth token (GitHub CLI, if installed)
+4. git credential fill for github.com (git credential helper)
+```
+
+If no token is found, the API check is skipped and detection falls back to the
+SSH/HTTPS heuristic. This is expected behavior, not an error condition.
+
+See `internal/routing/token_discovery.go` for implementation.
