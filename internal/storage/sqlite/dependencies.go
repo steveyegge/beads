@@ -911,6 +911,17 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var awaitID sql.NullString
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
+		// Agent fields
+		var hookBead sql.NullString
+		var roleBead sql.NullString
+		var agentState sql.NullString
+		var lastActivity sql.NullTime
+		var roleType sql.NullString
+		var rig sql.NullString
+		var molType sql.NullString
+		// Time-based scheduling fields
+		var dueAt sql.NullTime
+		var deferUntil sql.NullTime
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -920,6 +931,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
+			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+			&dueAt, &deferUntil,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -991,6 +1004,35 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if waiters.Valid && waiters.String != "" {
 			issue.Waiters = parseJSONStringArray(waiters.String)
+		}
+		// Agent fields
+		if hookBead.Valid {
+			issue.HookBead = hookBead.String
+		}
+		if roleBead.Valid {
+			issue.RoleBead = roleBead.String
+		}
+		if agentState.Valid {
+			issue.AgentState = types.AgentState(agentState.String)
+		}
+		if lastActivity.Valid {
+			issue.LastActivity = &lastActivity.Time
+		}
+		if roleType.Valid {
+			issue.RoleType = roleType.String
+		}
+		if rig.Valid {
+			issue.Rig = rig.String
+		}
+		if molType.Valid {
+			issue.MolType = types.MolType(molType.String)
+		}
+		// Time-based scheduling fields
+		if dueAt.Valid {
+			issue.DueAt = &dueAt.Time
+		}
+		if deferUntil.Valid {
+			issue.DeferUntil = &deferUntil.Time
 		}
 
 		issues = append(issues, &issue)
