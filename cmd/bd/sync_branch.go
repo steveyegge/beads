@@ -304,7 +304,8 @@ func commitToExternalBeadsRepo(ctx context.Context, beadsDir, message string, pu
 		relBeadsDir = beadsDir // Fallback to absolute path
 	}
 
-	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", relBeadsDir) //nolint:gosec // paths from trusted sources
+	// Use --sparse to work correctly with sparse-checkout enabled worktrees (fixes #1076)
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", "--sparse", relBeadsDir) //nolint:gosec // paths from trusted sources
 	if output, err := addCmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("git add failed: %w\n%s", err, output)
 	}
