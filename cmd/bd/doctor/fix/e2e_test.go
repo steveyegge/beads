@@ -780,15 +780,16 @@ func TestMergeDriverWithLockedConfig_E2E(t *testing.T) {
 
 		dir := setupTestGitRepo(t)
 
-		gitConfigPath := filepath.Join(dir, ".git", "config")
+		gitDir := filepath.Join(dir, ".git")
 
-		// Make git config read-only
-		if err := os.Chmod(gitConfigPath, 0444); err != nil {
-			t.Fatalf("failed to make config read-only: %v", err)
+		// Make .git directory read-only (git uses atomic writes with rename,
+		// so making the config file read-only alone doesn't prevent writes)
+		if err := os.Chmod(gitDir, 0555); err != nil {
+			t.Fatalf("failed to make .git directory read-only: %v", err)
 		}
 		defer func() {
 			// Restore permissions for cleanup
-			_ = os.Chmod(gitConfigPath, 0644)
+			_ = os.Chmod(gitDir, 0755)
 		}()
 
 		// Run fix - should fail gracefully
