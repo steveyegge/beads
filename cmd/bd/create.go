@@ -361,11 +361,10 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				FatalError("failed to open target store: %v", err)
 			}
-			defer func() {
-				if err := targetStore.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: failed to close target store: %v\n", err)
-				}
-			}()
+			// NOTE: Do NOT defer close here! We assign targetStore to the global store below,
+			// and PersistentPostRun will close it. If we defer close here, the global store
+			// gets closed before PersistentPostRun's flush, causing "sql: database is closed"
+			// errors during auto-flush. (bd-z6d.1)
 
 			// Replace store for remainder of create operation
 			// This also bypasses daemon mode since daemon owns the current repo's store

@@ -565,16 +565,25 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	log.Info("monitoring parent process", "pid", parentPID)
 
 	// daemonMode already determined above for SetConfig
+	// Check if using Dolt backend (doesn't require JSONL for event-driven mode)
+	_, isDoltBackend := store.(interface{ Commit(context.Context, string) error })
+
 	switch daemonMode {
 	case "events":
 		log.Info("using event-driven mode")
 		jsonlPath := findJSONLPath()
-		if jsonlPath == "" {
+		if jsonlPath == "" && !isDoltBackend {
+			// SQLite backend requires JSONL for event-driven mode (file watching)
 			log.Error("JSONL path not found, cannot use event-driven mode")
 			log.Info("falling back to polling mode")
 			runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 		} else {
 			// Event-driven mode uses separate export-only and import-only functions
+			// For Dolt, jsonlPath may be empty - that's OK, we use RPC mutation events
+			// and Dolt's native change tracking instead of JSONL file watching. (bd-dli)
+			if isDoltBackend && jsonlPath == "" {
+				log.Info("Dolt backend detected, using RPC mutation events (no JSONL file watching)")
+			}
 			var doExport, doAutoImport func()
 			if localMode {
 				doExport = createLocalExportFunc(ctx, store, log)
