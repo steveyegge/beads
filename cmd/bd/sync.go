@@ -385,7 +385,8 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	fmt.Printf("→ Loaded %d local issues from database\n", len(localIssues))
 
 	// Acquire exclusive lock to prevent concurrent sync corruption
-	lockPath := filepath.Join(beadsDir, ".sync.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockPath := beads.VarPath(beadsDir, ".sync.lock", "")
 	lock := flock.New(lockPath)
 	locked, err := lock.TryLock()
 	if err != nil {
@@ -583,7 +584,8 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 	beadsDir := filepath.Dir(jsonlPath)
 
 	// Acquire exclusive lock to prevent concurrent sync corruption
-	lockPath := filepath.Join(beadsDir, ".sync.lock")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	lockPath := beads.VarPath(beadsDir, ".sync.lock", "")
 	lock := flock.New(lockPath)
 	locked, err := lock.TryLock()
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -38,7 +39,7 @@ func isJSONLNewerWithStore(jsonlPath string, st storage.Storage) bool {
 	}
 
 	beadsDir := filepath.Dir(jsonlPath)
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	dbInfo, dbStatErr := os.Stat(dbPath)
 	if dbStatErr != nil {
 		return false
@@ -391,7 +392,7 @@ func dbNeedsExport(ctx context.Context, store storage.Storage, jsonlPath string)
 
 	// Check database modification time
 	beadsDir := filepath.Dir(jsonlPath)
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	dbInfo, err := os.Stat(dbPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to stat database: %w", err)

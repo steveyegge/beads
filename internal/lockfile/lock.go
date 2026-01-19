@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // LockInfo represents the metadata stored in the daemon.lock file
@@ -25,8 +26,10 @@ type LockInfo struct {
 //
 // This is a cheap probe operation that should be called before attempting
 // RPC connections to avoid unnecessary connection timeouts.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func TryDaemonLock(beadsDir string) (running bool, pid int) {
-	lockPath := filepath.Join(beadsDir, "daemon.lock")
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	lockPath := beads.VarPath(beadsDir, "daemon.lock", "")
 
 	// Open lock file with read-write access (required for LockFileEx on Windows)
 	// #nosec G304 - controlled path from config
@@ -73,8 +76,10 @@ func TryDaemonLock(beadsDir string) (running bool, pid int) {
 
 // checkPIDFile checks if a daemon is running by reading the PID file.
 // This is used for backward compatibility with pre-lock daemons.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func checkPIDFile(beadsDir string) (running bool, pid int) {
-	pidFile := filepath.Join(beadsDir, "daemon.pid")
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	pidFile := beads.VarPath(beadsDir, "daemon.pid", "")
 	// #nosec G304 - controlled path from config
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -94,16 +99,18 @@ func checkPIDFile(beadsDir string) (running bool, pid int) {
 }
 
 // ReadLockInfo reads and parses the daemon lock file
-// Returns lock info if available, or error if file doesn't exist or can't be parsed
+// Returns lock info if available, or error if file doesn't exist or can't be parsed.
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func ReadLockInfo(beadsDir string) (*LockInfo, error) {
-	lockPath := filepath.Join(beadsDir, "daemon.lock")
-	
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	lockPath := beads.VarPath(beadsDir, "daemon.lock", "")
+
 	// #nosec G304 - controlled path from config
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var lockInfo LockInfo
 	if err := json.Unmarshal(data, &lockInfo); err != nil {
 		// Try parsing as old format (plain PID)
@@ -113,6 +120,6 @@ func ReadLockInfo(beadsDir string) (*LockInfo, error) {
 		}
 		return nil, fmt.Errorf("cannot parse lock file: %w", err)
 	}
-	
+
 	return &lockInfo, nil
 }

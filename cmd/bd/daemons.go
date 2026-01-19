@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -369,8 +370,8 @@ Supports tail mode (last N lines) and follow mode (like tail -f).`,
 			}
 			os.Exit(1)
 		}
-		// Determine log file path
-		logPath := filepath.Join(filepath.Dir(targetDaemon.SocketPath), "daemon.log")
+		// Determine log file path (VarPath checks var/ first for var/ layout)
+		logPath := beads.VarPath(filepath.Dir(targetDaemon.SocketPath), "daemon.log", "")
 		// Check if log file exists
 		if _, err := os.Stat(logPath); err != nil {
 			if jsonOutput {

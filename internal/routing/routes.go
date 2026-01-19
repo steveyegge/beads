@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
@@ -440,8 +441,8 @@ func GetRoutedStorageForID(ctx context.Context, id, currentBeadsDir string) (*Ro
 		return nil, nil // No routing needed, caller should use existing storage
 	}
 
-	// Open storage for the routed directory
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// Open storage for the routed directory (VarPath handles var/ layout)
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	store, err := sqlite.New(ctx, dbPath)
 	if err != nil {
 		return nil, err

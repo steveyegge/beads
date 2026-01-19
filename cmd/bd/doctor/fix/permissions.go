@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/beads"
 )
 
 // Permissions fixes file permission issues in the .beads directory
@@ -38,7 +40,8 @@ func Permissions(path string) error {
 
 	// Fix permissions on database file if it exists
 	// Use Lstat to detect symlinks - skip chmod for symlinked database files
-	dbPath := filepath.Join(beadsDir, "beads.db")
+	// VarPath checks var/ first, then root for var/ layout compatibility
+	dbPath := beads.VarPath(beadsDir, "beads.db", "")
 	if dbInfo, err := os.Lstat(dbPath); err == nil {
 		// Skip permission fixes for symlinked database files (NixOS)
 		if dbInfo.Mode()&os.ModeSymlink != 0 {

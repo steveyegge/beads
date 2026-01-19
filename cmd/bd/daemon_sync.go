@@ -456,7 +456,7 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			// Update database mtime to be >= JSONL mtime (fixes #278, #301, #321)
 			// This prevents validatePreExport from incorrectly blocking on next export
 			// with "JSONL is newer than database" after daemon auto-export
-			dbPath := filepath.Join(beadsDir, "beads.db")
+			dbPath := beads.VarPath(beadsDir, "beads.db", "")
 			if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 				log.log("Warning: failed to update database mtime: %v", err)
 			}
@@ -739,7 +739,7 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 
 		// GH#885: Defer metadata updates until AFTER git commit succeeds.
 		// Define helper to finalize after git operations.
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbPath := beads.VarPath(beadsDir, "beads.db", "")
 		finalizeExportMetadata := func() {
 			// Update export metadata for multi-repo support with stable keys
 			if multiRepoPaths != nil {

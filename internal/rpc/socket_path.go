@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -26,8 +27,10 @@ const MaxUnixSocketPath = 103
 // - The same workspace always gets the same hash (deterministic)
 // - Symlinks and case differences resolve to the same hash
 //
-// If the computed .beads/bd.sock path is short enough, it returns that directly.
-// This preserves backwards compatibility for workspaces with short paths.
+// Uses VarPath to support both legacy (.beads/bd.sock) and var/ layout
+// (.beads/var/bd.sock). If the computed path is short enough, it returns
+// that directly. This preserves backwards compatibility for workspaces with
+// short paths.
 func ShortSocketPath(workspacePath string) string {
 	// Canonicalize path for consistent hashing across symlinks and case
 	canonical := utils.NormalizePathForComparison(workspacePath)
@@ -35,8 +38,10 @@ func ShortSocketPath(workspacePath string) string {
 		canonical = workspacePath
 	}
 
-	// Compute the "natural" socket path in .beads/
-	naturalPath := filepath.Join(workspacePath, ".beads", "bd.sock")
+	// Compute the "natural" socket path using VarPath (read-both pattern)
+	// Empty layout triggers directory-based detection
+	beadsDir := filepath.Join(workspacePath, ".beads")
+	naturalPath := beads.VarPath(beadsDir, "bd.sock", "")
 
 	// If natural path is short enough, use it (backwards compatible)
 	if len(naturalPath) <= MaxUnixSocketPath {
@@ -67,12 +72,24 @@ const tmpDir = "/tmp"
 // EnsureSocketDir creates the socket directory if it doesn't exist.
 // Returns the socket path (unchanged) and any error.
 // This should be called by the daemon before listening.
+//
+// Creates directories for:
+// - /tmp/beads-* (short path fallback)
+// - .beads/var/ (new var/ layout)
 func EnsureSocketDir(socketPath string) (string, error) {
 	dir := filepath.Dir(socketPath)
 
-	// Only create if it's a /tmp/beads-* directory
-	// Don't create .beads directories - those should exist
+	// Create /tmp/beads-* directories (short path fallback)
 	if strings.HasPrefix(dir, filepath.Join(tmpDir, "beads-")) {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", err
+		}
+		return socketPath, nil
+	}
+
+	// Create .beads/var/ directory if socket path is in var/
+	if strings.HasSuffix(dir, string(filepath.Separator)+"var") ||
+		strings.HasSuffix(dir, ".beads"+string(filepath.Separator)+"var") {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return "", err
 		}
@@ -99,8 +116,10 @@ func CleanupSocketDir(socketPath string) error {
 }
 
 // NeedsShortPath returns true if the workspace path would result in a socket
-// path exceeding Unix limits.
+// path exceeding Unix limits. Considers both legacy and var/ layout paths.
 func NeedsShortPath(workspacePath string) bool {
-	naturalPath := filepath.Join(workspacePath, ".beads", "bd.sock")
+	beadsDir := filepath.Join(workspacePath, ".beads")
+	// Use VarPath to get the actual socket path based on layout
+	naturalPath := beads.VarPath(beadsDir, "bd.sock", "")
 	return len(naturalPath) > MaxUnixSocketPath
 }
