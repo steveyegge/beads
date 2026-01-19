@@ -11,6 +11,7 @@ Common issues and solutions for bd users.
 - [Ready Work and Dependencies](#ready-work-and-dependencies)
 - [Performance Issues](#performance-issues)
 - [Agent-Specific Issues](#agent-specific-issues)
+- [Role Detection Issues](#role-detection-issues)
 - [Platform-Specific Issues](#platform-specific-issues)
 
 ## Installation Issues
@@ -745,6 +746,93 @@ bd sync
 - See [DAEMON.md](DAEMON.md) for daemon troubleshooting
 - See [Claude Code sandboxing documentation](https://www.anthropic.com/engineering/claude-code-sandboxing) for more about sandbox restrictions
 - GitHub issue [#353](https://github.com/steveyegge/beads/issues/353) for background
+
+## Role Detection Issues
+
+Role detection determines whether you're a **maintainer** (can push directly) or **contributor** (working in a fork). This affects auto-routing of issues.
+
+### Role incorrectly detected
+
+**Symptom:** Issues are routed to the wrong repository, or `bd ready` shows unexpected results based on role.
+
+**Check your detected role:**
+```bash
+# Enable verbose logging to see detection
+bd -v create --dry-run "Test issue"
+# Look for: "User role detected: maintainer (source: heuristic)"
+```
+
+**Override with explicit config:**
+```bash
+# Force maintainer role
+git config beads.role maintainer
+
+# Force contributor role
+git config beads.role contributor
+```
+
+**Clear cached detection:**
+```bash
+# Remove cached role (forces re-detection)
+git config --unset beads.role.cache
+```
+
+**Detection priority:**
+1. `git config beads.role` - explicit override (highest priority)
+2. `git config beads.role.cache` - cached from previous detection
+3. Upstream remote - if `upstream` remote exists, you're a contributor
+4. GitHub API - if token available, checks fork status
+5. URL heuristic - SSH = maintainer, HTTPS = contributor
+
+### GitHub API rate limited
+
+**Symptom:** Role detection falls back to heuristic despite having a token.
+
+**Check rate limit status:**
+```bash
+# Check remaining API calls
+gh api rate_limit --jq '.resources.core'
+```
+
+**Solution:** Wait for rate limit reset, or set explicit role:
+```bash
+git config beads.role contributor
+```
+
+### No GitHub token found
+
+**Symptom:** Role detection uses URL heuristic instead of authoritative API check.
+
+**Token discovery order:**
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` (GitHub CLI)
+4. `git credential fill` (git credential store)
+
+**Solution:** Authenticate with GitHub CLI:
+```bash
+gh auth login
+gh auth status  # Verify authentication
+```
+
+Or set environment variable:
+```bash
+export GITHUB_TOKEN=ghp_your_token_here
+```
+
+### Cache invalidation
+
+**When to clear cache:**
+- After changing fork/upstream relationship
+- After receiving push access to a repo
+- After role detection gave wrong result
+
+**Clear cache:**
+```bash
+git config --unset beads.role.cache
+```
+
+The cache is automatically refreshed on next bd operation.
 
 ## Platform-Specific Issues
 

@@ -261,3 +261,160 @@ func TestUpstreamRemoteIntegration(t *testing.T) {
 		}
 	})
 }
+
+// TestRoleCaching_WriteAfterAPIDetection verifies that cache is written after API detection.
+func TestRoleCaching_WriteAfterAPIDetection(t *testing.T) {
+	// Track git config write calls
+	var configWritten bool
+	var writtenRole string
+
+	orig := gitCommandRunner
+	stub := &gitStub{t: t, responses: []gitResponse{
+		// Get origin URL
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "origin"}},
+			output: "https://github.com/owner/repo.git\n",
+			err:    nil,
+		},
+		// No upstream
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "upstream"}},
+			output: "",
+			err:    errors.New("fatal: No such remote 'upstream'"),
+		},
+		// No explicit config
+		{
+			expect: gitCall{"/repo", []string{"config", "--get", "beads.role"}},
+			output: "",
+			err:    errors.New("config not found"),
+		},
+		// No cached role
+		{
+			expect: gitCall{"/repo", []string{"config", "--get", "beads.role.cache"}},
+			output: "",
+			err:    errors.New("config not found"),
+		},
+		// Fallback to URL heuristic (no API in test), then cache
+		{
+			expect: gitCall{"/repo", []string{"config", "beads.role.cache", "contributor"}},
+			output: "",
+			err:    nil,
+		},
+	}}
+
+	// Intercept to track cache writes
+	gitCommandRunner = func(repoPath string, args ...string) ([]byte, error) {
+		if len(args) == 3 && args[0] == "config" && args[1] == "beads.role.cache" {
+			configWritten = true
+			writtenRole = args[2]
+		}
+		return stub.run(repoPath, args...)
+	}
+	t.Cleanup(func() {
+		gitCommandRunner = orig
+	})
+
+	result, err := DetectUserRoleWithSource("/repo")
+	if err != nil {
+		t.Fatalf("DetectUserRoleWithSource() error = %v", err)
+	}
+
+	if !configWritten {
+		t.Error("Expected cache to be written after detection")
+	}
+	if writtenRole != string(result.Role) {
+		t.Errorf("Cache written with wrong role: got %q, want %q", writtenRole, result.Role)
+	}
+}
+
+// TestRoleCaching_ReadFromCache verifies that cached role is used on second call.
+func TestRoleCaching_ReadFromCache(t *testing.T) {
+	orig := gitCommandRunner
+	stub := &gitStub{t: t, responses: []gitResponse{
+		// Get origin URL
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "origin"}},
+			output: "git@github.com:owner/repo.git\n",
+			err:    nil,
+		},
+		// No upstream
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "upstream"}},
+			output: "",
+			err:    errors.New("fatal: No such remote 'upstream'"),
+		},
+		// No explicit config
+		{
+			expect: gitCall{"/repo", []string{"config", "--get", "beads.role"}},
+			output: "",
+			err:    errors.New("config not found"),
+		},
+		// Cached role exists
+		{
+			expect: gitCall{"/repo", []string{"config", "--get", "beads.role.cache"}},
+			output: "maintainer\n",
+			err:    nil,
+		},
+		// Should NOT make any more git calls - cache hit
+	}}
+	gitCommandRunner = stub.run
+	t.Cleanup(func() {
+		gitCommandRunner = orig
+		stub.verify()
+	})
+
+	result, err := DetectUserRoleWithSource("/repo")
+	if err != nil {
+		t.Fatalf("DetectUserRoleWithSource() error = %v", err)
+	}
+
+	if result.Role != Maintainer {
+		t.Errorf("Expected Maintainer from cache, got %s", result.Role)
+	}
+	if result.Source != RoleSourceCache {
+		t.Errorf("Expected source=cache, got %s", result.Source)
+	}
+}
+
+// TestRoleCaching_ConfigOverridesCache verifies that explicit config beats cache.
+func TestRoleCaching_ConfigOverridesCache(t *testing.T) {
+	orig := gitCommandRunner
+	stub := &gitStub{t: t, responses: []gitResponse{
+		// Get origin URL
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "origin"}},
+			output: "git@github.com:owner/repo.git\n",
+			err:    nil,
+		},
+		// No upstream
+		{
+			expect: gitCall{"/repo", []string{"remote", "get-url", "upstream"}},
+			output: "",
+			err:    errors.New("fatal: No such remote 'upstream'"),
+		},
+		// Explicit config exists - should win over cache
+		{
+			expect: gitCall{"/repo", []string{"config", "--get", "beads.role"}},
+			output: "contributor\n",
+			err:    nil,
+		},
+		// Should NOT check cache or make API calls - config wins
+	}}
+	gitCommandRunner = stub.run
+	t.Cleanup(func() {
+		gitCommandRunner = orig
+		stub.verify()
+	})
+
+	result, err := DetectUserRoleWithSource("/repo")
+	if err != nil {
+		t.Fatalf("DetectUserRoleWithSource() error = %v", err)
+	}
+
+	if result.Role != Contributor {
+		t.Errorf("Expected Contributor from config, got %s", result.Role)
+	}
+	if result.Source != RoleSourceConfig {
+		t.Errorf("Expected source=config, got %s", result.Source)
+	}
+}

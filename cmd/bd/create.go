@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
@@ -311,10 +312,16 @@ var createCmd = &cobra.Command{
 			// Explicit --repo flag overrides auto-routing
 			repoPath = repoOverride
 		} else {
-			// Auto-routing based on user role
-			userRole, err := routing.DetectUserRole(".")
+			// Auto-routing based on user role from RepoContext
+			// RepoContext is initialized once per process and caches the role
+			var userRole routing.UserRole
+			rc, err := beads.GetRepoContext()
 			if err != nil {
-				debug.Logf("Warning: failed to detect user role: %v\n", err)
+				debug.Logf("Warning: failed to get repo context, defaulting to contributor: %v\n", err)
+				userRole = routing.Contributor
+			} else {
+				userRole = rc.UserRole
+				debug.Logf("User role detected: %s (source: %s)\n", userRole, rc.RoleSource)
 			}
 
 			// Build routing config with backward compatibility for legacy contributor.* keys

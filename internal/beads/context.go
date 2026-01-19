@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/routing"
 )
 
 // RepoContext holds resolved repository paths for beads operations.
@@ -56,6 +57,26 @@ type RepoContext struct {
 
 	// IsWorktree is true if CWD is in a git worktree.
 	IsWorktree bool
+
+	// UserRole indicates whether the user is a maintainer or contributor.
+	// Detected via the 4-tier strategy: config > cache > upstream > api > heuristic.
+	UserRole routing.UserRole
+
+	// RoleSource indicates how the role was determined.
+	// Values: "config", "cache", "upstream", "api", "heuristic"
+	RoleSource string
+
+	// IsFork is true if the GitHub API confirmed this repository is a fork.
+	IsFork bool
+
+	// OriginURL is the URL of the origin remote.
+	OriginURL string
+
+	// UpstreamURL is the URL of the upstream remote (empty if no upstream).
+	UpstreamURL string
+
+	// HasUpstream is true if an upstream remote is configured.
+	HasUpstream bool
 }
 
 var (
@@ -116,12 +137,28 @@ func buildRepoContext() (*RepoContext, error) {
 	// 5. Check worktree status
 	isWorktree := git.IsWorktree()
 
+	// 6. Detect user role using the 4-tier strategy
+	roleResult, err := routing.DetectUserRoleWithSource(repoRoot)
+	if err != nil {
+		// Role detection errors are non-fatal - default to contributor
+		roleResult = &routing.RoleDetectionResult{
+			Role:   routing.Contributor,
+			Source: routing.RoleSourceHeuristic,
+		}
+	}
+
 	return &RepoContext{
 		BeadsDir:     beadsDir,
 		RepoRoot:     repoRoot,
 		CWDRepoRoot:  cwdRepoRoot,
 		IsRedirected: redirectInfo.IsRedirected,
 		IsWorktree:   isWorktree,
+		UserRole:     roleResult.Role,
+		RoleSource:   string(roleResult.Source),
+		IsFork:       roleResult.IsFork,
+		OriginURL:    roleResult.OriginURL,
+		UpstreamURL:  roleResult.UpstreamURL,
+		HasUpstream:  roleResult.HasUpstream,
 	}, nil
 }
 
@@ -320,12 +357,28 @@ func buildRepoContextForWorkspace(workspacePath string) (*RepoContext, error) {
 	// 6. Get CWD's repo root (same as workspace in this case)
 	cwdRepoRoot := git.GetRepoRoot()
 
+	// 7. Detect user role using the 4-tier strategy
+	roleResult, err := routing.DetectUserRoleWithSource(repoRoot)
+	if err != nil {
+		// Role detection errors are non-fatal - default to contributor
+		roleResult = &routing.RoleDetectionResult{
+			Role:   routing.Contributor,
+			Source: routing.RoleSourceHeuristic,
+		}
+	}
+
 	return &RepoContext{
 		BeadsDir:     beadsDir,
 		RepoRoot:     repoRoot,
 		CWDRepoRoot:  cwdRepoRoot,
 		IsRedirected: false, // Workspace-specific context is never "redirected"
 		IsWorktree:   isWorktree,
+		UserRole:     roleResult.Role,
+		RoleSource:   string(roleResult.Source),
+		IsFork:       roleResult.IsFork,
+		OriginURL:    roleResult.OriginURL,
+		UpstreamURL:  roleResult.UpstreamURL,
+		HasUpstream:  roleResult.HasUpstream,
 	}, nil
 }
 

@@ -10,7 +10,7 @@ Auto-routing solves the OSS contributor problem: contributors want to plan work 
 
 ### Strategy
 
-The routing system detects user role via (in priority order):
+The routing system uses a 4-tier detection strategy (in priority order):
 
 1. **Explicit git config** (highest priority):
    ```bash
@@ -18,17 +18,61 @@ The routing system detects user role via (in priority order):
    # or
    git config beads.role contributor
    ```
+   This always wins. Use it to override any automatic detection.
 
-2. **Upstream remote detection** (fork signal):
+2. **Cached role** (performance optimization):
+   ```bash
+   # Stored automatically after detection
+   git config beads.role.cache maintainer
+
+   # Clear to force re-detection
+   git config --unset beads.role.cache
+   ```
+   After role is detected via API or heuristic, it's cached to avoid repeated lookups.
+
+3. **Upstream remote detection** (fork signal):
    - If an `upstream` remote exists → Contributor
    - This correctly identifies fork contributors who use SSH for their fork
-   - Overrides the SSH/HTTPS heuristic (see below)
+   - Standard OSS workflow: fork adds `upstream` pointing to original repo
 
-3. **Push URL inspection** (fallback heuristic):
+4. **GitHub API** (authoritative, if token available):
+   - Checks if repository is a fork via GitHub API
+   - Checks if user has push permissions
+   - Fork = Contributor, Push access = Maintainer
+   - Requires GitHub token (see Token Discovery below)
+   - Rate limit errors fall through to heuristic
+
+5. **Push URL inspection** (fallback heuristic):
    - SSH URLs (`git@github.com:user/repo.git`) → Maintainer
-   - HTTPS with credentials → Maintainer
+   - HTTPS with credentials (`https://token@github.com/...`) → Maintainer
    - HTTPS without credentials → Contributor
-   - No remote → Contributor (fallback)
+   - No remote → Contributor (safest fallback)
+
+### Token Discovery
+
+For GitHub API detection, tokens are discovered in this order:
+
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` (GitHub CLI)
+4. `git credential fill` for github.com
+
+If no token is found, detection skips API and uses heuristics.
+
+### Cache Invalidation
+
+The role cache (`beads.role.cache`) should be cleared when:
+- You receive push access to a repository
+- You change the fork/upstream relationship
+- Detection gave an incorrect result
+
+```bash
+# Clear cache
+git config --unset beads.role.cache
+
+# Next bd command will re-detect and re-cache
+bd ready
+```
 
 ### Examples
 
@@ -60,10 +104,10 @@ The presence of an `upstream` remote is a strong signal that you are working in 
 - Contributors fork the repo and add the original as `upstream` for syncing
 - This pattern is standard in OSS workflows (GitHub's fork documentation recommends it)
 
-**Detection priority:**
-1. `git config beads.role` (explicit override) - always wins
-2. `upstream` remote exists - contributor (even with SSH origin)
-3. SSH/HTTPS URL heuristic - fallback when no upstream
+**Note:** Upstream detection takes priority over GitHub API because it's faster (no network call) and the fork pattern is unambiguous. If you have an `upstream` remote but want to be treated as maintainer, use explicit config:
+```bash
+git config beads.role maintainer
+```
 
 ## Configuration
 
@@ -129,15 +173,31 @@ This ensures discovered work stays in the same repository as the parent task.
 
 **Key Files:**
 - `internal/routing/routing.go` - Role detection and routing logic
+- `internal/routing/github_client.go` - GitHub API integration
+- `internal/routing/token_discovery.go` - Token discovery from env/CLI/credential store
 - `internal/routing/routing_test.go` - Unit tests
+- `internal/routing/detection_test.go` - Detection priority and caching tests
+- `internal/beads/context.go` - RepoContext with role fields
 - `cmd/bd/create.go` - Integration with create command
-- `routing_integration_test.go` - End-to-end tests
 
 **API:**
 
 ```go
-// Detect user role based on git configuration
-// Checks: config → upstream remote → push URL heuristic
+// Detect user role with full metadata (recommended)
+// Uses 4-tier strategy: config → cache → upstream → api → heuristic
+func DetectUserRoleWithSource(repoPath string) (*RoleDetectionResult, error)
+
+// RoleDetectionResult contains role and detection metadata
+type RoleDetectionResult struct {
+    Role        UserRole    // "maintainer" or "contributor"
+    Source      RoleSource  // "config", "cache", "upstream", "api", "heuristic"
+    IsFork      bool        // True if GitHub API confirmed fork
+    OriginURL   string      // Origin remote URL
+    UpstreamURL string      // Upstream remote URL (empty if none)
+    HasUpstream bool        // True if upstream remote exists
+}
+
+// Legacy: simple role detection without metadata
 func DetectUserRole(repoPath string) (UserRole, error)
 
 // Check if repository has an "upstream" remote (fork signal)
@@ -145,6 +205,15 @@ func HasUpstreamRemote(repoPath string) bool
 
 // Determine target repo based on config and role
 func DetermineTargetRepo(config *RoutingConfig, userRole UserRole, repoPath string) string
+
+// RepoContext (from internal/beads) includes role fields:
+type RepoContext struct {
+    // ... existing fields ...
+    UserRole    routing.UserRole  // Detected role
+    RoleSource  string            // How role was detected
+    IsFork      bool              // From GitHub API
+    HasUpstream bool              // Upstream remote exists
+}
 ```
 
 ## Testing
