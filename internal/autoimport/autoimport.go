@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -61,6 +62,7 @@ type ImportFunc func(ctx context.Context, issues []*types.Issue) (created, updat
 
 // AutoImportIfNewer checks if JSONL is newer than last import and imports if needed
 // dbPath is the full path to the database file (e.g., /path/to/.beads/bd.db)
+// For Dolt backend, auto-import is skipped since Dolt is the source of truth, not JSONL.
 func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string, notify Notifier, importFunc ImportFunc, onChanged func(needsFullExport bool)) error {
 	if notify == nil {
 		notify = NewStderrNotifier(debug.Enabled())
@@ -68,6 +70,15 @@ func AutoImportIfNewer(ctx context.Context, store storage.Storage, dbPath string
 
 	// Find JSONL using database directory
 	dbDir := filepath.Dir(dbPath)
+
+	// Skip auto-import for Dolt backend (Dolt is source of truth, not JSONL)
+	// Import from configfile package to check backend type
+	backend := getBackendType(dbDir)
+	if backend == "dolt" {
+		notify.Debugf("auto-import skipped for Dolt backend (Dolt is source of truth)")
+		return nil
+	}
+
 	jsonlPath := utils.FindJSONLInDir(dbDir)
 	if jsonlPath == "" {
 		notify.Debugf("auto-import skipped, JSONL not found")
@@ -256,12 +267,20 @@ func parseJSONL(jsonlData []byte, _ Notifier) ([]*types.Issue, error) {
 
 // CheckStaleness checks if JSONL is newer than last import
 // dbPath is the full path to the database file
+// For Dolt backend, always returns false (not stale) since Dolt is source of truth.
 //
 // Returns:
 //   - (true, nil) if JSONL is newer than last import (database is stale)
 //   - (false, nil) if database is fresh or no JSONL exists yet
 //   - (false, err) if an abnormal error occurred (file system issues, permissions, etc.)
 func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (bool, error) {
+	// Skip staleness check for Dolt backend (Dolt is source of truth, not JSONL)
+	dbDir := filepath.Dir(dbPath)
+	backend := getBackendType(dbDir)
+	if backend == "dolt" {
+		return false, nil // Never stale for Dolt
+	}
+
 	lastImportStr, err := store.GetMetadata(ctx, "last_import_time")
 	if err != nil {
 		// No metadata yet - expected for first run
@@ -284,9 +303,6 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 			return false, fmt.Errorf("corrupted last_import_time in metadata (cannot parse as RFC3339): %w", err)
 		}
 	}
-
-	// Find JSONL using database directory
-	dbDir := filepath.Dir(dbPath)
 	jsonlPath := utils.FindJSONLInDir(dbDir)
 
 	// Use Lstat to get the symlink's own mtime, not the target's.
@@ -306,3 +322,12 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 	return stat.ModTime().After(lastImportTime), nil
 }
 
+// getBackendType returns the backend type from metadata.json in the .beads directory
+// Returns "sqlite" (default), "dolt", or other registered backend types
+func getBackendType(beadsDir string) string {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return configfile.BackendSQLite // default to sqlite
+	}
+	return cfg.GetBackend()
+}
