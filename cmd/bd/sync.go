@@ -951,7 +951,7 @@ func ClearSyncConflictState(beadsDir string) error {
 //   - "ours": Keep local version
 //   - "theirs": Keep remote version
 //   - "manual": Interactive resolution with user prompts
-func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy string, dryRun bool) error {
+func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config.ConflictStrategy, dryRun bool) error {
 	beadsDir := filepath.Dir(jsonlPath)
 
 	conflictState, err := LoadSyncConflictState(beadsDir)
