@@ -284,10 +284,10 @@ func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (stri
 	return currentBeadsDir, false, nil
 }
 
-// findTownRoot walks up from startDir looking for a town root.
+// FindTownRoot walks up from startDir looking for a town root.
 // Returns the town root path, or empty string if not found.
 // A town root is identified by the presence of mayor/town.json.
-func findTownRoot(startDir string) string {
+func FindTownRoot(startDir string) string {
 	current := startDir
 	for {
 		// Check for primary marker (mayor/town.json)
@@ -311,7 +311,7 @@ func findTownRootFromCWD() string {
 	if err != nil {
 		return ""
 	}
-	return findTownRoot(cwd)
+	return FindTownRoot(cwd)
 }
 
 // findTownRoutes searches for routes.jsonl at the town level.
@@ -321,13 +321,13 @@ func findTownRootFromCWD() string {
 //
 // IMPORTANT: This function handles symlinked .beads directories correctly.
 // When .beads is a symlink (e.g., ~/gt/.beads -> ~/gt/olympus/.beads), we must
-// use findTownRoot() starting from CWD to determine the actual town root rather
+// use FindTownRoot() starting from CWD to determine the actual town root rather
 // than starting from currentBeadsDir, which may be the resolved symlink path.
 func findTownRoutes(currentBeadsDir string) ([]Route, string) {
 	// First try the current beads dir (works if we're already at town level)
 	routes, err := LoadRoutes(currentBeadsDir)
 	if err == nil && len(routes) > 0 {
-		// Use findTownRoot() starting from CWD to determine the actual town root.
+		// Use FindTownRoot() starting from CWD to determine the actual town root.
 		// We must NOT use currentBeadsDir as the starting point because if .beads
 		// is a symlink (e.g., ~/gt/.beads -> ~/gt/olympus/.beads), currentBeadsDir
 		// will be the resolved path (e.g., ~/gt/olympus/.beads) and walking up
