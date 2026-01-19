@@ -89,32 +89,33 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// First, connect without specifying a database to create it if needed
-	initConnStr := fmt.Sprintf(
+	// Connect without specifying a database first (required for CREATE DATABASE)
+	// IMPORTANT: We use a single connection and switch databases using USE.
+	// The Dolt embedded driver shares internal state between connections to the same path.
+	// If we create two separate *sql.DB connections and close the first one, it closes
+	// the shared Dolt session, causing "sql: database is closed" errors on the second
+	// connection. (bd-z6d.1)
+	connStr := fmt.Sprintf(
 		"file://%s?commitname=%s&commitemail=%s",
 		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
-
-	initDB, err := sql.Open("dolt", initConnStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open Dolt for initialization: %w", err)
-	}
-
-	// Create the database if it doesn't exist
-	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
-	if err != nil {
-		_ = initDB.Close() // nolint:gosec // G104: error ignored on early return
-		return nil, fmt.Errorf("failed to create database: %w", err)
-	}
-	_ = initDB.Close() // nolint:gosec // G104: connection no longer needed
-
-	// Now connect with the database specified
-	connStr := fmt.Sprintf(
-		"file://%s?commitname=%s&commitemail=%s&database=%s",
-		cfg.Path, cfg.CommitterName, cfg.CommitterEmail, cfg.Database)
 
 	db, err := sql.Open("dolt", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open Dolt database: %w", err)
+	}
+
+	// Create the database if it doesn't exist
+	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+	if err != nil {
+		_ = db.Close() // nolint:gosec // G104: error ignored on early return
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+
+	// Switch to the target database using USE
+	_, err = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
+	if err != nil {
+		_ = db.Close() // nolint:gosec // G104: error ignored on early return
+		return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, err)
 	}
 
 	// Configure connection pool

@@ -480,9 +480,15 @@ func clearAutoFlushState() {
 // If mismatch detected, clears export_hashes and logs warning.
 // Returns (needsFullExport, error) where needsFullExport=true if export_hashes was cleared.
 func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error) {
+	// Debug: Check if store is closed before calling
+	if vc, ok := store.(interface{ IsClosed() bool }); ok && vc.IsClosed() {
+		debug.Logf("validateJSONLIntegrity: store reports IsClosed()=true")
+	}
+
 	// Get stored JSONL file hash
 	storedHash, err := store.GetJSONLFileHash(ctx)
 	if err != nil {
+		debug.Logf("validateJSONLIntegrity: GetJSONLFileHash failed: %v", err)
 		return false, fmt.Errorf("failed to get stored JSONL hash: %w", err)
 	}
 	
