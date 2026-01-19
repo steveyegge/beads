@@ -1124,9 +1124,9 @@ func TestFederationConfigDefaults(t *testing.T) {
 	if cfg.Remote != "" {
 		t.Errorf("GetFederationConfig().Remote = %q, want empty", cfg.Remote)
 	}
-	// Default sovereignty is T1 when not configured
-	if cfg.Sovereignty != SovereigntyT1 {
-		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q (default)", cfg.Sovereignty, SovereigntyT1)
+	// Default sovereignty is empty (no restriction) when not configured
+	if cfg.Sovereignty != SovereigntyNone {
+		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q (no restriction)", cfg.Sovereignty, SovereigntyNone)
 	}
 }
 
