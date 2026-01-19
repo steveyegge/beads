@@ -802,7 +802,7 @@ func showSyncStateStatus(ctx context.Context, jsonlPath string) error {
 
 	// Sync mode (from config)
 	syncCfg := config.GetSyncConfig()
-	fmt.Printf("Sync mode: %s (%s)\n", syncCfg.Mode, SyncModeDescription(syncCfg.Mode))
+	fmt.Printf("Sync mode: %s (%s)\n", syncCfg.Mode, SyncModeDescription(string(syncCfg.Mode)))
 	fmt.Printf("  Export on: %s, Import on: %s\n", syncCfg.ExportOn, syncCfg.ImportOn)
 
 	// Conflict strategy
