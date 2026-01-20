@@ -84,6 +84,12 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		cfg.Remote = "origin"
 	}
 
+	// Read-only mode: skip all write operations (directory creation, lock cleanup, CREATE DATABASE)
+	// This path is used by read-only commands (list, show, ready, etc.) to avoid acquiring write locks
+	if cfg.ReadOnly {
+		return newReadOnly(ctx, cfg)
+	}
+
 	// Ensure directory exists
 	if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
@@ -155,14 +161,76 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		readOnly:       cfg.ReadOnly,
 	}
 
-	// Initialize schema (skip for read-only mode)
-	if !cfg.ReadOnly {
-		if err := store.initSchema(ctx); err != nil {
-			return nil, fmt.Errorf("failed to initialize schema: %w", err)
-		}
+	// Initialize schema (write mode)
+	if err := store.initSchema(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	return store, nil
+}
+
+// newReadOnly opens an existing Dolt database in read-only mode.
+// This avoids acquiring write locks by:
+// - Not creating directories
+// - Not cleaning up lock files
+// - Not executing CREATE DATABASE
+// - Connecting directly to an existing database
+//
+// Returns an error if the database doesn't exist.
+func newReadOnly(ctx context.Context, cfg *Config) (*DoltStore, error) {
+	// Verify the database exists - check for the .dolt directory
+	doltDir := filepath.Join(cfg.Path, cfg.Database, ".dolt")
+	if _, err := os.Stat(doltDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("Dolt database does not exist: %s (run a write command first to initialize)", cfg.Path)
+	}
+
+	// Build connection string - connect directly to the existing database
+	// The Dolt driver doesn't have a native read-only mode, but by not running
+	// CREATE DATABASE or schema initialization, we avoid write lock acquisition
+	connStr := fmt.Sprintf(
+		"file://%s?commitname=%s&commitemail=%s",
+		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
+
+	db, err := sql.Open("dolt", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Dolt database read-only: %w", err)
+	}
+
+	// Switch to the target database using USE (read operation)
+	_, err = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, err)
+	}
+
+	// Configure connection pool - read-only doesn't need large pool
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	// Test connection
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
+	}
+
+	// Convert to absolute path
+	absPath, err := filepath.Abs(cfg.Path)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	return &DoltStore{
+		db:             db,
+		dbPath:         absPath,
+		connStr:        connStr,
+		committerName:  cfg.CommitterName,
+		committerEmail: cfg.CommitterEmail,
+		remote:         cfg.Remote,
+		branch:         "main",
+		readOnly:       true,
+	}, nil
 }
 
 // isLockError detects if an error is related to lock contention or readonly mode
