@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Daemon zombie state after database file replacement** - Improved reconnection resilience
+  - Added `checkFreshness()` calls to `GetMetadata()`, `GetConfig()`, and `GetAllConfig()`
+  - Health checks now properly detect and handle database file replacements
+  - Refactored `reconnect()` to validate new connection before closing old one
+  - Prevents "sql: database is closed" errors that left daemon running but unable to serve requests
+  - Added conditional debug logging via `BD_DEBUG_FRESHNESS` environment variable
+
 - **Routed issues invisible in `bd list` (split-brain bug)** - Auto-flush JSONL after routing
   - `bd create` now flushes JSONL immediately in target repo (via daemon RPC or direct export)
   - Fixes issue where routed issues weren't visible until manual sync
@@ -42,7 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clarifies when to use `bd init --contributor`
   - Documents `git config beads.role maintainer` (only needed for HTTPS without credentials)
   - Explains auto-detection via SSH and HTTPS with credentials
-
 ## [0.48.0] - 2026-01-17
 
 ### Added
