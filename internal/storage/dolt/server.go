@@ -68,16 +68,13 @@ func StartServer(ctx context.Context, cfg *ServerConfig) (int, error) {
 	}
 
 	// Build command arguments
+	// Note: --user and --password were removed in dolt 1.80+
+	// Users should be created with CREATE USER and GRANT statements instead
 	args := []string{
 		"sql-server",
 		"--host", cfg.Host,
 		"--port", strconv.Itoa(cfg.Port),
-		"--user", cfg.User,
 		"--data-dir", cfg.DataDir,
-	}
-
-	if cfg.Password != "" {
-		args = append(args, "--password", cfg.Password)
 	}
 
 	if cfg.LogLevel != "" {
@@ -86,6 +83,9 @@ func StartServer(ctx context.Context, cfg *ServerConfig) (int, error) {
 
 	// Create the command
 	cmd := exec.CommandContext(ctx, "dolt", args...)
+
+	// Set the working directory to the data directory
+	cmd.Dir = cfg.DataDir
 
 	// Set up log file if specified, otherwise use temp file
 	logPath := cfg.LogFile
@@ -132,6 +132,10 @@ func StartServer(ctx context.Context, cfg *ServerConfig) (int, error) {
 	if err := waitForServer(cfg.Host, cfg.Port, 30*time.Second); err != nil {
 		// Server didn't start properly, try to kill it
 		_ = cmd.Process.Kill()
+		// Read the log file to see what went wrong
+		if logContent, readErr := os.ReadFile(logPath); readErr == nil {
+			return 0, fmt.Errorf("server failed to start: %w\nServer log:\n%s", err, string(logContent))
+		}
 		return 0, fmt.Errorf("server failed to start: %w", err)
 	}
 
