@@ -95,9 +95,25 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		issue.ID = generatedID
 	}
 
+	// Check if issue already exists (idempotent create)
+	var existingID string
+	err = tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
+	if err == nil {
+		// Issue already exists - this is idempotent, return success
+		// This handles race conditions and retry scenarios
+		return tx.Commit()
+	} else if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check for existing issue: %w", err)
+	}
+
 	// Insert issue
 	if err := insertIssue(ctx, tx, issue); err != nil {
-		return fmt.Errorf("failed to insert issue: %w", err)
+		// Check if this is a duplicate key error (race condition between check and insert)
+		if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
+			// Another process created the issue - this is fine, return success
+			return tx.Commit()
+		}
+		return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 	}
 
 	// Record creation event
@@ -173,7 +189,22 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
+		// Check if issue already exists (idempotent create)
+		var existingID string
+		err = tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
+		if err == nil {
+			// Issue already exists - skip it (idempotent)
+			continue
+		} else if err != sql.ErrNoRows {
+			return fmt.Errorf("failed to check for existing issue %s: %w", issue.ID, err)
+		}
+
 		if err := insertIssue(ctx, tx, issue); err != nil {
+			// Check if this is a duplicate key error (race condition)
+			if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
+				// Another process created the issue - skip it
+				continue
+			}
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
 		if err := recordEvent(ctx, tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
