@@ -504,12 +504,17 @@ const (
 	TypeWarrant      IssueType = "warrant"       // Session termination warrant
 )
 
-// IsValid checks if the issue type is a core work type.
-// Only core work types (bug, feature, task, epic, chore) are built-in.
-// Other types (molecule, gate, convoy, etc.) require types.custom configuration.
+// IsValid checks if the issue type is a defined type constant.
+// This includes core work types (bug, feature, task, epic, chore) and
+// extended types (merge-request, molecule, gate, agent, role, rig, convoy, event, slot, warrant).
+// All defined type constants are valid without requiring custom configuration.
 func (t IssueType) IsValid() bool {
 	switch t {
+	// Core work types
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
+		return true
+	// Extended types (Gas Town, molecules, coordination)
+	case TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant:
 		return true
 	}
 	return false

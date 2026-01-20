@@ -217,11 +217,12 @@ func TestParseIssueType(t *testing.T) {
 		{"task type", "task", types.TypeTask, false, ""},
 		{"epic type", "epic", types.TypeEpic, false, ""},
 		{"chore type", "chore", types.TypeChore, false, ""},
-		// Gas Town types require types.custom configuration (invalid without config)
-		{"merge-request type", "merge-request", types.TypeTask, true, "invalid issue type"},
-		{"molecule type", "molecule", types.TypeTask, true, "invalid issue type"},
-		{"gate type", "gate", types.TypeTask, true, "invalid issue type"},
-		{"event type", "event", types.TypeTask, true, "invalid issue type"},
+		// Extended types (now built-in valid)
+		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
+		{"molecule type", "molecule", types.TypeMolecule, false, ""},
+		{"gate type", "gate", types.TypeGate, false, ""},
+		{"event type", "event", types.TypeEvent, false, ""},
+		// Message type still requires types.custom configuration
 		{"message type", "message", types.TypeTask, true, "invalid issue type"},
 
 		// Case sensitivity (function is case-sensitive)
