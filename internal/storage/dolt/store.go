@@ -98,6 +98,14 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
+	// Clean up stale LOCK file if present (bd-d7b931)
+	// The Dolt embedded driver creates a LOCK file in .dolt/noms/ that may persist
+	// after crashes or unexpected termination. This causes "database is read only" errors.
+	if err := cleanupStaleDoltLock(cfg.Path, cfg.Database); err != nil {
+		// Log but don't fail - the lock may be legitimately held
+		fmt.Fprintf(os.Stderr, "Warning: could not check/clean Dolt lock: %v\n", err)
+	}
+
 	// Build connection string (used throughout and stored in DoltStore)
 	// Connect without specifying a database first (required for CREATE DATABASE)
 	// IMPORTANT: We use a single connection and switch databases using USE.
@@ -217,6 +225,46 @@ func isLockError(err error) bool {
 		strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "lock") && strings.Contains(errStr, "timeout") ||
 		strings.Contains(errStr, "lock") && strings.Contains(errStr, "contention")
+}
+
+// cleanupStaleDoltLock removes stale LOCK files from the Dolt noms directory.
+// The embedded Dolt driver creates a LOCK file that persists after crashes,
+// causing subsequent opens to fail with "database is read only" errors. (bd-d7b931)
+func cleanupStaleDoltLock(dbPath string, database string) error {
+	// The LOCK file is in the noms directory under .dolt
+	// For a database at /path/to/dolt with database name "beads",
+	// the lock is at /path/to/dolt/beads/.dolt/noms/LOCK
+	lockPath := filepath.Join(dbPath, database, ".dolt", "noms", "LOCK")
+
+	info, err := os.Stat(lockPath)
+	if os.IsNotExist(err) {
+		// No lock file, nothing to do
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat lock file: %w", err)
+	}
+
+	// Check if lock file is empty (Dolt creates empty LOCK files)
+	// An empty LOCK file is likely stale - the driver should have released it
+	if info.Size() == 0 {
+		// Check how old the lock is - if it's been more than a few seconds,
+		// it's likely stale from a crashed process
+		age := time.Since(info.ModTime())
+		if age > 5*time.Second {
+			fmt.Fprintf(os.Stderr, "Removing stale Dolt LOCK file (age: %v)\n", age.Round(time.Second))
+			if err := os.Remove(lockPath); err != nil {
+				return fmt.Errorf("remove stale lock: %w", err)
+			}
+			return nil
+		}
+		// Lock is recent, might be held by another process
+		return nil
+	}
+
+	// Non-empty lock file - might contain PID info, try to check if process is alive
+	// For now, just log and don't touch it
+	return nil
 }
 
 // initSchema creates all tables if they don't exist
