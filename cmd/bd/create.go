@@ -385,14 +385,18 @@ var createCmd = &cobra.Command{
 		if parentID != "" && daemonClient == nil {
 			ctx := rootCtx
 			// Validate parent exists before generating child ID
-			parentIssue, err := store.GetIssue(ctx, parentID)
+			// Use routing-aware lookup to support cross-repo parent references
+			result, err := resolveAndGetIssueWithRouting(ctx, store, parentID)
 			if err != nil {
 				FatalError("failed to check parent issue: %v", err)
 			}
-			if parentIssue == nil {
+			if result == nil || result.Issue == nil {
 				FatalError("parent issue %s not found", parentID)
 			}
-			childID, err := store.GetNextChildID(ctx, parentID)
+			defer result.Close()
+
+			// Use the routed store for GetNextChildID to ensure consistent child ID generation
+			childID, err := result.Store.GetNextChildID(ctx, result.ResolvedID)
 			if err != nil {
 				FatalError("%v", err)
 			}
