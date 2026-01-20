@@ -54,6 +54,33 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Generate ID if not set (rig-0e5de3: fix empty root issue ID in wisps)
+	if issue.ID == "" {
+		// Get prefix from config
+		var configPrefix string
+		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
+		if err == sql.ErrNoRows || configPrefix == "" {
+			configPrefix = "bd" // Fallback default
+		} else if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+		// Determine prefix for ID generation
+		prefix := configPrefix
+		if issue.PrefixOverride != "" {
+			prefix = issue.PrefixOverride
+		} else if issue.IDPrefix != "" {
+			prefix = configPrefix + "-" + issue.IDPrefix
+		}
+
+		// Generate hash-based ID
+		generatedID, err := generateIssueID(ctx, t.tx, prefix, issue, actor)
+		if err != nil {
+			return fmt.Errorf("failed to generate issue ID: %w", err)
+		}
+		issue.ID = generatedID
+	}
+
 	// Check if issue already exists (idempotent create for wisps/molecules)
 	var existingID string
 	err := t.tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
