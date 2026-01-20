@@ -191,3 +191,99 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckHydratedRepoDaemons(t *testing.T) {
+	t.Run("no additional repos configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database without repos.additional config
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		ctx := context.Background()
+		store, err := sqlite.New(ctx, dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = store.Close() }()
+
+		check := CheckHydratedRepoDaemons(tmpDir)
+
+		if check.Status != StatusOK {
+			t.Errorf("Status = %q, want %q", check.Status, StatusOK)
+		}
+		if check.Name != "Hydrated Repo Daemons" {
+			t.Errorf("Name = %q, want %q", check.Name, "Hydrated Repo Daemons")
+		}
+		// Should say no additional repos configured
+		if check.Message != "No additional repos configured (N/A)" {
+			t.Errorf("Message = %q, want 'No additional repos configured (N/A)'", check.Message)
+		}
+	})
+
+	t.Run("additional repos configured but no daemons running", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a fake additional repo directory
+		additionalRepo := t.TempDir()
+		additionalBeadsDir := filepath.Join(additionalRepo, ".beads")
+		if err := os.Mkdir(additionalBeadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create database with repos.additional config
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		ctx := context.Background()
+		store, err := sqlite.New(ctx, dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = store.Close() }()
+
+		// Set repos.additional config (stored as JSON array)
+		reposJSON := `["` + additionalRepo + `"]`
+		if err := store.SetConfig(ctx, "repos.additional", reposJSON); err != nil {
+			t.Fatalf("failed to set repos.additional: %v", err)
+		}
+
+		check := CheckHydratedRepoDaemons(tmpDir)
+
+		// Should return warning because no daemon is running in additional repo
+		if check.Status != StatusWarning {
+			t.Errorf("Status = %q, want %q", check.Status, StatusWarning)
+		}
+		if check.Name != "Hydrated Repo Daemons" {
+			t.Errorf("Name = %q, want %q", check.Name, "Hydrated Repo Daemons")
+		}
+		// Should mention missing daemons
+		if check.Fix == "" {
+			t.Error("Expected Fix to contain remediation steps")
+		}
+	})
+
+	t.Run("database unavailable", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.Mkdir(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Don't create database - should handle gracefully
+
+		check := CheckHydratedRepoDaemons(tmpDir)
+
+		if check.Status != StatusOK {
+			t.Errorf("Status = %q, want %q", check.Status, StatusOK)
+		}
+		// Should say couldn't check config
+		if check.Message != "Could not check config (database unavailable)" {
+			t.Errorf("Message = %q, want 'Could not check config (database unavailable)'", check.Message)
+		}
+	})
+}
