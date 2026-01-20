@@ -30,6 +30,17 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
+	// Skip SQLite-specific check for Dolt backend
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Database",
+			Status:   StatusOK,
+			Message:  "Dolt backend",
+			Detail:   "Storage: Dolt (version tracking via dolt_log)",
+			Category: CategoryCore,
+		}
+	}
+
 	// Check metadata.json first for custom database name
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -140,6 +151,16 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
+	// Skip SQLite-specific check for Dolt backend (use CheckDoltSchema instead)
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Schema Compatibility",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - see Dolt Schema check)",
+			Category: CategoryCore,
+		}
+	}
+
 	// Check metadata.json first for custom database name
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -229,6 +250,16 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 func CheckDatabaseIntegrity(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Skip SQLite PRAGMA integrity_check for Dolt backend
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Database Integrity",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - Dolt handles integrity internally)",
+			Category: CategoryCore,
+		}
+	}
 
 	// Get database path (same logic as CheckSchemaCompatibility)
 	var dbPath string
@@ -342,6 +373,16 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// For Dolt backend, use CheckDoltIssueCount instead
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "DB-JSONL Sync",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - see Dolt-JSONL Sync check)",
+			Category: CategoryData,
+		}
+	}
 
 	// Resolve database path (respects metadata.json override).
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)

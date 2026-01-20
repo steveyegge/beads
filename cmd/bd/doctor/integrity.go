@@ -407,6 +407,17 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
+	// Skip SQLite-specific fingerprint check for Dolt backend
+	// Dolt has its own versioning via dolt_log and doesn't use SQLite metadata table
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Repo Fingerprint",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - uses native Dolt versioning)",
+			Category: CategoryCore,
+		}
+	}
+
 	// Get database path
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
