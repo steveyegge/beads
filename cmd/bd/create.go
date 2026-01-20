@@ -737,6 +737,12 @@ var createCmd = &cobra.Command{
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
+		// If issue was routed to a different repo, flush its JSONL immediately
+		// so the issue appears in bd list when hydration is enabled (bd-fix-routing)
+		if repoPath != "." {
+			flushRoutedRepo(targetStore, repoPath)
+		}
+
 		// Run create hook
 		if hookRunner != nil {
 			hookRunner.Run(hooks.EventCreate, issue)
@@ -759,6 +765,119 @@ var createCmd = &cobra.Command{
 		// Track as last touched issue
 		SetLastTouchedID(issue.ID)
 	},
+}
+
+// flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
+// This is critical for multi-repo hydration to work correctly (bd-fix-routing).
+func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
+	ctx := context.Background()
+
+	// Expand the repo path and construct the .beads directory path
+	targetBeadsDir := routing.ExpandPath(repoPath)
+	if !filepath.IsAbs(targetBeadsDir) {
+		// If relative path, make it absolute
+		absPath, err := filepath.Abs(targetBeadsDir)
+		if err != nil {
+			debug.Logf("warning: failed to get absolute path for %s: %v", targetBeadsDir, err)
+			return
+		}
+		targetBeadsDir = absPath
+	}
+
+	// Construct paths for daemon socket and JSONL
+	beadsDir := filepath.Join(targetBeadsDir, ".beads")
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
+
+	// Try to connect to target repo's daemon (if running)
+	flushed := false
+	if client, err := rpc.TryConnect(socketPath); err == nil && client != nil {
+		defer client.Close()
+
+		// Daemon is running - ask it to export
+		debug.Logf("found running daemon in target repo, requesting export")
+		exportArgs := &rpc.ExportArgs{
+			JSONLPath: jsonlPath,
+		}
+		if resp, err := client.Export(exportArgs); err == nil && resp.Success {
+			debug.Logf("successfully flushed via target repo daemon")
+			flushed = true
+		} else {
+			if err != nil {
+				debug.Logf("daemon export failed: %v", err)
+			} else {
+				debug.Logf("daemon export error: %s", resp.Error)
+			}
+		}
+	}
+
+	// Fallback: No daemon or daemon flush failed - export directly
+	if !flushed {
+		debug.Logf("no daemon in target repo, exporting directly to JSONL")
+
+		// Get all issues including tombstones (mirrors exportToJSONLDeferred logic)
+		issues, err := targetStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+		if err != nil {
+			WarnError("failed to query issues for export: %v", err)
+			return
+		}
+
+		// Perform atomic export (temporary file + rename)
+		if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
+			WarnError("failed to export target repo JSONL: %v", err)
+			return
+		}
+
+		debug.Logf("successfully exported to %s", jsonlPath)
+	}
+}
+
+// performAtomicExport writes issues to JSONL using atomic temp file + rename
+func performAtomicExport(ctx context.Context, jsonlPath string, issues []*types.Issue, targetStore storage.Storage) error {
+	// Create temp file with PID suffix for atomic write
+	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
+
+	// Ensure we clean up temp file on error
+	defer func() {
+		// Remove temp file if it still exists (rename failed or error occurred)
+		if _, err := os.Stat(tempPath); err == nil {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	// Open temp file for writing
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	// Write issues as JSONL
+	encoder := json.NewEncoder(tempFile)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			tempFile.Close()
+			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+	}
+
+	// Sync to disk before rename
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
 }
 
 func init() {

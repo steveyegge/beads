@@ -406,6 +406,11 @@ func runDiagnostics(path string) doctorResult {
 	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
 	result.Checks = append(result.Checks, doltModeCheck)
 
+	// Check 8i: Hydrated repo daemons (warn if multi-repo hydration configured but daemons not running)
+	hydratedRepoDaemonsCheck := convertWithCategory(doctor.CheckHydratedRepoDaemons(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
+	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
+
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)

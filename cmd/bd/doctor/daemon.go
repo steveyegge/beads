@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -286,4 +287,99 @@ func CheckLegacyDaemonConfig(path string) DoctorCheck {
 		Status:  StatusOK,
 		Message: "Using current config format",
 	}
+}
+
+// CheckHydratedRepoDaemons checks if daemons are running for all repos
+// configured in repos.additional. Without running daemons, JSONL files won't
+// be kept updated, causing multi-repo hydration to become stale (bd-fix-routing).
+func CheckHydratedRepoDaemons(path string) DoctorCheck {
+	beadsDir := filepath.Join(path, ".beads")
+	dbPath := filepath.Join(beadsDir, "beads.db")
+
+	ctx := context.Background()
+	store, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		return DoctorCheck{
+			Name:    "Hydrated Repo Daemons",
+			Status:  StatusOK,
+			Message: "Could not check config (database unavailable)",
+		}
+	}
+	defer func() { _ = store.Close() }()
+
+	// Get repos.additional from config
+	additionalReposStr, _ := store.GetConfig(ctx, "repos.additional")
+	if additionalReposStr == "" {
+		return DoctorCheck{
+			Name:    "Hydrated Repo Daemons",
+			Status:  StatusOK,
+			Message: "No additional repos configured (N/A)",
+		}
+	}
+
+	// Parse additional repos (stored as JSON array string)
+	var additionalRepos []string
+	if err := unmarshalConfigValue(additionalReposStr, &additionalRepos); err != nil {
+		return DoctorCheck{
+			Name:    "Hydrated Repo Daemons",
+			Status:  StatusWarning,
+			Message: "Could not parse repos.additional config",
+			Detail:  err.Error(),
+		}
+	}
+
+	if len(additionalRepos) == 0 {
+		return DoctorCheck{
+			Name:    "Hydrated Repo Daemons",
+			Status:  StatusOK,
+			Message: "No additional repos configured (N/A)",
+		}
+	}
+
+	// Check each additional repo for running daemon
+	var missingDaemons []string
+	for _, repoPath := range additionalRepos {
+		// Expand ~ to home directory
+		expandedPath := expandPath(repoPath)
+
+		// Construct socket path
+		socketPath := filepath.Join(expandedPath, ".beads", "bd.sock")
+
+		// Try to connect to daemon
+		client, err := rpc.TryConnect(socketPath)
+		if err == nil && client != nil {
+			_ = client.Close()
+			// Daemon is running, all good
+		} else {
+			// No daemon running
+			missingDaemons = append(missingDaemons, repoPath)
+		}
+	}
+
+	if len(missingDaemons) > 0 {
+		return DoctorCheck{
+			Name:    "Hydrated Repo Daemons",
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Daemons not running in %d hydrated repo(s)", len(missingDaemons)),
+			Detail:  fmt.Sprintf("Missing daemons in: %v", missingDaemons),
+			Fix:     "For each repo, run: cd <repo> && bd daemon start --local",
+		}
+	}
+
+	return DoctorCheck{
+		Name:    "Hydrated Repo Daemons",
+		Status:  StatusOK,
+		Message: fmt.Sprintf("All %d hydrated repo(s) have running daemons", len(additionalRepos)),
+	}
+}
+
+// unmarshalConfigValue unmarshals a JSON config value
+func unmarshalConfigValue(value string, target interface{}) error {
+	// Config values are stored as JSON
+	if value == "" {
+		return nil
+	}
+
+	// Unmarshal JSON into target
+	return json.Unmarshal([]byte(value), target)
 }
