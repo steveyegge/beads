@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Contributor vs maintainer setup** - Added to README.md
   - Clarifies when to use `bd init --contributor`
-  - Documents `git config beads.role maintainer` for maintainers
+  - Documents `git config beads.role maintainer` (only needed for HTTPS without credentials)
+  - Explains auto-detection via SSH and HTTPS with credentials
 
 ## [0.48.0] - 2026-01-17
 
