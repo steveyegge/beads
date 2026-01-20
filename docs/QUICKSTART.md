@@ -10,6 +10,26 @@ go build -o bd ./cmd/bd
 ./bd --help
 ```
 
+## Discover Commands
+
+Use `bd help` to see all available commands organized by category:
+
+```bash
+bd help
+```
+
+This shows commands grouped into:
+- **Working With Issues** - create, list, show, update, close
+- **Dependencies & Structure** - dep, epic, graph
+- **Views & Reports** - status, stale, activity
+- **Sync & Collaboration** - sync, import, export
+
+For detailed help on any command:
+
+```bash
+bd help create    # or: bd create --help
+```
+
 ## Initialize
 
 First time in a repository:
