@@ -17,6 +17,8 @@ func TestAgentStateWithRouting(t *testing.T) {
 
 	// Create temp directory structure:
 	// tmpDir/
+	//   mayor/
+	//     town.json (fake town marker so FindTownRoot finds this as town root)
 	//   .beads/
 	//     beads.db (town database)
 	//     routes.jsonl (routing config)
@@ -24,6 +26,22 @@ func TestAgentStateWithRouting(t *testing.T) {
 	//     .beads/
 	//       beads.db (rig database with agent)
 	tmpDir := t.TempDir()
+
+	// Create fake mayor/town.json so FindTownRoot identifies tmpDir as town root (bd-z7x)
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test-town"}`), 0644); err != nil {
+		t.Fatalf("Failed to write town.json: %v", err)
+	}
+
+	// Change to tmpDir so findTownRootFromCWD() finds our fake town
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir to tmpDir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldCwd) })
 
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
@@ -120,6 +138,22 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
+	// Create fake mayor/town.json so FindTownRoot identifies tmpDir as town root (bd-z7x)
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test-town"}`), 0644); err != nil {
+		t.Fatalf("Failed to write town.json: %v", err)
+	}
+
+	// Change to tmpDir so findTownRootFromCWD() finds our fake town
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir to tmpDir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldCwd) })
+
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
@@ -193,6 +227,22 @@ func TestAgentShowWithRouting(t *testing.T) {
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
+
+	// Create fake mayor/town.json so FindTownRoot identifies tmpDir as town root (bd-z7x)
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("Failed to create mayor dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test-town"}`), 0644); err != nil {
+		t.Fatalf("Failed to write town.json: %v", err)
+	}
+
+	// Change to tmpDir so findTownRootFromCWD() finds our fake town
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir to tmpDir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldCwd) })
 
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
