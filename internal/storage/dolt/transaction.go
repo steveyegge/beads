@@ -54,7 +54,25 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
-	return insertIssueTx(ctx, t.tx, issue)
+	// Check if issue already exists (idempotent create for wisps/molecules)
+	var existingID string
+	err := t.tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
+	if err == nil {
+		// Issue already exists - this is idempotent, return success
+		return nil
+	} else if err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check for existing issue: %w", err)
+	}
+
+	if err := insertIssueTx(ctx, t.tx, issue); err != nil {
+		// Check if this is a duplicate key error (race condition)
+		if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
+			// Another process created the issue - this is fine, return success
+			return nil
+		}
+		return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
+	}
+	return nil
 }
 
 // CreateIssues creates multiple issues within the transaction

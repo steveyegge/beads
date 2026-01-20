@@ -94,6 +94,7 @@ type CreateArgs struct {
 	// Messaging fields
 	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
 	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
+	Pinned    bool   `json:"pinned,omitempty"`    // If true, keeps visible (used for agent beads)
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
