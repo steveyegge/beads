@@ -22,6 +22,8 @@ bd init
 # Tell your agent
 echo "Use 'bd' for task tracking" >> AGENTS.md
 
+# Verify installation
+bd version
 ```
 
 ## 🛠 Features
