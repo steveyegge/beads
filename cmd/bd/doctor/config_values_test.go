@@ -461,6 +461,17 @@ func TestCheckConfigValuesDbPath(t *testing.T) {
 	})
 
 	t.Run("routing.mode=auto with hydration configured correctly", func(t *testing.T) {
+		// Create the planning repo directory so path validation passes
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("failed to get home dir: %v", err)
+		}
+		planningRepo := filepath.Join(home, "planning-repo")
+		if err := os.MkdirAll(planningRepo, 0755); err != nil {
+			t.Fatalf("failed to create planning repo: %v", err)
+		}
+		defer os.RemoveAll(planningRepo)
+
 		configContent := `routing:
   mode: auto
   contributor: ~/planning-repo
@@ -500,6 +511,17 @@ repos:
 	})
 
 	t.Run("routing.mode=auto with maintainer routing", func(t *testing.T) {
+		// Create the maintainer repo directory so path validation passes
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("failed to get home dir: %v", err)
+		}
+		maintainerRepo := filepath.Join(home, "maintainer-repo")
+		if err := os.MkdirAll(maintainerRepo, 0755); err != nil {
+			t.Fatalf("failed to create maintainer repo: %v", err)
+		}
+		defer os.RemoveAll(maintainerRepo)
+
 		configContent := `routing:
   mode: auto
   maintainer: ~/maintainer-repo

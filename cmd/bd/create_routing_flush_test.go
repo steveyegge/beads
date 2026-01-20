@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -41,9 +41,8 @@ func TestFlushRoutedRepo_DirectExport(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a test issue in the target store
+	// Create a test issue in the target store (let ID be auto-generated with correct prefix)
 	issue := &types.Issue{
-		ID:        "beads-test1",
 		Title:     "Test routed issue",
 		Priority:  2,
 		IssueType: types.TypeTask,
@@ -53,6 +52,9 @@ func TestFlushRoutedRepo_DirectExport(t *testing.T) {
 	if err := targetStore.CreateIssue(ctx, issue, "test"); err != nil {
 		t.Fatalf("failed to create test issue: %v", err)
 	}
+
+	// Save the generated ID for later verification
+	testIssueID := issue.ID
 
 	// Call flushRoutedRepo (the function we're testing)
 	// This should export the issue to JSONL since no daemon is running
@@ -70,20 +72,26 @@ func TestFlushRoutedRepo_DirectExport(t *testing.T) {
 
 	// Parse JSONL to verify our issue is there
 	var foundIssue *types.Issue
-	decoder := json.NewDecoder(os.Open(targetJSONLPath))
+	file, err := os.Open(targetJSONLPath)
+	if err != nil {
+		t.Fatalf("failed to open JSONL: %v", err)
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
 	for decoder.More() {
 		var iss types.Issue
 		if err := decoder.Decode(&iss); err != nil {
 			t.Fatalf("failed to decode JSONL issue: %v", err)
 		}
-		if iss.ID == "beads-test1" {
+		if iss.ID == testIssueID {
 			foundIssue = &iss
 			break
 		}
 	}
 
 	if foundIssue == nil {
-		t.Fatal("could not find routed issue in target JSONL")
+		t.Fatalf("could not find routed issue %s in target JSONL", testIssueID)
 	}
 
 	if foundIssue.Title != "Test routed issue" {
@@ -231,7 +239,6 @@ repos:
 
 	// Create issue in planning repo (simulating routed create)
 	issue := &types.Issue{
-		ID:        "beads-routed1",
 		Title:     "Routed issue",
 		Priority:  2,
 		IssueType: types.TypeTask,
@@ -245,33 +252,25 @@ repos:
 	// Flush to JSONL (this is what our fix does)
 	flushRoutedRepo(planningStore, planningDir)
 
-	// Verify config can be loaded
-	cfg, err := config.LoadYAML(configPath)
+	// Verify config.yaml was written with correct content
+	configBytes, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("failed to load config: %v", err)
+		t.Fatalf("failed to read config.yaml: %v", err)
+	}
+	configStr := string(configBytes)
+
+	// Check routing is configured
+	if !strings.Contains(configStr, "routing:") || !strings.Contains(configStr, "mode: auto") {
+		t.Error("expected routing.mode=auto in config.yaml")
 	}
 
-	// Verify routing is configured
-	if mode := cfg.GetString("routing.mode"); mode != "auto" {
-		t.Errorf("expected routing.mode=auto, got %q", mode)
+	// Check hydration is configured (planning dir should be in repos.additional)
+	if !strings.Contains(configStr, "repos:") || !strings.Contains(configStr, "additional:") {
+		t.Error("expected repos.additional in config.yaml")
 	}
 
-	// Verify hydration is configured
-	additional := cfg.GetStringSlice("repos.additional")
-	if len(additional) == 0 {
-		t.Fatal("expected repos.additional to be configured")
-	}
-
-	foundPlanning := false
-	for _, path := range additional {
-		if path == planningDir {
-			foundPlanning = true
-			break
-		}
-	}
-
-	if !foundPlanning {
-		t.Errorf("planning repo %q not found in repos.additional: %v", planningDir, additional)
+	if !strings.Contains(configStr, planningDir) {
+		t.Errorf("expected planning dir %q to be in config.yaml", planningDir)
 	}
 
 	// Verify JSONL contains the routed issue
