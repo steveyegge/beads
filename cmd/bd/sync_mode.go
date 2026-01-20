@@ -33,6 +33,14 @@ const (
 
 	// SyncImportOnConfigKey controls when JSONL import happens.
 	SyncImportOnConfigKey = "sync.import_on"
+
+	// SyncAutoDoltCommitKey controls automatic Dolt commits after sync.
+	// When enabled (default), data changes are committed to Dolt after each sync.
+	SyncAutoDoltCommitKey = "sync.auto_dolt_commit"
+
+	// SyncAutoDoltPushKey controls automatic Dolt push after sync.
+	// When enabled, commits are pushed to the Dolt remote after each sync.
+	SyncAutoDoltPushKey = "sync.auto_dolt_push"
 )
 
 // Trigger constants for export_on and import_on settings.
@@ -110,6 +118,26 @@ func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 func ShouldUseDoltRemote(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)
 	return mode == SyncModeDoltNative || mode == SyncModeBeltAndSuspenders
+}
+
+// ShouldAutoDoltCommit returns true if Dolt commits should happen automatically after sync.
+// Defaults to true to prevent journal corruption.
+func ShouldAutoDoltCommit(ctx context.Context, s storage.Storage) bool {
+	val, err := s.GetConfig(ctx, SyncAutoDoltCommitKey)
+	if err != nil || val == "" {
+		return true // Default: enabled
+	}
+	return val == "true" || val == "1" || val == "yes"
+}
+
+// ShouldAutoDoltPush returns true if Dolt pushes should happen automatically after sync.
+// Defaults to false (requires explicit configuration).
+func ShouldAutoDoltPush(ctx context.Context, s storage.Storage) bool {
+	val, err := s.GetConfig(ctx, SyncAutoDoltPushKey)
+	if err != nil || val == "" {
+		return false // Default: disabled
+	}
+	return val == "true" || val == "1" || val == "yes"
 }
 
 // SyncModeDescription returns a human-readable description of the sync mode.

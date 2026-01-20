@@ -189,3 +189,113 @@ func TestSyncModeDescription(t *testing.T) {
 		})
 	}
 }
+
+// TestShouldAutoDoltCommit verifies auto dolt commit configuration.
+func TestShouldAutoDoltCommit(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create .beads directory
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create store
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	testStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Test 1: Default is true (enabled)
+	if !ShouldAutoDoltCommit(ctx, testStore) {
+		t.Error("default ShouldAutoDoltCommit should be true")
+	}
+	t.Log("✓ Default ShouldAutoDoltCommit is true")
+
+	// Test 2: Explicitly set to true
+	if err := testStore.SetConfig(ctx, SyncAutoDoltCommitKey, "true"); err != nil {
+		t.Fatalf("failed to set config: %v", err)
+	}
+	if !ShouldAutoDoltCommit(ctx, testStore) {
+		t.Error("ShouldAutoDoltCommit should be true when set to 'true'")
+	}
+	t.Log("✓ ShouldAutoDoltCommit=true works")
+
+	// Test 3: Set to false
+	if err := testStore.SetConfig(ctx, SyncAutoDoltCommitKey, "false"); err != nil {
+		t.Fatalf("failed to set config: %v", err)
+	}
+	if ShouldAutoDoltCommit(ctx, testStore) {
+		t.Error("ShouldAutoDoltCommit should be false when set to 'false'")
+	}
+	t.Log("✓ ShouldAutoDoltCommit=false works")
+
+	// Test 4: Various truthy values
+	for _, val := range []string{"1", "yes", "true"} {
+		if err := testStore.SetConfig(ctx, SyncAutoDoltCommitKey, val); err != nil {
+			t.Fatalf("failed to set config: %v", err)
+		}
+		if !ShouldAutoDoltCommit(ctx, testStore) {
+			t.Errorf("ShouldAutoDoltCommit should be true for value %q", val)
+		}
+	}
+	t.Log("✓ ShouldAutoDoltCommit accepts various truthy values")
+}
+
+// TestShouldAutoDoltPush verifies auto dolt push configuration.
+func TestShouldAutoDoltPush(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create .beads directory
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create store
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	testStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Test 1: Default is false (disabled)
+	if ShouldAutoDoltPush(ctx, testStore) {
+		t.Error("default ShouldAutoDoltPush should be false")
+	}
+	t.Log("✓ Default ShouldAutoDoltPush is false")
+
+	// Test 2: Explicitly set to true
+	if err := testStore.SetConfig(ctx, SyncAutoDoltPushKey, "true"); err != nil {
+		t.Fatalf("failed to set config: %v", err)
+	}
+	if !ShouldAutoDoltPush(ctx, testStore) {
+		t.Error("ShouldAutoDoltPush should be true when set to 'true'")
+	}
+	t.Log("✓ ShouldAutoDoltPush=true works")
+
+	// Test 3: Set to false
+	if err := testStore.SetConfig(ctx, SyncAutoDoltPushKey, "false"); err != nil {
+		t.Fatalf("failed to set config: %v", err)
+	}
+	if ShouldAutoDoltPush(ctx, testStore) {
+		t.Error("ShouldAutoDoltPush should be false when set to 'false'")
+	}
+	t.Log("✓ ShouldAutoDoltPush=false works")
+
+	// Test 4: Various truthy values
+	for _, val := range []string{"1", "yes", "true"} {
+		if err := testStore.SetConfig(ctx, SyncAutoDoltPushKey, val); err != nil {
+			t.Fatalf("failed to set config: %v", err)
+		}
+		if !ShouldAutoDoltPush(ctx, testStore) {
+			t.Errorf("ShouldAutoDoltPush should be true for value %q", val)
+		}
+	}
+	t.Log("✓ ShouldAutoDoltPush accepts various truthy values")
+}

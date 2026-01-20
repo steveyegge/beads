@@ -682,6 +682,8 @@ func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 // - git-portable, realtime: Export to JSONL
 // - dolt-native: Commit and push to Dolt remote (skip JSONL)
 // - belt-and-suspenders: Both JSONL export and Dolt push
+// Additionally, if auto_dolt_commit is enabled (default), always commits to Dolt
+// when using Dolt backend, regardless of sync mode. This prevents journal corruption.
 // Does NOT stage or commit to git - that's the user's job.
 func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) error {
 	if err := ensureStoreActive(); err != nil {
@@ -690,47 +692,24 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 
 	syncMode := GetSyncMode(ctx, store)
 	shouldExportJSONL := ShouldExportJSONL(ctx, store)
-	shouldUseDolt := ShouldUseDoltRemote(ctx, store)
+	shouldUseDoltRemote := ShouldUseDoltRemote(ctx, store)
+	autoDoltCommit := ShouldAutoDoltCommit(ctx, store)
+	autoDoltPush := ShouldAutoDoltPush(ctx, store)
+
+	// Check if we have Dolt remote support
+	rs, hasDoltRemote := storage.AsRemote(store)
 
 	if dryRun {
 		if shouldExportJSONL {
 			fmt.Println("→ [DRY RUN] Would export database to JSONL")
 		}
-		if shouldUseDolt {
-			fmt.Println("→ [DRY RUN] Would commit and push to Dolt remote")
+		if hasDoltRemote && autoDoltCommit {
+			fmt.Println("→ [DRY RUN] Would commit to Dolt")
+		}
+		if hasDoltRemote && (shouldUseDoltRemote || autoDoltPush) {
+			fmt.Println("→ [DRY RUN] Would push to Dolt remote")
 		}
 		return nil
-	}
-
-	// Handle Dolt remote operations for dolt-native and belt-and-suspenders modes
-	if shouldUseDolt {
-		rs, ok := storage.AsRemote(store)
-		if !ok {
-			if syncMode == SyncModeDoltNative {
-				return fmt.Errorf("dolt-native sync mode requires Dolt backend (current backend doesn't support remote operations)")
-			}
-			// belt-and-suspenders: warn but continue with JSONL
-			fmt.Println("⚠ Dolt remote not available, falling back to JSONL-only")
-		} else {
-			fmt.Println("→ Committing to Dolt...")
-			if err := rs.Commit(ctx, "bd sync: auto-commit"); err != nil {
-				// Ignore "nothing to commit" errors
-				if !strings.Contains(err.Error(), "nothing to commit") {
-					return fmt.Errorf("dolt commit failed: %w", err)
-				}
-			}
-
-			fmt.Println("→ Pushing to Dolt remote...")
-			if err := rs.Push(ctx); err != nil {
-				// Don't fail if no remote configured
-				if !strings.Contains(err.Error(), "remote") {
-					return fmt.Errorf("dolt push failed: %w", err)
-				}
-				fmt.Println("⚠ No Dolt remote configured, skipping push")
-			} else {
-				fmt.Println("✓ Pushed to Dolt remote")
-			}
-		}
 	}
 
 	// Export to JSONL for git-portable, realtime, and belt-and-suspenders modes
@@ -769,6 +748,39 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			fmt.Printf("✓ Exported %d issues\n", totalCount)
 		}
 		fmt.Printf("✓ %s updated\n", jsonlPath)
+	}
+
+	// Auto Dolt commit: Always commit when using Dolt backend (prevents journal corruption)
+	// This happens regardless of sync mode if auto_dolt_commit is enabled (default: true)
+	if hasDoltRemote && autoDoltCommit {
+		fmt.Println("→ Committing to Dolt...")
+		if err := rs.Commit(ctx, "bd sync: auto-commit"); err != nil {
+			// Ignore "nothing to commit" errors
+			if !strings.Contains(err.Error(), "nothing to commit") {
+				return fmt.Errorf("dolt commit failed: %w", err)
+			}
+			fmt.Println("  (nothing to commit)")
+		} else {
+			fmt.Println("✓ Committed to Dolt")
+		}
+	} else if !hasDoltRemote && syncMode == SyncModeDoltNative {
+		return fmt.Errorf("dolt-native sync mode requires Dolt backend (current backend doesn't support remote operations)")
+	}
+
+	// Dolt push: Push to remote if enabled by sync mode or auto_dolt_push
+	shouldPush := shouldUseDoltRemote || autoDoltPush
+	if hasDoltRemote && shouldPush {
+		fmt.Println("→ Pushing to Dolt remote...")
+		if err := rs.Push(ctx); err != nil {
+			// Don't fail if no remote configured
+			if strings.Contains(err.Error(), "remote") || strings.Contains(err.Error(), "no remotes") {
+				fmt.Println("⚠ No Dolt remote configured, skipping push")
+			} else {
+				return fmt.Errorf("dolt push failed: %w", err)
+			}
+		} else {
+			fmt.Println("✓ Pushed to Dolt remote")
+		}
 	}
 
 	return nil
