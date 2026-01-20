@@ -221,8 +221,8 @@ func checkYAMLConfigValues(repoPath string) []string {
 			contributorRepo := v.GetString("routing.contributor")
 			maintainerRepo := v.GetString("routing.maintainer")
 
-			// Check if routing targets are configured
-			hasRoutingTargets := contributorRepo != "" || maintainerRepo != ""
+			// Check if routing targets are configured (exclude "." which means current repo)
+			hasRoutingTargets := (contributorRepo != "" && contributorRepo != ".") || (maintainerRepo != "" && maintainerRepo != ".")
 
 			if hasRoutingTargets {
 				// Check if hydration is configured
