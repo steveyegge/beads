@@ -45,12 +45,19 @@ func init() {
 			}
 		}
 
+		// Server mode is enabled by default for Dolt to avoid lock contention (bd-f4f78a)
+		// Can be disabled with BEADS_DOLT_SERVER_MODE=0
+		serverMode := opts.ServerMode
+		if os.Getenv("BEADS_DOLT_SERVER_MODE") != "0" && os.Getenv("BEADS_DOLT_SERVER_MODE") != "false" {
+			serverMode = true
+		}
+
 		return dolt.New(ctx, &dolt.Config{
 			Path:        path,
 			ReadOnly:    opts.ReadOnly,
 			IdleTimeout: opts.IdleTimeout,
 			// Server mode options (bd-f4f78a)
-			ServerMode: opts.ServerMode,
+			ServerMode: serverMode,
 			ServerHost: opts.ServerHost,
 			ServerPort: opts.ServerPort,
 			ServerUser: opts.ServerUser,
