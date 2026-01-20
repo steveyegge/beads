@@ -7,7 +7,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // ensureDirectMode makes sure the CLI is operating in direct-storage mode.
@@ -89,11 +89,17 @@ func ensureStoreActive() error {
 		}
 	}
 
-	sqlStore, err := sqlite.New(getRootContext(), path)
+	// Use factory to respect backend configuration (SQLite vs Dolt)
+	// The path might be either a .db file (SQLite) or a directory (Dolt)
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		beadsDir = filepath.Dir(path)
+	}
+
+	newStore, err := factory.NewFromConfig(getRootContext(), beadsDir)
 	if err != nil {
 		// Check for fresh clone scenario
 		if isFreshCloneError(err) {
-			beadsDir := filepath.Dir(path)
 			handleFreshCloneError(err, beadsDir)
 			return fmt.Errorf("database not initialized")
 		}
@@ -101,7 +107,7 @@ func ensureStoreActive() error {
 	}
 
 	lockStore()
-	setStore(sqlStore)
+	setStore(newStore)
 	setStoreActive(true)
 	unlockStore()
 

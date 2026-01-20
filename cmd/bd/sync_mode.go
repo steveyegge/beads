@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 )
 
@@ -54,9 +55,18 @@ const (
 )
 
 // GetSyncMode returns the configured sync mode, defaulting to git-portable.
+// Reads from config.yaml first (sync.mode is a yaml-only key), then falls back
+// to database config for backwards compatibility and testing.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
-	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
-	if err != nil || mode == "" {
+	// Try yaml config first (preferred source)
+	mode := config.GetSyncMode()
+
+	// Fall back to database config for backwards compatibility
+	if mode == "" && s != nil {
+		mode, _ = s.GetConfig(ctx, SyncModeConfigKey)
+	}
+
+	if mode == "" {
 		return SyncModeGitPortable
 	}
 
