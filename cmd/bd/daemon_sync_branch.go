@@ -161,8 +161,7 @@ func gitCommitInWorktree(ctx context.Context, worktreePath, filePath, message st
 	}
 
 	// Stage the file
-	// Use --sparse to work correctly with sparse-checkout enabled worktrees (fixes #1076)
-	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "--sparse", relPath) // #nosec G204 - worktreePath and relPath are derived from trusted git operations
+	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", relPath) // #nosec G204 - worktreePath and relPath are derived from trusted git operations
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed in worktree: %w", err)
 	}

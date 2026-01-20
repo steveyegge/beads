@@ -339,8 +339,7 @@ func commitInitialSyncState(ctx context.Context, worktreePath, jsonlRelPath stri
 	beadsRelDir := filepath.Dir(jsonlRelPath)
 
 	// Stage all beads files
-	// Use --sparse to work correctly with sparse-checkout enabled worktrees (fixes #1076)
-	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "--sparse", beadsRelDir)
+	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", beadsRelDir)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed: %w", err)
 	}

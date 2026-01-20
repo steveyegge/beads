@@ -412,9 +412,9 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	}
 	defer db.Close()
 
-	// Get database count (exclude ephemeral/wisp issues - they're never exported to JSONL)
+	// Get database count
 	var dbCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM issues WHERE ephemeral = 0 OR ephemeral IS NULL").Scan(&dbCount)
+	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&dbCount)
 	if err != nil {
 		// Database opened but can't query. If JSONL has issues, suggest recovery.
 		if jsonlErr == nil && jsonlCount > 0 {
@@ -542,11 +542,11 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 			fixMsg = "Run 'bd doctor --fix' to fix automatically, or manually run 'bd sync --import-only' or 'bd export' depending on which has newer data"
 		}
 		if strings.Contains(strings.Join(issues, " "), "Prefix mismatch") {
-			fixMsg = "Run 'bd import -i .beads/issues.jsonl --rename-on-import' to fix prefixes"
+			fixMsg = "Run 'bd import -i " + filepath.Base(jsonlPath) + " --rename-on-import' to fix prefixes"
 		}
 		// GH#885: For status mismatches, provide specific guidance and include detail
 		if strings.Contains(strings.Join(issues, " "), "Status mismatch") {
-			fixMsg = "Run 'bd export -o .beads/issues.jsonl' to update JSONL from DB (DB is usually source of truth)"
+			fixMsg = "Run 'bd export -o " + filepath.Base(jsonlPath) + "' to update JSONL from DB (DB is usually source of truth)"
 			detail = statusMismatchDetail
 		}
 

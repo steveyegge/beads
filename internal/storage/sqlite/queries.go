@@ -2021,9 +2021,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
@@ -42,28 +41,6 @@ func init() {
 			fmt.Fprintf(os.Stderr, "\n  Dolt database ready\n")
 		}
 
-		// Calculate retry configuration from LockTimeout
-		// Default: 30 retries with 100ms initial delay = ~6 seconds
-		lockRetries := 30
-		lockRetryDelay := 100 * time.Millisecond
-		if opts.LockTimeout > 0 {
-			// Convert timeout to number of retries with exponential backoff
-			// Formula: timeout ≈ initialDelay * (2^retries - 1)
-			// For simplicity, assume ~200ms per retry on average
-			lockRetries = int(opts.LockTimeout.Milliseconds() / 200)
-			if lockRetries < 1 {
-				lockRetries = 1
-			}
-			if lockRetries > 100 {
-				lockRetries = 100 // Cap at 100 retries to avoid excessive waits
-			}
-		}
-
-		return dolt.New(ctx, &dolt.Config{
-			Path:           path,
-			ReadOnly:       opts.ReadOnly,
-			LockRetries:    lockRetries,
-			LockRetryDelay: lockRetryDelay,
-		})
+		return dolt.New(ctx, &dolt.Config{Path: path, ReadOnly: opts.ReadOnly})
 	})
 }

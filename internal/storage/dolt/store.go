@@ -50,14 +50,12 @@ type DoltStore struct {
 
 // Config holds Dolt database configuration
 type Config struct {
-	Path           string        // Path to Dolt database directory
-	CommitterName  string        // Git-style committer name
-	CommitterEmail string        // Git-style committer email
-	Remote         string        // Default remote name (e.g., "origin")
-	Database       string        // Database name within Dolt (default: "beads")
-	ReadOnly       bool          // Open in read-only mode (skip schema init)
-	LockRetries    int           // Number of retries on lock contention (default: 30)
-	LockRetryDelay time.Duration // Initial retry delay (default: 100ms, doubles each retry)
+	Path           string // Path to Dolt database directory
+	CommitterName  string // Git-style committer name
+	CommitterEmail string // Git-style committer email
+	Remote         string // Default remote name (e.g., "origin")
+	Database       string // Database name within Dolt (default: "beads")
+	ReadOnly       bool   // Open in read-only mode (skip schema init)
 }
 
 // New creates a new Dolt storage backend
@@ -85,20 +83,12 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	if cfg.Remote == "" {
 		cfg.Remote = "origin"
 	}
-	// Lock retry defaults
-	if cfg.LockRetries == 0 {
-		cfg.LockRetries = 30 // ~6 seconds with exponential backoff
-	}
-	if cfg.LockRetryDelay == 0 {
-		cfg.LockRetryDelay = 100 * time.Millisecond
-	}
 
 	// Ensure directory exists
 	if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// Build connection string (used throughout and stored in DoltStore)
 	// Connect without specifying a database first (required for CREATE DATABASE)
 	// IMPORTANT: We use a single connection and switch databases using USE.
 	// The Dolt embedded driver shares internal state between connections to the same path.
@@ -109,75 +99,34 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		"file://%s?commitname=%s&commitemail=%s",
 		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
 
-	// Retry logic for lock contention
-	var db *sql.DB
-	var lastErr error
-	retryDelay := cfg.LockRetryDelay
-
-	for attempt := 0; attempt <= cfg.LockRetries; attempt++ {
-		if attempt > 0 {
-			// Log lock contention for debugging (rig-358fc7)
-			fmt.Fprintf(os.Stderr, "Dolt lock contention detected (attempt %d/%d), retrying in %v...\n",
-				attempt, cfg.LockRetries, retryDelay)
-			time.Sleep(retryDelay)
-			// Exponential backoff
-			retryDelay *= 2
-		}
-
-		db, lastErr = sql.Open("dolt", connStr)
-		if lastErr != nil {
-			if isLockError(lastErr) {
-				continue // Retry
-			}
-			return nil, fmt.Errorf("failed to open Dolt database: %w", lastErr)
-		}
-
-		// Create the database if it doesn't exist
-		_, lastErr = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
-		if lastErr != nil {
-			if isLockError(lastErr) {
-				_ = db.Close()
-				continue // Retry
-			}
-			_ = db.Close() // nolint:gosec // G104: error ignored on early return
-			return nil, fmt.Errorf("failed to create database: %w", lastErr)
-		}
-
-		// Switch to the target database using USE
-		_, lastErr = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
-		if lastErr != nil {
-			if isLockError(lastErr) {
-				_ = db.Close()
-				continue // Retry
-			}
-			_ = db.Close() // nolint:gosec // G104: error ignored on early return
-			return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, lastErr)
-		}
-
-		// Configure connection pool
-		// Dolt embedded mode is single-writer like SQLite
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(1)
-		db.SetConnMaxLifetime(0)
-
-		// Test connection
-		lastErr = db.PingContext(ctx)
-		if lastErr != nil {
-			if isLockError(lastErr) {
-				_ = db.Close()
-				continue // Retry
-			}
-			_ = db.Close()
-			return nil, fmt.Errorf("failed to ping Dolt database: %w", lastErr)
-		}
-
-		// Success! Break out of retry loop
-		break
+	db, err := sql.Open("dolt", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Dolt database: %w", err)
 	}
 
-	// Check if all retries exhausted
-	if lastErr != nil {
-		return nil, fmt.Errorf("failed to acquire Dolt database lock after %d retries: %w", cfg.LockRetries, lastErr)
+	// Create the database if it doesn't exist
+	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+	if err != nil {
+		_ = db.Close() // nolint:gosec // G104: error ignored on early return
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+
+	// Switch to the target database using USE
+	_, err = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
+	if err != nil {
+		_ = db.Close() // nolint:gosec // G104: error ignored on early return
+		return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, err)
+	}
+
+	// Configure connection pool
+	// Dolt embedded mode is single-writer like SQLite
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	// Test connection
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
 	}
 
 	// Convert to absolute path
@@ -205,18 +154,6 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	return store, nil
-}
-
-// isLockError detects if an error is related to lock contention or readonly mode
-func isLockError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "database is read only") ||
-		strings.Contains(errStr, "database is locked") ||
-		strings.Contains(errStr, "lock") && strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "lock") && strings.Contains(errStr, "contention")
 }
 
 // initSchema creates all tables if they don't exist

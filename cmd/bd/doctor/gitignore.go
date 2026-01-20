@@ -683,10 +683,3 @@ func FixSyncBranchGitignore() error {
 
 	return fix.SyncBranchGitignore(cwd)
 }
-
-// SetSyncBranchGitignoreFlags sets git index flags on .beads/*.jsonl files.
-// This is called directly by init when --branch is specified, bypassing the
-// GetFromYAML() check since the in-memory config may not be updated yet.
-func SetSyncBranchGitignoreFlags(path string) error {
-	return fix.SyncBranchGitignore(path)
-}

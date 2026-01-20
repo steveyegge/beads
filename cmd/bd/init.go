@@ -542,23 +542,6 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 		}
 
-		// Set git index flags to hide JSONL from git status when sync.branch is configured.
-		// These flags are local-only (don't transfer via git clone), so each clone needs them set.
-		// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
-		if isGitRepo() {
-			if branch != "" {
-				// --branch flag was passed: set flags directly (in-memory config not updated yet)
-				if err := doctor.SetSyncBranchGitignoreFlags(cwd); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set git index flags: %v\n", err)
-				}
-			} else {
-				// No --branch flag: check if sync-branch exists in config.yaml (cloned repo scenario)
-				if err := doctor.FixSyncBranchGitignore(); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set git index flags: %v\n", err)
-				}
-			}
-		}
-
 		// Add "landing the plane" instructions to AGENTS.md and @AGENTS.md
 		// Skip in stealth mode (user wants invisible setup) and quiet mode (suppress all output)
 		if !stealth {

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,9 +13,6 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
-
-// gitSSHRemotePattern matches standard git SSH remote URLs (user@host:path)
-var gitSSHRemotePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+@[a-zA-Z0-9][a-zA-Z0-9._-]*:.+$`)
 
 var configCmd = &cobra.Command{
 	Use:     "config",
@@ -351,7 +347,7 @@ func validateSyncConfig(repoPath string) []string {
 	var issues []string
 
 	// Load config.yaml directly from the repo path
-	configPath := filepath.Join(repoPath, ".beads", "config.yaml")
+	configPath := repoPath + "/.beads/config.yaml"
 	v := viper.New()
 	v.SetConfigType("yaml")
 	v.SetConfigFile(configPath)
@@ -437,31 +433,26 @@ func isValidRemoteURL(url string) bool {
 	}
 
 	// Also allow standard git remote patterns (user@host:path)
-	return gitSSHRemotePattern.MatchString(url)
+	// The host must have at least one character before the colon
+	// Pattern: username@hostname:path where hostname has at least 2 chars
+	gitSSHPattern := regexp.MustCompile(`^[a-zA-Z0-9._-]+@[a-zA-Z0-9][a-zA-Z0-9._-]*:.+$`)
+	return gitSSHPattern.MatchString(url)
 }
 
 // findBeadsRepoRoot walks up from the given path to find the repo root (containing .beads)
 func findBeadsRepoRoot(startPath string) string {
 	path := startPath
 	for {
-		beadsDir := filepath.Join(path, ".beads")
+		beadsDir := path + "/.beads"
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
-			// Skip temporary directories - they're not valid repo roots
-			if !isTemporaryDir(path) {
-				return path
-			}
+			return path
 		}
-		parent := filepath.Dir(path)
-		if parent == path {
+		parent := path[:strings.LastIndex(path, "/")]
+		if parent == path || parent == "" {
 			return ""
 		}
 		path = parent
 	}
-}
-
-// isTemporaryDir checks if a path is a temporary directory that shouldn't be a repo root
-func isTemporaryDir(path string) bool {
-	return path == "/tmp" || path == "/var/tmp"
 }
 
 func init() {

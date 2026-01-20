@@ -399,15 +399,20 @@ var createCmd = &cobra.Command{
 
 		// Validate explicit ID format if provided
 		if explicitID != "" {
-			// For agent types, use agent-aware validation.
+			var requestedPrefix string
+			var err error
+
+			// For agent types, use agent-aware prefix extraction.
 			// This fixes the bug where 3-char polecat names like "nux" in
-			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes.
+			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes,
+			// causing prefix to be extracted as "nx-nexus-polecat" instead of "nx".
 			if issueType == "agent" {
 				if err := validation.ValidateAgentID(explicitID); err != nil {
 					FatalError("invalid agent ID: %v", err)
 				}
+				requestedPrefix = validation.ExtractAgentPrefix(explicitID)
 			} else {
-				_, err := validation.ValidateIDFormat(explicitID)
+				requestedPrefix, err = validation.ValidateIDFormat(explicitID)
 				if err != nil {
 					FatalError("%v", err)
 				}
@@ -431,18 +436,12 @@ var createCmd = &cobra.Command{
 				}
 				// If error, continue without validation (non-fatal)
 			} else {
-				// Direct mode - check config (GH#1145: fallback to config.yaml)
+				// Direct mode - check config
 				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
-				if dbPrefix == "" {
-					dbPrefix = config.GetString("issue-prefix")
-				}
 				allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
 			}
 
-			// Use ValidateIDPrefixAllowed which handles multi-hyphen prefixes correctly (GH#1135)
-			// This checks if the ID starts with an allowed prefix, rather than extracting
-			// the prefix first (which can fail for IDs like "hq-cv-test" where "test" looks like a word)
-			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
+			if err := validation.ValidatePrefixWithAllowed(requestedPrefix, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				FatalError("%v", err)
 			}
 		}

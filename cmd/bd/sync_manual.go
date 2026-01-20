@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/ui"
@@ -23,8 +21,8 @@ type InteractiveConflict struct {
 
 // InteractiveResolution represents the user's choice for a conflict
 type InteractiveResolution struct {
-	Choice string       // "local", "remote", "merged", "skip", "quit", "accept-all"
-	Issue  *beads.Issue // The resolved issue (nil if skipped/quit)
+	Choice string       // "local", "remote", "merged", "skip"
+	Issue  *beads.Issue // The resolved issue (nil if skipped)
 }
 
 // resolveConflictsInteractively handles manual conflict resolution with user prompts.
@@ -56,42 +54,15 @@ func resolveConflictsInteractively(conflicts []InteractiveConflict) ([]*beads.Is
 		}
 
 		switch resolution.Choice {
-		case "quit":
-			// Quit - skip all remaining conflicts
-			remaining := len(conflicts) - i
-			skipped += remaining
-			fmt.Printf("  %s Quit - skipping %d remaining conflict(s)\n\n", ui.RenderMuted("⏹"), remaining)
-			return resolved, skipped, nil
-
-		case "accept-all":
-			// Auto-merge all remaining conflicts
-			fmt.Printf("  %s Auto-merging %d remaining conflict(s)...\n", ui.RenderAccent("⚡"), len(conflicts)-i)
-			for j := i; j < len(conflicts); j++ {
-				c := conflicts[j]
-				if c.Local != nil && c.Remote != nil {
-					merged := mergeFieldLevel(c.Base, c.Local, c.Remote)
-					resolved = append(resolved, merged)
-				} else if c.Local != nil {
-					resolved = append(resolved, c.Local)
-				} else if c.Remote != nil {
-					resolved = append(resolved, c.Remote)
-				}
-			}
-			fmt.Printf("  %s Done\n\n", ui.RenderPass("✓"))
-			return resolved, skipped, nil
-
 		case "skip":
 			skipped++
-			fmt.Printf("  %s Skipped (will keep local, conflict remains)\n\n", ui.RenderMuted("⏭"))
-
+			fmt.Printf("  %s Skipped\n\n", ui.RenderMuted("⏭"))
 		case "local":
 			resolved = append(resolved, conflict.Local)
 			fmt.Printf("  %s Kept local version\n\n", ui.RenderPass("✓"))
-
 		case "remote":
 			resolved = append(resolved, conflict.Remote)
 			fmt.Printf("  %s Kept remote version\n\n", ui.RenderPass("✓"))
-
 		case "merged":
 			resolved = append(resolved, resolution.Issue)
 			fmt.Printf("  %s Used field-level merge\n\n", ui.RenderPass("✓"))
@@ -216,7 +187,7 @@ func promptConflictResolution(reader *bufio.Reader, conflict InteractiveConflict
 
 	// Build options based on what's available
 	var options []string
-	optionMap := make(map[string]string)
+	var optionMap = make(map[string]string)
 
 	if local != nil {
 		options = append(options, "l")
@@ -234,13 +205,9 @@ func promptConflictResolution(reader *bufio.Reader, conflict InteractiveConflict
 		optionMap["merge"] = "merged"
 		optionMap["merged"] = "merged"
 	}
-	options = append(options, "s", "a", "q", "d", "?")
+	options = append(options, "s", "d", "?")
 	optionMap["s"] = "skip"
 	optionMap["skip"] = "skip"
-	optionMap["a"] = "accept-all"
-	optionMap["all"] = "accept-all"
-	optionMap["q"] = "quit"
-	optionMap["quit"] = "quit"
 	optionMap["d"] = "diff"
 	optionMap["diff"] = "diff"
 	optionMap["?"] = "help"
@@ -250,10 +217,6 @@ func promptConflictResolution(reader *bufio.Reader, conflict InteractiveConflict
 		fmt.Printf("  Choice [%s]: ", strings.Join(options, "/"))
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			if err == io.EOF {
-				// Treat EOF as quit
-				return InteractiveResolution{Choice: "quit", Issue: nil}, nil
-			}
 			return InteractiveResolution{}, err
 		}
 
@@ -298,12 +261,6 @@ func promptConflictResolution(reader *bufio.Reader, conflict InteractiveConflict
 
 		case "skip":
 			return InteractiveResolution{Choice: "skip", Issue: nil}, nil
-
-		case "accept-all":
-			return InteractiveResolution{Choice: "accept-all", Issue: nil}, nil
-
-		case "quit":
-			return InteractiveResolution{Choice: "quit", Issue: nil}, nil
 		}
 	}
 }
@@ -321,9 +278,7 @@ func printResolutionHelp(hasLocal, hasRemote bool) {
 	if hasLocal && hasRemote {
 		fmt.Println("    m, merge  - Auto-merge (LWW for scalars, union for collections)")
 	}
-	fmt.Println("    s, skip   - Skip this conflict (keep local, conflict remains)")
-	fmt.Println("    a, all    - Accept auto-merge for all remaining conflicts")
-	fmt.Println("    q, quit   - Quit and skip all remaining conflicts")
+	fmt.Println("    s, skip   - Skip this conflict (leave unresolved)")
 	fmt.Println("    d, diff   - Show detailed JSON diff")
 	fmt.Println("    ?, help   - Show this help")
 	fmt.Println()
@@ -337,12 +292,8 @@ func showDetailedDiff(conflict InteractiveConflict) {
 
 	if conflict.Local != nil {
 		fmt.Printf("  %s\n", ui.RenderAccent("LOCAL:"))
-		localJSON, err := json.MarshalIndent(conflict.Local, "  ", "  ")
-		if err != nil {
-			fmt.Printf("  (error marshaling: %v)\n", err)
-		} else {
-			fmt.Println(string(localJSON))
-		}
+		localJSON, _ := json.MarshalIndent(conflict.Local, "  ", "  ")
+		fmt.Println(string(localJSON))
 		fmt.Println()
 	} else {
 		fmt.Printf("  %s (deleted)\n", ui.RenderMuted("LOCAL:"))
@@ -350,12 +301,8 @@ func showDetailedDiff(conflict InteractiveConflict) {
 
 	if conflict.Remote != nil {
 		fmt.Printf("  %s\n", ui.RenderAccent("REMOTE:"))
-		remoteJSON, err := json.MarshalIndent(conflict.Remote, "  ", "  ")
-		if err != nil {
-			fmt.Printf("  (error marshaling: %v)\n", err)
-		} else {
-			fmt.Println(string(remoteJSON))
-		}
+		remoteJSON, _ := json.MarshalIndent(conflict.Remote, "  ", "  ")
+		fmt.Println(string(remoteJSON))
 		fmt.Println()
 	} else {
 		fmt.Printf("  %s (deleted)\n", ui.RenderMuted("REMOTE:"))
@@ -371,8 +318,6 @@ func valueOrNone(s string) string {
 	return s
 }
 
-// truncateText truncates a string to maxLen runes (not bytes) for proper UTF-8 handling.
-// Replaces newlines with spaces for single-line display.
 func truncateText(s string, maxLen int) string {
 	if s == "" {
 		return "(empty)"
@@ -380,17 +325,8 @@ func truncateText(s string, maxLen int) string {
 	// Replace newlines with spaces for display
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", "")
-
-	// Count runes, not bytes, for proper UTF-8 handling
-	runeCount := utf8.RuneCountInString(s)
-	if runeCount <= maxLen {
-		return s
+	if len(s) > maxLen {
+		return s[:maxLen-3] + "..."
 	}
-
-	// Truncate by runes
-	runes := []rune(s)
-	if maxLen <= 3 {
-		return "..."
-	}
-	return string(runes[:maxLen-3]) + "..."
+	return s
 }

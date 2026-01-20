@@ -728,8 +728,7 @@ func commitInWorktree(ctx context.Context, worktreePath, jsonlRelPath, message s
 
 	// Use -f (force) to add files even if they're gitignored
 	// In contributor mode, .beads/ is excluded in .git/info/exclude but needs to be tracked in sync branch
-	// Use --sparse to work correctly with sparse-checkout enabled worktrees (fixes #1076)
-	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "-f", "--sparse", beadsRelDir)
+	addCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "add", "-f", beadsRelDir)
 	if err := addCmd.Run(); err != nil {
 		return fmt.Errorf("git add failed in worktree: %w", err)
 	}
