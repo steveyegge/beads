@@ -377,6 +377,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
 	// Note: Don't set OverallOK = false for this - deprecated options still work
 
+	// Check 8d: Hydrated repo daemons (warn if multi-repo hydration configured but daemons not running)
+	hydratedRepoDaemonsCheck := convertWithCategory(doctor.CheckHydratedRepoDaemons(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
+	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
+
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)
