@@ -49,6 +49,12 @@ func init() {
 			Path:        path,
 			ReadOnly:    opts.ReadOnly,
 			IdleTimeout: opts.IdleTimeout,
+			// Server mode options (bd-f4f78a)
+			ServerMode: opts.ServerMode,
+			ServerHost: opts.ServerHost,
+			ServerPort: opts.ServerPort,
+			ServerUser: opts.ServerUser,
+			ServerPass: opts.ServerPass,
 		})
 	})
 }

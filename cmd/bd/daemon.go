@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -407,9 +408,32 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 
 	// Open database with idle timeout for Dolt to release lock when not in use (bd-d705ea)
 	// This allows external dolt CLI commands to work while daemon is running
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+	opts := factory.Options{
 		IdleTimeout: 30 * time.Second, // Release Dolt lock after 30s of inactivity
-	})
+	}
+
+	// Check for server mode via environment variable (bd-f4f78a)
+	// In server mode, the daemon connects to a running dolt sql-server instead of embedded mode.
+	// This eliminates lock contention between multiple bd processes.
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "true" {
+		opts.ServerMode = true
+		opts.IdleTimeout = 0 // Disable idle timeout in server mode (server handles connections)
+		if host := os.Getenv("BEADS_DOLT_SERVER_HOST"); host != "" {
+			opts.ServerHost = host
+		}
+		if portStr := os.Getenv("BEADS_DOLT_SERVER_PORT"); portStr != "" {
+			if port, err := strconv.Atoi(portStr); err == nil {
+				opts.ServerPort = port
+			}
+		}
+		if user := os.Getenv("BEADS_DOLT_SERVER_USER"); user != "" {
+			opts.ServerUser = user
+		}
+		opts.ServerPass = os.Getenv("BEADS_DOLT_SERVER_PASS")
+		log.Info("server mode enabled", "host", opts.ServerHost, "port", opts.ServerPort)
+	}
+
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, opts)
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run

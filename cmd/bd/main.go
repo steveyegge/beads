@@ -10,6 +10,7 @@ import (
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -769,6 +770,23 @@ var rootCmd = &cobra.Command{
 		opts := factory.Options{
 			ReadOnly:    useReadOnly,
 			LockTimeout: lockTimeout,
+		}
+
+		// Check for server mode via environment variable (bd-f4f78a)
+		if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "true" {
+			opts.ServerMode = true
+			if host := os.Getenv("BEADS_DOLT_SERVER_HOST"); host != "" {
+				opts.ServerHost = host
+			}
+			if portStr := os.Getenv("BEADS_DOLT_SERVER_PORT"); portStr != "" {
+				if port, err := strconv.Atoi(portStr); err == nil {
+					opts.ServerPort = port
+				}
+			}
+			if user := os.Getenv("BEADS_DOLT_SERVER_USER"); user != "" {
+				opts.ServerUser = user
+			}
+			opts.ServerPass = os.Getenv("BEADS_DOLT_SERVER_PASS")
 		}
 
 		if backend == configfile.BackendDolt {

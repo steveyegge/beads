@@ -26,8 +26,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	// Import Dolt driver
+	// Import Dolt embedded driver
 	_ "github.com/dolthub/driver"
+	// Import MySQL driver for server mode (bd-f4f78a)
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -37,9 +39,11 @@ type DoltStore struct {
 	db          *sql.DB
 	dbPath      string       // Path to Dolt database directory
 	closed      atomic.Bool  // Tracks whether Close() has been called
-	connStr     string       // Connection string for reconnection
+	connStr     string       // Connection string for reconnection (embedded mode)
+	serverDSN   string       // MySQL DSN for reconnection (server mode, bd-f4f78a)
 	mu          sync.RWMutex // Protects concurrent access
 	readOnly    bool         // True if opened in read-only mode
+	serverMode  bool         // True if connected to sql-server (bd-f4f78a)
 
 	// Version control config
 	committerName  string
@@ -49,6 +53,7 @@ type DoltStore struct {
 
 	// Idle connection management (bd-d705ea)
 	// Releases LOCK file after idle period to allow external dolt CLI access
+	// Note: idle management is disabled in server mode (server handles connections)
 	database     string        // Database name for reconnection
 	lastActivity time.Time     // Last operation timestamp
 	idleTimeout  time.Duration // How long to wait before releasing lock (0 = disabled)
@@ -67,6 +72,15 @@ type Config struct {
 	LockRetries    int           // Number of retries on lock contention (default: 30)
 	LockRetryDelay time.Duration // Initial retry delay (default: 100ms, doubles each retry)
 	IdleTimeout    time.Duration // Release lock after this idle period (0 = disabled, default: 30s for daemon)
+
+	// Server mode configuration (bd-f4f78a)
+	// When ServerMode is true, connect to a running dolt sql-server instead of embedded mode.
+	// This allows multiple concurrent clients without lock contention.
+	ServerMode bool   // Use sql-server instead of embedded mode
+	ServerHost string // Server host (default: "127.0.0.1")
+	ServerPort int    // Server port (default: 3306)
+	ServerUser string // MySQL user (default: "root")
+	ServerPass string // MySQL password (default: "")
 }
 
 // DefaultIdleTimeout is the default idle timeout for releasing locks
@@ -105,10 +119,33 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		cfg.LockRetryDelay = 100 * time.Millisecond
 	}
 
+	// Server mode defaults (bd-f4f78a)
+	if cfg.ServerMode {
+		if cfg.ServerHost == "" {
+			cfg.ServerHost = "127.0.0.1"
+		}
+		if cfg.ServerPort == 0 {
+			cfg.ServerPort = 3306
+		}
+		if cfg.ServerUser == "" {
+			cfg.ServerUser = "root"
+		}
+		// ServerPass can be empty (Dolt default)
+	}
+
 	// Read-only mode: skip all write operations (directory creation, lock cleanup, CREATE DATABASE)
 	// This path is used by read-only commands (list, show, ready, etc.) to avoid acquiring write locks
 	if cfg.ReadOnly {
+		if cfg.ServerMode {
+			return newServerMode(ctx, cfg)
+		}
 		return newReadOnly(ctx, cfg)
+	}
+
+	// Server mode: connect to running dolt sql-server (bd-f4f78a)
+	// This allows multiple concurrent clients without lock contention
+	if cfg.ServerMode {
+		return newServerMode(ctx, cfg)
 	}
 
 	// Ensure directory exists
@@ -305,6 +342,111 @@ func newReadOnly(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}, nil
 }
 
+// newServerMode connects to a running dolt sql-server via MySQL protocol (bd-f4f78a).
+// This mode allows multiple concurrent clients without lock contention because:
+// - The server manages all locking internally
+// - Clients connect via standard MySQL protocol
+// - Connection pooling is handled by the server
+//
+// If the server is not running, this function will attempt to start it automatically.
+func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
+	// Auto-start server if not running (bd-649383)
+	if !IsServerRunning(cfg.ServerHost, cfg.ServerPort) {
+		fmt.Fprintf(os.Stderr, "Dolt sql-server not running, starting automatically...\n")
+		serverCfg := ServerConfigFromStoreConfig(cfg)
+		if err := EnsureServerRunning(ctx, serverCfg); err != nil {
+			return nil, fmt.Errorf("failed to auto-start dolt sql-server: %w", err)
+		}
+	}
+
+	// Build MySQL DSN: user:password@tcp(host:port)/database
+	// See: https://github.com/go-sql-driver/mysql#dsn-data-source-name
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&multiStatements=true",
+		cfg.ServerUser, cfg.ServerPass, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+
+	// Store DSN without password for logging/display
+	connStrDisplay := fmt.Sprintf("%s:***@tcp(%s:%d)/%s",
+		cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open MySQL connection to dolt sql-server: %w", err)
+	}
+
+	// Configure connection pool - server mode can handle multiple connections
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Test connection with retry
+	var lastErr error
+	for attempt := 0; attempt <= cfg.LockRetries; attempt++ {
+		if attempt > 0 {
+			fmt.Fprintf(os.Stderr, "Dolt sql-server connection failed (attempt %d/%d), retrying...\n",
+				attempt, cfg.LockRetries)
+			time.Sleep(cfg.LockRetryDelay * time.Duration(1<<uint(attempt-1))) // exponential backoff
+		}
+
+		lastErr = db.PingContext(ctx)
+		if lastErr == nil {
+			break
+		}
+	}
+	if lastErr != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to connect to dolt sql-server at %s:%d after %d retries: %w",
+			cfg.ServerHost, cfg.ServerPort, cfg.LockRetries, lastErr)
+	}
+
+	// Initialize schema if not read-only
+	// In server mode, we still need to ensure schema exists
+	if !cfg.ReadOnly {
+		store := &DoltStore{
+			db:             db,
+			dbPath:         cfg.Path,
+			connStr:        connStrDisplay,
+			serverDSN:      dsn,
+			committerName:  cfg.CommitterName,
+			committerEmail: cfg.CommitterEmail,
+			remote:         cfg.Remote,
+			branch:         "main",
+			readOnly:       false,
+			serverMode:     true,
+			database:       cfg.Database,
+		}
+		if err := store.initSchema(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to initialize schema via sql-server: %w", err)
+		}
+		return store, nil
+	}
+
+	// Convert to absolute path if provided
+	absPath := cfg.Path
+	if cfg.Path != "" {
+		var err error
+		absPath, err = filepath.Abs(cfg.Path)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to get absolute path: %w", err)
+		}
+	}
+
+	return &DoltStore{
+		db:             db,
+		dbPath:         absPath,
+		connStr:        connStrDisplay,
+		serverDSN:      dsn,
+		committerName:  cfg.CommitterName,
+		committerEmail: cfg.CommitterEmail,
+		remote:         cfg.Remote,
+		branch:         "main",
+		readOnly:       cfg.ReadOnly,
+		serverMode:     true,
+		database:       cfg.Database,
+	}, nil
+}
+
 // isLockError detects if an error is related to lock contention or readonly mode
 func isLockError(err error) bool {
 	if err == nil {
@@ -494,9 +636,15 @@ func (s *DoltStore) IsClosed() bool {
 	return s.closed.Load()
 }
 
+// IsServerMode returns true if connected to dolt sql-server (bd-f4f78a)
+func (s *DoltStore) IsServerMode() bool {
+	return s.serverMode
+}
+
 // startIdleMonitor starts a goroutine that releases the lock after idle timeout (bd-d705ea)
+// Note: This is disabled in server mode since the server manages connections (bd-f4f78a)
 func (s *DoltStore) startIdleMonitor() {
-	if s.idleTimeout <= 0 || s.idleRunning.Load() {
+	if s.idleTimeout <= 0 || s.idleRunning.Load() || s.serverMode {
 		return
 	}
 	s.idleRunning.Store(true)
@@ -532,6 +680,7 @@ func (s *DoltStore) checkAndReleaseLock() {
 }
 
 // ensureConnected reopens the database connection if it was closed due to idle timeout (bd-d705ea)
+// In server mode (bd-f4f78a), reconnection uses the MySQL driver instead of embedded Dolt.
 func (s *DoltStore) ensureConnected(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -549,26 +698,44 @@ func (s *DoltStore) ensureConnected(ctx context.Context) error {
 	// Reopen the connection
 	fmt.Fprintf(os.Stderr, "Dolt: reopening connection after idle release\n")
 
-	// Clean up stale lock file first
-	if err := cleanupStaleDoltLock(s.dbPath, s.database); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not check/clean Dolt lock: %v\n", err)
-	}
+	var db *sql.DB
+	var err error
 
-	db, err := sql.Open("dolt", s.connStr)
-	if err != nil {
-		return fmt.Errorf("failed to reopen Dolt database: %w", err)
-	}
+	if s.serverMode {
+		// Server mode: reconnect via MySQL driver (bd-f4f78a)
+		// Use serverDSN which contains the full connection string with credentials
+		// Note: In practice, server mode connections rarely close due to idle since
+		// we don't run the idle monitor in server mode
+		db, err = sql.Open("mysql", s.serverDSN)
+		if err != nil {
+			return fmt.Errorf("failed to reopen MySQL connection: %w", err)
+		}
+		db.SetMaxOpenConns(10)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
+	} else {
+		// Embedded mode: reconnect via Dolt driver
+		// Clean up stale lock file first
+		if err := cleanupStaleDoltLock(s.dbPath, s.database); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not check/clean Dolt lock: %v\n", err)
+		}
 
-	// Switch to the target database
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("USE %s", s.database)); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("failed to switch to database %s: %w", s.database, err)
-	}
+		db, err = sql.Open("dolt", s.connStr)
+		if err != nil {
+			return fmt.Errorf("failed to reopen Dolt database: %w", err)
+		}
 
-	// Configure connection pool
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
+		// Switch to the target database
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("USE %s", s.database)); err != nil {
+			_ = db.Close()
+			return fmt.Errorf("failed to switch to database %s: %w", s.database, err)
+		}
+
+		// Configure connection pool for embedded mode
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		db.SetConnMaxLifetime(0)
+	}
 
 	// Test connection
 	if err := db.PingContext(ctx); err != nil {
