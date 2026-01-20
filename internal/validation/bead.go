@@ -233,11 +233,9 @@ func ValidateAgentID(id string) error {
 		if isTownLevelRole(role) {
 			return nil // Valid town-level agent (gt-mayor, gt-deacon)
 		}
-		// Support deduplicated format: <prefix>-<role> where prefix == rig
-		// This handles cases like "spa-witness" for spa rig with spa- prefix
-		// (Gas Town deduplicates to avoid "spa-spa-witness")
+		// Rig-level roles (witness, refinery) always require explicit rig name
 		if isRigLevelRole(role) {
-			return nil // Valid deduplicated rig-level singleton
+			return fmt.Errorf("agent role %q requires rig: <prefix>-<rig>-%s (got %q)", role, role, id)
 		}
 		if isNamedRole(role) {
 			// Named roles still need a name even in deduplicated format
