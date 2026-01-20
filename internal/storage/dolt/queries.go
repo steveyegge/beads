@@ -12,8 +12,10 @@ import (
 
 // SearchIssues finds issues matching query and filters
 func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
 
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -219,7 +221,7 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, querySQL, args...)
+	rows, err := db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search issues: %w", err)
 	}
@@ -230,8 +232,10 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 
 // GetReadyWork returns issues that are ready to work on (not blocked)
 func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
 
 	whereClauses := []string{"status = 'open'", "(ephemeral = 0 OR ephemeral IS NULL)"}
 	args := []interface{}{}
@@ -281,7 +285,7 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		%s
 	`, whereSQL, limitSQL)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ready work: %w", err)
 	}
@@ -292,10 +296,12 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 
 // GetBlockedIssues returns issues that are blocked by other issues
 func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
 		SELECT i.id, COUNT(d.depends_on_id) as blocked_by_count
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
@@ -326,7 +332,7 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 		// Get blocker IDs
 		var blockerIDs []string
-		blockerRows, err := s.db.QueryContext(ctx, `
+		blockerRows, err := db.QueryContext(ctx, `
 			SELECT d.depends_on_id
 			FROM dependencies d
 			JOIN issues blocker ON d.depends_on_id = blocker.id
@@ -359,7 +365,12 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 
 // GetEpicsEligibleForClosure returns epics whose children are all closed
 func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT e.id,
 		       (SELECT COUNT(*) FROM dependencies d JOIN issues c ON d.issue_id = c.id
 		        WHERE d.depends_on_id = e.id AND d.type = 'parent-child') as total_children,
@@ -402,6 +413,11 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 
 // GetStaleIssues returns issues that haven't been updated recently
 func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	cutoff := time.Now().UTC().AddDate(0, 0, -filter.Days)
 
 	statusClause := "status IN ('open', 'in_progress')"
@@ -426,7 +442,7 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale issues: %w", err)
 	}
@@ -437,10 +453,15 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 
 // GetStatistics returns summary statistics
 func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	stats := &types.Statistics{}
 
 	// Count by status
-	err := s.db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*) as total,
 			SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
@@ -471,18 +492,23 @@ func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error
 
 // GetMoleculeProgress returns progress stats for a molecule
 func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	stats := &types.MoleculeProgressStats{
 		MoleculeID: moleculeID,
 	}
 
 	// Get molecule title
 	var title sql.NullString
-	err := s.db.QueryRowContext(ctx, "SELECT title FROM issues WHERE id = ?", moleculeID).Scan(&title)
+	err = db.QueryRowContext(ctx, "SELECT title FROM issues WHERE id = ?", moleculeID).Scan(&title)
 	if err == nil && title.Valid {
 		stats.MoleculeTitle = title.String
 	}
 
-	err = s.db.QueryRowContext(ctx, `
+	err = db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*) as total,
 			SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as completed,
@@ -499,7 +525,7 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 
 	// Get first in_progress step ID
 	var stepID sql.NullString
-	_ = s.db.QueryRowContext(ctx, `
+	_ = db.QueryRowContext(ctx, `
 		SELECT i.id FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?
@@ -517,7 +543,12 @@ func (s *DoltStore) GetMoleculeProgress(ctx context.Context, moleculeID string) 
 
 // GetNextChildID returns the next available child ID for a parent
 func (s *DoltStore) GetNextChildID(ctx context.Context, parentID string) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}

@@ -10,7 +10,12 @@ import (
 
 // AddLabel adds a label to an issue
 func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
 		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
 	`, issueID, label)
 	if err != nil {
@@ -21,7 +26,12 @@ func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) 
 
 // RemoveLabel removes a label from an issue
 func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
 		DELETE FROM labels WHERE issue_id = ? AND label = ?
 	`, issueID, label)
 	if err != nil {
@@ -32,7 +42,12 @@ func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor strin
 
 // GetLabels retrieves all labels for an issue
 func (s *DoltStore) GetLabels(ctx context.Context, issueID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT label FROM labels WHERE issue_id = ? ORDER BY label
 	`, issueID)
 	if err != nil {
@@ -64,6 +79,11 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 		args[i] = id
 	}
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 	query := fmt.Sprintf(`
 		SELECT issue_id, label FROM labels
@@ -71,7 +91,7 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 		ORDER BY issue_id, label
 	`, strings.Join(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get labels for issues: %w", err)
 	}
@@ -90,7 +110,12 @@ func (s *DoltStore) GetLabelsForIssues(ctx context.Context, issueIDs []string) (
 
 // GetIssuesByLabel retrieves all issues with a specific label
 func (s *DoltStore) GetIssuesByLabel(ctx context.Context, label string) ([]*types.Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT i.id FROM issues i
 		JOIN labels l ON i.id = l.issue_id
 		WHERE l.label = ?

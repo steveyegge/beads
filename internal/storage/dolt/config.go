@@ -9,7 +9,12 @@ import (
 
 // SetConfig sets a configuration value
 func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO config (` + "`key`" + `, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
@@ -21,8 +26,13 @@ func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
 
 // GetConfig retrieves a configuration value
 func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
+	err = db.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -34,7 +44,12 @@ func (s *DoltStore) GetConfig(ctx context.Context, key string) (string, error) {
 
 // GetAllConfig retrieves all configuration values
 func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT `key`, value FROM config")
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT `key`, value FROM config")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all config: %w", err)
 	}
@@ -53,7 +68,12 @@ func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error)
 
 // DeleteConfig removes a configuration value
 func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
 	if err != nil {
 		return fmt.Errorf("failed to delete config %s: %w", key, err)
 	}
@@ -62,7 +82,12 @@ func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
 
 // SetMetadata sets a metadata value
 func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO metadata (` + "`key`" + `, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
@@ -74,8 +99,13 @@ func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
 
 // GetMetadata retrieves a metadata value
 func (s *DoltStore) GetMetadata(ctx context.Context, key string) (string, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	var value string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = ?", key).Scan(&value)
+	err = db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = ?", key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

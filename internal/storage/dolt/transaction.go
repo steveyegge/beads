@@ -19,7 +19,12 @@ type doltTransaction struct {
 
 // RunInTransaction executes a function within a database transaction
 func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
-	sqlTx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	sqlTx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

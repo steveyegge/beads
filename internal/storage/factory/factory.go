@@ -27,6 +27,7 @@ func RegisterBackend(name string, factory BackendFactory) {
 type Options struct {
 	ReadOnly    bool
 	LockTimeout time.Duration
+	IdleTimeout time.Duration // For Dolt: release lock after this idle period (0 = disabled)
 }
 
 // New creates a storage backend based on the backend type.

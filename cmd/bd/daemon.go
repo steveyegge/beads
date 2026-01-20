@@ -388,9 +388,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		}
 	}
 
-	// Validate using canonical name
+	// Validate using canonical name (SQLite) or dolt directory (Dolt)
 	dbBaseName := filepath.Base(daemonDBPath)
-	if dbBaseName != beads.CanonicalDatabaseName {
+	isDolt := dbBaseName == "dolt" // Dolt backend uses a directory named "dolt"
+	if !isDolt && dbBaseName != beads.CanonicalDatabaseName {
 		log.Error("non-canonical database name", "name", dbBaseName, "expected", beads.CanonicalDatabaseName)
 		log.Info("run 'bd init' to migrate to canonical name")
 		return // Use return instead of os.Exit to allow defers to run
@@ -404,7 +405,11 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("could not remove daemon-error file", "error", err)
 	}
 
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	// Open database with idle timeout for Dolt to release lock when not in use (bd-d705ea)
+	// This allows external dolt CLI commands to work while daemon is running
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+		IdleTimeout: 30 * time.Second, // Release Dolt lock after 30s of inactivity
+	})
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run
@@ -418,7 +423,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		sqliteStore.EnableFreshnessChecking()
 		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
 	} else {
-		log.Info("database opened", "path", store.Path(), "backend", "dolt")
+		log.Info("database opened", "path", store.Path(), "backend", "dolt", "idle_timeout", "30s")
 	}
 
 	// Auto-upgrade .beads/.gitignore if outdated

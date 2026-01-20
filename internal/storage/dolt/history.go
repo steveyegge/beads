@@ -54,7 +54,12 @@ type IssueHistory struct {
 
 // GetIssueHistory returns the complete history of an issue
 func (s *DoltStore) GetIssueHistory(ctx context.Context, issueID string) ([]*IssueHistory, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT
 			id, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, owner, created_by,
@@ -134,6 +139,11 @@ func (s *DoltStore) GetIssueAsOf(ctx context.Context, issueID string, ref string
 	var assignee, owner, contentHash sql.NullString
 	var estimatedMinutes sql.NullInt64
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// nolint:gosec // G201: ref is validated by validateRef() above - AS OF requires literal
 	query := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, status, priority, issue_type, assignee, estimated_minutes,
@@ -142,7 +152,7 @@ func (s *DoltStore) GetIssueAsOf(ctx context.Context, issueID string, ref string
 		WHERE id = ?
 	`, ref)
 
-	err := s.db.QueryRowContext(ctx, query, issueID).Scan(
+	err = db.QueryRowContext(ctx, query, issueID).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Status, &issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt,
 	)
@@ -185,7 +195,12 @@ type DiffEntry struct {
 
 // GetDiff returns changes between two commits
 func (s *DoltStore) GetDiff(ctx context.Context, fromRef, toRef string) ([]*DiffEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT table_name, diff_type, from_commit, to_commit
 		FROM dolt_diff(?, ?)
 	`, fromRef, toRef)
@@ -216,6 +231,11 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 		return nil, fmt.Errorf("invalid toRef: %w", err)
 	}
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// nolint:gosec // G201: refs are validated by validateRef() above - dolt_diff_issues requires literal
 	query := fmt.Sprintf(`
 		SELECT
@@ -232,7 +252,7 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 	var fromID, toID, fromTitle, toTitle, fromStatus, toStatus sql.NullString
 	var fromDesc, toDesc sql.NullString
 
-	err := s.db.QueryRowContext(ctx, query, issueID, issueID).Scan(
+	err = db.QueryRowContext(ctx, query, issueID, issueID).Scan(
 		&fromID, &toID,
 		&fromTitle, &toTitle,
 		&fromStatus, &toStatus,
@@ -291,7 +311,12 @@ type IssueDiff struct {
 // GetInternalConflicts returns any merge conflicts in the current state (internal format).
 // For the public interface, use GetConflicts which returns storage.Conflict.
 func (s *DoltStore) GetInternalConflicts(ctx context.Context) ([]*TableConflict, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT table_name, num_conflicts FROM dolt_conflicts
 	`)
 	if err != nil {
@@ -324,6 +349,11 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 		return fmt.Errorf("invalid table name: %w", err)
 	}
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	var query string
 	switch strategy {
 	case "ours":
@@ -335,7 +365,7 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 		return fmt.Errorf("unknown conflict resolution strategy: %s", strategy)
 	}
 
-	_, err := s.db.ExecContext(ctx, query)
+	_, err = db.ExecContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to resolve conflicts: %w", err)
 	}

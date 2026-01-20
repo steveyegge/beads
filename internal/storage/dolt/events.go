@@ -11,7 +11,12 @@ import (
 
 // AddComment adds a comment event to an issue
 func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment string) error {
-	_, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
 		INSERT INTO events (issue_id, event_type, actor, comment)
 		VALUES (?, ?, ?, ?)
 	`, issueID, types.EventCommented, actor, comment)
@@ -23,6 +28,11 @@ func (s *DoltStore) AddComment(ctx context.Context, issueID, actor, comment stri
 
 // GetEvents retrieves events for an issue
 func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([]*types.Event, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	query := `
 		SELECT id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 		FROM events
@@ -35,7 +45,7 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events: %w", err)
 	}
@@ -65,7 +75,12 @@ func (s *DoltStore) GetEvents(ctx context.Context, issueID string, limit int) ([
 
 // AddIssueComment adds a comment to an issue (structured comment)
 func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
-	result, err := s.db.ExecContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	result, err := db.ExecContext(ctx, `
 		INSERT INTO comments (issue_id, author, text, created_at)
 		VALUES (?, ?, ?, ?)
 	`, issueID, author, text, time.Now().UTC())
@@ -89,7 +104,12 @@ func (s *DoltStore) AddIssueComment(ctx context.Context, issueID, author, text s
 
 // GetIssueComments retrieves all comments for an issue
 func (s *DoltStore) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT id, issue_id, author, text, created_at
 		FROM comments
 		WHERE issue_id = ?
@@ -124,6 +144,11 @@ func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string)
 		args[i] = id
 	}
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 	query := fmt.Sprintf(`
 		SELECT id, issue_id, author, text, created_at
@@ -132,7 +157,7 @@ func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string)
 		ORDER BY issue_id, created_at ASC
 	`, joinStrings(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get comments: %w", err)
 	}

@@ -46,6 +46,14 @@ type DoltStore struct {
 	committerEmail string
 	remote         string // Default remote for push/pull
 	branch         string // Current branch
+
+	// Idle connection management (bd-d705ea)
+	// Releases LOCK file after idle period to allow external dolt CLI access
+	database     string        // Database name for reconnection
+	lastActivity time.Time     // Last operation timestamp
+	idleTimeout  time.Duration // How long to wait before releasing lock (0 = disabled)
+	stopIdle     chan struct{} // Signal to stop idle monitor
+	idleRunning  atomic.Bool   // Whether idle monitor is running
 }
 
 // Config holds Dolt database configuration
@@ -58,7 +66,11 @@ type Config struct {
 	ReadOnly       bool          // Open in read-only mode (skip schema init)
 	LockRetries    int           // Number of retries on lock contention (default: 30)
 	LockRetryDelay time.Duration // Initial retry delay (default: 100ms, doubles each retry)
+	IdleTimeout    time.Duration // Release lock after this idle period (0 = disabled, default: 30s for daemon)
 }
+
+// DefaultIdleTimeout is the default idle timeout for releasing locks
+const DefaultIdleTimeout = 30 * time.Second
 
 // New creates a new Dolt storage backend
 func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
@@ -209,11 +221,21 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remote:         cfg.Remote,
 		branch:         "main",
 		readOnly:       cfg.ReadOnly,
+		database:       cfg.Database,
+		lastActivity:   time.Now(),
+		idleTimeout:    cfg.IdleTimeout,
+		stopIdle:       make(chan struct{}),
 	}
 
 	// Initialize schema (write mode)
 	if err := store.initSchema(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+	}
+
+	// Start idle monitor if timeout is configured (bd-d705ea)
+	// This releases the LOCK file after idle period to allow external dolt CLI access
+	if cfg.IdleTimeout > 0 {
+		store.startIdleMonitor()
 	}
 
 	return store, nil
@@ -450,9 +472,16 @@ func isOnlyComments(stmt string) bool {
 // Close closes the database connection
 func (s *DoltStore) Close() error {
 	s.closed.Store(true)
+	// Stop idle monitor if running
+	if s.idleRunning.CompareAndSwap(true, false) {
+		close(s.stopIdle)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.db.Close()
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }
 
 // Path returns the database directory path
@@ -463,6 +492,126 @@ func (s *DoltStore) Path() string {
 // IsClosed returns true if Close() has been called
 func (s *DoltStore) IsClosed() bool {
 	return s.closed.Load()
+}
+
+// startIdleMonitor starts a goroutine that releases the lock after idle timeout (bd-d705ea)
+func (s *DoltStore) startIdleMonitor() {
+	if s.idleTimeout <= 0 || s.idleRunning.Load() {
+		return
+	}
+	s.idleRunning.Store(true)
+	go func() {
+		ticker := time.NewTicker(s.idleTimeout / 2) // Check at half the timeout interval
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.stopIdle:
+				return
+			case <-ticker.C:
+				s.checkAndReleaseLock()
+			}
+		}
+	}()
+}
+
+// checkAndReleaseLock releases the lock if idle timeout has passed (bd-d705ea)
+func (s *DoltStore) checkAndReleaseLock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.db == nil || s.closed.Load() {
+		return
+	}
+
+	if time.Since(s.lastActivity) > s.idleTimeout {
+		// Release the lock by closing the connection
+		fmt.Fprintf(os.Stderr, "Dolt idle timeout: releasing lock (idle for %v)\n", time.Since(s.lastActivity).Round(time.Second))
+		_ = s.db.Close()
+		s.db = nil
+	}
+}
+
+// ensureConnected reopens the database connection if it was closed due to idle timeout (bd-d705ea)
+func (s *DoltStore) ensureConnected(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed.Load() {
+		return fmt.Errorf("database is closed")
+	}
+
+	if s.db != nil {
+		// Already connected
+		s.lastActivity = time.Now()
+		return nil
+	}
+
+	// Reopen the connection
+	fmt.Fprintf(os.Stderr, "Dolt: reopening connection after idle release\n")
+
+	// Clean up stale lock file first
+	if err := cleanupStaleDoltLock(s.dbPath, s.database); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check/clean Dolt lock: %v\n", err)
+	}
+
+	db, err := sql.Open("dolt", s.connStr)
+	if err != nil {
+		return fmt.Errorf("failed to reopen Dolt database: %w", err)
+	}
+
+	// Switch to the target database
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("USE %s", s.database)); err != nil {
+		_ = db.Close()
+		return fmt.Errorf("failed to switch to database %s: %w", s.database, err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	// Test connection
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return fmt.Errorf("failed to ping Dolt database: %w", err)
+	}
+
+	s.db = db
+	s.lastActivity = time.Now()
+	return nil
+}
+
+// trackActivity updates the last activity timestamp (bd-d705ea)
+func (s *DoltStore) trackActivity() {
+	s.mu.Lock()
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+}
+
+// getDB returns the database connection, ensuring it's connected (bd-d705ea)
+// This method handles reconnection after idle timeout transparently.
+// All database operations should use this method instead of accessing s.db directly.
+func (s *DoltStore) getDB(ctx context.Context) (*sql.DB, error) {
+	// Fast path: check if already connected with read lock
+	s.mu.RLock()
+	if s.db != nil {
+		db := s.db
+		s.mu.RUnlock()
+		s.trackActivity()
+		return db, nil
+	}
+	s.mu.RUnlock()
+
+	// Slow path: need to reconnect
+	if err := s.ensureConnected(ctx); err != nil {
+		return nil, err
+	}
+
+	// Return the db (ensureConnected already set lastActivity)
+	s.mu.RLock()
+	db := s.db
+	s.mu.RUnlock()
+	return db, nil
 }
 
 // UnderlyingDB returns the underlying *sql.DB connection
@@ -481,7 +630,12 @@ func (s *DoltStore) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 
 // Commit creates a Dolt commit with the given message
 func (s *DoltStore) Commit(ctx context.Context, message string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)", message)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)", message)
 	if err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
@@ -490,7 +644,12 @@ func (s *DoltStore) Commit(ctx context.Context, message string) error {
 
 // Push pushes commits to the remote
 func (s *DoltStore) Push(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", s.remote, s.branch)
 	if err != nil {
 		return fmt.Errorf("failed to push to %s/%s: %w", s.remote, s.branch, err)
 	}
@@ -499,7 +658,12 @@ func (s *DoltStore) Push(ctx context.Context) error {
 
 // Pull pulls changes from the remote
 func (s *DoltStore) Pull(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_PULL(?)", s.remote)
 	if err != nil {
 		return fmt.Errorf("failed to pull from %s: %w", s.remote, err)
 	}
@@ -508,7 +672,12 @@ func (s *DoltStore) Pull(ctx context.Context) error {
 
 // Branch creates a new branch
 func (s *DoltStore) Branch(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH(?)", name)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_BRANCH(?)", name)
 	if err != nil {
 		return fmt.Errorf("failed to create branch %s: %w", name, err)
 	}
@@ -517,7 +686,12 @@ func (s *DoltStore) Branch(ctx context.Context, name string) error {
 
 // Checkout switches to the specified branch
 func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", branch)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_CHECKOUT(?)", branch)
 	if err != nil {
 		return fmt.Errorf("failed to checkout branch %s: %w", branch, err)
 	}
@@ -528,7 +702,12 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
 // Merge merges the specified branch into the current branch.
 // Returns any merge conflicts if present. Implements storage.VersionedStorage.
 func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE(?)", branch)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_MERGE(?)", branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)
@@ -542,8 +721,13 @@ func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflic
 
 // CurrentBranch returns the current branch name
 func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	var branch string
-	err := s.db.QueryRowContext(ctx, "SELECT active_branch()").Scan(&branch)
+	err = db.QueryRowContext(ctx, "SELECT active_branch()").Scan(&branch)
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
@@ -552,7 +736,12 @@ func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
 
 // DeleteBranch deletes a branch (used to clean up import branches)
 func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_BRANCH('-D', ?)", branch)
 	if err != nil {
 		return fmt.Errorf("failed to delete branch %s: %w", branch, err)
 	}
@@ -561,7 +750,12 @@ func (s *DoltStore) DeleteBranch(ctx context.Context, branch string) error {
 
 // Log returns recent commit history
 func (s *DoltStore) Log(ctx context.Context, limit int) ([]CommitInfo, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `
 		SELECT commit_hash, committer, email, date, message
 		FROM dolt_log
 		LIMIT ?
@@ -602,7 +796,12 @@ type HistoryEntry struct {
 
 // AddRemote adds a Dolt remote
 func (s *DoltStore) AddRemote(ctx context.Context, name, url string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	_, err = db.ExecContext(ctx, "CALL DOLT_REMOTE('add', ?, ?)", name, url)
 	if err != nil {
 		return fmt.Errorf("failed to add remote %s: %w", name, err)
 	}
@@ -611,7 +810,12 @@ func (s *DoltStore) AddRemote(ctx context.Context, name, url string) error {
 
 // Status returns the current Dolt status (staged/unstaged changes)
 func (s *DoltStore) Status(ctx context.Context) (*DoltStatus, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT table_name, staged, status FROM dolt_status")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get status: %w", err)
 	}

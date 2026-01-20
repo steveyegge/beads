@@ -10,7 +10,12 @@ import (
 
 // UpdateIssueID updates an issue ID and all its references
 func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -93,7 +98,12 @@ func (s *DoltStore) UpdateIssueID(ctx context.Context, oldID, newID string, issu
 
 // RenameDependencyPrefix updates the prefix in all dependency records
 func (s *DoltStore) RenameDependencyPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

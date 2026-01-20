@@ -49,6 +49,11 @@ func (s *DoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]*storage
 		return nil, fmt.Errorf("invalid toRef: %w", err)
 	}
 
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// Query issue-level diffs directly
 	// Note: refs are validated above
 	// nolint:gosec // G201: refs validated by validateRef()
@@ -64,7 +69,7 @@ func (s *DoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]*storage
 		FROM dolt_diff_issues('%s', '%s')
 	`, fromRef, toRef)
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get diff: %w", err)
 	}
@@ -142,7 +147,12 @@ func (s *DoltStore) Diff(ctx context.Context, fromRef, toRef string) ([]*storage
 // ListBranches returns the names of all branches.
 // Implements storage.VersionedStorage.
 func (s *DoltStore) ListBranches(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name FROM dolt_branches ORDER BY name")
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT name FROM dolt_branches ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
@@ -162,8 +172,13 @@ func (s *DoltStore) ListBranches(ctx context.Context) ([]string, error) {
 // GetCurrentCommit returns the hash of the current HEAD commit.
 // Implements storage.VersionedStorage.
 func (s *DoltStore) GetCurrentCommit(ctx context.Context) (string, error) {
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	var hash string
-	err := s.db.QueryRowContext(ctx, "SELECT DOLT_HASHOF('HEAD')").Scan(&hash)
+	err = db.QueryRowContext(ctx, "SELECT DOLT_HASHOF('HEAD')").Scan(&hash)
 	if err != nil {
 		return "", fmt.Errorf("failed to get current commit: %w", err)
 	}

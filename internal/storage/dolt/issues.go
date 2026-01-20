@@ -62,8 +62,14 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Get database connection (handles reconnection after idle timeout)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	// Start transaction
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -145,7 +151,13 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Get database connection (handles reconnection after idle timeout)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -220,10 +232,12 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
 
-	issue, err := scanIssue(ctx, s.db, id)
+	issue, err := scanIssue(ctx, db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -243,11 +257,13 @@ func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, erro
 
 // GetIssueByExternalRef retrieves an issue by external reference
 func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database connection: %w", err)
+	}
 
 	var id string
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
+	err = db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -290,7 +306,13 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 
 	args = append(args, id)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Get database connection (handles reconnection after idle timeout)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -322,7 +344,13 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now().UTC()
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Get database connection (handles reconnection after idle timeout)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -357,7 +385,13 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 
 // DeleteIssue permanently removes an issue
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Get database connection (handles reconnection after idle timeout)
+	db, err := s.getDB(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

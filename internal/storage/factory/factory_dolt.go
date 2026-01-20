@@ -45,6 +45,10 @@ func init() {
 			}
 		}
 
-		return dolt.New(ctx, &dolt.Config{Path: path, ReadOnly: opts.ReadOnly})
+		return dolt.New(ctx, &dolt.Config{
+			Path:        path,
+			ReadOnly:    opts.ReadOnly,
+			IdleTimeout: opts.IdleTimeout,
+		})
 	})
 }
