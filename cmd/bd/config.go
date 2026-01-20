@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -439,16 +440,27 @@ func isValidRemoteURL(url string) bool {
 	return gitSSHPattern.MatchString(url)
 }
 
-// findBeadsRepoRoot walks up from the given path to find the repo root (containing .beads)
+// findBeadsRepoRoot walks up from the given path to find the repo root (containing .beads).
+// Stops at the system temp directory root to avoid finding stray .beads directories in /tmp.
 func findBeadsRepoRoot(startPath string) string {
 	path := startPath
+	tempDir := filepath.Clean(os.TempDir())
+
 	for {
-		beadsDir := path + "/.beads"
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanPath := filepath.Clean(path)
+		if cleanPath == tempDir {
+			return ""
+		}
+
+		beadsDir := filepath.Join(path, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return path
 		}
-		parent := path[:strings.LastIndex(path, "/")]
-		if parent == path || parent == "" {
+
+		parent := filepath.Dir(path)
+		if parent == path {
+			// Reached filesystem root
 			return ""
 		}
 		path = parent

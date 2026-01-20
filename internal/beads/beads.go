@@ -171,6 +171,7 @@ func findLocalBdsDirInRepo() string {
 
 // findLocalBeadsDir finds the local .beads directory without following redirects.
 // This is used to detect if a redirect is configured.
+// Stops at the temp directory root to avoid finding stray .beads directories in /tmp.
 func findLocalBeadsDir() string {
 	// Check BEADS_DIR environment variable first
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
@@ -193,7 +194,16 @@ func findLocalBeadsDir() string {
 		return ""
 	}
 
+	// Get temp directory root to stop traversal
+	tempDir := filepath.Clean(os.TempDir())
+
 	for dir := cwd; dir != "/" && dir != "."; {
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanDir := filepath.Clean(dir)
+		if cleanDir == tempDir {
+			break
+		}
+
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return beadsDir
@@ -592,6 +602,8 @@ func findGitRoot() string {
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
 // Stops at the git repository root to avoid finding unrelated databases.
+// When not in a git repo, stops at the temp directory root to avoid finding
+// stray .beads directories in /tmp.
 // For worktrees, searches the main repository root first, then falls back to worktree.
 // Prefers config.json, falls back to beads.db, and warns if multiple .db files exist.
 // Redirect files are supported: if a .beads/redirect file exists, its contents
@@ -636,8 +648,17 @@ func findDatabaseInTree() string {
 		gitRoot = mainRepoRoot
 	}
 
+	// Get temp directory root to stop traversal when not in a git repo
+	tempDir := filepath.Clean(os.TempDir())
+
 	// Walk up directory tree (regular repository or worktree fallback)
 	for {
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanDir := filepath.Clean(dir)
+		if cleanDir == tempDir {
+			break
+		}
+
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
