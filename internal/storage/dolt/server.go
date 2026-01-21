@@ -107,10 +107,8 @@ func (s *Server) Start(ctx context.Context) error {
 	s.cmd = exec.CommandContext(ctx, "dolt", args...)
 	s.cmd.Dir = s.cfg.DataDir
 
-	// Set up process group for clean shutdown
-	s.cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Set up process group for clean shutdown (platform-specific)
+	s.cmd.SysProcAttr = doltSysProcAttr()
 
 	// Set up logging
 	if s.cfg.LogFile != "" {
