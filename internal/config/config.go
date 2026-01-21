@@ -638,3 +638,30 @@ func NeedsJSONL() bool {
 	mode := GetSyncMode()
 	return mode == SyncModeGitPortable || mode == SyncModeRealtime || mode == SyncModeBeltAndSuspenders
 }
+
+// GetCustomTypesFromYAML retrieves custom issue types from config.yaml.
+// This is used as a fallback when the database doesn't have types.custom set yet
+// (e.g., during bd init auto-import before the database is fully configured).
+// Returns nil if no custom types are configured in config.yaml.
+func GetCustomTypesFromYAML() []string {
+	if v == nil {
+		return nil
+	}
+
+	// Try to get types.custom from viper (config.yaml or env var)
+	value := v.GetString("types.custom")
+	if value == "" {
+		return nil
+	}
+
+	// Parse comma-separated list
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}

@@ -1442,3 +1442,104 @@ func TestGetSovereigntyInvalid(t *testing.T) {
 		t.Errorf("GetSovereignty() with invalid tier = %q, want %q (fallback)", got, SovereigntyT1)
 	}
 }
+
+func TestGetCustomTypesFromYAML(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory with a .beads/config.yaml
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Write a config file with types.custom set
+	configContent := `
+types:
+  custom: "molecule,gate,convoy,agent,event"
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory so config is found
+	t.Chdir(tmpDir)
+
+	// Reset and initialize viper
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test GetCustomTypesFromYAML returns the expected types
+	got := GetCustomTypesFromYAML()
+	if got == nil {
+		t.Fatal("GetCustomTypesFromYAML() returned nil, want custom types")
+	}
+
+	expected := []string{"molecule", "gate", "convoy", "agent", "event"}
+	if len(got) != len(expected) {
+		t.Errorf("GetCustomTypesFromYAML() returned %d types, want %d", len(got), len(expected))
+	}
+
+	for i, typ := range expected {
+		if i >= len(got) || got[i] != typ {
+			t.Errorf("GetCustomTypesFromYAML()[%d] = %q, want %q", i, got[i], typ)
+		}
+	}
+}
+
+func TestGetCustomTypesFromYAML_NotSet(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Create a temporary directory with a .beads/config.yaml WITHOUT types.custom
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	// Write a config file without types.custom
+	configContent := `
+issue-prefix: "test"
+`
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Reset and initialize viper
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test GetCustomTypesFromYAML returns nil when not set
+	got := GetCustomTypesFromYAML()
+	if got != nil {
+		t.Errorf("GetCustomTypesFromYAML() = %v, want nil when types.custom not set", got)
+	}
+}
+
+func TestGetCustomTypesFromYAML_NilViper(t *testing.T) {
+	// Save the current viper instance
+	savedV := v
+
+	// Set viper to nil to test nil-safety
+	v = nil
+	defer func() { v = savedV }()
+
+	// Should return nil without panicking
+	got := GetCustomTypesFromYAML()
+	if got != nil {
+		t.Errorf("GetCustomTypesFromYAML() with nil viper = %v, want nil", got)
+	}
+}
