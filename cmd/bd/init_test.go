@@ -296,6 +296,7 @@ func TestInitWithSyncBranch(t *testing.T) {
 
 	// Reset Cobra flags
 	initCmd.Flags().Set("branch", "")
+	initCmd.Flags().Set("legacy", "false")
 
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -479,6 +480,9 @@ func TestInitAlreadyInitialized(t *testing.T) {
 	origDBPath := dbPath
 	defer func() { dbPath = origDBPath }()
 	dbPath = ""
+
+	// Reset Cobra flags (prevents state leakage from TestInitLegacyLayout)
+	initCmd.Flags().Set("legacy", "false")
 
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -1585,6 +1589,7 @@ func TestInitWithRedirect(t *testing.T) {
 	// Reset Cobra flags
 	initCmd.Flags().Set("prefix", "")
 	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("legacy", "false")
 
 	tmpDir := t.TempDir()
 
@@ -1622,16 +1627,20 @@ func TestInitWithRedirect(t *testing.T) {
 		t.Fatalf("Init with redirect failed: %v", err)
 	}
 
-	// Verify database was created in TARGET directory, not local
-	targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
+	// Verify database was created in TARGET directory (var/ subdirectory by default), not local
+	targetDBPath := filepath.Join(targetBeadsDir, "var", "beads.db")
 	if _, err := os.Stat(targetDBPath); os.IsNotExist(err) {
 		t.Errorf("Database was NOT created in redirect target: %s", targetDBPath)
 	}
 
-	// Verify database was NOT created in local directory
-	localDBPath := filepath.Join(localBeadsDir, "beads.db")
+	// Verify database was NOT created in local directory (either layout)
+	localDBPath := filepath.Join(localBeadsDir, "var", "beads.db")
 	if _, err := os.Stat(localDBPath); err == nil {
-		t.Errorf("Database was incorrectly created in local .beads: %s (should be in redirect target)", localDBPath)
+		t.Errorf("Database was incorrectly created in local .beads/var/: %s (should be in redirect target)", localDBPath)
+	}
+	localLegacyDBPath := filepath.Join(localBeadsDir, "beads.db")
+	if _, err := os.Stat(localLegacyDBPath); err == nil {
+		t.Errorf("Database was incorrectly created in local .beads/: %s (should be in redirect target)", localLegacyDBPath)
 	}
 
 	// Verify the database is functional
