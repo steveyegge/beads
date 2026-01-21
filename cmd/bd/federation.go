@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
@@ -374,7 +373,7 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 	password := federationPassword
 	if federationUser != "" && password == "" {
 		fmt.Fprint(os.Stderr, "Password: ")
-		pwBytes, err := term.ReadPassword(syscall.Stdin)
+		pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr) // newline after password
 		if err != nil {
 			FatalErrorRespectJSON("failed to read password: %v", err)
