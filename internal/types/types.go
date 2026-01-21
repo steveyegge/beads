@@ -122,6 +122,54 @@ type Issue struct {
 	Actor     string `json:"actor,omitempty"`      // Entity URI who caused this event
 	Target    string `json:"target,omitempty"`     // Entity URI or bead ID affected
 	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
+
+	// ===== Decision Point Fields (human-in-the-loop choices) =====
+	// Decision points are gates that wait for structured human input.
+	// Model: single-select from options + optional text input.
+
+	// DecisionPrompt is the question shown to the human.
+	// Can contain markdown for rich formatting.
+	DecisionPrompt string `json:"decision_prompt,omitempty"`
+
+	// DecisionOptions are the available choices (JSON array of DecisionOption objects).
+	// Can be empty if only text input is needed.
+	DecisionOptions string `json:"decision_options,omitempty"`
+
+	// DecisionDefault is the option ID selected if timeout occurs.
+	// Empty means no default (timeout = no response).
+	DecisionDefault string `json:"decision_default,omitempty"`
+
+	// DecisionSelected is the option ID the human chose (set when resolved).
+	// Empty if human provided only text without selecting an option.
+	DecisionSelected string `json:"decision_selected,omitempty"`
+
+	// DecisionText is custom text input from the human (set when resolved).
+	// Can be provided alongside a selection, or instead of one.
+	DecisionText string `json:"decision_text,omitempty"`
+
+	// DecisionRespondedAt is when the human responded.
+	DecisionRespondedAt *time.Time `json:"decision_responded_at,omitempty"`
+
+	// DecisionRespondedBy identifies who responded (email, user ID, etc.).
+	DecisionRespondedBy string `json:"decision_responded_by,omitempty"`
+
+	// ===== Decision Iteration Fields (for refinement loop) =====
+
+	// DecisionIteration tracks the current iteration number (1-indexed).
+	// First decision point is iteration 1.
+	DecisionIteration int `json:"decision_iteration,omitempty"`
+
+	// DecisionMaxIterations limits refinement loops (default: 3).
+	// After max, human must select or decision times out.
+	DecisionMaxIterations int `json:"decision_max_iterations,omitempty"`
+
+	// DecisionPriorID links to the previous iteration's decision point.
+	// Empty for iteration 1.
+	DecisionPriorID string `json:"decision_prior_id,omitempty"`
+
+	// DecisionGuidance stores the human's text that triggered this iteration.
+	// Copied from prior iteration's DecisionText for context.
+	DecisionGuidance string `json:"decision_guidance,omitempty"`
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -201,6 +249,18 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Actor)
 	w.str(i.Target)
 	w.str(i.Payload)
+
+	// Decision point fields
+	w.str(i.DecisionPrompt)
+	w.str(i.DecisionOptions)
+	w.str(i.DecisionDefault)
+	w.str(i.DecisionSelected)
+	w.str(i.DecisionText)
+	w.str(i.DecisionRespondedBy)
+	w.int(i.DecisionIteration)
+	w.int(i.DecisionMaxIterations)
+	w.str(i.DecisionPriorID)
+	w.str(i.DecisionGuidance)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -1063,6 +1123,25 @@ const (
 	BondTypeConditional = "conditional" // B runs only if A fails
 	BondTypeRoot        = "root"        // Marks the primary/root component
 )
+
+// DecisionOption represents one choice in a decision point.
+// Stored as JSON array in Issue.DecisionOptions field.
+type DecisionOption struct {
+	// ID is the short identifier (e.g., "a", "b", "yes", "no")
+	ID string `json:"id"`
+
+	// Short is a 1-3 word summary for compact display (SMS, CLI lists)
+	// Example: "Redis", "In-memory", "Yes", "No"
+	Short string `json:"short"`
+
+	// Label is a sentence-length description for UI display
+	// Example: "Use Redis for distributed caching"
+	Label string `json:"label"`
+
+	// Description is optional rich content (markdown)
+	// Can contain full design documents, code snippets, etc.
+	Description string `json:"description,omitempty"`
+}
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).
 func (i *Issue) IsCompound() bool {
