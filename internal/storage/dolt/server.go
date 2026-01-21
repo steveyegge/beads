@@ -102,7 +102,8 @@ func (s *Server) Start(ctx context.Context) error {
 		args = append(args, "--readonly")
 	}
 
-	// Create command
+	// Create command (args are built from validated config)
+	// #nosec G204 -- command and args are derived from trusted config fields.
 	s.cmd = exec.CommandContext(ctx, "dolt", args...)
 	s.cmd.Dir = s.cfg.DataDir
 
@@ -272,6 +273,7 @@ func (s *Server) waitForReady(ctx context.Context) error {
 // GetRunningServerPID returns the PID of a running server from the PID file, or 0 if not running
 func GetRunningServerPID(dataDir string) int {
 	pidFile := filepath.Join(dataDir, "dolt-server.pid")
+	// #nosec G304 -- pidFile is derived from the configured data directory.
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return 0

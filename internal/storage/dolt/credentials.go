@@ -261,17 +261,27 @@ func (s *DoltStore) UpdatePeerLastSync(ctx context.Context, name string) error {
 // setFederationCredentials sets DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD env vars.
 // Returns a cleanup function that must be called (typically via defer) to unset them.
 // The caller must hold federationEnvMutex.
-func setFederationCredentials(username, password string) func() {
+func setFederationCredentials(username, password string) (func(), error) {
+	var setErr error
 	if username != "" {
-		os.Setenv("DOLT_REMOTE_USER", username)
+		if err := os.Setenv("DOLT_REMOTE_USER", username); err != nil {
+			setErr = err
+		}
 	}
 	if password != "" {
-		os.Setenv("DOLT_REMOTE_PASSWORD", password)
+		if err := os.Setenv("DOLT_REMOTE_PASSWORD", password); err != nil && setErr == nil {
+			setErr = err
+		}
 	}
-	return func() {
-		os.Unsetenv("DOLT_REMOTE_USER")
-		os.Unsetenv("DOLT_REMOTE_PASSWORD")
+	cleanup := func() {
+		if err := os.Unsetenv("DOLT_REMOTE_USER"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to unset DOLT_REMOTE_USER: %v\n", err)
+		}
+		if err := os.Unsetenv("DOLT_REMOTE_PASSWORD"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to unset DOLT_REMOTE_PASSWORD: %v\n", err)
+		}
 	}
+	return cleanup, setErr
 }
 
 // withPeerCredentials executes a function with peer credentials set in environment.
@@ -287,7 +297,11 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 	// If we have credentials, set env vars with mutex protection
 	if peer != nil && (peer.Username != "" || peer.Password != "") {
 		federationEnvMutex.Lock()
-		cleanup := setFederationCredentials(peer.Username, peer.Password)
+		cleanup, err := setFederationCredentials(peer.Username, peer.Password)
+		if err != nil {
+			federationEnvMutex.Unlock()
+			return fmt.Errorf("failed to set federation credentials: %w", err)
+		}
 		defer func() {
 			cleanup()
 			federationEnvMutex.Unlock()
