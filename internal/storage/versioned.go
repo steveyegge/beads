@@ -171,6 +171,27 @@ type FederatedStorage interface {
 
 	// SyncStatus returns the sync status with a peer.
 	SyncStatus(ctx context.Context, peer string) (*SyncStatus, error)
+
+	// Credential management for SQL user authentication
+
+	// AddFederationPeer adds or updates a federation peer with credentials.
+	AddFederationPeer(ctx context.Context, peer *FederationPeer) error
+
+	// GetFederationPeer retrieves a federation peer by name.
+	// Returns nil if peer doesn't exist.
+	GetFederationPeer(ctx context.Context, name string) (*FederationPeer, error)
+
+	// ListFederationPeers returns all configured federation peers.
+	ListFederationPeers(ctx context.Context) ([]*FederationPeer, error)
+
+	// RemoveFederationPeer removes a federation peer and its credentials.
+	RemoveFederationPeer(ctx context.Context, name string) error
+
+	// PushWithCredentials pushes to a remote using stored credentials.
+	PushWithCredentials(ctx context.Context, remoteName string) error
+
+	// PullWithCredentials pulls from a remote using stored credentials.
+	PullWithCredentials(ctx context.Context, remoteName string) ([]Conflict, error)
 }
 
 // RemoteInfo describes a configured remote.
@@ -186,6 +207,19 @@ type SyncStatus struct {
 	LocalAhead   int       // Commits ahead of peer
 	LocalBehind  int       // Commits behind peer
 	HasConflicts bool      // Whether there are unresolved conflicts
+}
+
+// FederationPeer represents a remote peer with authentication credentials.
+// Used for peer-to-peer Dolt remotes between Gas Towns with SQL user auth.
+type FederationPeer struct {
+	Name        string     // Unique name for this peer (used as remote name)
+	RemoteURL   string     // Dolt remote URL (e.g., http://host:port/org/db)
+	Username    string     // SQL username for authentication
+	Password    string     // Password (decrypted, not stored directly)
+	Sovereignty string     // Sovereignty tier: T1, T2, T3, T4
+	LastSync    *time.Time // Last successful sync time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // IsFederated checks if a storage instance supports federation.

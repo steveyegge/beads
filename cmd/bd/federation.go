@@ -2,16 +2,23 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/ui"
+	"golang.org/x/term"
 )
 
 var (
 	federationPeer     string
 	federationStrategy string
+	federationUser     string
+	federationPassword string
+	federationSov      string
 )
 
 var federationCmd = &cobra.Command{
@@ -66,17 +73,22 @@ Examples:
 
 var federationAddPeerCmd = &cobra.Command{
 	Use:   "add-peer <name> <url>",
-	Short: "Add a federation peer",
-	Long: `Add a new federation peer remote.
+	Short: "Add a federation peer with optional SQL credentials",
+	Long: `Add a new federation peer remote with optional SQL user authentication.
 
 The URL can be:
   - dolthub://org/repo      DoltHub hosted repository
   - host:port/database      Direct dolt sql-server connection
   - file:///path/to/repo    Local file path (for testing)
 
+Credentials are encrypted and stored locally. They are used automatically
+when syncing with the peer. If --user is provided without --password,
+you will be prompted for the password interactively.
+
 Examples:
   bd federation add-peer town-beta dolthub://acme/town-beta-beads
-  bd federation add-peer town-gamma 192.168.1.100:3306/beads`,
+  bd federation add-peer town-gamma 192.168.1.100:3306/beads --user sync-bot
+  bd federation add-peer partner https://partner.example.com/beads --user admin --password secret`,
 	Args: cobra.ExactArgs(2),
 	Run:  runFederationAddPeer,
 }
@@ -108,6 +120,11 @@ func init() {
 
 	// Flags for status
 	federationStatusCmd.Flags().StringVar(&federationPeer, "peer", "", "Specific peer to check")
+
+	// Flags for add-peer (SQL user authentication)
+	federationAddPeerCmd.Flags().StringVarP(&federationUser, "user", "u", "", "SQL username for authentication")
+	federationAddPeerCmd.Flags().StringVarP(&federationPassword, "password", "p", "", "SQL password (prompted if --user set without --password)")
+	federationAddPeerCmd.Flags().StringVar(&federationSov, "sovereignty", "", "Sovereignty tier (T1, T2, T3, T4)")
 
 	rootCmd.AddCommand(federationCmd)
 }
@@ -288,19 +305,63 @@ func runFederationAddPeer(cmd *cobra.Command, args []string) {
 		FatalErrorRespectJSON("federation requires Dolt backend")
 	}
 
-	if err := fs.AddRemote(ctx, name, url); err != nil {
-		FatalErrorRespectJSON("failed to add peer: %v", err)
+	// If user is provided but password is not, prompt for it
+	password := federationPassword
+	if federationUser != "" && password == "" {
+		fmt.Fprint(os.Stderr, "Password: ")
+		pwBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Fprintln(os.Stderr) // newline after password
+		if err != nil {
+			FatalErrorRespectJSON("failed to read password: %v", err)
+		}
+		password = string(pwBytes)
+	}
+
+	// Validate sovereignty tier if provided
+	sov := federationSov
+	if sov != "" {
+		sov = strings.ToUpper(sov)
+		if sov != "T1" && sov != "T2" && sov != "T3" && sov != "T4" {
+			FatalErrorRespectJSON("invalid sovereignty tier: %s (must be T1, T2, T3, or T4)", federationSov)
+		}
+	}
+
+	// If credentials provided, use AddFederationPeer to store them
+	if federationUser != "" {
+		peer := &storage.FederationPeer{
+			Name:        name,
+			RemoteURL:   url,
+			Username:    federationUser,
+			Password:    password,
+			Sovereignty: sov,
+		}
+		if err := fs.AddFederationPeer(ctx, peer); err != nil {
+			FatalErrorRespectJSON("failed to add peer: %v", err)
+		}
+	} else {
+		// No credentials, just add the remote
+		if err := fs.AddRemote(ctx, name, url); err != nil {
+			FatalErrorRespectJSON("failed to add peer: %v", err)
+		}
 	}
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
-			"added": name,
-			"url":   url,
+			"added":       name,
+			"url":         url,
+			"has_auth":    federationUser != "",
+			"sovereignty": sov,
 		})
 		return
 	}
 
 	fmt.Printf("Added peer %s: %s\n", ui.RenderAccent(name), url)
+	if federationUser != "" {
+		fmt.Printf("  User: %s (credentials stored)\n", federationUser)
+	}
+	if sov != "" {
+		fmt.Printf("  Sovereignty: %s\n", sov)
+	}
 }
 
 func runFederationRemovePeer(cmd *cobra.Command, args []string) {

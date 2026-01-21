@@ -12,39 +12,51 @@ import (
 // These methods enable peer-to-peer synchronization between Gas Towns.
 
 // PushTo pushes commits to a specific peer remote.
+// If credentials are stored for this peer, they are used automatically.
 func (s *DoltStore) PushTo(ctx context.Context, peer string) error {
-	// DOLT_PUSH(remote, branch)
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch)
-	if err != nil {
-		return fmt.Errorf("failed to push to peer %s: %w", peer, err)
-	}
-	return nil
+	return s.withPeerCredentials(ctx, peer, func() error {
+		// DOLT_PUSH(remote, branch)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_PUSH(?, ?)", peer, s.branch)
+		if err != nil {
+			return fmt.Errorf("failed to push to peer %s: %w", peer, err)
+		}
+		return nil
+	})
 }
 
 // PullFrom pulls changes from a specific peer remote.
+// If credentials are stored for this peer, they are used automatically.
 // Returns any merge conflicts if present.
 func (s *DoltStore) PullFrom(ctx context.Context, peer string) ([]storage.Conflict, error) {
-	// DOLT_PULL(remote) - pulls and merges
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", peer)
-	if err != nil {
-		// Check if the error is due to merge conflicts
-		conflicts, conflictErr := s.GetConflicts(ctx)
-		if conflictErr == nil && len(conflicts) > 0 {
-			return conflicts, nil
+	var conflicts []storage.Conflict
+	err := s.withPeerCredentials(ctx, peer, func() error {
+		// DOLT_PULL(remote) - pulls and merges
+		_, pullErr := s.db.ExecContext(ctx, "CALL DOLT_PULL(?)", peer)
+		if pullErr != nil {
+			// Check if the error is due to merge conflicts
+			c, conflictErr := s.GetConflicts(ctx)
+			if conflictErr == nil && len(c) > 0 {
+				conflicts = c
+				return nil
+			}
+			return fmt.Errorf("failed to pull from peer %s: %w", peer, pullErr)
 		}
-		return nil, fmt.Errorf("failed to pull from peer %s: %w", peer, err)
-	}
-	return nil, nil
+		return nil
+	})
+	return conflicts, err
 }
 
 // Fetch fetches refs from a peer without merging.
+// If credentials are stored for this peer, they are used automatically.
 func (s *DoltStore) Fetch(ctx context.Context, peer string) error {
-	// DOLT_FETCH(remote)
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_FETCH(?)", peer)
-	if err != nil {
-		return fmt.Errorf("failed to fetch from peer %s: %w", peer, err)
-	}
-	return nil
+	return s.withPeerCredentials(ctx, peer, func() error {
+		// DOLT_FETCH(remote)
+		_, err := s.db.ExecContext(ctx, "CALL DOLT_FETCH(?)", peer)
+		if err != nil {
+			return fmt.Errorf("failed to fetch from peer %s: %w", peer, err)
+		}
+		return nil
+	})
 }
 
 // ListRemotes returns configured remote names and URLs.
