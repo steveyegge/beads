@@ -105,9 +105,9 @@ func TestFindRepliesToAndReplies_WorksWithMemoryStorage(t *testing.T) {
 		t.Fatalf("SetConfig types.custom: %v", err)
 	}
 
-	root := &types.Issue{Title: "root", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeMessage, Sender: "a", Assignee: "b"}
-	reply1 := &types.Issue{Title: "r1", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeMessage, Sender: "b", Assignee: "a"}
-	reply2 := &types.Issue{Title: "r2", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeMessage, Sender: "a", Assignee: "b"}
+	root := &types.Issue{Title: "root", Status: types.StatusOpen, Priority: 2, IssueType: "message", Sender: "a", Assignee: "b"}
+	reply1 := &types.Issue{Title: "r1", Status: types.StatusOpen, Priority: 2, IssueType: "message", Sender: "b", Assignee: "a"}
+	reply2 := &types.Issue{Title: "r2", Status: types.StatusOpen, Priority: 2, IssueType: "message", Sender: "a", Assignee: "b"}
 	if err := st.CreateIssue(ctx, root, "tester"); err != nil {
 		t.Fatalf("CreateIssue(root): %v", err)
 	}

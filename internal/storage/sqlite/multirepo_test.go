@@ -1128,7 +1128,7 @@ func TestUpsertPreservesGateFields(t *testing.T) {
 		Title:     "Test Gate",
 		Status:    types.StatusOpen,
 		Priority:  1,
-		IssueType: types.TypeGate,
+		IssueType: "gate",
 		Ephemeral: true,
 		AwaitType: "gh:run",
 		AwaitID:   "123456789",
@@ -1170,7 +1170,7 @@ func TestUpsertPreservesGateFields(t *testing.T) {
 		Title:       "Test Gate Updated", // Different title to trigger update
 		Status:      types.StatusOpen,
 		Priority:    1,
-		IssueType:   types.TypeGate,
+		IssueType:   "gate",
 		AwaitType:   "", // Empty - simulating JSONL without await fields
 		AwaitID:     "", // Empty
 		Timeout:     0,

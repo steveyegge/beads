@@ -796,7 +796,7 @@ var listCmd = &cobra.Command{
 		// Gate filtering: exclude gate issues by default (bd-7zka.2)
 		// Use --include-gates or --type gate to show gate issues
 		if !includeGates && issueType != "gate" {
-			filter.ExcludeTypes = append(filter.ExcludeTypes, types.TypeGate)
+			filter.ExcludeTypes = append(filter.ExcludeTypes, "gate")
 		}
 
 		// Parent filtering: filter children by parent issue

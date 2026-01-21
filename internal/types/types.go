@@ -486,21 +486,9 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Well-known custom types - constants for code convenience.
-// These are NOT built-in types and require types.custom configuration for validation.
-// Used by Gas Town and other infrastructure that extends beads.
-const (
-	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
-	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
-	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
-	TypeGate         IssueType = "gate"          // Async coordination gate
-	TypeAgent        IssueType = "agent"         // Agent identity bead
-	TypeRole         IssueType = "role"          // Agent role definition
-	TypeRig          IssueType = "rig"           // Rig identity bead (multi-repo workspace)
-	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
-	TypeEvent        IssueType = "event"         // Operational state change record
-	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
-)
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// were removed from beads core. They are now purely custom types with no built-in constants.
+// Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -538,16 +526,12 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 }
 
 // Normalize maps issue type aliases to their canonical form.
-// For example, "enhancement" -> "feature", "mr" -> "merge-request".
+// For example, "enhancement" -> "feature".
 // Case-insensitive to match util.NormalizeIssueType behavior.
 func (t IssueType) Normalize() IssueType {
 	switch strings.ToLower(string(t)) {
 	case "enhancement", "feat":
 		return TypeFeature
-	case "mr":
-		return TypeMergeRequest
-	case "mol":
-		return TypeMolecule
 	default:
 		return t
 	}
