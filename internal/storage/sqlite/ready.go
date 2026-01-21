@@ -346,6 +346,8 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 	var issues []*types.Issue
 	for rows.Next() {
 		var issue types.Issue
+		var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+		var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
@@ -378,7 +380,7 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&createdAtStr, &updatedAtStr, &closedAt, &externalRef, &sourceRepo,
 			&compactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &ephemeral, &pinned, &isTemplate,
@@ -386,6 +388,14 @@ func (s *SQLiteStorage) GetStaleIssues(ctx context.Context, filter types.StaleFi
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan stale issue: %w", err)
+		}
+
+		// Parse timestamp strings (TEXT columns require manual parsing)
+		if createdAtStr.Valid {
+			issue.CreatedAt = parseTimeString(createdAtStr.String)
+		}
+		if updatedAtStr.Valid {
+			issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 		}
 
 		if contentHash.Valid {
@@ -564,6 +574,8 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 	var blocked []*types.BlockedIssue
 	for rows.Next() {
 		var issue types.BlockedIssue
+		var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+		var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
 		var assignee sql.NullString
@@ -575,11 +587,19 @@ func (s *SQLiteStorage) GetBlockedIssues(ctx context.Context, filter types.WorkF
 			&issue.ID, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.CreatedBy, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &issue.BlockedByCount,
+			&createdAtStr, &issue.CreatedBy, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &issue.BlockedByCount,
 			&blockerIDsStr,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan blocked issue: %w", err)
+		}
+
+		// Parse timestamp strings (TEXT columns require manual parsing)
+		if createdAtStr.Valid {
+			issue.CreatedAt = parseTimeString(createdAtStr.String)
+		}
+		if updatedAtStr.Valid {
+			issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 		}
 
 		if closedAt.Valid {

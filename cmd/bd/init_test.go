@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -1464,4 +1465,181 @@ func captureStdout(t *testing.T, fn func() error) string {
 		t.Errorf("unexpected error: %v", err)
 	}
 	return buf.String()
+}
+
+// TestInitWithRedirect verifies that bd init creates the database in the redirect target,
+// not in the local .beads directory. (GH#bd-0qel)
+func TestInitWithRedirect(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Clear BEADS_DIR to ensure we test the tree search path
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DIR")
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		}
+	}()
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+
+	tmpDir := t.TempDir()
+
+	// Create project directory (where we'll run from)
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create local .beads with redirect file pointing to target
+	localBeadsDir := filepath.Join(projectDir, ".beads")
+	if err := os.MkdirAll(localBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create target .beads directory (the redirect destination)
+	targetBeadsDir := filepath.Join(tmpDir, "canonical", ".beads")
+	if err := os.MkdirAll(targetBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file - use relative path
+	redirectPath := filepath.Join(localBeadsDir, beads.RedirectFileName)
+	// Relative path from project/.beads to canonical/.beads is ../canonical/.beads
+	if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to project directory
+	t.Chdir(projectDir)
+
+	// Run bd init
+	rootCmd.SetArgs([]string{"init", "--prefix", "redirect-test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with redirect failed: %v", err)
+	}
+
+	// Verify database was created in TARGET directory, not local
+	targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
+	if _, err := os.Stat(targetDBPath); os.IsNotExist(err) {
+		t.Errorf("Database was NOT created in redirect target: %s", targetDBPath)
+	}
+
+	// Verify database was NOT created in local directory
+	localDBPath := filepath.Join(localBeadsDir, "beads.db")
+	if _, err := os.Stat(localDBPath); err == nil {
+		t.Errorf("Database was incorrectly created in local .beads: %s (should be in redirect target)", localDBPath)
+	}
+
+	// Verify the database is functional
+	store, err := openExistingTestDB(t, targetDBPath)
+	if err != nil {
+		t.Fatalf("Failed to open database in redirect target: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("Failed to get issue prefix from database: %v", err)
+	}
+	if prefix != "redirect-test" {
+		t.Errorf("Expected prefix 'redirect-test', got %q", prefix)
+	}
+}
+
+// TestInitWithRedirectToExistingDatabase verifies that bd init errors when the redirect
+// target already has a database, preventing accidental overwrites. (GH#bd-0qel)
+func TestInitWithRedirectToExistingDatabase(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Clear BEADS_DIR to ensure we test the tree search path
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Unsetenv("BEADS_DIR")
+	defer func() {
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		}
+	}()
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("force", "false")
+
+	tmpDir := t.TempDir()
+
+	// Create canonical .beads directory with EXISTING database
+	canonicalDir := filepath.Join(tmpDir, "canonical")
+	canonicalBeadsDir := filepath.Join(canonicalDir, ".beads")
+	if err := os.MkdirAll(canonicalBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an existing database in canonical location
+	canonicalDBPath := filepath.Join(canonicalBeadsDir, "beads.db")
+	store, err := sqlite.New(context.Background(), canonicalDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create canonical database: %v", err)
+	}
+	if err := store.SetConfig(context.Background(), "issue_prefix", "existing"); err != nil {
+		t.Fatalf("Failed to set prefix in canonical database: %v", err)
+	}
+	store.Close()
+
+	// Create project directory with redirect to canonical
+	projectDir := filepath.Join(tmpDir, "project")
+	projectBeadsDir := filepath.Join(projectDir, ".beads")
+	if err := os.MkdirAll(projectBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write redirect file pointing to canonical
+	redirectPath := filepath.Join(projectBeadsDir, beads.RedirectFileName)
+	if err := os.WriteFile(redirectPath, []byte("../canonical/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test checkExistingBeadsData directly since init uses os.Exit(1) which terminates tests
+	// Change to project directory first
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	// Call checkExistingBeadsData directly - should return error
+	err = checkExistingBeadsData("new-prefix")
+	if err == nil {
+		t.Fatal("Expected checkExistingBeadsData to return error when redirect target already has database")
+	}
+
+	errorMsg := err.Error()
+	if !strings.Contains(errorMsg, "redirect target already has database") {
+		t.Errorf("Expected error about redirect target having database, got: %s", errorMsg)
+	}
+
+	// Verify canonical database was NOT modified
+	store, err = openExistingTestDB(t, canonicalDBPath)
+	if err != nil {
+		t.Fatalf("Failed to reopen canonical database: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("Failed to get prefix from canonical database: %v", err)
+	}
+	if prefix != "existing" {
+		t.Errorf("Canonical database prefix should still be 'existing', got %q (was overwritten!)", prefix)
+	}
 }

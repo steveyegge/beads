@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,17 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/types"
 )
+
+// jsonlFilePaths lists all JSONL files that should be staged/tracked.
+// Includes beads.jsonl for backwards compatibility with older installations.
+var jsonlFilePaths = []string{
+	".beads/issues.jsonl",
+	".beads/deletions.jsonl",
+	".beads/interactions.jsonl",
+	".beads/beads.jsonl", // Legacy filename, kept for backwards compatibility
+}
 
 // hookCmd is the main "bd hook" command that git hooks call into.
 // This is distinct from "bd hooks" (plural) which manages hook installation.
@@ -368,17 +379,16 @@ func hookPreCommit() int {
 	}
 
 	// Stage JSONL files
-	jsonlFiles := []string{".beads/beads.jsonl", ".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"}
 	if os.Getenv("BEADS_NO_AUTO_STAGE") == "" {
 		rc, rcErr := beads.GetRepoContext()
 		ctx := context.Background()
-		for _, f := range jsonlFiles {
+		for _, f := range jsonlFilePaths {
 			if _, err := os.Stat(f); err == nil {
 				var gitAdd *exec.Cmd
 				if rcErr == nil {
 					gitAdd = rc.GitCmdCWD(ctx, "add", f)
 				} else {
-					// #nosec G204 -- f comes from jsonlFiles (controlled, hardcoded paths)
+					// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
 					gitAdd = exec.Command("git", "add", f)
 				}
 				_ = gitAdd.Run()
@@ -532,14 +542,13 @@ func stageJSONLFiles(ctx context.Context) {
 	}
 
 	rc, rcErr := beads.GetRepoContext()
-	jsonlFiles := []string{".beads/issues.jsonl", ".beads/deletions.jsonl", ".beads/interactions.jsonl"}
-	for _, f := range jsonlFiles {
+	for _, f := range jsonlFilePaths {
 		if _, err := os.Stat(f); err == nil {
 			var gitAdd *exec.Cmd
 			if rcErr == nil {
 				gitAdd = rc.GitCmdCWD(ctx, "add", f)
 			} else {
-				// #nosec G204 -- f comes from jsonlFiles (hardcoded)
+				// #nosec G204 -- f comes from jsonlFilePaths (controlled, hardcoded paths)
 				gitAdd = exec.Command("git", "add", f)
 			}
 			_ = gitAdd.Run()
@@ -663,7 +672,7 @@ func hookPostMergeDolt(beadsDir string) int {
 
 	// Import JSONL to the import branch
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
-	if err := importFromJSONLToStore(store, jsonlPath); err != nil {
+	if err := importFromJSONLToStore(ctx, store, jsonlPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not import JSONL: %v\n", err)
 		// Checkout back to original branch
 		_ = doltStore.Checkout(ctx, currentBranch)
@@ -831,13 +840,41 @@ func hookPostCheckout(args []string) int {
 
 // importFromJSONLToStore imports issues from JSONL to a store.
 // This is a placeholder - the actual implementation should use the store's methods.
-func importFromJSONLToStore(store interface{}, jsonlPath string) error {
-	_ = store
-	_ = jsonlPath
-	// Use bd sync --import-only for now
-	// TODO: Implement direct store import
-	cmd := exec.Command("bd", "sync", "--import-only", "--no-git-history", "--no-daemon")
-	return cmd.Run()
+func importFromJSONLToStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
+	// Parse JSONL into issues
+	// #nosec G304 - jsonlPath is derived from beadsDir (trusted workspace path)
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	// 2MB buffer for large issues
+	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024)
+
+	var allIssues []*types.Issue
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var issue types.Issue
+		if err := json.Unmarshal([]byte(line), &issue); err != nil {
+			return err
+		}
+		issue.SetDefaults()
+		allIssues = append(allIssues, &issue)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Import using shared logic (no subprocess).
+	// Use store.Path() as the database path (works for both sqlite and dolt).
+	opts := ImportOptions{}
+	_, err = importIssuesCore(ctx, store.Path(), store, allIssues, opts)
+	return err
 }
 
 func init() {

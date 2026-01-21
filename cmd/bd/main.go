@@ -532,7 +532,16 @@ var rootCmd = &cobra.Command{
 				// Invariant: dbPath must always be absolute for filepath.Rel() compatibility
 				// in daemon sync-branch code path. Use CanonicalizePath for OS-agnostic
 				// handling (symlinks, case normalization on macOS).
-				dbPath = utils.CanonicalizePath(filepath.Join(".beads", beads.CanonicalDatabaseName))
+				//
+				// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
+				// which follows redirect files. Without this, a redirected .beads
+				// would create a local database instead of using the redirect target.
+				// (GH#bd-0qel)
+				targetBeadsDir := beads.FindBeadsDir()
+				if targetBeadsDir == "" {
+					targetBeadsDir = ".beads"
+				}
+				dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
 			}
 		}
 
@@ -568,6 +577,16 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 			daemonStatus.FallbackReason = FallbackWispOperation
 			debug.Logf("wisp operation detected, using direct mode")
+		}
+
+		// Dolt backend (embedded) is single-process-only; never use daemon/RPC.
+		// This must be checked after dbPath is resolved.
+		if !noDaemon && singleProcessOnlyBackend() {
+			noDaemon = true
+			daemonStatus.AutoStartEnabled = false
+			daemonStatus.FallbackReason = FallbackSingleProcessOnly
+			daemonStatus.Detail = "backend is single-process-only (dolt): daemon mode disabled; using direct mode"
+			debug.Logf("single-process backend detected, using direct mode")
 		}
 
 		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)

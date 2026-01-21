@@ -23,12 +23,18 @@ The daemon will:
 - Pull remote changes periodically
 - Auto-import when remote changes detected
 
+Federation mode (--federation):
+- Starts dolt sql-server for multi-writer support
+- Exposes remotesapi on port 8080 for peer-to-peer push/pull
+- Enables real-time sync between Gas Towns
+
 Examples:
   bd daemon start                    # Start with defaults
   bd daemon start --auto-commit      # Enable auto-commit
   bd daemon start --auto-push        # Enable auto-push (implies --auto-commit)
   bd daemon start --foreground       # Run in foreground (for systemd/supervisord)
-  bd daemon start --local            # Local-only mode (no git sync)`,
+  bd daemon start --local            # Local-only mode (no git sync)
+  bd daemon start --federation       # Enable federation mode (dolt sql-server)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		interval, _ := cmd.Flags().GetDuration("interval")
 		autoCommit, _ := cmd.Flags().GetBool("auto-commit")
@@ -39,6 +45,9 @@ Examples:
 		foreground, _ := cmd.Flags().GetBool("foreground")
 		logLevel, _ := cmd.Flags().GetString("log-level")
 		logJSON, _ := cmd.Flags().GetBool("log-json")
+		federation, _ := cmd.Flags().GetBool("federation")
+		federationPort, _ := cmd.Flags().GetInt("federation-port")
+		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
 
 		// NOTE: Only load daemon auto-settings from the database in foreground mode.
 		//
@@ -136,6 +145,8 @@ Examples:
 		// Start daemon
 		if localMode {
 			fmt.Printf("Starting bd daemon in LOCAL mode (interval: %v, no git sync)\n", interval)
+		} else if federation {
+			fmt.Printf("Starting bd daemon in FEDERATION mode (interval: %v, dolt sql-server with remotesapi)\n", interval)
 		} else {
 			fmt.Printf("Starting bd daemon (interval: %v, auto-commit: %v, auto-push: %v, auto-pull: %v)\n",
 				interval, autoCommit, autoPush, autoPull)
@@ -144,7 +155,7 @@ Examples:
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON)
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
 	},
 }
 
@@ -158,4 +169,7 @@ func init() {
 	daemonStartCmd.Flags().Bool("foreground", false, "Run in foreground (don't daemonize)")
 	daemonStartCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	daemonStartCmd.Flags().Bool("log-json", false, "Output logs in JSON format")
+	daemonStartCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server)")
+	daemonStartCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
+	daemonStartCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
 }

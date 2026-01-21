@@ -347,3 +347,156 @@ func TestDetectPrefixFromIssues(t *testing.T) {
 		t.Errorf("expected prefix 'proj', got '%s'", prefix)
 	}
 }
+
+func TestBootstrapWithRoutesAndInteractions(t *testing.T) {
+	// Create temp directory structure
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+
+	// Create test issues JSONL
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	issue := types.Issue{
+		ID:     "test-001",
+		Title:  "Test issue",
+		Status: types.StatusOpen,
+	}
+	data, _ := json.Marshal(issue)
+	if err := os.WriteFile(jsonlPath, append(data, '\n'), 0644); err != nil {
+		t.Fatalf("failed to write issues JSONL: %v", err)
+	}
+
+	// Create test routes JSONL
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routesContent := `{"prefix":"test-","path":"."}
+{"prefix":"other-","path":"other/rig"}
+`
+	if err := os.WriteFile(routesPath, []byte(routesContent), 0644); err != nil {
+		t.Fatalf("failed to write routes JSONL: %v", err)
+	}
+
+	// Create test interactions JSONL
+	interactionsPath := filepath.Join(beadsDir, "interactions.jsonl")
+	interactionsContent := `{"id":"int-001","kind":"llm_call","created_at":"2025-01-20T10:00:00Z","actor":"test-agent","model":"claude-3"}
+{"id":"int-002","kind":"tool_call","created_at":"2025-01-20T10:01:00Z","actor":"test-agent","tool_name":"bash","exit_code":0}
+`
+	if err := os.WriteFile(interactionsPath, []byte(interactionsContent), 0644); err != nil {
+		t.Fatalf("failed to write interactions JSONL: %v", err)
+	}
+
+	// Perform bootstrap
+	ctx := context.Background()
+	bootstrapped, result, err := Bootstrap(ctx, BootstrapConfig{
+		BeadsDir:    beadsDir,
+		DoltPath:    doltDir,
+		LockTimeout: 10 * time.Second,
+	})
+
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+	if !bootstrapped {
+		t.Fatal("expected bootstrap to be performed")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Verify issues imported
+	if result.IssuesImported != 1 {
+		t.Errorf("expected 1 issue imported, got %d", result.IssuesImported)
+	}
+
+	// Verify routes imported
+	if result.RoutesImported != 2 {
+		t.Errorf("expected 2 routes imported, got %d", result.RoutesImported)
+	}
+
+	// Verify interactions imported
+	if result.InteractionsImported != 2 {
+		t.Errorf("expected 2 interactions imported, got %d", result.InteractionsImported)
+	}
+
+	// Open store and verify data
+	store, err := New(ctx, &Config{Path: doltDir})
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer store.Close()
+
+	// Verify routes table
+	var routeCount int
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM routes").Scan(&routeCount)
+	if err != nil {
+		t.Fatalf("failed to count routes: %v", err)
+	}
+	if routeCount != 2 {
+		t.Errorf("expected 2 routes in table, got %d", routeCount)
+	}
+
+	// Verify interactions table
+	var interactionCount int
+	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM interactions").Scan(&interactionCount)
+	if err != nil {
+		t.Fatalf("failed to count interactions: %v", err)
+	}
+	if interactionCount != 2 {
+		t.Errorf("expected 2 interactions in table, got %d", interactionCount)
+	}
+}
+
+func TestBootstrapWithoutOptionalFiles(t *testing.T) {
+	// Test that bootstrap succeeds when routes.jsonl and interactions.jsonl don't exist
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	doltDir := filepath.Join(beadsDir, "dolt")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("failed to create beads dir: %v", err)
+	}
+
+	// Create only issues JSONL
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	issue := types.Issue{
+		ID:     "test-001",
+		Title:  "Test issue",
+		Status: types.StatusOpen,
+	}
+	data, _ := json.Marshal(issue)
+	if err := os.WriteFile(jsonlPath, append(data, '\n'), 0644); err != nil {
+		t.Fatalf("failed to write issues JSONL: %v", err)
+	}
+
+	// Perform bootstrap - should succeed even without routes.jsonl and interactions.jsonl
+	ctx := context.Background()
+	bootstrapped, result, err := Bootstrap(ctx, BootstrapConfig{
+		BeadsDir:    beadsDir,
+		DoltPath:    doltDir,
+		LockTimeout: 10 * time.Second,
+	})
+
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+	if !bootstrapped {
+		t.Fatal("expected bootstrap to be performed")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Verify issues imported
+	if result.IssuesImported != 1 {
+		t.Errorf("expected 1 issue imported, got %d", result.IssuesImported)
+	}
+
+	// Routes and interactions should be 0 (files don't exist)
+	if result.RoutesImported != 0 {
+		t.Errorf("expected 0 routes imported, got %d", result.RoutesImported)
+	}
+	if result.InteractionsImported != 0 {
+		t.Errorf("expected 0 interactions imported, got %d", result.InteractionsImported)
+	}
+}

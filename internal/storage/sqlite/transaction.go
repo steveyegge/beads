@@ -1291,6 +1291,8 @@ type scanner interface {
 // consistent scanning of issue rows.
 func scanIssueRow(row scanner) (*types.Issue, error) {
 	var issue types.Issue
+	var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+	var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 	var contentHash sql.NullString
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
@@ -1336,7 +1338,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
@@ -1346,6 +1348,14 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {

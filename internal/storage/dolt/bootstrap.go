@@ -12,17 +12,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/lockfile"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
 // BootstrapResult contains statistics about the bootstrap operation
 type BootstrapResult struct {
-	IssuesImported int
-	IssuesSkipped  int
-	ParseErrors    []ParseError
-	PrefixDetected string
+	IssuesImported       int
+	IssuesSkipped        int
+	RoutesImported       int
+	InteractionsImported int
+	ParseErrors          []ParseError
+	PrefixDetected       string
 }
 
 // ParseError describes a JSONL parsing error
@@ -174,11 +178,12 @@ func releaseBootstrapLock(f *os.File, lockPath string) {
 	_ = os.Remove(lockPath)
 }
 
-// performBootstrap performs the actual bootstrap from JSONL
+// performBootstrap performs the actual bootstrap from JSONL files.
+// Import order: routes -> issues -> interactions (dependencies require issues to exist)
 func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string) (*BootstrapResult, error) {
 	result := &BootstrapResult{}
 
-	// Parse JSONL with graceful error handling
+	// Parse issues JSONL with graceful error handling
 	issues, parseErrors := parseJSONLWithErrors(jsonlPath)
 	result.ParseErrors = parseErrors
 
@@ -218,6 +223,14 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 		}
 	}
 
+	// Import routes first (no dependencies)
+	routesImported, err := importRoutesBootstrap(ctx, store, cfg.BeadsDir)
+	if err != nil {
+		// Non-fatal - routes.jsonl may not exist
+		fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import routes: %v\n", err)
+	}
+	result.RoutesImported = routesImported
+
 	// Import issues in a transaction
 	imported, skipped, err := importIssuesBootstrap(ctx, store, issues)
 	if err != nil {
@@ -226,6 +239,15 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 
 	result.IssuesImported = imported
 	result.IssuesSkipped = skipped
+
+	// Import interactions (after issues, since interactions may reference issue_id)
+	interactionsPath := filepath.Join(cfg.BeadsDir, "interactions.jsonl")
+	interactionsImported, err := importInteractionsBootstrap(ctx, store, interactionsPath)
+	if err != nil {
+		// Non-fatal - interactions.jsonl may not exist
+		fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import interactions: %v\n", err)
+	}
+	result.InteractionsImported = interactionsImported
 
 	// Commit the bootstrap
 	if err := store.Commit(ctx, "Bootstrap from JSONL"); err != nil {
@@ -431,4 +453,106 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	}
 
 	return imported, skipped, nil
+}
+
+// importRoutesBootstrap imports routes from routes.jsonl during bootstrap
+// Returns the number of routes imported
+func importRoutesBootstrap(ctx context.Context, store *DoltStore, beadsDir string) (int, error) {
+	routes, err := routing.LoadRoutes(beadsDir)
+	if err != nil {
+		return 0, err
+	}
+	if len(routes) == 0 {
+		return 0, nil // No routes to import
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	imported := 0
+	for _, route := range routes {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO routes (prefix, path, created_at)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE path = VALUES(path)
+		`, route.Prefix, route.Path, time.Now().UTC())
+		if err != nil {
+			return imported, fmt.Errorf("failed to insert route %s: %w", route.Prefix, err)
+		}
+		imported++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return imported, fmt.Errorf("failed to commit routes: %w", err)
+	}
+
+	return imported, nil
+}
+
+// importInteractionsBootstrap imports interactions from interactions.jsonl during bootstrap
+// Returns the number of interactions imported
+func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interactionsPath string) (int, error) {
+	// #nosec G304 - controlled path
+	f, err := os.Open(interactionsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // No interactions file is not an error
+		}
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	imported := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB buffer for large lines
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var entry audit.Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			// Skip malformed lines during bootstrap
+			continue
+		}
+
+		// Convert extra map to JSON (default to empty object for valid JSON)
+		extraJSON := []byte("{}")
+		if entry.Extra != nil {
+			extraJSON, _ = json.Marshal(entry.Extra)
+		}
+
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO interactions (id, kind, created_at, actor, issue_id, model, prompt, response, error, tool_name, exit_code, parent_id, label, reason, extra)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE kind = kind
+		`, entry.ID, entry.Kind, entry.CreatedAt, entry.Actor, entry.IssueID, entry.Model, entry.Prompt, entry.Response, entry.Error, entry.ToolName, entry.ExitCode, entry.ParentID, entry.Label, entry.Reason, extraJSON)
+		if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+			// Non-fatal - skip individual failures
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import interaction %s: %v\n", entry.ID, err)
+			continue
+		}
+		imported++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return imported, fmt.Errorf("scanner error: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return imported, fmt.Errorf("failed to commit interactions: %w", err)
+	}
+
+	return imported, nil
 }

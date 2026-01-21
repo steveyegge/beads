@@ -381,6 +381,31 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
 	// Note: Don't set OverallOK = false for this - deprecated options still work
 
+	// Federation health checks (bd-wkumz.6)
+	// Check 8d: Federation remotesapi port accessibility
+	remotesAPICheck := convertWithCategory(doctor.CheckFederationRemotesAPI(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, remotesAPICheck)
+	// Don't fail overall for federation issues - they're only relevant for Dolt users
+
+	// Check 8e: Federation peer connectivity
+	peerConnCheck := convertWithCategory(doctor.CheckFederationPeerConnectivity(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, peerConnCheck)
+
+	// Check 8f: Federation sync staleness
+	syncStalenessCheck := convertWithCategory(doctor.CheckFederationSyncStaleness(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, syncStalenessCheck)
+
+	// Check 8g: Federation conflict detection
+	fedConflictsCheck := convertWithCategory(doctor.CheckFederationConflicts(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, fedConflictsCheck)
+	if fedConflictsCheck.Status == statusError {
+		result.OverallOK = false // Unresolved conflicts are a real problem
+	}
+
+	// Check 8h: Dolt init vs embedded mode mismatch
+	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, doltModeCheck)
+
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
 	result.Checks = append(result.Checks, syncCheck)
@@ -587,9 +612,10 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, staleMQFilesCheck)
 	// Don't fail overall check for legacy MQ files, just warn
 
-	// Note: Check 26d (misclassified wisps) was referenced but never implemented.
-	// The commit f703237c added importer-based auto-detection instead.
-	// Removing the undefined reference to fix build.
+	// Check 26d: Patrol pollution (patrol digests, session beads)
+	patrolPollutionCheck := convertDoctorCheck(doctor.CheckPatrolPollution(path))
+	result.Checks = append(result.Checks, patrolPollutionCheck)
+	// Don't fail overall check for patrol pollution, just warn
 
 	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))

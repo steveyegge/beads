@@ -139,11 +139,15 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		//
 		// Use global dbPath if set via --db flag or BEADS_DB env var (SQLite-only),
 		// otherwise default to `.beads/beads.db` for SQLite.
+		// If there's a redirect file, use the redirect target (GH#bd-0qel)
 		initDBPath := dbPath
 		if backend == configfile.BackendDolt {
 			initDBPath = filepath.Join(".beads", "dolt")
 		} else if initDBPath == "" {
-			initDBPath = filepath.Join(".beads", beads.CanonicalDatabaseName)
+			// Check for redirect in local .beads
+			localBeadsDir := filepath.Join(".", ".beads")
+			targetBeadsDir := beads.FollowRedirect(localBeadsDir)
+			initDBPath = filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)
 		}
 
 		// Migrate old SQLite database files if they exist (SQLite backend only).
@@ -192,7 +196,9 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		var beadsDir string
 		// For regular repos, use current directory
-		beadsDir = filepath.Join(cwd, ".beads")
+		// But first check if there's a redirect file - if so, use the redirect target (GH#bd-0qel)
+		localBeadsDir := filepath.Join(cwd, ".beads")
+		beadsDir = beads.FollowRedirect(localBeadsDir)
 
 		// Prevent nested .beads directories
 		// Check if current working directory is inside a .beads directory
@@ -535,31 +541,53 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		// Check if we're in a git repo and hooks aren't installed
 		// Install by default unless --skip-hooks is passed
 		// For Dolt backend, install hooks to .beads/hooks/ (uses git config core.hooksPath)
-		if !skipHooks && isGitRepo() && !hooksInstalled() {
-			if backend == configfile.BackendDolt {
-				// Dolt backend: install hooks to .beads/hooks/
-				embeddedHooks, err := getEmbeddedHooks()
-				if err == nil {
-					if err := installHooksWithOptions(embeddedHooks, false, false, false, true); err != nil && !quiet {
-						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
-						fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
-					} else if !quiet {
-						fmt.Printf("  Hooks installed to: .beads/hooks/\n")
-					}
-				} else if !quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to load embedded hooks: %v\n", ui.RenderWarn("⚠"), err)
+		// For jujutsu colocated repos, use simplified hooks (no staging needed)
+		if !skipHooks && !hooksInstalled() {
+			isJJ := git.IsJujutsuRepo()
+			isColocated := git.IsColocatedJJGit()
+
+			if isJJ && !isColocated {
+				// Pure jujutsu repo (no git) - print alias instructions
+				if !quiet {
+					printJJAliasInstructions()
 				}
-			} else {
-				// SQLite backend: use traditional hook installation
-				if err := installGitHooks(); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", ui.RenderWarn("⚠"), err)
+			} else if isColocated {
+				// Colocated jj+git repo - use simplified hooks
+				if err := installJJHooks(); err != nil && !quiet {
+					fmt.Fprintf(os.Stderr, "\n%s Failed to install jj hooks: %v\n", ui.RenderWarn("⚠"), err)
 					fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
+				} else if !quiet {
+					fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
+				}
+			} else if isGitRepo() {
+				// Regular git repo
+				if backend == configfile.BackendDolt {
+					// Dolt backend: install hooks to .beads/hooks/
+					embeddedHooks, err := getEmbeddedHooks()
+					if err == nil {
+						if err := installHooksWithOptions(embeddedHooks, false, false, false, true); err != nil && !quiet {
+							fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
+							fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
+						} else if !quiet {
+							fmt.Printf("  Hooks installed to: .beads/hooks/\n")
+						}
+					} else if !quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to load embedded hooks: %v\n", ui.RenderWarn("⚠"), err)
+					}
+				} else {
+					// SQLite backend: use traditional hook installation
+					if err := installGitHooks(); err != nil && !quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", ui.RenderWarn("⚠"), err)
+						fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
+					}
 				}
 			}
 		}
 
 		// Check if we're in a git repo and merge driver isn't configured
 		// Install by default unless --skip-merge-driver is passed
+		// For colocated jj+git repos, merge driver is still useful
+		// For pure jj repos, skip merge driver (no git)
 		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
 			if err := installMergeDriver(); err != nil && !quiet {
 				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", ui.RenderWarn("⚠"), err)
@@ -777,6 +805,9 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 //
 // For worktrees, checks the main repository root instead of current directory
 // since worktrees should share the database with the main repository.
+//
+// For redirects, checks the redirect target and errors if it already has a database.
+// This prevents accidentally overwriting an existing canonical database (GH#bd-0qel).
 func checkExistingBeadsData(prefix string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -827,6 +858,34 @@ Aborting.`, ui.RenderWarn("⚠"), doltPath, ui.RenderAccent("bd list"), prefix)
 		}
 	}
 
+	// Check for redirect file - if present, we need to check the redirect target (GH#bd-0qel)
+	redirectTarget := beads.FollowRedirect(beadsDir)
+	if redirectTarget != beadsDir {
+		// There's a redirect - check if the target already has a database
+		targetDBPath := filepath.Join(redirectTarget, beads.CanonicalDatabaseName)
+		if _, err := os.Stat(targetDBPath); err == nil {
+			return fmt.Errorf(`
+%s Cannot init: redirect target already has database
+
+Local .beads redirects to: %s
+That location already has: %s
+
+The redirect target is already initialized. Running init here would overwrite it.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+  The redirect will route to the canonical database.
+
+To reinitialize the canonical location (data loss warning):
+  rm %s && bd init --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), targetDBPath, prefix)
+		}
+		// Redirect target has no database - safe to init there
+		return nil
+	}
+
+	// Check for existing database file (no redirect case)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if _, err := os.Stat(dbPath); err == nil {
 		return fmt.Errorf(`

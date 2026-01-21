@@ -26,8 +26,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	// Import Dolt driver
+	// Import Dolt embedded driver
 	_ "github.com/dolthub/driver"
+	// Import MySQL driver for server mode connections
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -56,6 +58,13 @@ type Config struct {
 	Remote         string // Default remote name (e.g., "origin")
 	Database       string // Database name within Dolt (default: "beads")
 	ReadOnly       bool   // Open in read-only mode (skip schema init)
+
+	// Server mode options (federation)
+	ServerMode     bool   // Connect to dolt sql-server instead of embedded
+	ServerHost     string // Server host (default: 127.0.0.1)
+	ServerPort     int    // Server port (default: 3306)
+	ServerUser     string // MySQL user (default: root)
+	ServerPassword string // MySQL password (default: empty, can be set via BEADS_DOLT_PASSWORD)
 }
 
 // New creates a new Dolt storage backend
@@ -84,44 +93,43 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		cfg.Remote = "origin"
 	}
 
+	// Server mode defaults
+	if cfg.ServerMode {
+		if cfg.ServerHost == "" {
+			cfg.ServerHost = "127.0.0.1"
+		}
+		if cfg.ServerPort == 0 {
+			cfg.ServerPort = DefaultSQLPort
+		}
+		if cfg.ServerUser == "" {
+			cfg.ServerUser = "root"
+		}
+		// Check environment variable for password (more secure than command-line)
+		if cfg.ServerPassword == "" {
+			cfg.ServerPassword = os.Getenv("BEADS_DOLT_PASSWORD")
+		}
+	}
+
 	// Ensure directory exists
 	if err := os.MkdirAll(cfg.Path, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// First, connect without specifying a database to create it if needed
-	initConnStr := fmt.Sprintf(
-		"file://%s?commitname=%s&commitemail=%s",
-		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
+	var db *sql.DB
+	var connStr string
+	var err error
 
-	initDB, err := sql.Open("dolt", initConnStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open Dolt for initialization: %w", err)
+	if cfg.ServerMode {
+		// Server mode: connect via MySQL protocol to dolt sql-server
+		db, connStr, err = openServerConnection(ctx, cfg)
+	} else {
+		// Embedded mode: use Dolt driver directly
+		db, connStr, err = openEmbeddedConnection(ctx, cfg)
 	}
 
-	// Create the database if it doesn't exist
-	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
 	if err != nil {
-		_ = initDB.Close() // nolint:gosec // G104: error ignored on early return
-		return nil, fmt.Errorf("failed to create database: %w", err)
+		return nil, err
 	}
-	_ = initDB.Close() // nolint:gosec // G104: connection no longer needed
-
-	// Now connect with the database specified
-	connStr := fmt.Sprintf(
-		"file://%s?commitname=%s&commitemail=%s&database=%s",
-		cfg.Path, cfg.CommitterName, cfg.CommitterEmail, cfg.Database)
-
-	db, err := sql.Open("dolt", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open Dolt database: %w", err)
-	}
-
-	// Configure connection pool
-	// Dolt embedded mode is single-writer like SQLite
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
 
 	// Test connection
 	if err := db.PingContext(ctx); err != nil {
@@ -153,6 +161,94 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	}
 
 	return store, nil
+}
+
+// openEmbeddedConnection opens a connection using the embedded Dolt driver
+func openEmbeddedConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
+	// First, connect without specifying a database to create it if needed
+	initConnStr := fmt.Sprintf(
+		"file://%s?commitname=%s&commitemail=%s",
+		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
+
+	initDB, err := sql.Open("dolt", initConnStr)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open Dolt for initialization: %w", err)
+	}
+
+	// Create the database if it doesn't exist
+	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+	if err != nil {
+		_ = initDB.Close()
+		return nil, "", fmt.Errorf("failed to create database: %w", err)
+	}
+	_ = initDB.Close()
+
+	// Now connect with the database specified
+	connStr := fmt.Sprintf(
+		"file://%s?commitname=%s&commitemail=%s&database=%s",
+		cfg.Path, cfg.CommitterName, cfg.CommitterEmail, cfg.Database)
+
+	db, err := sql.Open("dolt", connStr)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open Dolt database: %w", err)
+	}
+
+	// Configure connection pool
+	// Dolt embedded mode is single-writer like SQLite
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	return db, connStr, nil
+}
+
+// openServerConnection opens a connection to a dolt sql-server via MySQL protocol
+func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, error) {
+	// DSN format: user:password@tcp(host:port)/database?parseTime=true
+	// parseTime=true tells the MySQL driver to parse DATETIME/TIMESTAMP to time.Time
+	var connStr string
+	if cfg.ServerPassword != "" {
+		connStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+	} else {
+		connStr = fmt.Sprintf("%s@tcp(%s:%d)/%s?parseTime=true",
+			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort, cfg.Database)
+	}
+
+	db, err := sql.Open("mysql", connStr)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open Dolt server connection: %w", err)
+	}
+
+	// Server mode supports multi-writer, configure reasonable pool size
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Ensure database exists (may need to create it)
+	// First connect without database to create it
+	var initConnStr string
+	if cfg.ServerPassword != "" {
+		initConnStr = fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true",
+			cfg.ServerUser, cfg.ServerPassword, cfg.ServerHost, cfg.ServerPort)
+	} else {
+		initConnStr = fmt.Sprintf("%s@tcp(%s:%d)/?parseTime=true",
+			cfg.ServerUser, cfg.ServerHost, cfg.ServerPort)
+	}
+	initDB, err := sql.Open("mysql", initConnStr)
+	if err != nil {
+		_ = db.Close()
+		return nil, "", fmt.Errorf("failed to open init connection: %w", err)
+	}
+	defer func() { _ = initDB.Close() }()
+
+	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
+	if err != nil {
+		_ = db.Close()
+		return nil, "", fmt.Errorf("failed to create database: %w", err)
+	}
+
+	return db, connStr, nil
 }
 
 // initSchema creates all tables if they don't exist
@@ -348,6 +444,22 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
 // Returns any merge conflicts if present. Implements storage.VersionedStorage.
 func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
 	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE(?)", branch)
+	if err != nil {
+		// Check if the error is due to conflicts
+		conflicts, conflictErr := s.GetConflicts(ctx)
+		if conflictErr == nil && len(conflicts) > 0 {
+			return conflicts, nil
+		}
+		return nil, fmt.Errorf("failed to merge branch %s: %w", branch, err)
+	}
+	return nil, nil
+}
+
+// MergeAllowUnrelated merges the specified branch allowing unrelated histories.
+// This is needed for initial federation sync between independently initialized towns.
+// Returns any merge conflicts if present.
+func (s *DoltStore) MergeAllowUnrelated(ctx context.Context, branch string) ([]storage.Conflict, error) {
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', ?)", branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)

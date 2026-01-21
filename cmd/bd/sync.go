@@ -260,7 +260,7 @@ The --full flag provides the legacy full sync behavior for backwards compatibili
 				fmt.Println("→ [DRY RUN] Would import from JSONL")
 			} else {
 				fmt.Println("→ Importing from JSONL...")
-				if err := importFromJSONLInline(ctx, jsonlPath, renameOnImport, noGitHistory); err != nil {
+				if err := importFromJSONLInline(ctx, jsonlPath, renameOnImport, noGitHistory, false); err != nil {
 					FatalError("importing: %v", err)
 				}
 				fmt.Println("✓ Import complete")
@@ -772,8 +772,8 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			}
 		}
 
-		// Export to JSONL
-		result, err := exportToJSONLDeferred(ctx, jsonlPath)
+		// Export to JSONL (uses incremental export for large repos)
+		result, err := exportToJSONLIncrementalDeferred(ctx, jsonlPath)
 		if err != nil {
 			return fmt.Errorf("exporting: %w", err)
 		}
@@ -1077,7 +1077,7 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config
 	}
 
 	// Import to database
-	if err := importFromJSONLInline(ctx, jsonlPath, false, false); err != nil {
+	if err := importFromJSONLInline(ctx, jsonlPath, false, false, false); err != nil {
 		return fmt.Errorf("importing merged state: %w", err)
 	}
 
@@ -1209,7 +1209,7 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 	}
 
 	// Import to database
-	if err := importFromJSONLInline(ctx, jsonlPath, false, false); err != nil {
+	if err := importFromJSONLInline(ctx, jsonlPath, false, false, false); err != nil {
 		return fmt.Errorf("importing merged state: %w", err)
 	}
 

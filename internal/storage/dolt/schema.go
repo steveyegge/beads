@@ -203,6 +203,51 @@ CREATE TABLE IF NOT EXISTS repo_mtimes (
     last_checked DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_repo_mtimes_checked (last_checked)
 );
+
+-- Routes table (prefix-to-path routing configuration)
+CREATE TABLE IF NOT EXISTS routes (
+    prefix VARCHAR(32) PRIMARY KEY,
+    path VARCHAR(512) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Interactions table (agent audit log)
+CREATE TABLE IF NOT EXISTS interactions (
+    id VARCHAR(32) PRIMARY KEY,
+    kind VARCHAR(64) NOT NULL,
+    created_at DATETIME NOT NULL,
+    actor VARCHAR(255),
+    issue_id VARCHAR(255),
+    model VARCHAR(255),
+    prompt TEXT,
+    response TEXT,
+    error TEXT,
+    tool_name VARCHAR(255),
+    exit_code INT,
+    parent_id VARCHAR(32),
+    label VARCHAR(64),
+    reason TEXT,
+    extra JSON,
+    INDEX idx_interactions_kind (kind),
+    INDEX idx_interactions_created_at (created_at),
+    INDEX idx_interactions_issue_id (issue_id),
+    INDEX idx_interactions_parent_id (parent_id)
+);
+
+-- Federation peers table (for SQL user authentication)
+-- Stores credentials for peer-to-peer Dolt remotes between Gas Towns
+CREATE TABLE IF NOT EXISTS federation_peers (
+    name VARCHAR(255) PRIMARY KEY,
+    remote_url VARCHAR(1024) NOT NULL,
+    username VARCHAR(255),
+    password_encrypted BLOB,
+    sovereignty VARCHAR(8) DEFAULT '',
+    last_sync DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_federation_peers_sovereignty (sovereignty)
+);
 `
 
 // defaultConfig contains the default configuration values
