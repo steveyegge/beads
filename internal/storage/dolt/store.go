@@ -455,6 +455,22 @@ func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflic
 	return nil, nil
 }
 
+// MergeAllowUnrelated merges the specified branch allowing unrelated histories.
+// This is needed for initial federation sync between independently initialized towns.
+// Returns any merge conflicts if present.
+func (s *DoltStore) MergeAllowUnrelated(ctx context.Context, branch string) ([]storage.Conflict, error) {
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', ?)", branch)
+	if err != nil {
+		// Check if the error is due to conflicts
+		conflicts, conflictErr := s.GetConflicts(ctx)
+		if conflictErr == nil && len(conflicts) > 0 {
+			return conflicts, nil
+		}
+		return nil, fmt.Errorf("failed to merge branch %s: %w", branch, err)
+	}
+	return nil, nil
+}
+
 // CurrentBranch returns the current branch name
 func (s *DoltStore) CurrentBranch(ctx context.Context) (string, error) {
 	var branch string
