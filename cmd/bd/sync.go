@@ -772,8 +772,8 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			}
 		}
 
-		// Export to JSONL
-		result, err := exportToJSONLDeferred(ctx, jsonlPath)
+		// Export to JSONL (uses incremental export for large repos)
+		result, err := exportToJSONLIncrementalDeferred(ctx, jsonlPath)
 		if err != nil {
 			return fmt.Errorf("exporting: %w", err)
 		}
