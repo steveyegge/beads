@@ -134,7 +134,7 @@ func TestDoltAutoCommit_On_WritesAdvanceHead(t *testing.T) {
 		t.Fatalf("expected Dolt HEAD to change after write; before=%s after=%s", before, after)
 	}
 
-// Commit author should be deterministic (not the authenticated SQL user like root@%).
+	// Commit author should be deterministic (not the authenticated SQL user like root@%).
 	expectedName := os.Getenv("GIT_AUTHOR_NAME")
 	if expectedName == "" {
 		expectedName = "beads"
