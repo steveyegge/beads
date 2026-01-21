@@ -297,6 +297,37 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.48.0",
+		Date:    "2026-01-17",
+		Changes: []string{
+			"NEW: VersionedStorage interface - Abstract storage layer with history/diff/branch operations",
+			"NEW: bd types command - List valid issue types with descriptions",
+			"NEW: bd close -m flag - Alias for --reason (git commit convention)",
+			"NEW: RepoContext API - Centralized git operations context",
+			"WIP: Dolt backend improvements - Bootstrap from JSONL, hook infrastructure, bd compact --dolt",
+			"FIX: Doctor sync branch check - Removed destructive --fix behavior (GH#1062)",
+			"FIX: Duplicate merge target - Use combined weight for better selection (GH#1022)",
+			"FIX: Worktree exclude paths - Correct --git-common-dir usage (GH#1053)",
+			"FIX: Daemon git.author - Apply configured author to sync commits",
+			"FIX: Windows CGO-free builds - Enable building without CGO (#1117)",
+			"FIX: Git hooks in worktrees - Fix hook execution in linked worktrees (#1126)",
+		},
+	},
+	{
+		Version: "0.47.2",
+		Date:    "2026-01-14",
+		Changes: []string{
+			"NEW: Dolt backend (experimental) - bd init --backend=dolt for version-controlled storage",
+			"NEW: bd show --children flag - Display child issues inline with parent",
+			"NEW: Comprehensive NixOS support - Improved flake and home-manager integration",
+			"FIX: Redirect + sync-branch incompatibility - bd sync works in redirected repos (bd-wayc3)",
+			"FIX: Doctor project-level settings - Detects plugins/hooks/MCP in .claude/settings.json",
+			"FIX: Contributor routing - bd init --contributor correctly sets up routing (#1088)",
+			"CHANGED: Release workflow modernized - bump-version.sh replaced with molecule pointer",
+			"DOCS: EXTENDING.md deprecated - Custom SQLite tables approach deprecated for Dolt migration",
+		},
+	},
+	{
 		Version: "0.47.1",
 		Date:    "2026-01-12",
 		Changes: []string{

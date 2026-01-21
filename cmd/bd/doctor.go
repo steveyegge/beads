@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -54,7 +55,9 @@ var (
 	checkHealthMode      bool
 	doctorCheckFlag      string // run specific check (e.g., "pollution")
 	doctorClean          bool   // for pollution check, delete detected issues
-	doctorDeep           bool   // full graph integrity validation
+	doctorDeep                  bool // full graph integrity validation
+	doctorGastown               bool // running in gastown multi-workspace mode
+	gastownDuplicatesThreshold  int  // duplicate tolerance threshold for gastown mode
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -225,6 +228,8 @@ func init() {
 	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show detailed output during fixes (e.g., list each removed dependency)")
 	doctorCmd.Flags().BoolVar(&doctorForce, "force", false, "Force repair mode: attempt recovery even when database cannot be opened")
 	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
+	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
+	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 }
 
 func runDiagnostics(path string) doctorResult {
@@ -319,7 +324,7 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	// Check 6: Multiple JSONL files (excluding merge artifacts)
-	jsonlCheck := convertWithCategory(doctor.CheckLegacyJSONLFilename(path), doctor.CategoryData)
+	jsonlCheck := convertWithCategory(doctor.CheckLegacyJSONLFilename(path, doctorGastown), doctor.CategoryData)
 	result.Checks = append(result.Checks, jsonlCheck)
 	if jsonlCheck.Status == statusWarning || jsonlCheck.Status == statusError {
 		result.OverallOK = false
@@ -465,7 +470,12 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, vestigialWorktreesCheck)
 	// Don't fail overall check for vestigial worktrees, just warn
 
-	// Check 14f: last-touched file tracking (runtime state shouldn't be committed)
+	// Check 14f: redirect + sync-branch conflict (bd-wayc3)
+	redirectSyncBranchCheck := convertDoctorCheck(doctor.CheckRedirectSyncBranchConflict(path))
+	result.Checks = append(result.Checks, redirectSyncBranchCheck)
+	// Don't fail overall check for redirect+sync-branch conflict, just warn
+
+	// Check 14g: last-touched file tracking (runtime state shouldn't be committed)
 	lastTouchedTrackingCheck := convertWithCategory(doctor.CheckLastTouchedNotTracked(), doctor.CategoryGit)
 	result.Checks = append(result.Checks, lastTouchedTrackingCheck)
 	// Don't fail overall check for last-touched tracking, just warn
@@ -541,7 +551,7 @@ func runDiagnostics(path string) doctorResult {
 	// Don't fail overall check for child→parent deps, just warn
 
 	// Check 23: Duplicate issues (from bd validate)
-	duplicatesCheck := convertDoctorCheck(doctor.CheckDuplicateIssues(path))
+	duplicatesCheck := convertDoctorCheck(doctor.CheckDuplicateIssues(path, doctorGastown, gastownDuplicatesThreshold))
 	result.Checks = append(result.Checks, duplicatesCheck)
 	// Don't fail overall check for duplicates, just warn
 
@@ -577,10 +587,9 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, staleMQFilesCheck)
 	// Don't fail overall check for legacy MQ files, just warn
 
-	// Check 26d: Misclassified wisps (wisp-patterned IDs without ephemeral flag)
-	misclassifiedWispsCheck := convertDoctorCheck(doctor.CheckMisclassifiedWisps(path))
-	result.Checks = append(result.Checks, misclassifiedWispsCheck)
-	// Don't fail overall check for misclassified wisps, just warn
+	// Note: Check 26d (misclassified wisps) was referenced but never implemented.
+	// The commit f703237c added importer-based auto-detection instead.
+	// Removing the undefined reference to fix build.
 
 	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))
@@ -770,7 +779,15 @@ func printDiagnostics(result doctorResult) {
 				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
 			}
 			if check.Fix != "" {
-				fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), check.Fix)
+				// Handle multiline Fix messages with proper indentation
+				lines := strings.Split(check.Fix, "\n")
+				for i, line := range lines {
+					if i == 0 {
+						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), line)
+					} else {
+						fmt.Printf("          %s\n", line)
+					}
+				}
 			}
 		}
 	} else {

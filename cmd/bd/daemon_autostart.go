@@ -125,7 +125,7 @@ func restartDaemonForVersionMismatch() bool {
 		return false
 	}
 
-	args := []string{"daemon", "--start"}
+	args := []string{"daemon", "start"}
 	cmd := execCommandFn(exe, args...)
 	cmd.Env = append(os.Environ(), "BD_DAEMON_FOREGROUND=1")
 
@@ -220,17 +220,29 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		return false
 	}
 
-	// nolint:gosec // G304: lockPath is derived from secure beads directory
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
+	// Bounded retry loop to prevent infinite recursion when lock cleanup fails
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// nolint:gosec // G304: lockPath is derived from secure beads directory
+		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			// Successfully acquired lock
+			_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
+			_ = lockFile.Close() // Best-effort close during startup
+			return true
+		}
+
 		// Lock file exists - check if daemon is actually starting
 		lockPID, pidErr := readPIDFromFile(lockPath)
 		if pidErr != nil || !isPIDAlive(lockPID) {
 			// Stale lock from crashed process - clean up immediately (avoids 5s wait)
 			debugLog("startlock is stale (PID %d dead or unreadable), cleaning up", lockPID)
-			_ = os.Remove(lockPath)
-			// Retry lock acquisition after cleanup
-			return acquireStartLock(lockPath, socketPath)
+			if rmErr := removeFileFn(lockPath); rmErr != nil {
+				debugLog("failed to remove stale lock file: %v", rmErr)
+				return false // Can't acquire lock if we can't clean up
+			}
+			// Continue to next iteration to retry lock acquisition
+			continue
 		}
 
 		// PID is alive - but is daemon actually running/starting?
@@ -239,8 +251,12 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 			// Daemon lock not held - the start attempt failed or process was reused
 			debugLog("startlock PID %d alive but daemon lock not held, cleaning up", lockPID)
-			_ = os.Remove(lockPath)
-			return acquireStartLock(lockPath, socketPath)
+			if rmErr := removeFileFn(lockPath); rmErr != nil {
+				debugLog("failed to remove orphaned lock file: %v", rmErr)
+				return false // Can't acquire lock if we can't clean up
+			}
+			// Continue to next iteration to retry lock acquisition
+			continue
 		}
 
 		// Daemon lock is held - daemon is legitimately starting, wait for socket
@@ -251,9 +267,8 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		return handleStaleLock(lockPath, socketPath)
 	}
 
-	_, _ = fmt.Fprintf(lockFile, "%d\n", os.Getpid())
-	_ = lockFile.Close() // Best-effort close during startup
-	return true
+	debugLog("failed to acquire start lock after %d attempts", maxRetries)
+	return false
 }
 
 func handleStaleLock(lockPath, socketPath string) bool {
@@ -262,7 +277,10 @@ func handleStaleLock(lockPath, socketPath string) bool {
 	// Check if PID is dead
 	if err != nil || !isPIDAlive(lockPID) {
 		debugLog("lock is stale (PID %d dead or unreadable), removing and retrying", lockPID)
-		_ = os.Remove(lockPath)
+		if rmErr := removeFileFn(lockPath); rmErr != nil {
+			debugLog("failed to remove stale lock in handleStaleLock: %v", rmErr)
+			return false
+		}
 		return tryAutoStartDaemon(socketPath)
 	}
 
@@ -270,7 +288,10 @@ func handleStaleLock(lockPath, socketPath string) bool {
 	beadsDir := filepath.Dir(dbPath)
 	if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
 		debugLog("lock PID %d alive but daemon lock not held, removing and retrying", lockPID)
-		_ = os.Remove(lockPath)
+		if rmErr := removeFileFn(lockPath); rmErr != nil {
+			debugLog("failed to remove orphaned lock in handleStaleLock: %v", rmErr)
+			return false
+		}
 		return tryAutoStartDaemon(socketPath)
 	}
 
@@ -334,7 +355,9 @@ func startDaemonProcess(socketPath string) bool {
 	// Skip attempting to start and avoid the 5-second wait if not in git repo
 	if !isGitRepo() {
 		debugLog("not in a git repository, skipping daemon start")
-		fmt.Fprintf(os.Stderr, "%s No git repository initialized - running without background sync\n", ui.RenderMuted("Note:"))
+		if !quietFlag {
+			fmt.Fprintf(os.Stderr, "%s No git repository initialized - running without background sync\n", ui.RenderMuted("Note:"))
+		}
 		return false
 	}
 
@@ -343,9 +366,28 @@ func startDaemonProcess(socketPath string) bool {
 		binPath = os.Args[0]
 	}
 
-	args := []string{"daemon", "--start"}
+	// IMPORTANT: Use --foreground for auto-start.
+	//
+	// Rationale:
+	// - `bd daemon start` (without --foreground) spawns an additional child process
+	//   (`bd daemon --start` with BD_DAEMON_FOREGROUND=1). For Dolt, that extra
+	//   daemonization layer can introduce startup races/lock contention (Dolt's
+	//   LOCK acquisition timeout is 100ms). If the daemon isn't ready quickly,
+	//   the parent falls back to direct mode and may fail to open Dolt because the
+	//   daemon holds the write lock.
+	// - Here we already daemonize via SysProcAttr + stdio redirection, so a second
+	//   layer is unnecessary.
+	args := []string{"daemon", "start", "--foreground"}
 
 	cmd := execCommandFn(binPath, args...)
+	// Mark this as a daemon-foreground child so we don't track/kill based on the
+	// short-lived launcher process PID (see computeDaemonParentPID()).
+	// Also force the daemon to bind the same socket we're probing for readiness,
+	// avoiding any mismatch between workspace-derived paths.
+	cmd.Env = append(os.Environ(),
+		"BD_DAEMON_FOREGROUND=1",
+		"BD_SOCKET="+socketPath,
+	)
 	setupDaemonIO(cmd)
 
 	if dbPath != "" {
@@ -495,13 +537,13 @@ func getSocketPath() string {
 func emitVerboseWarning() {
 	switch daemonStatus.FallbackReason {
 	case FallbackConnectFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon --status\n", daemonStatus.SocketPath)
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unreachable at %s. Running in direct mode. Hint: bd daemon status\n", daemonStatus.SocketPath)
 	case FallbackHealthFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon --health\n")
+		fmt.Fprintf(os.Stderr, "Warning: Daemon unhealthy. Falling back to direct mode. Hint: bd daemon status --all\n")
 	case FallbackAutoStartDisabled:
 		fmt.Fprintf(os.Stderr, "Warning: Auto-start disabled (BEADS_AUTO_START_DAEMON=false). Running in direct mode. Hint: bd daemon\n")
 	case FallbackAutoStartFailed:
-		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon --status\n")
+		fmt.Fprintf(os.Stderr, "Warning: Failed to auto-start daemon. Running in direct mode. Hint: bd daemon status\n")
 	case FallbackDaemonUnsupported:
 		fmt.Fprintf(os.Stderr, "Warning: Daemon does not support this command yet. Running in direct mode. Hint: update daemon or use local mode.\n")
 	case FallbackWorktreeSafety:

@@ -787,6 +787,189 @@ func TestConfigSourceConstants(t *testing.T) {
 	}
 }
 
+// TestResolveExternalProjectPathFromRepoRoot tests that external_projects paths
+// are resolved from repo root (parent of .beads/), NOT from CWD.
+// This is the fix for oss-lbp (related to Bug 3 in the spec).
+func TestResolveExternalProjectPathFromRepoRoot(t *testing.T) {
+	// Helper to canonicalize paths for comparison (handles macOS /var -> /private/var symlink)
+	canonicalize := func(path string) string {
+		if path == "" {
+			return ""
+		}
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return path
+		}
+		return resolved
+	}
+
+	t.Run("relative path resolved from repo root not CWD", func(t *testing.T) {
+		// Create a repo structure:
+		// tmpDir/
+		//   .beads/
+		//     config.yaml
+		//   beads-project/     <- relative path should resolve here
+		tmpDir := t.TempDir()
+
+		// Create .beads directory with config file
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatalf("failed to create .beads dir: %v", err)
+		}
+
+		// Create the target project directory
+		projectDir := filepath.Join(tmpDir, "beads-project")
+		if err := os.MkdirAll(projectDir, 0750); err != nil {
+			t.Fatalf("failed to create project dir: %v", err)
+		}
+
+		// Create config file with relative path
+		configContent := `
+external_projects:
+  beads: beads-project
+`
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		// Change to a DIFFERENT directory (to test that CWD doesn't affect resolution)
+		// This simulates daemon context where CWD is .beads/
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		if err := os.Chdir(beadsDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+		defer os.Chdir(origDir)
+
+		// Reload config from the new location
+		if err := Initialize(); err != nil {
+			t.Fatalf("failed to initialize config: %v", err)
+		}
+
+		// Verify ConfigFileUsed() returns the config path
+		usedConfig := ConfigFileUsed()
+		if usedConfig == "" {
+			t.Skip("config file not loaded - skipping test")
+		}
+
+		// Resolve the external project path
+		got := ResolveExternalProjectPath("beads")
+
+		// The path should resolve to tmpDir/beads-project (repo root + relative path)
+		// NOT to .beads/beads-project (CWD + relative path)
+		// Use canonicalize to handle macOS /var -> /private/var symlink
+		if canonicalize(got) != canonicalize(projectDir) {
+			t.Errorf("ResolveExternalProjectPath(beads) = %q, want %q", got, projectDir)
+		}
+
+		// Verify the wrong path doesn't exist (CWD-based resolution)
+		wrongPath := filepath.Join(beadsDir, "beads-project")
+		if canonicalize(got) == canonicalize(wrongPath) {
+			t.Errorf("path was incorrectly resolved from CWD: %s", wrongPath)
+		}
+	})
+
+	t.Run("CWD should not affect resolution", func(t *testing.T) {
+		// Create two different directory structures
+		tmpDir := t.TempDir()
+
+		// Create main repo with .beads and target project
+		mainRepoDir := filepath.Join(tmpDir, "main-repo")
+		beadsDir := filepath.Join(mainRepoDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatalf("failed to create .beads dir: %v", err)
+		}
+
+		// Create the target project as a sibling directory
+		siblingProject := filepath.Join(tmpDir, "sibling-project")
+		if err := os.MkdirAll(siblingProject, 0750); err != nil {
+			t.Fatalf("failed to create sibling project: %v", err)
+		}
+
+		// Create config file with parent-relative path
+		configContent := `
+external_projects:
+  sibling: ../sibling-project
+`
+		configPath := filepath.Join(beadsDir, "config.yaml")
+		if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+
+		// Test from multiple different CWDs
+		// Note: We only test from mainRepoDir and beadsDir, not from tmpDir
+		// because when CWD is tmpDir, the config file at mainRepoDir/.beads/config.yaml
+		// won't be discovered (viper searches from CWD upward)
+		testDirs := []string{
+			mainRepoDir, // From repo root
+			beadsDir,    // From .beads/ (daemon context)
+		}
+
+		for _, testDir := range testDirs {
+			// Change to test directory
+			origDir, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("failed to get cwd: %v", err)
+			}
+			if err := os.Chdir(testDir); err != nil {
+				t.Fatalf("failed to chdir to %s: %v", testDir, err)
+			}
+
+			// Reload config
+			if err := Initialize(); err != nil {
+				os.Chdir(origDir)
+				t.Fatalf("failed to initialize config: %v", err)
+			}
+
+			// Resolve the external project path
+			got := ResolveExternalProjectPath("sibling")
+
+			// Restore CWD before checking result
+			os.Chdir(origDir)
+
+			// Path should always resolve to the sibling project,
+			// regardless of which directory we were in
+			// Use canonicalize to handle macOS /var -> /private/var symlink
+			if canonicalize(got) != canonicalize(siblingProject) {
+				t.Errorf("from CWD=%s: ResolveExternalProjectPath(sibling) = %q, want %q",
+					testDir, got, siblingProject)
+			}
+		}
+	})
+}
+
+func TestRoutingModeDefaultIsEmpty(t *testing.T) {
+	// GH#1165: routing.mode must default to empty (disabled)
+	// to prevent unexpected auto-routing to ~/.beads-planning
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Verify routing.mode defaults to empty string (disabled)
+	if got := GetString("routing.mode"); got != "" {
+		t.Errorf("GetString(routing.mode) = %q, want \"\" (empty = disabled by default)", got)
+	}
+
+	// Verify other routing defaults are still set correctly
+	if got := GetString("routing.default"); got != "." {
+		t.Errorf("GetString(routing.default) = %q, want \".\"", got)
+	}
+	if got := GetString("routing.maintainer"); got != "." {
+		t.Errorf("GetString(routing.maintainer) = %q, want \".\"", got)
+	}
+	if got := GetString("routing.contributor"); got != "~/.beads-planning" {
+		t.Errorf("GetString(routing.contributor) = %q, want \"~/.beads-planning\"", got)
+	}
+}
+
 func TestValidationConfigDefaults(t *testing.T) {
 	// Isolate from environment variables
 	restore := envSnapshot(t)
@@ -842,5 +1025,420 @@ validation:
 	}
 	if got := GetString("validation.on-sync"); got != "warn" {
 		t.Errorf("GetString(validation.on-sync) = %q, want \"warn\"", got)
+	}
+}
+
+// Tests for sync mode configuration (hq-ew1mbr.3)
+
+func TestSyncModeConstants(t *testing.T) {
+	// Verify sync mode constants have expected string values
+	if SyncModeGitPortable != "git-portable" {
+		t.Errorf("SyncModeGitPortable = %q, want \"git-portable\"", SyncModeGitPortable)
+	}
+	if SyncModeRealtime != "realtime" {
+		t.Errorf("SyncModeRealtime = %q, want \"realtime\"", SyncModeRealtime)
+	}
+	if SyncModeDoltNative != "dolt-native" {
+		t.Errorf("SyncModeDoltNative = %q, want \"dolt-native\"", SyncModeDoltNative)
+	}
+	if SyncModeBeltAndSuspenders != "belt-and-suspenders" {
+		t.Errorf("SyncModeBeltAndSuspenders = %q, want \"belt-and-suspenders\"", SyncModeBeltAndSuspenders)
+	}
+}
+
+func TestSyncTriggerConstants(t *testing.T) {
+	if SyncTriggerPush != "push" {
+		t.Errorf("SyncTriggerPush = %q, want \"push\"", SyncTriggerPush)
+	}
+	if SyncTriggerChange != "change" {
+		t.Errorf("SyncTriggerChange = %q, want \"change\"", SyncTriggerChange)
+	}
+	if SyncTriggerPull != "pull" {
+		t.Errorf("SyncTriggerPull = %q, want \"pull\"", SyncTriggerPull)
+	}
+}
+
+func TestConflictStrategyConstants(t *testing.T) {
+	if ConflictStrategyNewest != "newest" {
+		t.Errorf("ConflictStrategyNewest = %q, want \"newest\"", ConflictStrategyNewest)
+	}
+	if ConflictStrategyOurs != "ours" {
+		t.Errorf("ConflictStrategyOurs = %q, want \"ours\"", ConflictStrategyOurs)
+	}
+	if ConflictStrategyTheirs != "theirs" {
+		t.Errorf("ConflictStrategyTheirs = %q, want \"theirs\"", ConflictStrategyTheirs)
+	}
+	if ConflictStrategyManual != "manual" {
+		t.Errorf("ConflictStrategyManual = %q, want \"manual\"", ConflictStrategyManual)
+	}
+}
+
+func TestSovereigntyConstants(t *testing.T) {
+	if SovereigntyT1 != "T1" {
+		t.Errorf("SovereigntyT1 = %q, want \"T1\"", SovereigntyT1)
+	}
+	if SovereigntyT2 != "T2" {
+		t.Errorf("SovereigntyT2 = %q, want \"T2\"", SovereigntyT2)
+	}
+	if SovereigntyT3 != "T3" {
+		t.Errorf("SovereigntyT3 = %q, want \"T3\"", SovereigntyT3)
+	}
+	if SovereigntyT4 != "T4" {
+		t.Errorf("SovereigntyT4 = %q, want \"T4\"", SovereigntyT4)
+	}
+}
+
+func TestSyncConfigDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test sync mode default
+	if got := GetSyncMode(); got != SyncModeGitPortable {
+		t.Errorf("GetSyncMode() = %q, want %q", got, SyncModeGitPortable)
+	}
+
+	// Test sync config defaults
+	cfg := GetSyncConfig()
+	if cfg.Mode != SyncModeGitPortable {
+		t.Errorf("GetSyncConfig().Mode = %q, want %q", cfg.Mode, SyncModeGitPortable)
+	}
+	if cfg.ExportOn != SyncTriggerPush {
+		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", cfg.ExportOn, SyncTriggerPush)
+	}
+	if cfg.ImportOn != SyncTriggerPull {
+		t.Errorf("GetSyncConfig().ImportOn = %q, want %q", cfg.ImportOn, SyncTriggerPull)
+	}
+}
+
+func TestConflictConfigDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test conflict strategy default
+	if got := GetConflictStrategy(); got != ConflictStrategyNewest {
+		t.Errorf("GetConflictStrategy() = %q, want %q", got, ConflictStrategyNewest)
+	}
+
+	// Test conflict config
+	cfg := GetConflictConfig()
+	if cfg.Strategy != ConflictStrategyNewest {
+		t.Errorf("GetConflictConfig().Strategy = %q, want %q", cfg.Strategy, ConflictStrategyNewest)
+	}
+}
+
+func TestFederationConfigDefaults(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test federation config defaults
+	cfg := GetFederationConfig()
+	if cfg.Remote != "" {
+		t.Errorf("GetFederationConfig().Remote = %q, want empty", cfg.Remote)
+	}
+	// Default sovereignty is empty (no restriction) when not configured
+	if cfg.Sovereignty != SovereigntyNone {
+		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q (no restriction)", cfg.Sovereignty, SovereigntyNone)
+	}
+}
+
+func TestIsSyncModeValid(t *testing.T) {
+	tests := []struct {
+		mode  string
+		valid bool
+	}{
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
+		{"invalid-mode", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			if got := IsSyncModeValid(tt.mode); got != tt.valid {
+				t.Errorf("IsSyncModeValid(%q) = %v, want %v", tt.mode, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestIsConflictStrategyValid(t *testing.T) {
+	tests := []struct {
+		strategy string
+		valid    bool
+	}{
+		{string(ConflictStrategyNewest), true},
+		{string(ConflictStrategyOurs), true},
+		{string(ConflictStrategyTheirs), true},
+		{string(ConflictStrategyManual), true},
+		{"invalid-strategy", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.strategy, func(t *testing.T) {
+			if got := IsConflictStrategyValid(tt.strategy); got != tt.valid {
+				t.Errorf("IsConflictStrategyValid(%q) = %v, want %v", tt.strategy, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestIsSovereigntyValid(t *testing.T) {
+	tests := []struct {
+		sovereignty string
+		valid       bool
+	}{
+		{string(SovereigntyT1), true},
+		{string(SovereigntyT2), true},
+		{string(SovereigntyT3), true},
+		{string(SovereigntyT4), true},
+		{"", true}, // Empty is valid (means no restriction)
+		{"T5", false},
+		{"invalid", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.sovereignty, func(t *testing.T) {
+			if got := IsSovereigntyValid(tt.sovereignty); got != tt.valid {
+				t.Errorf("IsSovereigntyValid(%q) = %v, want %v", tt.sovereignty, got, tt.valid)
+			}
+		})
+	}
+}
+
+func TestSyncConfigFromFile(t *testing.T) {
+	// Create a temporary directory for config file
+	tmpDir := t.TempDir()
+
+	// Create a config file with sync settings
+	configContent := `
+sync:
+  mode: realtime
+  export_on: change
+  import_on: change
+
+conflict:
+  strategy: ours
+
+federation:
+  remote: dolthub://myorg/beads
+  sovereignty: T2
+`
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change to tmp directory
+	t.Chdir(tmpDir)
+
+	// Initialize viper
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Test sync config
+	syncCfg := GetSyncConfig()
+	if syncCfg.Mode != SyncModeRealtime {
+		t.Errorf("GetSyncConfig().Mode = %q, want %q", syncCfg.Mode, SyncModeRealtime)
+	}
+	if syncCfg.ExportOn != SyncTriggerChange {
+		t.Errorf("GetSyncConfig().ExportOn = %q, want %q", syncCfg.ExportOn, SyncTriggerChange)
+	}
+	if syncCfg.ImportOn != SyncTriggerChange {
+		t.Errorf("GetSyncConfig().ImportOn = %q, want %q", syncCfg.ImportOn, SyncTriggerChange)
+	}
+
+	// Test conflict config
+	conflictCfg := GetConflictConfig()
+	if conflictCfg.Strategy != ConflictStrategyOurs {
+		t.Errorf("GetConflictConfig().Strategy = %q, want %q", conflictCfg.Strategy, ConflictStrategyOurs)
+	}
+
+	// Test federation config
+	fedCfg := GetFederationConfig()
+	if fedCfg.Remote != "dolthub://myorg/beads" {
+		t.Errorf("GetFederationConfig().Remote = %q, want \"dolthub://myorg/beads\"", fedCfg.Remote)
+	}
+	if fedCfg.Sovereignty != SovereigntyT2 {
+		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q", fedCfg.Sovereignty, SovereigntyT2)
+	}
+}
+
+func TestShouldExportOnChange(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Default should be false (export on push, not change)
+	if ShouldExportOnChange() {
+		t.Error("ShouldExportOnChange() = true, want false (default)")
+	}
+
+	// Set to change
+	Set("sync.export_on", SyncTriggerChange)
+	if !ShouldExportOnChange() {
+		t.Error("ShouldExportOnChange() = false after setting to change, want true")
+	}
+}
+
+func TestShouldImportOnChange(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Default should be false (import on pull, not change)
+	if ShouldImportOnChange() {
+		t.Error("ShouldImportOnChange() = true, want false (default)")
+	}
+
+	// Set to change
+	Set("sync.import_on", SyncTriggerChange)
+	if !ShouldImportOnChange() {
+		t.Error("ShouldImportOnChange() = false after setting to change, want true")
+	}
+}
+
+func TestNeedsDoltRemote(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	tests := []struct {
+		mode        SyncMode
+		needsRemote bool
+	}{
+		{SyncModeGitPortable, false},
+		{SyncModeRealtime, false},
+		{SyncModeDoltNative, true},
+		{SyncModeBeltAndSuspenders, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			if err := Initialize(); err != nil {
+				t.Fatalf("Initialize() returned error: %v", err)
+			}
+			Set("sync.mode", string(tt.mode))
+
+			if got := NeedsDoltRemote(); got != tt.needsRemote {
+				t.Errorf("NeedsDoltRemote() with mode=%s = %v, want %v", tt.mode, got, tt.needsRemote)
+			}
+		})
+	}
+}
+
+func TestNeedsJSONL(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	tests := []struct {
+		mode       SyncMode
+		needsJSONL bool
+	}{
+		{SyncModeGitPortable, true},
+		{SyncModeRealtime, true},
+		{SyncModeDoltNative, false},
+		{SyncModeBeltAndSuspenders, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			if err := Initialize(); err != nil {
+				t.Fatalf("Initialize() returned error: %v", err)
+			}
+			Set("sync.mode", string(tt.mode))
+
+			if got := NeedsJSONL(); got != tt.needsJSONL {
+				t.Errorf("NeedsJSONL() with mode=%s = %v, want %v", tt.mode, got, tt.needsJSONL)
+			}
+		})
+	}
+}
+
+func TestGetSyncModeInvalid(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Set invalid mode - should fall back to git-portable
+	Set("sync.mode", "invalid-mode")
+	if got := GetSyncMode(); got != SyncModeGitPortable {
+		t.Errorf("GetSyncMode() with invalid mode = %q, want %q (fallback)", got, SyncModeGitPortable)
+	}
+}
+
+func TestGetConflictStrategyInvalid(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Set invalid strategy - should fall back to newest
+	Set("conflict.strategy", "invalid-strategy")
+	if got := GetConflictStrategy(); got != ConflictStrategyNewest {
+		t.Errorf("GetConflictStrategy() with invalid strategy = %q, want %q (fallback)", got, ConflictStrategyNewest)
+	}
+}
+
+func TestGetSovereigntyInvalid(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	// Set invalid sovereignty - should return T1 (default) with warning
+	Set("federation.sovereignty", "T99")
+	if got := GetSovereignty(); got != SovereigntyT1 {
+		t.Errorf("GetSovereignty() with invalid tier = %q, want %q (fallback)", got, SovereigntyT1)
 	}
 }

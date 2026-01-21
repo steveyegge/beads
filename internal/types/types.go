@@ -476,13 +476,20 @@ func (s Status) IsValidWithCustom(customStatuses []string) bool {
 // IssueType categorizes the kind of work
 type IssueType string
 
-// Issue type constants
+// Core work type constants - these are the built-in types that beads validates.
+// All other types require configuration via types.custom in config.yaml.
 const (
-	TypeBug          IssueType = "bug"
-	TypeFeature      IssueType = "feature"
-	TypeTask         IssueType = "task"
-	TypeEpic         IssueType = "epic"
-	TypeChore        IssueType = "chore"
+	TypeBug     IssueType = "bug"
+	TypeFeature IssueType = "feature"
+	TypeTask    IssueType = "task"
+	TypeEpic    IssueType = "epic"
+	TypeChore   IssueType = "chore"
+)
+
+// Well-known custom types - constants for code convenience.
+// These are NOT built-in types and require types.custom configuration for validation.
+// Used by Gas Town and other infrastructure that extends beads.
+const (
 	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
 	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
 	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
@@ -495,10 +502,12 @@ const (
 	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 )
 
-// IsValid checks if the issue type value is valid
+// IsValid checks if the issue type is a core work type.
+// Only core work types (bug, feature, task, epic, chore) are built-in.
+// Other types (molecule, gate, convoy, etc.) require types.custom configuration.
 func (t IssueType) IsValid() bool {
 	switch t {
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeMessage, TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
 	}
 	return false
@@ -528,6 +537,22 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 	return false
 }
 
+// Normalize maps issue type aliases to their canonical form.
+// For example, "enhancement" -> "feature", "mr" -> "merge-request".
+// Case-insensitive to match util.NormalizeIssueType behavior.
+func (t IssueType) Normalize() IssueType {
+	switch strings.ToLower(string(t)) {
+	case "enhancement", "feat":
+		return TypeFeature
+	case "mr":
+		return TypeMergeRequest
+	case "mol":
+		return TypeMolecule
+	default:
+		return t
+	}
+}
+
 // RequiredSection describes a recommended section for an issue type.
 // Used by bd lint and bd create --validate for template validation.
 type RequiredSection struct {
@@ -553,8 +578,7 @@ func (t IssueType) RequiredSections() []RequiredSection {
 			{Heading: "## Success Criteria", Hint: "Define high-level success criteria"},
 		}
 	default:
-		// Chore, message, molecule, gate, agent, role, convoy, event, merge-request
-		// have no required sections
+		// Chore and custom types have no required sections
 		return nil
 	}
 }

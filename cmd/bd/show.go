@@ -25,7 +25,14 @@ var showCmd = &cobra.Command{
 		shortMode, _ := cmd.Flags().GetBool("short")
 		showRefs, _ := cmd.Flags().GetBool("refs")
 		showChildren, _ := cmd.Flags().GetBool("children")
+		asOfRef, _ := cmd.Flags().GetString("as-of")
 		ctx := rootCtx
+
+		// Handle --as-of flag: show issue at a specific point in history
+		if asOfRef != "" {
+			showIssueAsOf(ctx, args, asOfRef, shortMode)
+			return
+		}
 
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
@@ -1039,11 +1046,62 @@ func containsStr(slice []string, val string) bool {
 	return false
 }
 
+// showIssueAsOf displays issues as they existed at a specific commit or branch ref.
+// This requires a versioned storage backend (e.g., Dolt).
+func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode bool) {
+	// Check if storage supports versioning
+	vs, ok := storage.AsVersioned(store)
+	if !ok {
+		FatalErrorRespectJSON("--as-of requires Dolt backend (current backend does not support versioning)")
+	}
+
+	var allIssues []*types.Issue
+	for idx, id := range args {
+		issue, err := vs.AsOf(ctx, id, ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error fetching %s as of %s: %v\n", id, ref, err)
+			continue
+		}
+		if issue == nil {
+			fmt.Fprintf(os.Stderr, "Issue %s did not exist at %s\n", id, ref)
+			continue
+		}
+
+		if shortMode {
+			fmt.Println(formatShortIssue(issue))
+			continue
+		}
+
+		if jsonOutput {
+			allIssues = append(allIssues, issue)
+			continue
+		}
+
+		if idx > 0 {
+			fmt.Println("\n" + ui.RenderMuted(strings.Repeat("-", 60)))
+		}
+
+		// Display header with ref indicator
+		fmt.Printf("\n%s (as of %s)\n", formatIssueHeader(issue), ui.RenderMuted(ref))
+		fmt.Println(formatIssueMetadata(issue))
+
+		if issue.Description != "" {
+			fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+		}
+		fmt.Println()
+	}
+
+	if jsonOutput && len(allIssues) > 0 {
+		outputJSON(allIssues)
+	}
+}
+
 func init() {
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
 	showCmd.Flags().Bool("refs", false, "Show issues that reference this issue (reverse lookup)")
 	showCmd.Flags().Bool("children", false, "Show only the children of this issue")
+	showCmd.Flags().String("as-of", "", "Show issue as it existed at a specific commit hash or branch (requires Dolt)")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }

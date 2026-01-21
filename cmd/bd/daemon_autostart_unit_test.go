@@ -145,6 +145,34 @@ func TestDaemonAutostart_AcquireStartLock_CreatesMissingDir(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostart_AcquireStartLock_FailsWhenRemoveFails(t *testing.T) {
+	// This test verifies that acquireStartLock returns false (instead of
+	// recursing infinitely) when os.Remove fails on a stale lock file.
+
+	oldRemove := removeFileFn
+	defer func() { removeFileFn = oldRemove }()
+
+	// Stub removeFileFn to always fail
+	removeFileFn = func(path string) error {
+		return os.ErrPermission
+	}
+
+	tmpDir := t.TempDir()
+	lockPath := filepath.Join(tmpDir, "bd.sock.startlock")
+	socketPath := filepath.Join(tmpDir, "bd.sock")
+
+	// Create a stale lock file with PID 0 (will be detected as dead)
+	if err := os.WriteFile(lockPath, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// acquireStartLock should return false since it can't remove the stale lock
+	// Previously, this would cause infinite recursion and stack overflow
+	if acquireStartLock(lockPath, socketPath) {
+		t.Fatalf("expected acquireStartLock to fail when remove fails")
+	}
+}
+
 func TestDaemonAutostart_SocketHealthAndReadiness(t *testing.T) {
 	socketPath, cleanup := startTestRPCServer(t)
 	defer cleanup()
@@ -329,6 +357,41 @@ func TestDaemonAutostart_StartDaemonProcess_NoGitRepo(t *testing.T) {
 	}
 	if !strings.Contains(output, "running without background sync") {
 		t.Errorf("expected output to contain 'running without background sync', got: %q", output)
+	}
+}
+
+func TestDaemonAutostart_StartDaemonProcess_NoGitRepo_Quiet(t *testing.T) {
+	// Test that startDaemonProcess suppresses the note when quietFlag is true
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	oldQuiet := quietFlag
+	defer func() {
+		_ = os.Chdir(oldDir)
+		quietFlag = oldQuiet
+	}()
+
+	// Change to a temp directory that is NOT a git repo
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	// Enable quiet mode
+	quietFlag = true
+
+	// Capture stderr to verify the message is suppressed
+	output := captureStderr(t, func() {
+		result := startDaemonProcess(filepath.Join(tmpDir, "bd.sock"))
+		if result {
+			t.Errorf("expected startDaemonProcess to return false when not in git repo")
+		}
+	})
+
+	// Verify the message is NOT shown in quiet mode
+	if strings.Contains(output, "No git repository initialized") {
+		t.Errorf("expected no output in quiet mode, got: %q", output)
 	}
 }
 

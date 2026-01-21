@@ -190,8 +190,17 @@ func (m *MemoryStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Validate
-	if err := issue.Validate(); err != nil {
+	// Get custom types and statuses for validation
+	var customTypes, customStatuses []string
+	if typeStr := m.config["types.custom"]; typeStr != "" {
+		customTypes = parseCustomStatuses(typeStr)
+	}
+	if statusStr := m.config["status.custom"]; statusStr != "" {
+		customStatuses = parseCustomStatuses(statusStr)
+	}
+
+	// Validate with custom types
+	if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -243,9 +252,18 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Get custom types and statuses for validation
+	var customTypes, customStatuses []string
+	if typeStr := m.config["types.custom"]; typeStr != "" {
+		customTypes = parseCustomStatuses(typeStr)
+	}
+	if statusStr := m.config["status.custom"]; statusStr != "" {
+		customStatuses = parseCustomStatuses(statusStr)
+	}
+
 	// Validate all first
 	for i, issue := range issues {
-		if err := issue.Validate(); err != nil {
+		if err := issue.ValidateWithCustom(customStatuses, customTypes); err != nil {
 			return fmt.Errorf("validation failed for issue %d: %w", i, err)
 		}
 	}

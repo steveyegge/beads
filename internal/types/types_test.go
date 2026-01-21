@@ -539,20 +539,24 @@ func TestIssueTypeIsValid(t *testing.T) {
 		issueType IssueType
 		valid     bool
 	}{
+		// Core work types are always valid
 		{TypeBug, true},
 		{TypeFeature, true},
 		{TypeTask, true},
 		{TypeEpic, true},
 		{TypeChore, true},
-		{TypeMessage, true},
-		{TypeMergeRequest, true},
-		{TypeMolecule, true},
-		{TypeGate, true},
-		{TypeAgent, true},
-		{TypeRole, true},
-		{TypeConvoy, true},
-		{TypeEvent, true},
-		{TypeSlot, true},
+		// Gas Town types require types.custom configuration
+		{TypeMessage, false},
+		{TypeMergeRequest, false},
+		{TypeMolecule, false},
+		{TypeGate, false},
+		{TypeAgent, false},
+		{TypeRole, false},
+		{TypeConvoy, false},
+		{TypeEvent, false},
+		{TypeSlot, false},
+		{TypeRig, false},
+		// Invalid types
 		{IssueType("invalid"), false},
 		{IssueType(""), false},
 	}

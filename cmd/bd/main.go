@@ -18,13 +18,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/memory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
@@ -75,8 +76,9 @@ var (
 	sandboxMode    bool
 	allowStale     bool          // Use --allow-stale: skip staleness check (emergency escape hatch)
 	noDb           bool          // Use --no-db mode: load from JSONL, write back after each command
-	readonlyMode   bool          // Read-only mode: block write operations (for worker sandboxes)
-	lockTimeout    time.Duration // SQLite busy_timeout (default 30s, 0 = fail immediately)
+	readonlyMode    bool          // Read-only mode: block write operations (for worker sandboxes)
+	storeIsReadOnly bool          // Track if store was opened read-only (for staleness checks)
+	lockTimeout     time.Duration // SQLite busy_timeout (default 30s, 0 = fail immediately)
 	profileEnabled bool
 	profileFile    *os.File
 	traceFile      *os.File
@@ -232,9 +234,6 @@ var rootCmd = &cobra.Command{
 		// Set up signal-aware context for graceful cancellation
 		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
-		// Signal orchestrator daemon about bd activity (best-effort, for exponential backoff)
-		defer signalOrchestratorActivity()
-
 		// Apply verbosity flags early (before any output)
 		debug.SetVerbose(verboseFlag)
 		debug.SetQuiet(quietFlag)
@@ -331,29 +330,13 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Protect forks from accidentally committing upstream issue database
-		ensureForkProtection()
-
-		// Performance profiling setup
-		// When --profile is enabled, force direct mode to capture actual database operations
-		// rather than just RPC serialization/network overhead. This gives accurate profiles
-		// of the storage layer, query performance, and business logic.
-		if profileEnabled {
-			noDaemon = true
-			timestamp := time.Now().Format("20060102-150405")
-			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
-				profileFile = f
-				_ = pprof.StartCPUProfile(f)
-			}
-			if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
-				traceFile = f
-				_ = trace.Start(f)
-			}
-		}
-
-		// Skip database initialization for commands that don't need a database
+		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection,
+		// signalOrchestratorActivity) to avoid spawning git subprocesses for simple commands
+		// like "bd version" that don't need database access.
 		noDbCommands := []string{
 			cmdDaemon,
+			"__complete",       // Cobra's internal completion command (shell completions work without db)
+			"__completeNoDesc", // Cobra's completion without descriptions (used by fish)
 			"bash",
 			"completion",
 			"doctor",
@@ -393,6 +376,30 @@ var rootCmd = &cobra.Command{
 		// Also skip for --version flag on root command (cmdName would be "bd")
 		if v, _ := cmd.Flags().GetBool("version"); v {
 			return
+		}
+
+		// Signal orchestrator daemon about bd activity (best-effort, for exponential backoff)
+		// GH#1093: Moved after noDbCommands check to avoid git subprocesses for simple commands
+		defer signalOrchestratorActivity()
+
+		// Protect forks from accidentally committing upstream issue database
+		ensureForkProtection()
+
+		// Performance profiling setup
+		// When --profile is enabled, force direct mode to capture actual database operations
+		// rather than just RPC serialization/network overhead. This gives accurate profiles
+		// of the storage layer, query performance, and business logic.
+		if profileEnabled {
+			noDaemon = true
+			timestamp := time.Now().Format("20060102-150405")
+			if f, _ := os.Create(fmt.Sprintf("bd-profile-%s-%s.prof", cmd.Name(), timestamp)); f != nil {
+				profileFile = f
+				_ = pprof.StartCPUProfile(f)
+			}
+			if f, _ := os.Create(fmt.Sprintf("bd-trace-%s-%s.out", cmd.Name(), timestamp)); f != nil {
+				traceFile = f
+				_ = trace.Start(f)
+			}
 		}
 
 		// Auto-detect sandboxed environment (Phase 2 for GH #353)
@@ -753,22 +760,40 @@ var rootCmd = &cobra.Command{
 		// Fall back to direct storage access
 		var err error
 		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
-		if useReadOnly {
-			// Read-only mode: prevents file modifications (GH#804)
-			store, err = sqlite.NewReadOnlyWithTimeout(rootCtx, dbPath, lockTimeout)
-			if err != nil {
+		beadsDir := filepath.Dir(dbPath)
+
+		// Detect backend from metadata.json
+		backend := factory.GetBackendFromConfig(beadsDir)
+
+		// Create storage with appropriate options
+		opts := factory.Options{
+			ReadOnly:    useReadOnly,
+			LockTimeout: lockTimeout,
+		}
+
+		if backend == configfile.BackendDolt {
+			// For Dolt, use the dolt subdirectory
+			doltPath := filepath.Join(beadsDir, "dolt")
+			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
+		} else {
+			// SQLite backend
+			store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
+			if err != nil && useReadOnly {
 				// If read-only fails (e.g., DB doesn't exist), fall back to read-write
 				// This handles the case where user runs "bd list" before "bd init"
 				debug.Logf("read-only open failed, falling back to read-write: %v", err)
-				store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
+				opts.ReadOnly = false
+				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
 				needsBootstrap = true // New DB needs auto-import (GH#b09)
 			}
-		} else {
-			store, err = sqlite.NewWithTimeout(rootCtx, dbPath, lockTimeout)
 		}
+
+		// Track final read-only state for staleness checks (GH#1089)
+		// opts.ReadOnly may have changed if read-only open failed and fell back
+		storeIsReadOnly = opts.ReadOnly
+
 		if err != nil {
 			// Check for fresh clone scenario
-			beadsDir := filepath.Dir(dbPath)
 			if handleFreshCloneError(err, beadsDir) {
 				os.Exit(1)
 			}
