@@ -61,7 +61,7 @@ By default, shows only open gates. Use --all to include closed gates.`,
 		limit, _ := cmd.Flags().GetInt("limit")
 
 		// Build filter for gate type issues
-		gateType := types.TypeGate
+		gateType := types.IssueType("gate")
 		filter := types.IssueFilter{
 			IssueType: &gateType,
 			Limit:     limit,
@@ -243,7 +243,7 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 			}
 		}
 
-		if issue.IssueType != types.TypeGate {
+		if issue.IssueType != "gate" {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
 			os.Exit(1)
 		}
@@ -329,7 +329,7 @@ This is similar to 'bd show' but validates that the issue is a gate.`,
 			}
 		}
 
-		if issue.IssueType != types.TypeGate {
+		if issue.IssueType != "gate" {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
 			os.Exit(1)
 		}
@@ -410,7 +410,7 @@ Use --reason to provide context for why the gate was resolved.`,
 			}
 		}
 
-		if issue.IssueType != types.TypeGate {
+		if issue.IssueType != "gate" {
 			fmt.Fprintf(os.Stderr, "Error: %s is not a gate issue (type=%s)\n", gateID, issue.IssueType)
 			os.Exit(1)
 		}
@@ -492,7 +492,7 @@ Examples:
 		limit, _ := cmd.Flags().GetInt("limit")
 
 		// Get open gates
-		gateType := types.TypeGate
+		gateType := types.IssueType("gate")
 		filter := types.IssueFilter{
 			IssueType:     &gateType,
 			ExcludeStatus: []types.Status{types.StatusClosed},

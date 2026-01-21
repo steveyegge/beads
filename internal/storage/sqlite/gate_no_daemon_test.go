@@ -39,7 +39,7 @@ func TestGateFieldsPreservedAcrossConnections(t *testing.T) {
 		Title:     "Test Gate",
 		Status:    types.StatusOpen,
 		Priority:  1,
-		IssueType: types.TypeGate,
+		IssueType: "gate",
 		Ephemeral: true,
 		AwaitType: "timer",
 		AwaitID:   "5s",

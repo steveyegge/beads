@@ -164,7 +164,7 @@ func TestLoader_SkipExistingMolecules(t *testing.T) {
 	existingMol := &types.Issue{
 		ID:         "mol-existing",
 		Title:      "Existing Molecule",
-		IssueType:  types.TypeMolecule,
+		IssueType:  "molecule",
 		Status:     types.StatusOpen,
 		IsTemplate: true,
 	}

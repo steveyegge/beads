@@ -228,7 +228,7 @@ func findPendingGates() ([]*types.Issue, error) {
 		}
 	} else {
 		// Direct mode
-		gateType := types.TypeGate
+		gateType := types.IssueType("gate")
 		filter := types.IssueFilter{
 			IssueType: &gateType,
 			ExcludeStatus: []types.Status{types.StatusClosed},
