@@ -58,8 +58,12 @@ const (
 // Reads from config.yaml first (sync.mode is a yaml-only key), then falls back
 // to database config for backwards compatibility and testing.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
-	// Try yaml config first (preferred source)
-	mode := config.GetSyncMode()
+	// Try yaml config first (preferred source), but only if it exists in config file
+	// (not just the viper default value)
+	var mode string
+	if config.InConfig("sync.mode") {
+		mode = config.GetString("sync.mode")
+	}
 
 	// Fall back to database config for backwards compatibility
 	if mode == "" && s != nil {

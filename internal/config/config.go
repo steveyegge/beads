@@ -392,6 +392,22 @@ func GetString(key string) string {
 	return v.GetString(key)
 }
 
+// IsSet checks if a key has been explicitly set (not just default)
+func IsSet(key string) bool {
+	if v == nil {
+		return false
+	}
+	return v.IsSet(key)
+}
+
+// InConfig checks if a key exists in the config file (not default or env)
+func InConfig(key string) bool {
+	if v == nil {
+		return false
+	}
+	return v.InConfig(key)
+}
+
 // GetBool retrieves a boolean configuration value
 func GetBool(key string) bool {
 	if v == nil {

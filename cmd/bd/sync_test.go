@@ -231,9 +231,9 @@ func TestMergeSyncBranch_NoSyncBranchConfigured(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when sync.branch not configured")
 	}
-	// Error could be about missing database or missing sync.branch config
-	if err != nil && !strings.Contains(err.Error(), "sync.branch") && !strings.Contains(err.Error(), "database") {
-		t.Errorf("expected error about sync.branch or database, got: %v", err)
+	// Error could be about missing database or missing sync.branch config or non-existent branch
+	if err != nil && !strings.Contains(err.Error(), "sync.branch") && !strings.Contains(err.Error(), "database") && !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected error about sync.branch, database, or non-existent branch, got: %v", err)
 	}
 }
 

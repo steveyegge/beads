@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
 
@@ -118,9 +119,28 @@ func TestShouldExportJSONL(t *testing.T) {
 }
 
 // TestShouldUseDoltRemote verifies Dolt remote usage per mode.
+// Note: This test changes to a temp directory and reinitializes config to ensure
+// the yaml config doesn't override the database config we're testing.
 func TestShouldUseDoltRemote(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+
+	// Save original working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current dir: %v", err)
+	}
+
+	// Change to temp directory so config.Initialize() won't find parent config
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir to temp: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	// Reinitialize config from temp directory (no config.yaml present)
+	if err := config.Initialize(); err != nil {
+		t.Logf("config.Initialize() returned: %v (expected for test dir)", err)
+	}
 
 	beadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
