@@ -839,16 +839,32 @@ The key is **repetition and consistency**. LLMs learn patterns from:
 
 ## Open Questions
 
-1. **Reminder behavior**: Should reminders go to same channels or escalate?
+1. **Text response as LLM prompt (hq-946577.8)**: CRITICAL OPEN QUESTION
+
+   When human provides text instead of selecting an option, that text should be a **prompt to the LLM** to generate a new approach, not the final answer itself.
+
+   This creates a feedback loop that needs design:
+   - What happens after LLM processes the guidance?
+   - How do we prevent infinite loops?
+   - How does async notification work with iterative refinement?
+
+   **Possible models:**
+   - **Iterative Refinement**: Text → LLM generates new option → new decision point
+   - **Guided Proceed**: Text → LLM interprets and proceeds (no confirmation)
+   - **Interpret-and-Confirm**: Text → LLM interpretation → human confirms
+
+   See task hq-946577.8 for research.
+
+2. **Reminder behavior**: Should reminders go to same channels or escalate?
    - Proposal: Same channels, with escalation to mayor after N reminders
 
-2. **Multi-respondent**: Should decisions support multiple approvers?
+3. **Multi-respondent**: Should decisions support multiple approvers?
    - Proposal: Future enhancement, v1 is single respondent
 
-3. **Response editing**: Can human change their answer?
+4. **Response editing**: Can human change their answer?
    - Proposal: No, one response is final (create new decision if needed)
 
-4. **Offline mode**: What if external services are unreachable?
+5. **Offline mode**: What if external services are unreachable?
    - Proposal: Queue notifications, retry with backoff, log failures
 
 ---
