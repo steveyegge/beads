@@ -113,6 +113,24 @@ DecisionRespondedAt *time.Time `json:"decision_responded_at,omitempty"`
 
 // DecisionRespondedBy identifies who responded (email, user ID, etc.).
 DecisionRespondedBy string `json:"decision_responded_by,omitempty"`
+
+// ===== Iteration Fields (for refinement loop) =====
+
+// DecisionIteration tracks the current iteration number (1-indexed).
+// First decision point is iteration 1.
+DecisionIteration int `json:"decision_iteration,omitempty"`
+
+// DecisionMaxIterations limits refinement loops (default: 3).
+// After max, human must select or decision times out.
+DecisionMaxIterations int `json:"decision_max_iterations,omitempty"`
+
+// DecisionPriorID links to the previous iteration's decision point.
+// Empty for iteration 1.
+DecisionPriorID string `json:"decision_prior_id,omitempty"`
+
+// DecisionGuidance stores the human's text that triggered this iteration.
+// Copied from prior iteration's DecisionText for context.
+DecisionGuidance string `json:"decision_guidance,omitempty"`
 ```
 
 ### Option Schema
@@ -197,6 +215,7 @@ var migrations = []Migration{
         ID: 29,
         Up: func(tx *sql.Tx) error {
             _, err := tx.Exec(`
+                -- Core decision fields
                 ALTER TABLE issues ADD COLUMN decision_prompt TEXT;
                 ALTER TABLE issues ADD COLUMN decision_options TEXT;
                 ALTER TABLE issues ADD COLUMN decision_default TEXT;
@@ -204,6 +223,12 @@ var migrations = []Migration{
                 ALTER TABLE issues ADD COLUMN decision_text TEXT;
                 ALTER TABLE issues ADD COLUMN decision_responded_at TEXT;
                 ALTER TABLE issues ADD COLUMN decision_responded_by TEXT;
+
+                -- Iteration fields (for refinement loop)
+                ALTER TABLE issues ADD COLUMN decision_iteration INTEGER DEFAULT 1;
+                ALTER TABLE issues ADD COLUMN decision_max_iterations INTEGER DEFAULT 3;
+                ALTER TABLE issues ADD COLUMN decision_prior_id TEXT;
+                ALTER TABLE issues ADD COLUMN decision_guidance TEXT;
             `)
             return err
         },
@@ -837,25 +862,241 @@ The key is **repetition and consistency**. LLMs learn patterns from:
 
 ---
 
+## Part 5: Iterative Refinement (Text as LLM Prompt)
+
+When human provides text instead of selecting an option, that text is a **prompt to the LLM** to generate a refined approach. This creates an iterative feedback loop.
+
+### Design Decision
+
+We implement **Iterative Refinement** - the most general model. Simpler cases (guided proceed, single-shot) are subsets that can be achieved by configuration or convention.
+
+### Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. Agent creates decision point with options [A, B, C]          │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. Human receives notification, reviews options                  │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+            ┌───────────────┐           ┌───────────────────────┐
+            │ SELECT option │           │ PROVIDE text guidance │
+            │ (terminal)    │           │ (iterate)             │
+            └───────┬───────┘           └───────────┬───────────┘
+                    │                               │
+                    ▼                               ▼
+            ┌───────────────┐           ┌───────────────────────┐
+            │ Decision      │           │ 3. LLM interprets     │
+            │ RESOLVED      │           │ guidance, generates   │
+            │ Gate closes   │           │ refined options       │
+            └───────────────┘           └───────────┬───────────┘
+                                                    │
+                                                    ▼
+                                        ┌───────────────────────┐
+                                        │ 4. New decision point │
+                                        │ with refined options  │
+                                        │ (iteration N+1)       │
+                                        └───────────┬───────────┘
+                                                    │
+                                                    ▼
+                                        ┌───────────────────────┐
+                                        │ 5. Human notified     │
+                                        │ again, reviews new    │
+                                        │ options               │
+                                        └───────────┬───────────┘
+                                                    │
+                                                    ▼
+                                              (back to step 2)
+```
+
+### Iteration Data Model
+
+New fields to track iteration state:
+
+```go
+// DecisionIteration tracks the current iteration number (1-indexed)
+// First decision point is iteration 1
+DecisionIteration int `json:"decision_iteration,omitempty"`
+
+// DecisionMaxIterations limits refinement loops (default: 3)
+// After max, human must select or decision times out
+DecisionMaxIterations int `json:"decision_max_iterations,omitempty"`
+
+// DecisionPriorID links to the previous iteration's decision point
+// Empty for iteration 1
+DecisionPriorID string `json:"decision_prior_id,omitempty"`
+
+// DecisionGuidance stores the human's text that triggered this iteration
+// (copied from prior iteration's DecisionText for context)
+DecisionGuidance string `json:"decision_guidance,omitempty"`
+```
+
+### Iteration History
+
+Each iteration is a separate bead, linked via `DecisionPriorID`:
+
+```
+gt-abc123.decision-1          (iteration 1, original options)
+    ↓ human provided text
+gt-abc123.decision-1.r2       (iteration 2, refined based on guidance)
+    ↓ human provided more text
+gt-abc123.decision-1.r3       (iteration 3, further refined)
+    ↓ human selects option
+    RESOLVED
+```
+
+The full history is preserved - each iteration bead contains:
+- The options presented at that iteration
+- The human's response (selection or text)
+- Link to prior iteration
+
+### Termination Conditions
+
+The iteration loop terminates when:
+
+1. **Human selects an option** → Decision resolved, gate closes
+2. **Max iterations reached** → Final iteration, human MUST select (text input disabled)
+3. **Timeout** → Default option selected (if configured) or escalate
+4. **Human explicitly accepts LLM interpretation** → Special option "[Accept as-is]" always available after iteration 1
+
+### Database Migration (Additional Fields)
+
+```go
+// Add to migration 029
+ALTER TABLE issues ADD COLUMN decision_iteration INTEGER DEFAULT 1;
+ALTER TABLE issues ADD COLUMN decision_max_iterations INTEGER DEFAULT 3;
+ALTER TABLE issues ADD COLUMN decision_prior_id TEXT;
+ALTER TABLE issues ADD COLUMN decision_guidance TEXT;
+```
+
+### CLI Changes
+
+#### bd decision respond (with text → triggers iteration)
+
+```bash
+# Human provides guidance instead of selecting
+bd decision respond gt-abc123.decision-1 --text="Consider a hybrid approach with Redis for hot data and Postgres for cold"
+```
+
+**Output:**
+```
+📝 Guidance received for gt-abc123.decision-1
+
+  Your feedback: "Consider a hybrid approach with Redis for hot data
+  and Postgres for cold"
+
+  → Agent will generate refined options based on your guidance
+  → You'll receive a new notification when ready (iteration 2/3)
+
+  To skip iteration and let agent proceed with your guidance as-is:
+  bd decision respond gt-abc123.decision-1 --text="..." --accept-guidance
+```
+
+#### bd decision show (iteration context)
+
+```
+○ gt-abc123.decision-1.r2 · Which caching strategy?   [● P2 · OPEN]
+Iteration: 2 of 3 · Based on your feedback
+
+PRIOR GUIDANCE (from iteration 1)
+  "Consider a hybrid approach with Redis for hot data and Postgres for cold"
+
+REFINED OPTIONS
+  [a] Hybrid Redis+Postgres - Hot data in Redis, cold in Postgres
+      Based on your suggestion, this approach gives best of both worlds...
+
+  [b] Redis-only with TTL tiers - Different TTLs for hot vs warm data
+      Alternative interpretation using single technology...
+
+  [c] Accept guidance as-is - Proceed with hybrid approach without further options
+
+  Or provide more guidance (iteration 3 will be final).
+
+STATUS: ⏳ Awaiting response (22h remaining)
+```
+
+#### bd decision list (shows iteration state)
+
+```
+📋 Pending Decisions (2)
+
+  ○ gt-abc123.decision-1.r2 - Which caching strategy? [iter 2/3]
+    [a] Hybrid  [b] Redis-only  [c] Accept as-is
+    Guidance: "Consider a hybrid approach..."
+    Created: 1h ago · Timeout: 23h
+
+  ○ gt-def456.decision-1 - Proceed with migration? [iter 1/3]
+    [yes] Yes  [no] No
+    Created: 2h ago · Timeout: 22h
+```
+
+### Agent Behavior on Text Response
+
+When agent receives text guidance (not a selection):
+
+1. **Close current decision** with `decision_text` set
+2. **Parse and interpret** the guidance
+3. **Generate refined options** based on guidance + original context
+4. **Create new decision point** (iteration N+1) with:
+   - `decision_prior_id` = current decision ID
+   - `decision_iteration` = N+1
+   - `decision_guidance` = human's text
+   - New `decision_options` based on interpretation
+5. **Notify human** with new options
+
+### Accept Guidance As-Is
+
+After iteration 1, a special option is always available:
+
+```json
+{
+  "id": "_accept",
+  "short": "Accept as-is",
+  "label": "Accept my guidance as-is and proceed",
+  "description": "The agent will interpret your guidance and proceed without generating more options."
+}
+```
+
+Selecting this option:
+- Closes the decision with `decision_selected = "_accept"`
+- Agent proceeds using `decision_guidance` as the directive
+- No further iteration
+
+### Configuration
+
+```yaml
+# .beads/config.yaml
+decision_points:
+  max_iterations: 3          # Default max iterations
+  iteration_timeout: "24h"   # Timeout per iteration
+  auto_accept_on_max: false  # If true, accept last guidance on max iterations
+```
+
+### Simpler Cases (Subsets)
+
+**Single-shot (no iteration):**
+```yaml
+decision_points:
+  max_iterations: 1
+```
+Human must select an option. Text input disabled or treated as comment only.
+
+**Guided proceed (accept immediately):**
+```bash
+bd decision respond ... --text="..." --accept-guidance
+```
+Text is accepted as directive, no new options generated.
+
+---
+
 ## Open Questions
 
-1. **Text response as LLM prompt (hq-946577.8)**: CRITICAL OPEN QUESTION
-
-   When human provides text instead of selecting an option, that text should be a **prompt to the LLM** to generate a new approach, not the final answer itself.
-
-   This creates a feedback loop that needs design:
-   - What happens after LLM processes the guidance?
-   - How do we prevent infinite loops?
-   - How does async notification work with iterative refinement?
-
-   **Possible models:**
-   - **Iterative Refinement**: Text → LLM generates new option → new decision point
-   - **Guided Proceed**: Text → LLM interprets and proceeds (no confirmation)
-   - **Interpret-and-Confirm**: Text → LLM interpretation → human confirms
-
-   See task hq-946577.8 for research.
-
-2. **Reminder behavior**: Should reminders go to same channels or escalate?
+1. **Reminder behavior**: Should reminders go to same channels or escalate?
    - Proposal: Same channels, with escalation to mayor after N reminders
 
 3. **Multi-respondent**: Should decisions support multiple approvers?
