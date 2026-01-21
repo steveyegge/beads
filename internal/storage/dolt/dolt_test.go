@@ -2,6 +2,7 @@ package dolt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -958,5 +959,84 @@ func TestClosedIssueIDCollision(t *testing.T) {
 	expectedPrefix := originalID + "-"
 	if len(issue2.ID) <= len(expectedPrefix) || issue2.ID[:len(expectedPrefix)] != expectedPrefix {
 		t.Logf("Note: new issue ID %s (original was %s)", issue2.ID, originalID)
+	}
+}
+
+// TestIsTransientDoltError verifies the transient error detection function (bd-3q6.4)
+func TestIsTransientDoltError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "invalid format version",
+			err:      fmt.Errorf("invalid format version"),
+			expected: true,
+		},
+		{
+			name:     "failed to load database with format version",
+			err:      fmt.Errorf("failed to load database at /path/to/db with error: invalid format version"),
+			expected: true,
+		},
+		{
+			name:     "failed to load database generic",
+			err:      fmt.Errorf("failed to load database"),
+			expected: true,
+		},
+		{
+			name:     "manifest invalid",
+			err:      fmt.Errorf("manifest is invalid or corrupted"),
+			expected: true,
+		},
+		{
+			name:     "database is read only (lock error)",
+			err:      fmt.Errorf("database is read only"),
+			expected: true,
+		},
+		{
+			name:     "database is locked",
+			err:      fmt.Errorf("database is locked"),
+			expected: true,
+		},
+		{
+			name:     "lock timeout",
+			err:      fmt.Errorf("lock timeout exceeded"),
+			expected: true,
+		},
+		{
+			name:     "lock contention",
+			err:      fmt.Errorf("lock contention detected"),
+			expected: true,
+		},
+		{
+			name:     "generic non-transient error",
+			err:      fmt.Errorf("table does not exist"),
+			expected: false,
+		},
+		{
+			name:     "connection refused",
+			err:      fmt.Errorf("connection refused"),
+			expected: false,
+		},
+		{
+			name:     "case insensitive format version",
+			err:      fmt.Errorf("Invalid Format Version in manifest"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isTransientDoltError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isTransientDoltError(%v) = %v, expected %v", tt.err, result, tt.expected)
+			}
+		})
 	}
 }

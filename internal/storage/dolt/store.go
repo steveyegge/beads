@@ -172,15 +172,16 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		"file://%s?commitname=%s&commitemail=%s",
 		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
 
-	// Retry logic for lock contention (bd-g9fg)
+	// Retry logic for transient Dolt errors (lock contention, format version issues)
+	// bd-g9fg (lock contention), bd-3q6.4 (format version)
 	var db *sql.DB
 	var lastErr error
 	retryDelay := cfg.LockRetryDelay
 
 	for attempt := 0; attempt <= cfg.LockRetries; attempt++ {
 		if attempt > 0 {
-			// Log lock contention for debugging
-			fmt.Fprintf(os.Stderr, "Dolt lock contention detected (attempt %d/%d), retrying in %v...\n",
+			// Log transient error for debugging
+			fmt.Fprintf(os.Stderr, "Dolt transient error detected (attempt %d/%d), retrying in %v...\n",
 				attempt, cfg.LockRetries, retryDelay)
 			time.Sleep(retryDelay)
 			// Exponential backoff
@@ -189,7 +190,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 
 		db, lastErr = sql.Open("dolt", connStr)
 		if lastErr != nil {
-			if isLockError(lastErr) {
+			if isTransientDoltError(lastErr) {
 				continue // Retry
 			}
 			return nil, fmt.Errorf("failed to open Dolt database: %w", lastErr)
@@ -198,7 +199,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		// Create the database if it doesn't exist
 		_, lastErr = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
 		if lastErr != nil {
-			if isLockError(lastErr) {
+			if isTransientDoltError(lastErr) {
 				_ = db.Close()
 				continue // Retry
 			}
@@ -209,7 +210,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		// Switch to the target database using USE
 		_, lastErr = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
 		if lastErr != nil {
-			if isLockError(lastErr) {
+			if isTransientDoltError(lastErr) {
 				_ = db.Close()
 				continue // Retry
 			}
@@ -226,7 +227,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		// Test connection
 		lastErr = db.PingContext(ctx)
 		if lastErr != nil {
-			if isLockError(lastErr) {
+			if isTransientDoltError(lastErr) {
 				_ = db.Close()
 				continue // Retry
 			}
@@ -240,7 +241,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 
 	// Check if all retries exhausted
 	if lastErr != nil {
-		return nil, fmt.Errorf("failed to acquire Dolt database lock after %d retries: %w", cfg.LockRetries, lastErr)
+		return nil, fmt.Errorf("failed to connect to Dolt database after %d retries: %w", cfg.LockRetries, lastErr)
 	}
 
 	// Convert to absolute path
@@ -286,6 +287,7 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 // - Connecting directly to an existing database
 //
 // Returns an error if the database doesn't exist.
+// Includes retry logic for transient errors (bd-3q6.4).
 func newReadOnly(ctx context.Context, cfg *Config) (*DoltStore, error) {
 	// Verify the database exists - check for the .dolt directory
 	doltDir := filepath.Join(cfg.Path, cfg.Database, ".dolt")
@@ -300,27 +302,68 @@ func newReadOnly(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		"file://%s?commitname=%s&commitemail=%s",
 		cfg.Path, cfg.CommitterName, cfg.CommitterEmail)
 
-	db, err := sql.Open("dolt", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open Dolt database read-only: %w", err)
+	// Retry logic for transient Dolt errors (bd-3q6.4)
+	// Read-only operations can also encounter transient errors during concurrent access
+	retries := cfg.LockRetries
+	if retries == 0 {
+		retries = 5 // Fewer retries for read-only since we're not competing for writes
+	}
+	retryDelay := cfg.LockRetryDelay
+	if retryDelay == 0 {
+		retryDelay = 100 * time.Millisecond
 	}
 
-	// Switch to the target database using USE (read operation)
-	_, err = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, err)
+	var db *sql.DB
+	var lastErr error
+
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			fmt.Fprintf(os.Stderr, "Dolt read-only transient error (attempt %d/%d), retrying in %v...\n",
+				attempt, retries, retryDelay)
+			time.Sleep(retryDelay)
+			retryDelay *= 2
+		}
+
+		db, lastErr = sql.Open("dolt", connStr)
+		if lastErr != nil {
+			if isTransientDoltError(lastErr) {
+				continue // Retry
+			}
+			return nil, fmt.Errorf("failed to open Dolt database read-only: %w", lastErr)
+		}
+
+		// Switch to the target database using USE (read operation)
+		_, lastErr = db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.Database))
+		if lastErr != nil {
+			_ = db.Close()
+			if isTransientDoltError(lastErr) {
+				continue // Retry
+			}
+			return nil, fmt.Errorf("failed to switch to database %s: %w", cfg.Database, lastErr)
+		}
+
+		// Configure connection pool - read-only doesn't need large pool
+		db.SetMaxOpenConns(2)
+		db.SetMaxIdleConns(1)
+		db.SetConnMaxLifetime(0)
+
+		// Test connection
+		lastErr = db.PingContext(ctx)
+		if lastErr != nil {
+			_ = db.Close()
+			if isTransientDoltError(lastErr) {
+				continue // Retry
+			}
+			return nil, fmt.Errorf("failed to ping Dolt database: %w", lastErr)
+		}
+
+		// Success!
+		break
 	}
 
-	// Configure connection pool - read-only doesn't need large pool
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-
-	// Test connection
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
+	// Check if all retries exhausted
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to connect to Dolt database (read-only) after %d retries: %w", retries, lastErr)
 	}
 
 	// Convert to absolute path
@@ -457,6 +500,25 @@ func isLockError(err error) bool {
 		strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "lock") && strings.Contains(errStr, "timeout") ||
 		strings.Contains(errStr, "lock") && strings.Contains(errStr, "contention")
+}
+
+// isTransientDoltError detects if an error is transient and should be retried.
+// This includes lock errors and format version errors which can occur during
+// concurrent access when the manifest is being updated. (bd-3q6.4)
+func isTransientDoltError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check lock errors first
+	if isLockError(err) {
+		return true
+	}
+	// Check for format version errors - these can occur transiently during
+	// concurrent manifest updates (e.g., during push/pull operations)
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "invalid format version") ||
+		strings.Contains(errStr, "failed to load database") ||
+		strings.Contains(errStr, "manifest") && strings.Contains(errStr, "invalid")
 }
 
 // cleanupStaleDoltLock removes stale LOCK files from the Dolt noms directory.
