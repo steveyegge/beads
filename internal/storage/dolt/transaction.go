@@ -87,13 +87,27 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 	}
 
 	// Check if issue already exists (idempotent create for wisps/molecules)
+	// hq-3ebbac: Must also check status - if existing issue is closed, we need a new ID
 	var existingID string
-	err := t.tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
-	if err == nil {
-		// Issue already exists - this is idempotent, return success
-		return nil
-	} else if err != sql.ErrNoRows {
-		return fmt.Errorf("failed to check for existing issue: %w", err)
+	var existingStatus string
+	checkErr := t.tx.QueryRowContext(ctx, "SELECT id, status FROM issues WHERE id = ?", issue.ID).Scan(&existingID, &existingStatus)
+	if checkErr == nil {
+		// Issue exists - check if it's closed
+		if existingStatus == string(types.StatusClosed) {
+			// Existing issue is closed - generate a new unique ID (hq-3ebbac)
+			// This prevents wisps from inheriting closed status from previous instances
+			newID, genErr := generateUniqueIDSuffix(ctx, t.tx, issue.ID)
+			if genErr != nil {
+				return fmt.Errorf("failed to generate unique ID: %w", genErr)
+			}
+			issue.ID = newID
+			// Fall through to insert with new ID
+		} else {
+			// Issue exists and is open/in_progress - this is idempotent, return success
+			return nil
+		}
+	} else if checkErr != sql.ErrNoRows {
+		return fmt.Errorf("failed to check for existing issue: %w", checkErr)
 	}
 
 	if err := insertIssueTx(ctx, t.tx, issue); err != nil {

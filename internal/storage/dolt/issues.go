@@ -102,12 +102,26 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 	}
 
 	// Check if issue already exists (idempotent create)
+	// hq-3ebbac: Must also check status - if existing issue is closed, we need a new ID
 	var existingID string
-	err = tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
+	var existingStatus string
+	err = tx.QueryRowContext(ctx, "SELECT id, status FROM issues WHERE id = ?", issue.ID).Scan(&existingID, &existingStatus)
 	if err == nil {
-		// Issue already exists - this is idempotent, return success
-		// This handles race conditions and retry scenarios
-		return tx.Commit()
+		// Issue exists - check if it's closed
+		if existingStatus == string(types.StatusClosed) {
+			// Existing issue is closed - generate a new unique ID (hq-3ebbac)
+			// This prevents wisps from inheriting closed status from previous instances
+			newID, genErr := generateUniqueIDSuffix(ctx, tx, issue.ID)
+			if genErr != nil {
+				return fmt.Errorf("failed to generate unique ID: %w", genErr)
+			}
+			issue.ID = newID
+			// Fall through to insert with new ID
+		} else {
+			// Issue exists and is open/in_progress - this is idempotent, return success
+			// This handles race conditions and retry scenarios
+			return tx.Commit()
+		}
 	} else if err != sql.ErrNoRows {
 		return fmt.Errorf("failed to check for existing issue: %w", err)
 	}
@@ -664,6 +678,27 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
 	`, issueID, time.Now().UTC())
 	return err
+}
+
+// generateUniqueIDSuffix generates a unique ID when there's a collision with a closed issue.
+// It appends a numeric suffix (-1, -2, etc.) until an unused ID is found.
+// This fixes hq-3ebbac: wisps getting closed status from previous instances.
+func generateUniqueIDSuffix(ctx context.Context, tx *sql.Tx, baseID string) (string, error) {
+	// Try suffixes -1, -2, -3, etc. until we find an unused ID
+	for i := 1; i <= 100; i++ { // Cap at 100 to prevent infinite loops
+		candidateID := fmt.Sprintf("%s-%d", baseID, i)
+		var existingID string
+		err := tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", candidateID).Scan(&existingID)
+		if err == sql.ErrNoRows {
+			// This ID is available
+			return candidateID, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to check candidate ID %s: %w", candidateID, err)
+		}
+		// ID exists, try next suffix
+	}
+	return "", fmt.Errorf("could not generate unique ID after 100 attempts (base: %s)", baseID)
 }
 
 // nolint:unparam // error return kept for interface consistency

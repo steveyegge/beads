@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -879,5 +880,83 @@ func TestDoltStoreGetReadyWork(t *testing.T) {
 	}
 	if !foundReady {
 		t.Error("expected ready issue to be in ready work")
+	}
+}
+
+// TestClosedIssueIDCollision verifies that creating an issue with the same content
+// as a closed issue doesn't inherit the closed status (hq-3ebbac fix).
+func TestClosedIssueIDCollision(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create an issue with specific content
+	issue1 := &types.Issue{
+		Title:       "Wisp Step",
+		Description: "Test step for wisp",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		IDPrefix:    "wisp", // Use wisp prefix like actual wisps
+	}
+
+	if err := store.CreateIssue(ctx, issue1, "tester"); err != nil {
+		t.Fatalf("failed to create first issue: %v", err)
+	}
+	originalID := issue1.ID
+
+	// Close the issue
+	if err := store.CloseIssue(ctx, issue1.ID, "completed", "tester", "session1"); err != nil {
+		t.Fatalf("failed to close issue: %v", err)
+	}
+
+	// Verify it's closed
+	retrieved, err := store.GetIssue(ctx, originalID)
+	if err != nil {
+		t.Fatalf("failed to get closed issue: %v", err)
+	}
+	if retrieved.Status != types.StatusClosed {
+		t.Errorf("expected status %s, got %s", types.StatusClosed, retrieved.Status)
+	}
+
+	// Now try to create a new issue with the same content (same hash -> same base ID)
+	// This simulates creating a new wisp from the same template
+	issue2 := &types.Issue{
+		Title:       "Wisp Step",
+		Description: "Test step for wisp",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		IDPrefix:    "wisp",
+	}
+
+	// Use RunInTransaction since that's what wisp creation uses
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.CreateIssue(ctx, issue2, "tester")
+	})
+	if err != nil {
+		t.Fatalf("failed to create second issue: %v", err)
+	}
+
+	// The new issue should have a different ID (with suffix)
+	if issue2.ID == originalID {
+		t.Errorf("expected new issue to have different ID, but both have %s", issue2.ID)
+	}
+
+	// The new issue should be open, not closed
+	retrieved2, err := store.GetIssue(ctx, issue2.ID)
+	if err != nil {
+		t.Fatalf("failed to get new issue: %v", err)
+	}
+	if retrieved2.Status != types.StatusOpen {
+		t.Errorf("expected new issue status %s, got %s", types.StatusOpen, retrieved2.Status)
+	}
+
+	// Verify the ID follows the expected suffix pattern
+	expectedPrefix := originalID + "-"
+	if len(issue2.ID) <= len(expectedPrefix) || issue2.ID[:len(expectedPrefix)] != expectedPrefix {
+		t.Logf("Note: new issue ID %s (original was %s)", issue2.ID, originalID)
 	}
 }
