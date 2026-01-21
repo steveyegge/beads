@@ -17,6 +17,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -206,6 +207,18 @@ func autoImportIfNewer() {
 	if noAutoImport {
 		debug.Logf("auto-import skipped (--no-auto-import flag)")
 		return
+	}
+
+	// hq-c2495f: Skip auto-import for Dolt backend (Dolt is source of truth, not JSONL)
+	// This mirrors the check in internal/autoimport/autoimport.go
+	if dbPath != "" {
+		dbDir := filepath.Dir(dbPath)
+		if cfg, err := configfile.Load(dbDir); err == nil && cfg != nil {
+			if cfg.GetBackend() == configfile.BackendDolt {
+				debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
+				return
+			}
+		}
 	}
 
 	// Find JSONL path
@@ -479,10 +492,25 @@ func clearAutoFlushState() {
 // validateJSONLIntegrity checks if JSONL file hash matches stored hash.
 // If mismatch detected, clears export_hashes and logs warning.
 // Returns (needsFullExport, error) where needsFullExport=true if export_hashes was cleared.
+//
+// hq-c2495f: Skip validation for Dolt backend since Dolt is source of truth, not JSONL.
+// JSONL in Dolt mode is export-only, so hash mismatches are not concerning.
 func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error) {
 	// Debug: Check if store is closed before calling
 	if vc, ok := store.(interface{ IsClosed() bool }); ok && vc.IsClosed() {
 		debug.Logf("validateJSONLIntegrity: store reports IsClosed()=true")
+	}
+
+	// hq-c2495f: Skip integrity validation for Dolt backend
+	// In Dolt mode, JSONL is export-only, so mismatches don't matter
+	if dbPath != "" {
+		dbDir := filepath.Dir(dbPath)
+		if cfg, err := configfile.Load(dbDir); err == nil && cfg != nil {
+			if cfg.GetBackend() == configfile.BackendDolt {
+				debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
+				return false, nil
+			}
+		}
 	}
 
 	// Get stored JSONL file hash
