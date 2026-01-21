@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
@@ -89,14 +90,21 @@ func ensureStoreActive() error {
 		}
 	}
 
-	// Use factory to respect backend configuration (SQLite vs Dolt)
-	// The path might be either a .db file (SQLite) or a directory (Dolt)
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		beadsDir = filepath.Dir(path)
+	// Determine backend from config, but use the explicit path
+	// This supports tests with temp directories while respecting backend choice
+	beadsDir := filepath.Dir(path)
+
+	// Only use FindBeadsDir() config if path is within the found directory
+	if found := beads.FindBeadsDir(); found != "" && strings.HasPrefix(path, found) {
+		beadsDir = found
 	}
 
-	newStore, err := factory.NewFromConfig(getRootContext(), beadsDir)
+	// Get backend type from config, default to SQLite
+	backend := factory.GetBackendFromConfig(beadsDir)
+
+	// Use the explicit path, not the config-derived path
+	// This ensures tests and explicit --db flags work correctly
+	newStore, err := factory.New(getRootContext(), backend, path)
 	if err != nil {
 		// Check for fresh clone scenario
 		if isFreshCloneError(err) {
