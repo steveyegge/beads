@@ -216,7 +216,8 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 		return nil, fmt.Errorf("invalid toRef: %w", err)
 	}
 
-	// nolint:gosec // G201: refs are validated by validateRef() above - dolt_diff_issues requires literal
+	// nolint:gosec // G201: refs are validated by validateRef() above
+	// Syntax: dolt_diff(from_ref, to_ref, 'table_name')
 	query := fmt.Sprintf(`
 		SELECT
 			from_id, to_id,
@@ -224,7 +225,7 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 			from_status, to_status,
 			from_description, to_description,
 			diff_type
-		FROM dolt_diff_issues('%s', '%s')
+		FROM dolt_diff('%s', '%s', 'issues')
 		WHERE from_id = ? OR to_id = ?
 	`, fromRef, toRef)
 
