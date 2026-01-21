@@ -24,22 +24,38 @@ import (
 // wslWindowsPathPattern matches WSL paths to Windows filesystems like /mnt/c/, /mnt/d/, etc.
 var wslWindowsPathPattern = regexp.MustCompile(`^/mnt/[a-zA-Z]/`)
 
-// isWSL2WindowsPath returns true if running under WSL2 and the path is on a Windows filesystem.
-// SQLite WAL mode doesn't work reliably across the WSL2/Windows boundary (GH#920).
-func isWSL2WindowsPath(path string) bool {
-	// Check if path looks like a Windows filesystem mounted in WSL (/mnt/c/, /mnt/d/, etc.)
-	if !wslWindowsPathPattern.MatchString(path) {
-		return false
-	}
+// wslNetworkPathPattern matches WSL network mount paths (Docker Desktop bind mounts, etc.)
+// Pattern: /mnt/wsl/* paths which are network filesystems that don't support WAL mode
+var wslNetworkPathPattern = regexp.MustCompile(`^/mnt/wsl/`)
 
-	// Check if we're running under WSL by examining /proc/version
+// isWSL2WindowsPath returns true if running under WSL2 and the path is on a Windows filesystem
+// or a WSL2 network mount (Docker Desktop bind mounts, etc.).
+// SQLite WAL mode doesn't work reliably across the WSL2/Windows boundary (GH#920) or on network mounts (GH#1224).
+func isWSL2WindowsPath(path string) bool {
+	// Check if we're running under WSL by examining /proc/version first (cheap check)
 	// WSL2 contains "microsoft" or "WSL" in the version string
 	data, err := os.ReadFile("/proc/version")
 	if err != nil {
 		return false // Not Linux or can't read - not WSL
 	}
 	version := strings.ToLower(string(data))
-	return strings.Contains(version, "microsoft") || strings.Contains(version, "wsl")
+	isWSL := strings.Contains(version, "microsoft") || strings.Contains(version, "wsl")
+	if !isWSL {
+		return false
+	}
+
+	// Now check if path is on a Windows filesystem or network mount
+	// Windows filesystem: /mnt/c/, /mnt/d/, etc.
+	if wslWindowsPathPattern.MatchString(path) {
+		return true
+	}
+
+	// Network filesystem: /mnt/wsl/* (Docker Desktop bind mounts, etc.)
+	if wslNetworkPathPattern.MatchString(path) {
+		return true
+	}
+
+	return false
 }
 
 // SQLiteStorage implements the Storage interface using SQLite
