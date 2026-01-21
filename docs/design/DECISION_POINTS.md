@@ -125,7 +125,12 @@ type DecisionOption struct {
     // ID is the short identifier (e.g., "a", "b", "yes", "no")
     ID string `json:"id"`
 
-    // Label is the display text shown to human
+    // Short is a 1-3 word summary for compact display (SMS, CLI lists)
+    // Example: "Redis", "In-memory", "Yes", "No"
+    Short string `json:"short"`
+
+    // Label is a sentence-length description for UI display
+    // Example: "Use Redis for distributed caching"
     Label string `json:"label"`
 
     // Description is optional rich content (markdown)
@@ -134,16 +139,27 @@ type DecisionOption struct {
 }
 ```
 
+**Field usage by context:**
+
+| Context | Fields Used |
+|---------|-------------|
+| SMS notification | `id` + `short` (e.g., "A) Redis  B) In-memory") |
+| CLI list | `id` + `short` (e.g., "[a] Redis, [b] In-memory") |
+| Email/Web UI | `id` + `label` + `description` |
+| Response logging | `id` + `short` (e.g., "Selected: a (Redis)") |
+
 Example JSON:
 ```json
 [
   {
     "id": "a",
-    "label": "Use Redis for caching",
+    "short": "Redis",
+    "label": "Use Redis for distributed caching",
     "description": "## Redis Approach\n\n- Proven technology\n- 10ms p99 latency\n- Requires Redis cluster..."
   },
   {
     "id": "b",
+    "short": "In-memory",
     "label": "Use in-memory LRU cache",
     "description": "## In-Memory Approach\n\n- Zero external deps\n- Process-local only\n- Lost on restart..."
   }
@@ -280,10 +296,12 @@ Reply with your choice:
 
 #### SMS
 
+Uses `short` field for compact display:
+
 ```
 [Gas Town] Decision needed: Which caching strategy?
 A) Redis  B) In-memory
-Reply A or B. Default: A (in 24h)
+Reply A or B (or text). Default: A (24h)
 https://beads.example.com/d/gt-abc123
 ```
 
@@ -446,14 +464,14 @@ bd decision create \
 - `--priority`: Notification priority (low/default/high/urgent)
 - `--no-notify`: Don't send notifications (manual/testing)
 
-**Output:**
+**Output (uses `short` field in summary):**
 ```
 ✓ Created decision point: gt-abc123.decision-1
 
   Which caching strategy should we use?
 
-  [a] Redis
-  [b] In-memory (default)
+  [a] Redis - Use Redis for distributed caching
+  [b] In-memory - Use in-memory LRU cache (default)
 
   Or provide custom text response.
 
@@ -499,16 +517,16 @@ bd decision respond gt-abc123.decision-1 --select=a --by="steve@example.com"
 bd decision list [--pending] [--all] [--parent=<id>]
 ```
 
-**Output:**
+**Output (uses `short` field):**
 ```
 📋 Pending Decisions (2)
 
   ○ gt-abc123.decision-1 - Which caching strategy?
-    Options: [a] Redis, [b] In-memory
+    [a] Redis  [b] In-memory
     Created: 2h ago · Timeout: 22h · Blocks: gt-abc123.4
 
   ○ gt-def456.decision-1 - Proceed with migration?
-    Options: [yes] Yes, [no] No
+    [yes] Yes  [no] No
     Created: 1d ago · Timeout: OVERDUE · Blocks: gt-def456.3
 
 Use 'bd decision show <id>' for details
@@ -547,7 +565,7 @@ METADATA
 STATUS: ⏳ Awaiting response (22h remaining)
 ```
 
-**Output (resolved):**
+**Output (resolved - uses `short` for compact response display):**
 ```
 ✓ gt-abc123.decision-1 · Which caching strategy should we use?   [● P2 · CLOSED]
 Created: 2026-01-21 10:00 UTC · Resolved: 2026-01-21 15:30 UTC
@@ -561,8 +579,8 @@ PROMPT
 Which caching strategy should we use for the API rate limiter?
 
 OPTIONS
-  [a] Redis ← SELECTED
-  [b] In-memory LRU
+  [a] Redis - Use Redis for distributed caching ← SELECTED
+  [b] In-memory - Use in-memory LRU cache
 
 STATUS: ✓ Resolved
 ```
@@ -586,9 +604,9 @@ needs = ["implement"]
 [steps.decision]
 prompt = "Review the implementation and choose deployment strategy:"
 options = [
-  { id = "immediate", label = "Deploy immediately", description = "Push to production now" },
-  { id = "staged", label = "Staged rollout", description = "10% -> 50% -> 100% over 3 days" },
-  { id = "hold", label = "Hold for review", description = "Schedule review meeting first" }
+  { id = "immediate", short = "Immediate", label = "Deploy immediately to production", description = "Push to production now" },
+  { id = "staged", short = "Staged", label = "Staged rollout over 3 days", description = "10% -> 50% -> 100% over 3 days" },
+  { id = "hold", short = "Hold", label = "Hold for team review", description = "Schedule review meeting first" }
 ]
 default = "staged"
 timeout = "48h"
