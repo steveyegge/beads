@@ -73,6 +73,11 @@ type Transaction interface {
 
 	// Comment operations
 	AddComment(ctx context.Context, issueID, actor, comment string) error
+
+	// Decision point operations
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
 }
 
 // Storage defines the interface for issue storage backends
@@ -123,6 +128,12 @@ type Storage interface {
 	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
+
+	// Decision Points
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

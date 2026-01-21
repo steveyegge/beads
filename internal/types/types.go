@@ -123,53 +123,6 @@ type Issue struct {
 	Target    string `json:"target,omitempty"`     // Entity URI or bead ID affected
 	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
 
-	// ===== Decision Point Fields (human-in-the-loop choices) =====
-	// Decision points are gates that wait for structured human input.
-	// Model: single-select from options + optional text input.
-
-	// DecisionPrompt is the question shown to the human.
-	// Can contain markdown for rich formatting.
-	DecisionPrompt string `json:"decision_prompt,omitempty"`
-
-	// DecisionOptions are the available choices (JSON array of DecisionOption objects).
-	// Can be empty if only text input is needed.
-	DecisionOptions string `json:"decision_options,omitempty"`
-
-	// DecisionDefault is the option ID selected if timeout occurs.
-	// Empty means no default (timeout = no response).
-	DecisionDefault string `json:"decision_default,omitempty"`
-
-	// DecisionSelected is the option ID the human chose (set when resolved).
-	// Empty if human provided only text without selecting an option.
-	DecisionSelected string `json:"decision_selected,omitempty"`
-
-	// DecisionText is custom text input from the human (set when resolved).
-	// Can be provided alongside a selection, or instead of one.
-	DecisionText string `json:"decision_text,omitempty"`
-
-	// DecisionRespondedAt is when the human responded.
-	DecisionRespondedAt *time.Time `json:"decision_responded_at,omitempty"`
-
-	// DecisionRespondedBy identifies who responded (email, user ID, etc.).
-	DecisionRespondedBy string `json:"decision_responded_by,omitempty"`
-
-	// ===== Decision Iteration Fields (for refinement loop) =====
-
-	// DecisionIteration tracks the current iteration number (1-indexed).
-	// First decision point is iteration 1.
-	DecisionIteration int `json:"decision_iteration,omitempty"`
-
-	// DecisionMaxIterations limits refinement loops (default: 3).
-	// After max, human must select or decision times out.
-	DecisionMaxIterations int `json:"decision_max_iterations,omitempty"`
-
-	// DecisionPriorID links to the previous iteration's decision point.
-	// Empty for iteration 1.
-	DecisionPriorID string `json:"decision_prior_id,omitempty"`
-
-	// DecisionGuidance stores the human's text that triggered this iteration.
-	// Copied from prior iteration's DecisionText for context.
-	DecisionGuidance string `json:"decision_guidance,omitempty"`
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -249,18 +202,6 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Actor)
 	w.str(i.Target)
 	w.str(i.Payload)
-
-	// Decision point fields
-	w.str(i.DecisionPrompt)
-	w.str(i.DecisionOptions)
-	w.str(i.DecisionDefault)
-	w.str(i.DecisionSelected)
-	w.str(i.DecisionText)
-	w.str(i.DecisionRespondedBy)
-	w.int(i.DecisionIteration)
-	w.int(i.DecisionMaxIterations)
-	w.str(i.DecisionPriorID)
-	w.str(i.DecisionGuidance)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -1141,6 +1082,25 @@ type DecisionOption struct {
 	// Description is optional rich content (markdown)
 	// Can contain full design documents, code snippets, etc.
 	Description string `json:"description,omitempty"`
+}
+
+// DecisionPoint represents a human-in-the-loop decision gate.
+// Decision points are stored in a separate table (decision_points) with FK to issues.
+// This allows iteration on decisions without cluttering the issue record.
+type DecisionPoint struct {
+	IssueID        string     `json:"issue_id"`
+	Prompt         string     `json:"prompt"`
+	Options        string     `json:"options"`                    // JSON array of DecisionOption
+	DefaultOption  string     `json:"default_option,omitempty"`   // Option ID selected if timeout
+	SelectedOption string     `json:"selected_option,omitempty"`  // Option ID the human chose
+	ResponseText   string     `json:"response_text,omitempty"`    // Custom text input from human
+	RespondedAt    *time.Time `json:"responded_at,omitempty"`     // When the human responded
+	RespondedBy    string     `json:"responded_by,omitempty"`     // Who responded (email, user ID)
+	Iteration      int        `json:"iteration"`                  // Current iteration number (1-indexed)
+	MaxIterations  int        `json:"max_iterations"`             // Limit on refinement loops (default: 3)
+	PriorID        string     `json:"prior_id,omitempty"`         // Previous iteration's decision point
+	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).

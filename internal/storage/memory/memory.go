@@ -22,14 +22,15 @@ type MemoryStorage struct {
 	mu sync.RWMutex // Protects all maps
 
 	// Core data
-	issues       map[string]*types.Issue        // ID -> Issue
-	dependencies map[string][]*types.Dependency // IssueID -> Dependencies
-	labels       map[string][]string            // IssueID -> Labels
-	events       map[string][]*types.Event      // IssueID -> Events
-	comments     map[string][]*types.Comment    // IssueID -> Comments
-	config       map[string]string              // Config key-value pairs
-	metadata     map[string]string              // Metadata key-value pairs
-	counters     map[string]int                 // Prefix -> Last ID
+	issues         map[string]*types.Issue          // ID -> Issue
+	dependencies   map[string][]*types.Dependency   // IssueID -> Dependencies
+	labels         map[string][]string              // IssueID -> Labels
+	events         map[string][]*types.Event        // IssueID -> Events
+	comments       map[string][]*types.Comment      // IssueID -> Comments
+	decisionPoints map[string]*types.DecisionPoint  // IssueID -> DecisionPoint
+	config         map[string]string                // Config key-value pairs
+	metadata       map[string]string                // Metadata key-value pairs
+	counters       map[string]int                   // Prefix -> Last ID
 
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
@@ -49,6 +50,7 @@ func New(jsonlPath string) *MemoryStorage {
 		labels:          make(map[string][]string),
 		events:          make(map[string][]*types.Event),
 		comments:        make(map[string][]*types.Comment),
+		decisionPoints:  make(map[string]*types.DecisionPoint),
 		config:          make(map[string]string),
 		metadata:        make(map[string]string),
 		counters:        make(map[string]int),
@@ -1829,4 +1831,68 @@ func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) erro
 
 	m.dirty[issueID] = true
 	return nil
+}
+
+// CreateDecisionPoint creates a new decision point for an issue.
+func (m *MemoryStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Verify issue exists
+	if _, exists := m.issues[dp.IssueID]; !exists {
+		return fmt.Errorf("issue %s not found", dp.IssueID)
+	}
+
+	// Set created_at if not already set
+	if dp.CreatedAt.IsZero() {
+		dp.CreatedAt = time.Now()
+	}
+
+	m.decisionPoints[dp.IssueID] = dp
+	return nil
+}
+
+// GetDecisionPoint retrieves the decision point for an issue.
+func (m *MemoryStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	dp, exists := m.decisionPoints[issueID]
+	if !exists {
+		return nil, nil
+	}
+	return dp, nil
+}
+
+// UpdateDecisionPoint updates an existing decision point.
+func (m *MemoryStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.decisionPoints[dp.IssueID]; !exists {
+		return fmt.Errorf("decision point not found for issue %s", dp.IssueID)
+	}
+
+	m.decisionPoints[dp.IssueID] = dp
+	return nil
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to.
+func (m *MemoryStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var results []*types.DecisionPoint
+	for _, dp := range m.decisionPoints {
+		if dp.RespondedAt == nil {
+			results = append(results, dp)
+		}
+	}
+
+	// Sort by created_at for consistent ordering
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CreatedAt.Before(results[j].CreatedAt)
+	})
+
+	return results, nil
 }

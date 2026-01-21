@@ -1482,3 +1482,105 @@ func (t *sqliteTxStorage) getLabelsForIssues(ctx context.Context, issueIDs []str
 
 	return result, rows.Err()
 }
+
+// CreateDecisionPoint creates a new decision point within the transaction.
+func (t *sqliteTxStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	// Verify issue exists
+	issue, err := t.GetIssue(ctx, dp.IssueID)
+	if err != nil {
+		return fmt.Errorf("failed to check issue existence: %w", err)
+	}
+	if issue == nil {
+		return fmt.Errorf("issue %s not found", dp.IssueID)
+	}
+
+	// Convert empty strings to NULL for optional FK fields
+	var priorID interface{}
+	if dp.PriorID != "" {
+		priorID = dp.PriorID
+	}
+
+	// Insert decision point
+	_, err = t.conn.ExecContext(ctx, `
+		INSERT INTO decision_points (
+			issue_id, prompt, options, default_option, selected_option,
+			response_text, responded_at, responded_by, iteration, max_iterations,
+			prior_id, guidance, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, dp.IssueID, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
+		priorID, dp.Guidance)
+	if err != nil {
+		return fmt.Errorf("failed to insert decision point: %w", err)
+	}
+
+	return nil
+}
+
+// GetDecisionPoint retrieves the decision point for an issue within the transaction.
+func (t *sqliteTxStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	dp := &types.DecisionPoint{}
+	err := t.conn.QueryRowContext(ctx, `
+		SELECT issue_id, prompt, options,
+			COALESCE(default_option, ''), COALESCE(selected_option, ''),
+			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
+			iteration, max_iterations,
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), created_at
+		FROM decision_points
+		WHERE issue_id = ?
+	`, issueID).Scan(
+		&dp.IssueID, &dp.Prompt, &dp.Options,
+		&dp.DefaultOption, &dp.SelectedOption,
+		&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
+		&dp.Iteration, &dp.MaxIterations,
+		&dp.PriorID, &dp.Guidance, &dp.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision point: %w", err)
+	}
+
+	return dp, nil
+}
+
+// UpdateDecisionPoint updates an existing decision point within the transaction.
+func (t *sqliteTxStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	// Convert empty strings to NULL for optional FK fields
+	var priorID interface{}
+	if dp.PriorID != "" {
+		priorID = dp.PriorID
+	}
+
+	result, err := t.conn.ExecContext(ctx, `
+		UPDATE decision_points SET
+			prompt = ?,
+			options = ?,
+			default_option = ?,
+			selected_option = ?,
+			response_text = ?,
+			responded_at = ?,
+			responded_by = ?,
+			iteration = ?,
+			max_iterations = ?,
+			prior_id = ?,
+			guidance = ?
+		WHERE issue_id = ?
+	`, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.RespondedAt, dp.RespondedBy,
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.IssueID)
+	if err != nil {
+		return fmt.Errorf("failed to update decision point: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("decision point not found for issue %s", dp.IssueID)
+	}
+
+	return nil
+}
