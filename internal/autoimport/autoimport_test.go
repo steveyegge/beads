@@ -514,6 +514,32 @@ not valid json`
 			t.Error("Expected debug notification for auto-added deleted_at")
 		}
 	})
+
+	t.Run("fix corrupted closed issue with deleted_at (GH#1223)", func(t *testing.T) {
+		now := time.Now()
+		deletedAt := now.Format(time.RFC3339)
+		data := `{"id":"bd-6s61","title":"Version Bump","status":"closed","priority":1,"issue_type":"task","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z","closed_at":"2024-01-02T00:00:00Z","deleted_at":"` + deletedAt + `"}`
+
+		notify := &testNotifier{}
+		issues, err := parseJSONL([]byte(data), notify)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if len(issues) != 1 {
+			t.Errorf("Expected 1 issue, got %d", len(issues))
+		}
+
+		// Issue should be converted to tombstone
+		if issues[0].Status != types.StatusTombstone {
+			t.Errorf("Expected status 'tombstone' for closed issue with deleted_at, got %s", issues[0].Status)
+		}
+
+		// Check that debug message was logged
+		if len(notify.debugs) == 0 {
+			t.Error("Expected debug notification for status correction")
+		}
+	})
 }
 
 func TestShowRemapping(t *testing.T) {

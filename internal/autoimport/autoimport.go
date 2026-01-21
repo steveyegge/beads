@@ -249,6 +249,15 @@ func parseJSONL(jsonlData []byte, notify Notifier) ([]*types.Issue, error) {
 			}
 		}
 
+		// Fix: Any non-tombstone issue with deleted_at set is malformed and should be tombstone
+		// This catches issues that may have been corrupted or migrated incorrectly
+		if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
+			issue.Status = types.StatusTombstone
+			if notify != nil {
+				notify.Debugf("Auto-corrected status %s to 'tombstone' (had deleted_at) for issue %s", issue.Status, issue.ID)
+			}
+		}
+
 		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
 			now := time.Now()
 			issue.ClosedAt = &now
