@@ -247,7 +247,28 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 		}
 	}
 
+	// Sort roots for stable tree ordering (fixes unstable --tree output)
+	// Use same sorting logic as children for consistency
+	slices.SortFunc(roots, compareIssuesByPriority)
+
+	// Sort children within each parent for stable ordering in data structure
+	for parentID := range childrenMap {
+		slices.SortFunc(childrenMap[parentID], compareIssuesByPriority)
+	}
+
 	return roots, childrenMap
+}
+
+// compareIssuesByPriority provides stable sorting for tree display
+// Primary sort: priority (P0 before P1 before P2...)
+// Secondary sort: ID for deterministic ordering when priorities match
+func compareIssuesByPriority(a, b *types.Issue) int {
+	// Primary: priority (ascending: P0 before P1 before P2...)
+	if result := cmp.Compare(a.Priority, b.Priority); result != 0 {
+		return result
+	}
+	// Secondary: ID for deterministic order when priorities match
+	return cmp.Compare(a.ID, b.ID)
 }
 
 // printPrettyTree recursively prints the issue tree
@@ -255,10 +276,8 @@ func buildIssueTreeWithDeps(issues []*types.Issue, allDeps map[string][]*types.D
 func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string) {
 	children := childrenMap[parentID]
 
-	// Sort children by priority (ascending: P0 before P1 before P2...)
-	slices.SortFunc(children, func(a, b *types.Issue) int {
-		return cmp.Compare(a.Priority, b.Priority)
-	})
+	// Sort children by priority using same comparison as roots for consistency
+	slices.SortFunc(children, compareIssuesByPriority)
 
 	for i, child := range children {
 		isLast := i == len(children)-1
