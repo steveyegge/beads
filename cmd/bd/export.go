@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
@@ -550,7 +551,7 @@ Examples:
 				// Dolt backend does not have a SQLite DB file, so only touch mtime for SQLite.
 				if _, ok := store.(*sqlite.SQLiteStorage); ok {
 					beadsDir := filepath.Dir(finalPath)
-					dbPath := filepath.Join(beadsDir, "beads.db")
+					dbPath := beads.VarPath(beadsDir, "beads.db", "")
 					if err := TouchDatabaseFile(dbPath, finalPath); err != nil {
 						// Log warning but don't fail export
 						fmt.Fprintf(os.Stderr, "Warning: failed to update database mtime: %v\n", err)

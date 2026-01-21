@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/ui"
@@ -491,8 +492,8 @@ func discoverRigDaemons() []rigDaemon {
 		// Follow redirect if present
 		beadsDir = resolveBeadsRedirect(beadsDir)
 
-		// Check if daemon is running
-		socketPath := filepath.Join(beadsDir, "bd.sock")
+		// Check if daemon is running (VarPath checks var/ first for var/ layout)
+		socketPath := beads.VarPath(beadsDir, "bd.sock", "")
 		client, _ := rpc.TryConnect(socketPath)
 
 		rigName := routing.ExtractProjectFromPath(route.Path)

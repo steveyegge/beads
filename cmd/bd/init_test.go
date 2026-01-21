@@ -144,8 +144,8 @@ func TestInitCommand(t *testing.T) {
 				}
 			}
 
-			// Verify database was created (always beads.db now)
-			dbPath := filepath.Join(beadsDir, "beads.db")
+			// Verify database was created (in var/ subdirectory by default)
+			dbPath := filepath.Join(beadsDir, "var", "beads.db")
 			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 				t.Errorf("Database file was not created at %s", dbPath)
 			}
@@ -192,6 +192,100 @@ func TestInitCommand(t *testing.T) {
 // GH#807: Rejection of main/master as sync branch is tested at unit level in
 // internal/syncbranch/syncbranch_test.go (TestValidateSyncBranchName, TestSet).
 
+// TestInitVarLayout verifies var/ layout is created by default (GH#919)
+func TestInitVarLayout(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("legacy", "false")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Run bd init (default var/ layout)
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+
+	// Verify var/ directory was created
+	varDir := filepath.Join(beadsDir, "var")
+	if _, err := os.Stat(varDir); os.IsNotExist(err) {
+		t.Error("var/ directory was not created")
+	}
+
+	// Verify database is in var/
+	dbPath := filepath.Join(beadsDir, "var", "beads.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Errorf("Database not created at var/beads.db")
+	}
+
+	// Verify database NOT at root
+	rootDbPath := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(rootDbPath); err == nil {
+		t.Error("Database should NOT be at root when using var/ layout")
+	}
+
+	// Verify metadata.json has layout: v2
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("Failed to read metadata.json: %v", err)
+	}
+	if !strings.Contains(string(metadataContent), `"layout": "v2"`) {
+		t.Errorf("metadata.json should contain layout: v2, got: %s", string(metadataContent))
+	}
+}
+
+// TestInitLegacyLayout verifies --legacy flag creates flat layout (GH#919)
+func TestInitLegacyLayout(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("legacy", "false")
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Run bd init --legacy
+	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--legacy"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init --legacy failed: %v", err)
+	}
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+
+	// Verify var/ directory was NOT created
+	varDir := filepath.Join(beadsDir, "var")
+	if _, err := os.Stat(varDir); err == nil {
+		t.Error("var/ directory should NOT be created with --legacy")
+	}
+
+	// Verify database is at root
+	rootDbPath := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(rootDbPath); os.IsNotExist(err) {
+		t.Error("Database should be at root with --legacy")
+	}
+
+	// Verify metadata.json does NOT have layout: v2
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("Failed to read metadata.json: %v", err)
+	}
+	if strings.Contains(string(metadataContent), `"layout": "v2"`) {
+		t.Errorf("metadata.json should NOT contain layout: v2 with --legacy, got: %s", string(metadataContent))
+	}
+}
+
 // TestInitWithSyncBranch verifies that --branch flag correctly sets sync.branch
 // GH#807: Also verifies that valid sync branches work (rejection is tested at unit level)
 func TestInitWithSyncBranch(t *testing.T) {
@@ -202,6 +296,7 @@ func TestInitWithSyncBranch(t *testing.T) {
 
 	// Reset Cobra flags
 	initCmd.Flags().Set("branch", "")
+	initCmd.Flags().Set("legacy", "false")
 
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -217,8 +312,8 @@ func TestInitWithSyncBranch(t *testing.T) {
 		t.Fatalf("Init with --branch failed: %v", err)
 	}
 
-	// Verify database was created
-	dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
+	// Verify database was created (in var/ subdirectory by default)
+	dbFilePath := filepath.Join(tmpDir, ".beads", "var", "beads.db")
 	store, err := openExistingTestDB(t, dbFilePath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
@@ -361,8 +456,8 @@ func TestInitWithoutBranchFlag(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Verify database was created
-	dbFilePath := filepath.Join(tmpDir, ".beads", "beads.db")
+	// Verify database was created (in var/ subdirectory by default)
+	dbFilePath := filepath.Join(tmpDir, ".beads", "var", "beads.db")
 	store, err := openExistingTestDB(t, dbFilePath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
@@ -386,6 +481,9 @@ func TestInitAlreadyInitialized(t *testing.T) {
 	defer func() { dbPath = origDBPath }()
 	dbPath = ""
 
+	// Reset Cobra flags (prevents state leakage from TestInitLegacyLayout)
+	initCmd.Flags().Set("legacy", "false")
+
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
@@ -404,8 +502,8 @@ func TestInitAlreadyInitialized(t *testing.T) {
 		t.Fatalf("Second init with --force failed: %v", err)
 	}
 
-	// Verify database still works (always beads.db now)
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	// Verify database still works (in var/ subdirectory by default)
+	dbPath := filepath.Join(tmpDir, ".beads", "var", "beads.db")
 	store, err := openExistingTestDB(t, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
@@ -647,10 +745,14 @@ func TestInitNoDbMode(t *testing.T) {
 	// (init creating proper config.yaml for no-db mode) is verified above.
 	// Real-world usage works correctly since each command is a fresh process.
 
-	// Verify no SQLite database was created
-	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
-	if _, err := os.Stat(dbPath); err == nil {
-		t.Error("SQLite database should not be created in --no-db mode")
+	// Verify no SQLite database was created (check both legacy and var/ paths)
+	legacyDbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+	if _, err := os.Stat(legacyDbPath); err == nil {
+		t.Error("SQLite database should not be created in --no-db mode (legacy path)")
+	}
+	varDbPath := filepath.Join(tmpDir, ".beads", "var", "beads.db")
+	if _, err := os.Stat(varDbPath); err == nil {
+		t.Error("SQLite database should not be created in --no-db mode (var path)")
 	}
 }
 
@@ -1487,6 +1589,7 @@ func TestInitWithRedirect(t *testing.T) {
 	// Reset Cobra flags
 	initCmd.Flags().Set("prefix", "")
 	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("legacy", "false")
 
 	tmpDir := t.TempDir()
 
@@ -1524,16 +1627,20 @@ func TestInitWithRedirect(t *testing.T) {
 		t.Fatalf("Init with redirect failed: %v", err)
 	}
 
-	// Verify database was created in TARGET directory, not local
-	targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
+	// Verify database was created in TARGET directory (var/ subdirectory by default), not local
+	targetDBPath := filepath.Join(targetBeadsDir, "var", "beads.db")
 	if _, err := os.Stat(targetDBPath); os.IsNotExist(err) {
 		t.Errorf("Database was NOT created in redirect target: %s", targetDBPath)
 	}
 
-	// Verify database was NOT created in local directory
-	localDBPath := filepath.Join(localBeadsDir, "beads.db")
+	// Verify database was NOT created in local directory (either layout)
+	localDBPath := filepath.Join(localBeadsDir, "var", "beads.db")
 	if _, err := os.Stat(localDBPath); err == nil {
-		t.Errorf("Database was incorrectly created in local .beads: %s (should be in redirect target)", localDBPath)
+		t.Errorf("Database was incorrectly created in local .beads/var/: %s (should be in redirect target)", localDBPath)
+	}
+	localLegacyDBPath := filepath.Join(localBeadsDir, "beads.db")
+	if _, err := os.Stat(localLegacyDBPath); err == nil {
+		t.Errorf("Database was incorrectly created in local .beads/: %s (should be in redirect target)", localLegacyDBPath)
 	}
 
 	// Verify the database is functional

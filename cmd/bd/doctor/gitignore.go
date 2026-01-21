@@ -8,11 +8,15 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
 // GitignoreTemplate is the canonical .beads/.gitignore content
-const GitignoreTemplate = `# SQLite databases
+const GitignoreTemplate = `# Volatile files directory (var/ layout)
+var/
+
+# SQLite databases (legacy patterns - kept for backward compatibility)
 *.db
 *.db?*
 *.db-journal
@@ -22,6 +26,7 @@ const GitignoreTemplate = `# SQLite databases
 # Daemon runtime files
 daemon.lock
 daemon.log
+daemon-*.log*
 daemon.pid
 bd.sock
 sync-state.json
@@ -60,6 +65,7 @@ sync_base.jsonl
 
 // requiredPatterns are patterns that MUST be in .beads/.gitignore
 var requiredPatterns = []string{
+	"var/",
 	"beads.base.jsonl",
 	"beads.left.jsonl",
 	"beads.right.jsonl",
@@ -71,12 +77,13 @@ var requiredPatterns = []string{
 	"last-touched",
 	".sync.lock",
 	"sync_base.jsonl",
+	"daemon-*.log*",
 }
 
 // CheckGitignore checks if .beads/.gitignore is up to date
 func CheckGitignore() DoctorCheck {
 	gitignorePath := filepath.Join(".beads", ".gitignore")
-	
+
 	// Check if file exists
 	content, err := os.ReadFile(gitignorePath) // #nosec G304 -- path is hardcoded
 	if err != nil {
@@ -151,8 +158,8 @@ func CheckIssuesTracking() DoctorCheck {
 	if _, err := os.Stat(issuesPath); os.IsNotExist(err) {
 		// File doesn't exist yet - not an error, bd init may not have been run
 		return DoctorCheck{
-			Name:   "Issues Tracking",
-			Status: "ok",
+			Name:    "Issues Tracking",
+			Status:  "ok",
 			Message: "No issues.jsonl yet (will be created on first issue)",
 		}
 	}
@@ -345,8 +352,8 @@ func CheckRedirectTargetValid() DoctorCheck {
 		}
 	}
 
-	// Check for valid beads database in target
-	dbPath := filepath.Join(resolvedTarget, "beads.db")
+	// Check for valid beads database in target (checks var/ first for var/ layout)
+	dbPath := beads.VarPath(resolvedTarget, "beads.db", "")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Also check for any .db file
 		matches, _ := filepath.Glob(filepath.Join(resolvedTarget, "*.db"))

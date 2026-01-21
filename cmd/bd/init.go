@@ -53,6 +53,7 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
+		legacyLayout, _ := cmd.Flags().GetBool("legacy")
 
 		// Validate backend flag
 		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
@@ -138,7 +139,7 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		// so in Dolt mode it should point to the Dolt directory instead.
 		//
 		// Use global dbPath if set via --db flag or BEADS_DB env var (SQLite-only),
-		// otherwise default to `.beads/beads.db` for SQLite.
+		// otherwise default to `.beads/var/beads.db` for SQLite (or `.beads/beads.db` with --legacy).
 		// If there's a redirect file, use the redirect target (GH#bd-0qel)
 		initDBPath := dbPath
 		if backend == configfile.BackendDolt {
@@ -147,7 +148,11 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			// Check for redirect in local .beads
 			localBeadsDir := filepath.Join(".", ".beads")
 			targetBeadsDir := beads.FollowRedirect(localBeadsDir)
-			initDBPath = filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)
+			if legacyLayout {
+				initDBPath = filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)
+			} else {
+				initDBPath = filepath.Join(targetBeadsDir, "var", beads.CanonicalDatabaseName)
+			}
 		}
 
 		// Migrate old SQLite database files if they exist (SQLite backend only).
@@ -222,13 +227,27 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			initDBDirAbs = filepath.Clean(initDBDir)
 		}
 
-		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs)
+		// Check if database is inside .beads (directly or in a subdirectory like var/)
+		// This handles both:
+		//   - Legacy: .beads/beads.db (initDBDirAbs == beadsDirAbs)
+		//   - var/ layout: .beads/var/beads.db (initDBDirAbs is child of beadsDirAbs)
+		useLocalBeads := filepath.Clean(initDBDirAbs) == filepath.Clean(beadsDirAbs) ||
+			strings.HasPrefix(filepath.Clean(initDBDirAbs)+string(filepath.Separator), filepath.Clean(beadsDirAbs)+string(filepath.Separator))
 
 		if useLocalBeads {
 			// Create .beads directory
 			if err := os.MkdirAll(beadsDir, 0750); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to create .beads directory: %v\n", err)
 				os.Exit(1)
+			}
+
+			// Create var/ subdirectory for volatile files (unless --legacy)
+			if !legacyLayout {
+				varDir := filepath.Join(beadsDir, "var")
+				if err := os.MkdirAll(varDir, 0700); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: failed to create .beads/var directory: %v\n", err)
+					os.Exit(1)
+				}
 			}
 
 			// Handle --no-db mode: create issues.jsonl file instead of database
@@ -255,6 +274,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 				// Create metadata.json for --no-db mode
 				cfg := configfile.DefaultConfig()
+				// Set layout version for var/ layout (unless --legacy)
+				if !legacyLayout {
+					cfg.Layout = configfile.LayoutV2
+				}
 				if err := cfg.Save(beadsDir); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
 					// Non-fatal - continue anyway
@@ -413,6 +436,11 @@ With --stealth: configures per-repository git settings for invisible beads usage
 				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
 					cfg.Database = "dolt"
 				}
+			}
+
+			// Set layout version for var/ layout (unless --legacy or existing config)
+			if !legacyLayout && existingCfg == nil {
+				cfg.Layout = configfile.LayoutV2
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -666,6 +694,7 @@ func init() {
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+	initCmd.Flags().Bool("legacy", false, "Use legacy flat layout (database at .beads/beads.db instead of .beads/var/beads.db)")
 	rootCmd.AddCommand(initCmd)
 }
 

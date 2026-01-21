@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -518,9 +517,11 @@ func stringSliceEqual(a, b []string) bool {
 const syncBaseFileName = "sync_base.jsonl"
 
 // loadBaseState loads the last-synced state from .beads/sync_base.jsonl
-// Returns empty slice if file doesn't exist (first sync scenario)
+// Returns empty slice if file doesn't exist (first sync scenario).
+// Uses VarPath with read-both pattern: checks var/ first, then root.
 func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
-	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	baseStatePath := beads.VarPath(beadsDir, syncBaseFileName, "")
 
 	// Check if file exists
 	if _, err := os.Stat(baseStatePath); os.IsNotExist(err) {
@@ -565,9 +566,11 @@ func loadBaseState(beadsDir string) ([]*beads.Issue, error) {
 }
 
 // saveBaseState writes the merged state to .beads/sync_base.jsonl
-// This becomes the base for the next 3-way merge
+// This becomes the base for the next 3-way merge.
+// Uses VarPathForWrite to respect layout preference.
 func saveBaseState(beadsDir string, issues []*beads.Issue) error {
-	baseStatePath := filepath.Join(beadsDir, syncBaseFileName)
+	// Empty layout triggers directory-based detection (bootstrap/migration safe)
+	baseStatePath := beads.VarPathForWrite(beadsDir, syncBaseFileName, "")
 
 	// Write to temp file first for atomicity
 	tempPath := baseStatePath + ".tmp"

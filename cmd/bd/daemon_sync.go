@@ -459,7 +459,7 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 			// with "JSONL is newer than database" after daemon auto-export
 			// Dolt backend does not have a SQLite DB file; mtime touch is SQLite-only.
 			if _, ok := store.(*sqlite.SQLiteStorage); ok {
-				dbPath := filepath.Join(beadsDir, "beads.db")
+				dbPath := beads.VarPath(beadsDir, "beads.db", "")
 				if err := TouchDatabaseFile(dbPath, jsonlPath); err != nil {
 					log.log("Warning: failed to update database mtime: %v", err)
 				}
@@ -743,7 +743,7 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 
 		// GH#885: Defer metadata updates until AFTER git commit succeeds.
 		// Define helper to finalize after git operations.
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbPath := beads.VarPath(beadsDir, "beads.db", "")
 		finalizeExportMetadata := func() {
 			// Update export metadata for multi-repo support with stable keys
 			if multiRepoPaths != nil {
