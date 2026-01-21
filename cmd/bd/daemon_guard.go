@@ -26,11 +26,20 @@ func singleProcessBackendHelp(backend string) string {
 // daemon architecture relies on multiple processes (CLI + daemon + helper spawns),
 // which can trigger lock contention and transient "read-only" failures.
 //
+// Exception: --federation flag enables dolt sql-server mode which is multi-writer.
+//
 // We still allow help output so users can discover the command surface.
 func guardDaemonUnsupportedForDolt(cmd *cobra.Command, _ []string) error {
 	// Allow `--help` for any daemon subcommand.
 	if helpFlag := cmd.Flags().Lookup("help"); helpFlag != nil {
 		if help, _ := cmd.Flags().GetBool("help"); help {
+			return nil
+		}
+	}
+
+	// Allow `--federation` flag which enables dolt sql-server (multi-writer) mode.
+	if fedFlag := cmd.Flags().Lookup("federation"); fedFlag != nil {
+		if federation, _ := cmd.Flags().GetBool("federation"); federation {
 			return nil
 		}
 	}
