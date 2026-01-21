@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -19,7 +23,30 @@ version control for your issue data, including branching, merging, and
 viewing history.
 
 Note: 'bd history', 'bd diff', and 'bd branch' also work for quick access.
-This subcommand provides additional operations like merge and commit.`,
+This subcommand provides additional operations like merge and commit.
+
+NOTE: VC operations require direct database access and do not work with
+      daemon mode. The command automatically uses --no-daemon when executed.`,
+}
+
+// ensureDirectStorageForVC forces direct storage access for VC commands.
+// VC commands require DoltStore's versioning interface which isn't available
+// through the daemon RPC proxy. This function closes any daemon connection
+// and initializes the store directly.
+func ensureDirectStorageForVC() {
+	if daemonClient != nil {
+		debug.Logf("vc command forcing direct mode (closes daemon connection)")
+		_ = daemonClient.Close()
+		daemonClient = nil
+
+		dbDir := filepath.Dir(dbPath)
+		var err error
+		store, err = factory.NewFromConfig(rootCtx, dbDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 var vcMergeStrategy string
@@ -40,6 +67,9 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
 		branchName := args[0]
+
+		// Force direct mode for versioning access
+		ensureDirectStorageForVC()
 
 		// Check if storage supports versioning
 		vs, ok := storage.AsVersioned(store)
@@ -125,6 +155,9 @@ Examples:
 			FatalErrorRespectJSON("commit message is required (use -m or --message)")
 		}
 
+		// Force direct mode for versioning access
+		ensureDirectStorageForVC()
+
 		// Check if storage supports versioning
 		vs, ok := storage.AsVersioned(store)
 		if !ok {
@@ -163,6 +196,9 @@ Examples:
   bd vc status`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := rootCtx
+
+		// Force direct mode for versioning access
+		ensureDirectStorageForVC()
 
 		// Check if storage supports versioning
 		vs, ok := storage.AsVersioned(store)
