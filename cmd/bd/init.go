@@ -99,13 +99,37 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 		}
 
-		// Determine prefix with precedence: flag > config > auto-detect from git > auto-detect from directory name
-		if prefix == "" {
-			// Try to get from config file
-			prefix = config.GetString("issue-prefix")
+		// Get current working directory early - needed for prefix detection and later
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+			os.Exit(1)
 		}
 
-		// auto-detect prefix from first issue in JSONL file
+		// Determine prefix with precedence: flag > local config > auto-detect from local JSONL > auto-detect from git > auto-detect from directory name
+		//
+		// IMPORTANT (GH#hq-3b9eb3): Only use config.GetString("issue-prefix") if a LOCAL config
+		// file exists in cwd/.beads/. The config module walks UP directories to find config files,
+		// which means running `bd init` in a subdirectory could inherit the parent's prefix.
+		// This is wrong for init, which should create a NEW beads instance.
+		if prefix == "" {
+			// Only use config file if it's local to the current directory
+			localConfigPath := filepath.Join(cwd, ".beads", "config.yaml")
+			if _, err := os.Stat(localConfigPath); err == nil {
+				prefix = config.GetString("issue-prefix")
+			}
+		}
+
+		// For --from-jsonl, prefer prefix detected from the local JSONL file (GH#hq-3b9eb3)
+		// This ensures we use the correct prefix even if config inheritance happened
+		if prefix == "" && fromJSONL {
+			localJSONLPath := filepath.Join(cwd, ".beads", "issues.jsonl")
+			if firstIssue, err := readFirstIssueFromJSONL(localJSONLPath); err == nil && firstIssue != nil {
+				prefix = utils.ExtractIssuePrefix(firstIssue.ID)
+			}
+		}
+
+		// auto-detect prefix from first issue in JSONL file (from git history)
 		if prefix == "" {
 			issueCount, jsonlPath, gitRef := checkGitForIssues()
 			if issueCount > 0 {
@@ -118,12 +142,6 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		// auto-detect prefix from directory name
 		if prefix == "" {
-			// Auto-detect from directory name
-			cwd, err := os.Getwd()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-				os.Exit(1)
-			}
 			prefix = filepath.Base(cwd)
 		}
 
@@ -146,11 +164,7 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		// Determine if we should create .beads/ directory in CWD or main repo root
 		// For worktrees, .beads should always be in the main repository root
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-			os.Exit(1)
-		}
+		// Note: cwd is already defined earlier for prefix detection
 
 		// Check if we're in a git worktree
 		// Guard with isGitRepo() check first - on Windows, git commands may hang
