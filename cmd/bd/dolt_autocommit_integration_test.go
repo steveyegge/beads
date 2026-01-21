@@ -5,6 +5,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -32,6 +37,64 @@ func doltHeadCommit(t *testing.T, dir string, env []string) string {
 		t.Fatalf("missing commit in vc status output:\n%s", out)
 	}
 	return commit
+}
+
+func runCommandInDirCombinedOutput(dir string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...) // #nosec G204 -- test helper executes trusted binaries
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+func findDoltRepoDir(t *testing.T, dir string) string {
+	t.Helper()
+
+	// Embedded driver may create either:
+	// - a dolt repo directly at .beads/dolt/
+	// - a dolt environment at .beads/dolt/ with a db subdir containing .dolt/
+	base := filepath.Join(dir, ".beads", "dolt")
+	candidates := []string{
+		base,
+		filepath.Join(base, "beads"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(c, ".dolt")); err == nil {
+			return c
+		}
+	}
+
+	var found string
+	_ = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == ".dolt" {
+			found = filepath.Dir(path)
+			return fs.SkipDir
+		}
+		return nil
+	})
+	if found == "" {
+		t.Fatalf("could not find Dolt repo dir under %s", base)
+	}
+	return found
+}
+
+func doltHeadAuthor(t *testing.T, dir string) string {
+	t.Helper()
+
+	doltDir := findDoltRepoDir(t, dir)
+	out, err := runCommandInDirCombinedOutput(doltDir, "dolt", "log", "-n", "1")
+	if err != nil {
+		t.Fatalf("dolt log failed: %v\n%s", err, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Author:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Author:"))
+		}
+	}
+	t.Fatalf("missing Author in dolt log output:\n%s", out)
+	return ""
 }
 
 func TestDoltAutoCommit_On_WritesAdvanceHead(t *testing.T) {
@@ -69,6 +132,20 @@ func TestDoltAutoCommit_On_WritesAdvanceHead(t *testing.T) {
 	after := doltHeadCommit(t, tmpDir, env)
 	if after == before {
 		t.Fatalf("expected Dolt HEAD to change after write; before=%s after=%s", before, after)
+	}
+
+	// Commit author should be deterministic (not the authenticated SQL user like root@%).
+	expectedName := os.Getenv("GIT_AUTHOR_NAME")
+	if expectedName == "" {
+		expectedName = "beads"
+	}
+	expectedEmail := os.Getenv("GIT_AUTHOR_EMAIL")
+	if expectedEmail == "" {
+		expectedEmail = "beads@local"
+	}
+	expectedAuthor := fmt.Sprintf("%s <%s>", expectedName, expectedEmail)
+	if got := doltHeadAuthor(t, tmpDir); got != expectedAuthor {
+		t.Fatalf("expected Dolt commit author %q, got %q", expectedAuthor, got)
 	}
 
 	// A read-only command should not create another commit.
