@@ -52,6 +52,18 @@ CREATE TABLE IF NOT EXISTS issues (
     actor TEXT DEFAULT '',
     target TEXT DEFAULT '',
     payload TEXT DEFAULT '',
+    -- Decision point fields (human-in-the-loop choices)
+    decision_prompt TEXT DEFAULT '',
+    decision_options TEXT DEFAULT '',
+    decision_default TEXT DEFAULT '',
+    decision_selected TEXT DEFAULT '',
+    decision_text TEXT DEFAULT '',
+    decision_responded_at TEXT,
+    decision_responded_by TEXT DEFAULT '',
+    decision_iteration INTEGER DEFAULT 1,
+    decision_max_iterations INTEGER DEFAULT 3,
+    decision_prior_id TEXT DEFAULT '',
+    decision_guidance TEXT DEFAULT '',
     -- NOTE: replies_to, relates_to, duplicate_of, superseded_by removed per Decision 004
     -- These relationships are now stored in the dependencies table
     -- closed_at constraint: closed issues must have it, tombstones may retain it from before deletion

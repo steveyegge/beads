@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,
+    -- Decision point fields
+    decision_prompt TEXT DEFAULT '',
+    decision_options TEXT DEFAULT '',
+    decision_default VARCHAR(255) DEFAULT '',
+    decision_selected VARCHAR(255) DEFAULT '',
+    decision_text TEXT DEFAULT '',
+    decision_responded_at DATETIME,
+    decision_responded_by VARCHAR(255) DEFAULT '',
+    decision_iteration INT DEFAULT 1,
+    decision_max_iterations INT DEFAULT 3,
+    decision_prior_id VARCHAR(255) DEFAULT '',
+    decision_guidance TEXT DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
