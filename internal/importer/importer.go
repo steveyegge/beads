@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -108,6 +109,11 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 		if strings.Contains(issue.ID, "-wisp-") && !issue.Ephemeral {
 			issue.Ephemeral = true
 		}
+	}
+
+	// Check for Dolt backend and use dolt-specific import path
+	if doltStore, ok := store.(*dolt.DoltStore); ok {
+		return importIssuesDolt(ctx, doltStore, issues, opts, result)
 	}
 
 	// Get or create SQLite store
