@@ -118,10 +118,34 @@ func (s *DoltStore) SyncStatus(ctx context.Context, peer string) (*storage.SyncS
 		status.HasConflicts = true
 	}
 
-	// TODO: Track last sync time in metadata
-	status.LastSync = time.Time{} // Zero time indicates never synced
+	// Get last sync time from metadata
+	status.LastSync = s.getLastSyncTime(ctx, peer)
 
 	return status, nil
+}
+
+// getLastSyncTime retrieves the last sync time for a peer from metadata.
+func (s *DoltStore) getLastSyncTime(ctx context.Context, peer string) time.Time {
+	key := "last_sync_" + peer
+	var value string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM metadata WHERE `key` = ?", key).Scan(&value)
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// setLastSyncTime records the last sync time for a peer in metadata.
+func (s *DoltStore) setLastSyncTime(ctx context.Context, peer string) error {
+	key := "last_sync_" + peer
+	value := time.Now().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx,
+		"REPLACE INTO metadata (`key`, value) VALUES (?, ?)", key, value)
+	return err
 }
 
 // Sync performs a full bidirectional sync with a peer:
@@ -194,6 +218,9 @@ func (s *DoltStore) Sync(ctx context.Context, peer string, strategy string) (*Sy
 	} else {
 		result.Pushed = true
 	}
+
+	// Record last sync time
+	_ = s.setLastSyncTime(ctx, peer)
 
 	result.EndTime = time.Now()
 	return result, nil

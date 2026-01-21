@@ -241,52 +241,117 @@ func runFederationStatus(cmd *cobra.Command, args []string) {
 		FatalErrorRespectJSON("%v", err)
 	}
 
+	// Get all remotes for URL lookup
+	allRemotes, err := ds.ListRemotes(ctx)
+	if err != nil {
+		FatalErrorRespectJSON("failed to list remotes: %v", err)
+	}
+	remoteURLs := make(map[string]string)
+	for _, r := range allRemotes {
+		remoteURLs[r.Name] = r.URL
+	}
+
 	// Get peers to check
 	var peers []string
 	if federationPeer != "" {
 		peers = []string{federationPeer}
 	} else {
-		remotes, err := ds.ListRemotes(ctx)
-		if err != nil {
-			FatalErrorRespectJSON("failed to list peers: %v", err)
-		}
-		for _, r := range remotes {
+		for _, r := range allRemotes {
 			peers = append(peers, r.Name)
 		}
 	}
 
 	if len(peers) == 0 {
 		if jsonOutput {
-			outputJSON(map[string]interface{}{"peers": []string{}})
+			outputJSON(map[string]interface{}{
+				"peers":          []string{},
+				"pendingChanges": 0,
+			})
 		} else {
 			fmt.Println("No federation peers configured.")
 		}
 		return
 	}
 
-	var statuses []*storage.SyncStatus
+	// Get pending local changes
+	doltStatus, _ := ds.Status(ctx)
+	pendingChanges := 0
+	if doltStatus != nil {
+		pendingChanges = len(doltStatus.Staged) + len(doltStatus.Unstaged)
+	}
+
+	// Collect status for each peer
+	type peerStatus struct {
+		Status      *storage.SyncStatus
+		URL         string
+		Reachable   bool
+		ReachError  string
+	}
+	var peerStatuses []peerStatus
+
 	for _, peer := range peers {
+		ps := peerStatus{
+			URL: remoteURLs[peer],
+		}
+
+		// Get sync status
 		status, _ := ds.SyncStatus(ctx, peer)
-		statuses = append(statuses, status)
+		ps.Status = status
+
+		// Test connectivity by attempting a fetch
+		fetchErr := ds.Fetch(ctx, peer)
+		if fetchErr == nil {
+			ps.Reachable = true
+			// Re-get status after successful fetch for accurate ahead/behind
+			status, _ = ds.SyncStatus(ctx, peer)
+			ps.Status = status
+		} else {
+			ps.ReachError = fetchErr.Error()
+		}
+
+		peerStatuses = append(peerStatuses, ps)
 	}
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
-			"peers":    peers,
-			"statuses": statuses,
+			"peers":          peerStatuses,
+			"pendingChanges": pendingChanges,
 		})
 		return
 	}
 
 	fmt.Printf("\n%s Federation Status:\n\n", ui.RenderAccent("🌐"))
-	for _, status := range statuses {
-		fmt.Printf("  %s\n", ui.RenderAccent(status.Peer))
+
+	// Show local pending changes
+	if pendingChanges > 0 {
+		fmt.Printf("  %s %d pending local changes\n\n", ui.RenderWarn("⚠"), pendingChanges)
+	}
+
+	for _, ps := range peerStatuses {
+		status := ps.Status
+		fmt.Printf("  %s  %s\n", ui.RenderAccent(status.Peer), ui.RenderMuted(ps.URL))
+
+		// Connectivity status
+		if ps.Reachable {
+			fmt.Printf("    %s Reachable\n", ui.RenderPass("✓"))
+		} else {
+			fmt.Printf("    %s Unreachable: %s\n", ui.RenderFail("✗"), ps.ReachError)
+		}
+
+		// Sync status
 		if status.LocalAhead >= 0 {
 			fmt.Printf("    Ahead:  %d commits\n", status.LocalAhead)
 			fmt.Printf("    Behind: %d commits\n", status.LocalBehind)
 		} else {
-			fmt.Printf("    Status: not fetched yet\n")
+			fmt.Printf("    Sync:   %s\n", ui.RenderMuted("not fetched yet"))
 		}
+
+		// Last sync time
+		if !status.LastSync.IsZero() {
+			fmt.Printf("    Last sync: %s\n", status.LastSync.Format("2006-01-02 15:04:05"))
+		}
+
+		// Conflicts
 		if status.HasConflicts {
 			fmt.Printf("    %s Unresolved conflicts\n", ui.RenderWarn("⚠"))
 		}
