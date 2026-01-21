@@ -737,6 +737,8 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 			fmt.Println("⚠ Dolt remote not available, falling back to JSONL-only")
 		} else {
 			fmt.Println("→ Committing to Dolt...")
+			// We are explicitly creating a Dolt commit inside sync; avoid redundant auto-commit in PersistentPostRun.
+			commandDidExplicitDoltCommit = true
 			if err := rs.Commit(ctx, "bd sync: auto-commit"); err != nil {
 				// Ignore "nothing to commit" errors
 				if !strings.Contains(err.Error(), "nothing to commit") {
