@@ -885,6 +885,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 	// First pass: scan all issues
 	for rows.Next() {
 		var issue types.Issue
+		var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+		var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 		var contentHash sql.NullString
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
@@ -927,7 +929,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo, &closeReason,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -936,6 +938,14 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
+		}
+
+		// Parse timestamp strings (TEXT columns require manual parsing)
+		if createdAtStr.Valid {
+			issue.CreatedAt = parseTimeString(createdAtStr.String)
+		}
+		if updatedAtStr.Valid {
+			issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 		}
 
 		if contentHash.Valid {
@@ -1065,6 +1075,8 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 	var results []*types.IssueWithDependencyMetadata
 	for rows.Next() {
 		var issue types.Issue
+		var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+		var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 		var contentHash sql.NullString
 		var closedAt sql.NullTime
 		var estimatedMinutes sql.NullInt64
@@ -1096,7 +1108,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 			&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 			&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-			&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef, &sourceRepo,
+			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -1104,6 +1116,14 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue with dependency type: %w", err)
+		}
+
+		// Parse timestamp strings (TEXT columns require manual parsing)
+		if createdAtStr.Valid {
+			issue.CreatedAt = parseTimeString(createdAtStr.String)
+		}
+		if updatedAtStr.Valid {
+			issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 		}
 
 		if contentHash.Valid {

@@ -33,6 +33,22 @@ func parseNullableTimeString(ns sql.NullString) *time.Time {
 	return nil // Unparseable - shouldn't happen with valid data
 }
 
+// parseTimeString parses a time string from database TEXT columns (non-nullable).
+// Similar to parseNullableTimeString but for required timestamp fields like created_at/updated_at.
+// Returns zero time if parsing fails, which maintains backwards compatibility.
+func parseTimeString(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	// Try RFC3339Nano first (more precise), then RFC3339, then SQLite format
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{} // Unparseable - shouldn't happen with valid data
+}
+
 // parseJSONStringArray parses a JSON string array from database TEXT column.
 // Returns empty slice if the string is empty or invalid JSON.
 func parseJSONStringArray(s string) []string {
@@ -292,6 +308,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	defer s.reconnectMu.RUnlock()
 
 	var issue types.Issue
+	var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+	var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
@@ -356,7 +374,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
@@ -371,6 +389,14 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue: %w", err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {
@@ -581,6 +607,8 @@ func (s *SQLiteStorage) GetCloseReasonsForIssues(ctx context.Context, issueIDs [
 // GetIssueByExternalRef retrieves an issue by external reference
 func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
 	var issue types.Issue
+	var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+	var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
@@ -625,7 +653,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRefCol,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRefCol,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
@@ -637,6 +665,14 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue by external_ref: %w", err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {
