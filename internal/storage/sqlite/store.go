@@ -491,7 +491,11 @@ func (s *SQLiteStorage) DisableFreshnessChecking() {
 // This should be called before read operations in daemon mode.
 func (s *SQLiteStorage) checkFreshness() {
 	if s.freshness != nil {
-		s.freshness.Check()
+		wasReplaced := s.freshness.Check()
+		if wasReplaced {
+			// Log that reconnection was attempted
+			debugPrintf("Database file replaced, reconnection triggered\n")
+		}
 	}
 }
 
@@ -502,25 +506,19 @@ func (s *SQLiteStorage) reconnect() error {
 	defer s.reconnectMu.Unlock()
 
 	if s.closed.Load() {
-		return nil
+		return fmt.Errorf("storage is closed")
 	}
 
-	// Close the old connection - log but continue since connection may be stale/invalid
-	if err := s.db.Close(); err != nil {
-		// Old connection might already be broken after file replacement - this is expected
-		debugPrintf("reconnect: close old connection: %v (continuing)\n", err)
-	}
-
-	// Open a new connection
+	// Open NEW connection FIRST (don't close old one yet)
 	db, err := sql.Open("sqlite3", s.connStr)
 	if err != nil {
-		return fmt.Errorf("failed to reconnect: %w", err)
+		return fmt.Errorf("failed to open new connection: %w", err)
 	}
 
-	// Restore connection pool settings
+	// Configure connection pool for new connection
 	s.configureConnectionPool(db)
 
-	// Re-enable WAL mode for file-based databases (or DELETE for WSL2 Windows paths)
+	// Re-enable WAL mode (or DELETE for WSL2)
 	isInMemory := s.dbPath == ":memory:" ||
 		(strings.HasPrefix(s.connStr, "file:") && strings.Contains(s.connStr, "mode=memory"))
 	if !isInMemory {
@@ -530,18 +528,24 @@ func (s *SQLiteStorage) reconnect() error {
 		}
 		if _, err := db.Exec("PRAGMA journal_mode=" + journalMode); err != nil {
 			_ = db.Close()
-			return fmt.Errorf("failed to enable %s mode on reconnect: %w", journalMode, err)
+			return fmt.Errorf("failed to enable %s mode: %w", journalMode, err)
 		}
 	}
 
-	// Test the new connection
+	// VALIDATE new connection works
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return fmt.Errorf("failed to ping on reconnect: %w", err)
+		return fmt.Errorf("failed to ping new connection: %w", err)
 	}
 
-	// Swap in the new connection
+	// SUCCESS: Swap connections (old one can now fail safely)
+	oldDB := s.db
 	s.db = db
+
+	// Close old connection (errors are non-fatal since file may be deleted)
+	if err := oldDB.Close(); err != nil {
+		debugPrintf("reconnect: close old connection: %v (non-fatal)\n", err)
+	}
 
 	// Update freshness checker state
 	if s.freshness != nil {
