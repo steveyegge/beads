@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -79,7 +80,8 @@ func NewFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error
 	return NewFromConfigWithOptions(ctx, beadsDir, Options{})
 }
 
-// NewFromConfigWithOptions creates a storage backend with options from metadata.json.
+// NewFromConfigWithOptions creates a storage backend with options from configuration.
+// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
 func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
@@ -89,7 +91,8 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 		cfg = configfile.DefaultConfig()
 	}
 
-	backend := cfg.GetBackend()
+	// Use GetBackendFromConfig which checks config.yaml first, then metadata.json
+	backend := GetBackendFromConfig(beadsDir)
 	switch backend {
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
@@ -102,8 +105,18 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	}
 }
 
-// GetBackendFromConfig returns the backend type from metadata.json
+// GetBackendFromConfig returns the backend type from configuration.
+// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
+// This allows users to set storage-backend in config.yaml for team-wide configuration.
 func GetBackendFromConfig(beadsDir string) string {
+	// Check config.yaml first (team-shared configuration)
+	if yamlBackend := config.GetYamlConfig("storage-backend"); yamlBackend != "" {
+		if yamlBackend == configfile.BackendDolt || yamlBackend == configfile.BackendSQLite {
+			return yamlBackend
+		}
+	}
+
+	// Fall back to metadata.json (legacy/local configuration)
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
 		return configfile.BackendSQLite

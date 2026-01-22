@@ -27,9 +27,10 @@ var YamlOnlyKeys = map[string]bool{
 	"auto-start-daemon": true,
 
 	// Database and identity
-	"db":       true,
-	"actor":    true,
-	"identity": true,
+	"db":              true,
+	"actor":           true,
+	"identity":        true,
+	"storage-backend": true, // "sqlite" (default) or "dolt"
 
 	// Timing settings
 	"flush-debounce":       true,

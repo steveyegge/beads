@@ -21,6 +21,7 @@ func TestIsYamlOnlyKey(t *testing.T) {
 		{"flush-debounce", true},
 		{"git.author", true},
 		{"git.no-gpg-sign", true},
+		{"storage-backend", true}, // Storage backend: sqlite or dolt
 
 		// Prefix matches
 		{"routing.mode", true},
