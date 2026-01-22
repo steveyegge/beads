@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -211,13 +212,12 @@ func autoImportIfNewer() {
 
 	// hq-c2495f: Skip auto-import for Dolt backend (Dolt is source of truth, not JSONL)
 	// This mirrors the check in internal/autoimport/autoimport.go
+	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
 	if dbPath != "" {
 		dbDir := filepath.Dir(dbPath)
-		if cfg, err := configfile.Load(dbDir); err == nil && cfg != nil {
-			if cfg.GetBackend() == configfile.BackendDolt {
-				debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
-				return
-			}
+		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
+			debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
+			return
 		}
 	}
 
@@ -503,13 +503,12 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 
 	// hq-c2495f: Skip integrity validation for Dolt backend
 	// In Dolt mode, JSONL is export-only, so mismatches don't matter
+	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
 	if dbPath != "" {
 		dbDir := filepath.Dir(dbPath)
-		if cfg, err := configfile.Load(dbDir); err == nil && cfg != nil {
-			if cfg.GetBackend() == configfile.BackendDolt {
-				debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
-				return false, nil
-			}
+		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
+			debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
+			return false, nil
 		}
 	}
 
