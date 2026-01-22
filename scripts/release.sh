@@ -155,7 +155,7 @@ else
     else
         git tag "v${VERSION}"
     fi
-    
+
     if ! git push origin "v${VERSION}"; then
         echo -e "${RED}✗ Tag push failed${NC}"
         exit 1
@@ -185,13 +185,13 @@ if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] Would run: brew upgrade bd"
 else
     brew update
-    
+
     # Check if bd is installed via brew
     if brew list bd >/dev/null 2>&1; then
         brew upgrade bd || brew reinstall bd
     else
         echo -e "${YELLOW}⚠ bd not installed via Homebrew, skipping upgrade${NC}"
-        echo "To install: brew install steveyegge/beads/bd"
+        echo "To install: brew install beads"
     fi
 fi
 echo -e "${GREEN}✓ Local installation upgraded${NC}\n"

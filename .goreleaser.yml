@@ -200,24 +200,24 @@ release:
     ## beads v{{.Version}}
 
     Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), Windows (AMD64 & ARM64), Android/Termux (ARM64), and FreeBSD.
-    
+
     ### Installation
-    
+
     **Homebrew (macOS/Linux):**
     ```bash
-    brew install steveyegge/beads/bd
+    brew install beads
     ```
-    
+
     **Quick Install (macOS/Linux/FreeBSD):**
     ```bash
     curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
     ```
-    
+
     **Windows (PowerShell):**
     ```powershell
     irm https://raw.githubusercontent.com/steveyegge/beads/main/install.ps1 | iex
     ```
-    
+
     **Manual Install:**
     Download the appropriate binary for your platform below, extract it, and place it in your PATH.
 
