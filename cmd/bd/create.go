@@ -257,6 +257,33 @@ var createCmd = &cobra.Command{
 			return
 		}
 
+		// Auto-route based on explicit ID prefix (if no explicit --rig/--prefix provided)
+		// When creating an issue with --id=pq-xxx, automatically route to the database
+		// that handles the pq- prefix based on routes.jsonl
+		if explicitID != "" && rigOverride == "" && prefixOverride == "" {
+			prefix := routing.ExtractPrefix(explicitID)
+			if prefix != "" {
+				// Load routes from town level
+				townBeadsDir, err := findTownBeadsDir()
+				if err == nil {
+					routes, err := routing.LoadTownRoutes(townBeadsDir)
+					if err == nil && len(routes) > 0 {
+						// Check if this prefix matches a route to a different rig
+						for _, route := range routes {
+							if route.Prefix == prefix && route.Path != "" && route.Path != "." {
+								// Found a matching route - auto-route to that rig
+								rigName := routing.ExtractProjectFromPath(route.Path)
+								if rigName != "" {
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
 		targetRig := rigOverride
@@ -267,7 +294,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
 			return
 		}
 
@@ -780,9 +807,9 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 }
 
-// createInRig creates an issue in a different rig using --rig flag.
+// createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -856,8 +883,9 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		deferUntil = &t
 	}
 
-	// Create issue without ID - CreateIssue will generate one with the correct prefix
+	// Create issue with explicit ID if provided, otherwise CreateIssue will generate one
 	issue := &types.Issue{
+		ID:                 explicitID, // Set explicit ID if provided (empty string if not)
 		Title:              title,
 		Description:        description,
 		Design:             design,
