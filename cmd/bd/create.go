@@ -794,7 +794,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 	// Try to connect to target repo's daemon (if running)
 	flushed := false
 	if client, err := rpc.TryConnect(socketPath); err == nil && client != nil {
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		// Daemon is running - ask it to export
 		debug.Logf("found running daemon in target repo, requesting export")
@@ -835,7 +835,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 }
 
 // performAtomicExport writes issues to JSONL using atomic temp file + rename
-func performAtomicExport(ctx context.Context, jsonlPath string, issues []*types.Issue, targetStore storage.Storage) error {
+func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Issue, _ storage.Storage) error {
 	// Create temp file with PID suffix for atomic write
 	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
 
@@ -848,7 +848,7 @@ func performAtomicExport(ctx context.Context, jsonlPath string, issues []*types.
 	}()
 
 	// Open temp file for writing
-	tempFile, err := os.Create(tempPath)
+	tempFile, err := os.Create(tempPath) //nolint:gosec // tempPath is safely constructed from jsonlPath
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -857,14 +857,14 @@ func performAtomicExport(ctx context.Context, jsonlPath string, issues []*types.
 	encoder := json.NewEncoder(tempFile)
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-			tempFile.Close()
+			_ = tempFile.Close()
 			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
 	}
 
 	// Sync to disk before rename
 	if err := tempFile.Sync(); err != nil {
-		tempFile.Close()
+		_ = tempFile.Close()
 		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
 
