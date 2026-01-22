@@ -48,10 +48,17 @@ const (
 	TriggerChange = "change"
 )
 
-// GetSyncMode returns the configured sync mode from the database, defaulting to git-portable.
-// This reads from storage.Storage (database), not config.yaml.
-// For config.yaml access, use config.GetSyncMode() instead.
+// GetSyncMode returns the configured sync mode, checking config.yaml first (where bd config set writes),
+// then falling back to database. This fixes GH#??? where yaml and database were inconsistent.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
+	// First check config.yaml (where bd config set writes for sync.* keys)
+	yamlMode := config.GetSyncMode()
+	if yamlMode != "" && yamlMode != config.SyncModeGitPortable {
+		// Non-default value in yaml takes precedence
+		return string(yamlMode)
+	}
+
+	// Fall back to database (legacy path)
 	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
 	if err != nil || mode == "" {
 		return SyncModeGitPortable
