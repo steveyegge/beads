@@ -478,3 +478,57 @@ func TestSovereigntyString(t *testing.T) {
 		t.Errorf("SovereigntyNone.String() = %q, want %q", got, "")
 	}
 }
+
+func TestFieldStrategyString(t *testing.T) {
+	tests := []struct {
+		strategy FieldStrategy
+		expected string
+	}{
+		{FieldStrategyNewest, "newest"},
+		{FieldStrategyMax, "max"},
+		{FieldStrategyUnion, "union"},
+		{FieldStrategyManual, "manual"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.strategy.String(); got != tt.expected {
+			t.Errorf("%v.String() = %q, want %q", tt.strategy, got, tt.expected)
+		}
+	}
+}
+
+func TestValidFieldStrategies(t *testing.T) {
+	strategies := ValidFieldStrategies()
+	if len(strategies) != 4 {
+		t.Errorf("ValidFieldStrategies() returned %d strategies, want 4", len(strategies))
+	}
+	expected := []string{"newest", "max", "union", "manual"}
+	for i, s := range strategies {
+		if s != expected[i] {
+			t.Errorf("ValidFieldStrategies()[%d] = %q, want %q", i, s, expected[i])
+		}
+	}
+}
+
+func TestIsValidFieldStrategy(t *testing.T) {
+	tests := []struct {
+		strategy string
+		valid    bool
+	}{
+		{"newest", true},
+		{"max", true},
+		{"union", true},
+		{"manual", true},
+		{"NEWEST", true},      // case insensitive
+		{"  max  ", true},     // whitespace trimmed
+		{"invalid", false},
+		{"lww", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		if got := IsValidFieldStrategy(tt.strategy); got != tt.valid {
+			t.Errorf("IsValidFieldStrategy(%q) = %v, want %v", tt.strategy, got, tt.valid)
+		}
+	}
+}

@@ -61,7 +61,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - darwin
     goarch:
@@ -77,7 +77,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - darwin
     goarch:

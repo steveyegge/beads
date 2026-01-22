@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -48,7 +47,6 @@ Common operations:
   bd daemon killall              Stop all running daemons
 
 Run 'bd daemon --help' to see all subcommands.`,
-	PersistentPreRunE: guardDaemonUnsupportedForDolt,
 	Run: func(cmd *cobra.Command, args []string) {
 		start, _ := cmd.Flags().GetBool("start")
 		stop, _ := cmd.Flags().GetBool("stop")
@@ -422,13 +420,17 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	}
 
 	// Start dolt sql-server if federation mode is enabled and backend is dolt
-	var doltServer *dolt.Server
+	var doltServer *DoltServerHandle
 	factoryOpts := factory.Options{}
 	if federation && backend != configfile.BackendDolt {
 		log.Warn("federation mode requires dolt backend, ignoring --federation flag")
 		federation = false
 	}
 	if federation && backend == configfile.BackendDolt {
+		if !DoltServerAvailable() {
+			log.Error("federation mode requires CGO; use pre-built binaries from GitHub releases")
+			return
+		}
 		log.Info("starting dolt sql-server for federation mode")
 
 		doltPath := filepath.Join(beadsDir, "dolt")
@@ -437,22 +439,16 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		// Use provided ports or defaults
 		sqlPort := federationPort
 		if sqlPort == 0 {
-			sqlPort = dolt.DefaultSQLPort
+			sqlPort = DoltDefaultSQLPort
 		}
 		remotePort := remotesapiPort
 		if remotePort == 0 {
-			remotePort = dolt.DefaultRemotesAPIPort
+			remotePort = DoltDefaultRemotesAPIPort
 		}
 
-		doltServer = dolt.NewServer(dolt.ServerConfig{
-			DataDir:        doltPath,
-			SQLPort:        sqlPort,
-			RemotesAPIPort: remotePort,
-			Host:           "127.0.0.1",
-			LogFile:        serverLogFile,
-		})
-
-		if err := doltServer.Start(ctx); err != nil {
+		var err error
+		doltServer, err = StartDoltServer(ctx, doltPath, serverLogFile, sqlPort, remotePort)
+		if err != nil {
 			log.Error("failed to start dolt sql-server", "error", err)
 			return
 		}

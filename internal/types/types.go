@@ -486,21 +486,9 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Well-known custom types - constants for code convenience.
-// These are NOT built-in types and require types.custom configuration for validation.
-// Used by Gas Town and other infrastructure that extends beads.
-const (
-	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
-	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
-	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
-	TypeGate         IssueType = "gate"          // Async coordination gate
-	TypeAgent        IssueType = "agent"         // Agent identity bead
-	TypeRole         IssueType = "role"          // Agent role definition
-	TypeRig          IssueType = "rig"           // Rig identity bead (multi-repo workspace)
-	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
-	TypeEvent        IssueType = "event"         // Operational state change record
-	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
-)
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// were removed from beads core. They are now purely custom types with no built-in constants.
+// Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -538,16 +526,12 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 }
 
 // Normalize maps issue type aliases to their canonical form.
-// For example, "enhancement" -> "feature", "mr" -> "merge-request".
+// For example, "enhancement" -> "feature".
 // Case-insensitive to match util.NormalizeIssueType behavior.
 func (t IssueType) Normalize() IssueType {
 	switch strings.ToLower(string(t)) {
 	case "enhancement", "feat":
 		return TypeFeature
-	case "mr":
-		return TypeMergeRequest
-	case "mol":
-		return TypeMolecule
 	default:
 		return t
 	}
@@ -1023,6 +1007,11 @@ type WorkFilter struct {
 
 	// Time-based deferral filtering (GH#820)
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
+
+	// Molecule step filtering
+	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)
+	// Set to true for internal callers that need to see mol steps (e.g., findGateReadyMolecules)
+	IncludeMolSteps bool
 }
 
 // StaleFilter is used to filter stale issue queries
@@ -1055,6 +1044,15 @@ const (
 	BondTypeParallel    = "parallel"    // B runs alongside A
 	BondTypeConditional = "conditional" // B runs only if A fails
 	BondTypeRoot        = "root"        // Marks the primary/root component
+)
+
+// ID prefix constants for molecule/wisp instantiation.
+// These prefixes are inserted into issue IDs: <project>-<prefix>-<id>
+// Used by: cmd/bd/pour.go, cmd/bd/wisp.go (ID generation)
+// Exclusion from bd ready is config-driven via ready.exclude_id_patterns (default: -mol-,-wisp-)
+const (
+	IDPrefixMol  = "mol"  // Persistent molecules (bd-mol-xxx)
+	IDPrefixWisp = "wisp" // Ephemeral wisps (bd-wisp-xxx)
 )
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).

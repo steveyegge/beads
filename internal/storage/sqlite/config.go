@@ -24,6 +24,7 @@ func (s *SQLiteStorage) SetConfig(ctx context.Context, key, value string) error 
 
 // GetConfig gets a configuration value
 func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, error) {
+	s.checkFreshness()
 	// Hold read lock during database operations to prevent reconnect() from
 	// closing the connection mid-query (GH#607 race condition fix)
 	s.reconnectMu.RLock()
@@ -39,6 +40,7 @@ func (s *SQLiteStorage) GetConfig(ctx context.Context, key string) (string, erro
 
 // GetAllConfig gets all configuration key-value pairs
 func (s *SQLiteStorage) GetAllConfig(ctx context.Context) (map[string]string, error) {
+	s.checkFreshness()
 	// Hold read lock during database operations to prevent reconnect() from
 	// closing the connection mid-query (GH#607 race condition fix)
 	s.reconnectMu.RLock()
@@ -114,6 +116,7 @@ func (s *SQLiteStorage) SetMetadata(ctx context.Context, key, value string) erro
 
 // GetMetadata gets a metadata value (for internal state like import hashes)
 func (s *SQLiteStorage) GetMetadata(ctx context.Context, key string) (string, error) {
+	s.checkFreshness()
 	// Hold read lock during database operations to prevent reconnect() from
 	// closing the connection mid-query (GH#607 race condition fix)
 	s.reconnectMu.RLock()

@@ -188,6 +188,30 @@ func importToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		}
 		issue.SetDefaults() // Apply defaults for omitted fields
 
+		// Migrate old JSONL format: auto-correct deleted status to tombstone
+		// This handles JSONL files from versions that used "deleted" instead of "tombstone"
+		// (GH#1223: Stuck in sync diversion loop)
+		if issue.Status == types.Status("deleted") && issue.DeletedAt != nil {
+			issue.Status = types.StatusTombstone
+		}
+
+		// Fix: Any non-tombstone issue with deleted_at set is malformed and should be tombstone
+		// This catches issues that may have been corrupted or migrated incorrectly
+		if issue.Status != types.StatusTombstone && issue.DeletedAt != nil {
+			issue.Status = types.StatusTombstone
+		}
+
+		if issue.Status == types.StatusClosed && issue.ClosedAt == nil {
+			now := time.Now()
+			issue.ClosedAt = &now
+		}
+
+		// Ensure tombstones have deleted_at set (fix for malformed data)
+		if issue.Status == types.StatusTombstone && issue.DeletedAt == nil {
+			now := time.Now()
+			issue.DeletedAt = &now
+		}
+
 		issues = append(issues, &issue)
 	}
 

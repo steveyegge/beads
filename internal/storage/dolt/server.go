@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -103,13 +102,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Create command
+	// #nosec G204 -- dolt binary is fixed; args are derived from internal config.
 	s.cmd = exec.CommandContext(ctx, "dolt", args...)
 	s.cmd.Dir = s.cfg.DataDir
 
-	// Set up process group for clean shutdown
-	s.cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Set up process group for clean shutdown (Unix-only; no-op on Windows).
+	setDoltServerSysProcAttr(s.cmd)
 
 	// Set up logging
 	if s.cfg.LogFile != "" {
@@ -162,13 +160,8 @@ func (s *Server) Stop() error {
 		return nil
 	}
 
-	// Try graceful shutdown first (SIGTERM)
-	if err := s.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		// Process may already be dead
-		if !strings.Contains(err.Error(), "process already finished") {
-			return fmt.Errorf("failed to send SIGTERM: %w", err)
-		}
-	}
+	// Best-effort graceful shutdown (platform-specific).
+	_ = terminateProcess(s.cmd.Process)
 
 	// Wait for graceful shutdown with timeout
 	done := make(chan error, 1)
@@ -249,11 +242,9 @@ func (s *Server) waitForReady(ctx context.Context) error {
 		default:
 		}
 
-		// Check if process is still alive using signal 0
-		if s.cmd.Process != nil {
-			if err := s.cmd.Process.Signal(syscall.Signal(0)); err != nil {
-				return fmt.Errorf("server process exited unexpectedly")
-			}
+		// Best-effort: if we can tell the process is dead, fail fast.
+		if s.cmd.Process != nil && !processMayBeAlive(s.cmd.Process) {
+			return fmt.Errorf("server process exited unexpectedly")
 		}
 
 		// Try to connect
@@ -272,6 +263,7 @@ func (s *Server) waitForReady(ctx context.Context) error {
 // GetRunningServerPID returns the PID of a running server from the PID file, or 0 if not running
 func GetRunningServerPID(dataDir string) int {
 	pidFile := filepath.Join(dataDir, "dolt-server.pid")
+	// #nosec G304 -- pidFile is derived from internal dataDir.
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return 0
@@ -288,9 +280,8 @@ func GetRunningServerPID(dataDir string) int {
 		return 0
 	}
 
-	// On Unix, FindProcess always succeeds, so we need to check if it's alive
-	if err := process.Signal(syscall.Signal(0)); err != nil {
-		// Process is not running
+	// Best-effort liveness check (platform-specific).
+	if !processMayBeAlive(process) {
 		_ = os.Remove(pidFile)
 		return 0
 	}
@@ -305,13 +296,8 @@ func StopServerByPID(pid int) error {
 		return err
 	}
 
-	// Try graceful shutdown first
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		if !strings.Contains(err.Error(), "process already finished") {
-			return err
-		}
-		return nil
-	}
+	// Best-effort graceful shutdown (platform-specific).
+	_ = terminateProcess(process)
 
 	// Wait for graceful shutdown
 	done := make(chan struct{})

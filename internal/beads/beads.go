@@ -342,14 +342,13 @@ const (
 	StatusClosed     = types.StatusClosed
 )
 
-// IssueType constants
+// IssueType constants (core types only - Gas Town types removed)
 const (
-	TypeBug      = types.TypeBug
-	TypeFeature  = types.TypeFeature
-	TypeTask     = types.TypeTask
-	TypeEpic     = types.TypeEpic
-	TypeChore    = types.TypeChore
-	TypeMolecule = types.TypeMolecule
+	TypeBug     = types.TypeBug
+	TypeFeature = types.TypeFeature
+	TypeTask    = types.TypeTask
+	TypeEpic    = types.TypeEpic
+	TypeChore   = types.TypeChore
 )
 
 // DependencyType constants

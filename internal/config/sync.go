@@ -76,12 +76,34 @@ const (
 	ConflictStrategyManual ConflictStrategy = "manual"
 )
 
+// FieldStrategy represents the merge strategy for a specific field
+type FieldStrategy string
+
+const (
+	// FieldStrategyNewest uses last-write-wins (default for scalar fields)
+	FieldStrategyNewest FieldStrategy = "newest"
+	// FieldStrategyMax takes the maximum value (for counters like compaction_level)
+	FieldStrategyMax FieldStrategy = "max"
+	// FieldStrategyUnion performs set union (for arrays like labels, waiters)
+	FieldStrategyUnion FieldStrategy = "union"
+	// FieldStrategyManual flags conflict for user resolution (for fields like estimated_minutes)
+	FieldStrategyManual FieldStrategy = "manual"
+)
+
 // validConflictStrategies is the set of allowed conflict strategy values
 var validConflictStrategies = map[ConflictStrategy]bool{
 	ConflictStrategyNewest: true,
 	ConflictStrategyOurs:   true,
 	ConflictStrategyTheirs: true,
 	ConflictStrategyManual: true,
+}
+
+// validFieldStrategies is the set of allowed per-field strategy values
+var validFieldStrategies = map[FieldStrategy]bool{
+	FieldStrategyNewest: true,
+	FieldStrategyMax:    true,
+	FieldStrategyUnion:  true,
+	FieldStrategyManual: true,
 }
 
 // ValidConflictStrategies returns the list of valid conflict strategy values.
@@ -97,6 +119,21 @@ func ValidConflictStrategies() []string {
 // IsValidConflictStrategy returns true if the given string is a valid conflict strategy.
 func IsValidConflictStrategy(strategy string) bool {
 	return validConflictStrategies[ConflictStrategy(strings.ToLower(strings.TrimSpace(strategy)))]
+}
+
+// ValidFieldStrategies returns the list of valid per-field strategy values.
+func ValidFieldStrategies() []string {
+	return []string{
+		string(FieldStrategyNewest),
+		string(FieldStrategyMax),
+		string(FieldStrategyUnion),
+		string(FieldStrategyManual),
+	}
+}
+
+// IsValidFieldStrategy returns true if the given string is a valid per-field strategy.
+func IsValidFieldStrategy(strategy string) bool {
+	return validFieldStrategies[FieldStrategy(strings.ToLower(strings.TrimSpace(strategy)))]
 }
 
 // Sovereignty represents the federation sovereignty tier
@@ -222,4 +259,9 @@ func (s ConflictStrategy) String() string {
 // String returns the string representation of the Sovereignty.
 func (s Sovereignty) String() string {
 	return string(s)
+}
+
+// String returns the string representation of the FieldStrategy.
+func (f FieldStrategy) String() string {
+	return string(f)
 }

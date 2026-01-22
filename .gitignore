@@ -69,6 +69,7 @@ Thumbs.db
 result
 
 # direnv (machine-specific environment)
+.direnv
 .envrc
 
 # GoReleaser build artifacts

@@ -69,7 +69,7 @@ func resolveConflictsInteractively(conflicts []InteractiveConflict) ([]*beads.Is
 			for j := i; j < len(conflicts); j++ {
 				c := conflicts[j]
 				if c.Local != nil && c.Remote != nil {
-					merged := mergeFieldLevel(c.Base, c.Local, c.Remote)
+					merged, _ := mergeFieldLevel(c.Base, c.Local, c.Remote)
 					resolved = append(resolved, merged)
 				} else if c.Local != nil {
 					resolved = append(resolved, c.Local)
@@ -293,7 +293,7 @@ func promptConflictResolution(reader *bufio.Reader, conflict InteractiveConflict
 
 		case "merged":
 			// Do field-level merge (same as automatic LWW merge)
-			merged := mergeFieldLevel(conflict.Base, local, remote)
+			merged, _ := mergeFieldLevel(conflict.Base, local, remote)
 			return InteractiveResolution{Choice: "merged", Issue: merged}, nil
 
 		case "skip":

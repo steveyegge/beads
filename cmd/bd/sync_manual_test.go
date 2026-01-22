@@ -285,7 +285,7 @@ func TestInteractiveResolutionMerge(t *testing.T) {
 
 	// mergeFieldLevel should pick local values (newer) for scalars
 	// and union for labels
-	merged := mergeFieldLevel(nil, local, remote)
+	merged, _ := mergeFieldLevel(nil, local, remote)
 
 	if merged.Title != "Local title" {
 		t.Errorf("Expected title 'Local title', got %q", merged.Title)
