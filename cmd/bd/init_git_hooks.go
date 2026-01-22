@@ -397,10 +397,25 @@ if [ ! -f "$BEADS_DIR/issues.jsonl" ]; then
     exit 0
 fi
 
-# Import the updated JSONL
-if ! bd import -i "$BEADS_DIR/issues.jsonl" >/dev/null 2>&1; then
-    echo "Warning: Failed to import bd changes after merge" >&2
-    echo "Run 'bd import -i $BEADS_DIR/issues.jsonl' manually to see the error" >&2
+# Skip import for Dolt backend (Dolt is source of truth, not JSONL)
+if [ -f "$BEADS_DIR/metadata.json" ]; then
+    # Check for "backend": "dolt" in metadata.json
+    if grep -q '"backend"[[:space:]]*:[[:space:]]*"dolt"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
+        exit 0
+    fi
+fi
+
+# Import the updated JSONL, capturing stderr for better error reporting
+IMPORT_OUTPUT=$(bd import -i "$BEADS_DIR/issues.jsonl" 2>&1)
+IMPORT_EXIT=$?
+
+if [ $IMPORT_EXIT -ne 0 ]; then
+    echo "Warning: Failed to import bd changes after merge (exit code $IMPORT_EXIT)" >&2
+    if [ -n "$IMPORT_OUTPUT" ]; then
+        echo "Error details:" >&2
+        echo "$IMPORT_OUTPUT" | head -5 >&2
+    fi
+    echo "Run 'bd import -i $BEADS_DIR/issues.jsonl' manually to diagnose" >&2
 fi
 
 exit 0
