@@ -1,8 +1,7 @@
 # Draft PR: Dolt Backend Operational Improvements
 
-> **Status**: SUBMITTED - Core PR merged
+> **Status**: DRAFT - Prerequisites incomplete
 > **Tracking**: hq-3446fc.13
-> **PR**: https://github.com/steveyegge/beads/pull/1260 (Lock retry + stale lock cleanup)
 
 ## Summary
 
@@ -72,25 +71,6 @@ No migration required. New configuration options have sensible defaults:
 - `LockRetries`: 30
 - `LockRetryDelay`: 100ms
 - `IdleTimeout`: 30s (daemon), 0 (CLI)
-
----
-
-## Submission Status (2026-01-22)
-
-### PR #1260 - Core Operational Fixes (Submitted)
-- ✅ Lock retry with exponential backoff
-- ✅ Stale lock file cleanup
-- ✅ Transient error detection (format version, lock contention)
-
-### Remaining for Follow-up PRs
-- ⏳ Idle connection management (bd-d705ea)
-- ⏳ Read-only mode improvements (bd-o3gt)
-- ⏳ Import support for Dolt backend
-- ⏳ Doctor Dolt diagnostics
-- ⏳ Server mode auto-start (bd-f4f78a)
-
-The core PR addresses the most critical production issues. Additional
-improvements can be submitted incrementally as separate PRs.
 
 ---
 
