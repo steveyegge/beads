@@ -16,8 +16,26 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// shouldSkipDueToSameBranch checks if operation should be skipped because
+// sync-branch == current-branch. Returns true if should skip, logs reason.
+// Uses fail-open pattern: if branch detection fails, allows operation to proceed.
+func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, operation string, log daemonLogger) bool {
+	syncBranch, err := syncbranch.Get(ctx, store)
+	if err != nil || syncBranch == "" {
+		return false // No sync branch configured, allow
+	}
+
+	if syncbranch.IsSyncBranchSameAsCurrent(ctx, syncBranch) {
+		log.log("Skipping %s: sync-branch '%s' is your current branch. Use a dedicated sync branch.", operation, syncBranch)
+		return true
+	}
+
+	return false
+}
 
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
 // If multi-repo mode is configured, routes issues to their respective JSONL files.
@@ -426,6 +444,13 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		if skipGit {
 			mode = "local export"
 		}
+
+		// Guard: Skip if sync-branch == current-branch (GH#1258)
+		// Local-only mode (skipGit) doesn't use sync-branch, so skip the guard
+		if !skipGit && shouldSkipDueToSameBranch(exportCtx, store, mode, log) {
+			return
+		}
+
 		log.log("Starting %s...", mode)
 
 		jsonlPath := findJSONLPath()

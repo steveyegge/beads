@@ -1957,3 +1957,98 @@ func TestDaemonSyncBranchForceOverwrite(t *testing.T) {
 	// Clean up git caches to prevent test pollution
 	git.ResetCaches()
 }
+
+// TestDaemonExportSkipsSameBranch tests that daemon export is skipped when
+// sync-branch == current-branch. This prevents the worktree conflict issue (GH#1258).
+func TestDaemonExportSkipsSameBranch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Clean up git caches to avoid pollution from previous tests
+	git.ResetCaches()
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	// Change to temp directory first (so git commands work)
+	t.Chdir(tmpDir)
+
+	// Get current branch name
+	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd.Dir = tmpDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to get current branch: %v", err)
+	}
+	currentBranch := strings.TrimSpace(string(output))
+
+	// Set BEADS_SYNC_BRANCH to the current branch (highest priority config)
+	// This is the bug case: sync-branch == current-branch
+	t.Setenv(syncbranch.EnvVar, currentBranch)
+
+	// Setup test store
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create test issue
+	issue := &types.Issue{
+		Title:     "Test same branch guard",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Export to JSONL (initial export for setup)
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	if err := exportToJSONLWithStore(ctx, store, jsonlPath); err != nil {
+		t.Fatalf("Failed to export: %v", err)
+	}
+
+	// Create logger that captures output
+	var logBuf strings.Builder
+	log := newTestLoggerWithWriter(&logBuf)
+
+	// Call performExport (via createExportFunc) - this should be skipped
+	exportFn := createExportFunc(ctx, store, true, false, log)
+	exportFn()
+
+	// Verify the operation was skipped by checking log output
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "Skipping") || !strings.Contains(logOutput, "sync-branch") {
+		t.Errorf("Expected log to contain skip message about sync-branch, got:\n%s", logOutput)
+	}
+
+	// Verify the log mentions the current branch
+	if !strings.Contains(logOutput, currentBranch) {
+		t.Errorf("Expected log to mention branch '%s', got:\n%s", currentBranch, logOutput)
+	}
+
+	// Verify "Starting export" was NOT logged (guard returned early)
+	if strings.Contains(logOutput, "Starting export") {
+		t.Error("Expected export to be skipped before 'Starting export' was logged")
+	}
+
+	// Clean up git caches
+	git.ResetCaches()
+}
