@@ -893,7 +893,7 @@ func FindOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
 	if err != nil {
 		return []OrphanIssue{}, nil
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	return FindOrphanedIssues(path, provider)
 }
