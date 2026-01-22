@@ -45,7 +45,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		// - role: agent role definitions (reference metadata)
 		// - rig: rig identity beads (reference metadata)
 		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
-		// Exclude IDs matching configured patterns (GH#1239)
+		// Exclude IDs matching configured patterns
 		// Default patterns: -mol- (molecule steps), -wisp- (ephemeral wisps)
 		// Configure with: bd config set ready.exclude_id_patterns "-mol-,-wisp-"
 		// Use --type=task to explicitly include them, or IncludeMolSteps for internal callers

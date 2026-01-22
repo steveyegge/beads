@@ -1907,7 +1907,7 @@ func TestIsBlocked(t *testing.T) {
 }
 
 // TestGetReadyWorkExcludesMolSteps tests that molecule steps (IDs containing -mol-) are
-// excluded from bd ready by default, but included when filtering by explicit type (GH#1239).
+// excluded from bd ready by default, but included when filtering by explicit type.
 func TestGetReadyWorkExcludesMolSteps(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -1957,7 +1957,7 @@ func TestGetReadyWorkExcludesMolSteps(t *testing.T) {
 	}
 }
 
-// TestGetReadyWorkExcludeIDPatternsConfig tests custom exclusion patterns via config (GH#1239).
+// TestGetReadyWorkExcludeIDPatternsConfig tests custom exclusion patterns via config.
 func TestGetReadyWorkExcludeIDPatternsConfig(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := env.Ctx
