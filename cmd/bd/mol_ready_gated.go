@@ -131,7 +131,8 @@ func findGateReadyMolecules(ctx context.Context, s storage.Storage) ([]*GatedMol
 	}
 
 	// Step 2: Get ready work to check which steps are ready
-	readyIssues, err := s.GetReadyWork(ctx, types.WorkFilter{Limit: 500})
+	// IncludeMolSteps: true because we specifically need to see molecule steps here
+	readyIssues, err := s.GetReadyWork(ctx, types.WorkFilter{Limit: 500, IncludeMolSteps: true})
 	if err != nil {
 		return nil, fmt.Errorf("getting ready work: %w", err)
 	}
