@@ -47,7 +47,7 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
 		// Exclude IDs matching configured patterns (GH#1239)
 		// Default patterns: -mol- (molecule steps), -wisp- (ephemeral wisps)
-		// Configure with: bd config set ready.exclude_id_patterns "-mol-,-wisp-,-role-"
+		// Configure with: bd config set ready.exclude_id_patterns "-mol-,-wisp-"
 		// Use --type=task to explicitly include them, or IncludeMolSteps for internal callers
 		if !filter.IncludeMolSteps {
 			patterns := s.getExcludeIDPatterns(ctx)
@@ -843,7 +843,7 @@ var DefaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
 
 // getExcludeIDPatterns returns the ID patterns to exclude from GetReadyWork.
 // Reads from ready.exclude_id_patterns config, defaults to DefaultExcludeIDPatterns.
-// Config format: comma-separated patterns, e.g., "-mol-,-wisp-,-role-"
+// Config format: comma-separated patterns, e.g., "-mol-,-wisp-"
 func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
 	value, err := s.GetConfig(ctx, ExcludeIDPatternsConfigKey)
 	if err != nil || value == "" {
