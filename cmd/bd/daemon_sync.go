@@ -601,6 +601,12 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 			mode = "local auto-import"
 		}
 
+		// Guard: Skip if sync-branch == current-branch (GH#1258)
+		// Local-only mode (skipGit) doesn't use sync-branch, so skip the guard
+		if !skipGit && shouldSkipDueToSameBranch(importCtx, store, mode, log) {
+			return
+		}
+
 		// Check backoff before attempting sync (skip for local mode)
 		if !skipGit {
 			jsonlPath := findJSONLPath()
@@ -739,6 +745,13 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		if skipGit {
 			mode = "local sync cycle"
 		}
+
+		// Guard: Skip if sync-branch == current-branch (GH#1258)
+		// Local-only mode (skipGit) doesn't use sync-branch, so skip the guard
+		if !skipGit && shouldSkipDueToSameBranch(syncCtx, store, mode, log) {
+			return
+		}
+
 		log.log("Starting %s...", mode)
 
 		jsonlPath := findJSONLPath()
