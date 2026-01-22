@@ -261,27 +261,20 @@ func (s *DoltStore) UpdatePeerLastSync(ctx context.Context, name string) error {
 // setFederationCredentials sets DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD env vars.
 // Returns a cleanup function that must be called (typically via defer) to unset them.
 // The caller must hold federationEnvMutex.
-func setFederationCredentials(username, password string) (func(), error) {
-	var setErr error
+func setFederationCredentials(username, password string) func() {
 	if username != "" {
-		if err := os.Setenv("DOLT_REMOTE_USER", username); err != nil {
-			setErr = err
-		}
+		// Best-effort: failures here should not crash the caller.
+		_ = os.Setenv("DOLT_REMOTE_USER", username)
 	}
 	if password != "" {
-		if err := os.Setenv("DOLT_REMOTE_PASSWORD", password); err != nil && setErr == nil {
-			setErr = err
-		}
+		// Best-effort: failures here should not crash the caller.
+		_ = os.Setenv("DOLT_REMOTE_PASSWORD", password)
 	}
-	cleanup := func() {
-		if err := os.Unsetenv("DOLT_REMOTE_USER"); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to unset DOLT_REMOTE_USER: %v\n", err)
-		}
-		if err := os.Unsetenv("DOLT_REMOTE_PASSWORD"); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to unset DOLT_REMOTE_PASSWORD: %v\n", err)
-		}
+	return func() {
+		// Best-effort cleanup.
+		_ = os.Unsetenv("DOLT_REMOTE_USER")
+		_ = os.Unsetenv("DOLT_REMOTE_PASSWORD")
 	}
-	return cleanup, setErr
 }
 
 // withPeerCredentials executes a function with peer credentials set in environment.
@@ -297,11 +290,7 @@ func (s *DoltStore) withPeerCredentials(ctx context.Context, peerName string, fn
 	// If we have credentials, set env vars with mutex protection
 	if peer != nil && (peer.Username != "" || peer.Password != "") {
 		federationEnvMutex.Lock()
-		cleanup, err := setFederationCredentials(peer.Username, peer.Password)
-		if err != nil {
-			federationEnvMutex.Unlock()
-			return fmt.Errorf("failed to set federation credentials: %w", err)
-		}
+		cleanup := setFederationCredentials(peer.Username, peer.Password)
 		defer func() {
 			cleanup()
 			federationEnvMutex.Unlock()
