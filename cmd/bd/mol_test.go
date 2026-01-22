@@ -2329,6 +2329,79 @@ func TestAnalyzeMoleculeParallelMultipleArms(t *testing.T) {
 	}
 }
 
+// TestAnalyzeMoleculeParallelDecisionPoints tests decision point detection (hq-946577.28)
+func TestAnalyzeMoleculeParallelDecisionPoints(t *testing.T) {
+	// Create molecule with a decision point
+	root := &types.Issue{ID: "mol-1", Status: types.StatusOpen}
+	step1 := &types.Issue{ID: "mol-1.1", Status: types.StatusClosed}
+	decision := &types.Issue{
+		ID:        "mol-1.decision-1",
+		Status:    types.StatusOpen,
+		AwaitType: "decision", // This marks it as a decision point
+	}
+	step2 := &types.Issue{ID: "mol-1.2", Status: types.StatusOpen}
+
+	subgraph := &MoleculeSubgraph{
+		Root:     root,
+		Issues:   []*types.Issue{root, step1, decision, step2},
+		IssueMap: map[string]*types.Issue{"mol-1": root, "mol-1.1": step1, "mol-1.decision-1": decision, "mol-1.2": step2},
+		Dependencies: []*types.Dependency{
+			{IssueID: "mol-1.1", DependsOnID: "mol-1", Type: types.DepParentChild},
+			{IssueID: "mol-1.decision-1", DependsOnID: "mol-1", Type: types.DepParentChild},
+			{IssueID: "mol-1.2", DependsOnID: "mol-1", Type: types.DepParentChild},
+			{IssueID: "mol-1.2", DependsOnID: "mol-1.decision-1", Type: types.DepBlocks}, // step2 blocked by decision
+		},
+	}
+
+	analysis := analyzeMoleculeParallel(subgraph)
+
+	// Should have 1 pending decision
+	if analysis.PendingDecisions != 1 {
+		t.Errorf("Expected 1 pending decision, got %d", analysis.PendingDecisions)
+	}
+
+	// Decision point should be marked
+	decisionInfo := analysis.Steps["mol-1.decision-1"]
+	if decisionInfo == nil {
+		t.Fatal("Decision point info not found")
+	}
+	if !decisionInfo.IsDecision {
+		t.Error("Decision point not marked as IsDecision")
+	}
+	if decisionInfo.DecisionState != "PENDING" {
+		t.Errorf("Expected PENDING state, got %s", decisionInfo.DecisionState)
+	}
+
+	// step2 should be blocked by decision
+	step2Info := analysis.Steps["mol-1.2"]
+	if step2Info == nil {
+		t.Fatal("step2 info not found")
+	}
+	found := false
+	for _, blocker := range step2Info.BlockedBy {
+		if blocker == "mol-1.decision-1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("step2 should be blocked by decision point")
+	}
+
+	// Test resolved decision
+	decision.Status = types.StatusClosed
+	analysis2 := analyzeMoleculeParallel(subgraph)
+
+	if analysis2.PendingDecisions != 0 {
+		t.Errorf("Expected 0 pending decisions after resolve, got %d", analysis2.PendingDecisions)
+	}
+
+	decisionInfo2 := analysis2.Steps["mol-1.decision-1"]
+	if decisionInfo2.DecisionState != "RESOLVED" {
+		t.Errorf("Expected RESOLVED state, got %s", decisionInfo2.DecisionState)
+	}
+}
+
 // TestCalculateBlockingDepths tests the depth calculation
 func TestCalculateBlockingDepths(t *testing.T) {
 	// Create chain: root -> step1 -> step2 -> step3
