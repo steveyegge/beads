@@ -517,6 +517,11 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 //
 // Fixes issues #278, #301, #321: daemon export leaving JSONL newer than DB.
 func TouchDatabaseFile(dbPath, jsonlPath string) error {
+	// Skip if database file doesn't exist (e.g., Dolt backend uses JSONL-only)
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil
+	}
+
 	targetTime := time.Now()
 
 	// If we have the JSONL path, use max(JSONL mtime, now) to handle clock skew
