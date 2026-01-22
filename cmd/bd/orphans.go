@@ -117,7 +117,7 @@ func getIssueProvider() (types.IssueProvider, func(), error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
 		}
-		return provider, func() { provider.Close() }, nil
+		return provider, func() { _ = provider.Close() }, nil
 	}
 
 	// Use the global store (already opened by PersistentPreRun)
