@@ -30,6 +30,7 @@ package formula
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // FormulaType categorizes formulas by their purpose.
@@ -187,6 +188,11 @@ type Step struct {
 	// Close the gate issue (bd close bd-xxx.gate-stepid) to unblock.
 	Gate *Gate `json:"gate,omitempty"`
 
+	// Decision defines a decision point that requires option selection.
+	// When set, bd cook creates a decision gate that blocks until resolved.
+	// The selected option is recorded and can affect workflow routing.
+	Decision *DecisionConfig `json:"decision,omitempty"`
+
 	// Loop defines iteration for this step.
 	// When set, the step becomes a container that expands its body.
 	Loop *LoopSpec `json:"loop,omitempty"`
@@ -219,6 +225,49 @@ type Gate struct {
 
 	// Timeout is how long to wait before escalation (e.g., "1h", "24h").
 	Timeout string `json:"timeout,omitempty"`
+}
+
+// DecisionConfig defines a decision point that requires input selection.
+// When a step has a Decision, bd cook creates a decision gate that blocks
+// until an option is selected. The selected option affects workflow routing.
+//
+// Example TOML:
+//
+//	[steps.decision]
+//	prompt = "Choose deployment strategy:"
+//	options = [
+//	  { id = "staged", short = "Staged", label = "Staged rollout (recommended)" },
+//	  { id = "direct", short = "Direct", label = "Direct deployment" }
+//	]
+//	default = "staged"
+//	timeout = "48h"
+type DecisionConfig struct {
+	// Prompt is the question or instruction shown to the decision maker.
+	Prompt string `json:"prompt"`
+
+	// Options are the available choices. At least 2 options are required.
+	Options []DecisionOption `json:"options"`
+
+	// Default is the option ID to use if timeout expires without selection.
+	// Must match one of the option IDs. If empty, decision is required.
+	Default string `json:"default,omitempty"`
+
+	// Timeout is how long to wait for a decision (e.g., "24h", "48h").
+	// After timeout, the default option is selected (if set) or the step blocks.
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// DecisionOption defines a single choice within a decision point.
+type DecisionOption struct {
+	// ID is the unique identifier for this option within the decision.
+	// Used for routing and recording the selection.
+	ID string `json:"id"`
+
+	// Short is a brief label for compact display (e.g., "Staged").
+	Short string `json:"short,omitempty"`
+
+	// Label is the full description shown to the decision maker.
+	Label string `json:"label"`
 }
 
 // LoopSpec defines iteration over a body of steps.
@@ -553,6 +602,10 @@ func (f *Formula) Validate() error {
 		if step.OnComplete != nil {
 			validateOnComplete(step.OnComplete, &errs, fmt.Sprintf("steps[%d] (%s)", i, step.ID))
 		}
+		// Validate decision field - decision point
+		if step.Decision != nil {
+			validateDecision(step.Decision, &errs, fmt.Sprintf("steps[%d] (%s)", i, step.ID))
+		}
 		// Validate children's depends_on and needs recursively
 		validateChildDependsOn(step.Children, stepIDLocations, &errs, fmt.Sprintf("steps[%d]", i))
 	}
@@ -708,6 +761,10 @@ func validateChildDependsOn(children []*Step, idLocations map[string]string, err
 		if child.OnComplete != nil {
 			validateOnComplete(child.OnComplete, errs, fmt.Sprintf("%s (%s)", childPrefix, child.ID))
 		}
+		// Validate decision field
+		if child.Decision != nil {
+			validateDecision(child.Decision, errs, fmt.Sprintf("%s (%s)", childPrefix, child.ID))
+		}
 		validateChildDependsOn(child.Children, idLocations, errs, childPrefix)
 	}
 }
@@ -732,6 +789,54 @@ func validateOnComplete(oc *OnCompleteSpec, errs *[]string, prefix string) {
 	// Check parallel and sequential are mutually exclusive
 	if oc.Parallel && oc.Sequential {
 		*errs = append(*errs, fmt.Sprintf("%s.on_complete: cannot set both parallel and sequential", prefix))
+	}
+}
+
+// validateDecision validates a DecisionConfig.
+func validateDecision(dc *DecisionConfig, errs *[]string, prefix string) {
+	if dc.Prompt == "" {
+		*errs = append(*errs, fmt.Sprintf("%s.decision: prompt is required", prefix))
+	}
+
+	if len(dc.Options) < 2 {
+		*errs = append(*errs, fmt.Sprintf("%s.decision: at least 2 options are required (got %d)", prefix, len(dc.Options)))
+	}
+
+	// Track option IDs for uniqueness check
+	optionIDs := make(map[string]bool)
+	defaultFound := false
+
+	for i, opt := range dc.Options {
+		optPrefix := fmt.Sprintf("%s.decision.options[%d]", prefix, i)
+
+		if opt.ID == "" {
+			*errs = append(*errs, fmt.Sprintf("%s: id is required", optPrefix))
+		} else {
+			if optionIDs[opt.ID] {
+				*errs = append(*errs, fmt.Sprintf("%s: duplicate option id %q", optPrefix, opt.ID))
+			}
+			optionIDs[opt.ID] = true
+
+			if opt.ID == dc.Default {
+				defaultFound = true
+			}
+		}
+
+		if opt.Label == "" {
+			*errs = append(*errs, fmt.Sprintf("%s: label is required", optPrefix))
+		}
+	}
+
+	// Validate default references a valid option
+	if dc.Default != "" && !defaultFound {
+		*errs = append(*errs, fmt.Sprintf("%s.decision: default %q is not a valid option id", prefix, dc.Default))
+	}
+
+	// Validate timeout format if specified
+	if dc.Timeout != "" {
+		if _, err := time.ParseDuration(dc.Timeout); err != nil {
+			*errs = append(*errs, fmt.Sprintf("%s.decision: invalid timeout format %q (expected duration like '24h', '48h')", prefix, dc.Timeout))
+		}
 	}
 }
 

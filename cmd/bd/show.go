@@ -250,6 +250,13 @@ var showCmd = &cobra.Command{
 						for _, dep := range details.Dependencies {
 							fmt.Println(formatDependencyLine("→", dep))
 						}
+
+						// Show decision context for blocking decisions (hq-946577.26)
+						// Open direct store for decision point lookup
+						if directStore, err := sqlite.New(ctx, dbPath); err == nil {
+							displayBlockingDecisionContext(ctx, details.Dependencies, directStore)
+							_ = directStore.Close()
+						}
 					}
 
 					// Dependents grouped by type with semantic colors
@@ -433,17 +440,32 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show dependencies with semantic colors
-			deps, _ := issueStore.GetDependencies(ctx, issue.ID)
-			if len(deps) > 0 {
-				fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
-				for _, dep := range deps {
-					fmt.Println(formatSimpleDependencyLine("→", dep))
+			// Use GetDependenciesWithMetadata if available for decision context (hq-946577.26)
+			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+			if ok {
+				depsWithMeta, _ := sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+				if len(depsWithMeta) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+					for _, dep := range depsWithMeta {
+						fmt.Println(formatDependencyLine("→", dep))
+					}
+
+					// Show decision context for blocking decisions (hq-946577.26)
+					displayBlockingDecisionContext(ctx, depsWithMeta, issueStore)
+				}
+			} else {
+				// Fallback without metadata
+				deps, _ := issueStore.GetDependencies(ctx, issue.ID)
+				if len(deps) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+					for _, dep := range deps {
+						fmt.Println(formatSimpleDependencyLine("→", dep))
+					}
 				}
 			}
 
 			// Show dependents - grouped by dependency type for clarity
 			// Use GetDependentsWithMetadata to get the dependency type
-			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
 			if ok {
 				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 				if len(dependentsWithMeta) > 0 {
@@ -1044,6 +1066,79 @@ func containsStr(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+// displayBlockingDecisionContext shows decision context for open blockers that have decision points.
+// This helps users understand what decision needs to be made to unblock the issue. (hq-946577.26)
+func displayBlockingDecisionContext(ctx context.Context, deps []*types.IssueWithDependencyMetadata, issueStore storage.Storage) {
+	if issueStore == nil {
+		return
+	}
+
+	for _, dep := range deps {
+		// Only check open/in_progress blocking dependencies
+		if dep.Status == types.StatusClosed {
+			continue
+		}
+		if dep.DependencyType != types.DepBlocks && dep.DependencyType != "" {
+			// Skip non-blocking dependencies (parent-child, related, etc.)
+			// Note: empty type is treated as blocks for backwards compatibility
+			continue
+		}
+
+		// Try to get the decision point for this blocker
+		dp, err := issueStore.GetDecisionPoint(ctx, dep.ID)
+		if err != nil || dp == nil {
+			continue
+		}
+
+		// Only show if decision is pending (no response yet)
+		if dp.SelectedOption != "" || dp.ResponseText != "" {
+			continue
+		}
+
+		// Parse options from JSON
+		var options []types.DecisionOption
+		if dp.Options != "" {
+			_ = json.Unmarshal([]byte(dp.Options), &options)
+		}
+
+		// Build options display
+		var optionLines []string
+		for _, opt := range options {
+			displayText := opt.Short
+			if displayText == "" {
+				displayText = opt.Label
+			}
+			marker := ""
+			if opt.ID == dp.DefaultOption {
+				marker = " (default)"
+			}
+			optionLines = append(optionLines, fmt.Sprintf("  [%s] %s%s", opt.ID, displayText, marker))
+		}
+
+		// Display decision context prominently
+		fmt.Printf("\n  %s %s %s\n\n",
+			ui.RenderFail("⚠️  BLOCKED BY DECISION:"),
+			ui.RenderAccent(dep.ID),
+			ui.RenderMuted(fmt.Sprintf("● P%d", dep.Priority)))
+
+		fmt.Printf("  %s\n\n", dp.Prompt)
+
+		if len(optionLines) > 0 {
+			for _, line := range optionLines {
+				fmt.Println(line)
+			}
+			fmt.Println()
+		}
+
+		fmt.Printf("  %s bd decision respond %s --select=<option>\n",
+			ui.RenderMuted("→ To unblock:"),
+			dep.ID)
+		fmt.Printf("  %s bd decision respond %s --text=\"...\"\n",
+			ui.RenderMuted("→ Or provide text:"),
+			dep.ID)
+	}
 }
 
 // showIssueAsOf displays issues as they existed at a specific commit or branch ref.
