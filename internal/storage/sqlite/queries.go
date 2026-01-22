@@ -804,6 +804,7 @@ var allowedUpdateFields = map[string]bool{
 	"defer_until": true,
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
+	"waiters":  true,
 }
 
 // validatePriority validates a priority value
@@ -913,7 +914,14 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			columnName = "ephemeral"
 		}
 		setClauses = append(setClauses, fmt.Sprintf("%s = ?", columnName))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		if key == "waiters" {
+			waitersJSON, _ := json.Marshal(value)
+			args = append(args, string(waitersJSON))
+		} else {
+			args = append(args, value)
+		}
 	}
 
 	// Auto-manage closed_at when status changes (enforce invariant)
