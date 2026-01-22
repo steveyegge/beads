@@ -529,7 +529,8 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// JSONL doesn't exist but we have a stored hash - clear export_hashes and jsonl_file_hash
-			fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file missing but export_hashes exist. Clearing export_hashes.\n")
+			// bd-36869a: Log at debug level since this is normal recovery (e.g., after git checkout)
+			debug.Logf("validateJSONLIntegrity: JSONL file missing but hash exists, triggering full re-export")
 			if err := store.ClearAllExportHashes(ctx); err != nil {
 				return false, fmt.Errorf("failed to clear export_hashes: %w", err)
 			}
@@ -549,9 +550,11 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 	
 	// Compare hashes
 	if currentHash != storedHash {
-		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected\n")
-		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
-		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
+		// bd-36869a: Log at debug level since this is normal recovery after external changes
+		// (e.g., git pull bringing in JSONL modifications). The system auto-recovers by
+		// forcing a full re-export, so users don't need to see alarming warnings.
+		debug.Logf("validateJSONLIntegrity: JSONL hash mismatch (stored=%s, current=%s), triggering full re-export",
+			storedHash[:8], currentHash[:8])
 
 		// Clear export_hashes to force full re-export
 		if err := store.ClearAllExportHashes(ctx); err != nil {
