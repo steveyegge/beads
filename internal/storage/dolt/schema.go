@@ -106,8 +106,9 @@ CREATE TABLE IF NOT EXISTS dependencies (
     INDEX idx_dependencies_depends_on (depends_on_id),
     INDEX idx_dependencies_depends_on_type (depends_on_id, type),
     INDEX idx_dependencies_thread (thread_id),
-    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
-    CONSTRAINT fk_dep_depends_on FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
+    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+    -- NOTE: No FK on depends_on_id to allow external references (external:<project>:<capability>)
+    -- See SQLite migration 025_remove_depends_on_fk.go and bd-3q6.6-1
 );
 
 -- Labels table

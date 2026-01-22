@@ -580,6 +580,12 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 		}
 	}
 
+	// Migration: Remove FK constraint on depends_on_id to allow external references
+	// (external:<project>:<capability>). See bd-3q6.6-1 and SQLite migration
+	// 025_remove_depends_on_fk.go. This is idempotent - errors are ignored if
+	// the constraint doesn't exist (new databases) or was already dropped.
+	_, _ = s.db.ExecContext(ctx, "ALTER TABLE dependencies DROP FOREIGN KEY fk_dep_depends_on")
+
 	// Insert default config values
 	for _, stmt := range splitStatements(defaultConfig) {
 		stmt = strings.TrimSpace(stmt)
