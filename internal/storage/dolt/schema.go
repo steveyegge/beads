@@ -230,6 +230,7 @@ CREATE TABLE IF NOT EXISTS decision_points (
     max_iterations INT NOT NULL DEFAULT 3,
     prior_id VARCHAR(255),
     guidance TEXT,
+    reminder_count INT NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_decision_points_prior (prior_id),
     CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,

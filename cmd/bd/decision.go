@@ -19,6 +19,8 @@ Commands:
   respond   Record a human response to a decision point
   list      List pending decision points
   show      Show decision point details
+  remind    Send a reminder for a pending decision
+  cancel    Cancel a pending decision without response
 
 Decision points are specialized gates with await_type="decision". They support:
   - Single-select from predefined options
@@ -30,7 +32,9 @@ Examples:
   bd decision create --prompt="Which approach?" --options='[{"id":"a","label":"Option A"}]'
   bd decision respond <id> --select=a
   bd decision list --pending
-  bd decision show <id>`,
+  bd decision show <id>
+  bd decision remind <id>
+  bd decision cancel <id> --reason="No longer needed"`,
 }
 
 func init() {

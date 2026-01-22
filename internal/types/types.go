@@ -1100,6 +1100,7 @@ type DecisionPoint struct {
 	MaxIterations  int        `json:"max_iterations"`             // Limit on refinement loops (default: 3)
 	PriorID        string     `json:"prior_id,omitempty"`         // Previous iteration's decision point
 	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
+	ReminderCount  int        `json:"reminder_count"`             // Number of reminders sent
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
