@@ -1905,3 +1905,54 @@ func TestIsBlocked(t *testing.T) {
 		t.Errorf("Expected issue3 to NOT be blocked (blocker is closed), got blocked=true with blockers=%v", blockers)
 	}
 }
+
+// TestGetReadyWorkExcludesMolSteps tests that molecule steps (IDs containing -mol-) are
+// excluded from bd ready by default, but included when filtering by explicit type (GH#1239).
+func TestGetReadyWorkExcludesMolSteps(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Create regular tasks
+	regularTask := env.CreateIssue("Regular task")
+
+	// Create molecule steps (IDs contain -mol-)
+	molStep1 := env.CreateIssueWithID("bd-mol-abc", "Mol step 1")
+	molStep2 := env.CreateIssueWithID("bd-mol-xyz", "Mol step 2")
+
+	// Default query should exclude mol steps
+	ready := env.GetReadyWork(types.WorkFilter{})
+	readyIDs := make(map[string]bool)
+	for _, issue := range ready {
+		readyIDs[issue.ID] = true
+	}
+
+	// Regular task should be included
+	if !readyIDs[regularTask.ID] {
+		t.Errorf("Expected regular task %s to be in ready work", regularTask.ID)
+	}
+
+	// Mol steps should be excluded
+	if readyIDs[molStep1.ID] {
+		t.Errorf("Expected mol step %s to be EXCLUDED from ready work by default", molStep1.ID)
+	}
+	if readyIDs[molStep2.ID] {
+		t.Errorf("Expected mol step %s to be EXCLUDED from ready work by default", molStep2.ID)
+	}
+
+	// Explicit type=task filter should include mol steps
+	readyWithType := env.GetReadyWork(types.WorkFilter{Type: "task"})
+	readyWithTypeIDs := make(map[string]bool)
+	for _, issue := range readyWithType {
+		readyWithTypeIDs[issue.ID] = true
+	}
+
+	// All tasks should be included when filtering by type
+	if !readyWithTypeIDs[regularTask.ID] {
+		t.Errorf("Expected regular task %s to be in ready work with --type=task", regularTask.ID)
+	}
+	if !readyWithTypeIDs[molStep1.ID] {
+		t.Errorf("Expected mol step %s to be INCLUDED with --type=task filter", molStep1.ID)
+	}
+	if !readyWithTypeIDs[molStep2.ID] {
+		t.Errorf("Expected mol step %s to be INCLUDED with --type=task filter", molStep2.ID)
+	}
+}

@@ -62,7 +62,7 @@ func TestFindGateReadyMolecules_NoGates(t *testing.T) {
 
 	// Create a regular molecule (no gates)
 	mol := &types.Issue{
-		ID:        "test-mol-001",
+		ID:        "test-workflow-001",
 		Title:     "Test Molecule",
 		IssueType: types.TypeEpic,
 		Status:    types.StatusInProgress,
@@ -70,7 +70,7 @@ func TestFindGateReadyMolecules_NoGates(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	step := &types.Issue{
-		ID:        "test-mol-001.step1",
+		ID:        "test-workflow-001.step1",
 		Title:     "Step 1",
 		IssueType: types.TypeTask,
 		Status:    types.StatusOpen,
@@ -117,7 +117,7 @@ func TestFindGateReadyMolecules_ClosedGate(t *testing.T) {
 	//   └── step1 (blocked by gate-await-ci, should become ready)
 
 	mol := &types.Issue{
-		ID:        "test-mol-002",
+		ID:        "test-workflow-002",
 		Title:     "Test Molecule with Gate",
 		IssueType: types.TypeEpic,
 		Status:    types.StatusInProgress,
@@ -125,7 +125,7 @@ func TestFindGateReadyMolecules_ClosedGate(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	gate := &types.Issue{
-		ID:        "test-mol-002.gate-await-ci",
+		ID:        "test-workflow-002.gate-await-ci",
 		Title:     "Gate: gh:run ci-workflow",
 		IssueType: "gate",
 		Status:    types.StatusClosed, // Gate has closed
@@ -135,7 +135,7 @@ func TestFindGateReadyMolecules_ClosedGate(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	step := &types.Issue{
-		ID:        "test-mol-002.step1",
+		ID:        "test-workflow-002.step1",
 		Title:     "Deploy after CI",
 		IssueType: types.TypeTask,
 		Status:    types.StatusOpen,
@@ -212,7 +212,7 @@ func TestFindGateReadyMolecules_OpenGate(t *testing.T) {
 
 	// Create molecule with OPEN gate
 	mol := &types.Issue{
-		ID:        "test-mol-003",
+		ID:        "test-workflow-003",
 		Title:     "Test Molecule with Open Gate",
 		IssueType: types.TypeEpic,
 		Status:    types.StatusInProgress,
@@ -220,7 +220,7 @@ func TestFindGateReadyMolecules_OpenGate(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	gate := &types.Issue{
-		ID:        "test-mol-003.gate-await-ci",
+		ID:        "test-workflow-003.gate-await-ci",
 		Title:     "Gate: gh:run ci-workflow",
 		IssueType: "gate",
 		Status:    types.StatusOpen, // Gate is still open
@@ -230,7 +230,7 @@ func TestFindGateReadyMolecules_OpenGate(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	step := &types.Issue{
-		ID:        "test-mol-003.step1",
+		ID:        "test-workflow-003.step1",
 		Title:     "Deploy after CI",
 		IssueType: types.TypeTask,
 		Status:    types.StatusOpen,
@@ -292,7 +292,7 @@ func TestFindGateReadyMolecules_HookedMolecule(t *testing.T) {
 
 	// Create molecule with closed gate, but molecule is hooked
 	mol := &types.Issue{
-		ID:        "test-mol-004",
+		ID:        "test-workflow-004",
 		Title:     "Test Hooked Molecule",
 		IssueType: types.TypeEpic,
 		Status:    types.StatusHooked, // Already hooked by an agent
@@ -300,7 +300,7 @@ func TestFindGateReadyMolecules_HookedMolecule(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	gate := &types.Issue{
-		ID:        "test-mol-004.gate-await-ci",
+		ID:        "test-workflow-004.gate-await-ci",
 		Title:     "Gate: gh:run ci-workflow",
 		IssueType: "gate",
 		Status:    types.StatusClosed,
@@ -310,7 +310,7 @@ func TestFindGateReadyMolecules_HookedMolecule(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 	step := &types.Issue{
-		ID:        "test-mol-004.step1",
+		ID:        "test-workflow-004.step1",
 		Title:     "Deploy after CI",
 		IssueType: types.TypeTask,
 		Status:    types.StatusOpen,

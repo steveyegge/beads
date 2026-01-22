@@ -46,6 +46,10 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		// - role: agent role definitions (reference metadata)
 		// - rig: rig identity beads (reference metadata)
 		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
+		// Exclude molecule steps by ID pattern (GH#1239)
+		// Molecule steps have type=task but IDs contain -mol- (e.g., bd-mol-xxx)
+		// Use --type=task to explicitly include them
+		whereClauses = append(whereClauses, "i.id NOT LIKE '"+types.MolStepIDPattern()+"'")
 	}
 
 	if filter.Priority != nil {

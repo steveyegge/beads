@@ -1041,6 +1041,21 @@ const (
 	BondTypeRoot        = "root"        // Marks the primary/root component
 )
 
+// ID prefix constants for molecule/wisp instantiation.
+// These prefixes are inserted into issue IDs: <project>-<prefix>-<id>
+// Used by: cmd/bd/pour.go, cmd/bd/wisp.go (ID generation)
+//          internal/storage/sqlite/ready.go (exclusion filter)
+const (
+	IDPrefixMol  = "mol"  // Persistent molecules (bd-mol-xxx)
+	IDPrefixWisp = "wisp" // Ephemeral wisps (bd-wisp-xxx)
+)
+
+// MolStepIDPattern returns the SQL LIKE pattern for matching molecule step IDs.
+// Used by GetReadyWork to exclude molecule steps from the general work queue.
+func MolStepIDPattern() string {
+	return "%-" + IDPrefixMol + "-%"
+}
+
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).
 func (i *Issue) IsCompound() bool {
 	return len(i.BondedFrom) > 0
