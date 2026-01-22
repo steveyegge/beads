@@ -296,46 +296,23 @@ func (d *Dispatcher) logNotification(payload *DecisionPayload) {
 	fmt.Println()
 }
 
-// sendEmail sends an email notification.
+// sendEmail sends an email notification using the email templates.
 func (d *Dispatcher) sendEmail(payload *DecisionPayload, to string) error {
-	// Build email content
-	subject := fmt.Sprintf("[Decision Required] %s", truncate(payload.Prompt, 60))
-
-	var body strings.Builder
-	body.WriteString(fmt.Sprintf("A decision is needed for %s:\n\n", payload.ID))
-	body.WriteString(fmt.Sprintf("  %s\n\n", payload.Prompt))
-
-	if len(payload.Options) > 0 {
-		body.WriteString("Options:\n")
-		for _, opt := range payload.Options {
-			defaultMark := ""
-			if opt.ID == payload.Default {
-				defaultMark = " (default)"
-			}
-			body.WriteString(fmt.Sprintf("  [%s] %s - %s%s\n", opt.ID, opt.Short, opt.Label, defaultMark))
-		}
-		body.WriteString("\n")
+	// Render email using templates
+	email, err := RenderEmail(payload)
+	if err != nil {
+		return fmt.Errorf("failed to render email: %w", err)
 	}
 
-	if payload.TimeoutAt != nil {
-		body.WriteString(fmt.Sprintf("Timeout: %s\n", payload.TimeoutAt.Format("2006-01-02 15:04 MST")))
-	}
-
-	if payload.RespondURL != "" {
-		body.WriteString(fmt.Sprintf("\nRespond: %s\n", payload.RespondURL))
-	}
-
-	body.WriteString(fmt.Sprintf("\nOr use CLI: bd decision respond %s --select=<option>\n", payload.ID))
-
-	// Try to send via system mail command
-	cmd := exec.Command("mail", "-s", subject, to)
-	cmd.Stdin = strings.NewReader(body.String())
+	// Try to send via system mail command (plain text)
+	cmd := exec.Command("mail", "-s", email.Subject, to)
+	cmd.Stdin = strings.NewReader(email.PlainText)
 
 	if err := cmd.Run(); err != nil {
 		// Fall back to logging
 		fmt.Printf("📧 Email notification (to %s):\n", to)
-		fmt.Printf("   Subject: %s\n", subject)
-		fmt.Printf("   Body:\n%s\n", body.String())
+		fmt.Printf("   Subject: %s\n", email.Subject)
+		fmt.Printf("   Body:\n%s\n", email.PlainText)
 		return fmt.Errorf("mail command failed (logged instead): %w", err)
 	}
 
