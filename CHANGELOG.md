@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Automatic multi-repo hydration in `bd init --contributor`** - Routing and hydration now configured together
+  - `bd init --contributor` automatically adds planning repo to `repos.additional`
+  - Routed issues appear in `bd list` immediately after setup
+  - No manual `bd repo add` required for contributor workflow
+
+- **Doctor check for routing+hydration mismatch** - Validates configuration consistency
+  - Warns when `routing.mode=auto` configured without `repos.additional`
+  - Detects routing targets missing from hydration list
+  - Suggests remediation: `bd repo add <routing-target>`
+
+- **Doctor check for hydrated repo daemons** - Ensures JSONL stays fresh
+  - Warns if daemons not running in `repos.additional` repos
+  - Without daemons, JSONL becomes stale and hydration breaks
+  - Suggests: `cd <repo> && bd daemon start --local`
+
+### Fixed
+
+- **Routed issues invisible in `bd list` (split-brain bug)** - Auto-flush JSONL after routing
+  - `bd create` now flushes JSONL immediately in target repo (via daemon RPC or direct export)
+  - Fixes issue where routed issues weren't visible until manual sync
+  - Hydration now sees new issues immediately
+
+### Documentation
+
+- **Multi-repo hydration guide** - Added comprehensive section to docs/ROUTING.md
+  - Explains hydration requirement when using routing
+  - Troubleshooting guide for common issues
+  - Daemon requirements for optimal hydration
+
+- **Contributor vs maintainer setup** - Added to README.md
+  - Clarifies when to use `bd init --contributor`
+  - Documents `git config beads.role maintainer` (only needed for HTTPS without credentials)
+  - Explains auto-detection via SSH and HTTPS with credentials
+
 ## [0.48.0] - 2026-01-17
 
 ### Added

@@ -213,6 +213,56 @@ func checkYAMLConfigValues(repoPath string) []string {
 			}
 			issues = append(issues, fmt.Sprintf("routing.mode: %q is invalid (valid values: %s)", mode, strings.Join(validModes, ", ")))
 		}
+
+		// Validate routing + hydration consistency (bd-fix-routing)
+		// When routing.mode=auto with routing targets, those targets should be in repos.additional
+		// so routed issues are visible in bd list via multi-repo hydration
+		if mode == "auto" {
+			contributorRepo := v.GetString("routing.contributor")
+			maintainerRepo := v.GetString("routing.maintainer")
+
+			// Check if routing targets are configured (exclude "." which means current repo)
+			hasRoutingTargets := (contributorRepo != "" && contributorRepo != ".") || (maintainerRepo != "" && maintainerRepo != ".")
+
+			if hasRoutingTargets {
+				// Check if hydration is configured
+				additional := v.GetStringSlice("repos.additional")
+				hasHydration := len(additional) > 0
+
+				if !hasHydration {
+					issues = append(issues,
+						"routing.mode=auto with routing targets but repos.additional not configured. "+
+							"Issues created via routing will not be visible in bd list. "+
+							"Run 'bd repo add <routing-target>' to enable hydration.")
+				} else {
+					// Check if routing targets are in hydration list
+					additionalSet := make(map[string]bool)
+					for _, path := range additional {
+						additionalSet[expandPath(path)] = true
+					}
+
+					if contributorRepo != "" {
+						expandedContributor := expandPath(contributorRepo)
+						if !additionalSet[expandedContributor] {
+							issues = append(issues, fmt.Sprintf(
+								"routing.contributor=%q is not in repos.additional. "+
+									"Run 'bd repo add %s' to make routed issues visible.",
+								contributorRepo, contributorRepo))
+						}
+					}
+
+					if maintainerRepo != "" && maintainerRepo != "." {
+						expandedMaintainer := expandPath(maintainerRepo)
+						if !additionalSet[expandedMaintainer] {
+							issues = append(issues, fmt.Sprintf(
+								"routing.maintainer=%q is not in repos.additional. "+
+									"Run 'bd repo add %s' to make routed issues visible.",
+								maintainerRepo, maintainerRepo))
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Validate sync-branch (should be a valid git branch name if set)
