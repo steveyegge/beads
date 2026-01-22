@@ -105,6 +105,11 @@ func TestDetectPrefix(t *testing.T) {
 	t.Run("from existing issues", func(t *testing.T) {
 		memStore := memory.New(filepath.Join(beadsDir, "issues.jsonl"))
 
+		// Clear config override to test issue-based detection
+		prev := config.GetString("issue-prefix")
+		config.Set("issue-prefix", "")
+		t.Cleanup(func() { config.Set("issue-prefix", prev) })
+
 		// Add issues with common prefix
 		issues := []*types.Issue{
 			{ID: "myapp-1", Title: "Issue 1"},
@@ -125,6 +130,11 @@ func TestDetectPrefix(t *testing.T) {
 
 	t.Run("mixed prefixes error", func(t *testing.T) {
 		memStore := memory.New(filepath.Join(beadsDir, "issues.jsonl"))
+
+		// Clear config override to test issue-based detection
+		prev := config.GetString("issue-prefix")
+		config.Set("issue-prefix", "")
+		t.Cleanup(func() { config.Set("issue-prefix", prev) })
 
 		issues := []*types.Issue{
 			{ID: "app1-1", Title: "Issue 1"},
@@ -147,6 +157,11 @@ func TestDetectPrefix(t *testing.T) {
 			t.Fatalf("Failed to create named dir: %v", err)
 		}
 		t.Chdir(namedDir)
+
+		// Clear config override to test directory-based detection
+		prev := config.GetString("issue-prefix")
+		config.Set("issue-prefix", "")
+		t.Cleanup(func() { config.Set("issue-prefix", prev) })
 
 		memStore := memory.New(filepath.Join(beadsDir, "issues.jsonl"))
 		prefix, err := detectPrefix(beadsDir, memStore)
