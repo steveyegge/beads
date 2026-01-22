@@ -572,6 +572,11 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 	fmt.Printf("    Local wins: %d, Remote wins: %d, Same: %d, Conflicts (LWW): %d\n",
 		localCount, remoteCount, sameCount, mergeResult.Conflicts)
 
+	// Display manual conflicts that need user resolution
+	if len(mergeResult.ManualConflicts) > 0 {
+		displayManualConflicts(mergeResult.ManualConflicts)
+	}
+
 	// Step 6: Import merged state to DB
 	// First, write merged result to JSONL so import can read it
 	fmt.Println("→ Writing merged state to JSONL...")
@@ -1071,6 +1076,11 @@ func resolveSyncConflicts(ctx context.Context, jsonlPath string, strategy config
 	// Re-run merge with the resolved conflicts
 	mergeResult := MergeIssues(baseIssues, localIssues, remoteIssues)
 
+	// Display any remaining manual conflicts
+	if len(mergeResult.ManualConflicts) > 0 {
+		displayManualConflicts(mergeResult.ManualConflicts)
+	}
+
 	// Write merged state
 	if err := writeMergedStateToJSONL(jsonlPath, mergeResult.Merged); err != nil {
 		return fmt.Errorf("writing merged state: %w", err)
@@ -1177,7 +1187,7 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 			local := localMap[id]
 			remote := remoteMap[id]
 			base := baseMap[id]
-			merged, _ := MergeIssue(base, local, remote)
+			merged, _, _ := MergeIssue(base, local, remote)
 			if merged != nil {
 				mergedIssues = append(mergedIssues, merged)
 			}

@@ -1543,3 +1543,141 @@ func TestGetCustomTypesFromYAML_NilViper(t *testing.T) {
 		t.Errorf("GetCustomTypesFromYAML() with nil viper = %v, want nil", got)
 	}
 }
+
+func TestGetFieldStrategies(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	t.Run("empty_by_default", func(t *testing.T) {
+		result := GetFieldStrategies()
+		if len(result) != 0 {
+			t.Errorf("GetFieldStrategies() with no config = %v, want empty map", result)
+		}
+	})
+
+	t.Run("valid_strategies", func(t *testing.T) {
+		ResetForTesting()
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize() returned error: %v", err)
+		}
+
+		// Set per-field strategies
+		Set("conflict.fields", map[string]string{
+			"compaction_level":   "max",
+			"labels":             "union",
+			"estimated_minutes":  "manual",
+			"status":             "newest",
+		})
+
+		result := GetFieldStrategies()
+
+		if result["compaction_level"] != FieldStrategyMax {
+			t.Errorf("Expected compaction_level=max, got %s", result["compaction_level"])
+		}
+		if result["labels"] != FieldStrategyUnion {
+			t.Errorf("Expected labels=union, got %s", result["labels"])
+		}
+		if result["estimated_minutes"] != FieldStrategyManual {
+			t.Errorf("Expected estimated_minutes=manual, got %s", result["estimated_minutes"])
+		}
+		if result["status"] != FieldStrategyNewest {
+			t.Errorf("Expected status=newest, got %s", result["status"])
+		}
+	})
+
+	t.Run("invalid_strategy_skipped", func(t *testing.T) {
+		ResetForTesting()
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize() returned error: %v", err)
+		}
+
+		// Set a mix of valid and invalid strategies
+		Set("conflict.fields", map[string]string{
+			"compaction_level": "max",
+			"invalid_field":    "invalid-strategy",
+		})
+
+		result := GetFieldStrategies()
+
+		// Valid one should be present
+		if result["compaction_level"] != FieldStrategyMax {
+			t.Errorf("Expected compaction_level=max, got %s", result["compaction_level"])
+		}
+		// Invalid one should be skipped
+		if _, exists := result["invalid_field"]; exists {
+			t.Errorf("Expected invalid_field to be skipped, but it was included: %s", result["invalid_field"])
+		}
+	})
+}
+
+func TestGetFieldStrategy(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	t.Run("returns_default_for_unconfigured_field", func(t *testing.T) {
+		result := GetFieldStrategy("unconfigured_field")
+		if result != FieldStrategyNewest {
+			t.Errorf("GetFieldStrategy(unconfigured_field) = %s, want newest (default)", result)
+		}
+	})
+
+	t.Run("returns_configured_strategy", func(t *testing.T) {
+		ResetForTesting()
+		if err := Initialize(); err != nil {
+			t.Fatalf("Initialize() returned error: %v", err)
+		}
+
+		Set("conflict.fields", map[string]string{
+			"compaction_level": "max",
+		})
+
+		result := GetFieldStrategy("compaction_level")
+		if result != FieldStrategyMax {
+			t.Errorf("GetFieldStrategy(compaction_level) = %s, want max", result)
+		}
+	})
+}
+
+func TestGetConflictConfigWithFields(t *testing.T) {
+	// Isolate from environment variables
+	restore := envSnapshot(t)
+	defer restore()
+
+	// Initialize config
+	ResetForTesting()
+	if err := Initialize(); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	Set("conflict.strategy", "ours")
+	Set("conflict.fields", map[string]string{
+		"compaction_level": "max",
+		"labels":           "union",
+	})
+
+	result := GetConflictConfig()
+
+	if result.Strategy != ConflictStrategyOurs {
+		t.Errorf("GetConflictConfig().Strategy = %s, want ours", result.Strategy)
+	}
+	if result.Fields["compaction_level"] != FieldStrategyMax {
+		t.Errorf("GetConflictConfig().Fields[compaction_level] = %s, want max", result.Fields["compaction_level"])
+	}
+	if result.Fields["labels"] != FieldStrategyUnion {
+		t.Errorf("GetConflictConfig().Fields[labels] = %s, want union", result.Fields["labels"])
+	}
+}

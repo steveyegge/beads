@@ -574,14 +574,65 @@ func GetSyncConfig() SyncConfig {
 
 // ConflictConfig holds the conflict resolution configuration.
 type ConflictConfig struct {
-	Strategy ConflictStrategy // newest, ours, theirs, manual
+	Strategy ConflictStrategy          // newest, ours, theirs, manual (default for all fields)
+	Fields   map[string]FieldStrategy  // Per-field strategy overrides
 }
 
 // GetConflictConfig returns the current conflict resolution configuration.
 func GetConflictConfig() ConflictConfig {
 	return ConflictConfig{
 		Strategy: GetConflictStrategy(),
+		Fields:   GetFieldStrategies(),
 	}
+}
+
+// GetFieldStrategies retrieves per-field conflict resolution strategies from config.
+// Returns a map of field name to strategy (e.g., {"labels": "union", "compaction_level": "max"}).
+// Invalid strategies are logged and skipped.
+//
+// Config key: conflict.fields
+// Example:
+//
+//	conflict:
+//	  strategy: newest
+//	  fields:
+//	    compaction_level: max
+//	    labels: union
+//	    waiters: union
+//	    estimated_minutes: manual
+func GetFieldStrategies() map[string]FieldStrategy {
+	result := make(map[string]FieldStrategy)
+	if v == nil {
+		return result
+	}
+
+	// Get the raw map from config
+	fieldsMap := v.GetStringMapString("conflict.fields")
+	if fieldsMap == nil {
+		return result
+	}
+
+	for field, strategyStr := range fieldsMap {
+		strategy := FieldStrategy(strings.ToLower(strings.TrimSpace(strategyStr)))
+		if !validFieldStrategies[strategy] {
+			logConfigWarning("Warning: invalid conflict.fields.%s strategy %q (valid: %s), skipping\n",
+				field, strategyStr, strings.Join(ValidFieldStrategies(), ", "))
+			continue
+		}
+		result[field] = strategy
+	}
+
+	return result
+}
+
+// GetFieldStrategy returns the merge strategy for a specific field.
+// Returns the per-field strategy if configured, otherwise returns "newest" (default).
+func GetFieldStrategy(field string) FieldStrategy {
+	fields := GetFieldStrategies()
+	if strategy, ok := fields[field]; ok {
+		return strategy
+	}
+	return FieldStrategyNewest // Default
 }
 
 // FederationConfig holds the federation (Dolt remote) configuration.
