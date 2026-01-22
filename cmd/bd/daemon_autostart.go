@@ -307,35 +307,38 @@ func acquireStartLock(lockPath, socketPath string) bool {
 		if waitForSocketReadiness(socketPath, 5*time.Second) {
 			return true
 		}
-		return handleStaleLock(lockPath, socketPath)
+		return handleStaleLock(lockPath)
 	}
 
 	debugLog("failed to acquire start lock after %d attempts", maxRetries)
 	return false
 }
 
-func handleStaleLock(lockPath, socketPath string) bool {
+func handleStaleLock(lockPath string) bool {
 	lockPID, err := readPIDFromFile(lockPath)
 
 	// Check if PID is dead
 	if err != nil || !isPIDAlive(lockPID) {
-		debugLog("lock is stale (PID %d dead or unreadable), removing and retrying", lockPID)
+		debugLog("lock is stale (PID %d dead or unreadable), removing", lockPID)
 		if rmErr := removeFileFn(lockPath); rmErr != nil {
 			debugLog("failed to remove stale lock in handleStaleLock: %v", rmErr)
-			return false
 		}
-		return tryAutoStartDaemon(socketPath)
+		// Return false to let caller retry. DO NOT call tryAutoStartDaemon here
+		// to avoid infinite recursion: acquireStartLock -> handleStaleLock ->
+		// tryAutoStartDaemon -> acquireStartLock -> ...
+		return false
 	}
 
 	// PID is alive - but check daemon lock as authoritative source (immune to PID reuse)
 	beadsDir := filepath.Dir(dbPath)
 	if running, _ := lockfile.TryDaemonLock(beadsDir); !running {
-		debugLog("lock PID %d alive but daemon lock not held, removing and retrying", lockPID)
+		debugLog("lock PID %d alive but daemon lock not held, removing", lockPID)
 		if rmErr := removeFileFn(lockPath); rmErr != nil {
 			debugLog("failed to remove orphaned lock in handleStaleLock: %v", rmErr)
-			return false
 		}
-		return tryAutoStartDaemon(socketPath)
+		// Return false to let caller retry. DO NOT call tryAutoStartDaemon here
+		// to avoid infinite recursion.
+		return false
 	}
 
 	// Daemon lock is held - daemon is genuinely running but socket isn't ready
