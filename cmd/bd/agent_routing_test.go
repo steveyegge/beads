@@ -25,6 +25,17 @@ func TestAgentStateWithRouting(t *testing.T) {
 	//       beads.db (rig database with agent)
 	tmpDir := t.TempDir()
 
+	// Change to temp directory so routing resolves paths correctly
+	// (routing uses CWD to find town root)
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
@@ -120,6 +131,16 @@ func TestAgentHeartbeatWithRouting(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
+	// Change to temp directory so routing resolves paths correctly
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
 	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
@@ -193,6 +214,16 @@ func TestAgentShowWithRouting(t *testing.T) {
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
+
+	// Change to temp directory so routing resolves paths correctly
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
 
 	// Create town .beads directory
 	townBeadsDir := filepath.Join(tmpDir, ".beads")
