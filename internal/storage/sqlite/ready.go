@@ -18,8 +18,7 @@ import (
 func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilter) ([]*types.Issue, error) {
 	whereClauses := []string{
 		"i.pinned = 0",                             // Exclude pinned issues
-		"(i.ephemeral = 0 OR i.ephemeral IS NULL)", // Exclude wisps
-		"i.id NOT LIKE '%-wisp-%'",                 // Defense in depth: exclude wisp IDs even if ephemeral flag missing
+		"(i.ephemeral = 0 OR i.ephemeral IS NULL)", // Exclude wisps by ephemeral flag
 	}
 	args := []interface{}{}
 
@@ -46,10 +45,16 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		// - role: agent role definitions (reference metadata)
 		// - rig: rig identity beads (reference metadata)
 		whereClauses = append(whereClauses, "i.issue_type NOT IN ('merge-request', 'gate', 'molecule', 'message', 'agent', 'role', 'rig')")
-		// Exclude molecule steps by ID pattern (GH#1239)
-		// Molecule steps have type=task but IDs contain -mol- (e.g., bd-mol-xxx)
-		// Use --type=task to explicitly include them
-		whereClauses = append(whereClauses, "i.id NOT LIKE '"+types.MolStepIDPattern()+"'")
+		// Exclude IDs matching configured patterns (GH#1239)
+		// Default patterns: -mol- (molecule steps), -wisp- (ephemeral wisps)
+		// Configure with: bd config set ready.exclude_id_patterns "-mol-,-wisp-,-role-"
+		// Use --type=task to explicitly include them, or IncludeMolSteps for internal callers
+		if !filter.IncludeMolSteps {
+			patterns := s.getExcludeIDPatterns(ctx)
+			for _, pattern := range patterns {
+				whereClauses = append(whereClauses, "i.id NOT LIKE '%"+pattern+"%'")
+			}
+		}
 	}
 
 	if filter.Priority != nil {
@@ -827,4 +832,36 @@ func buildOrderByClause(policy types.SortPolicy) string {
 			END ASC,
 			i.created_at ASC`
 	}
+}
+
+// ExcludeIDPatternsConfigKey is the config key for ID exclusion patterns in GetReadyWork
+const ExcludeIDPatternsConfigKey = "ready.exclude_id_patterns"
+
+// DefaultExcludeIDPatterns are the default patterns to exclude from GetReadyWork
+// These exclude molecule steps (-mol-) and wisps (-wisp-) which are internal workflow items
+var DefaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
+
+// getExcludeIDPatterns returns the ID patterns to exclude from GetReadyWork.
+// Reads from ready.exclude_id_patterns config, defaults to DefaultExcludeIDPatterns.
+// Config format: comma-separated patterns, e.g., "-mol-,-wisp-,-role-"
+func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
+	value, err := s.GetConfig(ctx, ExcludeIDPatternsConfigKey)
+	if err != nil || value == "" {
+		return DefaultExcludeIDPatterns
+	}
+
+	// Parse comma-separated patterns
+	parts := strings.Split(value, ",")
+	patterns := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			patterns = append(patterns, p)
+		}
+	}
+
+	if len(patterns) == 0 {
+		return DefaultExcludeIDPatterns
+	}
+	return patterns
 }

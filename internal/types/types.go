@@ -1007,6 +1007,11 @@ type WorkFilter struct {
 
 	// Time-based deferral filtering (GH#820)
 	IncludeDeferred bool // If true, include issues with future defer_until timestamps
+
+	// Molecule step filtering (GH#1239)
+	// By default, GetReadyWork excludes mol/wisp steps (IDs containing -mol- or -wisp-)
+	// Set to true for internal callers that need to see mol steps (e.g., findGateReadyMolecules)
+	IncludeMolSteps bool
 }
 
 // StaleFilter is used to filter stale issue queries
@@ -1044,17 +1049,11 @@ const (
 // ID prefix constants for molecule/wisp instantiation.
 // These prefixes are inserted into issue IDs: <project>-<prefix>-<id>
 // Used by: cmd/bd/pour.go, cmd/bd/wisp.go (ID generation)
-//          internal/storage/sqlite/ready.go (exclusion filter)
+// Exclusion from bd ready is config-driven via ready.exclude_id_patterns (default: -mol-,-wisp-)
 const (
 	IDPrefixMol  = "mol"  // Persistent molecules (bd-mol-xxx)
 	IDPrefixWisp = "wisp" // Ephemeral wisps (bd-wisp-xxx)
 )
-
-// MolStepIDPattern returns the SQL LIKE pattern for matching molecule step IDs.
-// Used by GetReadyWork to exclude molecule steps from the general work queue.
-func MolStepIDPattern() string {
-	return "%-" + IDPrefixMol + "-%"
-}
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).
 func (i *Issue) IsCompound() bool {
