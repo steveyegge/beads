@@ -104,8 +104,6 @@ func TestPerformAtomicExport(t *testing.T) {
 	tmpDir := t.TempDir()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
 
-	ctx := context.Background()
-
 	// Create test issues
 	issues := []*types.Issue{
 		{
@@ -125,7 +123,7 @@ func TestPerformAtomicExport(t *testing.T) {
 	}
 
 	// Call performAtomicExport
-	if err := performAtomicExport(ctx, jsonlPath, issues, nil); err != nil {
+	if err := performAtomicExport(jsonlPath, issues); err != nil {
 		t.Fatalf("performAtomicExport failed: %v", err)
 	}
 

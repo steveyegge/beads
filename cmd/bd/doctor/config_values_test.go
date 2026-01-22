@@ -461,23 +461,15 @@ func TestCheckConfigValuesDbPath(t *testing.T) {
 	})
 
 	t.Run("routing.mode=auto with hydration configured correctly", func(t *testing.T) {
-		// Create the planning repo directory so path validation passes
-		home, err := os.UserHomeDir()
-		if err != nil {
-			t.Fatalf("failed to get home dir: %v", err)
-		}
-		planningRepo := filepath.Join(home, "planning-repo")
-		if err := os.MkdirAll(planningRepo, 0755); err != nil {
-			t.Fatalf("failed to create planning repo: %v", err)
-		}
-		defer os.RemoveAll(planningRepo)
+		// Create the planning repo directory in temp dir so path validation passes
+		planningRepo := t.TempDir()
 
 		configContent := `routing:
   mode: auto
-  contributor: ~/planning-repo
+  contributor: ` + planningRepo + `
 repos:
   additional:
-    - ~/planning-repo
+    - ` + planningRepo + `
 `
 		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
 			t.Fatalf("failed to write config.yaml: %v", err)
@@ -511,23 +503,15 @@ repos:
 	})
 
 	t.Run("routing.mode=auto with maintainer routing", func(t *testing.T) {
-		// Create the maintainer repo directory so path validation passes
-		home, err := os.UserHomeDir()
-		if err != nil {
-			t.Fatalf("failed to get home dir: %v", err)
-		}
-		maintainerRepo := filepath.Join(home, "maintainer-repo")
-		if err := os.MkdirAll(maintainerRepo, 0755); err != nil {
-			t.Fatalf("failed to create maintainer repo: %v", err)
-		}
-		defer os.RemoveAll(maintainerRepo)
+		// Create the maintainer repo directory in temp dir so path validation passes
+		maintainerRepo := t.TempDir()
 
 		configContent := `routing:
   mode: auto
-  maintainer: ~/maintainer-repo
+  maintainer: ` + maintainerRepo + `
 repos:
   additional:
-    - ~/maintainer-repo
+    - ` + maintainerRepo + `
 `
 		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
 			t.Fatalf("failed to write config.yaml: %v", err)

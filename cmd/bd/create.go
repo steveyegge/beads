@@ -795,7 +795,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 		}
 
 		// Perform atomic export (temporary file + rename)
-		if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
+		if err := performAtomicExport(jsonlPath, issues); err != nil {
 			WarnError("failed to export target repo JSONL: %v", err)
 			return
 		}
@@ -805,7 +805,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 }
 
 // performAtomicExport writes issues to JSONL using atomic temp file + rename
-func performAtomicExport(ctx context.Context, jsonlPath string, issues []*types.Issue, targetStore storage.Storage) error {
+func performAtomicExport(jsonlPath string, issues []*types.Issue) error {
 	// Create temp file with PID suffix for atomic write
 	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
 
