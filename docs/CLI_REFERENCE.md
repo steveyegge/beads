@@ -334,6 +334,24 @@ bd admin cleanup --dry-run --json                                 # Preview what
 bd admin cleanup --older-than 90 --cascade --force --json         # Delete old + dependents
 ```
 
+### Orphan Detection
+
+Find issues referenced in git commits that were never closed:
+
+```bash
+# Basic usage - scan current repo
+bd orphans
+
+# Cross-repo: scan CODE repo's commits against external BEADS database
+cd ~/my-code-repo
+bd orphans --db ~/my-beads-repo/.beads/beads.db
+
+# JSON output
+bd orphans --json
+```
+
+**Use case**: When your beads database lives in a separate repository from your code, run `bd orphans` from the code repo and point `--db` to the external database. This scans commits in your current directory while checking issue status from the specified database.
+
 ### Duplicate Detection & Merging
 
 ```bash
