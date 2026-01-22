@@ -96,6 +96,15 @@ var (
 	// explicitly (e.g., bd sync in dolt-native mode, hook flows, bd vc commit).
 	// This prevents a redundant auto-commit attempt in PersistentPostRun.
 	commandDidExplicitDoltCommit bool
+
+	// commandDidWriteTipMetadata is set when a command records a tip as "shown" by writing
+	// metadata (tip_*_last_shown). This will be used to create a separate Dolt commit for
+	// tip writes, even when the main command is read-only.
+	commandDidWriteTipMetadata bool
+
+	// commandTipIDsShown tracks which tip IDs were shown in this command (deduped).
+	// This is used for tip-commit message formatting.
+	commandTipIDsShown map[string]struct{}
 )
 
 // readOnlyCommands lists commands that only read from the database.
@@ -247,6 +256,8 @@ var rootCmd = &cobra.Command{
 		// Reset per-command write tracking (used by Dolt auto-commit).
 		commandDidWrite = false
 		commandDidExplicitDoltCommit = false
+		commandDidWriteTipMetadata = false
+		commandTipIDsShown = make(map[string]struct{})
 
 		// Set up signal-aware context for graceful cancellation
 		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -964,9 +975,39 @@ var rootCmd = &cobra.Command{
 		// Dolt auto-commit: after a successful write command (and after final flush),
 		// create a Dolt commit so changes don't remain only in the working set.
 		if commandDidWrite && !commandDidExplicitDoltCommit {
-			if _, err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
+			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
 				os.Exit(1)
+			}
+		}
+
+		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
+		// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
+		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
+			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
+			if mode, err := getDoltAutoCommitMode(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+				os.Exit(1)
+			} else if mode == doltAutoCommitOn {
+				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
+				for tipID := range commandTipIDsShown {
+					key := fmt.Sprintf("tip_%s_last_shown", tipID)
+					value := time.Now().Format(time.RFC3339)
+					if err := store.SetMetadata(rootCtx, key, value); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+						os.Exit(1)
+					}
+				}
+
+				ids := make([]string, 0, len(commandTipIDsShown))
+				for tipID := range commandTipIDsShown {
+					ids = append(ids, tipID)
+				}
+				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
+				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 

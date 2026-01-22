@@ -24,21 +24,19 @@ type doltAutoCommitParams struct {
 // - Only applies when dolt auto-commit is enabled (on) AND the active store is versioned (Dolt).
 // - Uses Dolt's "commit all" behavior under the hood (DOLT_COMMIT -Am).
 // - Treats "nothing to commit" as a no-op.
-//
-// Returns (committed, error).
-func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) (bool, error) {
+func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) error {
 	mode, err := getDoltAutoCommitMode()
 	if err != nil {
-		return false, err
+		return err
 	}
 	if mode != doltAutoCommitOn {
-		return false, nil
+		return nil
 	}
 
 	st := getStore()
 	vs, ok := storage.AsVersioned(st)
 	if !ok {
-		return false, nil
+		return nil
 	}
 
 	msg := p.MessageOverride
@@ -48,11 +46,11 @@ func maybeAutoCommit(ctx context.Context, p doltAutoCommitParams) (bool, error) 
 
 	if err := vs.Commit(ctx, msg); err != nil {
 		if isDoltNothingToCommit(err) {
-			return false, nil
+			return nil
 		}
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 func isDoltNothingToCommit(err error) bool {
