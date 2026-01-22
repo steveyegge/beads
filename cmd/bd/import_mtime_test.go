@@ -86,3 +86,23 @@ func TestTouchDatabaseFileWithClockSkew(t *testing.T) {
 		t.Errorf("DB mtime: %v, JSONL mtime: %v", dbInfo.ModTime(), jsonlInfo.ModTime())
 	}
 }
+
+// TestTouchDatabaseFile_NonExistentFile verifies that TouchDatabaseFile
+// returns nil (no error) when the database file doesn't exist.
+// This is the case for Dolt backend which uses JSONL-only (no beads.db).
+// Fixes bd-f74e54: bd sync warning about missing beads.db in Dolt mode.
+func TestTouchDatabaseFile_NonExistentFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	nonExistentFile := filepath.Join(tmpDir, "nonexistent.db")
+
+	// Touch a non-existent file should return nil (not an error)
+	err := TouchDatabaseFile(nonExistentFile, "")
+	if err != nil {
+		t.Errorf("TouchDatabaseFile should return nil for non-existent file, got: %v", err)
+	}
+
+	// Verify the file was NOT created
+	if _, err := os.Stat(nonExistentFile); !os.IsNotExist(err) {
+		t.Errorf("TouchDatabaseFile should not create the file if it doesn't exist")
+	}
+}

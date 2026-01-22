@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -322,12 +322,10 @@ func CheckStaleness(ctx context.Context, store storage.Storage, dbPath string) (
 	return stat.ModTime().After(lastImportTime), nil
 }
 
-// getBackendType returns the backend type from metadata.json in the .beads directory
-// Returns "sqlite" (default), "dolt", or other registered backend types
+// getBackendType returns the backend type from configuration.
+// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
+// Returns "sqlite" (default), "dolt", or other registered backend types.
+// hq-3446fc.17: Use factory.GetBackendFromConfig for consistent backend detection.
 func getBackendType(beadsDir string) string {
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		return configfile.BackendSQLite // default to sqlite
-	}
-	return cfg.GetBackend()
+	return factory.GetBackendFromConfig(beadsDir)
 }
