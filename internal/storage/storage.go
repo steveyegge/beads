@@ -134,6 +134,7 @@ type Storage interface {
 	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
 	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
 	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
+	ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) // For JSONL export
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

@@ -170,3 +170,49 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 
 	return results, nil
 }
+
+// ListAllDecisionPoints returns all decision points (for JSONL export).
+func (s *SQLiteStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) {
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT issue_id, prompt, options,
+			COALESCE(default_option, ''), COALESCE(selected_option, ''),
+			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
+			iteration, max_iterations,
+			COALESCE(prior_id, ''), COALESCE(guidance, ''),
+			COALESCE(reminder_count, 0), created_at
+		FROM decision_points
+		ORDER BY issue_id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all decision points: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []*types.DecisionPoint
+	for rows.Next() {
+		dp := &types.DecisionPoint{}
+		err := rows.Scan(
+			&dp.IssueID, &dp.Prompt, &dp.Options,
+			&dp.DefaultOption, &dp.SelectedOption,
+			&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
+			&dp.Iteration, &dp.MaxIterations,
+			&dp.PriorID, &dp.Guidance,
+			&dp.ReminderCount, &dp.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan decision point: %w", err)
+		}
+		results = append(results, dp)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating decision points: %w", err)
+	}
+
+	return results, nil
+}

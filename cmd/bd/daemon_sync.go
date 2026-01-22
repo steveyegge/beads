@@ -91,6 +91,21 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		issue.Comments = comments
 	}
 
+	// Populate decision points for issues that have them (hq-946577.12)
+	allDecisionPoints, err := store.ListAllDecisionPoints(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get decision points: %w", err)
+	}
+	dpByIssue := make(map[string]*types.DecisionPoint)
+	for _, dp := range allDecisionPoints {
+		dpByIssue[dp.IssueID] = dp
+	}
+	for _, issue := range issues {
+		if dp, ok := dpByIssue[issue.ID]; ok {
+			issue.DecisionPoint = dp
+		}
+	}
+
 	// Create temp file for atomic write
 	dir := filepath.Dir(jsonlPath)
 	base := filepath.Base(jsonlPath)

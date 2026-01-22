@@ -1896,3 +1896,21 @@ func (m *MemoryStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 
 	return results, nil
 }
+
+// ListAllDecisionPoints returns all decision points (for JSONL export).
+func (m *MemoryStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var results []*types.DecisionPoint
+	for _, dp := range m.decisionPoints {
+		results = append(results, dp)
+	}
+
+	// Sort by issue_id for consistent ordering
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].IssueID < results[j].IssueID
+	})
+
+	return results, nil
+}

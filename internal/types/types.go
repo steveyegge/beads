@@ -61,9 +61,10 @@ type Issue struct {
 	PrefixOverride string `json:"-"` // Completely replace config prefix (for cross-rig creation)
 
 	// ===== Relational Data (populated for export/import) =====
-	Labels       []string      `json:"labels,omitempty"`
-	Dependencies []*Dependency `json:"dependencies,omitempty"`
-	Comments     []*Comment    `json:"comments,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Dependencies  []*Dependency  `json:"dependencies,omitempty"`
+	Comments      []*Comment     `json:"comments,omitempty"`
+	DecisionPoint *DecisionPoint `json:"decision_point,omitempty"` // Decision gate data (hq-946577.12)
 
 	// ===== Tombstone Fields (soft-delete support) =====
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When deleted

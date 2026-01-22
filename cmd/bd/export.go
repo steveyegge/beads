@@ -406,6 +406,22 @@ Examples:
 			issue.Labels = labels
 		}
 
+		// Populate decision points for issues that have them (hq-946577.12)
+		allDecisionPoints, err := store.ListAllDecisionPoints(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting decision points: %v\n", err)
+			os.Exit(1)
+		}
+		dpByIssue := make(map[string]*types.DecisionPoint)
+		for _, dp := range allDecisionPoints {
+			dpByIssue[dp.IssueID] = dp
+		}
+		for _, issue := range issues {
+			if dp, ok := dpByIssue[issue.ID]; ok {
+				issue.DecisionPoint = dp
+			}
+		}
+
 		// Open output
 		out := os.Stdout
 		var tempFile *os.File

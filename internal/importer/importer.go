@@ -184,6 +184,11 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 		return nil, err
 	}
 
+	// Import decision points (hq-946577.12)
+	if err := importDecisionPoints(ctx, sqliteStore, issues, opts); err != nil {
+		return nil, err
+	}
+
 	// Checkpoint WAL to ensure data persistence and reduce WAL file size
 	if err := sqliteStore.CheckpointWAL(ctx); err != nil {
 		// Non-fatal - just log warning
@@ -944,6 +949,62 @@ func importComments(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issu
 				if _, err := sqliteStore.ImportIssueComment(ctx, issue.ID, comment.Author, comment.Text, createdAt); err != nil {
 					if opts.Strict {
 						return fmt.Errorf("error adding comment to %s: %w", issue.ID, err)
+					}
+					continue
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// importDecisionPoints imports decision points for issues (hq-946577.12)
+func importDecisionPoints(ctx context.Context, sqliteStore *sqlite.SQLiteStorage, issues []*types.Issue, opts Options) error {
+	for _, issue := range issues {
+		if issue.DecisionPoint == nil {
+			continue
+		}
+
+		dp := issue.DecisionPoint
+		// Ensure issue_id matches the parent issue
+		dp.IssueID = issue.ID
+
+		// Check if decision point already exists
+		existing, err := sqliteStore.GetDecisionPoint(ctx, dp.IssueID)
+		if err != nil {
+			if opts.Strict {
+				return fmt.Errorf("error checking decision point for %s: %w", issue.ID, err)
+			}
+			continue
+		}
+
+		if existing == nil {
+			// Create new decision point
+			if err := sqliteStore.CreateDecisionPoint(ctx, dp); err != nil {
+				if opts.Strict {
+					return fmt.Errorf("error creating decision point for %s: %w", issue.ID, err)
+				}
+				continue
+			}
+		} else {
+			// Update existing if incoming is newer (by CreatedAt or if it has response when existing doesn't)
+			shouldUpdate := false
+			if dp.RespondedAt != nil && existing.RespondedAt == nil {
+				// Incoming has response, existing doesn't - update
+				shouldUpdate = true
+			} else if dp.ReminderCount > existing.ReminderCount {
+				// More reminders sent - update
+				shouldUpdate = true
+			} else if dp.Iteration > existing.Iteration {
+				// Higher iteration - update
+				shouldUpdate = true
+			}
+
+			if shouldUpdate {
+				if err := sqliteStore.UpdateDecisionPoint(ctx, dp); err != nil {
+					if opts.Strict {
+						return fmt.Errorf("error updating decision point for %s: %w", issue.ID, err)
 					}
 					continue
 				}

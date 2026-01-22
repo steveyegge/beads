@@ -137,6 +137,9 @@ func (m *mockStorage) UpdateDecisionPoint(ctx context.Context, dp *types.Decisio
 func (m *mockStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
 	return nil, nil
 }
+func (m *mockStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	return nil, nil
 }

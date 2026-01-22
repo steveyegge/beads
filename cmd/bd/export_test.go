@@ -383,3 +383,146 @@ func TestExportCommand(t *testing.T) {
 		}
 	})
 }
+
+// TestExportDecisionPoints tests that decision points are correctly exported and imported (hq-946577.12)
+func TestExportDecisionPoints(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bd-test-decision-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	testDB := filepath.Join(tmpDir, "test.db")
+	s := newTestStore(t, testDB)
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Create test issue with decision await type
+	issue := &types.Issue{
+		Title:       "Decision Test",
+		Description: "Test issue with decision point",
+		Priority:    0,
+		IssueType:   types.TypeTask,
+		Status:      types.StatusOpen,
+		AwaitType:   "decision",
+	}
+	if err := s.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+
+	// Create decision point for the issue
+	dp := &types.DecisionPoint{
+		IssueID:       issue.ID,
+		Prompt:        "Which caching strategy should we use?",
+		Options:       `[{"id":"a","short":"Redis","label":"Use Redis for caching"},{"id":"b","short":"Memory","label":"Use in-memory cache"}]`,
+		DefaultOption: "a",
+		Iteration:     1,
+		MaxIterations: 3,
+	}
+	if err := s.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("Failed to create decision point: %v", err)
+	}
+
+	t.Run("export includes decision point", func(t *testing.T) {
+		exportPath := filepath.Join(tmpDir, "export_decision.jsonl")
+
+		// Clear export hashes to force re-export
+		if err := s.ClearAllExportHashes(ctx); err != nil {
+			t.Fatalf("Failed to clear export hashes: %v", err)
+		}
+
+		store = s
+		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
+		exportCmd.Flags().Set("output", exportPath)
+		exportCmd.Run(exportCmd, []string{})
+
+		file, err := os.Open(exportPath)
+		if err != nil {
+			t.Fatalf("Failed to open export file: %v", err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		foundDecisionPoint := false
+		for scanner.Scan() {
+			var exportedIssue types.Issue
+			if err := json.Unmarshal(scanner.Bytes(), &exportedIssue); err != nil {
+				t.Fatalf("Failed to parse JSONL: %v", err)
+			}
+
+			if exportedIssue.ID == issue.ID && exportedIssue.DecisionPoint != nil {
+				foundDecisionPoint = true
+				if exportedIssue.DecisionPoint.Prompt != dp.Prompt {
+					t.Errorf("Expected prompt %q, got %q", dp.Prompt, exportedIssue.DecisionPoint.Prompt)
+				}
+				if exportedIssue.DecisionPoint.DefaultOption != dp.DefaultOption {
+					t.Errorf("Expected default option %q, got %q", dp.DefaultOption, exportedIssue.DecisionPoint.DefaultOption)
+				}
+				if exportedIssue.DecisionPoint.Iteration != dp.Iteration {
+					t.Errorf("Expected iteration %d, got %d", dp.Iteration, exportedIssue.DecisionPoint.Iteration)
+				}
+			}
+		}
+
+		if !foundDecisionPoint {
+			t.Error("Did not find decision point in export")
+		}
+	})
+
+	t.Run("import restores decision point", func(t *testing.T) {
+		exportPath := filepath.Join(tmpDir, "export_for_import.jsonl")
+
+		// Clear export hashes to force re-export
+		if err := s.ClearAllExportHashes(ctx); err != nil {
+			t.Fatalf("Failed to clear export hashes: %v", err)
+		}
+
+		// Export first
+		store = s
+		dbPath = testDB
+		rootCtx = ctx
+		defer func() { rootCtx = nil }()
+		exportCmd.Flags().Set("output", exportPath)
+		exportCmd.Run(exportCmd, []string{})
+
+		// Create a fresh database for import
+		importDB := filepath.Join(tmpDir, "import.db")
+		importStore := newTestStore(t, importDB)
+		defer importStore.Close()
+
+		// Import the exported file
+		store = importStore
+		dbPath = importDB
+		importCmd.Flags().Set("input", exportPath)
+		importCmd.Run(importCmd, []string{})
+
+		// Verify the decision point was imported
+		importedDP, err := importStore.GetDecisionPoint(ctx, issue.ID)
+		if err != nil {
+			t.Fatalf("Failed to get imported decision point: %v", err)
+		}
+		if importedDP == nil {
+			t.Fatal("Decision point was not imported")
+		}
+
+		// Verify decision point fields
+		if importedDP.Prompt != dp.Prompt {
+			t.Errorf("Imported prompt = %q, want %q", importedDP.Prompt, dp.Prompt)
+		}
+		if importedDP.DefaultOption != dp.DefaultOption {
+			t.Errorf("Imported default option = %q, want %q", importedDP.DefaultOption, dp.DefaultOption)
+		}
+		if importedDP.Options != dp.Options {
+			t.Errorf("Imported options = %q, want %q", importedDP.Options, dp.Options)
+		}
+		if importedDP.Iteration != dp.Iteration {
+			t.Errorf("Imported iteration = %d, want %d", importedDP.Iteration, dp.Iteration)
+		}
+		if importedDP.MaxIterations != dp.MaxIterations {
+			t.Errorf("Imported max_iterations = %d, want %d", importedDP.MaxIterations, dp.MaxIterations)
+		}
+	})
+}
