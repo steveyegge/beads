@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -39,13 +41,14 @@ type BootstrapConfig struct {
 	LockTimeout time.Duration // Timeout waiting for bootstrap lock
 }
 
-// Bootstrap checks if Dolt DB needs bootstrapping from JSONL and performs it if needed.
-// This is called during store creation to handle the cold-start scenario where
-// JSONL files exist (from git clone) but no Dolt database exists yet.
+// Bootstrap checks if Dolt DB needs bootstrapping and performs it if needed.
+// This is called during store creation to handle cold-start scenarios:
+//   1. JSONL files exist (from git clone) - bootstrap from JSONL
+//   2. No JSONL but DoltRemoteURL configured - bootstrap by cloning from remote
 //
 // Returns:
 //   - true, result, nil: Bootstrap was performed successfully
-//   - false, nil, nil: No bootstrap needed (Dolt already exists or no JSONL)
+//   - false, nil, nil: No bootstrap needed (Dolt already exists or no source)
 //   - false, nil, err: Bootstrap failed
 func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult, error) {
 	if cfg.LockTimeout == 0 {
@@ -59,8 +62,18 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult
 
 	// Check if JSONL exists to bootstrap from
 	jsonlPath := findJSONLPath(cfg.BeadsDir)
+
+	// If no JSONL, check for Dolt remote URL in metadata.json
+	var remoteURL string
 	if jsonlPath == "" {
-		// No JSONL to bootstrap from - let normal init handle it
+		metaCfg, err := configfile.Load(cfg.BeadsDir)
+		if err == nil && metaCfg != nil && metaCfg.DoltRemoteURL != "" {
+			remoteURL = metaCfg.DoltRemoteURL
+		}
+	}
+
+	// No bootstrap source available
+	if jsonlPath == "" && remoteURL == "" {
 		return false, nil, nil
 	}
 
@@ -77,7 +90,17 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult
 		return false, nil, nil
 	}
 
-	// Perform bootstrap
+	// Perform bootstrap from appropriate source
+	if remoteURL != "" {
+		// Bootstrap from Dolt remote (preferred for dolt-native mode)
+		result, err := performBootstrapFromRemote(ctx, cfg, remoteURL)
+		if err != nil {
+			return false, nil, err
+		}
+		return true, result, nil
+	}
+
+	// Bootstrap from JSONL (fallback)
 	result, err := performBootstrap(ctx, cfg, jsonlPath)
 	if err != nil {
 		return false, nil, err
@@ -234,6 +257,91 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	}
 
 	return result, nil
+}
+
+// performBootstrapFromRemote bootstraps the Dolt database by cloning from a remote.
+// This enables JSONL-free fresh clones when dolt_remote_url is configured in metadata.json.
+func performBootstrapFromRemote(ctx context.Context, cfg BootstrapConfig, remoteURL string) (*BootstrapResult, error) {
+	result := &BootstrapResult{}
+
+	fmt.Fprintf(os.Stderr, "Bootstrap: Cloning from Dolt remote: %s\n", remoteURL)
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(cfg.DoltPath, 0o750); err != nil {
+		return nil, fmt.Errorf("failed to create dolt directory: %w", err)
+	}
+
+	// Clone into the "beads" subdirectory (matches the database name used by embedded driver)
+	targetDir := filepath.Join(cfg.DoltPath, "beads")
+
+	// Run dolt clone
+	// #nosec G204 - remoteURL comes from config file, not user input
+	cmd := exec.CommandContext(ctx, "dolt", "clone", remoteURL, targetDir)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stderr // Show progress
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("dolt clone failed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Bootstrap: Clone complete, verifying database...\n")
+
+	// Verify the clone worked by checking the schema is ready
+	if !schemaReady(ctx, cfg.DoltPath) {
+		return nil, fmt.Errorf("cloned database is missing expected schema")
+	}
+
+	// Count issues using direct SQL query (avoids circular dependency with store)
+	count, prefix, err := countIssuesInClonedDB(ctx, cfg.DoltPath)
+	if err != nil {
+		// Non-fatal - clone succeeded, just can't count
+		fmt.Fprintf(os.Stderr, "Bootstrap: warning: could not count issues: %v\n", err)
+	} else {
+		result.IssuesImported = count
+		result.PrefixDetected = prefix
+	}
+
+	fmt.Fprintf(os.Stderr, "Bootstrap: Cloned %d issues from remote\n", result.IssuesImported)
+
+	return result, nil
+}
+
+// countIssuesInClonedDB counts issues in a freshly cloned Dolt database
+func countIssuesInClonedDB(ctx context.Context, doltPath string) (int, string, error) {
+	// Use dolt sql command to query the cloned database
+	dbPath := filepath.Join(doltPath, "beads")
+
+	// Count issues
+	cmd := exec.CommandContext(ctx, "dolt", "sql", "-q", "SELECT COUNT(*) FROM issues", "-r", "csv")
+	cmd.Dir = dbPath
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to count issues: %w", err)
+	}
+
+	// Parse CSV output (header + count)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return 0, "", nil
+	}
+	var count int
+	_, _ = fmt.Sscanf(lines[1], "%d", &count)
+
+	// Get first issue ID to detect prefix
+	cmd = exec.CommandContext(ctx, "dolt", "sql", "-q", "SELECT id FROM issues LIMIT 1", "-r", "csv")
+	cmd.Dir = dbPath
+	out, err = cmd.Output()
+	if err != nil {
+		return count, "", nil // Count succeeded, prefix detection failed
+	}
+
+	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
+	var prefix string
+	if len(lines) >= 2 && lines[1] != "" {
+		prefix = utils.ExtractIssuePrefix(lines[1])
+	}
+
+	return count, prefix, nil
 }
 
 // parseJSONLWithErrors parses JSONL, collecting errors instead of failing

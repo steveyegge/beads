@@ -14,6 +14,12 @@ type Config struct {
 	JSONLExport string `json:"jsonl_export,omitempty"`
 	Backend     string `json:"backend,omitempty"` // "sqlite" (default) or "dolt"
 
+	// Dolt remote URL for bootstrap from remote (enables JSONL-free fresh clones)
+	// When set and Dolt backend is configured, fresh clones will bootstrap by
+	// cloning from this remote instead of requiring JSONL in git.
+	// Example: "aws://[bucket:table]/database"
+	DoltRemoteURL string `json:"dolt_remote_url,omitempty"`
+
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
