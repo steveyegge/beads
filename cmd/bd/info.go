@@ -297,6 +297,28 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.49.0",
+		Date:    "2026-01-21",
+		Changes: []string{
+			"NEW: Dolt federation - Peer-to-peer issue sync with bd federation sync command",
+			"NEW: SQLite to Dolt migration - bd migrate dolt converts existing repos",
+			"NEW: bd children <id> - Display child issues for a parent",
+			"NEW: bd rename <old> <new> - Rename issue IDs",
+			"NEW: bd view - Alias for bd show command",
+			"NEW: bd config validate - Validate sync configuration",
+			"NEW: Jujutsu (jj) VCS support - Beads now works with jj repositories",
+			"NEW: Per-field merge strategies for conflict resolution",
+			"NEW: -m flag as alias for --description in bd create",
+			"CHANGED: Auto-routing disabled by default - Enable with routing.mode: auto (#1177)",
+			"CHANGED: Gas Town types removed from core - Use types.custom configuration",
+			"FIX: Daemon zombie state after DB replacement (#1213)",
+			"FIX: WSL2 Docker Desktop - Detect bind mounts and disable WAL mode (#1224)",
+			"FIX: Daemon stack overflow in handleStaleLock (#1238)",
+			"FIX: Molecule steps excluded from bd ready (#1246)",
+			"FIX: Tree ordering stabilization for consistent --tree output (#1228)",
+		},
+	},
+	{
 		Version: "0.48.0",
 		Date:    "2026-01-17",
 		Changes: []string{
