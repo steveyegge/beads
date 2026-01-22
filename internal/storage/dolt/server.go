@@ -103,13 +103,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Create command
+	// #nosec G204 -- dolt binary path is fixed, args are from trusted config
 	s.cmd = exec.CommandContext(ctx, "dolt", args...)
 	s.cmd.Dir = s.cfg.DataDir
 
-	// Set up process group for clean shutdown
-	s.cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Set up process group for clean shutdown (platform-specific)
+	setSysProcAttr(s.cmd)
 
 	// Set up logging
 	if s.cfg.LogFile != "" {
@@ -272,6 +271,7 @@ func (s *Server) waitForReady(ctx context.Context) error {
 // GetRunningServerPID returns the PID of a running server from the PID file, or 0 if not running
 func GetRunningServerPID(dataDir string) int {
 	pidFile := filepath.Join(dataDir, "dolt-server.pid")
+	// #nosec G304 -- pidFile is constructed from dataDir which is a trusted internal path
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return 0
