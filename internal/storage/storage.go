@@ -78,6 +78,12 @@ type Transaction interface {
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+
+	// Decision point operations
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
 }
 
 // Storage defines the interface for issue storage backends

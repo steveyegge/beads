@@ -1701,3 +1701,64 @@ func (t *sqliteTxStorage) UpdateDecisionPoint(ctx context.Context, dp *types.Dec
 
 	return nil
 }
+
+// ListPendingDecisions returns all decision points that haven't been responded to within the transaction.
+func (t *sqliteTxStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	rows, err := t.conn.QueryContext(ctx, `
+		SELECT issue_id, prompt, options, default_option, selected_option,
+			response_text, responded_at, responded_by, iteration,
+			max_iterations, prior_id, guidance, reminder_count, created_at
+		FROM decision_points
+		WHERE responded_at IS NULL
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*types.DecisionPoint
+	for rows.Next() {
+		dp := &types.DecisionPoint{}
+		var defaultOption, selectedOption, responseText, respondedBy, priorID, guidance sql.NullString
+		var respondedAt sql.NullTime
+		var reminderCount sql.NullInt64
+
+		err := rows.Scan(
+			&dp.IssueID, &dp.Prompt, &dp.Options, &defaultOption, &selectedOption,
+			&responseText, &respondedAt, &respondedBy, &dp.Iteration,
+			&dp.MaxIterations, &priorID, &guidance, &reminderCount, &dp.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan decision point: %w", err)
+		}
+
+		if defaultOption.Valid {
+			dp.DefaultOption = defaultOption.String
+		}
+		if selectedOption.Valid {
+			dp.SelectedOption = selectedOption.String
+		}
+		if responseText.Valid {
+			dp.ResponseText = responseText.String
+		}
+		if respondedAt.Valid {
+			dp.RespondedAt = &respondedAt.Time
+		}
+		if respondedBy.Valid {
+			dp.RespondedBy = respondedBy.String
+		}
+		if priorID.Valid {
+			dp.PriorID = priorID.String
+		}
+		if guidance.Valid {
+			dp.Guidance = guidance.String
+		}
+		if reminderCount.Valid {
+			dp.ReminderCount = int(reminderCount.Int64)
+		}
+
+		results = append(results, dp)
+	}
+	return results, rows.Err()
+}

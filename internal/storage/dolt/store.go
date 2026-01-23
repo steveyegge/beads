@@ -60,6 +60,7 @@ type Config struct {
 	ReadOnly       bool          // Open in read-only mode (skip schema init)
 	LockRetries    int           // Number of retries on lock contention (default: 30)
 	LockRetryDelay time.Duration // Initial retry delay (default: 100ms, doubles each retry)
+	IdleTimeout    time.Duration // Connection idle timeout (default: 0, no timeout)
 
 	// Server mode options (federation)
 	ServerMode     bool   // Connect to dolt sql-server instead of embedded
@@ -431,6 +432,11 @@ func (s *DoltStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.db.Close()
+}
+
+// getDB returns the underlying database connection for testing purposes.
+func (s *DoltStore) getDB(_ context.Context) (*sql.DB, error) {
+	return s.db, nil
 }
 
 // Path returns the database directory path
