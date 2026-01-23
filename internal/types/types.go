@@ -3,6 +3,7 @@ package types
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -1103,6 +1104,39 @@ type DecisionPoint struct {
 	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
 	ReminderCount  int        `json:"reminder_count"`             // Number of reminders sent
 	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// DecisionAcceptOptionID is the ID for the special "accept-as-is" option (hq-946577.24).
+// This option is automatically injected for decisions with iteration > 1.
+const DecisionAcceptOptionID = "_accept"
+
+// AcceptOption returns the special "_accept" option for iterative decisions.
+// This option allows users to accept their guidance directly without another iteration.
+func AcceptOption() DecisionOption {
+	return DecisionOption{
+		ID:          DecisionAcceptOptionID,
+		Short:       "Accept as-is",
+		Label:       "Accept my guidance as-is and proceed",
+		Description: "The agent will interpret your guidance and proceed without generating more options.",
+	}
+}
+
+// GetOptionsWithAccept parses the options JSON and injects the _accept option
+// if the decision point is an iteration (iteration > 1). (hq-946577.24)
+func (dp *DecisionPoint) GetOptionsWithAccept() ([]DecisionOption, error) {
+	var options []DecisionOption
+	if dp.Options != "" {
+		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
+			return nil, err
+		}
+	}
+
+	// Inject _accept option for iterations > 1
+	if dp.Iteration > 1 {
+		options = append(options, AcceptOption())
+	}
+
+	return options, nil
 }
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -78,12 +77,10 @@ func runDecisionShow(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Parse options
-	var options []types.DecisionOption
-	if dp.Options != "" {
-		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
-		}
+	// Parse options (includes _accept for iterations > 1) (hq-946577.24)
+	options, err := dp.GetOptionsWithAccept()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not parse options: %v\n", err)
 	}
 
 	// Get issues that depend on this decision (will be unblocked when resolved)

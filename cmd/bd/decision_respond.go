@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -133,13 +132,11 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// If --select provided, validate the option exists
-	var options []types.DecisionOption
-	if dp.Options != "" {
-		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
-			os.Exit(1)
-		}
+	// Get options including the _accept option if iteration > 1 (hq-946577.24)
+	options, err := dp.GetOptionsWithAccept()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
+		os.Exit(1)
 	}
 
 	if selectOpt != "" {
@@ -184,11 +181,16 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 		// Close the gate issue
 		reason := "Decision resolved"
 		if selectOpt != "" {
-			// Find the label for the selected option
-			for _, opt := range options {
-				if opt.ID == selectOpt {
-					reason = fmt.Sprintf("Selected: %s", opt.Label)
-					break
+			// Handle _accept option specially (hq-946577.24)
+			if selectOpt == types.DecisionAcceptOptionID {
+				reason = "Guidance accepted as-is"
+			} else {
+				// Find the label for the selected option
+				for _, opt := range options {
+					if opt.ID == selectOpt {
+						reason = fmt.Sprintf("Selected: %s", opt.Label)
+						break
+					}
 				}
 			}
 		} else if acceptGuidance {
