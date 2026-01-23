@@ -438,7 +438,7 @@ func autoImportIfNewer() {
 // Thread-safe: Safe to call from multiple goroutines (uses atomic.Bool).
 // No-op if auto-flush is disabled via --no-auto-flush flag.
 func markDirtyAndScheduleFlush() {
-// Track that this command performed a write (atomic to avoid data races).
+	// Track that this command performed a write (atomic to avoid data races).
 	commandDidWrite.Store(true)
 
 	// Use FlushManager if available
