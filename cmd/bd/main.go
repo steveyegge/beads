@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -71,19 +72,41 @@ var (
 	upgradeAcknowledged    = false // Set to true after showing upgrade notification once per session
 )
 var (
-	noAutoFlush    bool
-	noAutoImport   bool
-	sandboxMode    bool
-	allowStale     bool          // Use --allow-stale: skip staleness check (emergency escape hatch)
-	noDb           bool          // Use --no-db mode: load from JSONL, write back after each command
+	noAutoFlush     bool
+	noAutoImport    bool
+	sandboxMode     bool
+	allowStale      bool          // Use --allow-stale: skip staleness check (emergency escape hatch)
+	noDb            bool          // Use --no-db mode: load from JSONL, write back after each command
 	readonlyMode    bool          // Read-only mode: block write operations (for worker sandboxes)
 	storeIsReadOnly bool          // Track if store was opened read-only (for staleness checks)
 	lockTimeout     time.Duration // SQLite busy_timeout (default 30s, 0 = fail immediately)
-	profileEnabled bool
-	profileFile    *os.File
-	traceFile      *os.File
-	verboseFlag    bool // Enable verbose/debug output
-	quietFlag      bool // Suppress non-essential output
+	profileEnabled  bool
+	profileFile     *os.File
+	traceFile       *os.File
+	verboseFlag     bool // Enable verbose/debug output
+	quietFlag       bool // Suppress non-essential output
+
+	// Dolt auto-commit policy (flag/config). Values: off | on
+	doltAutoCommit string
+
+	// commandDidWrite is set when a command performs a write that should trigger
+	// auto-flush. Used to decide whether to auto-commit Dolt after the command completes.
+	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
+	commandDidWrite atomic.Bool
+
+	// commandDidExplicitDoltCommit is set when a command already created a Dolt commit
+	// explicitly (e.g., bd sync in dolt-native mode, hook flows, bd vc commit).
+	// This prevents a redundant auto-commit attempt in PersistentPostRun.
+	commandDidExplicitDoltCommit bool
+
+	// commandDidWriteTipMetadata is set when a command records a tip as "shown" by writing
+	// metadata (tip_*_last_shown). This will be used to create a separate Dolt commit for
+	// tip writes, even when the main command is read-only.
+	commandDidWriteTipMetadata bool
+
+	// commandTipIDsShown tracks which tip IDs were shown in this command (deduped).
+	// This is used for tip-commit message formatting.
+	commandTipIDsShown map[string]struct{}
 )
 
 // readOnlyCommands lists commands that only read from the database.
@@ -189,6 +212,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Allow operations on potentially stale data (skip staleness check)")
 	rootCmd.PersistentFlags().BoolVar(&noDb, "no-db", false, "Use no-db mode: load from JSONL, no SQLite")
 	rootCmd.PersistentFlags().BoolVar(&readonlyMode, "readonly", false, "Read-only mode: block write operations (for worker sandboxes)")
+	rootCmd.PersistentFlags().StringVar(&doltAutoCommit, "dolt-auto-commit", "", "Dolt backend: auto-commit after write commands (off|on). Default from config key dolt.auto-commit")
 	rootCmd.PersistentFlags().DurationVar(&lockTimeout, "lock-timeout", 30*time.Second, "SQLite busy timeout (0 = fail immediately if locked)")
 	rootCmd.PersistentFlags().BoolVar(&profileEnabled, "profile", false, "Generate CPU profile for performance analysis")
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
@@ -230,6 +254,12 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Initialize CommandContext to hold runtime state (replaces scattered globals)
 		initCommandContext()
+
+		// Reset per-command write tracking (used by Dolt auto-commit).
+		commandDidWrite.Store(false)
+		commandDidExplicitDoltCommit = false
+		commandDidWriteTipMetadata = false
+		commandTipIDsShown = make(map[string]struct{})
 
 		// Set up signal-aware context for graceful cancellation
 		rootCtx, rootCancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -321,6 +351,14 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{actor, true}
 		}
+		if !cmd.Flags().Changed("dolt-auto-commit") && strings.TrimSpace(doltAutoCommit) == "" {
+			doltAutoCommit = config.GetString("dolt.auto-commit")
+		} else if cmd.Flags().Changed("dolt-auto-commit") {
+			flagOverrides["dolt-auto-commit"] = struct {
+				Value  interface{}
+				WasSet bool
+			}{doltAutoCommit, true}
+		}
 
 		// Check for and log configuration overrides (only in verbose mode)
 		if verboseFlag {
@@ -328,6 +366,12 @@ var rootCmd = &cobra.Command{
 			for _, override := range overrides {
 				config.LogOverride(override)
 			}
+		}
+
+		// Validate Dolt auto-commit mode early so all commands fail fast on invalid config.
+		if _, err := getDoltAutoCommitMode(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
 		// GH#1093: Check noDbCommands BEFORE expensive operations (ensureForkProtection,
@@ -927,6 +971,45 @@ var rootCmd = &cobra.Command{
 		if flushManager != nil && !skipFinalFlush {
 			if err := flushManager.Shutdown(); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: flush manager shutdown error: %v\n", err)
+			}
+		}
+
+		// Dolt auto-commit: after a successful write command (and after final flush),
+		// create a Dolt commit so changes don't remain only in the working set.
+		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
+			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Tip metadata auto-commit: if a tip was shown, create a separate Dolt commit for the
+		// tip_*_last_shown metadata updates. This may happen even for otherwise read-only commands.
+		if commandDidWriteTipMetadata && len(commandTipIDsShown) > 0 {
+			// Only applies when dolt auto-commit is enabled and backend is versioned (Dolt).
+			if mode, err := getDoltAutoCommitMode(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+				os.Exit(1)
+			} else if mode == doltAutoCommitOn {
+				// Apply tip metadata writes now (deferred in recordTipShown for Dolt).
+				for tipID := range commandTipIDsShown {
+					key := fmt.Sprintf("tip_%s_last_shown", tipID)
+					value := time.Now().Format(time.RFC3339)
+					if err := store.SetMetadata(rootCtx, key, value); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+						os.Exit(1)
+					}
+				}
+
+				ids := make([]string, 0, len(commandTipIDsShown))
+				for tipID := range commandTipIDsShown {
+					ids = append(ids, tipID)
+				}
+				msg := formatDoltAutoCommitMessage("tip", getActor(), ids)
+				if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: "tip", MessageOverride: msg}); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: dolt tip auto-commit failed: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 

@@ -680,6 +680,8 @@ func hookPostMergeDolt(beadsDir string) int {
 	}
 
 	// Commit changes on import branch
+	// This hook flow commits to Dolt explicitly; avoid redundant auto-commit in PersistentPostRun.
+	commandDidExplicitDoltCommit = true
 	if err := doltStore.Commit(ctx, "Import from JSONL"); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not commit import: %v\n", err)
 	}
@@ -702,6 +704,8 @@ func hookPostMergeDolt(beadsDir string) int {
 	}
 
 	// Commit the merge
+	// Still part of explicit hook commit flow.
+	commandDidExplicitDoltCommit = true
 	if err := doltStore.Commit(ctx, "Merge JSONL import"); err != nil {
 		// May fail if nothing to commit (fast-forward merge)
 		// This is expected, not an error

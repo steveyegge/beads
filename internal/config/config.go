@@ -111,6 +111,11 @@ func Initialize() error {
 	v.SetDefault("identity", "")
 	v.SetDefault("remote-sync-interval", "30s")
 
+	// Dolt configuration defaults
+	// Controls whether beads should automatically create Dolt commits after write commands.
+	// Values: off | on
+	v.SetDefault("dolt.auto-commit", "on")
+
 	// Routing configuration defaults
 	v.SetDefault("routing.mode", "")
 	v.SetDefault("routing.default", ".")
@@ -122,16 +127,16 @@ func Initialize() error {
 
 	// Sync mode configuration (hq-ew1mbr.3)
 	// See docs/CONFIG.md for detailed documentation
-	v.SetDefault("sync.mode", SyncModeGitPortable)      // git-portable | realtime | dolt-native | belt-and-suspenders
-	v.SetDefault("sync.export_on", SyncTriggerPush)     // push | change
-	v.SetDefault("sync.import_on", SyncTriggerPull)     // pull | change
+	v.SetDefault("sync.mode", SyncModeGitPortable)  // git-portable | realtime | dolt-native | belt-and-suspenders
+	v.SetDefault("sync.export_on", SyncTriggerPush) // push | change
+	v.SetDefault("sync.import_on", SyncTriggerPull) // pull | change
 
 	// Conflict resolution configuration
 	v.SetDefault("conflict.strategy", ConflictStrategyNewest) // newest | ours | theirs | manual
 
 	// Federation configuration (optional Dolt remote)
-	v.SetDefault("federation.remote", "")       // e.g., dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
-	v.SetDefault("federation.sovereignty", "")  // T1 | T2 | T3 | T4 (empty = no restriction)
+	v.SetDefault("federation.remote", "")      // e.g., dolthub://org/beads, gs://bucket/beads, s3://bucket/beads
+	v.SetDefault("federation.sovereignty", "") // T1 | T2 | T3 | T4 (empty = no restriction)
 
 	// Push configuration defaults
 	v.SetDefault("no-push", false)

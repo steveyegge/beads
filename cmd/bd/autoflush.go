@@ -435,9 +435,12 @@ func autoImportIfNewer() {
 // Flush-on-exit guarantee: PersistentPostRun calls flushManager.Shutdown() which
 // performs a final flush before the command exits, ensuring no data is lost.
 //
-// Thread-safe: Safe to call from multiple goroutines (no shared mutable state).
+// Thread-safe: Safe to call from multiple goroutines (uses atomic.Bool).
 // No-op if auto-flush is disabled via --no-auto-flush flag.
 func markDirtyAndScheduleFlush() {
+	// Track that this command performed a write (atomic to avoid data races).
+	commandDidWrite.Store(true)
+
 	// Use FlushManager if available
 	// No FlushManager means sandbox mode or test without flush setup - no-op is correct
 	if flushManager != nil {
@@ -447,6 +450,9 @@ func markDirtyAndScheduleFlush() {
 
 // markDirtyAndScheduleFullExport marks DB as needing a full export (for ID-changing operations)
 func markDirtyAndScheduleFullExport() {
+	// Track that this command performed a write (atomic to avoid data races).
+	commandDidWrite.Store(true)
+
 	// Use FlushManager if available
 	// No FlushManager means sandbox mode or test without flush setup - no-op is correct
 	if flushManager != nil {
@@ -472,11 +478,11 @@ func clearAutoFlushState() {
 //
 // Atomic write pattern:
 //
-//	1. Create temp file with PID suffix: issues.jsonl.tmp.12345
-//	2. Write all issues as JSONL to temp file
-//	3. Close temp file
-//	4. Atomic rename: temp → target
-//	5. Set file permissions to 0644
+//  1. Create temp file with PID suffix: issues.jsonl.tmp.12345
+//  2. Write all issues as JSONL to temp file
+//  3. Close temp file
+//  4. Atomic rename: temp → target
+//  5. Set file permissions to 0644
 //
 // Error handling: Returns error on any failure. Cleanup is guaranteed via defer.
 // Thread-safe: No shared state access. Safe to call from multiple goroutines.

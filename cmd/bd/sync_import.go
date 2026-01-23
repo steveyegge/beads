@@ -136,6 +136,18 @@ func importFromJSONLInline(ctx context.Context, jsonlPath string, renameOnImport
 		return fmt.Errorf("import failed: %w", err)
 	}
 
+	// Mark command as having performed a write when the import changed anything.
+	// This enables Dolt auto-commit in PersistentPostRun.
+	if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
+		commandDidWrite.Store(true)
+	}
+
+	// Mark command as having performed a write when the import changed anything.
+	// This enables Dolt auto-commit in PersistentPostRun for single-process backends.
+	if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
+		commandDidWrite.Store(true)
+	}
+
 	// Update staleness metadata (same as import.go lines 386-411)
 	// This is critical: without this, CheckStaleness will still report stale
 	if currentHash, hashErr := computeJSONLHash(jsonlPath); hashErr == nil {

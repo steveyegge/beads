@@ -358,8 +358,9 @@ export BEADS_DB=/path/to/specific/.beads/beads.db
 ```bash
 # Configure sync behavior
 bd config set sync.branch beads-sync  # Use separate sync branch
-bd config set sync.auto_commit true       # Auto-commit changes
-bd config set sync.auto_push true         # Auto-push changes
+
+# For git-portable workflows, enable daemon auto-commit/push (SQLite backend only):
+bd daemon start --auto-commit --auto-push
 ```
 
 ## Performance Considerations

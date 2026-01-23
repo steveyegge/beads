@@ -36,12 +36,12 @@ import (
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
-	db          *sql.DB
-	dbPath      string       // Path to Dolt database directory
-	closed      atomic.Bool  // Tracks whether Close() has been called
-	connStr     string       // Connection string for reconnection
-	mu          sync.RWMutex // Protects concurrent access
-	readOnly    bool         // True if opened in read-only mode
+	db       *sql.DB
+	dbPath   string       // Path to Dolt database directory
+	closed   atomic.Bool  // Tracks whether Close() has been called
+	connStr  string       // Connection string for reconnection
+	mu       sync.RWMutex // Protects concurrent access
+	readOnly bool         // True if opened in read-only mode
 
 	// Version control config
 	committerName  string
@@ -457,9 +457,15 @@ func (s *DoltStore) UnderlyingConn(ctx context.Context) (*sql.Conn, error) {
 // Version Control Operations (Dolt-specific extensions)
 // =============================================================================
 
+func (s *DoltStore) commitAuthorString() string {
+	return fmt.Sprintf("%s <%s>", s.committerName, s.committerEmail)
+}
+
 // Commit creates a Dolt commit with the given message
 func (s *DoltStore) Commit(ctx context.Context, message string) error {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?)", message)
+	// NOTE: In SQL procedure mode, Dolt defaults author to the authenticated SQL user
+	// (e.g. root@localhost). Always pass an explicit author for deterministic history.
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString())
 	if err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
@@ -506,7 +512,8 @@ func (s *DoltStore) Checkout(ctx context.Context, branch string) error {
 // Merge merges the specified branch into the current branch.
 // Returns any merge conflicts if present. Implements storage.VersionedStorage.
 func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflict, error) {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE(?)", branch)
+	// DOLT_MERGE may create a merge commit; pass explicit author for determinism.
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--author', ?, ?)", s.commitAuthorString(), branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)
@@ -522,7 +529,8 @@ func (s *DoltStore) Merge(ctx context.Context, branch string) ([]storage.Conflic
 // This is needed for initial federation sync between independently initialized towns.
 // Returns any merge conflicts if present.
 func (s *DoltStore) MergeAllowUnrelated(ctx context.Context, branch string) ([]storage.Conflict, error) {
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', ?)", branch)
+	// DOLT_MERGE may create a merge commit; pass explicit author for determinism.
+	_, err := s.db.ExecContext(ctx, "CALL DOLT_MERGE('--allow-unrelated-histories', '--author', ?, ?)", s.commitAuthorString(), branch)
 	if err != nil {
 		// Check if the error is due to conflicts
 		conflicts, conflictErr := s.GetConflicts(ctx)

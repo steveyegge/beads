@@ -407,6 +407,12 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 			fmt.Fprintf(os.Stderr, "\nAll text and dependency references have been updated.\n")
 		}
 
+		// Mark this command as having performed a write if it changed anything.
+		// This enables Dolt auto-commit in PersistentPostRun.
+		if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
+			commandDidWrite.Store(true)
+		}
+
 		// Flush immediately after import (no debounce) to ensure daemon sees changes
 		// Without this, daemon FileWatcher won't detect the import for up to 30s
 		// Only flush if there were actual changes to avoid unnecessary I/O
@@ -589,7 +595,7 @@ func checkUncommittedChanges(filePath string, result *ImportResult) {
 		// Get line counts for context
 		workingTreeLines := countLines(filePath)
 		headLines := countLinesInGitHEAD(filePath, workDir)
-		
+
 		fmt.Fprintf(os.Stderr, "\n⚠️  Warning: %s has uncommitted changes\n", filePath)
 		fmt.Fprintf(os.Stderr, "   Working tree: %d lines\n", workingTreeLines)
 		if headLines > 0 {
