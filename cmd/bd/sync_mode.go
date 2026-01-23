@@ -49,7 +49,7 @@ const (
 )
 
 // GetSyncMode returns the configured sync mode, checking config.yaml first (where bd config set writes),
-// then falling back to database. This fixes GH#??? where yaml and database were inconsistent.
+// then falling back to database. This fixes GH#1277 where yaml and database were inconsistent.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
 	// First check config.yaml (where bd config set writes for sync.* keys)
 	yamlMode := config.GetSyncMode()
