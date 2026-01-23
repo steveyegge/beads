@@ -316,20 +316,52 @@ func NewReadOnlyWithTimeout(ctx context.Context, path string, busyTimeout time.D
 
 // Close closes the database connection.
 // For read-write connections, it checkpoints the WAL to ensure all writes
-// are flushed to the main database file.
+// are flushed to the main database file. If another process holds a read lock,
+// checkpoint will retry with exponential backoff (up to ~3 seconds total).
 // For read-only connections (GH#804), it skips checkpointing to avoid file modifications.
 func (s *SQLiteStorage) Close() error {
 	s.closed.Store(true)
 	// Acquire write lock to prevent racing with reconnect() (GH#607)
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
+
 	// Only checkpoint for read-write connections (GH#804)
 	// Read-only connections should not modify the database file at all.
 	if !s.readOnly {
 		// Checkpoint WAL to ensure all writes are persisted to the main database file.
 		// Without this, writes may be stranded in the WAL and lost between CLI invocations.
-		_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		//
+		// If another process has a read lock (SQLITE_BUSY), retry with exponential backoff.
+		// This prevents silent data loss when the database file is committed to git
+		// without the WAL file. See SECURITY_AUDIT.md issue #8.
+		const maxRetries = 5
+		backoff := 100 * time.Millisecond
+		var lastErr error
+
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			_, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+			if err == nil {
+				lastErr = nil
+				break // checkpoint succeeded
+			}
+			lastErr = err
+
+			// Only sleep if we have attempts remaining
+			if attempt < maxRetries-1 {
+				time.Sleep(backoff)
+				backoff *= 2
+			}
+		}
+
+		if lastErr != nil {
+			// Warn user about potential data loss - checkpoint failed after all retries.
+			// The WAL file may contain uncommitted changes that won't be in the main .db file.
+			fmt.Fprintf(os.Stderr, "WARNING: WAL checkpoint failed after %d attempts: %v\n", maxRetries, lastErr)
+			fmt.Fprintf(os.Stderr, "Some changes may not be committed to the database file.\n")
+			fmt.Fprintf(os.Stderr, "Ensure no other processes are reading the database before git operations.\n")
+		}
 	}
+
 	return s.db.Close()
 }
 
