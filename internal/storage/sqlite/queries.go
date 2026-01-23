@@ -158,8 +158,8 @@ func (s *SQLiteStorage) CreateIssue(ctx context.Context, issue *types.Issue, act
 	// We use raw Exec instead of BeginTx because database/sql doesn't support transaction
 	// modes in BeginTx, and modernc.org/sqlite's BeginTx always uses DEFERRED mode.
 	//
-	// Use retry logic with exponential backoff to handle SQLITE_BUSY under concurrent load
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	// The connection's busy_timeout pragma (30s) handles retries if locked.
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("failed to begin immediate transaction: %w", err)
 	}
 

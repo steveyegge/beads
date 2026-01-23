@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"time"
 )
 
 // QueryContext exposes the underlying database QueryContext method for advanced queries
@@ -18,10 +17,13 @@ func (s *SQLiteStorage) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return s.db.BeginTx(ctx, nil)
 }
 
-// withTx executes a function within a database transaction with retry logic.
-// Uses BEGIN IMMEDIATE with exponential backoff retry on SQLITE_BUSY errors.
-// If the function returns an error, the transaction is rolled back.
-// Otherwise, the transaction is committed.
+// withTx executes a function within a database transaction.
+// Uses BEGIN IMMEDIATE to acquire the write lock early, preventing deadlocks
+// in concurrent scenarios. If the function returns an error, the transaction
+// is rolled back. Otherwise, the transaction is committed.
+//
+// The connection's busy_timeout pragma (30s by default) handles SQLITE_BUSY
+// retries internally - no additional retry logic is needed here.
 //
 // This fixes GH#1272: database lock errors during concurrent operations.
 func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Conn) error) error {
@@ -34,8 +36,10 @@ func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Conn) error) er
 	defer func() { _ = conn.Close() }()
 
 	// Start IMMEDIATE transaction to acquire write lock early.
-	// Use retry logic with exponential backoff to handle SQLITE_BUSY
-	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
+	// BEGIN IMMEDIATE prevents deadlocks by acquiring the write lock upfront
+	// rather than upgrading from a read lock later. The connection's
+	// busy_timeout pragma (30s) handles retries if another writer holds the lock.
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return wrapDBError("begin transaction", err)
 	}
 
@@ -102,65 +106,4 @@ func IsBusyError(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "SQLITE_BUSY")
-}
-
-// beginImmediateWithRetry starts an IMMEDIATE transaction with exponential backoff retry
-// on SQLITE_BUSY errors. This addresses bd-ola6: under concurrent write load, BEGIN IMMEDIATE
-// can fail with SQLITE_BUSY, so we retry with exponential backoff instead of failing immediately.
-//
-// Parameters:
-//   - ctx: context for cancellation checking
-//   - conn: dedicated database connection (must use same connection for entire transaction)
-//   - maxRetries: maximum number of retry attempts (default: 5)
-//   - initialDelay: initial backoff delay (default: 10ms)
-//
-// Returns error if:
-//   - Context is canceled
-//   - BEGIN IMMEDIATE fails with non-busy error
-//   - All retries exhausted with SQLITE_BUSY
-func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn, maxRetries int, initialDelay time.Duration) error {
-	if maxRetries <= 0 {
-		maxRetries = 5
-	}
-	if initialDelay <= 0 {
-		initialDelay = 10 * time.Millisecond
-	}
-
-	var lastErr error
-	delay := initialDelay
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Check context cancellation before each attempt
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		// Attempt to begin transaction
-		_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
-		if err == nil {
-			return nil // Success
-		}
-
-		lastErr = err
-
-		// If not a busy error, fail immediately
-		if !IsBusyError(err) {
-			return err
-		}
-
-		// On last attempt, don't sleep
-		if attempt == maxRetries {
-			break
-		}
-
-		// Exponential backoff: sleep before retry
-		select {
-		case <-time.After(delay):
-			delay *= 2 // Double the delay for next attempt
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	return lastErr // Return the last SQLITE_BUSY error after exhausting retries
 }
