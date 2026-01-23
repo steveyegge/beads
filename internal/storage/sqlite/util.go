@@ -18,30 +18,61 @@ func (s *SQLiteStorage) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return s.db.BeginTx(ctx, nil)
 }
 
-// withTx executes a function within a database transaction.
+// withTx executes a function within a database transaction with retry logic.
+// Uses BEGIN IMMEDIATE with exponential backoff retry on SQLITE_BUSY errors.
 // If the function returns an error, the transaction is rolled back.
 // Otherwise, the transaction is committed.
-func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+//
+// This fixes GH#1272: database lock errors during concurrent operations.
+func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Conn) error) error {
+	// Acquire a dedicated connection for the transaction.
+	// This ensures all operations in the transaction use the same connection.
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
+		return wrapDBError("acquire connection", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Start IMMEDIATE transaction to acquire write lock early.
+	// Use retry logic with exponential backoff to handle SQLITE_BUSY
+	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
 		return wrapDBError("begin transaction", err)
 	}
-	defer func() { _ = tx.Rollback() }()
 
-	if err := fn(tx); err != nil {
+	// Track commit state for cleanup
+	committed := false
+	defer func() {
+		if !committed {
+			// Use background context to ensure rollback completes even if ctx is canceled
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	// Execute user function
+	if err := fn(conn); err != nil {
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
+	// Commit the transaction
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return wrapDBError("commit transaction", err)
 	}
-
+	committed = true
 	return nil
 }
 
 // ExecInTransaction is deprecated. Use withTx instead.
-func (s *SQLiteStorage) ExecInTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+func (s *SQLiteStorage) ExecInTransaction(ctx context.Context, fn func(*sql.Conn) error) error {
 	return s.withTx(ctx, fn)
+}
+
+// dbExecutor is an interface satisfied by both *sql.Tx and *sql.Conn.
+// This allows helper functions to work with either transaction type.
+type dbExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 }
 
 // IsUniqueConstraintError checks if an error is a UNIQUE constraint violation

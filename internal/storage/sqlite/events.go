@@ -13,10 +13,10 @@ const limitClause = " LIMIT ?"
 
 // AddComment adds a comment to an issue
 func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(conn *sql.Conn) error {
 		// Update issue updated_at timestamp first to verify issue exists
 		now := time.Now()
-		res, err := tx.ExecContext(ctx, `
+		res, err := conn.ExecContext(ctx, `
 			UPDATE issues SET updated_at = ? WHERE id = ?
 		`, now, issueID)
 		if err != nil {
@@ -31,7 +31,7 @@ func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment 
 			return fmt.Errorf("issue %s not found", issueID)
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			INSERT INTO events (issue_id, event_type, actor, comment)
 			VALUES (?, ?, ?, ?)
 		`, issueID, types.EventCommented, actor, comment)
@@ -40,7 +40,7 @@ func (s *SQLiteStorage) AddComment(ctx context.Context, issueID, actor, comment 
 		}
 
 		// Mark issue as dirty for incremental export
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			INSERT INTO dirty_issues (issue_id, marked_at)
 			VALUES (?, ?)
 			ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at

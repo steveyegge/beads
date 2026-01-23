@@ -104,8 +104,8 @@ func TestExecInTransaction(t *testing.T) {
 	defer store.Close()
 
 	t.Run("successful transaction", func(t *testing.T) {
-		err := store.ExecInTransaction(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, "INSERT INTO config (key, value) VALUES (?, ?)", "test_key", "test_value")
+		err := store.ExecInTransaction(ctx, func(conn *sql.Conn) error {
+			_, err := conn.ExecContext(ctx, "INSERT INTO config (key, value) VALUES (?, ?)", "test_key", "test_value")
 			return err
 		})
 		if err != nil {
@@ -125,8 +125,8 @@ func TestExecInTransaction(t *testing.T) {
 
 	t.Run("failed transaction rolls back", func(t *testing.T) {
 		expectedErr := errors.New("intentional error")
-		err := store.ExecInTransaction(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, "INSERT INTO config (key, value) VALUES (?, ?)", "rollback_key", "rollback_value")
+		err := store.ExecInTransaction(ctx, func(conn *sql.Conn) error {
+			_, err := conn.ExecContext(ctx, "INSERT INTO config (key, value) VALUES (?, ?)", "rollback_key", "rollback_value")
 			if err != nil {
 				return err
 			}
