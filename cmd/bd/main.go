@@ -133,10 +133,30 @@ func isReadOnlyCommand(cmdName string) bool {
 	return readOnlyCommands[cmdName]
 }
 
+// cachedGitUser stores the result of git config user.name lookup.
+// Cached to avoid subprocess overhead (~15-20ms) on repeated calls.
+var (
+	cachedGitUser     string
+	cachedGitUserOnce sync.Once
+)
+
+// getGitUser retrieves the git user.name with caching.
+// The git config is static per-process, so we cache it to avoid
+// repeated subprocess calls which add ~15-20ms each.
+func getGitUser() string {
+	cachedGitUserOnce.Do(func() {
+		if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+			cachedGitUser = strings.TrimSpace(string(out))
+		}
+	})
+	return cachedGitUser
+}
+
 // getActorWithGit returns the actor for audit trails with git config fallback.
 // Priority: --actor flag > BD_ACTOR env > BEADS_ACTOR env > git config user.name > $USER > "unknown"
 // This provides a sensible default for developers: their git identity is used unless
-// explicitly overridden
+// explicitly overridden.
+// Performance: Git user lookup is cached to avoid ~15-20ms subprocess overhead per call.
 func getActorWithGit() string {
 	// If actor is already set (from --actor flag), use it
 	if actor != "" {
@@ -154,10 +174,9 @@ func getActorWithGit() string {
 	}
 
 	// Try git config user.name - the natural default for a git-native tool
-	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
-		if gitUser := strings.TrimSpace(string(out)); gitUser != "" {
-			return gitUser
-		}
+	// Uses cached value to avoid subprocess overhead on repeated calls
+	if gitUser := getGitUser(); gitUser != "" {
+		return gitUser
 	}
 
 	// Fall back to system username
@@ -168,10 +187,30 @@ func getActorWithGit() string {
 	return "unknown"
 }
 
+// cachedGitEmail stores the result of git config user.email lookup.
+// Cached to avoid subprocess overhead (~15-20ms) on repeated calls.
+var (
+	cachedGitEmail     string
+	cachedGitEmailOnce sync.Once
+)
+
+// getGitEmail retrieves the git user.email with caching.
+// The git config is static per-process, so we cache it to avoid
+// repeated subprocess calls which add ~15-20ms each.
+func getGitEmail() string {
+	cachedGitEmailOnce.Do(func() {
+		if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+			cachedGitEmail = strings.TrimSpace(string(out))
+		}
+	})
+	return cachedGitEmail
+}
+
 // getOwner returns the human owner for CV attribution.
 // Priority: GIT_AUTHOR_EMAIL env > git config user.email > "" (empty)
 // This is the foundation for HOP CV (curriculum vitae) chains per Decision 008.
 // Unlike actor (which tracks who executed), owner tracks the human responsible.
+// Performance: Git email lookup is cached to avoid ~15-20ms subprocess overhead per call.
 func getOwner() string {
 	// Check GIT_AUTHOR_EMAIL first - this is set during git commit operations
 	if authorEmail := os.Getenv("GIT_AUTHOR_EMAIL"); authorEmail != "" {
@@ -179,10 +218,9 @@ func getOwner() string {
 	}
 
 	// Fall back to git config user.email - the natural default
-	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
-		if gitEmail := strings.TrimSpace(string(out)); gitEmail != "" {
-			return gitEmail
-		}
+	// Uses cached value to avoid subprocess overhead on repeated calls
+	if gitEmail := getGitEmail(); gitEmail != "" {
+		return gitEmail
 	}
 
 	// Return empty if no email found (owner is optional)

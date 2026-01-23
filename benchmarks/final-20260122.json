@@ -1,0 +1,79 @@
+{
+  "system": {
+    "timestamp": "2026-01-22T16:27:20Z",
+    "hostname": "Khubairs-Air.home",
+    "os": "Darwin",
+    "os_version": "25.1.0",
+    "arch": "arm64",
+    "cpu": "Apple M4",
+    "cpu_cores": 10,
+    "bd_version": "bd version 0.48.0 (dev: main@5264d7aa604d)",
+    "memory_gb": 16.0
+  },
+  "config": {
+    "iterations": 20,
+    "mode": "synthetic"
+  },
+  "results": {
+    "synthetic_10k_info": {
+      "path": "/tmp/beads-bench-cache/large.db",
+      "size": "21M",
+      "issues": 10000
+    },
+    "synthetic_10k_direct_ready_10": {
+      "count": 20,
+      "mean": 169.81,
+      "stddev": 6.69,
+      "min": 165.81,
+      "max": 197.41,
+      "p50": 168.33,
+      "p95": 174.04,
+      "p99": 192.73
+    },
+    "synthetic_10k_direct_ready_100": {
+      "count": 20,
+      "mean": 175.76,
+      "stddev": 5.96,
+      "min": 168.09,
+      "max": 195.58,
+      "p50": 173.73,
+      "p95": 185.53,
+      "p99": 193.57
+    },
+    "synthetic_10k_direct_stats": {
+      "count": 20,
+      "mean": 724.33,
+      "stddev": 41.21,
+      "min": 686.43,
+      "max": 826.04,
+      "p50": 708.43,
+      "p95": 812.12,
+      "p99": 823.26
+    },
+    "synthetic_10k_direct_list_10": {
+      "count": 20,
+      "mean": 164.4,
+      "stddev": 14.99,
+      "min": 151.42,
+      "max": 211.07,
+      "p50": 159.06,
+      "p95": 197.18,
+      "p99": 208.3
+    },
+    "synthetic_10k_version": {
+      "count": 20,
+      "mean": 155.65,
+      "stddev": 182.98,
+      "min": 83.5,
+      "max": 894.88,
+      "p50": 86.94,
+      "p95": 311.63,
+      "p99": 778.23
+    },
+    "throughput_synthetic_10k_direct_ready": {
+      "ops": 29,
+      "duration_sec": 5.01,
+      "ops_per_sec": 5.79
+    }
+  }
+}
