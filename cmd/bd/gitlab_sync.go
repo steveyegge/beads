@@ -1,8 +1,15 @@
 // Package main provides the bd CLI commands.
 package main
 
+// Error Handling Contract:
+// - Functions return error for fatal failures that should stop the operation
+// - Non-fatal issues (single issue update failure, dependency creation failure)
+//   are logged as warnings and operation continues
+// - Stats track error counts for reporting
+
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"strconv"
 	"strings"
@@ -357,11 +364,15 @@ func detectGitLabConflicts(ctx context.Context, client *gitlab.Client, localIssu
 }
 
 // generateIssueID creates a unique issue ID with the given prefix.
-// Uses atomic counter combined with timestamp to ensure uniqueness even when called rapidly.
+// Uses atomic counter combined with timestamp and random bytes to ensure uniqueness
+// even when called rapidly or after process restart.
 func generateIssueID(prefix string) string {
 	counter := atomic.AddUint64(&issueIDCounter, 1)
 	timestamp := time.Now().UnixNano() / 1000000 // milliseconds
-	return fmt.Sprintf("%s-%d-%d", prefix, timestamp, counter)
+	// Add random bytes to prevent collision on restart
+	randBytes := make([]byte, 4)
+	rand.Read(randBytes)
+	return fmt.Sprintf("%s-%d-%d-%x", prefix, timestamp, counter, randBytes)
 }
 
 // parseGitLabSourceSystem parses a source system string like "gitlab:123:42"
@@ -436,42 +447,6 @@ func resolveGitLabConflicts(ctx context.Context, client *gitlab.Client, config *
 			}
 		}
 		// If not useGitLab, local version is kept (no action needed)
-	}
-
-	return nil
-}
-
-// resolveGitLabConflictsByTimestamp resolves conflicts by preferring newer changes.
-// Deprecated: Use resolveGitLabConflicts with ConflictStrategyPreferNewer instead.
-func resolveGitLabConflictsByTimestamp(ctx context.Context, client *gitlab.Client, config *gitlab.MappingConfig, conflicts []gitlab.Conflict) error {
-	for _, conflict := range conflicts {
-		if conflict.GitLabUpdated.After(conflict.LocalUpdated) {
-			// GitLab wins - reimport from GitLab
-			issue, err := client.FetchIssueByIID(ctx, conflict.GitLabIID)
-			if err != nil {
-				fmt.Printf("Warning: failed to fetch GitLab issue #%d: %v\n", conflict.GitLabIID, err)
-				continue
-			}
-
-			conversion := gitlab.GitLabIssueToBeads(issue, config)
-			beadsIssue := conversion.Issue.(*types.Issue)
-
-			if store != nil {
-				// Convert beads issue to updates map
-				updates := map[string]interface{}{
-					"title":       beadsIssue.Title,
-					"description": beadsIssue.Description,
-					"status":      string(beadsIssue.Status),
-					"priority":    beadsIssue.Priority,
-					"issue_type":  string(beadsIssue.IssueType),
-					"assignee":    beadsIssue.Assignee,
-				}
-				if err := store.UpdateIssue(ctx, conflict.IssueID, updates, actor); err != nil {
-					fmt.Printf("Warning: failed to update local issue %s: %v\n", conflict.IssueID, err)
-				}
-			}
-		}
-		// Local wins - local version will be pushed in doPushToGitLab
 	}
 
 	return nil

@@ -402,98 +402,6 @@ func TestDoPushToGitLab_PathBasedProjectID(t *testing.T) {
 	}
 }
 
-// TestResolveGitLabConflictsByTimestamp_GitLabWins verifies conflict resolution prefers newer.
-func TestResolveGitLabConflictsByTimestamp_GitLabWins(t *testing.T) {
-	// Save and restore global store
-	oldStore := store
-	store = nil
-	defer func() { store = oldStore }()
-
-	gitlabTime := time.Now()
-	localTime := time.Now().Add(-1 * time.Hour) // Local is older
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Return single issue for FetchIssueByIID
-		json.NewEncoder(w).Encode(gitlab.Issue{
-			ID:          100,
-			IID:         42,
-			ProjectID:   123,
-			Title:       "GitLab updated title",
-			Description: "GitLab updated description",
-			State:       "opened",
-			UpdatedAt:   &gitlabTime,
-			WebURL:      "https://gitlab.example.com/-/issues/42",
-		})
-	}))
-	defer server.Close()
-
-	client := gitlab.NewClient("token", server.URL, "123")
-	config := gitlab.DefaultMappingConfig()
-	ctx := context.Background()
-
-	conflicts := []gitlab.Conflict{
-		{
-			IssueID:       "bd-1",
-			LocalUpdated:  localTime,
-			GitLabUpdated: gitlabTime, // GitLab is newer
-			GitLabIID:     42,
-			GitLabID:      100,
-		},
-	}
-
-	err := resolveGitLabConflictsByTimestamp(ctx, client, config, conflicts)
-	if err != nil {
-		t.Fatalf("resolveGitLabConflictsByTimestamp() error = %v", err)
-	}
-
-	// Test passes if no error - actual store update requires store to be set
-	// This test verifies the GitLab fetch path works
-}
-
-// TestResolveGitLabConflictsByTimestamp_LocalWins verifies local version kept when newer.
-func TestResolveGitLabConflictsByTimestamp_LocalWins(t *testing.T) {
-	// Save and restore global store
-	oldStore := store
-	store = nil
-	defer func() { store = oldStore }()
-
-	localTime := time.Now()
-	gitlabTime := time.Now().Add(-1 * time.Hour) // GitLab is older
-
-	var fetchCalled bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fetchCalled = true
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(gitlab.Issue{})
-	}))
-	defer server.Close()
-
-	client := gitlab.NewClient("token", server.URL, "123")
-	config := gitlab.DefaultMappingConfig()
-	ctx := context.Background()
-
-	conflicts := []gitlab.Conflict{
-		{
-			IssueID:       "bd-1",
-			LocalUpdated:  localTime,   // Local is newer
-			GitLabUpdated: gitlabTime,
-			GitLabIID:     42,
-			GitLabID:      100,
-		},
-	}
-
-	err := resolveGitLabConflictsByTimestamp(ctx, client, config, conflicts)
-	if err != nil {
-		t.Fatalf("resolveGitLabConflictsByTimestamp() error = %v", err)
-	}
-
-	// When local wins, should NOT fetch from GitLab
-	if fetchCalled {
-		t.Error("GitLab API was called when local version should win")
-	}
-}
-
 // TestGenerateUniqueIssueIDs verifies IDs are unique even when generated rapidly.
 func TestGenerateUniqueIssueIDs(t *testing.T) {
 	seen := make(map[string]bool)
@@ -506,6 +414,38 @@ func TestGenerateUniqueIssueIDs(t *testing.T) {
 			t.Errorf("Duplicate ID generated: %s", id)
 		}
 		seen[id] = true
+	}
+}
+
+// TestGenerateIssueIDHasRandomComponent verifies IDs include random bytes for restart safety.
+// Without random bytes, counter reset on restart could cause ID collisions.
+func TestGenerateIssueIDHasRandomComponent(t *testing.T) {
+	// Save current counter
+	oldCounter := issueIDCounter
+	defer func() { issueIDCounter = oldCounter }()
+
+	prefix := "test"
+
+	// Generate ID, reset counter (simulating restart), generate another
+	// Both generated at same counter value - should still be unique due to random component
+	issueIDCounter = 100
+	id1 := generateIssueID(prefix)
+
+	// Simulate restart by resetting counter to same value
+	issueIDCounter = 100
+	id2 := generateIssueID(prefix)
+
+	// Even with same counter, IDs should differ due to random component
+	// Note: timestamp might also differ, but within same millisecond they'd collide without randomness
+	if id1 == id2 {
+		t.Errorf("IDs should be unique even with counter reset: id1=%s, id2=%s", id1, id2)
+	}
+
+	// Verify format includes hex suffix (random bytes)
+	// Expected format: prefix-timestamp-counter-hex
+	parts := strings.Split(id1, "-")
+	if len(parts) != 4 {
+		t.Errorf("Expected 4 parts (prefix-timestamp-counter-random), got %d: %s", len(parts), id1)
 	}
 }
 
