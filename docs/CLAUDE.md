@@ -59,6 +59,7 @@ See `internal/types/types.go`:
 - `Label`: Flexible tagging system
 - `Comment`: Threaded discussions
 - `Event`: Full audit trail
+- `DecisionPoint`: Human-in-the-loop decision gates (see AGENT_INSTRUCTIONS.md)
 
 ### Daemon Architecture
 

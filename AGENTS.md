@@ -7,6 +7,7 @@ This file exists for compatibility with tools that look for AGENTS.md.
 ## Key Sections
 
 - **Issue Tracking** - How to use bd for work management
+- **Decision Points** - Human-in-the-loop gates for async human input
 - **Development Guidelines** - Code standards and testing
 - **Visual Design System** - Status icons, colors, and semantic styling for CLI output
 

@@ -254,6 +254,108 @@ Without the pre-push hook, you can have database changes committed locally but s
 
 **Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
+## Decision Points
+
+When you need **human input on a choice**, create a decision point. This blocks the workflow until a human responds via email, web, or SMS notification.
+
+### Creating a Decision Point
+
+```bash
+# Create a decision that blocks another issue
+bd decision create \
+  --prompt="Which caching strategy should we use?" \
+  --options='[
+    {"id":"redis","short":"Redis","label":"Use Redis for distributed caching"},
+    {"id":"memory","short":"Memory","label":"Use in-memory caching"}
+  ]' \
+  --default=redis \
+  --timeout=24h \
+  --blocks=<blocked-issue-id>
+```
+
+**Key options:**
+- `--prompt` - The question to ask (required)
+- `--options` - JSON array of choices with id, short, and label
+- `--default` - Default option if timeout expires
+- `--timeout` - How long to wait (default: 24h)
+- `--blocks` - Issue to unblock when decision is resolved
+- `--parent` - Parent molecule for the decision
+
+### Responding to Decisions
+
+Humans can respond by selecting an option or providing custom text:
+
+```bash
+# Select an option
+bd decision respond <decision-id> --select=redis
+
+# Provide custom guidance (may trigger refinement iteration)
+bd decision respond <decision-id> --text="I'd prefer a hybrid approach"
+
+# Select AND add notes
+bd decision respond <decision-id> --select=redis --text="Also add TTL support"
+
+# Accept text guidance directly (skip iteration)
+bd decision respond <decision-id> --text="Use approach X" --accept-guidance
+```
+
+### Checking Decision Status
+
+```bash
+# List pending decisions
+bd decision list --pending
+
+# Show details of a specific decision
+bd decision show <decision-id>
+
+# Send a reminder for a pending decision
+bd decision remind <decision-id>
+```
+
+### When to Use Decision Points
+
+Use decision points when:
+- You need human approval before proceeding (design review, deployment)
+- There are multiple valid approaches and you need human preference
+- A choice has significant impact and shouldn't be made autonomously
+- You need async human input (human may not respond immediately)
+
+**Example patterns:**
+
+```bash
+# Architecture decision
+bd decision create \
+  --prompt="Should we use REST or GraphQL for the new API?" \
+  --options='[{"id":"rest","label":"REST API"},{"id":"graphql","label":"GraphQL"}]'
+
+# Approval gate
+bd decision create \
+  --prompt="Approve deployment to production?" \
+  --options='[{"id":"yes","label":"Yes, deploy"},{"id":"no","label":"No, wait"}]' \
+  --blocks=bd-deploy.1
+
+# Design choice
+bd decision create \
+  --prompt="Which color scheme for the dashboard?" \
+  --options='[
+    {"id":"light","label":"Light theme (better readability)"},
+    {"id":"dark","label":"Dark theme (reduced eye strain)"}
+  ]'
+```
+
+### Iterative Refinement
+
+When a human provides text guidance without selecting an option, the system may create a new iteration with refined options:
+
+1. Human provides text: "I'd prefer something in between"
+2. Agent receives guidance and creates new decision point (iteration 2)
+3. Agent generates refined options based on guidance
+4. Human responds again
+
+After iteration 1, an "_accept" option appears that lets humans say "accept my guidance as-is".
+
+Max iterations: 3 (configurable via `--max-iterations`)
+
 ## Common Development Tasks
 
 ### CLI Design Principles
