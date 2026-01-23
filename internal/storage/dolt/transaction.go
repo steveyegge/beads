@@ -429,7 +429,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash sql.NullString
+	var assignee, owner, contentHash, createdBy sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var awaitType, awaitID, waiters sql.NullString
 	var timeoutNs sql.NullInt64
@@ -446,7 +446,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
+		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt,
 		&ephemeral, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
@@ -481,6 +481,9 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 	if owner.Valid {
 		issue.Owner = owner.String
+	}
+	if createdBy.Valid {
+		issue.CreatedBy = createdBy.String
 	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
