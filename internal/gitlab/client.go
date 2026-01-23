@@ -111,7 +111,13 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			case <-time.After(delay):
 				// Reset body reader for retry
 				if body != nil {
-					jsonBody, _ := json.Marshal(body)
+					jsonBody, err := json.Marshal(body)
+					if err != nil {
+						// This shouldn't happen since we marshaled successfully before,
+						// but log it and continue to next retry attempt
+						lastErr = fmt.Errorf("retry marshal failed: %w", err)
+						continue
+					}
 					reqBody = bytes.NewReader(jsonBody)
 				}
 				continue

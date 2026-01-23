@@ -17,28 +17,30 @@ type MappingConfig struct {
 }
 
 // DefaultMappingConfig returns the default mapping configuration.
+// Uses exported mapping constants from types.go as the single source of truth.
 func DefaultMappingConfig() *MappingConfig {
+	// Copy PriorityMapping to avoid external modification
+	priorityMap := make(map[string]int, len(PriorityMapping))
+	for k, v := range PriorityMapping {
+		priorityMap[k] = v
+	}
+
+	// Copy TypeMapping to avoid external modification
+	labelTypeMap := make(map[string]string, len(TypeMapping))
+	for k, v := range TypeMapping {
+		labelTypeMap[k] = v
+	}
+
 	return &MappingConfig{
-		PriorityMap: map[string]int{
-			"critical": 0,
-			"high":     1,
-			"medium":   2,
-			"low":      3,
-			"none":     4,
-		},
+		PriorityMap: priorityMap,
+		// StateMap maps GitLab states to beads statuses
+		// Note: GitLab uses "opened"/"closed"/"reopened", beads uses "open"/"closed"
 		StateMap: map[string]string{
-			"opened":   "open",
-			"closed":   "closed",
-			"reopened": "open",
+			"opened":   StatusMapping["open"],
+			"closed":   StatusMapping["closed"],
+			"reopened": StatusMapping["open"], // reopened maps to open
 		},
-		LabelTypeMap: map[string]string{
-			"bug":         "bug",
-			"feature":     "feature",
-			"task":        "task",
-			"epic":        "epic",
-			"chore":       "chore",
-			"enhancement": "feature",
-		},
+		LabelTypeMap: labelTypeMap,
 		RelationMap: map[string]string{
 			"blocks":        "blocks",
 			"is_blocked_by": "blocked_by",
