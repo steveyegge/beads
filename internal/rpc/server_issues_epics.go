@@ -321,6 +321,11 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Time-based scheduling (GH#820, GH#950, GH#952)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Gate fields (async coordination - hq-b0b22c.3)
+		AwaitType: createArgs.AwaitType,
+		AwaitID:   createArgs.AwaitID,
+		Timeout:   createArgs.Timeout,
+		Waiters:   createArgs.Waiters,
 	}
 	
 	// Check if any dependencies are discovered-from type

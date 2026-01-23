@@ -113,6 +113,11 @@ type CreateArgs struct {
 	// Time-based scheduling fields (GH#820)
 	DueAt      string `json:"due_at,omitempty"`      // Relative or ISO format due date
 	DeferUntil string `json:"defer_until,omitempty"` // Relative or ISO format defer date
+	// Gate fields (async coordination - hq-b0b22c.3)
+	AwaitType string        `json:"await_type,omitempty"` // Condition type: gh:run, gh:pr, timer, human, mail, decision
+	AwaitID   string        `json:"await_id,omitempty"`   // Condition identifier (run ID, PR number, etc.)
+	Timeout   time.Duration `json:"timeout,omitempty"`    // Max wait time before escalation
+	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
 }
 
 // UpdateArgs represents arguments for the update operation
