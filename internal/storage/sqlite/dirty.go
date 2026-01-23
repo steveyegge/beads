@@ -31,9 +31,9 @@ func (s *SQLiteStorage) MarkIssuesDirty(ctx context.Context, issueIDs []string) 
 		return nil
 	}
 
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(conn *sql.Conn) error {
 		now := time.Now()
-		stmt, err := tx.PrepareContext(ctx, `
+		stmt, err := conn.PrepareContext(ctx, `
 			INSERT INTO dirty_issues (issue_id, marked_at)
 			VALUES (?, ?)
 			ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
@@ -117,8 +117,8 @@ func (s *SQLiteStorage) ClearDirtyIssuesByID(ctx context.Context, issueIDs []str
 		return nil
 	}
 
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`)
+	return s.withTx(ctx, func(conn *sql.Conn) error {
+		stmt, err := conn.PrepareContext(ctx, `DELETE FROM dirty_issues WHERE issue_id = ?`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
@@ -152,15 +152,16 @@ func (s *SQLiteStorage) GetDirtyIssueCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// markIssuesDirtyTx marks multiple issues as dirty within an existing transaction
-// This is a helper for operations that need to mark issues dirty as part of a larger transaction
-func markIssuesDirtyTx(ctx context.Context, tx *sql.Tx, issueIDs []string) error {
+// markIssuesDirtyTx marks multiple issues as dirty within an existing transaction.
+// This is a helper for operations that need to mark issues dirty as part of a larger transaction.
+// The exec parameter can be either *sql.Tx or *sql.Conn.
+func markIssuesDirtyTx(ctx context.Context, exec dbExecutor, issueIDs []string) error {
 	if len(issueIDs) == 0 {
 		return nil
 	}
 
 	now := time.Now()
-	stmt, err := tx.PrepareContext(ctx, `
+	stmt, err := exec.PrepareContext(ctx, `
 		INSERT INTO dirty_issues (issue_id, marked_at)
 		VALUES (?, ?)
 		ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at
