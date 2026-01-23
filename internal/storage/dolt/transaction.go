@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -60,7 +61,53 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Generate ID if not set (hq-8af330.10: fix duplicate primary key error)
+	if issue.ID == "" {
+		// Get configured prefix
+		var prefix string
+		err := t.tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = 'issue_prefix'`).Scan(&prefix)
+		if err != nil || prefix == "" {
+			prefix = "hq-" // fallback default
+		}
+
+		// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
+		if issue.IDPrefix != "" {
+			prefix = strings.TrimSuffix(prefix, "-") + "-" + issue.IDPrefix + "-"
+		}
+
+		// Generate hash-based ID with collision avoidance
+		generated, err := generateIssueIDInTx(ctx, t.tx, prefix, issue, actor)
+		if err != nil {
+			return fmt.Errorf("failed to generate issue ID: %w", err)
+		}
+		issue.ID = generated
+	}
+
 	return insertIssueTx(ctx, t.tx, issue)
+}
+
+// generateIssueIDInTx generates a unique hash-based ID within a transaction
+func generateIssueIDInTx(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Use adaptive length starting at 6, up to 8
+	for length := 6; length <= 8; length++ {
+		// Try up to 10 nonces at each length
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+
+			// Check if this ID already exists
+			var exists bool
+			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE id = ?)`, candidate).Scan(&exists)
+			if err != nil {
+				return "", fmt.Errorf("failed to check for ID collision: %w", err)
+			}
+
+			if !exists {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
 }
 
 // CreateIssues creates multiple issues within the transaction
