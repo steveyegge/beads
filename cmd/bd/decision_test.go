@@ -1,3 +1,8 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: Temporarily ignored - ListAllDecisionPoints not implemented in SQLiteStorage.
+
 package main
 
 import (

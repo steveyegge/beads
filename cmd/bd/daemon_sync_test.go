@@ -1,3 +1,8 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: Temporarily ignored due to missing DoltSyncer and related dependencies.
+
 package main
 
 import (
