@@ -66,9 +66,12 @@ var gitlabProjectsCmd = &cobra.Command{
 }
 
 var (
-	gitlabSyncDryRun   bool
-	gitlabSyncPullOnly bool
-	gitlabSyncPushOnly bool
+	gitlabSyncDryRun     bool
+	gitlabSyncPullOnly   bool
+	gitlabSyncPushOnly   bool
+	gitlabPreferLocal    bool
+	gitlabPreferGitLab   bool
+	gitlabPreferNewer    bool
 )
 
 func init() {
@@ -81,6 +84,11 @@ func init() {
 	gitlabSyncCmd.Flags().BoolVar(&gitlabSyncDryRun, "dry-run", false, "Show what would be synced without making changes")
 	gitlabSyncCmd.Flags().BoolVar(&gitlabSyncPullOnly, "pull-only", false, "Only pull issues from GitLab")
 	gitlabSyncCmd.Flags().BoolVar(&gitlabSyncPushOnly, "push-only", false, "Only push issues to GitLab")
+
+	// Conflict resolution flags (mutually exclusive)
+	gitlabSyncCmd.Flags().BoolVar(&gitlabPreferLocal, "prefer-local", false, "On conflict, keep local beads version")
+	gitlabSyncCmd.Flags().BoolVar(&gitlabPreferGitLab, "prefer-gitlab", false, "On conflict, use GitLab version")
+	gitlabSyncCmd.Flags().BoolVar(&gitlabPreferNewer, "prefer-newer", false, "On conflict, use most recent version (default)")
 
 	// Register gitlab command with root
 	rootCmd.AddCommand(gitlabCmd)
@@ -265,6 +273,12 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot use both --pull-only and --push-only")
 	}
 
+	// Determine conflict strategy from flags
+	conflictStrategy, err := getConflictStrategy(gitlabPreferLocal, gitlabPreferGitLab, gitlabPreferNewer)
+	if err != nil {
+		return fmt.Errorf("%w (--prefer-local, --prefer-gitlab, --prefer-newer)", err)
+	}
+
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("database not available: %w", err)
 	}
@@ -346,6 +360,31 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 		if !gitlabSyncDryRun {
 			fmt.Fprintf(out, "✓ Pushed %d issues (%d created, %d updated)\n",
 				result.Stats.Pushed, pushStats.Created, pushStats.Updated)
+		}
+	}
+
+	// Detect and resolve conflicts for bidirectional sync
+	if pull && push && !gitlabSyncDryRun {
+		var localIssues []*types.Issue
+		if store != nil {
+			var err error
+			localIssues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+			if err != nil {
+				fmt.Fprintf(out, "Warning: failed to get local issues for conflict detection: %v\n", err)
+			} else {
+				conflicts, err := detectGitLabConflicts(ctx, client, localIssues)
+				if err != nil {
+					fmt.Fprintf(out, "Warning: failed to detect conflicts: %v\n", err)
+				} else if len(conflicts) > 0 {
+					fmt.Fprintf(out, "→ Resolving %d conflicts (strategy: %s)...\n", len(conflicts), conflictStrategy)
+					if err := resolveGitLabConflicts(ctx, client, mappingConfig, conflicts, conflictStrategy); err != nil {
+						fmt.Fprintf(out, "Warning: failed to resolve some conflicts: %v\n", err)
+					} else {
+						fmt.Fprintf(out, "✓ Resolved %d conflicts\n", len(conflicts))
+					}
+					result.Stats.Conflicts = len(conflicts)
+				}
+			}
 		}
 	}
 
