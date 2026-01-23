@@ -20,6 +20,27 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// warnIfSyncBranchMisconfigured logs a warning at daemon startup if sync-branch
+// equals the current branch. This is a one-time warning to alert users about
+// the misconfiguration. The daemon continues to start (warn only, don't block).
+// Returns true if misconfigured (warning was logged), false otherwise.
+// GH#1258: Prevents silent failure when sync-branch == current-branch.
+func warnIfSyncBranchMisconfigured(ctx context.Context, store storage.Storage, log daemonLogger) bool {
+	syncBranch, err := syncbranch.Get(ctx, store)
+	if err != nil || syncBranch == "" {
+		return false // No sync branch configured, not misconfigured
+	}
+
+	if syncbranch.IsSyncBranchSameAsCurrent(ctx, syncBranch) {
+		log.Warn("sync-branch misconfiguration detected",
+			"sync_branch", syncBranch,
+			"message", "sync-branch is your current branch; daemon sync operations will be skipped; configure a dedicated sync branch (e.g., 'beads-sync') to enable sync")
+		return true
+	}
+
+	return false
+}
+
 // shouldSkipDueToSameBranch checks if operation should be skipped because
 // sync-branch == current-branch. Returns true if should skip, logs reason.
 // Uses fail-open pattern: if branch detection fails, allows operation to proceed.

@@ -2840,3 +2840,204 @@ func TestDaemonExportConfigReload(t *testing.T) {
 	// Clean up git caches
 	git.ResetCaches()
 }
+
+// TestDaemonStartupWarnsSameBranch tests that daemon startup logs a warning when
+// sync-branch == current-branch, but continues to start (warn only, don't block).
+// This is a one-time warning at startup (GH#1258 Phase 3).
+func TestDaemonStartupWarnsSameBranch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Clean up git caches to avoid pollution from previous tests
+	git.ResetCaches()
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	// Change to temp directory first (so git commands work)
+	t.Chdir(tmpDir)
+
+	// Get current branch name
+	cmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+	cmd.Dir = tmpDir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("Failed to get current branch: %v", err)
+	}
+	currentBranch := strings.TrimSpace(string(output))
+
+	// Set BEADS_SYNC_BRANCH to the current branch (highest priority config)
+	// This is the misconfiguration case: sync-branch == current-branch
+	t.Setenv(syncbranch.EnvVar, currentBranch)
+
+	// Setup test store
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(context.Background(), testDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create logger that captures output
+	var logBuf strings.Builder
+	log := newTestLoggerWithWriter(&logBuf)
+
+	// Call warnIfSyncBranchMisconfigured - this should log a warning
+	misconfigured := warnIfSyncBranchMisconfigured(ctx, store, log)
+
+	// Verify the function returns true (misconfigured)
+	if !misconfigured {
+		t.Error("Expected warnIfSyncBranchMisconfigured to return true")
+	}
+
+	// Verify the warning was logged
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "sync-branch misconfiguration detected") {
+		t.Errorf("Expected warning about sync-branch misconfiguration, got:\n%s", logOutput)
+	}
+
+	// Verify the log mentions the branch name
+	if !strings.Contains(logOutput, currentBranch) {
+		t.Errorf("Expected warning to mention branch '%s', got:\n%s", currentBranch, logOutput)
+	}
+
+	// Verify the log contains guidance about dedicated sync branch
+	if !strings.Contains(logOutput, "beads-sync") {
+		t.Errorf("Expected warning to suggest 'beads-sync', got:\n%s", logOutput)
+	}
+
+	// Clean up git caches
+	git.ResetCaches()
+}
+
+// TestDaemonStartupNoWarningWhenDifferentBranch tests that daemon startup does NOT
+// log a warning when sync-branch is configured but different from current-branch.
+func TestDaemonStartupNoWarningWhenDifferentBranch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Clean up git caches to avoid pollution from previous tests
+	git.ResetCaches()
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	// Change to temp directory first (so git commands work)
+	t.Chdir(tmpDir)
+
+	// Set BEADS_SYNC_BRANCH to a different branch (not current-branch)
+	t.Setenv(syncbranch.EnvVar, "beads-sync")
+
+	// Setup test store
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(context.Background(), testDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create logger that captures output
+	var logBuf strings.Builder
+	log := newTestLoggerWithWriter(&logBuf)
+
+	// Call warnIfSyncBranchMisconfigured - this should NOT log a warning
+	misconfigured := warnIfSyncBranchMisconfigured(ctx, store, log)
+
+	// Verify the function returns false (not misconfigured)
+	if misconfigured {
+		t.Error("Expected warnIfSyncBranchMisconfigured to return false")
+	}
+
+	// Verify NO warning was logged
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "misconfiguration") {
+		t.Errorf("Expected NO warning when sync-branch differs from current-branch, got:\n%s", logOutput)
+	}
+
+	// Clean up git caches
+	git.ResetCaches()
+}
+
+// TestDaemonStartupNoWarningWhenNoSyncBranch tests that daemon startup does NOT
+// log a warning when no sync-branch is configured.
+func TestDaemonStartupNoWarningWhenNoSyncBranch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Clean up git caches to avoid pollution from previous tests
+	git.ResetCaches()
+
+	tmpDir := t.TempDir()
+	initTestGitRepo(t, tmpDir)
+	initMainBranch(t, tmpDir)
+
+	// Change to temp directory first (so git commands work)
+	t.Chdir(tmpDir)
+
+	// Ensure no sync-branch is configured (unset env var)
+	t.Setenv(syncbranch.EnvVar, "")
+
+	// Setup test store
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	testDBPath := filepath.Join(beadsDir, "test.db")
+	store, err := sqlite.New(context.Background(), testDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create logger that captures output
+	var logBuf strings.Builder
+	log := newTestLoggerWithWriter(&logBuf)
+
+	// Call warnIfSyncBranchMisconfigured - this should NOT log a warning
+	misconfigured := warnIfSyncBranchMisconfigured(ctx, store, log)
+
+	// Verify the function returns false (not misconfigured)
+	if misconfigured {
+		t.Error("Expected warnIfSyncBranchMisconfigured to return false when no sync-branch configured")
+	}
+
+	// Verify NO warning was logged
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "misconfiguration") {
+		t.Errorf("Expected NO warning when no sync-branch configured, got:\n%s", logOutput)
+	}
+
+	// Clean up git caches
+	git.ResetCaches()
+}
