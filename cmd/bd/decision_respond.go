@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/decision"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -25,7 +26,8 @@ The response can be:
   4. Accept guidance as-is: --accept-guidance (skips iteration, uses text directly)
 
 When an option is selected, the decision gate closes and any blocked issues are unblocked.
-When only text is provided (no selection), iterative refinement may be triggered (future feature).
+When only text is provided (no selection), iterative refinement is triggered - a new
+decision point is created with your guidance, allowing the agent to refine options.
 
 Examples:
   # Select an option
@@ -180,6 +182,10 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	shouldCloseGate := selectOpt != "" || acceptGuidance
 	shouldIterate := textResponse != "" && selectOpt == "" && !acceptGuidance
 
+	// Track iteration result for output
+	var iterationResult *decision.IterationResult
+	var iterationErr error
+
 	if shouldCloseGate {
 		// Close the gate issue
 		reason := "Decision resolved"
@@ -199,6 +205,9 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
 			os.Exit(1)
 		}
+	} else if shouldIterate {
+		// Trigger iterative refinement (hq-946577.23)
+		iterationResult, iterationErr = decision.CreateNextIteration(ctx, store, dp, issue, textResponse, respondedBy, actor)
 	}
 
 	markDirtyAndScheduleFlush()
@@ -213,6 +222,16 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			"responded_at":    now.Format(time.RFC3339),
 			"gate_closed":     shouldCloseGate,
 			"iteration":       shouldIterate,
+		}
+		// Include iteration details if applicable
+		if iterationErr != nil {
+			result["iteration_error"] = iterationErr.Error()
+		} else if iterationResult != nil {
+			result["max_reached"] = iterationResult.MaxReached
+			if !iterationResult.MaxReached && iterationResult.NewDecisionID != "" {
+				result["new_decision_id"] = iterationResult.NewDecisionID
+				result["new_iteration"] = iterationResult.DecisionPoint.Iteration
+			}
 		}
 		outputJSON(result)
 		return
@@ -244,8 +263,19 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	if shouldCloseGate {
 		fmt.Printf("  %s Gate closed - blocked issues now unblocked\n", ui.RenderPass("✓"))
 	} else if shouldIterate {
-		// TODO: Implement iteration trigger (hq-946577.23)
-		fmt.Printf("  %s Text-only response (iteration not yet implemented)\n", ui.RenderWarn("⚠"))
-		fmt.Printf("  Use --accept-guidance to proceed with this guidance directly\n")
+		// Show iteration result (hq-946577.23)
+		if iterationErr != nil {
+			fmt.Fprintf(os.Stderr, "  %s Error creating iteration: %v\n", ui.RenderFail("✗"), iterationErr)
+			fmt.Printf("  Use --accept-guidance to proceed with this guidance directly\n")
+		} else if iterationResult.MaxReached {
+			fmt.Printf("  %s Max iterations (%d) reached\n", ui.RenderWarn("⚠"), dp.MaxIterations)
+			fmt.Printf("  Use --accept-guidance to proceed with this guidance directly,\n")
+			fmt.Printf("  or --select to choose an existing option.\n")
+		} else {
+			fmt.Printf("  %s Created iteration %d: %s\n", ui.RenderPass("✓"),
+				iterationResult.DecisionPoint.Iteration, ui.RenderID(iterationResult.NewDecisionID))
+			fmt.Printf("  The agent will refine options based on your guidance.\n")
+			fmt.Printf("  Original decision: %s (closed)\n", ui.RenderID(resolvedID))
+		}
 	}
 }
