@@ -21,6 +21,15 @@ type Config struct {
 	// Example: "aws://[bucket:table]/database"
 	DoltRemoteURL string `json:"dolt_remote_url,omitempty"`
 
+	// Dolt SQL server mode configuration
+	// When enabled, connects to a dolt sql-server via TCP instead of embedded driver.
+	// This enables multi-writer support and eliminates lock contention.
+	DoltServerEnabled  bool   `json:"dolt_server_enabled,omitempty"`
+	DoltServerHost     string `json:"dolt_server_host,omitempty"`     // Default: 127.0.0.1
+	DoltServerPort     int    `json:"dolt_server_port,omitempty"`     // Default: 3306
+	DoltServerUser     string `json:"dolt_server_user,omitempty"`     // Default: root
+	DoltServerPassword string `json:"dolt_server_password,omitempty"` // Or use BEADS_DOLT_PASSWORD env
+
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
@@ -190,4 +199,48 @@ func (c *Config) GetBackend() string {
 		return BackendSQLite
 	}
 	return c.Backend
+}
+
+// IsDoltServerMode returns true if Dolt SQL server mode is enabled.
+// Server mode connects via TCP instead of embedded driver, enabling multi-writer support.
+func (c *Config) IsDoltServerMode() bool {
+	return c.GetBackend() == BackendDolt && c.DoltServerEnabled
+}
+
+// GetDoltServerHost returns the Dolt server host, defaulting to 127.0.0.1.
+func (c *Config) GetDoltServerHost() string {
+	if c.DoltServerHost == "" {
+		return "127.0.0.1"
+	}
+	return c.DoltServerHost
+}
+
+// GetDoltServerPort returns the Dolt server port, defaulting to 3306.
+func (c *Config) GetDoltServerPort() int {
+	if c.DoltServerPort == 0 {
+		return 3306
+	}
+	return c.DoltServerPort
+}
+
+// GetDoltServerUser returns the Dolt server user, defaulting to root.
+func (c *Config) GetDoltServerUser() string {
+	if c.DoltServerUser == "" {
+		return "root"
+	}
+	return c.DoltServerUser
+}
+
+// CapabilitiesForConfig returns capabilities based on full configuration.
+// This is preferred over CapabilitiesForBackend when you have the full config,
+// as it can account for server mode (which enables multi-process for Dolt).
+func CapabilitiesForConfig(cfg *Config) BackendCapabilities {
+	if cfg == nil {
+		return BackendCapabilities{SingleProcessOnly: false}
+	}
+	// Dolt in server mode is NOT single-process-only (server handles concurrency)
+	if cfg.IsDoltServerMode() {
+		return BackendCapabilities{SingleProcessOnly: false}
+	}
+	return CapabilitiesForBackend(cfg.GetBackend())
 }

@@ -26,11 +26,14 @@ func RegisterBackend(name string, factory BackendFactory) {
 type Options struct {
 	ReadOnly    bool
 	LockTimeout time.Duration
+	IdleTimeout time.Duration // Connection idle timeout (for connection pooling)
 
 	// Dolt server mode options (federation)
-	ServerMode bool   // Connect to dolt sql-server instead of embedded
-	ServerHost string // Server host (default: 127.0.0.1)
-	ServerPort int    // Server port (default: 3306)
+	ServerMode     bool   // Connect to dolt sql-server instead of embedded
+	ServerHost     string // Server host (default: 127.0.0.1)
+	ServerPort     int    // Server port (default: 3306)
+	ServerUser     string // Server user (default: root)
+	ServerPassword string // Server password (or use BEADS_DOLT_PASSWORD env)
 }
 
 // New creates a storage backend based on the backend type.
@@ -88,6 +91,16 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
+		// Check if Dolt server mode is enabled in config
+		if cfg.IsDoltServerMode() {
+			opts.ServerMode = true
+			opts.ServerHost = cfg.GetDoltServerHost()
+			opts.ServerPort = cfg.GetDoltServerPort()
+			opts.ServerUser = cfg.GetDoltServerUser()
+			if cfg.DoltServerPassword != "" {
+				opts.ServerPassword = cfg.DoltServerPassword
+			}
+		}
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	default:
 		return nil, fmt.Errorf("unknown storage backend in config: %s", backend)
@@ -101,4 +114,21 @@ func GetBackendFromConfig(beadsDir string) string {
 		return configfile.BackendSQLite
 	}
 	return cfg.GetBackend()
+}
+
+// LoadConfig loads and returns the config from the specified beads directory.
+// Returns nil if config doesn't exist or can't be loaded.
+func LoadConfig(beadsDir string) *configfile.Config {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return nil
+	}
+	return cfg
+}
+
+// GetCapabilitiesFromConfig returns backend capabilities based on full config.
+// This accounts for server mode (Dolt with server is NOT single-process-only).
+func GetCapabilitiesFromConfig(beadsDir string) configfile.BackendCapabilities {
+	cfg := LoadConfig(beadsDir)
+	return configfile.CapabilitiesForConfig(cfg)
 }

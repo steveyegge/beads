@@ -20,13 +20,15 @@ func singleProcessBackendHelp(backend string) string {
 }
 
 // guardDaemonStartForDolt blocks daemon start/restart commands when the current
-// workspace backend is Dolt, unless --federation is specified.
+// workspace backend is Dolt in embedded mode.
 //
 // Rationale: embedded Dolt is effectively single-writer at the OS-process level. The
 // daemon architecture relies on multiple processes (CLI + daemon + helper spawns),
 // which can trigger lock contention and transient "read-only" failures.
 //
-// Exception: --federation flag enables dolt sql-server mode which is multi-writer.
+// Exceptions (multi-writer modes):
+//   - --federation flag: enables dolt sql-server mode
+//   - dolt_server_enabled config: connects to external dolt sql-server
 //
 // Note: This guard should only be attached to commands that START a daemon process
 // (start, restart). Read-only commands (status, stop, logs, health, list) are allowed
@@ -69,9 +71,10 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	backend := cfg.GetBackend()
-	if configfile.CapabilitiesForBackend(backend).SingleProcessOnly {
-		return fmt.Errorf("%s", singleProcessBackendHelp(backend))
+	// Use CapabilitiesForConfig which accounts for server mode
+	// (Dolt with server mode is NOT single-process-only)
+	if configfile.CapabilitiesForConfig(cfg).SingleProcessOnly {
+		return fmt.Errorf("%s", singleProcessBackendHelp(cfg.GetBackend()))
 	}
 
 	return nil

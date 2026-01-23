@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -779,32 +778,29 @@ var rootCmd = &cobra.Command{
 		// Fall back to direct storage access
 		var err error
 		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
-		beadsDir := filepath.Dir(dbPath)
 
-		// Detect backend from metadata.json
-		backend := factory.GetBackendFromConfig(beadsDir)
+		// Find the beads directory - prefer FindBeadsDir() which respects BEADS_DIR env
+		// and follows redirects. Fall back to deriving from dbPath for explicit --db usage.
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			beadsDir = filepath.Dir(dbPath)
+		}
 
-		// Create storage with appropriate options
+		// Create storage with appropriate options using NewFromConfig
+		// This ensures server mode settings from metadata.json are respected
 		opts := factory.Options{
 			ReadOnly:    useReadOnly,
 			LockTimeout: lockTimeout,
 		}
 
-		if backend == configfile.BackendDolt {
-			// For Dolt, use the dolt subdirectory
-			doltPath := filepath.Join(beadsDir, "dolt")
-			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
-		} else {
-			// SQLite backend
-			store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-			if err != nil && useReadOnly {
-				// If read-only fails (e.g., DB doesn't exist), fall back to read-write
-				// This handles the case where user runs "bd list" before "bd init"
-				debug.Logf("read-only open failed, falling back to read-write: %v", err)
-				opts.ReadOnly = false
-				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-				needsBootstrap = true // New DB needs auto-import (GH#b09)
-			}
+		store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, opts)
+		if err != nil && useReadOnly {
+			// If read-only fails (e.g., DB doesn't exist), fall back to read-write
+			// This handles the case where user runs "bd list" before "bd init"
+			debug.Logf("read-only open failed, falling back to read-write: %v", err)
+			opts.ReadOnly = false
+			store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, opts)
+			needsBootstrap = true // New DB needs auto-import (GH#b09)
 		}
 
 		// Track final read-only state for staleness checks (GH#1089)
