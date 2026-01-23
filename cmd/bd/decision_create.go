@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/notification"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -126,7 +129,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	}
 
 	// Generate decision point ID
-	decisionID, err := generateDecisionID(ctx, parent)
+	decisionID, err := generateDecisionID(ctx, parent, prompt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating ID: %v\n", err)
 		os.Exit(1)
@@ -252,20 +255,38 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	if noNotify {
 		fmt.Println("\n  (Notifications skipped)")
 	} else {
-		// TODO: Dispatch notifications (future task)
-		fmt.Println("\n  (Notification dispatch not yet implemented)")
+		// Dispatch notifications (hq-5d43fc)
+		beadsDir := filepath.Dir(dbPath)
+		results, err := notification.DispatchDecisionNotification(beadsDir, decisionPoint, gateIssue, "default")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n  Warning: notification dispatch failed: %v\n", err)
+		} else if len(results) > 0 {
+			fmt.Printf("\n  Notifications sent: %d\n", len(results))
+			for _, r := range results {
+				if r.Success {
+					fmt.Printf("    ✓ %s\n", r.Channel)
+				} else {
+					fmt.Printf("    ✗ %s: %s\n", r.Channel, r.Error)
+				}
+			}
+		} else {
+			fmt.Println("\n  (No notification routes configured)")
+		}
 	}
 }
 
 // generateDecisionID creates an ID for the decision point
-func generateDecisionID(ctx context.Context, parent string) (string, error) {
+func generateDecisionID(ctx context.Context, parent, prompt string) (string, error) {
 	if parent != "" {
 		// Find next available decision suffix under parent
 		// Format: parent.decision-N
 		for i := 1; i <= 100; i++ {
 			candidateID := fmt.Sprintf("%s.decision-%d", parent, i)
-			_, err := store.GetIssue(ctx, candidateID)
+			issue, err := store.GetIssue(ctx, candidateID)
 			if err != nil {
+				return "", fmt.Errorf("checking issue existence: %w", err)
+			}
+			if issue == nil {
 				// Issue doesn't exist, use this ID
 				return candidateID, nil
 			}
@@ -273,8 +294,23 @@ func generateDecisionID(ctx context.Context, parent string) (string, error) {
 		return "", fmt.Errorf("too many decisions under parent %s", parent)
 	}
 
-	// No parent - return empty to let CreateIssue generate an ID
-	return "", nil
+	// No parent - generate a root-level decision ID with collision avoidance
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil || prefix == "" {
+		prefix = "hq-" // fallback default
+	}
+	now := time.Now()
+	for nonce := 0; nonce < 100; nonce++ {
+		candidateID := idgen.GenerateHashID(prefix, prompt, "", actor, now, 6, nonce)
+		issue, err := store.GetIssue(ctx, candidateID)
+		if err != nil {
+			return "", fmt.Errorf("checking issue existence: %w", err)
+		}
+		if issue == nil {
+			return candidateID, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique decision ID after 100 attempts")
 }
 
 
