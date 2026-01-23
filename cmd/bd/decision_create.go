@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -207,6 +209,14 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	}
 
 	markDirtyAndScheduleFlush()
+
+	// Run decision create hook (hq-946577.27)
+	if !noNotify {
+		if beadsDir := getBeadsDir(); beadsDir != "" {
+			hookRunner := hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+			hookRunner.RunDecision(hooks.EventDecisionCreate, decisionPoint, nil)
+		}
+	}
 
 	// Output
 	if jsonOutput {

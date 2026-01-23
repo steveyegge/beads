@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/decision"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -205,6 +207,16 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	}
 
 	markDirtyAndScheduleFlush()
+
+	// Run decision respond hook (hq-946577.27)
+	if beadsDir := getBeadsDir(); beadsDir != "" {
+		hookRunner := hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+		hookRunner.RunDecision(hooks.EventDecisionRespond, dp, &hooks.DecisionResponsePayload{
+			Selected:    selectOpt,
+			Text:        textResponse,
+			RespondedBy: respondedBy,
+		})
+	}
 
 	// Output
 	if jsonOutput {

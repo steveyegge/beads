@@ -15,6 +15,11 @@ const (
 	EventCreate = "create"
 	EventUpdate = "update"
 	EventClose  = "close"
+
+	// Decision lifecycle events (hq-946577.27)
+	EventDecisionCreate  = "decision_create"
+	EventDecisionRespond = "decision_respond"
+	EventDecisionTimeout = "decision_timeout"
 )
 
 // Hook file names
@@ -22,6 +27,11 @@ const (
 	HookOnCreate = "on_create"
 	HookOnUpdate = "on_update"
 	HookOnClose  = "on_close"
+
+	// Decision lifecycle hooks (hq-946577.27)
+	HookOnDecisionCreate  = "on_decision_create"
+	HookOnDecisionRespond = "on_decision_respond"
+	HookOnDecisionTimeout = "on_decision_timeout"
 )
 
 // Runner handles hook execution
@@ -118,6 +128,12 @@ func eventToHook(event string) string {
 		return HookOnUpdate
 	case EventClose:
 		return HookOnClose
+	case EventDecisionCreate:
+		return HookOnDecisionCreate
+	case EventDecisionRespond:
+		return HookOnDecisionRespond
+	case EventDecisionTimeout:
+		return HookOnDecisionTimeout
 	default:
 		return ""
 	}
