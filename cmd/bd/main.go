@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -90,7 +91,8 @@ var (
 
 	// commandDidWrite is set when a command performs a write that should trigger
 	// auto-flush. Used to decide whether to auto-commit Dolt after the command completes.
-	commandDidWrite bool
+	// Thread-safe via atomic.Bool to avoid data races in concurrent flush operations.
+	commandDidWrite atomic.Bool
 
 	// commandDidExplicitDoltCommit is set when a command already created a Dolt commit
 	// explicitly (e.g., bd sync in dolt-native mode, hook flows, bd vc commit).
@@ -254,7 +256,7 @@ var rootCmd = &cobra.Command{
 		initCommandContext()
 
 		// Reset per-command write tracking (used by Dolt auto-commit).
-		commandDidWrite = false
+		commandDidWrite.Store(false)
 		commandDidExplicitDoltCommit = false
 		commandDidWriteTipMetadata = false
 		commandTipIDsShown = make(map[string]struct{})
@@ -974,7 +976,7 @@ var rootCmd = &cobra.Command{
 
 		// Dolt auto-commit: after a successful write command (and after final flush),
 		// create a Dolt commit so changes don't remain only in the working set.
-		if commandDidWrite && !commandDidExplicitDoltCommit {
+		if commandDidWrite.Load() && !commandDidExplicitDoltCommit {
 			if err := maybeAutoCommit(rootCtx, doltAutoCommitParams{Command: cmd.Name()}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: dolt auto-commit failed: %v\n", err)
 				os.Exit(1)

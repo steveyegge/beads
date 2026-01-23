@@ -435,11 +435,11 @@ func autoImportIfNewer() {
 // Flush-on-exit guarantee: PersistentPostRun calls flushManager.Shutdown() which
 // performs a final flush before the command exits, ensuring no data is lost.
 //
-// Thread-safe: Safe to call from multiple goroutines (no shared mutable state).
+// Thread-safe: Safe to call from multiple goroutines (uses atomic.Bool).
 // No-op if auto-flush is disabled via --no-auto-flush flag.
 func markDirtyAndScheduleFlush() {
-	// Track that this command performed a write.
-	commandDidWrite = true
+	// Track that this command performed a write (atomic to avoid data races).
+	commandDidWrite.Store(true)
 
 	// Use FlushManager if available
 	// No FlushManager means sandbox mode or test without flush setup - no-op is correct
@@ -450,8 +450,8 @@ func markDirtyAndScheduleFlush() {
 
 // markDirtyAndScheduleFullExport marks DB as needing a full export (for ID-changing operations)
 func markDirtyAndScheduleFullExport() {
-	// Track that this command performed a write.
-	commandDidWrite = true
+	// Track that this command performed a write (atomic to avoid data races).
+	commandDidWrite.Store(true)
 
 	// Use FlushManager if available
 	// No FlushManager means sandbox mode or test without flush setup - no-op is correct

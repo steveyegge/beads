@@ -377,7 +377,7 @@ NOTE: Import requires direct database access and does not work with daemon mode.
 		// Mark this command as having performed a write if it changed anything.
 		// This enables Dolt auto-commit in PersistentPostRun.
 		if result.Created > 0 || result.Updated > 0 || len(result.IDMapping) > 0 {
-			commandDidWrite = true
+			commandDidWrite.Store(true)
 		}
 
 		// Flush immediately after import (no debounce) to ensure daemon sees changes
