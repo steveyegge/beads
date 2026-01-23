@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
@@ -21,6 +22,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// redirectChainWarned tracks whether we've already warned about redirect chains
+// to avoid spamming the same warning multiple times in a single process.
+var redirectChainWarned sync.Once
 
 // CanonicalDatabaseName is the required database filename for all beads repositories
 const CanonicalDatabaseName = "beads.db"
@@ -87,7 +92,9 @@ func FollowRedirect(beadsDir string) string {
 	// Prevent redirect chains - don't follow if target also has a redirect
 	targetRedirect := filepath.Join(target, RedirectFileName)
 	if _, err := os.Stat(targetRedirect); err == nil {
-		fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
+		redirectChainWarned.Do(func() {
+			fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
+		})
 	}
 
 	return target
