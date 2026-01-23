@@ -68,6 +68,196 @@ func setupBenchStore(b *testing.B) (*DoltStore, func()) {
 }
 
 // =============================================================================
+// Bootstrap & Connection Benchmarks
+// =============================================================================
+
+// BenchmarkBootstrapEmbedded measures store initialization time in embedded mode.
+// This is the critical path for CLI commands that open/close the store each time.
+func BenchmarkBootstrapEmbedded(b *testing.B) {
+	if _, err := os.LookupEnv("DOLT_PATH"); err != false {
+		if _, err := os.Stat("/usr/local/bin/dolt"); os.IsNotExist(err) {
+			if _, err := os.Stat("/usr/bin/dolt"); os.IsNotExist(err) {
+				b.Skip("Dolt not installed, skipping benchmark")
+			}
+		}
+	}
+
+	tmpDir, err := os.MkdirTemp("", "dolt-bootstrap-bench-*")
+	if err != nil {
+		b.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ctx := context.Background()
+
+	// Create initial store to set up schema
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "bench",
+		CommitterEmail: "bench@example.com",
+		Database:       "benchdb",
+		ServerMode:     false, // Force embedded mode
+	}
+
+	initStore, err := New(ctx, cfg)
+	if err != nil {
+		b.Fatalf("failed to create initial store: %v", err)
+	}
+	initStore.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		store, err := New(ctx, cfg)
+		if err != nil {
+			b.Fatalf("failed to create store: %v", err)
+		}
+		store.Close()
+	}
+}
+
+// BenchmarkColdStart simulates CLI pattern: open store, read one issue, close.
+// This measures the realistic cost of a single bd command.
+func BenchmarkColdStart(b *testing.B) {
+	// First create a store with data
+	store, cleanup := setupBenchStore(b)
+	ctx := context.Background()
+
+	// Create a test issue
+	issue := &types.Issue{
+		ID:          "cold-start-issue",
+		Title:       "Cold Start Test Issue",
+		Description: "Issue for cold start benchmark",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
+		b.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Get the path for reopening
+	tmpDir := store.dbPath
+	store.Close()
+
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "bench",
+		CommitterEmail: "bench@example.com",
+		Database:       "benchdb",
+		ServerMode:     false, // Force embedded mode
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Open
+		s, err := New(ctx, cfg)
+		if err != nil {
+			b.Fatalf("failed to open store: %v", err)
+		}
+
+		// Read
+		_, err = s.GetIssue(ctx, "cold-start-issue")
+		if err != nil {
+			b.Fatalf("failed to get issue: %v", err)
+		}
+
+		// Close
+		s.Close()
+	}
+
+	// Cleanup is handled by the deferred cleanup from setupBenchStore
+	cleanup()
+}
+
+// BenchmarkWarmCache measures read performance with warm cache (store already open).
+// Contrast with BenchmarkColdStart to see bootstrap overhead.
+func BenchmarkWarmCache(b *testing.B) {
+	store, cleanup := setupBenchStore(b)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a test issue
+	issue := &types.Issue{
+		ID:          "warm-cache-issue",
+		Title:       "Warm Cache Test Issue",
+		Description: "Issue for warm cache benchmark",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
+		b.Fatalf("failed to create issue: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := store.GetIssue(ctx, "warm-cache-issue")
+		if err != nil {
+			b.Fatalf("failed to get issue: %v", err)
+		}
+	}
+}
+
+// BenchmarkCLIWorkflow simulates a typical CLI workflow:
+// open -> list ready -> show issue -> close
+func BenchmarkCLIWorkflow(b *testing.B) {
+	// Setup store with data
+	store, cleanup := setupBenchStore(b)
+	ctx := context.Background()
+
+	// Create some issues
+	for i := 0; i < 20; i++ {
+		issue := &types.Issue{
+			ID:          fmt.Sprintf("cli-workflow-%d", i),
+			Title:       fmt.Sprintf("CLI Workflow Issue %d", i),
+			Status:      types.StatusOpen,
+			Priority:    (i % 4) + 1,
+			IssueType:   types.TypeTask,
+		}
+		if err := store.CreateIssue(ctx, issue, "bench"); err != nil {
+			b.Fatalf("failed to create issue: %v", err)
+		}
+	}
+
+	tmpDir := store.dbPath
+	store.Close()
+
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "bench",
+		CommitterEmail: "bench@example.com",
+		Database:       "benchdb",
+		ServerMode:     false,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Simulate: bd ready && bd show <first>
+		s, err := New(ctx, cfg)
+		if err != nil {
+			b.Fatalf("failed to open store: %v", err)
+		}
+
+		ready, err := s.GetReadyWork(ctx, types.WorkFilter{})
+		if err != nil {
+			b.Fatalf("failed to get ready work: %v", err)
+		}
+
+		if len(ready) > 0 {
+			_, err = s.GetIssue(ctx, ready[0].ID)
+			if err != nil {
+				b.Fatalf("failed to get issue: %v", err)
+			}
+		}
+
+		s.Close()
+	}
+
+	cleanup()
+}
+
+// =============================================================================
 // Single Operation Benchmarks
 // =============================================================================
 
