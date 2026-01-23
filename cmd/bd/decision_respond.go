@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/decision"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -246,8 +247,48 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	if shouldCloseGate {
 		fmt.Printf("  %s Gate closed - blocked issues now unblocked\n", ui.RenderPass("✓"))
 	} else if shouldIterate {
-		// TODO: Implement iteration trigger (hq-946577.23)
-		fmt.Printf("  %s Text-only response (iteration not yet implemented)\n", ui.RenderWarn("⚠"))
-		fmt.Printf("  Use --accept-guidance to proceed with this guidance directly\n")
+		// Check if max iterations reached
+		if decision.IsMaxIteration(dp) {
+			fmt.Printf("  %s Max iterations reached (%d/%d)\n", ui.RenderWarn("⚠"), dp.Iteration, dp.MaxIterations)
+			fmt.Printf("  Please select an option or use --accept-guidance to proceed with your text.\n")
+		} else {
+			// Create next iteration (hq-946577.23)
+			result, err := decision.CreateNextIteration(ctx, store, dp, issue, textResponse, respondedBy, actor)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating iteration: %v\n", err)
+				os.Exit(1)
+			}
+
+			markDirtyAndScheduleFlush()
+
+			if result.MaxReached {
+				fmt.Printf("  %s Created final iteration: %s (iteration %d/%d)\n",
+					ui.RenderWarn("⚠"), ui.RenderID(result.NewDecisionID),
+					result.DecisionPoint.Iteration, result.DecisionPoint.MaxIterations)
+				fmt.Printf("  This is the final iteration - you must select an option next time.\n")
+			} else {
+				fmt.Printf("  %s Created new iteration: %s (iteration %d/%d)\n",
+					ui.RenderPass("✓"), ui.RenderID(result.NewDecisionID),
+					result.DecisionPoint.Iteration, result.DecisionPoint.MaxIterations)
+				fmt.Printf("  Agent will refine options based on your guidance.\n")
+			}
+
+			// Include iteration info in JSON output
+			if jsonOutput {
+				result := map[string]interface{}{
+					"id":                   resolvedID,
+					"selected_option":      selectOpt,
+					"response_text":        textResponse,
+					"responded_by":         respondedBy,
+					"responded_at":         now.Format(time.RFC3339),
+					"gate_closed":          shouldCloseGate,
+					"iteration":            true,
+					"new_decision_id":      result.NewDecisionID,
+					"new_iteration_number": result.DecisionPoint.Iteration,
+					"max_reached":          result.MaxReached,
+				}
+				outputJSON(result)
+			}
+		}
 	}
 }
