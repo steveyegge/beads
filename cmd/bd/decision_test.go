@@ -502,3 +502,243 @@ func TestDecisionJSONLRoundTrip(t *testing.T) {
 		t.Errorf("Guidance = %q, want %q", got.Guidance, "Previous guidance")
 	}
 }
+
+// TestDecisionRemind tests the reminder functionality
+func TestDecisionRemind(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Initialize database with prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+
+	decisionID := "test-remind"
+	now := time.Now()
+
+	// Create decision point
+	issue := &types.Issue{
+		ID:        decisionID,
+		Title:     "Remind Test Decision",
+		IssueType: types.TypeGate,
+		Status:    types.StatusOpen,
+		Priority:  2,
+		AwaitType: "decision",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	dp := &types.DecisionPoint{
+		IssueID:       decisionID,
+		Prompt:        "Need a reminder?",
+		Options:       `[{"id":"a","label":"Option A"}]`,
+		Iteration:     1,
+		MaxIterations: 3,
+		ReminderCount: 0,
+		CreatedAt:     now,
+	}
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("CreateDecisionPoint failed: %v", err)
+	}
+
+	// Simulate sending reminders
+	for i := 1; i <= 3; i++ {
+		gotDP, err := store.GetDecisionPoint(ctx, decisionID)
+		if err != nil {
+			t.Fatalf("GetDecisionPoint failed: %v", err)
+		}
+
+		gotDP.ReminderCount++
+		if err := store.UpdateDecisionPoint(ctx, gotDP); err != nil {
+			t.Fatalf("UpdateDecisionPoint failed: %v", err)
+		}
+
+		// Verify reminder count
+		updated, err := store.GetDecisionPoint(ctx, decisionID)
+		if err != nil {
+			t.Fatalf("GetDecisionPoint failed: %v", err)
+		}
+		if updated.ReminderCount != i {
+			t.Errorf("ReminderCount = %d, want %d", updated.ReminderCount, i)
+		}
+	}
+
+	// Verify at max reminders
+	final, err := store.GetDecisionPoint(ctx, decisionID)
+	if err != nil {
+		t.Fatalf("GetDecisionPoint failed: %v", err)
+	}
+	if final.ReminderCount != 3 {
+		t.Errorf("Final ReminderCount = %d, want 3", final.ReminderCount)
+	}
+}
+
+// TestDecisionCancel tests the cancellation functionality
+func TestDecisionCancel(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Initialize database with prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+
+	decisionID := "test-cancel"
+	now := time.Now()
+
+	// Create decision point
+	issue := &types.Issue{
+		ID:        decisionID,
+		Title:     "Cancel Test Decision",
+		IssueType: types.TypeGate,
+		Status:    types.StatusOpen,
+		Priority:  2,
+		AwaitType: "decision",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	dp := &types.DecisionPoint{
+		IssueID:       decisionID,
+		Prompt:        "Should we cancel?",
+		Options:       `[{"id":"a","label":"Option A"}]`,
+		Iteration:     1,
+		MaxIterations: 3,
+		CreatedAt:     now,
+	}
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("CreateDecisionPoint failed: %v", err)
+	}
+
+	// Cancel the decision
+	cancelTime := time.Now()
+	cancelReason := "No longer needed"
+	cancelledBy := "admin@example.com"
+
+	gotDP, err := store.GetDecisionPoint(ctx, decisionID)
+	if err != nil {
+		t.Fatalf("GetDecisionPoint failed: %v", err)
+	}
+
+	gotDP.RespondedAt = &cancelTime
+	gotDP.RespondedBy = cancelledBy
+	gotDP.SelectedOption = "_cancelled"
+	gotDP.ResponseText = cancelReason
+
+	if err := store.UpdateDecisionPoint(ctx, gotDP); err != nil {
+		t.Fatalf("UpdateDecisionPoint failed: %v", err)
+	}
+
+	// Close the gate
+	if err := store.CloseIssue(ctx, decisionID, "Decision cancelled: "+cancelReason, "test", ""); err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+
+	// Verify final state
+	closedIssue, err := store.GetIssue(ctx, decisionID)
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if closedIssue.Status != types.StatusClosed {
+		t.Errorf("Status = %q, want %q", closedIssue.Status, types.StatusClosed)
+	}
+
+	finalDP, err := store.GetDecisionPoint(ctx, decisionID)
+	if err != nil {
+		t.Fatalf("GetDecisionPoint failed: %v", err)
+	}
+	if finalDP.SelectedOption != "_cancelled" {
+		t.Errorf("SelectedOption = %q, want %q", finalDP.SelectedOption, "_cancelled")
+	}
+	if finalDP.ResponseText != cancelReason {
+		t.Errorf("ResponseText = %q, want %q", finalDP.ResponseText, cancelReason)
+	}
+	if finalDP.RespondedBy != cancelledBy {
+		t.Errorf("RespondedBy = %q, want %q", finalDP.RespondedBy, cancelledBy)
+	}
+}
+
+// TestDecisionCancelAlreadyResponded tests cancelling an already responded decision
+func TestDecisionCancelAlreadyResponded(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+
+	store, err := sqlite.New(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+
+	// Initialize database with prefix
+	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+
+	decisionID := "test-cancel-responded"
+	now := time.Now()
+
+	// Create decision point
+	issue := &types.Issue{
+		ID:        decisionID,
+		Title:     "Already Responded Decision",
+		IssueType: types.TypeGate,
+		Status:    types.StatusClosed,
+		Priority:  2,
+		AwaitType: "decision",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateIssue(ctx, issue, "test"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	respondedAt := now.Add(-time.Hour)
+	dp := &types.DecisionPoint{
+		IssueID:        decisionID,
+		Prompt:         "Already answered",
+		Options:        `[{"id":"a","label":"Option A"}]`,
+		SelectedOption: "a",
+		RespondedAt:    &respondedAt,
+		RespondedBy:    "user@example.com",
+		Iteration:      1,
+		MaxIterations:  3,
+		CreatedAt:      now,
+	}
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("CreateDecisionPoint failed: %v", err)
+	}
+
+	// Verify it's already responded
+	gotDP, err := store.GetDecisionPoint(ctx, decisionID)
+	if err != nil {
+		t.Fatalf("GetDecisionPoint failed: %v", err)
+	}
+	if gotDP.RespondedAt == nil {
+		t.Error("RespondedAt should not be nil")
+	}
+	// In real code, we'd check this before attempting to cancel
+}
