@@ -131,10 +131,9 @@ var showCmd = &cobra.Command{
 					// Get labels and deps for JSON output
 					details := &types.IssueDetails{Issue: *issue}
 					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
-					if sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage); ok {
-						details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
-						details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-					}
+					// GetDependenciesWithMetadata and GetDependentsWithMetadata are on Storage interface
+					details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
+					details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 					details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
 					// Compute parent from dependencies
 					for _, dep := range details.Dependencies {
@@ -360,21 +359,9 @@ var showCmd = &cobra.Command{
 				details := &types.IssueDetails{Issue: *issue}
 				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
 
-				// Get dependencies with metadata (dependency_type field)
-				if sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage); ok {
-					details.Dependencies, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
-					details.Dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-				} else {
-					// Fallback to regular methods without metadata for other storage backends
-					deps, _ := issueStore.GetDependencies(ctx, issue.ID)
-					for _, dep := range deps {
-						details.Dependencies = append(details.Dependencies, &types.IssueWithDependencyMetadata{Issue: *dep})
-					}
-					dependents, _ := issueStore.GetDependents(ctx, issue.ID)
-					for _, dependent := range dependents {
-						details.Dependents = append(details.Dependents, &types.IssueWithDependencyMetadata{Issue: *dependent})
-					}
-				}
+				// Get dependencies and dependents with metadata (on Storage interface)
+				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
+				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 
 				details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
 				// Compute parent from dependencies
@@ -443,60 +430,48 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show dependents - grouped by dependency type for clarity
-			// Use GetDependentsWithMetadata to get the dependency type
-			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
-			if ok {
-				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-				if len(dependentsWithMeta) > 0 {
-					// Group by dependency type
-					var blocks, children, related, discovered []*types.IssueWithDependencyMetadata
-					for _, dep := range dependentsWithMeta {
-						switch dep.DependencyType {
-						case types.DepBlocks:
-							blocks = append(blocks, dep)
-						case types.DepParentChild:
-							children = append(children, dep)
-						case types.DepRelated:
-							related = append(related, dep)
-						case types.DepDiscoveredFrom:
-							discovered = append(discovered, dep)
-						default:
-							blocks = append(blocks, dep) // Default to blocks
-						}
-					}
-
-					if len(children) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("CHILDREN"))
-						for _, dep := range children {
-							fmt.Println(formatDependencyLine("↳", dep))
-						}
-					}
-					if len(blocks) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("BLOCKS"))
-						for _, dep := range blocks {
-							fmt.Println(formatDependencyLine("←", dep))
-						}
-					}
-					if len(related) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
-						for _, dep := range related {
-							fmt.Println(formatDependencyLine("↔", dep))
-						}
-					}
-					if len(discovered) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED"))
-						for _, dep := range discovered {
-							fmt.Println(formatDependencyLine("◊", dep))
-						}
+			// GetDependentsWithMetadata is on Storage interface (works with SQLite and Dolt)
+			dependentsWithMeta, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID)
+			if len(dependentsWithMeta) > 0 {
+				// Group by dependency type
+				var blocks, children, related, discovered []*types.IssueWithDependencyMetadata
+				for _, dep := range dependentsWithMeta {
+					switch dep.DependencyType {
+					case types.DepBlocks:
+						blocks = append(blocks, dep)
+					case types.DepParentChild:
+						children = append(children, dep)
+					case types.DepRelated:
+						related = append(related, dep)
+					case types.DepDiscoveredFrom:
+						discovered = append(discovered, dep)
+					default:
+						blocks = append(blocks, dep) // Default to blocks
 					}
 				}
-			} else {
-				// Fallback for non-SQLite storage
-				dependents, _ := issueStore.GetDependents(ctx, issue.ID)
-				if len(dependents) > 0 {
+
+				if len(children) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("CHILDREN"))
+					for _, dep := range children {
+						fmt.Println(formatDependencyLine("↳", dep))
+					}
+				}
+				if len(blocks) > 0 {
 					fmt.Printf("\n%s\n", ui.RenderBold("BLOCKS"))
-					for _, dep := range dependents {
-						fmt.Println(formatSimpleDependencyLine("←", dep))
+					for _, dep := range blocks {
+						fmt.Println(formatDependencyLine("←", dep))
+					}
+				}
+				if len(related) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
+					for _, dep := range related {
+						fmt.Println(formatDependencyLine("↔", dep))
+					}
+				}
+				if len(discovered) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED"))
+					for _, dep := range discovered {
+						fmt.Println(formatDependencyLine("◊", dep))
 					}
 				}
 			}
@@ -714,22 +689,9 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 	// Collect all refs for all issues
 	allRefs := make(map[string][]*types.IssueWithDependencyMetadata)
 
-	// Process each issue
+	// Process each issue (GetDependentsWithMetadata is on Storage interface)
 	processIssue := func(issueID string, issueStore storage.Storage) error {
-		sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
-		if !ok {
-			// Fallback: try to get dependents without metadata
-			dependents, err := issueStore.GetDependents(ctx, issueID)
-			if err != nil {
-				return err
-			}
-			for _, dep := range dependents {
-				allRefs[issueID] = append(allRefs[issueID], &types.IssueWithDependencyMetadata{Issue: *dep})
-			}
-			return nil
-		}
-
-		refs, err := sqliteStore.GetDependentsWithMetadata(ctx, issueID)
+		refs, err := issueStore.GetDependentsWithMetadata(ctx, issueID)
 		if err != nil {
 			return err
 		}
@@ -918,29 +880,15 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 	// Collect all children for all issues
 	allChildren := make(map[string][]*types.IssueWithDependencyMetadata)
 
-	// Process each issue to get its children
+	// Process each issue to get its children (GetDependentsWithMetadata is on Storage interface)
 	processIssue := func(issueID string, issueStore storage.Storage) error {
 		// Initialize entry so "no children" message can be shown
 		if _, exists := allChildren[issueID]; !exists {
 			allChildren[issueID] = []*types.IssueWithDependencyMetadata{}
 		}
 
-		sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
-		if !ok {
-			// Fallback: try to get dependents without metadata
-			dependents, err := issueStore.GetDependents(ctx, issueID)
-			if err != nil {
-				return err
-			}
-			// Filter for parent-child relationships (can't filter without metadata)
-			for _, dep := range dependents {
-				allChildren[issueID] = append(allChildren[issueID], &types.IssueWithDependencyMetadata{Issue: *dep})
-			}
-			return nil
-		}
-
 		// Get all dependents with metadata so we can filter for children
-		refs, err := sqliteStore.GetDependentsWithMetadata(ctx, issueID)
+		refs, err := issueStore.GetDependentsWithMetadata(ctx, issueID)
 		if err != nil {
 			return err
 		}
