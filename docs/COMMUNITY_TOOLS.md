@@ -16,6 +16,8 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 
 - **[bsv](https://github.com/bglenden/bsv)** - Simple two-panel terminal (TUI) viewer with tree navigation organized by epic/task/sub-task, markdown rendering, and mouse support. Built by [@bglenden](https://github.com/bglenden). (Rust)
 
+- **[abacus](https://github.com/ChrisEdwards/abacus)** - A powerful terminal UI for visualizing and navigating Beads issue tracking databases.
+
 ## Web UIs
 
 - **[beads-ui](https://github.com/mantoni/beads-ui)** - Local web interface with live updates and kanban board. Run with `npx beads-ui start`. Built by [@mantoni](https://github.com/mantoni). (Node.js)
@@ -25,6 +27,9 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 - **[beads-viz-prototype](https://github.com/mattbeane/beads-viz-prototype)** - Web-based visualization generating interactive HTML from `bd export`. Built by [@mattbeane](https://github.com/mattbeane). (Python)
 
 - **[beads-dashboard](https://github.com/rhydlewis/beads-dashboard)** - A local, lean metrics dashboard for your beads data. Provides insights insights into lead time, throughput and other continuous improvement metrics. Includes a filterable table view of "all issues". Built by [@rhydlewis](https://github.com/rhydlewis). (Node.js/React)
+
+
+- **[beads-kanban-ui](https://github.com/AvivK5498/Beads-Kanban-UI)** - Visual Kanban board with git branch status tracking, epic/subtask management, design doc viewer, and activity timeline. Install via npm: `npm install -g beads-kanban-ui`. Built by [@AvivK5498](https://github.com/AvivK5498). (TypeScript/Rust)
 
 ## Editor Extensions
 
@@ -47,6 +52,10 @@ A curated list of community-built UIs, extensions, and integrations for Beads. R
 ## Data Source Middleware
 
 - **[jira-beads-sync](https://github.com/conallob/jira-beads-sync)** - CLI tool & Claude Code plugin to sync tasks from Jira into beads and publish beads task states back to Jira. Built by [@conallob](https://github.com/conallob). (Go)
+
+## Claude Code Orchestration
+
+- **[beads-orchestration](https://github.com/AvivK5498/Claude-Code-Beads-Orchestration)** - Multi-agent orchestration skill for Claude Code. Orchestrator investigates issues, manages beads tasks automatically, and delegates to tech-specific supervisors on isolated branches. Includes hooks for workflow enforcement, epic/subtask support, and optional external provider delegation (Codex/Gemini). Install via npm: `npm install -g @avivkaplan/beads-orchestration`. Built by [@AvivK5498](https://github.com/AvivK5498). (Node.js/Python)
 
 ## Historical / Stale
 

@@ -8,16 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads"
 	internalbeads "github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
-	"github.com/steveyegge/beads/internal/types"
 )
 
 // isDaemonAutoSyncing checks if daemon is running with auto-commit and auto-push enabled.
@@ -216,77 +213,6 @@ func outputPrimeContext(w io.Writer, mcpMode bool, stealthMode bool) error {
 	return outputCLIContext(w, stealthMode)
 }
 
-// getPendingDecisionsNotice returns a notice string for pending decisions (hq-946577.30)
-func getPendingDecisionsNotice() string {
-	beadsDir := beads.FindBeadsDir()
-	if beadsDir == "" {
-		return ""
-	}
-
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return ""
-	}
-
-	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = store.Close() }()
-
-	decisions, err := store.ListPendingDecisions(ctx)
-	if err != nil || len(decisions) == 0 {
-		return ""
-	}
-
-	var lines []string
-	for _, dp := range decisions {
-		// Get the associated issue for timeout info
-		issue, _ := store.GetIssue(ctx, dp.IssueID)
-		timeInfo := formatDecisionTimeout(dp, issue)
-		// Truncate prompt if too long
-		prompt := dp.Prompt
-		if len(prompt) > 50 {
-			prompt = prompt[:47] + "..."
-		}
-		lines = append(lines, fmt.Sprintf("   → %s: %s%s", dp.IssueID, prompt, timeInfo))
-	}
-
-	return fmt.Sprintf(`
-⏳ **%d pending decision(s) awaiting response:**
-%s
-
-   View: ` + "`bd decision list --pending`" + `
-
-`, len(decisions), strings.Join(lines, "\n"))
-}
-
-// formatDecisionTimeout returns timeout info for a decision point
-func formatDecisionTimeout(dp *types.DecisionPoint, issue *types.Issue) string {
-	if issue == nil || issue.Timeout == 0 {
-		return ""
-	}
-
-	// Calculate timeout time from issue creation + timeout duration
-	timeoutAt := dp.CreatedAt.Add(issue.Timeout)
-	now := time.Now()
-
-	if timeoutAt.Before(now) {
-		return " (OVERDUE)"
-	}
-
-	remaining := timeoutAt.Sub(now)
-	if remaining < time.Hour {
-		return fmt.Sprintf(" (%dm remaining)", int(remaining.Minutes()))
-	} else if remaining < 24*time.Hour {
-		return fmt.Sprintf(" (%dh remaining)", int(remaining.Hours()))
-	} else {
-		days := int(remaining.Hours() / 24)
-		return fmt.Sprintf(" (%dd remaining)", days)
-	}
-}
-
 // outputMCPContext outputs minimal context for MCP users
 func outputMCPContext(w io.Writer, stealthMode bool) error {
 	ephemeral := isEphemeralBranch()
@@ -310,11 +236,10 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 	}
 
 	redirectNotice := getRedirectNotice(false)
-	pendingDecisions := getPendingDecisionsNotice()
 
 	context := `# Beads Issue Tracker Active
 
-` + redirectNotice + pendingDecisions + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
@@ -429,14 +354,13 @@ bd sync                     # Push to remote
 	}
 
 	redirectNotice := getRedirectNotice(true)
-	pendingDecisions := getPendingDecisionsNotice()
 
 	context := `# Beads Workflow Context
 
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code when .beads/ detected
 
-` + redirectNotice + pendingDecisions + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 

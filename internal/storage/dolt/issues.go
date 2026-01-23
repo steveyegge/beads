@@ -62,14 +62,8 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
-	// Get database connection (handles reconnection after idle timeout)
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
 	// Start transaction
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -101,39 +95,9 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 		issue.ID = generatedID
 	}
 
-	// Check if issue already exists (idempotent create)
-	// hq-3ebbac: Must also check status - if existing issue is closed, we need a new ID
-	var existingID string
-	var existingStatus string
-	err = tx.QueryRowContext(ctx, "SELECT id, status FROM issues WHERE id = ?", issue.ID).Scan(&existingID, &existingStatus)
-	if err == nil {
-		// Issue exists - check if it's closed
-		if existingStatus == string(types.StatusClosed) {
-			// Existing issue is closed - generate a new unique ID (hq-3ebbac)
-			// This prevents wisps from inheriting closed status from previous instances
-			newID, genErr := generateUniqueIDSuffix(ctx, tx, issue.ID)
-			if genErr != nil {
-				return fmt.Errorf("failed to generate unique ID: %w", genErr)
-			}
-			issue.ID = newID
-			// Fall through to insert with new ID
-		} else {
-			// Issue exists and is open/in_progress - this is idempotent, return success
-			// This handles race conditions and retry scenarios
-			return tx.Commit()
-		}
-	} else if err != sql.ErrNoRows {
-		return fmt.Errorf("failed to check for existing issue: %w", err)
-	}
-
 	// Insert issue
 	if err := insertIssue(ctx, tx, issue); err != nil {
-		// Check if this is a duplicate key error (race condition between check and insert)
-		if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
-			// Another process created the issue - this is fine, return success
-			return tx.Commit()
-		}
-		return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
+		return fmt.Errorf("failed to insert issue: %w", err)
 	}
 
 	// Record creation event
@@ -165,13 +129,7 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 		return fmt.Errorf("failed to get custom types: %w", err)
 	}
 
-	// Get database connection (handles reconnection after idle timeout)
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -215,22 +173,7 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
-		// Check if issue already exists (idempotent create)
-		var existingID string
-		err = tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", issue.ID).Scan(&existingID)
-		if err == nil {
-			// Issue already exists - skip it (idempotent)
-			continue
-		} else if err != sql.ErrNoRows {
-			return fmt.Errorf("failed to check for existing issue %s: %w", issue.ID, err)
-		}
-
 		if err := insertIssue(ctx, tx, issue); err != nil {
-			// Check if this is a duplicate key error (race condition)
-			if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
-				// Another process created the issue - skip it
-				continue
-			}
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
 		if err := recordEvent(ctx, tx, issue.ID, types.EventCreated, actor, "", ""); err != nil {
@@ -246,12 +189,10 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 
 // GetIssue retrieves an issue by ID
 func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	issue, err := scanIssue(ctx, db, id)
+	issue, err := scanIssue(ctx, s.db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -271,13 +212,11 @@ func (s *DoltStore) GetIssue(ctx context.Context, id string) (*types.Issue, erro
 
 // GetIssueByExternalRef retrieves an issue by external reference
 func (s *DoltStore) GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	var id string
-	err = db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM issues WHERE external_ref = ?", externalRef).Scan(&id)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -320,13 +259,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 
 	args = append(args, id)
 
-	// Get database connection (handles reconnection after idle timeout)
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -358,13 +291,7 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now().UTC()
 
-	// Get database connection (handles reconnection after idle timeout)
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -399,13 +326,7 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 
 // DeleteIssue permanently removes an issue
 func (s *DoltStore) DeleteIssue(ctx context.Context, id string) error {
-	// Get database connection (handles reconnection after idle timeout)
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -489,6 +410,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 
 func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error) {
 	var issue types.Issue
+	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var assignee, externalRef, compactedAtCommit, owner sql.NullString
@@ -518,7 +440,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
@@ -534,6 +456,14 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue: %w", err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	// Map nullable fields
@@ -678,27 +608,6 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
 	`, issueID, time.Now().UTC())
 	return err
-}
-
-// generateUniqueIDSuffix generates a unique ID when there's a collision with a closed issue.
-// It appends a numeric suffix (-1, -2, etc.) until an unused ID is found.
-// This fixes hq-3ebbac: wisps getting closed status from previous instances.
-func generateUniqueIDSuffix(ctx context.Context, tx *sql.Tx, baseID string) (string, error) {
-	// Try suffixes -1, -2, -3, etc. until we find an unused ID
-	for i := 1; i <= 100; i++ { // Cap at 100 to prevent infinite loops
-		candidateID := fmt.Sprintf("%s-%d", baseID, i)
-		var existingID string
-		err := tx.QueryRowContext(ctx, "SELECT id FROM issues WHERE id = ?", candidateID).Scan(&existingID)
-		if err == sql.ErrNoRows {
-			// This ID is available
-			return candidateID, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("failed to check candidate ID %s: %w", candidateID, err)
-		}
-		// ID exists, try next suffix
-	}
-	return "", fmt.Errorf("could not generate unique ID after 100 attempts (base: %s)", baseID)
 }
 
 // nolint:unparam // error return kept for interface consistency

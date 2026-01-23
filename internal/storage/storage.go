@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -58,10 +59,12 @@ type Transaction interface {
 	// Dependency operations
 	AddDependency(ctx context.Context, dep *types.Dependency, actor string) error
 	RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error
+	GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error)
 
 	// Label operations
 	AddLabel(ctx context.Context, issueID, label, actor string) error
 	RemoveLabel(ctx context.Context, issueID, label, actor string) error
+	GetLabels(ctx context.Context, issueID string) ([]string, error)
 
 	// Config operations (for atomic config + issue workflows)
 	SetConfig(ctx context.Context, key, value string) error
@@ -73,11 +76,8 @@ type Transaction interface {
 
 	// Comment operations
 	AddComment(ctx context.Context, issueID, actor, comment string) error
-
-	// Decision point operations
-	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
-	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
-	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
+	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 }
 
 // Storage defines the interface for issue storage backends
@@ -126,15 +126,11 @@ type Storage interface {
 
 	// Comments
 	AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error)
+	// ImportIssueComment adds a comment while preserving the original timestamp.
+	// Used during JSONL import to avoid timestamp drift across sync cycles.
+	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
-
-	// Decision Points
-	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
-	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
-	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
-	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
-	ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) // For JSONL export
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

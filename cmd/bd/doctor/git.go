@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -13,7 +14,9 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 	"github.com/steveyegge/beads/cmd/bd/doctor/fix"
 	"github.com/steveyegge/beads/internal/git"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/syncbranch"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 const (
@@ -774,64 +777,35 @@ func FixSyncBranchHealth(path string) error {
 
 // FindOrphanedIssues identifies issues referenced in git commits but still open in the database.
 // This is the shared core logic used by both 'bd orphans' and 'bd doctor' commands.
-// Returns empty slice if not a git repo, no database, or no orphans found (no error).
-func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
+// Returns empty slice if not a git repo, no issues from provider, or no orphans found (no error).
+//
+// Parameters:
+//   - gitPath: The directory to scan for git commits
+//   - provider: The issue provider to get open issues and prefix from
+func FindOrphanedIssues(gitPath string, provider types.IssueProvider) ([]OrphanIssue, error) {
 	// Skip if not in a git repo
 	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = path
+	cmd.Dir = gitPath
 	if err := cmd.Run(); err != nil {
 		return []OrphanIssue{}, nil // Not a git repo, return empty list
 	}
 
-	// Follow redirect to resolve actual beads directory (bd-tvus fix)
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	// Get issue prefix from provider
+	issuePrefix := provider.GetIssuePrefix()
 
-	// Skip if no .beads directory
-	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return []OrphanIssue{}, nil
-	}
-
-	// Get database path
-	dbPath := filepath.Join(beadsDir, "beads.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return []OrphanIssue{}, nil
-	}
-
-	// Open database read-only
-	db, err := openDBReadOnly(dbPath)
+	// Get all open/in_progress issues from provider
+	ctx := context.Background()
+	issues, err := provider.GetOpenIssues(ctx)
 	if err != nil {
 		return []OrphanIssue{}, nil
 	}
-	defer db.Close()
-
-	// Get issue prefix from config
-	var issuePrefix string
-	err = db.QueryRow("SELECT value FROM config WHERE key = 'issue_prefix'").Scan(&issuePrefix)
-	if err != nil || issuePrefix == "" {
-		issuePrefix = "bd" // default
-	}
-
-	// Get all open/in_progress issues with their titles (title is optional for compatibility)
-	var rows *sql.Rows
-	rows, err = db.Query("SELECT id, title, status FROM issues WHERE status IN ('open', 'in_progress')")
-	// If the query fails (e.g., no title column), fall back to simpler query
-	if err != nil {
-		rows, err = db.Query("SELECT id, '', status FROM issues WHERE status IN ('open', 'in_progress')")
-		if err != nil {
-			return []OrphanIssue{}, nil
-		}
-	}
-	defer rows.Close()
 
 	openIssues := make(map[string]*OrphanIssue)
-	for rows.Next() {
-		var id, title, status string
-		if err := rows.Scan(&id, &title, &status); err == nil {
-			openIssues[id] = &OrphanIssue{
-				IssueID: id,
-				Title:   title,
-				Status:  status,
-			}
+	for _, issue := range issues {
+		openIssues[issue.ID] = &OrphanIssue{
+			IssueID: issue.ID,
+			Title:   issue.Title,
+			Status:  string(issue.Status),
 		}
 	}
 
@@ -841,7 +815,7 @@ func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
 
 	// Get git log
 	cmd = exec.Command("git", "log", "--oneline", "--all")
-	cmd.Dir = path
+	cmd.Dir = gitPath
 	output, err := cmd.Output()
 	if err != nil {
 		return []OrphanIssue{}, nil
@@ -896,6 +870,34 @@ func FindOrphanedIssues(path string) ([]OrphanIssue, error) {
 	return orphanedIssues, nil
 }
 
+// FindOrphanedIssuesFromPath is a convenience function for callers that don't have a provider.
+// It creates a local provider from the given path's .beads/ directory.
+// This preserves backward compatibility for CheckOrphanedIssues and similar callers.
+func FindOrphanedIssuesFromPath(path string) ([]OrphanIssue, error) {
+	// Follow redirect to resolve actual beads directory (bd-tvus fix)
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Skip if no .beads directory
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return []OrphanIssue{}, nil
+	}
+
+	// Get database path
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return []OrphanIssue{}, nil
+	}
+
+	// Create a local provider from the database
+	provider, err := storage.NewLocalProvider(dbPath)
+	if err != nil {
+		return []OrphanIssue{}, nil
+	}
+	defer func() { _ = provider.Close() }()
+
+	return FindOrphanedIssues(path, provider)
+}
+
 // CheckOrphanedIssues detects issues referenced in git commits but still open.
 // This catches cases where someone implemented a fix with "(bd-xxx)" in the commit
 // message but forgot to run "bd close".
@@ -936,8 +938,8 @@ func CheckOrphanedIssues(path string) DoctorCheck {
 		}
 	}
 
-	// Use the shared FindOrphanedIssues function
-	orphans, err := FindOrphanedIssues(path)
+	// Use the shared FindOrphanedIssuesFromPath function (creates its own provider)
+	orphans, err := FindOrphanedIssuesFromPath(path)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Orphaned Issues",

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -119,25 +120,13 @@ func (m *mockStorage) GetEvents(ctx context.Context, issueID string, limit int) 
 func (m *mockStorage) AddIssueComment(ctx context.Context, issueID, author, text string) (*types.Comment, error) {
 	return nil, nil
 }
+func (m *mockStorage) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error) {
-	return nil, nil
-}
-func (m *mockStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	return nil
-}
-func (m *mockStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
-	return nil, nil
-}
-func (m *mockStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	return nil
-}
-func (m *mockStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
-	return nil, nil
-}
-func (m *mockStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.DecisionPoint, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetStatistics(ctx context.Context) (*types.Statistics, error) {
@@ -252,11 +241,17 @@ func (m *mockTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 func (m *mockTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	return nil
 }
+func (m *mockTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	return nil, nil
+}
 func (m *mockTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
 	return nil
 }
 func (m *mockTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
 	return nil
+}
+func (m *mockTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
+	return nil, nil
 }
 func (m *mockTransaction) SetConfig(ctx context.Context, key, value string) error {
 	return nil
@@ -273,16 +268,10 @@ func (m *mockTransaction) GetMetadata(ctx context.Context, key string) (string, 
 func (m *mockTransaction) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	return nil
 }
-func (m *mockTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	return nil
-}
-func (m *mockTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+func (m *mockTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
 	return nil, nil
 }
-func (m *mockTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	return nil
-}
-func (m *mockTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+func (m *mockTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
 	return nil, nil
 }
 

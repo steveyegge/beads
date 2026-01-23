@@ -1,8 +1,8 @@
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
-// This file contains server lifecycle management for dolt sql-server (bd-f4f78a, bd-649383).
-// The server mode allows multiple concurrent clients without lock contention.
-
+// This file implements the dolt sql-server management for federation mode.
+// When federation is enabled, we run dolt sql-server instead of the embedded driver
+// to enable multi-writer support and expose the remotesapi for peer-to-peer sync.
 package dolt
 
 import (
@@ -14,251 +14,303 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 )
 
-// ServerConfig holds configuration for dolt sql-server
+const (
+	// DefaultSQLPort is the default port for dolt sql-server MySQL protocol
+	DefaultSQLPort = 3306
+	// DefaultRemotesAPIPort is the default port for dolt remotesapi (peer-to-peer sync)
+	DefaultRemotesAPIPort = 8080
+	// ServerStartTimeout is how long to wait for server to start
+	ServerStartTimeout = 30 * time.Second
+	// ServerStopTimeout is how long to wait for graceful shutdown
+	ServerStopTimeout = 10 * time.Second
+)
+
+// ServerConfig holds configuration for the dolt sql-server
 type ServerConfig struct {
-	DataDir  string // Directory containing Dolt databases
-	Host     string // Listen host (default: 127.0.0.1)
-	Port     int    // Listen port (default: 3306)
-	User     string // MySQL user (default: root)
-	Password string // MySQL password (default: empty)
-	LogLevel string // Log level: trace, debug, info, warn, error (default: info)
-	LogFile  string // Log file path (default: stderr)
+	DataDir        string // Path to Dolt database directory
+	SQLPort        int    // MySQL protocol port (default: 3306)
+	RemotesAPIPort int    // remotesapi port for peer sync (default: 8080)
+	Host           string // Host to bind to (default: 127.0.0.1)
+	LogFile        string // Log file for server output (optional)
+	User           string // MySQL user (default: root)
+	ReadOnly       bool   // Start in read-only mode
 }
 
-// DefaultServerConfig returns server config with default values
-func DefaultServerConfig(dataDir string) *ServerConfig {
-	return &ServerConfig{
-		DataDir:  dataDir,
-		Host:     "127.0.0.1",
-		Port:     3306,
-		User:     "root",
-		Password: "",
-		LogLevel: "info",
+// Server manages a dolt sql-server process
+type Server struct {
+	cfg     ServerConfig
+	cmd     *exec.Cmd
+	mu      sync.Mutex
+	running bool
+	pidFile string
+	logFile *os.File // Track log file for cleanup
+}
+
+// NewServer creates a new dolt sql-server manager
+func NewServer(cfg ServerConfig) *Server {
+	if cfg.SQLPort == 0 {
+		cfg.SQLPort = DefaultSQLPort
+	}
+	if cfg.RemotesAPIPort == 0 {
+		cfg.RemotesAPIPort = DefaultRemotesAPIPort
+	}
+	if cfg.Host == "" {
+		cfg.Host = "127.0.0.1"
+	}
+	if cfg.User == "" {
+		cfg.User = "root"
+	}
+	return &Server{
+		cfg:     cfg,
+		pidFile: filepath.Join(cfg.DataDir, "dolt-server.pid"),
 	}
 }
 
-// ServerStatus represents the status of a dolt sql-server
-type ServerStatus struct {
-	Running bool
-	PID     int
-	Host    string
-	Port    int
-	Uptime  time.Duration
-}
+// Start starts the dolt sql-server process
+func (s *Server) Start(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// StartServer starts a dolt sql-server process in the background (bd-649383).
-// Returns the PID of the started process.
-func StartServer(ctx context.Context, cfg *ServerConfig) (int, error) {
-	if cfg.DataDir == "" {
-		return 0, fmt.Errorf("data directory is required")
+	if s.running {
+		return fmt.Errorf("server already running")
 	}
 
-	// Check if server is already running
-	if IsServerRunning(cfg.Host, cfg.Port) {
-		return 0, fmt.Errorf("server already running on %s:%d", cfg.Host, cfg.Port)
+	// Check if ports are available
+	if err := s.checkPortAvailable(s.cfg.SQLPort); err != nil {
+		return fmt.Errorf("SQL port %d not available: %w", s.cfg.SQLPort, err)
+	}
+	if err := s.checkPortAvailable(s.cfg.RemotesAPIPort); err != nil {
+		return fmt.Errorf("remotesapi port %d not available: %w", s.cfg.RemotesAPIPort, err)
 	}
 
-	// Ensure data directory exists
-	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
-		return 0, fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	// Build command arguments
-	// Note: --user and --password were removed in dolt 1.80+
-	// Users should be created with CREATE USER and GRANT statements instead
+	// Build command args
+	// Note: --user was removed in recent dolt versions, users are created with CREATE USER
 	args := []string{
 		"sql-server",
-		"--host", cfg.Host,
-		"--port", strconv.Itoa(cfg.Port),
-		"--data-dir", cfg.DataDir,
+		"--host", s.cfg.Host,
+		"--port", strconv.Itoa(s.cfg.SQLPort),
+		"--remotesapi-port", strconv.Itoa(s.cfg.RemotesAPIPort),
+		"--no-auto-commit", // Let the application manage commits
 	}
 
-	if cfg.LogLevel != "" {
-		args = append(args, "--loglevel", cfg.LogLevel)
+	if s.cfg.ReadOnly {
+		args = append(args, "--readonly")
 	}
 
-	// Create the command
-	cmd := exec.CommandContext(ctx, "dolt", args...)
+	// Create command
+	// #nosec G204 -- dolt binary is fixed; args are derived from internal config.
+	s.cmd = exec.CommandContext(ctx, "dolt", args...)
+	s.cmd.Dir = s.cfg.DataDir
 
-	// Set the working directory to the data directory
-	cmd.Dir = cfg.DataDir
+	// Set up process group for clean shutdown (Unix-only; no-op on Windows).
+	setDoltServerSysProcAttr(s.cmd)
 
-	// Set up log file if specified, otherwise use temp file
-	logPath := cfg.LogFile
-	if logPath == "" {
-		logPath = filepath.Join(cfg.DataDir, "sql-server.log")
-	}
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open log file: %w", err)
-	}
-
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	// Detach from parent process group so server survives parent exit
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+	// Set up logging
+	if s.cfg.LogFile != "" {
+		logFile, err := os.OpenFile(s.cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to open log file: %w", err)
+		}
+		s.logFile = logFile // Track for cleanup on Stop()
+		s.cmd.Stdout = logFile
+		s.cmd.Stderr = logFile
+	} else {
+		// Discard output if no log file specified
+		s.cmd.Stdout = nil
+		s.cmd.Stderr = nil
 	}
 
 	// Start the server
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return 0, fmt.Errorf("failed to start dolt sql-server: %w", err)
+	if err := s.cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start dolt sql-server: %w", err)
 	}
 
-	pid := cmd.Process.Pid
-
-	// Write PID file for later management
-	pidFile := filepath.Join(cfg.DataDir, "sql-server.pid")
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0o640); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to write PID file: %v\n", err)
+	// Write PID file
+	if err := os.WriteFile(s.pidFile, []byte(strconv.Itoa(s.cmd.Process.Pid)), 0600); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to write dolt server PID file: %v\n", err)
 	}
-
-	// Don't wait for command - let it run in background
-	go func() {
-		_ = cmd.Wait()
-		_ = logFile.Close()
-		// Clean up PID file when server exits
-		_ = os.Remove(pidFile)
-	}()
 
 	// Wait for server to be ready
-	if err := waitForServer(cfg.Host, cfg.Port, 30*time.Second); err != nil {
-		// Server didn't start properly, try to kill it
-		_ = cmd.Process.Kill()
-		// Read the log file to see what went wrong
-		if logContent, readErr := os.ReadFile(logPath); readErr == nil {
-			return 0, fmt.Errorf("server failed to start: %w\nServer log:\n%s", err, string(logContent))
+	if err := s.waitForReady(ctx); err != nil {
+		// Server failed to start, clean up
+		_ = s.cmd.Process.Kill()
+		_ = os.Remove(s.pidFile)
+		if s.logFile != nil {
+			_ = s.logFile.Close()
+			s.logFile = nil
 		}
-		return 0, fmt.Errorf("server failed to start: %w", err)
+		return fmt.Errorf("server failed to become ready: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Dolt sql-server started (PID %d) on %s:%d\n", pid, cfg.Host, cfg.Port)
-	return pid, nil
+	s.running = true
+	return nil
 }
 
-// StopServer stops a running dolt sql-server (bd-649383).
-func StopServer(dataDir string) error {
-	pidFile := filepath.Join(dataDir, "sql-server.pid")
+// Stop stops the dolt sql-server process gracefully
+func (s *Server) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	pidBytes, err := os.ReadFile(pidFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("no PID file found - server may not be running")
-		}
-		return fmt.Errorf("failed to read PID file: %w", err)
+	if !s.running || s.cmd == nil || s.cmd.Process == nil {
+		return nil
 	}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
-	if err != nil {
-		return fmt.Errorf("invalid PID in file: %w", err)
-	}
+	// Best-effort graceful shutdown (platform-specific).
+	_ = terminateProcess(s.cmd.Process)
 
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process %d: %w", pid, err)
-	}
-
-	// Send SIGTERM for graceful shutdown
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		// Process might already be dead
-		_ = os.Remove(pidFile)
-		return fmt.Errorf("failed to send SIGTERM to process %d: %w", pid, err)
-	}
-
-	// Wait for process to exit (with timeout)
+	// Wait for graceful shutdown with timeout
 	done := make(chan error, 1)
 	go func() {
-		_, err := process.Wait()
+		_, err := s.cmd.Process.Wait()
 		done <- err
 	}()
 
 	select {
 	case <-done:
 		// Process exited
-	case <-time.After(10 * time.Second):
-		// Force kill if graceful shutdown takes too long
-		_ = process.Signal(syscall.SIGKILL)
-		<-done
+	case <-time.After(ServerStopTimeout):
+		// Force kill
+		_ = s.cmd.Process.Kill()
+		<-done // Wait for process to be reaped
 	}
 
-	// Clean up PID file
-	_ = os.Remove(pidFile)
+	// Clean up PID file and log file
+	_ = os.Remove(s.pidFile)
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+		s.logFile = nil
+	}
+	s.running = false
+	s.cmd = nil
 
-	fmt.Fprintf(os.Stderr, "Dolt sql-server stopped (PID %d)\n", pid)
 	return nil
 }
 
-// GetServerStatus returns the status of a dolt sql-server (bd-649383).
-func GetServerStatus(dataDir string, host string, port int) (*ServerStatus, error) {
-	status := &ServerStatus{
-		Host: host,
-		Port: port,
-	}
-
-	// Check if server is responding
-	status.Running = IsServerRunning(host, port)
-
-	// Try to get PID from file
-	pidFile := filepath.Join(dataDir, "sql-server.pid")
-	if pidBytes, err := os.ReadFile(pidFile); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil {
-			status.PID = pid
-		}
-	}
-
-	return status, nil
+// IsRunning returns true if the server is running
+func (s *Server) IsRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
 }
 
-// IsServerRunning checks if a dolt sql-server is responding on the given host:port.
-func IsServerRunning(host string, port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
+// SQLPort returns the SQL port
+func (s *Server) SQLPort() int {
+	return s.cfg.SQLPort
+}
+
+// RemotesAPIPort returns the remotesapi port
+func (s *Server) RemotesAPIPort() int {
+	return s.cfg.RemotesAPIPort
+}
+
+// Host returns the host
+func (s *Server) Host() string {
+	return s.cfg.Host
+}
+
+// DSN returns the MySQL DSN for connecting to the server
+func (s *Server) DSN(database string) string {
+	return fmt.Sprintf("%s@tcp(%s:%d)/%s",
+		s.cfg.User, s.cfg.Host, s.cfg.SQLPort, database)
+}
+
+// checkPortAvailable checks if a TCP port is available
+func (s *Server) checkPortAvailable(port int) error {
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, port)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return false
+		return err
 	}
-	_ = conn.Close()
-	return true
+	_ = listener.Close()
+	return nil
 }
 
-// waitForServer waits for the server to be ready to accept connections.
-func waitForServer(host string, port int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+// waitForReady waits for the server to accept connections
+func (s *Server) waitForReady(ctx context.Context) error {
+	deadline := time.Now().Add(ServerStartTimeout)
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.SQLPort)
 
 	for time.Now().Before(deadline) {
-		if IsServerRunning(host, port) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Best-effort: if we can tell the process is dead, fail fast.
+		if s.cmd.Process != nil && !processMayBeAlive(s.cmd.Process) {
+			return fmt.Errorf("server process exited unexpectedly")
+		}
+
+		// Try to connect
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			_ = conn.Close()
 			return nil
 		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout waiting for server on %s:%d", host, port)
+	return fmt.Errorf("timeout waiting for server to start on %s", addr)
 }
 
-// EnsureServerRunning starts the server if it's not already running (bd-649383).
-// This is useful for auto-starting the server when ServerMode is enabled.
-func EnsureServerRunning(ctx context.Context, cfg *ServerConfig) error {
-	if IsServerRunning(cfg.Host, cfg.Port) {
-		return nil // Already running
+// GetRunningServerPID returns the PID of a running server from the PID file, or 0 if not running
+func GetRunningServerPID(dataDir string) int {
+	pidFile := filepath.Join(dataDir, "dolt-server.pid")
+	// #nosec G304 -- pidFile is derived from internal dataDir.
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0
 	}
 
-	_, err := StartServer(ctx, cfg)
-	return err
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+
+	// Check if process is actually running
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return 0
+	}
+
+	// Best-effort liveness check (platform-specific).
+	if !processMayBeAlive(process) {
+		_ = os.Remove(pidFile)
+		return 0
+	}
+
+	return pid
 }
 
-// ServerConfigFromStoreConfig converts a storage Config to ServerConfig.
-func ServerConfigFromStoreConfig(cfg *Config) *ServerConfig {
-	return &ServerConfig{
-		DataDir:  cfg.Path,
-		Host:     cfg.ServerHost,
-		Port:     cfg.ServerPort,
-		User:     cfg.ServerUser,
-		Password: cfg.ServerPass,
-		LogLevel: "info",
+// StopServerByPID stops a dolt sql-server by its PID
+func StopServerByPID(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+
+	// Best-effort graceful shutdown (platform-specific).
+	_ = terminateProcess(process)
+
+	// Wait for graceful shutdown
+	done := make(chan struct{})
+	go func() {
+		_, _ = process.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(ServerStopTimeout):
+		// Force kill
+		return process.Kill()
 	}
 }

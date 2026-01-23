@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -190,6 +191,26 @@ Created by: bd init --contributor
 	}
 
 	fmt.Printf("%s Auto-routing enabled\n", ui.RenderPass("✓"))
+
+	// Step 4b: Enable multi-repo hydration so routed issues are visible (bd-fix-routing)
+	fmt.Printf("\n%s Configuring multi-repo hydration...\n", ui.RenderAccent("▶"))
+
+	// Find config.yaml path
+	configPath, err := config.FindConfigYAMLPath()
+	if err != nil {
+		return fmt.Errorf("failed to find config.yaml: %w", err)
+	}
+
+	// Add planning repo to repos.additional for hydration
+	if err := config.AddRepo(configPath, planningPath); err != nil {
+		// Check if already added (non-fatal)
+		if !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("failed to configure hydration: %w", err)
+		}
+	}
+
+	fmt.Printf("%s Hydration enabled for planning repo\n", ui.RenderPass("✓"))
+	fmt.Println("  Issues from planning repo will appear in 'bd list'")
 
 	// If this is a fork, configure sync to pull beads from upstream (bd-bx9)
 	// This ensures `bd sync` gets the latest issues from the source repo,

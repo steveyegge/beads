@@ -54,12 +54,7 @@ type IssueHistory struct {
 
 // GetIssueHistory returns the complete history of an issue
 func (s *DoltStore) GetIssueHistory(ctx context.Context, issueID string) ([]*IssueHistory, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	rows, err := db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			id, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, owner, created_by,
@@ -79,6 +74,7 @@ func (s *DoltStore) GetIssueHistory(ctx context.Context, issueID string) ([]*Iss
 	for rows.Next() {
 		var h IssueHistory
 		var issue types.Issue
+		var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 		var closedAt sql.NullTime
 		var assignee, owner, createdBy, closeReason, molType sql.NullString
 		var estimatedMinutes sql.NullInt64
@@ -87,11 +83,19 @@ func (s *DoltStore) GetIssueHistory(ctx context.Context, issueID string) ([]*Iss
 		if err := rows.Scan(
 			&issue.ID, &issue.Title, &issue.Description, &issue.Design, &issue.AcceptanceCriteria, &issue.Notes,
 			&issue.Status, &issue.Priority, &issue.IssueType, &assignee, &owner, &createdBy,
-			&estimatedMinutes, &issue.CreatedAt, &issue.UpdatedAt, &closedAt, &closeReason,
+			&estimatedMinutes, &createdAtStr, &updatedAtStr, &closedAt, &closeReason,
 			&pinned, &molType,
 			&h.CommitHash, &h.Committer, &h.CommitDate,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan history: %w", err)
+		}
+
+		// Parse timestamp strings (TEXT columns require manual parsing)
+		if createdAtStr.Valid {
+			issue.CreatedAt = parseTimeString(createdAtStr.String)
+		}
+		if updatedAtStr.Valid {
+			issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 		}
 
 		if closedAt.Valid {
@@ -135,14 +139,10 @@ func (s *DoltStore) GetIssueAsOf(ctx context.Context, issueID string, ref string
 	}
 
 	var issue types.Issue
+	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt sql.NullTime
 	var assignee, owner, contentHash sql.NullString
 	var estimatedMinutes sql.NullInt64
-
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
 
 	// nolint:gosec // G201: ref is validated by validateRef() above - AS OF requires literal
 	query := fmt.Sprintf(`
@@ -152,9 +152,9 @@ func (s *DoltStore) GetIssueAsOf(ctx context.Context, issueID string, ref string
 		WHERE id = ?
 	`, ref)
 
-	err = db.QueryRowContext(ctx, query, issueID).Scan(
+	err := s.db.QueryRowContext(ctx, query, issueID).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Status, &issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -162,6 +162,14 @@ func (s *DoltStore) GetIssueAsOf(ctx context.Context, issueID string, ref string
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue as of %s: %w", ref, err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {
@@ -195,12 +203,7 @@ type DiffEntry struct {
 
 // GetDiff returns changes between two commits
 func (s *DoltStore) GetDiff(ctx context.Context, fromRef, toRef string) ([]*DiffEntry, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	rows, err := db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT table_name, diff_type, from_commit, to_commit
 		FROM dolt_diff(?, ?)
 	`, fromRef, toRef)
@@ -231,12 +234,8 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 		return nil, fmt.Errorf("invalid toRef: %w", err)
 	}
 
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	// nolint:gosec // G201: refs are validated by validateRef() above - dolt_diff_issues requires literal
+	// nolint:gosec // G201: refs are validated by validateRef() above
+	// Syntax: dolt_diff(from_ref, to_ref, 'table_name')
 	query := fmt.Sprintf(`
 		SELECT
 			from_id, to_id,
@@ -244,7 +243,7 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 			from_status, to_status,
 			from_description, to_description,
 			diff_type
-		FROM dolt_diff_issues('%s', '%s')
+		FROM dolt_diff('%s', '%s', 'issues')
 		WHERE from_id = ? OR to_id = ?
 	`, fromRef, toRef)
 
@@ -252,7 +251,7 @@ func (s *DoltStore) GetIssueDiff(ctx context.Context, issueID, fromRef, toRef st
 	var fromID, toID, fromTitle, toTitle, fromStatus, toStatus sql.NullString
 	var fromDesc, toDesc sql.NullString
 
-	err = db.QueryRowContext(ctx, query, issueID, issueID).Scan(
+	err := s.db.QueryRowContext(ctx, query, issueID, issueID).Scan(
 		&fromID, &toID,
 		&fromTitle, &toTitle,
 		&fromStatus, &toStatus,
@@ -311,12 +310,7 @@ type IssueDiff struct {
 // GetInternalConflicts returns any merge conflicts in the current state (internal format).
 // For the public interface, use GetConflicts which returns storage.Conflict.
 func (s *DoltStore) GetInternalConflicts(ctx context.Context) ([]*TableConflict, error) {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	rows, err := db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT table_name, num_conflicts FROM dolt_conflicts
 	`)
 	if err != nil {
@@ -349,11 +343,6 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 		return fmt.Errorf("invalid table name: %w", err)
 	}
 
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
 	var query string
 	switch strategy {
 	case "ours":
@@ -365,7 +354,7 @@ func (s *DoltStore) ResolveConflicts(ctx context.Context, table string, strategy
 		return fmt.Errorf("unknown conflict resolution strategy: %s", strategy)
 	}
 
-	_, err = db.ExecContext(ctx, query)
+	_, err := s.db.ExecContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to resolve conflicts: %w", err)
 	}

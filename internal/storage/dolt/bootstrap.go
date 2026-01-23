@@ -8,12 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/audit"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -21,10 +20,12 @@ import (
 
 // BootstrapResult contains statistics about the bootstrap operation
 type BootstrapResult struct {
-	IssuesImported int
-	IssuesSkipped  int
-	ParseErrors    []ParseError
-	PrefixDetected string
+	IssuesImported       int
+	IssuesSkipped        int
+	RoutesImported       int
+	InteractionsImported int
+	ParseErrors          []ParseError
+	PrefixDetected       string
 }
 
 // ParseError describes a JSONL parsing error
@@ -41,14 +42,13 @@ type BootstrapConfig struct {
 	LockTimeout time.Duration // Timeout waiting for bootstrap lock
 }
 
-// Bootstrap checks if Dolt DB needs bootstrapping and performs it if needed.
-// This is called during store creation to handle cold-start scenarios:
-//   1. JSONL files exist (from git clone) - bootstrap from JSONL
-//   2. No JSONL but DoltRemoteURL configured - bootstrap by cloning from remote
+// Bootstrap checks if Dolt DB needs bootstrapping from JSONL and performs it if needed.
+// This is called during store creation to handle the cold-start scenario where
+// JSONL files exist (from git clone) but no Dolt database exists yet.
 //
 // Returns:
 //   - true, result, nil: Bootstrap was performed successfully
-//   - false, nil, nil: No bootstrap needed (Dolt already exists or no source)
+//   - false, nil, nil: No bootstrap needed (Dolt already exists or no JSONL)
 //   - false, nil, err: Bootstrap failed
 func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult, error) {
 	if cfg.LockTimeout == 0 {
@@ -62,18 +62,8 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult
 
 	// Check if JSONL exists to bootstrap from
 	jsonlPath := findJSONLPath(cfg.BeadsDir)
-
-	// If no JSONL, check for Dolt remote URL in metadata.json
-	var remoteURL string
 	if jsonlPath == "" {
-		metaCfg, err := configfile.Load(cfg.BeadsDir)
-		if err == nil && metaCfg != nil && metaCfg.DoltRemoteURL != "" {
-			remoteURL = metaCfg.DoltRemoteURL
-		}
-	}
-
-	// No bootstrap source available
-	if jsonlPath == "" && remoteURL == "" {
+		// No JSONL to bootstrap from - let normal init handle it
 		return false, nil, nil
 	}
 
@@ -90,17 +80,7 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (bool, *BootstrapResult
 		return false, nil, nil
 	}
 
-	// Perform bootstrap from appropriate source
-	if remoteURL != "" {
-		// Bootstrap from Dolt remote (preferred for dolt-native mode)
-		result, err := performBootstrapFromRemote(ctx, cfg, remoteURL)
-		if err != nil {
-			return false, nil, err
-		}
-		return true, result, nil
-	}
-
-	// Bootstrap from JSONL (fallback)
+	// Perform bootstrap
 	result, err := performBootstrap(ctx, cfg, jsonlPath)
 	if err != nil {
 		return false, nil, err
@@ -163,7 +143,7 @@ func findJSONLPath(beadsDir string) string {
 func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, error) {
 	// Create lock file
 	// #nosec G304 - controlled path
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
@@ -197,11 +177,12 @@ func releaseBootstrapLock(f *os.File, lockPath string) {
 	_ = os.Remove(lockPath)
 }
 
-// performBootstrap performs the actual bootstrap from JSONL
+// performBootstrap performs the actual bootstrap from JSONL files.
+// Import order: routes -> issues -> interactions (dependencies require issues to exist)
 func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string) (*BootstrapResult, error) {
 	result := &BootstrapResult{}
 
-	// Parse JSONL with graceful error handling
+	// Parse issues JSONL with graceful error handling
 	issues, parseErrors := parseJSONLWithErrors(jsonlPath)
 	result.ParseErrors = parseErrors
 
@@ -241,6 +222,10 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 		}
 	}
 
+	// Note: importRoutesBootstrap disabled to avoid import cycle (routing -> factory -> dolt -> routing)
+	// Routes can be imported separately via bd import if needed
+	result.RoutesImported = 0
+
 	// Import issues in a transaction
 	imported, skipped, err := importIssuesBootstrap(ctx, store, issues)
 	if err != nil {
@@ -250,6 +235,15 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	result.IssuesImported = imported
 	result.IssuesSkipped = skipped
 
+	// Import interactions (after issues, since interactions may reference issue_id)
+	interactionsPath := filepath.Join(cfg.BeadsDir, "interactions.jsonl")
+	interactionsImported, err := importInteractionsBootstrap(ctx, store, interactionsPath)
+	if err != nil {
+		// Non-fatal - interactions.jsonl may not exist
+		fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import interactions: %v\n", err)
+	}
+	result.InteractionsImported = interactionsImported
+
 	// Commit the bootstrap
 	if err := store.Commit(ctx, "Bootstrap from JSONL"); err != nil {
 		// Non-fatal - data is still in the database
@@ -257,91 +251,6 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	}
 
 	return result, nil
-}
-
-// performBootstrapFromRemote bootstraps the Dolt database by cloning from a remote.
-// This enables JSONL-free fresh clones when dolt_remote_url is configured in metadata.json.
-func performBootstrapFromRemote(ctx context.Context, cfg BootstrapConfig, remoteURL string) (*BootstrapResult, error) {
-	result := &BootstrapResult{}
-
-	fmt.Fprintf(os.Stderr, "Bootstrap: Cloning from Dolt remote: %s\n", remoteURL)
-
-	// Ensure parent directory exists
-	if err := os.MkdirAll(cfg.DoltPath, 0o750); err != nil {
-		return nil, fmt.Errorf("failed to create dolt directory: %w", err)
-	}
-
-	// Clone into the "beads" subdirectory (matches the database name used by embedded driver)
-	targetDir := filepath.Join(cfg.DoltPath, "beads")
-
-	// Run dolt clone
-	// #nosec G204 - remoteURL comes from config file, not user input
-	cmd := exec.CommandContext(ctx, "dolt", "clone", remoteURL, targetDir)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stderr // Show progress
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("dolt clone failed: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Bootstrap: Clone complete, verifying database...\n")
-
-	// Verify the clone worked by checking the schema is ready
-	if !schemaReady(ctx, cfg.DoltPath) {
-		return nil, fmt.Errorf("cloned database is missing expected schema")
-	}
-
-	// Count issues using direct SQL query (avoids circular dependency with store)
-	count, prefix, err := countIssuesInClonedDB(ctx, cfg.DoltPath)
-	if err != nil {
-		// Non-fatal - clone succeeded, just can't count
-		fmt.Fprintf(os.Stderr, "Bootstrap: warning: could not count issues: %v\n", err)
-	} else {
-		result.IssuesImported = count
-		result.PrefixDetected = prefix
-	}
-
-	fmt.Fprintf(os.Stderr, "Bootstrap: Cloned %d issues from remote\n", result.IssuesImported)
-
-	return result, nil
-}
-
-// countIssuesInClonedDB counts issues in a freshly cloned Dolt database
-func countIssuesInClonedDB(ctx context.Context, doltPath string) (int, string, error) {
-	// Use dolt sql command to query the cloned database
-	dbPath := filepath.Join(doltPath, "beads")
-
-	// Count issues
-	cmd := exec.CommandContext(ctx, "dolt", "sql", "-q", "SELECT COUNT(*) FROM issues", "-r", "csv")
-	cmd.Dir = dbPath
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to count issues: %w", err)
-	}
-
-	// Parse CSV output (header + count)
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) < 2 {
-		return 0, "", nil
-	}
-	var count int
-	_, _ = fmt.Sscanf(lines[1], "%d", &count)
-
-	// Get first issue ID to detect prefix
-	cmd = exec.CommandContext(ctx, "dolt", "sql", "-q", "SELECT id FROM issues LIMIT 1", "-r", "csv")
-	cmd.Dir = dbPath
-	out, err = cmd.Output()
-	if err != nil {
-		return count, "", nil // Count succeeded, prefix detection failed
-	}
-
-	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-	var prefix string
-	if len(lines) >= 2 && lines[1] != "" {
-		prefix = utils.ExtractIssuePrefix(lines[1])
-	}
-
-	return count, prefix, nil
 }
 
 // parseJSONLWithErrors parses JSONL, collecting errors instead of failing
@@ -539,4 +448,69 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	}
 
 	return imported, skipped, nil
+}
+
+// importInteractionsBootstrap imports interactions from interactions.jsonl during bootstrap
+// Returns the number of interactions imported
+func importInteractionsBootstrap(ctx context.Context, store *DoltStore, interactionsPath string) (int, error) {
+	// #nosec G304 - controlled path
+	f, err := os.Open(interactionsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // No interactions file is not an error
+		}
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	imported := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024), 2*1024*1024) // 2MB buffer for large lines
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var entry audit.Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			// Skip malformed lines during bootstrap
+			continue
+		}
+
+		// Convert extra map to JSON (default to empty object for valid JSON)
+		extraJSON := []byte("{}")
+		if entry.Extra != nil {
+			extraJSON, _ = json.Marshal(entry.Extra)
+		}
+
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO interactions (id, kind, created_at, actor, issue_id, model, prompt, response, error, tool_name, exit_code, parent_id, label, reason, extra)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE kind = kind
+		`, entry.ID, entry.Kind, entry.CreatedAt, entry.Actor, entry.IssueID, entry.Model, entry.Prompt, entry.Response, entry.Error, entry.ToolName, entry.ExitCode, entry.ParentID, entry.Label, entry.Reason, extraJSON)
+		if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+			// Non-fatal - skip individual failures
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import interaction %s: %v\n", entry.ID, err)
+			continue
+		}
+		imported++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return imported, fmt.Errorf("scanner error: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return imported, fmt.Errorf("failed to commit interactions: %w", err)
+	}
+
+	return imported, nil
 }

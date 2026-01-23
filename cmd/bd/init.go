@@ -149,17 +149,31 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		// The hyphen is added automatically during ID generation
 		prefix = strings.TrimRight(prefix, "-")
 
-		// Create database
-		// Use global dbPath if set via --db flag or BEADS_DB env var, otherwise default to .beads/beads.db
+		// Determine storage path.
+		//
+		// IMPORTANT: In Dolt mode, we must NOT create a SQLite database file.
+		// `initDBPath` is used for SQLite-specific tasks (migration, import helpers, etc),
+		// so in Dolt mode it should point to the Dolt directory instead.
+		//
+		// Use global dbPath if set via --db flag or BEADS_DB env var (SQLite-only),
+		// otherwise default to `.beads/beads.db` for SQLite.
+		// If there's a redirect file, use the redirect target (GH#bd-0qel)
 		initDBPath := dbPath
-		if initDBPath == "" {
-			initDBPath = filepath.Join(".beads", beads.CanonicalDatabaseName)
+		if backend == configfile.BackendDolt {
+			initDBPath = filepath.Join(".beads", "dolt")
+		} else if initDBPath == "" {
+			// Check for redirect in local .beads
+			localBeadsDir := filepath.Join(".", ".beads")
+			targetBeadsDir := beads.FollowRedirect(localBeadsDir)
+			initDBPath = filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName)
 		}
 
-		// Migrate old database files if they exist
-		if err := migrateOldDatabases(initDBPath, quiet); err != nil {
-			fmt.Fprintf(os.Stderr, "Error during database migration: %v\n", err)
-			os.Exit(1)
+		// Migrate old SQLite database files if they exist (SQLite backend only).
+		if backend == configfile.BackendSQLite {
+			if err := migrateOldDatabases(initDBPath, quiet); err != nil {
+				fmt.Fprintf(os.Stderr, "Error during database migration: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// Determine if we should create .beads/ directory in CWD or main repo root
@@ -196,7 +210,9 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		var beadsDir string
 		// For regular repos, use current directory
-		beadsDir = filepath.Join(cwd, ".beads")
+		// But first check if there's a redirect file - if so, use the redirect target (GH#bd-0qel)
+		localBeadsDir := filepath.Join(cwd, ".beads")
+		beadsDir = beads.FollowRedirect(localBeadsDir)
 
 		// Prevent nested .beads directories
 		// Check if current working directory is inside a .beads directory
@@ -299,9 +315,10 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 		}
 
-		// Ensure parent directory exists for the database
+		// Ensure parent directory exists for the storage backend.
+		// For SQLite: parent of .beads/beads.db. For Dolt: parent of .beads/dolt.
 		if err := os.MkdirAll(initDBDir, 0750); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create database directory %s: %v\n", initDBDir, err)
+			fmt.Fprintf(os.Stderr, "Error: failed to create storage directory %s: %v\n", initDBDir, err)
 			os.Exit(1)
 		}
 
@@ -403,6 +420,14 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			if backend != configfile.BackendSQLite {
 				cfg.Backend = backend
 			}
+			// In Dolt mode, metadata.json.database should point to the Dolt directory (not beads.db).
+			// Backward-compat: older dolt setups left this as "beads.db", which is misleading and
+			// can trigger SQLite-only code paths.
+			if backend == configfile.BackendDolt {
+				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
+					cfg.Database = "dolt"
+				}
+			}
 
 			if err := cfg.Save(beadsDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to create metadata.json: %v\n", err)
@@ -443,40 +468,46 @@ With --stealth: configures per-repository git settings for invisible beads usage
 			}
 		}
 
-		// Check if git has existing issues to import (fresh clone scenario)
-		// With --from-jsonl: import from local file instead of git history
-		if fromJSONL {
-			// Import from current working tree's JSONL file
-			localJSONLPath := filepath.Join(beadsDir, "issues.jsonl")
-			if _, err := os.Stat(localJSONLPath); err == nil {
-				issueCount, err := importFromLocalJSONL(ctx, initDBPath, store, localJSONLPath)
-				if err != nil {
-					if !quiet {
-						fmt.Fprintf(os.Stderr, "Warning: import from local JSONL failed: %v\n", err)
+		// Import issues on init:
+		// - SQLite backend: import from git history or local JSONL (existing behavior).
+		// - Dolt backend: do NOT run SQLite import code. Dolt bootstraps itself from
+		//   `.beads/issues.jsonl` on first open (factory_dolt.go) when present.
+		if backend == configfile.BackendSQLite {
+			// Check if git has existing issues to import (fresh clone scenario)
+			// With --from-jsonl: import from local file instead of git history
+			if fromJSONL {
+				// Import from current working tree's JSONL file
+				localJSONLPath := filepath.Join(beadsDir, "issues.jsonl")
+				if _, err := os.Stat(localJSONLPath); err == nil {
+					issueCount, err := importFromLocalJSONL(ctx, initDBPath, store, localJSONLPath)
+					if err != nil {
+						if !quiet {
+							fmt.Fprintf(os.Stderr, "Warning: import from local JSONL failed: %v\n", err)
+						}
+						// Non-fatal - continue with empty database
+					} else if !quiet && issueCount > 0 {
+						fmt.Fprintf(os.Stderr, "✓ Imported %d issues from local %s\n\n", issueCount, localJSONLPath)
 					}
-					// Non-fatal - continue with empty database
-				} else if !quiet && issueCount > 0 {
-					fmt.Fprintf(os.Stderr, "✓ Imported %d issues from local %s\n\n", issueCount, localJSONLPath)
-				}
-			} else if !quiet {
-				fmt.Fprintf(os.Stderr, "Warning: --from-jsonl specified but %s not found\n", localJSONLPath)
-			}
-		} else {
-			// Default: import from git history
-			issueCount, jsonlPath, gitRef := checkGitForIssues()
-			if issueCount > 0 {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
-				}
-
-				if err := importFromGit(ctx, initDBPath, store, jsonlPath, gitRef); err != nil {
-					if !quiet {
-						fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
-						fmt.Fprintf(os.Stderr, "Try manually: git show %s:%s | bd import -i /dev/stdin\n", gitRef, jsonlPath)
-					}
-					// Non-fatal - continue with empty database
 				} else if !quiet {
-					fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
+					fmt.Fprintf(os.Stderr, "Warning: --from-jsonl specified but %s not found\n", localJSONLPath)
+				}
+			} else {
+				// Default: import from git history
+				issueCount, jsonlPath, gitRef := checkGitForIssues()
+				if issueCount > 0 {
+					if !quiet {
+						fmt.Fprintf(os.Stderr, "\n✓ Database initialized. Found %d issues in git, importing...\n", issueCount)
+					}
+
+					if err := importFromGit(ctx, initDBPath, store, jsonlPath, gitRef); err != nil {
+						if !quiet {
+							fmt.Fprintf(os.Stderr, "Warning: auto-import failed: %v\n", err)
+							fmt.Fprintf(os.Stderr, "Try manually: git show %s:%s | bd import -i /dev/stdin\n", gitRef, jsonlPath)
+						}
+						// Non-fatal - continue with empty database
+					} else if !quiet {
+						fmt.Fprintf(os.Stderr, "✓ Successfully imported %d issues from git.\n\n", issueCount)
+					}
 				}
 			}
 		}
@@ -524,31 +555,53 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		// Check if we're in a git repo and hooks aren't installed
 		// Install by default unless --skip-hooks is passed
 		// For Dolt backend, install hooks to .beads/hooks/ (uses git config core.hooksPath)
-		if !skipHooks && isGitRepo() && !hooksInstalled() {
-			if backend == configfile.BackendDolt {
-				// Dolt backend: install hooks to .beads/hooks/
-				embeddedHooks, err := getEmbeddedHooks()
-				if err == nil {
-					if err := installHooksWithOptions(embeddedHooks, false, false, false, true); err != nil && !quiet {
-						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
-						fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
-					} else if !quiet {
-						fmt.Printf("  Hooks installed to: .beads/hooks/\n")
-					}
-				} else if !quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to load embedded hooks: %v\n", ui.RenderWarn("⚠"), err)
+		// For jujutsu colocated repos, use simplified hooks (no staging needed)
+		if !skipHooks && !hooksInstalled() {
+			isJJ := git.IsJujutsuRepo()
+			isColocated := git.IsColocatedJJGit()
+
+			if isJJ && !isColocated {
+				// Pure jujutsu repo (no git) - print alias instructions
+				if !quiet {
+					printJJAliasInstructions()
 				}
-			} else {
-				// SQLite backend: use traditional hook installation
-				if err := installGitHooks(); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", ui.RenderWarn("⚠"), err)
+			} else if isColocated {
+				// Colocated jj+git repo - use simplified hooks
+				if err := installJJHooks(); err != nil && !quiet {
+					fmt.Fprintf(os.Stderr, "\n%s Failed to install jj hooks: %v\n", ui.RenderWarn("⚠"), err)
 					fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
+				} else if !quiet {
+					fmt.Printf("  Hooks installed (jujutsu mode - no staging)\n")
+				}
+			} else if isGitRepo() {
+				// Regular git repo
+				if backend == configfile.BackendDolt {
+					// Dolt backend: install hooks to .beads/hooks/
+					embeddedHooks, err := getEmbeddedHooks()
+					if err == nil {
+						if err := installHooksWithOptions(embeddedHooks, false, false, false, true); err != nil && !quiet {
+							fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks to .beads/hooks/: %v\n", ui.RenderWarn("⚠"), err)
+							fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd hooks install --beads"))
+						} else if !quiet {
+							fmt.Printf("  Hooks installed to: .beads/hooks/\n")
+						}
+					} else if !quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to load embedded hooks: %v\n", ui.RenderWarn("⚠"), err)
+					}
+				} else {
+					// SQLite backend: use traditional hook installation
+					if err := installGitHooks(); err != nil && !quiet {
+						fmt.Fprintf(os.Stderr, "\n%s Failed to install git hooks: %v\n", ui.RenderWarn("⚠"), err)
+						fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
+					}
 				}
 			}
 		}
 
 		// Check if we're in a git repo and merge driver isn't configured
 		// Install by default unless --skip-merge-driver is passed
+		// For colocated jj+git repos, merge driver is still useful
+		// For pure jj repos, skip merge driver (no git)
 		if !skipMergeDriver && isGitRepo() && !mergeDriverInstalled() {
 			if err := installMergeDriver(); err != nil && !quiet {
 				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", ui.RenderWarn("⚠"), err)
@@ -673,7 +726,6 @@ func migrateOldDatabases(targetPath string, quiet bool) error {
 	return nil
 }
 
-
 // readFirstIssueFromJSONL reads the first issue from a JSONL file
 func readFirstIssueFromJSONL(path string) (*types.Issue, error) {
 	// #nosec G304 -- helper reads JSONL file chosen by current bd command
@@ -741,7 +793,6 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 	return nil, nil
 }
 
-
 // checkExistingBeadsData checks for existing database files
 // and returns an error if found (safety guard for bd-emg)
 //
@@ -751,6 +802,9 @@ func readFirstIssueFromGit(jsonlPath, gitRef string) (*types.Issue, error) {
 //
 // For worktrees, checks the main repository root instead of current directory
 // since worktrees should share the database with the main repository.
+//
+// For redirects, checks the redirect target and errors if it already has a database.
+// This prevents accidentally overwriting an existing canonical database (GH#bd-0qel).
 func checkExistingBeadsData(prefix string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -778,7 +832,57 @@ func checkExistingBeadsData(prefix string) error {
 		return nil // No .beads directory, safe to init
 	}
 
-	// Check for existing database file
+	// Check for existing database (SQLite or Dolt)
+	//
+	// NOTE: For Dolt backend, the "database" is a directory at `.beads/dolt/`.
+	// We prefer metadata.json as the single source of truth, but we also keep a
+	// conservative fallback for legacy SQLite setups.
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		doltPath := filepath.Join(beadsDir, "dolt")
+		if info, err := os.Stat(doltPath); err == nil && info.IsDir() {
+			return fmt.Errorf(`
+%s Found existing Dolt database: %s
+
+This workspace is already initialized.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+
+To completely reinitialize (data loss warning):
+  rm -rf .beads && bd init --backend dolt --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), doltPath, ui.RenderAccent("bd list"), prefix)
+		}
+	}
+
+	// Check for redirect file - if present, we need to check the redirect target (GH#bd-0qel)
+	redirectTarget := beads.FollowRedirect(beadsDir)
+	if redirectTarget != beadsDir {
+		// There's a redirect - check if the target already has a database
+		targetDBPath := filepath.Join(redirectTarget, beads.CanonicalDatabaseName)
+		if _, err := os.Stat(targetDBPath); err == nil {
+			return fmt.Errorf(`
+%s Cannot init: redirect target already has database
+
+Local .beads redirects to: %s
+That location already has: %s
+
+The redirect target is already initialized. Running init here would overwrite it.
+
+To use the existing database:
+  Just run bd commands normally (e.g., %s)
+  The redirect will route to the canonical database.
+
+To reinitialize the canonical location (data loss warning):
+  rm %s && bd init --prefix %s
+
+Aborting.`, ui.RenderWarn("⚠"), redirectTarget, targetDBPath, ui.RenderAccent("bd list"), targetDBPath, prefix)
+		}
+		// Redirect target has no database - safe to init there
+		return nil
+	}
+
+	// Check for existing database file (no redirect case)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if _, err := os.Stat(dbPath); err == nil {
 		return fmt.Errorf(`

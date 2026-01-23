@@ -151,10 +151,16 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	// Use IDPrefix override if set, combined with config prefix
-	// e.g., configPrefix="bd" + IDPrefix="wisp" → "bd-wisp"
+	// Determine prefix for ID generation and validation:
+	// 1. PrefixOverride completely replaces config prefix (for cross-rig creation)
+	// 2. IDPrefix appends to config prefix (e.g., "bd" + "wisp" → "bd-wisp")
+	// 3. Otherwise use config prefix as-is
 	prefix := configPrefix
-	if issue.IDPrefix != "" {
+	skipPrefixValidation := false
+	if issue.PrefixOverride != "" {
+		prefix = issue.PrefixOverride
+		skipPrefixValidation = true // Caller explicitly specified prefix, skip validation
+	} else if issue.IDPrefix != "" {
 		prefix = configPrefix + "-" + issue.IDPrefix
 	}
 
@@ -168,8 +174,11 @@ func (t *sqliteTxStorage) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ID = generatedID
 	} else {
 		// Validate that explicitly provided ID matches the configured prefix
-		if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
-			return fmt.Errorf("failed to validate issue ID prefix: %w", err)
+		// Skip validation when PrefixOverride is set (cross-rig creation)
+		if !skipPrefixValidation {
+			if err := ValidateIssueIDPrefix(issue.ID, prefix); err != nil {
+				return fmt.Errorf("failed to validate issue ID prefix: %w", err)
+			}
 		}
 
 		// For hierarchical IDs (bd-a3f8e9.1), ensure parent exists
@@ -822,6 +831,37 @@ func (t *sqliteTxStorage) AddDependency(ctx context.Context, dep *types.Dependen
 	return nil
 }
 
+// GetDependencyRecords retrieves dependency records for an issue within the transaction.
+func (t *sqliteTxStorage) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	rows, err := t.conn.QueryContext(ctx, `
+		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+		FROM dependencies
+		WHERE issue_id = ?
+	`, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query dependencies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var deps []*types.Dependency
+	for rows.Next() {
+		var d types.Dependency
+		var metadata sql.NullString
+		var threadID sql.NullString
+		if err := rows.Scan(&d.IssueID, &d.DependsOnID, &d.Type, &d.CreatedAt, &d.CreatedBy, &metadata, &threadID); err != nil {
+			return nil, fmt.Errorf("failed to scan dependency: %w", err)
+		}
+		if metadata.Valid {
+			d.Metadata = metadata.String
+		}
+		if threadID.Valid {
+			d.ThreadID = threadID.String
+		}
+		deps = append(deps, &d)
+	}
+	return deps, rows.Err()
+}
+
 // RemoveDependency removes a dependency within the transaction.
 func (t *sqliteTxStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	// First, check what type of dependency is being removed
@@ -912,6 +952,11 @@ func (t *sqliteTxStorage) AddLabel(ctx context.Context, issueID, label, actor st
 	}
 
 	return nil
+}
+
+// GetLabels retrieves labels for an issue within the transaction.
+func (t *sqliteTxStorage) GetLabels(ctx context.Context, issueID string) ([]string, error) {
+	return t.getLabels(ctx, issueID)
 }
 
 // RemoveLabel removes a label from an issue within the transaction.
@@ -1059,6 +1104,68 @@ func (t *sqliteTxStorage) AddComment(ctx context.Context, issueID, actor, commen
 	}
 
 	return nil
+}
+
+// ImportIssueComment adds a structured comment during import, preserving the original timestamp.
+func (t *sqliteTxStorage) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+	// Verify issue exists
+	existing, err := t.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check issue existence: %w", err)
+	}
+	if existing == nil {
+		return nil, fmt.Errorf("issue %s not found", issueID)
+	}
+
+	createdAtStr := createdAt.UTC().Format(time.RFC3339Nano)
+	res, err := t.conn.ExecContext(ctx, `
+		INSERT INTO comments (issue_id, author, text, created_at)
+		VALUES (?, ?, ?, ?)
+	`, issueID, author, text, createdAtStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert comment: %w", err)
+	}
+	commentID, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment ID: %w", err)
+	}
+
+	// Mark issue dirty
+	if err := markDirty(ctx, t.conn, issueID); err != nil {
+		return nil, fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	return &types.Comment{
+		ID:        commentID,
+		IssueID:   issueID,
+		Author:    author,
+		Text:      text,
+		CreatedAt: createdAt.UTC(),
+	}, nil
+}
+
+// GetIssueComments retrieves structured comments for an issue within the transaction.
+func (t *sqliteTxStorage) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
+	rows, err := t.conn.QueryContext(ctx, `
+		SELECT id, issue_id, author, text, created_at
+		FROM comments
+		WHERE issue_id = ?
+		ORDER BY created_at ASC
+	`, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query comments: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var comments []*types.Comment
+	for rows.Next() {
+		var c types.Comment
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan comment: %w", err)
+		}
+		comments = append(comments, &c)
+	}
+	return comments, rows.Err()
 }
 
 // SearchIssues finds issues matching query and filters within the transaction.
@@ -1287,6 +1394,8 @@ type scanner interface {
 // consistent scanning of issue rows.
 func scanIssueRow(row scanner) (*types.Issue, error) {
 	var issue types.Issue
+	var createdAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
+	var updatedAtStr sql.NullString // TEXT column - must parse manually for cross-driver compatibility
 	var contentHash sql.NullString
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
@@ -1321,7 +1430,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
@@ -1329,6 +1438,14 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {

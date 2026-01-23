@@ -10,7 +10,6 @@ import (
 	"runtime/pprof"
 	"runtime/trace"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -533,7 +532,16 @@ var rootCmd = &cobra.Command{
 				// Invariant: dbPath must always be absolute for filepath.Rel() compatibility
 				// in daemon sync-branch code path. Use CanonicalizePath for OS-agnostic
 				// handling (symlinks, case normalization on macOS).
-				dbPath = utils.CanonicalizePath(filepath.Join(".beads", beads.CanonicalDatabaseName))
+				//
+				// IMPORTANT: Use FindBeadsDir() to get the correct .beads directory,
+				// which follows redirect files. Without this, a redirected .beads
+				// would create a local database instead of using the redirect target.
+				// (GH#bd-0qel)
+				targetBeadsDir := beads.FindBeadsDir()
+				if targetBeadsDir == "" {
+					targetBeadsDir = ".beads"
+				}
+				dbPath = utils.CanonicalizePath(filepath.Join(targetBeadsDir, beads.CanonicalDatabaseName))
 			}
 		}
 
@@ -569,6 +577,16 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 			daemonStatus.FallbackReason = FallbackWispOperation
 			debug.Logf("wisp operation detected, using direct mode")
+		}
+
+		// Dolt backend (embedded) is single-process-only; never use daemon/RPC.
+		// This must be checked after dbPath is resolved.
+		if !noDaemon && singleProcessOnlyBackend() {
+			noDaemon = true
+			daemonStatus.AutoStartEnabled = false
+			daemonStatus.FallbackReason = FallbackSingleProcessOnly
+			daemonStatus.Detail = "backend is single-process-only (dolt): daemon mode disabled; using direct mode"
+			debug.Logf("single-process backend detected, using direct mode")
 		}
 
 		// Try to connect to daemon first (unless --no-daemon flag is set or worktree safety check fails)
@@ -770,23 +788,6 @@ var rootCmd = &cobra.Command{
 		opts := factory.Options{
 			ReadOnly:    useReadOnly,
 			LockTimeout: lockTimeout,
-		}
-
-		// Check for server mode via environment variable (bd-f4f78a)
-		if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "true" {
-			opts.ServerMode = true
-			if host := os.Getenv("BEADS_DOLT_SERVER_HOST"); host != "" {
-				opts.ServerHost = host
-			}
-			if portStr := os.Getenv("BEADS_DOLT_SERVER_PORT"); portStr != "" {
-				if port, err := strconv.Atoi(portStr); err == nil {
-					opts.ServerPort = port
-				}
-			}
-			if user := os.Getenv("BEADS_DOLT_SERVER_USER"); user != "" {
-				opts.ServerUser = user
-			}
-			opts.ServerPass = os.Getenv("BEADS_DOLT_SERVER_PASS")
 		}
 
 		if backend == configfile.BackendDolt {

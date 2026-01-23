@@ -17,14 +17,15 @@ type doltTransaction struct {
 	store *DoltStore
 }
 
+// CreateIssueImport is the import-friendly issue creation hook.
+// Dolt does not enforce prefix validation at the storage layer, so this delegates to CreateIssue.
+func (t *doltTransaction) CreateIssueImport(ctx context.Context, issue *types.Issue, actor string, skipPrefixValidation bool) error {
+	return t.CreateIssue(ctx, issue, actor)
+}
+
 // RunInTransaction executes a function within a database transaction
 func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
-	db, err := s.getDB(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %w", err)
-	}
-
-	sqlTx, err := db.BeginTx(ctx, nil)
+	sqlTx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -59,66 +60,7 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
-	// Generate ID if not set (rig-0e5de3: fix empty root issue ID in wisps)
-	if issue.ID == "" {
-		// Get prefix from config
-		var configPrefix string
-		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
-		if err == sql.ErrNoRows || configPrefix == "" {
-			configPrefix = "bd" // Fallback default
-		} else if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
-		}
-
-		// Determine prefix for ID generation
-		prefix := configPrefix
-		if issue.PrefixOverride != "" {
-			prefix = issue.PrefixOverride
-		} else if issue.IDPrefix != "" {
-			prefix = configPrefix + "-" + issue.IDPrefix
-		}
-
-		// Generate hash-based ID
-		generatedID, err := generateIssueID(ctx, t.tx, prefix, issue, actor)
-		if err != nil {
-			return fmt.Errorf("failed to generate issue ID: %w", err)
-		}
-		issue.ID = generatedID
-	}
-
-	// Check if issue already exists (idempotent create for wisps/molecules)
-	// hq-3ebbac: Must also check status - if existing issue is closed, we need a new ID
-	var existingID string
-	var existingStatus string
-	checkErr := t.tx.QueryRowContext(ctx, "SELECT id, status FROM issues WHERE id = ?", issue.ID).Scan(&existingID, &existingStatus)
-	if checkErr == nil {
-		// Issue exists - check if it's closed
-		if existingStatus == string(types.StatusClosed) {
-			// Existing issue is closed - generate a new unique ID (hq-3ebbac)
-			// This prevents wisps from inheriting closed status from previous instances
-			newID, genErr := generateUniqueIDSuffix(ctx, t.tx, issue.ID)
-			if genErr != nil {
-				return fmt.Errorf("failed to generate unique ID: %w", genErr)
-			}
-			issue.ID = newID
-			// Fall through to insert with new ID
-		} else {
-			// Issue exists and is open/in_progress - this is idempotent, return success
-			return nil
-		}
-	} else if checkErr != sql.ErrNoRows {
-		return fmt.Errorf("failed to check for existing issue: %w", checkErr)
-	}
-
-	if err := insertIssueTx(ctx, t.tx, issue); err != nil {
-		// Check if this is a duplicate key error (race condition)
-		if strings.Contains(err.Error(), "1062") || strings.Contains(err.Error(), "duplicate") {
-			// Another process created the issue - this is fine, return success
-			return nil
-		}
-		return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
-	}
-	return nil
+	return insertIssueTx(ctx, t.tx, issue)
 }
 
 // CreateIssues creates multiple issues within the transaction
@@ -233,6 +175,36 @@ func (t *doltTransaction) AddDependency(ctx context.Context, dep *types.Dependen
 	return err
 }
 
+func (t *doltTransaction) GetDependencyRecords(ctx context.Context, issueID string) ([]*types.Dependency, error) {
+	rows, err := t.tx.QueryContext(ctx, `
+		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+		FROM dependencies
+		WHERE issue_id = ?
+	`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []*types.Dependency
+	for rows.Next() {
+		var d types.Dependency
+		var metadata sql.NullString
+		var threadID sql.NullString
+		if err := rows.Scan(&d.IssueID, &d.DependsOnID, &d.Type, &d.CreatedAt, &d.CreatedBy, &metadata, &threadID); err != nil {
+			return nil, err
+		}
+		if metadata.Valid {
+			d.Metadata = metadata.String
+		}
+		if threadID.Valid {
+			d.ThreadID = threadID.String
+		}
+		deps = append(deps, &d)
+	}
+	return deps, rows.Err()
+}
+
 // RemoveDependency removes a dependency within the transaction
 func (t *doltTransaction) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
 	_, err := t.tx.ExecContext(ctx, `
@@ -247,6 +219,23 @@ func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor st
 		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
 	`, issueID, label)
 	return err
+}
+
+func (t *doltTransaction) GetLabels(ctx context.Context, issueID string) ([]string, error) {
+	rows, err := t.tx.QueryContext(ctx, `SELECT label FROM labels WHERE issue_id = ? ORDER BY label`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		labels = append(labels, l)
+	}
+	return labels, rows.Err()
 }
 
 // RemoveLabel removes a label within the transaction
@@ -295,6 +284,63 @@ func (t *doltTransaction) GetMetadata(ctx context.Context, key string) (string, 
 	return value, err
 }
 
+func (t *doltTransaction) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+	// Verify issue exists in tx
+	iss, err := t.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	if iss == nil {
+		return nil, fmt.Errorf("issue %s not found", issueID)
+	}
+
+	createdAt = createdAt.UTC()
+	res, err := t.tx.ExecContext(ctx, `
+		INSERT INTO comments (issue_id, author, text, created_at)
+		VALUES (?, ?, ?, ?)
+	`, issueID, author, text, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add comment: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment id: %w", err)
+	}
+
+	// mark dirty in tx
+	if _, err := t.tx.ExecContext(ctx, `
+		INSERT INTO dirty_issues (issue_id, marked_at)
+		VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE marked_at = VALUES(marked_at)
+	`, issueID, time.Now().UTC()); err != nil {
+		return nil, fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	return &types.Comment{ID: id, IssueID: issueID, Author: author, Text: text, CreatedAt: createdAt}, nil
+}
+
+func (t *doltTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
+	rows, err := t.tx.QueryContext(ctx, `
+		SELECT id, issue_id, author, text, created_at
+		FROM comments
+		WHERE issue_id = ?
+		ORDER BY created_at ASC
+	`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var comments []*types.Comment
+	for rows.Next() {
+		var c types.Comment
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Text, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		comments = append(comments, &c)
+	}
+	return comments, rows.Err()
+}
+
 // AddComment adds a comment within the transaction
 func (t *doltTransaction) AddComment(ctx context.Context, issueID, actor, comment string) error {
 	_, err := t.tx.ExecContext(ctx, `
@@ -330,6 +376,7 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 
 func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, error) {
 	var issue types.Issue
+	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
 	var assignee, owner, contentHash sql.NullString
@@ -346,7 +393,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&issue.CreatedAt, &issue.CreatedBy, &owner, &issue.UpdatedAt, &closedAt,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
 		&ephemeral, &pinned, &isTemplate, &crystallizes,
 	)
 
@@ -355,6 +402,14 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// Parse timestamp strings (TEXT columns require manual parsing)
+	if createdAtStr.Valid {
+		issue.CreatedAt = parseTimeString(createdAtStr.String)
+	}
+	if updatedAtStr.Valid {
+		issue.UpdatedAt = parseTimeString(updatedAtStr.String)
 	}
 
 	if contentHash.Valid {

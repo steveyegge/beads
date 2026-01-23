@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
@@ -134,34 +133,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 				os.Exit(1)
 			}
-			// Query pending decisions via direct store (no RPC method yet) (hq-946577.25)
-			var pendingDecisions []*types.DecisionPoint
-			if directStore, err := sqlite.New(rootCtx, dbPath); err == nil {
-				pendingDecisions, _ = directStore.ListPendingDecisions(rootCtx)
-				_ = directStore.Close()
-			}
-
 			if jsonOutput {
 				if issues == nil {
 					issues = []*types.Issue{}
 				}
-				// Include pending decisions in JSON output
-				output := struct {
-					PendingDecisions []*types.DecisionPoint `json:"pending_decisions,omitempty"`
-					ReadyIssues      []*types.Issue         `json:"ready_issues"`
-				}{
-					PendingDecisions: pendingDecisions,
-					ReadyIssues:      issues,
-				}
-				outputJSON(output)
+				outputJSON(issues)
 				return
 			}
 
 			// Show upgrade notification if needed
 			maybeShowUpgradeNotification()
-
-			// Display pending decisions first (hq-946577.25)
-			pendingCount := displayPendingDecisions(pendingDecisions)
 
 			if len(issues) == 0 {
 				// Check if there are any open issues at all
@@ -173,13 +154,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 						hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
 					}
 				}
-				if pendingCount == 0 {
-					if hasOpenIssues {
-						fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-							ui.RenderWarn("✨"))
-					} else {
-						fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
-					}
+				if hasOpenIssues {
+					fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
+						ui.RenderWarn("✨"))
+				} else {
+					fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
 				}
 				return
 			}
@@ -231,30 +210,16 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 		}
 	}
-		// Query pending decisions (hq-946577.25)
-		pendingDecisions, _ := store.ListPendingDecisions(ctx)
-
 		if jsonOutput {
 			// Always output array, even if empty
 			if issues == nil {
 				issues = []*types.Issue{}
 			}
-			// Include pending decisions in JSON output
-			output := struct {
-				PendingDecisions []*types.DecisionPoint `json:"pending_decisions,omitempty"`
-				ReadyIssues      []*types.Issue         `json:"ready_issues"`
-			}{
-				PendingDecisions: pendingDecisions,
-				ReadyIssues:      issues,
-			}
-			outputJSON(output)
+			outputJSON(issues)
 			return
 		}
 		// Show upgrade notification if needed
 		maybeShowUpgradeNotification()
-
-		// Display pending decisions first (hq-946577.25)
-		pendingCount := displayPendingDecisions(pendingDecisions)
 
 		if len(issues) == 0 {
 			// Check if there are any open issues at all
@@ -262,13 +227,11 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if stats, statsErr := store.GetStatistics(ctx); statsErr == nil {
 				hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
 			}
-			if pendingCount == 0 {
-				if hasOpenIssues {
-					fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
-						ui.RenderWarn("✨"))
-				} else {
-					fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
-				}
+			if hasOpenIssues {
+				fmt.Printf("\n%s No ready work found (all issues have blocking dependencies)\n\n",
+					ui.RenderWarn("✨"))
+			} else {
+				fmt.Printf("\n%s No open issues\n\n", ui.RenderPass("✨"))
 			}
 			// Show tip even when no ready work found
 			maybeShowTip(store)
@@ -482,45 +445,6 @@ type MoleculeReadyOutput struct {
 	ReadySteps     int                     `json:"ready_steps"`
 	Steps          []*MoleculeReadyStep    `json:"steps"`
 	ParallelGroups map[string][]string     `json:"parallel_groups"`
-}
-
-// displayPendingDecisions shows pending decision points at the top of ready output.
-// Returns the number of pending decisions displayed.
-func displayPendingDecisions(decisions []*types.DecisionPoint) int {
-	if len(decisions) == 0 {
-		return 0
-	}
-
-	fmt.Printf("\n%s Pending Decisions (%d):\n\n", ui.RenderWarn("⏳"), len(decisions))
-
-	for _, dp := range decisions {
-		// Parse options from JSON
-		var options []types.DecisionOption
-		if dp.Options != "" {
-			_ = json.Unmarshal([]byte(dp.Options), &options)
-		}
-
-		// Build options display string
-		var optionParts []string
-		for _, opt := range options {
-			displayText := opt.Short
-			if displayText == "" {
-				displayText = opt.Label
-			}
-			optionParts = append(optionParts, fmt.Sprintf("[%s] %s", opt.ID, displayText))
-		}
-		optionsStr := strings.Join(optionParts, "  ")
-
-		// Display the decision
-		fmt.Printf("  %s %s\n", ui.RenderWarn("⏳"), ui.RenderID(dp.IssueID))
-		fmt.Printf("     %s\n", dp.Prompt)
-		if optionsStr != "" {
-			fmt.Printf("     %s\n", optionsStr)
-		}
-		fmt.Printf("     → Respond: %s\n\n", ui.RenderAccent(fmt.Sprintf("bd decision respond %s --select=<option>", dp.IssueID)))
-	}
-
-	return len(decisions)
 }
 
 func init() {

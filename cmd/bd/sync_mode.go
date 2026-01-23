@@ -8,23 +8,25 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 )
 
-// Sync mode constants define how beads synchronizes data with git.
+// Sync mode constants - re-exported from internal/config for backward compatibility.
+// These are used with storage.Storage (database) while config.SyncMode* are used
+// with viper (config.yaml).
 const (
 	// SyncModeGitPortable exports to JSONL on push, imports on pull.
 	// This is the default mode - works with standard git workflows.
-	SyncModeGitPortable = "git-portable"
+	SyncModeGitPortable = string(config.SyncModeGitPortable)
 
 	// SyncModeRealtime exports to JSONL on every database mutation.
 	// Provides immediate persistence but more git noise.
-	SyncModeRealtime = "realtime"
+	SyncModeRealtime = string(config.SyncModeRealtime)
 
 	// SyncModeDoltNative uses Dolt remotes for sync, skipping JSONL.
 	// Requires Dolt backend and configured Dolt remote.
-	SyncModeDoltNative = "dolt-native"
+	SyncModeDoltNative = string(config.SyncModeDoltNative)
 
 	// SyncModeBeltAndSuspenders uses both Dolt remotes AND JSONL.
 	// Maximum redundancy - Dolt for versioning, JSONL for git portability.
-	SyncModeBeltAndSuspenders = "belt-and-suspenders"
+	SyncModeBeltAndSuspenders = string(config.SyncModeBeltAndSuspenders)
 
 	// SyncModeConfigKey is the database config key for sync mode.
 	SyncModeConfigKey = "sync.mode"
@@ -34,14 +36,6 @@ const (
 
 	// SyncImportOnConfigKey controls when JSONL import happens.
 	SyncImportOnConfigKey = "sync.import_on"
-
-	// SyncAutoDoltCommitKey controls automatic Dolt commits after sync.
-	// When enabled (default), data changes are committed to Dolt after each sync.
-	SyncAutoDoltCommitKey = "sync.auto_dolt_commit"
-
-	// SyncAutoDoltPushKey controls automatic Dolt push after sync.
-	// When enabled, commits are pushed to the Dolt remote after each sync.
-	SyncAutoDoltPushKey = "sync.auto_dolt_push"
 )
 
 // Trigger constants for export_on and import_on settings.
@@ -54,45 +48,29 @@ const (
 	TriggerChange = "change"
 )
 
-// GetSyncMode returns the configured sync mode, defaulting to git-portable.
-// Reads from config.yaml first (sync.mode is a yaml-only key), then falls back
-// to database config for backwards compatibility and testing.
+// GetSyncMode returns the configured sync mode from the database, defaulting to git-portable.
+// This reads from storage.Storage (database), not config.yaml.
+// For config.yaml access, use config.GetSyncMode() instead.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
-	// Try yaml config first (preferred source), but only if it exists in config file
-	// (not just the viper default value)
-	var mode string
-	if config.InConfig("sync.mode") {
-		mode = config.GetString("sync.mode")
-	}
-
-	// Fall back to database config for backwards compatibility
-	if mode == "" && s != nil {
-		mode, _ = s.GetConfig(ctx, SyncModeConfigKey)
-	}
-
-	if mode == "" {
+	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
+	if err != nil || mode == "" {
 		return SyncModeGitPortable
 	}
 
-	// Validate mode
-	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
-		return mode
-	default:
-		// Invalid mode, return default
+	// Validate mode using the shared validation
+	if !config.IsValidSyncMode(mode) {
 		return SyncModeGitPortable
 	}
+
+	return mode
 }
 
-// SetSyncMode sets the sync mode configuration.
+// SetSyncMode sets the sync mode configuration in the database.
 func SetSyncMode(ctx context.Context, s storage.Storage, mode string) error {
-	// Validate mode
-	switch mode {
-	case SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders:
-		// Valid
-	default:
-		return fmt.Errorf("invalid sync mode: %s (valid: %s, %s, %s, %s)",
-			mode, SyncModeGitPortable, SyncModeRealtime, SyncModeDoltNative, SyncModeBeltAndSuspenders)
+	// Validate mode using the shared validation
+	if !config.IsValidSyncMode(mode) {
+		return fmt.Errorf("invalid sync mode: %s (valid: %s)",
+			mode, fmt.Sprintf("%v", config.ValidSyncModes()))
 	}
 
 	return s.SetConfig(ctx, SyncModeConfigKey, mode)
@@ -132,26 +110,6 @@ func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 func ShouldUseDoltRemote(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)
 	return mode == SyncModeDoltNative || mode == SyncModeBeltAndSuspenders
-}
-
-// ShouldAutoDoltCommit returns true if Dolt commits should happen automatically after sync.
-// Defaults to true to prevent journal corruption.
-func ShouldAutoDoltCommit(ctx context.Context, s storage.Storage) bool {
-	val, err := s.GetConfig(ctx, SyncAutoDoltCommitKey)
-	if err != nil || val == "" {
-		return true // Default: enabled
-	}
-	return val == "true" || val == "1" || val == "yes"
-}
-
-// ShouldAutoDoltPush returns true if Dolt pushes should happen automatically after sync.
-// Defaults to false (requires explicit configuration).
-func ShouldAutoDoltPush(ctx context.Context, s storage.Storage) bool {
-	val, err := s.GetConfig(ctx, SyncAutoDoltPushKey)
-	if err != nil || val == "" {
-		return false // Default: disabled
-	}
-	return val == "true" || val == "1" || val == "yes"
 }
 
 // SyncModeDescription returns a human-readable description of the sync mode.

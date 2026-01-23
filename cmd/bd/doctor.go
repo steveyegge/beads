@@ -56,7 +56,9 @@ var (
 	checkHealthMode      bool
 	doctorCheckFlag      string // run specific check (e.g., "pollution")
 	doctorClean          bool   // for pollution check, delete detected issues
-	doctorDeep           bool   // full graph integrity validation
+	doctorDeep                  bool // full graph integrity validation
+	doctorGastown               bool // running in gastown multi-workspace mode
+	gastownDuplicatesThreshold  int  // duplicate tolerance threshold for gastown mode
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -260,6 +262,8 @@ func init() {
 	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
 	doctorCmd.Flags().BoolVar(&perfDoltMode, "perf-dolt", false, "Run Dolt-specific performance diagnostics")
 	doctorCmd.Flags().BoolVar(&perfCompareMode, "perf-compare", false, "Compare Dolt embedded vs server mode performance")
+	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
+	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 }
 
 func runDiagnostics(path string) doctorResult {
@@ -379,7 +383,7 @@ func runDiagnostics(path string) doctorResult {
 	}
 
 	// Check 6: Multiple JSONL files (excluding merge artifacts)
-	jsonlCheck := convertWithCategory(doctor.CheckLegacyJSONLFilename(path), doctor.CategoryData)
+	jsonlCheck := convertWithCategory(doctor.CheckLegacyJSONLFilename(path, doctorGastown), doctor.CategoryData)
 	result.Checks = append(result.Checks, jsonlCheck)
 	if jsonlCheck.Status == statusWarning || jsonlCheck.Status == statusError {
 		result.OverallOK = false
@@ -435,6 +439,36 @@ func runDiagnostics(path string) doctorResult {
 	legacyDaemonConfigCheck := convertWithCategory(doctor.CheckLegacyDaemonConfig(path), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, legacyDaemonConfigCheck)
 	// Note: Don't set OverallOK = false for this - deprecated options still work
+
+	// Federation health checks (bd-wkumz.6)
+	// Check 8d: Federation remotesapi port accessibility
+	remotesAPICheck := convertWithCategory(doctor.CheckFederationRemotesAPI(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, remotesAPICheck)
+	// Don't fail overall for federation issues - they're only relevant for Dolt users
+
+	// Check 8e: Federation peer connectivity
+	peerConnCheck := convertWithCategory(doctor.CheckFederationPeerConnectivity(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, peerConnCheck)
+
+	// Check 8f: Federation sync staleness
+	syncStalenessCheck := convertWithCategory(doctor.CheckFederationSyncStaleness(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, syncStalenessCheck)
+
+	// Check 8g: Federation conflict detection
+	fedConflictsCheck := convertWithCategory(doctor.CheckFederationConflicts(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, fedConflictsCheck)
+	if fedConflictsCheck.Status == statusError {
+		result.OverallOK = false // Unresolved conflicts are a real problem
+	}
+
+	// Check 8h: Dolt init vs embedded mode mismatch
+	doltModeCheck := convertWithCategory(doctor.CheckDoltServerModeMismatch(path), doctor.CategoryFederation)
+	result.Checks = append(result.Checks, doltModeCheck)
+
+	// Check 8i: Hydrated repo daemons (warn if multi-repo hydration configured but daemons not running)
+	hydratedRepoDaemonsCheck := convertWithCategory(doctor.CheckHydratedRepoDaemons(path), doctor.CategoryRuntime)
+	result.Checks = append(result.Checks, hydratedRepoDaemonsCheck)
+	// Note: Don't set OverallOK = false for this - it's a performance/freshness hint
 
 	// Check 9: Database-JSONL sync
 	syncCheck := convertWithCategory(doctor.CheckDatabaseJSONLSync(path), doctor.CategoryData)
@@ -606,7 +640,7 @@ func runDiagnostics(path string) doctorResult {
 	// Don't fail overall check for child→parent deps, just warn
 
 	// Check 23: Duplicate issues (from bd validate)
-	duplicatesCheck := convertDoctorCheck(doctor.CheckDuplicateIssues(path))
+	duplicatesCheck := convertDoctorCheck(doctor.CheckDuplicateIssues(path, doctorGastown, gastownDuplicatesThreshold))
 	result.Checks = append(result.Checks, duplicatesCheck)
 	// Don't fail overall check for duplicates, just warn
 
@@ -642,9 +676,10 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, staleMQFilesCheck)
 	// Don't fail overall check for legacy MQ files, just warn
 
-	// Note: Check 26d (misclassified wisps) was referenced but never implemented.
-	// The commit f703237c added importer-based auto-detection instead.
-	// Removing the undefined reference to fix build.
+	// Check 26d: Patrol pollution (patrol digests, session beads)
+	patrolPollutionCheck := convertDoctorCheck(doctor.CheckPatrolPollution(path))
+	result.Checks = append(result.Checks, patrolPollutionCheck)
+	// Don't fail overall check for patrol pollution, just warn
 
 	// Check 27: Expired tombstones (maintenance)
 	tombstonesExpiredCheck := convertDoctorCheck(doctor.CheckExpiredTombstones(path))

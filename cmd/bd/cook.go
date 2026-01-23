@@ -475,10 +475,7 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	// Collect issues for each step (use protoID as parent for step IDs)
 	// The unified collectSteps builds both issueMap and idMapping
 	idMapping := make(map[string]string)
-	var decisionPoints []*types.DecisionPoint
-	collectSteps(f.Steps, protoID, idMapping, issueMap, &issues, &deps, nil, func(dp *types.DecisionPoint) {
-		decisionPoints = append(decisionPoints, dp)
-	})
+	collectSteps(f.Steps, protoID, idMapping, issueMap, &issues, &deps, nil) // nil = keep labels on issues
 
 	// Collect dependencies from depends_on using the idMapping built above
 	for _, step := range f.Steps {
@@ -486,11 +483,10 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	}
 
 	return &TemplateSubgraph{
-		Root:           rootIssue,
-		Issues:         issues,
-		Dependencies:   deps,
-		IssueMap:       issueMap,
-		DecisionPoints: decisionPoints,
+		Root:         rootIssue,
+		Issues:       issues,
+		Dependencies: deps,
+		IssueMap:     issueMap,
 	}, nil
 }
 
@@ -525,7 +521,7 @@ func createGateIssue(step *formula.Step, parentID string) *types.Issue {
 		Description: fmt.Sprintf("Async gate for step %s", step.ID),
 		Status:      types.StatusOpen,
 		Priority:    2,
-		IssueType:   types.TypeGate,
+		IssueType:   "gate",
 		AwaitType:   step.Gate.Type,
 		AwaitID:     step.Gate.ID,
 		Timeout:     timeout,
@@ -533,63 +529,6 @@ func createGateIssue(step *formula.Step, parentID string) *types.Issue {
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-}
-
-// createDecisionIssue creates a decision gate issue for a step with a Decision field.
-// Decision gates block until a human selects an option.
-// Returns the gate issue and the associated DecisionPoint template.
-func createDecisionIssue(step *formula.Step, parentID string) (*types.Issue, *types.DecisionPoint) {
-	if step.Decision == nil {
-		return nil, nil
-	}
-
-	// Generate decision issue ID: {parentID}.decision-{step.ID}
-	decisionID := fmt.Sprintf("%s.decision-%s", parentID, step.ID)
-
-	// Build title: truncate prompt if too long
-	title := step.Decision.Prompt
-	if len(title) > 100 {
-		title = title[:97] + "..."
-	}
-
-	// Parse timeout if specified
-	var timeout time.Duration
-	if step.Decision.Timeout != "" {
-		if parsed, err := time.ParseDuration(step.Decision.Timeout); err == nil {
-			timeout = parsed
-		}
-	}
-
-	// Marshal options to JSON for storage
-	optionsJSON, _ := json.Marshal(step.Decision.Options)
-
-	now := time.Now()
-
-	issue := &types.Issue{
-		ID:          decisionID,
-		Title:       title,
-		Description: fmt.Sprintf("Decision point for step %s", step.ID),
-		Status:      types.StatusOpen,
-		Priority:    2,
-		IssueType:   types.TypeGate,
-		AwaitType:   "decision",
-		Timeout:     timeout,
-		IsTemplate:  true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	decisionPoint := &types.DecisionPoint{
-		IssueID:       decisionID,
-		Prompt:        step.Decision.Prompt,
-		Options:       string(optionsJSON),
-		DefaultOption: step.Decision.Default,
-		Iteration:     1,
-		MaxIterations: 3, // Default max iterations
-		CreatedAt:     now,
-	}
-
-	return issue, decisionPoint
 }
 
 // processStepToIssue converts a formula.Step to a types.Issue.
@@ -646,14 +585,12 @@ func processStepToIssue(step *formula.Step, parentID string) *types.Issue {
 //   - issueMap: issue.ID → issue (optional, nil for DB path, populated for in-memory path)
 //   - labelHandler: callback for each label (if nil, labels stay on issue; if set, labels are
 //     extracted and issue.Labels is cleared - use for DB path)
-//   - decisionPointHandler: callback for each decision point (collects decision templates)
 func collectSteps(steps []*formula.Step, parentID string,
 	idMapping map[string]string,
 	issueMap map[string]*types.Issue,
 	issues *[]*types.Issue,
 	deps *[]*types.Dependency,
-	labelHandler func(issueID, label string),
-	decisionPointHandler func(dp *types.DecisionPoint)) {
+	labelHandler func(issueID, label string)) {
 
 	for _, step := range steps {
 		issue := processStepToIssue(step, parentID)
@@ -715,49 +652,9 @@ func collectSteps(steps []*formula.Step, parentID string,
 			})
 		}
 
-		// Create decision issue if step has a Decision (hq-946577.19)
-		if step.Decision != nil {
-			decisionIssue, decisionPoint := createDecisionIssue(step, parentID)
-			*issues = append(*issues, decisionIssue)
-
-			// Add decision to mapping (use decision-{step.ID} as key)
-			decisionKey := fmt.Sprintf("decision-%s", step.ID)
-			idMapping[decisionKey] = decisionIssue.ID
-			if issueMap != nil {
-				issueMap[decisionIssue.ID] = decisionIssue
-			}
-
-			// Handle decision labels if needed
-			if labelHandler != nil && len(decisionIssue.Labels) > 0 {
-				for _, label := range decisionIssue.Labels {
-					labelHandler(decisionIssue.ID, label)
-				}
-				decisionIssue.Labels = nil
-			}
-
-			// Decision is a child of the parent (same level as the step)
-			*deps = append(*deps, &types.Dependency{
-				IssueID:     decisionIssue.ID,
-				DependsOnID: parentID,
-				Type:        types.DepParentChild,
-			})
-
-			// Step depends on decision (decision blocks the step)
-			*deps = append(*deps, &types.Dependency{
-				IssueID:     issue.ID,
-				DependsOnID: decisionIssue.ID,
-				Type:        types.DepBlocks,
-			})
-
-			// Collect decision point via handler if provided
-			if decisionPointHandler != nil {
-				decisionPointHandler(decisionPoint)
-			}
-		}
-
 		// Recursively collect children
 		if len(step.Children) > 0 {
-			collectSteps(step.Children, issue.ID, idMapping, issueMap, issues, deps, labelHandler, decisionPointHandler)
+			collectSteps(step.Children, issue.ID, idMapping, issueMap, issues, deps, labelHandler)
 		}
 	}
 }
@@ -931,11 +828,8 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 
 	// Collect issues for each step (use protoID as parent for step IDs)
 	// Use labelHandler to extract labels for separate DB storage
-	var decisionPoints []*types.DecisionPoint
 	collectSteps(f.Steps, protoID, idMapping, nil, &issues, &deps, func(issueID, label string) {
 		labels = append(labels, struct{ issueID, label string }{issueID, label})
-	}, func(dp *types.DecisionPoint) {
-		decisionPoints = append(decisionPoints, dp)
 	})
 
 	// Collect dependencies from depends_on
@@ -954,7 +848,7 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 	// Track if we need cleanup on failure
 	issuesCreated := true
 
-	// Add labels, dependencies, and decision points in a transaction
+	// Add labels and dependencies in a transaction
 	err := s.RunInTransaction(ctx, func(tx storage.Transaction) error {
 		// Add labels
 		for _, l := range labels {
@@ -967,13 +861,6 @@ func cookFormula(ctx context.Context, s storage.Storage, f *formula.Formula, pro
 		for _, dep := range deps {
 			if err := tx.AddDependency(ctx, dep, actor); err != nil {
 				return fmt.Errorf("failed to create dependency: %w", err)
-			}
-		}
-
-		// Create decision points (hq-946577.19)
-		for _, dp := range decisionPoints {
-			if err := tx.CreateDecisionPoint(ctx, dp); err != nil {
-				return fmt.Errorf("failed to create decision point for %s: %w", dp.IssueID, err)
 			}
 		}
 

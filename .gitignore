@@ -70,6 +70,7 @@ Thumbs.db
 result
 
 # direnv (machine-specific environment)
+.direnv
 .envrc
 
 # GoReleaser build artifacts
@@ -126,3 +127,7 @@ state.json
 .agents/
 output
 bd_test
+
+# Gas Town (added by gt)
+.beads/
+.logs/

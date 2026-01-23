@@ -259,6 +259,33 @@ var createCmd = &cobra.Command{
 			return
 		}
 
+		// Auto-route based on explicit ID prefix (if no explicit --rig/--prefix provided)
+		// When creating an issue with --id=pq-xxx, automatically route to the database
+		// that handles the pq- prefix based on routes.jsonl
+		if explicitID != "" && rigOverride == "" && prefixOverride == "" {
+			prefix := routing.ExtractPrefix(explicitID)
+			if prefix != "" {
+				// Load routes from town level
+				townBeadsDir, err := findTownBeadsDir()
+				if err == nil {
+					routes, err := routing.LoadTownRoutes(townBeadsDir)
+					if err == nil && len(routes) > 0 {
+						// Check if this prefix matches a route to a different rig
+						for _, route := range routes {
+							if route.Prefix == prefix && route.Path != "" && route.Path != "." {
+								// Found a matching route - auto-route to that rig
+								rigName := routing.ExtractProjectFromPath(route.Path)
+								if rigName != "" {
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned)
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
 		targetRig := rigOverride
@@ -269,7 +296,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned)
+			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned)
 			return
 		}
 
@@ -363,10 +390,14 @@ var createCmd = &cobra.Command{
 			if err != nil {
 				FatalError("failed to open target store: %v", err)
 			}
-			// NOTE: Do NOT defer close here! We assign targetStore to the global store below,
-			// and PersistentPostRun will close it. If we defer close here, the global store
-			// gets closed before PersistentPostRun's flush, causing "sql: database is closed"
-			// errors during auto-flush. (bd-z6d.1)
+
+			// Close the original store before replacing it (it won't be used anymore)
+			// Note: We don't defer-close targetStore here because PersistentPostRun
+			// will close whatever store is assigned to the global `store` variable.
+			// This fixes the "database is closed" error during auto-flush (GH#routing-close-bug).
+			if store != nil {
+				_ = store.Close()
+			}
 
 			// Replace store for remainder of create operation
 			// This also bypasses daemon mode since daemon owns the current repo's store
@@ -713,6 +744,12 @@ var createCmd = &cobra.Command{
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
+		// If issue was routed to a different repo, flush its JSONL immediately
+		// so the issue appears in bd list when hydration is enabled (bd-fix-routing)
+		if repoPath != "." {
+			flushRoutedRepo(targetStore, repoPath)
+		}
+
 		// Run create hook
 		if hookRunner != nil {
 			hookRunner.Run(hooks.EventCreate, issue)
@@ -735,6 +772,119 @@ var createCmd = &cobra.Command{
 		// Track as last touched issue
 		SetLastTouchedID(issue.ID)
 	},
+}
+
+// flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
+// This is critical for multi-repo hydration to work correctly (bd-fix-routing).
+func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
+	ctx := context.Background()
+
+	// Expand the repo path and construct the .beads directory path
+	targetBeadsDir := routing.ExpandPath(repoPath)
+	if !filepath.IsAbs(targetBeadsDir) {
+		// If relative path, make it absolute
+		absPath, err := filepath.Abs(targetBeadsDir)
+		if err != nil {
+			debug.Logf("warning: failed to get absolute path for %s: %v", targetBeadsDir, err)
+			return
+		}
+		targetBeadsDir = absPath
+	}
+
+	// Construct paths for daemon socket and JSONL
+	beadsDir := filepath.Join(targetBeadsDir, ".beads")
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+
+	debug.Logf("attempting to flush routed repo at %s", targetBeadsDir)
+
+	// Try to connect to target repo's daemon (if running)
+	flushed := false
+	if client, err := rpc.TryConnect(socketPath); err == nil && client != nil {
+		defer func() { _ = client.Close() }()
+
+		// Daemon is running - ask it to export
+		debug.Logf("found running daemon in target repo, requesting export")
+		exportArgs := &rpc.ExportArgs{
+			JSONLPath: jsonlPath,
+		}
+		if resp, err := client.Export(exportArgs); err == nil && resp.Success {
+			debug.Logf("successfully flushed via target repo daemon")
+			flushed = true
+		} else {
+			if err != nil {
+				debug.Logf("daemon export failed: %v", err)
+			} else {
+				debug.Logf("daemon export error: %s", resp.Error)
+			}
+		}
+	}
+
+	// Fallback: No daemon or daemon flush failed - export directly
+	if !flushed {
+		debug.Logf("no daemon in target repo, exporting directly to JSONL")
+
+		// Get all issues including tombstones (mirrors exportToJSONLDeferred logic)
+		issues, err := targetStore.SearchIssues(ctx, "", types.IssueFilter{IncludeTombstones: true})
+		if err != nil {
+			WarnError("failed to query issues for export: %v", err)
+			return
+		}
+
+		// Perform atomic export (temporary file + rename)
+		if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
+			WarnError("failed to export target repo JSONL: %v", err)
+			return
+		}
+
+		debug.Logf("successfully exported to %s", jsonlPath)
+	}
+}
+
+// performAtomicExport writes issues to JSONL using atomic temp file + rename
+func performAtomicExport(_ context.Context, jsonlPath string, issues []*types.Issue, _ storage.Storage) error {
+	// Create temp file with PID suffix for atomic write
+	tempPath := fmt.Sprintf("%s.tmp.%d", jsonlPath, os.Getpid())
+
+	// Ensure we clean up temp file on error
+	defer func() {
+		// Remove temp file if it still exists (rename failed or error occurred)
+		if _, err := os.Stat(tempPath); err == nil {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	// Open temp file for writing
+	tempFile, err := os.Create(tempPath) //nolint:gosec // tempPath is safely constructed from jsonlPath
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	// Write issues as JSONL
+	encoder := json.NewEncoder(tempFile)
+	for _, issue := range issues {
+		if err := encoder.Encode(issue); err != nil {
+			_ = tempFile.Close()
+			return fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		}
+	}
+
+	// Sync to disk before rename
+	if err := tempFile.Sync(); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, jsonlPath); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
 }
 
 func init() {
@@ -784,9 +934,9 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 }
 
-// createInRig creates an issue in a different rig using --rig flag.
+// createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -860,8 +1010,9 @@ func createInRig(cmd *cobra.Command, rigName, title, description, issueType stri
 		deferUntil = &t
 	}
 
-	// Create issue without ID - CreateIssue will generate one with the correct prefix
+	// Create issue with explicit ID if provided, otherwise CreateIssue will generate one
 	issue := &types.Issue{
+		ID:                 explicitID, // Set explicit ID if provided (empty string if not)
 		Title:              title,
 		Description:        description,
 		Design:             design,

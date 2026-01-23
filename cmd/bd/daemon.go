@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/factory"
@@ -237,7 +237,10 @@ Run 'bd daemon --help' to see all subcommands.`,
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON)
+		federation, _ := cmd.Flags().GetBool("federation")
+		federationPort, _ := cmd.Flags().GetInt("federation-port")
+		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
+		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
 	},
 }
 
@@ -263,6 +266,9 @@ func init() {
 	daemonCmd.Flags().Bool("foreground", false, "Run in foreground (don't daemonize)")
 	daemonCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	daemonCmd.Flags().Bool("log-json", false, "Output logs in JSON format (structured logging)")
+	daemonCmd.Flags().Bool("federation", false, "Enable federation mode (runs dolt sql-server with remotesapi)")
+	daemonCmd.Flags().Int("federation-port", 3306, "MySQL port for federation mode dolt sql-server")
+	daemonCmd.Flags().Int("remotesapi-port", 8080, "remotesapi port for peer-to-peer sync in federation mode")
 	daemonCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output JSON format")
 	rootCmd.AddCommand(daemonCmd)
 }
@@ -279,7 +285,7 @@ func computeDaemonParentPID() int {
 	}
 	return os.Getppid()
 }
-func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON bool) {
+func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, localMode bool, logPath, pidFile, logLevel string, logJSON, federation bool, federationPort, remotesapiPort int) {
 	level := parseLogLevel(logLevel)
 	logF, log := setupDaemonLogger(logPath, logJSON, level)
 	defer func() { _ = logF.Close() }()
@@ -299,7 +305,6 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 			stackTrace := string(stackBuf[:stackSize])
 			log.Error("stack trace", "trace", stackTrace)
 
-			// Write crash report to daemon-error file for user visibility
 			var beadsDir string
 			if dbPath != "" {
 				beadsDir = filepath.Dir(dbPath)
@@ -308,13 +313,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 			}
 
 			if beadsDir != "" {
-				errFile := filepath.Join(beadsDir, "daemon-error")
 				crashReport := fmt.Sprintf("Daemon crashed at %s\n\nPanic: %v\n\nStack trace:\n%s\n",
 					time.Now().Format(time.RFC3339), r, stackTrace)
-				// nolint:gosec // G306: Error file needs to be readable for debugging
-				if err := os.WriteFile(errFile, []byte(crashReport), 0644); err != nil {
-					log.Warn("could not write crash report", "error", err)
-				}
+				log.Error("crash report", "report", crashReport)
 			}
 
 			// Clean up PID file
@@ -351,51 +352,63 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 
 	// Check for multiple .db files (ambiguity error)
 	beadsDir := filepath.Dir(daemonDBPath)
+	backend := factory.GetBackendFromConfig(beadsDir)
+	if backend == "" {
+		backend = configfile.BackendSQLite
+	}
 
 	// Reset backoff on daemon start (fresh start, but preserve NeedsManualSync hint)
 	if !localMode {
 		ResetBackoffOnDaemonStart(beadsDir)
 	}
-	matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-	if err == nil && len(matches) > 1 {
-		// Filter out backup files (*.backup-*.db, *.backup.db)
-		var validDBs []string
-		for _, match := range matches {
-			baseName := filepath.Base(match)
-			// Skip if it's a backup file (contains ".backup" in name)
-			if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
-				validDBs = append(validDBs, match)
-			}
-		}
-		if len(validDBs) > 1 {
-			errMsg := fmt.Sprintf("Error: Multiple database files found in %s:\n", beadsDir)
-			for _, db := range validDBs {
-				errMsg += fmt.Sprintf("  - %s\n", filepath.Base(db))
-			}
-			errMsg += fmt.Sprintf("\nBeads requires a single canonical database: %s\n", beads.CanonicalDatabaseName)
-			errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
-			errMsg += "Or run 'bd doctor' for more diagnostics"
 
-			log.log(errMsg)
-
-			// Write error to file so user can see it without checking logs
-			errFile := filepath.Join(beadsDir, "daemon-error")
-			// nolint:gosec // G306: Error file needs to be readable for debugging
-			if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
-				log.Warn("could not write daemon-error file", "error", err)
+	// Check for multiple .db files (ambiguity error) - SQLite only.
+	// Dolt is directory-backed so this check is irrelevant and can be misleading.
+	if backend == configfile.BackendSQLite {
+		matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
+		if err == nil && len(matches) > 1 {
+			// Filter out backup files (*.backup-*.db, *.backup.db)
+			var validDBs []string
+			for _, match := range matches {
+				baseName := filepath.Base(match)
+				// Skip if it's a backup file (contains ".backup" in name)
+				if !strings.Contains(baseName, ".backup") && baseName != "vc.db" {
+					validDBs = append(validDBs, match)
+				}
 			}
+			if len(validDBs) > 1 {
+				errMsg := fmt.Sprintf("Error: Multiple database files found in %s:\n", beadsDir)
+				for _, db := range validDBs {
+					errMsg += fmt.Sprintf("  - %s\n", filepath.Base(db))
+				}
+				errMsg += fmt.Sprintf("\nBeads requires a single canonical database: %s\n", beads.CanonicalDatabaseName)
+				errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
+				errMsg += "Or run 'bd doctor' for more diagnostics"
 
-			return // Use return instead of os.Exit to allow defers to run
+				log.log(errMsg)
+
+				// Write error to file so user can see it without checking logs
+				errFile := filepath.Join(beadsDir, "daemon-error")
+				// nolint:gosec // G306: Error file needs to be readable for debugging
+				if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
+					log.Warn("could not write daemon-error file", "error", err)
+				}
+
+				return // Use return instead of os.Exit to allow defers to run
+			}
 		}
 	}
 
-	// Validate using canonical name (SQLite) or dolt directory (Dolt)
-	dbBaseName := filepath.Base(daemonDBPath)
-	isDolt := dbBaseName == "dolt" // Dolt backend uses a directory named "dolt"
-	if !isDolt && dbBaseName != beads.CanonicalDatabaseName {
-		log.Error("non-canonical database name", "name", dbBaseName, "expected", beads.CanonicalDatabaseName)
-		log.Info("run 'bd init' to migrate to canonical name")
-		return // Use return instead of os.Exit to allow defers to run
+	// Validate using canonical name (SQLite only).
+	// Dolt uses a directory-backed store (typically .beads/dolt), so the "beads.db"
+	// basename invariant does not apply.
+	if backend == configfile.BackendSQLite {
+		dbBaseName := filepath.Base(daemonDBPath)
+		if dbBaseName != beads.CanonicalDatabaseName {
+			log.Error("non-canonical database name", "name", dbBaseName, "expected", beads.CanonicalDatabaseName)
+			log.Info("run 'bd init' to migrate to canonical name")
+			return // Use return instead of os.Exit to allow defers to run
+		}
 	}
 
 	log.Info("using database", "path", daemonDBPath)
@@ -406,34 +419,57 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.Warn("could not remove daemon-error file", "error", err)
 	}
 
-	// Open database with idle timeout for Dolt to release lock when not in use (bd-d705ea)
-	// This allows external dolt CLI commands to work while daemon is running
-	opts := factory.Options{
-		IdleTimeout: 30 * time.Second, // Release Dolt lock after 30s of inactivity
+	// Start dolt sql-server if federation mode is enabled and backend is dolt
+	var doltServer *DoltServerHandle
+	factoryOpts := factory.Options{}
+	if federation && backend != configfile.BackendDolt {
+		log.Warn("federation mode requires dolt backend, ignoring --federation flag")
+		federation = false
 	}
-
-	// Check for server mode via environment variable (bd-f4f78a)
-	// In server mode, the daemon connects to a running dolt sql-server instead of embedded mode.
-	// This eliminates lock contention between multiple bd processes.
-	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" || os.Getenv("BEADS_DOLT_SERVER_MODE") == "true" {
-		opts.ServerMode = true
-		opts.IdleTimeout = 0 // Disable idle timeout in server mode (server handles connections)
-		if host := os.Getenv("BEADS_DOLT_SERVER_HOST"); host != "" {
-			opts.ServerHost = host
+	if federation && backend == configfile.BackendDolt {
+		if !DoltServerAvailable() {
+			log.Error("federation mode requires CGO; use pre-built binaries from GitHub releases")
+			return
 		}
-		if portStr := os.Getenv("BEADS_DOLT_SERVER_PORT"); portStr != "" {
-			if port, err := strconv.Atoi(portStr); err == nil {
-				opts.ServerPort = port
+		log.Info("starting dolt sql-server for federation mode")
+
+		doltPath := filepath.Join(beadsDir, "dolt")
+		serverLogFile := filepath.Join(beadsDir, "dolt-server.log")
+
+		// Use provided ports or defaults
+		sqlPort := federationPort
+		if sqlPort == 0 {
+			sqlPort = DoltDefaultSQLPort
+		}
+		remotePort := remotesapiPort
+		if remotePort == 0 {
+			remotePort = DoltDefaultRemotesAPIPort
+		}
+
+		var err error
+		doltServer, err = StartDoltServer(ctx, doltPath, serverLogFile, sqlPort, remotePort)
+		if err != nil {
+			log.Error("failed to start dolt sql-server", "error", err)
+			return
+		}
+		defer func() {
+			log.Info("stopping dolt sql-server")
+			if err := doltServer.Stop(); err != nil {
+				log.Warn("error stopping dolt sql-server", "error", err)
 			}
-		}
-		if user := os.Getenv("BEADS_DOLT_SERVER_USER"); user != "" {
-			opts.ServerUser = user
-		}
-		opts.ServerPass = os.Getenv("BEADS_DOLT_SERVER_PASS")
-		log.Info("server mode enabled", "host", opts.ServerHost, "port", opts.ServerPort)
+		}()
+
+		log.Info("dolt sql-server started",
+			"sql_port", doltServer.SQLPort(),
+			"remotesapi_port", doltServer.RemotesAPIPort())
+
+		// Configure factory to use server mode
+		factoryOpts.ServerMode = true
+		factoryOpts.ServerHost = doltServer.Host()
+		factoryOpts.ServerPort = doltServer.SQLPort()
 	}
 
-	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, opts)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factoryOpts)
 	if err != nil {
 		log.Error("cannot open database", "error", err)
 		return // Use return instead of os.Exit to allow defers to run
@@ -446,8 +482,10 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
 		sqliteStore.EnableFreshnessChecking()
 		log.Info("database opened", "path", store.Path(), "backend", "sqlite", "freshness_checking", true)
+	} else if federation {
+		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "federation/server")
 	} else {
-		log.Info("database opened", "path", store.Path(), "backend", "dolt", "idle_timeout", "30s")
+		log.Info("database opened", "path", store.Path(), "backend", "dolt", "mode", "embedded")
 	}
 
 	// Auto-upgrade .beads/.gitignore if outdated
@@ -580,17 +618,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Check if using Dolt backend (doesn't require JSONL for event-driven mode)
-	// Use the DoltSyncer interface check from daemon_sync.go (bd-z6d.2)
-	isDoltBackend := IsDoltSyncer(store)
-
-	// Create sync function based on mode and backend type
+	// Create sync function based on mode
 	var doSync func()
-	if isDoltBackend && !localMode {
-		// Dolt backend: use native Dolt sync (commit → pull → push)
-		doSync = createDoltSyncFunc(ctx, store, autoCommit, autoPush, log)
-		log.Info("using Dolt native sync (bypassing JSONL)")
-	} else if localMode {
+	if localMode {
 		doSync = createLocalSyncFunc(ctx, store, log)
 	} else {
 		doSync = createSyncFunc(ctx, store, autoCommit, autoPush, log)
@@ -601,26 +631,19 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	parentPID := computeDaemonParentPID()
 	log.Info("monitoring parent process", "pid", parentPID)
 
+	// daemonMode already determined above for SetConfig
 	switch daemonMode {
 	case "events":
 		log.Info("using event-driven mode")
 		jsonlPath := findJSONLPath()
-		if jsonlPath == "" && !isDoltBackend {
-			// SQLite backend requires JSONL for event-driven mode (file watching)
+		if jsonlPath == "" {
 			log.Error("JSONL path not found, cannot use event-driven mode")
 			log.Info("falling back to polling mode")
 			runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 		} else {
 			// Event-driven mode uses separate export-only and import-only functions
-			// For Dolt, jsonlPath may be empty - that's OK, we use RPC mutation events
-			// and Dolt's native change tracking instead of JSONL file watching. (bd-dli)
 			var doExport, doAutoImport func()
-			if isDoltBackend && !localMode {
-				// Dolt backend: use native Dolt commit/push/pull (bd-z6d.2)
-				log.Info("Dolt backend detected, using native Dolt sync (no JSONL)")
-				doExport = createDoltExportFunc(ctx, store, autoCommit, autoPush, log)
-				doAutoImport = createDoltAutoImportFunc(ctx, store, log)
-			} else if localMode {
+			if localMode {
 				doExport = createLocalExportFunc(ctx, store, log)
 				doAutoImport = createLocalAutoImportFunc(ctx, store, log)
 			} else {
@@ -665,6 +688,7 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 //   - If either BEADS_AUTO_COMMIT/daemon.auto_commit or BEADS_AUTO_PUSH/daemon.auto_push
 //     is enabled, treat as auto-sync=true (full read/write)
 //   - Otherwise check auto-pull for read-only mode
+//
 // 4. Fallback: all default to true when sync-branch configured
 //
 // Note: The individual auto-commit/auto-push settings are deprecated.

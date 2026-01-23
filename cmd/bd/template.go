@@ -26,13 +26,12 @@ var variablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 
 // TemplateSubgraph holds a template epic and all its descendants
 type TemplateSubgraph struct {
-	Root           *types.Issue                // The template epic
-	Issues         []*types.Issue              // All issues in the subgraph (including root)
-	Dependencies   []*types.Dependency         // All dependencies within the subgraph
-	IssueMap       map[string]*types.Issue     // ID -> Issue for quick lookup
-	VarDefs        map[string]formula.VarDef   // Variable definitions from formula (for defaults)
-	Phase          string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
-	DecisionPoints []*types.DecisionPoint      // Decision point templates (IssueID is template ID)
+	Root         *types.Issue                // The template epic
+	Issues       []*types.Issue              // All issues in the subgraph (including root)
+	Dependencies []*types.Dependency         // All dependencies within the subgraph
+	IssueMap     map[string]*types.Issue     // ID -> Issue for quick lookup
+	VarDefs      map[string]formula.VarDef   // Variable definitions from formula (for defaults)
+	Phase        string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
 }
 
 // InstantiateResult holds the result of template instantiation
@@ -760,12 +759,6 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 		}
 	}
 
-	// TODO(hq-946577.19): Add RPC support for decision point creation via daemon
-	// For now, decision points are only supported via direct DB access (use --no-daemon)
-	if len(subgraph.DecisionPoints) > 0 {
-		return nil, fmt.Errorf("decision points not yet supported via daemon; use --no-daemon flag")
-	}
-
 	return &InstantiateResult{
 		NewEpicID: idMapping[subgraph.Root.ID],
 		IDMapping: idMapping,
@@ -1009,28 +1002,6 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 			}
 			if err := tx.AddDependency(ctx, newDep, opts.Actor); err != nil {
 				return fmt.Errorf("failed to create dependency: %w", err)
-			}
-		}
-
-		// Third pass: create decision points with new IDs (hq-946577.19)
-		for _, dp := range subgraph.DecisionPoints {
-			newIssueID, ok := idMapping[dp.IssueID]
-			if !ok {
-				continue // Skip if decision issue is outside the subgraph
-			}
-
-			// Clone the decision point with the new issue ID
-			newDP := &types.DecisionPoint{
-				IssueID:       newIssueID,
-				Prompt:        substituteVariables(dp.Prompt, opts.Vars),
-				Options:       dp.Options, // Options are pre-serialized JSON
-				DefaultOption: dp.DefaultOption,
-				Iteration:     1, // Fresh start
-				MaxIterations: dp.MaxIterations,
-				CreatedAt:     time.Now(),
-			}
-			if err := tx.CreateDecisionPoint(ctx, newDP); err != nil {
-				return fmt.Errorf("failed to create decision point for %s: %w", newIssueID, err)
 			}
 		}
 

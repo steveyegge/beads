@@ -1087,8 +1087,9 @@ func (m *MemoryStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		} else {
 			// Exclude workflow types from ready work by default
 			// These are internal workflow items, not work for polecats to claim
+			// (Gas Town types - not built into beads core)
 			switch issue.IssueType {
-			case types.TypeMergeRequest, types.TypeGate, types.TypeMolecule, types.TypeMessage:
+			case "merge-request", "gate", "molecule", "message":
 				continue
 			}
 		}
@@ -1451,6 +1452,24 @@ func (m *MemoryStorage) AddIssueComment(ctx context.Context, issueID, author, te
 		Author:    author,
 		Text:      text,
 		CreatedAt: time.Now(),
+	}
+
+	m.comments[issueID] = append(m.comments[issueID], comment)
+	m.dirty[issueID] = true
+
+	return comment, nil
+}
+
+func (m *MemoryStorage) ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	comment := &types.Comment{
+		ID:        int64(len(m.comments[issueID]) + 1),
+		IssueID:   issueID,
+		Author:    author,
+		Text:      text,
+		CreatedAt: createdAt,
 	}
 
 	m.comments[issueID] = append(m.comments[issueID], comment)

@@ -73,18 +73,6 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,
-    -- Decision point fields
-    decision_prompt TEXT DEFAULT '',
-    decision_options TEXT DEFAULT '',
-    decision_default VARCHAR(255) DEFAULT '',
-    decision_selected VARCHAR(255) DEFAULT '',
-    decision_text TEXT DEFAULT '',
-    decision_responded_at DATETIME,
-    decision_responded_by VARCHAR(255) DEFAULT '',
-    decision_iteration INT DEFAULT 1,
-    decision_max_iterations INT DEFAULT 3,
-    decision_prior_id VARCHAR(255) DEFAULT '',
-    decision_guidance TEXT DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
@@ -106,9 +94,8 @@ CREATE TABLE IF NOT EXISTS dependencies (
     INDEX idx_dependencies_depends_on (depends_on_id),
     INDEX idx_dependencies_depends_on_type (depends_on_id, type),
     INDEX idx_dependencies_thread (thread_id),
-    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-    -- NOTE: No FK on depends_on_id to allow external references (external:<project>:<capability>)
-    -- See SQLite migration 025_remove_depends_on_fk.go and bd-3q6.6-1
+    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
+    CONSTRAINT fk_dep_depends_on FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
 -- Labels table
@@ -217,25 +204,49 @@ CREATE TABLE IF NOT EXISTS repo_mtimes (
     INDEX idx_repo_mtimes_checked (last_checked)
 );
 
--- Decision points table (human-in-the-loop choices)
-CREATE TABLE IF NOT EXISTS decision_points (
-    issue_id VARCHAR(255) PRIMARY KEY,
-    prompt TEXT NOT NULL,
-    options TEXT NOT NULL,
-    default_option VARCHAR(255),
-    selected_option VARCHAR(255),
-    response_text TEXT,
-    responded_at DATETIME,
-    responded_by VARCHAR(255),
-    iteration INT NOT NULL DEFAULT 1,
-    max_iterations INT NOT NULL DEFAULT 3,
-    prior_id VARCHAR(255),
-    guidance TEXT,
-    reminder_count INT NOT NULL DEFAULT 0,
+-- Routes table (prefix-to-path routing configuration)
+CREATE TABLE IF NOT EXISTS routes (
+    prefix VARCHAR(32) PRIMARY KEY,
+    path VARCHAR(512) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_decision_points_prior (prior_id),
-    CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
-    CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Interactions table (agent audit log)
+CREATE TABLE IF NOT EXISTS interactions (
+    id VARCHAR(32) PRIMARY KEY,
+    kind VARCHAR(64) NOT NULL,
+    created_at DATETIME NOT NULL,
+    actor VARCHAR(255),
+    issue_id VARCHAR(255),
+    model VARCHAR(255),
+    prompt TEXT,
+    response TEXT,
+    error TEXT,
+    tool_name VARCHAR(255),
+    exit_code INT,
+    parent_id VARCHAR(32),
+    label VARCHAR(64),
+    reason TEXT,
+    extra JSON,
+    INDEX idx_interactions_kind (kind),
+    INDEX idx_interactions_created_at (created_at),
+    INDEX idx_interactions_issue_id (issue_id),
+    INDEX idx_interactions_parent_id (parent_id)
+);
+
+-- Federation peers table (for SQL user authentication)
+-- Stores credentials for peer-to-peer Dolt remotes between Gas Towns
+CREATE TABLE IF NOT EXISTS federation_peers (
+    name VARCHAR(255) PRIMARY KEY,
+    remote_url VARCHAR(1024) NOT NULL,
+    username VARCHAR(255),
+    password_encrypted BLOB,
+    sovereignty VARCHAR(8) DEFAULT '',
+    last_sync DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_federation_peers_sovereignty (sovereignty)
 );
 `
 

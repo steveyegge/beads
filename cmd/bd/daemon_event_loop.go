@@ -44,54 +44,33 @@ func runEventDrivenLoop(
 	signal.Notify(sigChan, daemonSignals...)
 	defer signal.Stop(sigChan)
 
-	// Check if using Dolt backend (no JSONL file watching needed)
-	isDoltBackend := IsDoltSyncer(store)
-
 	// Debounced sync actions
 	exportDebouncer := NewDebouncer(500*time.Millisecond, func() {
-		if isDoltBackend {
-			log.log("Dolt commit triggered by mutation events")
-		} else {
-			log.log("Export triggered by mutation events")
-		}
+		log.log("Export triggered by mutation events")
 		doExport()
 	})
 	defer exportDebouncer.Cancel()
 
-	// Import debouncer only needed for SQLite (file watching)
-	// Dolt uses periodic remote sync via remoteSyncTicker instead
-	var importDebouncer *Debouncer
-	if !isDoltBackend {
-		importDebouncer = NewDebouncer(500*time.Millisecond, func() {
-			log.log("Import triggered by file change")
-			doAutoImport()
-		})
-		defer importDebouncer.Cancel()
-	}
+	importDebouncer := NewDebouncer(500*time.Millisecond, func() {
+		log.log("Import triggered by file change")
+		doAutoImport()
+	})
+	defer importDebouncer.Cancel()
 
-	// Start file watcher for JSONL changes (SQLite backend only)
-	// Dolt doesn't need file watching - it uses RPC mutation events and periodic sync
-	var watcher *FileWatcher
+	// Start file watcher for JSONL changes
+	watcher, err := NewFileWatcher(jsonlPath, func() {
+		importDebouncer.Trigger()
+	})
 	var fallbackTicker *time.Ticker
-	if !isDoltBackend {
-		var err error
-		watcher, err = NewFileWatcher(jsonlPath, func() {
-			if importDebouncer != nil {
-				importDebouncer.Trigger()
-			}
-		})
-		if err != nil {
-			log.log("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
-			watcher = nil
-			// Fallback ticker to check for remote changes when watcher unavailable
-			fallbackTicker = time.NewTicker(60 * time.Second)
-			defer fallbackTicker.Stop()
-		} else {
-			watcher.Start(ctx, log)
-			defer func() { _ = watcher.Close() }()
-		}
+	if err != nil {
+		log.log("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
+		watcher = nil
+		// Fallback ticker to check for remote changes when watcher unavailable
+		fallbackTicker = time.NewTicker(60 * time.Second)
+		defer fallbackTicker.Stop()
 	} else {
-		log.log("Dolt backend detected: using RPC mutation events (no JSONL file watching)")
+		watcher.Start(ctx, log)
+		defer func() { _ = watcher.Close() }()
 	}
 
 	// Handle mutation events from RPC server
@@ -151,11 +130,7 @@ func runEventDrivenLoop(
 			// Check for dropped mutation events every second
 			dropped := server.ResetDroppedEventsCount()
 			if dropped > 0 {
-				if isDoltBackend {
-					log.log("WARNING: %d mutation events were dropped, triggering Dolt commit", dropped)
-				} else {
-					log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
-				}
+				log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
 				exportDebouncer.Trigger()
 			}
 
@@ -173,11 +148,7 @@ func runEventDrivenLoop(
 			// Periodic remote sync to pull updates from other clones
 			// This ensures the daemon sees changes pushed by other clones
 			// even when the local file watcher doesn't trigger
-			if isDoltBackend {
-				log.log("Periodic Dolt pull: checking for remote updates")
-			} else {
-				log.log("Periodic remote sync: checking for updates")
-			}
+			log.log("Periodic remote sync: checking for updates")
 			doAutoImport()
 
 		case <-parentCheckTicker.C:
@@ -195,13 +166,11 @@ func runEventDrivenLoop(
 			if fallbackTicker != nil {
 				return fallbackTicker.C
 			}
-			// Never fire if watcher is available (or Dolt backend)
+			// Never fire if watcher is available
 			return make(chan time.Time)
 		}():
 			log.log("Fallback ticker: checking for remote changes")
-			if importDebouncer != nil {
-				importDebouncer.Trigger()
-			}
+			importDebouncer.Trigger()
 
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {

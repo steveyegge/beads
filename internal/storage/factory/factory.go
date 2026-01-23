@@ -4,10 +4,8 @@ package factory
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -28,16 +26,11 @@ func RegisterBackend(name string, factory BackendFactory) {
 type Options struct {
 	ReadOnly    bool
 	LockTimeout time.Duration
-	IdleTimeout time.Duration // For Dolt: release lock after this idle period (0 = disabled)
 
-	// Server mode options for Dolt (bd-f4f78a)
-	// When ServerMode is true, connect to a running dolt sql-server instead of embedded mode.
-	// This allows multiple concurrent clients without lock contention.
-	ServerMode bool
+	// Dolt server mode options (federation)
+	ServerMode bool   // Connect to dolt sql-server instead of embedded
 	ServerHost string // Server host (default: 127.0.0.1)
 	ServerPort int    // Server port (default: 3306)
-	ServerUser string // MySQL user (default: root)
-	ServerPass string // MySQL password (default: empty)
 }
 
 // New creates a storage backend based on the backend type.
@@ -80,8 +73,7 @@ func NewFromConfig(ctx context.Context, beadsDir string) (storage.Storage, error
 	return NewFromConfigWithOptions(ctx, beadsDir, Options{})
 }
 
-// NewFromConfigWithOptions creates a storage backend with options from configuration.
-// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
+// NewFromConfigWithOptions creates a storage backend with options from metadata.json.
 func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options) (storage.Storage, error) {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil {
@@ -91,32 +83,19 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 		cfg = configfile.DefaultConfig()
 	}
 
-	// Use GetBackendFromConfig which checks config.yaml first, then metadata.json
-	backend := GetBackendFromConfig(beadsDir)
+	backend := cfg.GetBackend()
 	switch backend {
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
-		// For Dolt, use a subdirectory to store the Dolt database
-		doltPath := filepath.Join(beadsDir, "dolt")
-		return NewWithOptions(ctx, backend, doltPath, opts)
+		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	default:
 		return nil, fmt.Errorf("unknown storage backend in config: %s", backend)
 	}
 }
 
-// GetBackendFromConfig returns the backend type from configuration.
-// It checks config.yaml first (storage-backend key), then falls back to metadata.json.
-// This allows users to set storage-backend in config.yaml for team-wide configuration.
+// GetBackendFromConfig returns the backend type from metadata.json
 func GetBackendFromConfig(beadsDir string) string {
-	// Check config.yaml first (team-shared configuration)
-	if yamlBackend := config.GetYamlConfig("storage-backend"); yamlBackend != "" {
-		if yamlBackend == configfile.BackendDolt || yamlBackend == configfile.BackendSQLite {
-			return yamlBackend
-		}
-	}
-
-	// Fall back to metadata.json (legacy/local configuration)
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
 		return configfile.BackendSQLite
