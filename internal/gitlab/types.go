@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // API configuration constants.
@@ -196,10 +198,23 @@ type Conflict struct {
 
 // IssueConversion holds the result of converting a GitLab issue to Beads.
 // It includes the issue and any dependencies that should be created.
-// Note: This type is defined in types.go but populated by mapping.go which imports internal/types.
+// Note: Issue is interface{} for backwards compatibility, but GetIssue()
+// provides type-safe access to the underlying *types.Issue.
 type IssueConversion struct {
 	Issue        interface{} // *types.Issue when populated by mapping.go
 	Dependencies []DependencyInfo
+}
+
+// GetIssue returns the Issue field as *types.Issue for type-safe access.
+// Returns nil if Issue is nil or not a *types.Issue.
+func (c *IssueConversion) GetIssue() *types.Issue {
+	if c == nil || c.Issue == nil {
+		return nil
+	}
+	if issue, ok := c.Issue.(*types.Issue); ok {
+		return issue
+	}
+	return nil
 }
 
 // DependencyInfo represents a dependency to be created after issue import.
@@ -239,8 +254,10 @@ func ParseLabelPrefix(label string) (prefix, value string) {
 	return "", label
 }
 
-// Priority label values and their beads priority mapping.
-var priorityMapping = map[string]int{
+// PriorityMapping maps priority label values to beads priority (0-4).
+// This is the single source of truth for priority mappings.
+// Exported so DefaultMappingConfig in mapping.go can use it.
+var PriorityMapping = map[string]int{
 	"critical": 0, // P0
 	"high":     1, // P1
 	"medium":   2, // P2
@@ -248,8 +265,10 @@ var priorityMapping = map[string]int{
 	"none":     4, // P4
 }
 
-// Status label values and their beads status mapping.
-var statusMapping = map[string]string{
+// StatusMapping maps status label values to beads status strings.
+// This is the single source of truth for status mappings.
+// Exported so DefaultMappingConfig in mapping.go can use it.
+var StatusMapping = map[string]string{
 	"open":        "open",
 	"in_progress": "in_progress",
 	"blocked":     "blocked",
@@ -257,8 +276,10 @@ var statusMapping = map[string]string{
 	"closed":      "closed",
 }
 
-// Type label values and their beads issue type mapping.
-var typeMapping = map[string]string{
+// TypeMapping maps type label values to beads issue type strings.
+// This is the single source of truth for type mappings.
+// Exported so DefaultMappingConfig in mapping.go can use it.
+var TypeMapping = map[string]string{
 	"bug":         "bug",
 	"feature":     "feature",
 	"task":        "task",
@@ -270,7 +291,7 @@ var typeMapping = map[string]string{
 // GetPriorityFromLabel returns the beads priority for a priority label value.
 // Returns -1 if the value is not recognized.
 func GetPriorityFromLabel(value string) int {
-	if p, ok := priorityMapping[strings.ToLower(value)]; ok {
+	if p, ok := PriorityMapping[strings.ToLower(value)]; ok {
 		return p
 	}
 	return -1
@@ -279,11 +300,11 @@ func GetPriorityFromLabel(value string) int {
 // GetStatusFromLabel returns the beads status for a status label value.
 // Returns empty string if the value is not recognized.
 func GetStatusFromLabel(value string) string {
-	return statusMapping[strings.ToLower(value)]
+	return StatusMapping[strings.ToLower(value)]
 }
 
 // GetTypeFromLabel returns the beads issue type for a type label value.
 // Returns empty string if the value is not recognized.
 func GetTypeFromLabel(value string) string {
-	return typeMapping[strings.ToLower(value)]
+	return TypeMapping[strings.ToLower(value)]
 }

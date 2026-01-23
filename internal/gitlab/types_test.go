@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestIssueJSONUnmarshal verifies that GitLab API JSON responses
@@ -342,5 +344,47 @@ func TestGetTypeFromLabel(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("GetTypeFromLabel(%q) = %q, want %q", tt.value, got, tt.want)
 		}
+	}
+}
+
+// TestIssueConversionGetIssue verifies the GetIssue helper method on IssueConversion.
+// This tests the type safety improvement where IssueConversion.Issue is interface{}
+// but GetIssue() provides type-safe access to the *types.Issue.
+func TestIssueConversionGetIssue(t *testing.T) {
+	// Test with valid *types.Issue
+	conversion := &IssueConversion{
+		Issue: &types.Issue{
+			Title:       "Test issue",
+			Description: "Test description",
+		},
+		Dependencies: []DependencyInfo{},
+	}
+
+	issue := conversion.GetIssue()
+	if issue == nil {
+		t.Fatal("GetIssue() returned nil, want *types.Issue")
+	}
+	if issue.Title != "Test issue" {
+		t.Errorf("GetIssue().Title = %q, want %q", issue.Title, "Test issue")
+	}
+
+	// Test with nil Issue
+	conversionNil := &IssueConversion{
+		Issue:        nil,
+		Dependencies: []DependencyInfo{},
+	}
+	issueNil := conversionNil.GetIssue()
+	if issueNil != nil {
+		t.Errorf("GetIssue() with nil Issue = %v, want nil", issueNil)
+	}
+
+	// Test with wrong type (should return nil safely)
+	conversionWrongType := &IssueConversion{
+		Issue:        "not a types.Issue",
+		Dependencies: []DependencyInfo{},
+	}
+	issueWrongType := conversionWrongType.GetIssue()
+	if issueWrongType != nil {
+		t.Errorf("GetIssue() with wrong type = %v, want nil", issueWrongType)
 	}
 }

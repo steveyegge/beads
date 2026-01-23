@@ -575,3 +575,49 @@ func TestIssueLinksToDependencies_NilIssues(t *testing.T) {
 		t.Errorf("deps[0].ToGitLabIID = %d, want 0 (nil target)", deps[0].ToGitLabIID)
 	}
 }
+
+// TestMappingConfigUsesTypesConstants verifies that DefaultMappingConfig uses
+// the exported mapping constants from types.go, ensuring single source of truth.
+// This prevents duplicate definitions between types.go and mapping.go.
+func TestMappingConfigUsesTypesConstants(t *testing.T) {
+	config := DefaultMappingConfig()
+
+	// Priority mappings should match types.go PriorityMapping
+	if p := config.PriorityMap["critical"]; p != PriorityMapping["critical"] {
+		t.Errorf("PriorityMap[critical] = %d, want %d (from PriorityMapping)", p, PriorityMapping["critical"])
+	}
+	if p := config.PriorityMap["high"]; p != PriorityMapping["high"] {
+		t.Errorf("PriorityMap[high] = %d, want %d (from PriorityMapping)", p, PriorityMapping["high"])
+	}
+	if p := config.PriorityMap["medium"]; p != PriorityMapping["medium"] {
+		t.Errorf("PriorityMap[medium] = %d, want %d (from PriorityMapping)", p, PriorityMapping["medium"])
+	}
+	if p := config.PriorityMap["low"]; p != PriorityMapping["low"] {
+		t.Errorf("PriorityMap[low] = %d, want %d (from PriorityMapping)", p, PriorityMapping["low"])
+	}
+	if p := config.PriorityMap["none"]; p != PriorityMapping["none"] {
+		t.Errorf("PriorityMap[none] = %d, want %d (from PriorityMapping)", p, PriorityMapping["none"])
+	}
+
+	// Status mappings should match types.go StatusMapping
+	if s := config.StateMap["opened"]; s != StatusMapping["open"] {
+		t.Errorf("StateMap[opened] = %q, want %q (from StatusMapping)", s, StatusMapping["open"])
+	}
+	if s := config.StateMap["closed"]; s != StatusMapping["closed"] {
+		t.Errorf("StateMap[closed] = %q, want %q (from StatusMapping)", s, StatusMapping["closed"])
+	}
+
+	// Type mappings should match types.go TypeMapping
+	if typ := config.LabelTypeMap["bug"]; typ != TypeMapping["bug"] {
+		t.Errorf("LabelTypeMap[bug] = %q, want %q (from TypeMapping)", typ, TypeMapping["bug"])
+	}
+	if typ := config.LabelTypeMap["feature"]; typ != TypeMapping["feature"] {
+		t.Errorf("LabelTypeMap[feature] = %q, want %q (from TypeMapping)", typ, TypeMapping["feature"])
+	}
+	if typ := config.LabelTypeMap["task"]; typ != TypeMapping["task"] {
+		t.Errorf("LabelTypeMap[task] = %q, want %q (from TypeMapping)", typ, TypeMapping["task"])
+	}
+	if typ := config.LabelTypeMap["enhancement"]; typ != TypeMapping["enhancement"] {
+		t.Errorf("LabelTypeMap[enhancement] = %q, want %q (from TypeMapping)", typ, TypeMapping["enhancement"])
+	}
+}
