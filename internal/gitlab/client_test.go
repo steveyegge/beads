@@ -366,3 +366,145 @@ func TestErrorHandling(t *testing.T) {
 		t.Errorf("error = %v, want to contain '401'", err)
 	}
 }
+
+// TestProjectIDURLEncoding verifies path-based project IDs are URL-encoded.
+func TestProjectIDURLEncoding(t *testing.T) {
+	// Test URL construction directly (HTTP server decodes paths automatically)
+	client := NewClient("token", "https://gitlab.example.com", "group/subgroup/project")
+
+	// Build URL and verify encoding
+	url := client.buildURL("/projects/"+client.projectPath()+"/issues", nil)
+
+	// URL should contain encoded slashes: group%2Fsubgroup%2Fproject
+	if !strings.Contains(url, "group%2Fsubgroup%2Fproject") {
+		t.Errorf("buildURL = %s, want to contain URL-encoded project ID 'group%%2Fsubgroup%%2Fproject'", url)
+	}
+
+	// Also verify it works with a mock server (server receives decoded path, but request succeeds)
+	var serverReceived bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverReceived = true
+		// Server receives decoded path - this is expected HTTP behavior
+		if !strings.Contains(r.URL.Path, "group/subgroup/project") {
+			t.Errorf("Server path = %s, want to contain decoded 'group/subgroup/project'", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Issue{})
+	}))
+	defer server.Close()
+
+	client = NewClient("token", server.URL, "group/subgroup/project")
+	ctx := context.Background()
+
+	_, err := client.FetchIssues(ctx, "all")
+	if err != nil {
+		t.Fatalf("FetchIssues() error = %v", err)
+	}
+	if !serverReceived {
+		t.Error("Server did not receive request")
+	}
+}
+
+// TestWithEndpoint verifies the builder pattern for custom API endpoint.
+func TestWithEndpoint(t *testing.T) {
+	client := NewClient("token", "https://gitlab.example.com", "123").
+		WithEndpoint("https://custom.gitlab.com/api/v4")
+
+	if client.BaseURL != "https://custom.gitlab.com/api/v4" {
+		t.Errorf("BaseURL = %q, want %q", client.BaseURL, "https://custom.gitlab.com/api/v4")
+	}
+	// Original values preserved
+	if client.Token != "token" {
+		t.Errorf("Token = %q, want %q", client.Token, "token")
+	}
+	if client.ProjectID != "123" {
+		t.Errorf("ProjectID = %q, want %q", client.ProjectID, "123")
+	}
+}
+
+// TestFetchIssueByIID verifies fetching a single issue by its project-scoped IID.
+func TestFetchIssueByIID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify request path includes specific issue IID
+		if !strings.Contains(r.URL.Path, "/issues/42") {
+			t.Errorf("URL path = %s, want to contain /issues/42", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Issue{
+			ID:    100,
+			IID:   42,
+			Title: "Single issue",
+			State: "opened",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("token", server.URL, "123")
+	ctx := context.Background()
+
+	issue, err := client.FetchIssueByIID(ctx, 42)
+	if err != nil {
+		t.Fatalf("FetchIssueByIID() error = %v", err)
+	}
+
+	if issue.IID != 42 {
+		t.Errorf("issue.IID = %d, want 42", issue.IID)
+	}
+	if issue.Title != "Single issue" {
+		t.Errorf("issue.Title = %q, want %q", issue.Title, "Single issue")
+	}
+}
+
+// TestCreateIssueLink verifies creating a link between two issues.
+func TestCreateIssueLink(t *testing.T) {
+	var capturedPath string
+	var capturedBody map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		if r.Method != http.MethodPost {
+			t.Errorf("Method = %s, want POST", r.Method)
+		}
+
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(IssueLink{
+			SourceIssue: &Issue{IID: 42},
+			TargetIssue: &Issue{IID: 43},
+			LinkType:    "blocks",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("token", server.URL, "123")
+	ctx := context.Background()
+
+	link, err := client.CreateIssueLink(ctx, 42, 43, "blocks")
+	if err != nil {
+		t.Fatalf("CreateIssueLink() error = %v", err)
+	}
+
+	// Verify URL path
+	if !strings.Contains(capturedPath, "/issues/42/links") {
+		t.Errorf("URL path = %s, want to contain /issues/42/links", capturedPath)
+	}
+
+	// Verify request body
+	if capturedBody["target_project_id"] != "123" {
+		t.Errorf("target_project_id = %v, want %q", capturedBody["target_project_id"], "123")
+	}
+	if int(capturedBody["target_issue_iid"].(float64)) != 43 {
+		t.Errorf("target_issue_iid = %v, want 43", capturedBody["target_issue_iid"])
+	}
+	if capturedBody["link_type"] != "blocks" {
+		t.Errorf("link_type = %v, want %q", capturedBody["link_type"], "blocks")
+	}
+
+	// Verify response
+	if link.LinkType != "blocks" {
+		t.Errorf("link.LinkType = %q, want %q", link.LinkType, "blocks")
+	}
+}
