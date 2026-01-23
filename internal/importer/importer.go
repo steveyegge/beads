@@ -515,6 +515,84 @@ func handleRename(ctx context.Context, s storage.Storage, existing *types.Issue,
 	return oldID, nil
 }
 
+// handleRenameTx is the transaction-aware version of handleRename.
+// It operates within an existing transaction instead of starting new ones.
+func handleRenameTx(ctx context.Context, tx storage.Transaction, existing *types.Issue, incoming *types.Issue) (string, error) {
+	// Check if target ID already exists with the same content (race condition)
+	// This can happen when multiple clones import the same rename simultaneously
+	targetIssue, err := tx.GetIssue(ctx, incoming.ID)
+	if err == nil && targetIssue != nil {
+		// Target ID exists - check if it has the same content
+		if targetIssue.ComputeContentHash() == incoming.ComputeContentHash() {
+			// Same content - check if old ID still exists and delete it
+			deletedID := ""
+			existingCheck, checkErr := tx.GetIssue(ctx, existing.ID)
+			if checkErr == nil && existingCheck != nil {
+				if err := tx.DeleteIssue(ctx, existing.ID); err != nil {
+					return "", fmt.Errorf("failed to delete old ID %s: %w", existing.ID, err)
+				}
+				deletedID = existing.ID
+			}
+			// The rename is already complete in the database
+			return deletedID, nil
+		}
+		// With hash IDs, same content should produce same ID. If we find same content
+		// with different IDs, treat it as an update to the existing ID (not a rename).
+		// This handles edge cases like test data, legacy data, or data corruption.
+		// Keep the existing ID and update fields if incoming has newer timestamp.
+		if incoming.UpdatedAt.After(existing.UpdatedAt) {
+			// Update existing issue with incoming's fields
+			updates := map[string]interface{}{
+				"title":               incoming.Title,
+				"description":         incoming.Description,
+				"design":              incoming.Design,
+				"acceptance_criteria": incoming.AcceptanceCriteria,
+				"notes":               incoming.Notes,
+				"external_ref":        incoming.ExternalRef,
+				"status":              incoming.Status,
+				"priority":            incoming.Priority,
+				"issue_type":          incoming.IssueType,
+				"assignee":            incoming.Assignee,
+			}
+			if err := tx.UpdateIssue(ctx, existing.ID, updates, "importer"); err != nil {
+				return "", fmt.Errorf("failed to update issue %s: %w", existing.ID, err)
+			}
+		}
+		return "", nil
+	}
+
+	// Check if old ID still exists (it might have been deleted by another clone)
+	existingCheck, checkErr := tx.GetIssue(ctx, existing.ID)
+	if checkErr != nil || existingCheck == nil {
+		// Old ID doesn't exist - the rename must have been completed by another clone
+		// Verify that target exists with correct content
+		targetCheck, targetErr := tx.GetIssue(ctx, incoming.ID)
+		if targetErr == nil && targetCheck != nil && targetCheck.ComputeContentHash() == incoming.ComputeContentHash() {
+			return "", nil
+		}
+		return "", fmt.Errorf("old ID %s doesn't exist and target ID %s is not as expected", existing.ID, incoming.ID)
+	}
+
+	// Delete old ID
+	oldID := existing.ID
+	if err := tx.DeleteIssue(ctx, oldID); err != nil {
+		return "", fmt.Errorf("failed to delete old ID %s: %w", oldID, err)
+	}
+
+	// Create with new ID
+	if err := tx.CreateIssue(ctx, incoming, "import-rename"); err != nil {
+		// Another writer may have created the target concurrently. If the target now exists
+		// with the same content, treat the rename as already complete.
+		targetIssue, getErr := tx.GetIssue(ctx, incoming.ID)
+		if getErr == nil && targetIssue != nil && targetIssue.ComputeContentHash() == incoming.ComputeContentHash() {
+			return oldID, nil
+		}
+		return "", fmt.Errorf("failed to create renamed issue %s: %w", incoming.ID, err)
+	}
+
+	return oldID, nil
+}
+
 // upsertIssues creates new issues or updates existing ones using content-first matching
 func upsertIssues(ctx context.Context, store storage.Storage, issues []*types.Issue, opts Options, result *Result) error {
 	// Get all DB issues once - include tombstones to prevent UNIQUE constraint violations
@@ -976,7 +1054,7 @@ func upsertIssuesTx(ctx context.Context, tx storage.Transaction, store storage.S
 				if existingPrefix != incomingPrefix {
 					result.Skipped++
 				} else if !opts.SkipUpdate {
-					deletedID, err := handleRename(ctx, store, existing, incoming)
+					deletedID, err := handleRenameTx(ctx, tx, existing, incoming)
 					if err != nil {
 						return fmt.Errorf("failed to handle rename %s -> %s: %w", existing.ID, incoming.ID, err)
 					}
