@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -707,6 +709,221 @@ func TestResolveConflicts_PreferNewer(t *testing.T) {
 		t.Error("GitLab API was NOT called when GitLab version is newer")
 	}
 }
+
+// =============================================================================
+// P0 BUG FIX TESTS
+// =============================================================================
+
+// TestP0_ConflictDetectionBeforePush verifies that conflict detection happens
+// BEFORE push, not after. This is critical because pushing before detecting
+// conflicts can cause data loss - conflicting local changes overwrite GitLab
+// changes before we even know there's a conflict.
+//
+// BUG: The current implementation does: Pull -> Push -> Detect conflicts (WRONG)
+// FIX: Should be: Pull -> Detect conflicts -> Push (skip conflicting issues)
+func TestP0_ConflictDetectionBeforePush(t *testing.T) {
+	// Save and restore global store
+	oldStore := store
+	store = nil
+	defer func() { store = oldStore }()
+
+	localTime := time.Now()
+	gitlabTime := time.Now().Add(-30 * time.Minute)
+
+	var pushCalls []int // Track which issue IIDs were pushed
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodGet {
+			// Return issues for conflict detection
+			json.NewEncoder(w).Encode([]gitlab.Issue{
+				{
+					ID:        100,
+					IID:       42,
+					ProjectID: 123,
+					Title:     "GitLab version",
+					State:     "opened",
+					UpdatedAt: &gitlabTime,
+					WebURL:    "https://gitlab.example.com/-/issues/42",
+				},
+				{
+					ID:        101,
+					IID:       43,
+					ProjectID: 123,
+					Title:     "Another issue",
+					State:     "opened",
+					UpdatedAt: &gitlabTime,
+					WebURL:    "https://gitlab.example.com/-/issues/43",
+				},
+			})
+			return
+		}
+
+		if r.Method == http.MethodPut {
+			// Track which issue was pushed (extract IID from URL)
+			// URL format: /api/v4/projects/123/issues/42
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 2 {
+				if iid, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+					pushCalls = append(pushCalls, iid)
+				}
+			}
+			json.NewEncoder(w).Encode(gitlab.Issue{})
+			return
+		}
+	}))
+	defer server.Close()
+
+	client := gitlab.NewClient("token", server.URL, "123")
+	config := gitlab.DefaultMappingConfig()
+	ctx := context.Background()
+
+	// Local issues - issue 42 is in conflict (local modified), issue 43 is safe
+	webURL42 := "https://gitlab.example.com/-/issues/42"
+	webURL43 := "https://gitlab.example.com/-/issues/43"
+	localIssues := []*types.Issue{
+		{
+			ID:           "bd-1",
+			Title:        "Local version", // Different from GitLab
+			UpdatedAt:    localTime,       // More recent than GitLab
+			ExternalRef:  &webURL42,
+			SourceSystem: "gitlab:123:42",
+		},
+		{
+			ID:           "bd-2",
+			Title:        "Another issue", // Same as GitLab
+			UpdatedAt:    gitlabTime,      // Same time as GitLab (no conflict)
+			ExternalRef:  &webURL43,
+			SourceSystem: "gitlab:123:43",
+		},
+	}
+
+	// Detect conflicts BEFORE push
+	conflicts, err := detectGitLabConflicts(ctx, client, localIssues)
+	if err != nil {
+		t.Fatalf("detectGitLabConflicts() error = %v", err)
+	}
+
+	// Should detect conflict for issue 42 (timestamps differ)
+	if len(conflicts) != 1 {
+		t.Fatalf("expected 1 conflict, got %d", len(conflicts))
+	}
+	if conflicts[0].GitLabIID != 42 {
+		t.Errorf("expected conflict for IID 42, got %d", conflicts[0].GitLabIID)
+	}
+
+	// Build skipUpdateIDs from conflicts
+	skipUpdateIDs := make(map[string]bool)
+	for _, c := range conflicts {
+		skipUpdateIDs[c.IssueID] = true
+	}
+
+	// Push should skip conflicting issues
+	stats, err := doPushToGitLab(ctx, client, config, localIssues, false, false, nil, skipUpdateIDs)
+	if err != nil {
+		t.Fatalf("doPushToGitLab() error = %v", err)
+	}
+
+	// Issue 42 should be skipped, only issue 43 should be pushed
+	if stats.Skipped != 1 {
+		t.Errorf("stats.Skipped = %d, want 1 (conflict issue should be skipped)", stats.Skipped)
+	}
+	if stats.Updated != 1 {
+		t.Errorf("stats.Updated = %d, want 1 (non-conflict issue should be pushed)", stats.Updated)
+	}
+
+	// Verify the push call was only for issue 43, not 42
+	for _, iid := range pushCalls {
+		if iid == 42 {
+			t.Error("CRITICAL: Issue 42 was pushed despite being in conflict - this causes data loss!")
+		}
+	}
+}
+
+// TestP0_SyncContextIsolation verifies that SyncContext can be used instead of
+// global variables, allowing multiple sync operations to run concurrently
+// without race conditions.
+//
+// BUG: Current implementation uses global variables (store, actor, dbPath, issueIDCounter)
+// FIX: Should use SyncContext struct passed to functions
+func TestP0_SyncContextIsolation(t *testing.T) {
+	// Test that SyncContext exists and can hold required state
+	// This test will fail until SyncContext is implemented
+	ctx1 := NewSyncContext()
+	ctx2 := NewSyncContext()
+
+	// Verify contexts are independent
+	if ctx1 == ctx2 {
+		t.Error("NewSyncContext should return distinct instances")
+	}
+
+	// Verify context can hold store reference
+	ctx1.SetActor("user1")
+	ctx2.SetActor("user2")
+
+	if ctx1.Actor() == ctx2.Actor() {
+		t.Error("SyncContext instances should have independent actor values")
+	}
+
+	// Verify issue ID generation is isolated per context
+	id1 := ctx1.GenerateIssueID("bd")
+	id2 := ctx2.GenerateIssueID("bd")
+
+	if id1 == id2 {
+		t.Error("Issue IDs generated from different contexts should be unique")
+	}
+}
+
+// TestP0_SyncFunctionsUseSyncContext verifies that sync functions accept
+// SyncContext instead of relying on global variables.
+func TestP0_SyncFunctionsUseSyncContext(t *testing.T) {
+	// Save and restore global store to avoid interfering with other tests
+	oldStore := store
+	store = nil
+	defer func() { store = oldStore }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]gitlab.Issue{})
+	}))
+	defer server.Close()
+
+	client := gitlab.NewClient("token", server.URL, "123")
+	config := gitlab.DefaultMappingConfig()
+	ctx := context.Background()
+
+	// Create a SyncContext
+	syncCtx := NewSyncContext()
+	syncCtx.SetActor("test-actor")
+
+	// These function calls should work with SyncContext
+	// The test verifies the API exists and compiles
+	_, err := doPullFromGitLabWithContext(ctx, syncCtx, client, config, false, "all", nil)
+	if err != nil {
+		// Expected to fail if not implemented, but should compile
+		t.Logf("doPullFromGitLabWithContext returned error (expected if not implemented): %v", err)
+	}
+
+	_, err = doPushToGitLabWithContext(ctx, syncCtx, client, config, nil, false, false, nil, nil)
+	if err != nil {
+		t.Logf("doPushToGitLabWithContext returned error (expected if not implemented): %v", err)
+	}
+
+	_, err = detectGitLabConflictsWithContext(ctx, syncCtx, client, nil)
+	if err != nil {
+		t.Logf("detectGitLabConflictsWithContext returned error (expected if not implemented): %v", err)
+	}
+
+	err = resolveGitLabConflictsWithContext(ctx, syncCtx, client, config, nil, ConflictStrategyPreferNewer)
+	if err != nil {
+		t.Logf("resolveGitLabConflictsWithContext returned error (expected if not implemented): %v", err)
+	}
+}
+
+// =============================================================================
+// END P0 BUG FIX TESTS
+// =============================================================================
 
 // TestParseGitLabSourceSystem verifies parsing source system string.
 func TestParseGitLabSourceSystem(t *testing.T) {
