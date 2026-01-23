@@ -1983,3 +1983,71 @@ func TestInit_WithoutBEADS_DIR_NoBehaviorChange(t *testing.T) {
 		t.Errorf("Expected prefix 'no-beadsdir', got %q", prefix)
 	}
 }
+
+// TestInit_BEADS_DB_OverridesBEADS_DIR verifies precedence: BEADS_DB > BEADS_DIR
+// This ensures that explicit database path env var takes precedence over directory env var.
+func TestInit_BEADS_DB_OverridesBEADS_DIR(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	beads.ResetCaches()
+	git.ResetCaches()
+
+	// Reset Cobra flags
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("backend", "")
+
+	// Create two target locations
+	beadsDirTarget := t.TempDir() // Where BEADS_DIR points (should be ignored)
+	beadsDBTarget := t.TempDir()  // Where BEADS_DB points (should be used)
+
+	beadsDirBeads := filepath.Join(beadsDirTarget, ".beads")
+	if err := os.MkdirAll(beadsDirBeads, 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	beadsDBPath := filepath.Join(beadsDBTarget, "override.db")
+
+	// Set both env vars - BEADS_DB should take precedence
+	t.Setenv("BEADS_DIR", beadsDirBeads)
+	t.Setenv("BEADS_DB", beadsDBPath)
+
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Run bd init
+	rootCmd.SetArgs([]string{"init", "--prefix", "precedence", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init with BEADS_DB + BEADS_DIR failed: %v", err)
+	}
+
+	// Verify database was created at BEADS_DB location (not BEADS_DIR)
+	if _, err := os.Stat(beadsDBPath); os.IsNotExist(err) {
+		t.Errorf("Database was NOT created at BEADS_DB path: %s", beadsDBPath)
+	}
+
+	// Verify database was NOT created at BEADS_DIR location
+	beadsDirDBPath := filepath.Join(beadsDirBeads, beads.CanonicalDatabaseName)
+	if _, err := os.Stat(beadsDirDBPath); err == nil {
+		t.Errorf("Database was incorrectly created at BEADS_DIR path: %s (BEADS_DB should override)", beadsDirDBPath)
+	}
+
+	// Verify the database has correct prefix
+	store, err := openExistingTestDB(t, beadsDBPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("Failed to get prefix from database: %v", err)
+	}
+	if prefix != "precedence" {
+		t.Errorf("Expected prefix 'precedence', got %q", prefix)
+	}
+}
