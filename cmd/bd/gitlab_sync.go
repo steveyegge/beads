@@ -16,6 +16,44 @@ import (
 // issueIDCounter is used to generate unique issue IDs.
 var issueIDCounter uint64
 
+// ConflictStrategy defines how to resolve conflicts between local and GitLab versions.
+type ConflictStrategy string
+
+const (
+	// ConflictStrategyPreferNewer uses the most recently updated version (default).
+	ConflictStrategyPreferNewer ConflictStrategy = "prefer-newer"
+	// ConflictStrategyPreferLocal always keeps the local beads version.
+	ConflictStrategyPreferLocal ConflictStrategy = "prefer-local"
+	// ConflictStrategyPreferGitLab always uses the GitLab version.
+	ConflictStrategyPreferGitLab ConflictStrategy = "prefer-gitlab"
+)
+
+// getConflictStrategy determines the conflict strategy from flag values.
+// Returns error if multiple conflicting flags are set.
+func getConflictStrategy(preferLocal, preferGitLab, preferNewer bool) (ConflictStrategy, error) {
+	flagsSet := 0
+	if preferLocal {
+		flagsSet++
+	}
+	if preferGitLab {
+		flagsSet++
+	}
+	if preferNewer {
+		flagsSet++
+	}
+	if flagsSet > 1 {
+		return "", fmt.Errorf("cannot use multiple conflict resolution flags")
+	}
+
+	if preferLocal {
+		return ConflictStrategyPreferLocal, nil
+	}
+	if preferGitLab {
+		return ConflictStrategyPreferGitLab, nil
+	}
+	return ConflictStrategyPreferNewer, nil
+}
+
 // doPullFromGitLab imports issues from GitLab using the REST API.
 // Supports incremental sync by checking gitlab.last_sync config and only fetching
 // issues updated since that timestamp.
@@ -351,7 +389,59 @@ func parseGitLabSourceSystem(sourceSystem string) (projectID, iid int, ok bool) 
 	return projectID, iid, true
 }
 
+// resolveGitLabConflicts resolves conflicts using the specified strategy.
+func resolveGitLabConflicts(ctx context.Context, client *gitlab.Client, config *gitlab.MappingConfig, conflicts []gitlab.Conflict, strategy ConflictStrategy) error {
+	for _, conflict := range conflicts {
+		var useGitLab bool
+
+		switch strategy {
+		case ConflictStrategyPreferLocal:
+			// Always keep local version - nothing to do
+			useGitLab = false
+		case ConflictStrategyPreferGitLab:
+			// Always use GitLab version
+			useGitLab = true
+		case ConflictStrategyPreferNewer:
+			// Use whichever is newer
+			useGitLab = conflict.GitLabUpdated.After(conflict.LocalUpdated)
+		default:
+			// Default to prefer-newer
+			useGitLab = conflict.GitLabUpdated.After(conflict.LocalUpdated)
+		}
+
+		if useGitLab {
+			// Fetch and apply GitLab version
+			issue, err := client.FetchIssueByIID(ctx, conflict.GitLabIID)
+			if err != nil {
+				fmt.Printf("Warning: failed to fetch GitLab issue #%d: %v\n", conflict.GitLabIID, err)
+				continue
+			}
+
+			conversion := gitlab.GitLabIssueToBeads(issue, config)
+			beadsIssue := conversion.Issue.(*types.Issue)
+
+			if store != nil {
+				updates := map[string]interface{}{
+					"title":       beadsIssue.Title,
+					"description": beadsIssue.Description,
+					"status":      string(beadsIssue.Status),
+					"priority":    beadsIssue.Priority,
+					"issue_type":  string(beadsIssue.IssueType),
+					"assignee":    beadsIssue.Assignee,
+				}
+				if err := store.UpdateIssue(ctx, conflict.IssueID, updates, actor); err != nil {
+					fmt.Printf("Warning: failed to update local issue %s: %v\n", conflict.IssueID, err)
+				}
+			}
+		}
+		// If not useGitLab, local version is kept (no action needed)
+	}
+
+	return nil
+}
+
 // resolveGitLabConflictsByTimestamp resolves conflicts by preferring newer changes.
+// Deprecated: Use resolveGitLabConflicts with ConflictStrategyPreferNewer instead.
 func resolveGitLabConflictsByTimestamp(ctx context.Context, client *gitlab.Client, config *gitlab.MappingConfig, conflicts []gitlab.Conflict) error {
 	for _, conflict := range conflicts {
 		if conflict.GitLabUpdated.After(conflict.LocalUpdated) {

@@ -507,6 +507,207 @@ func TestGenerateUniqueIssueIDs(t *testing.T) {
 	}
 }
 
+// TestGetConflictStrategy verifies conflict strategy selection from flags.
+func TestGetConflictStrategy(t *testing.T) {
+	tests := []struct {
+		name           string
+		preferLocal    bool
+		preferGitLab   bool
+		preferNewer    bool
+		wantStrategy   ConflictStrategy
+		wantError      bool
+	}{
+		{
+			name:         "no flags - default to prefer-newer",
+			wantStrategy: ConflictStrategyPreferNewer,
+		},
+		{
+			name:         "prefer-local",
+			preferLocal:  true,
+			wantStrategy: ConflictStrategyPreferLocal,
+		},
+		{
+			name:         "prefer-gitlab",
+			preferGitLab: true,
+			wantStrategy: ConflictStrategyPreferGitLab,
+		},
+		{
+			name:         "prefer-newer explicit",
+			preferNewer:  true,
+			wantStrategy: ConflictStrategyPreferNewer,
+		},
+		{
+			name:         "multiple flags - error",
+			preferLocal:  true,
+			preferGitLab: true,
+			wantError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy, err := getConflictStrategy(tt.preferLocal, tt.preferGitLab, tt.preferNewer)
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error for multiple flags, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if strategy != tt.wantStrategy {
+				t.Errorf("strategy = %q, want %q", strategy, tt.wantStrategy)
+			}
+		})
+	}
+}
+
+// TestResolveConflicts_PreferLocal verifies --prefer-local always uses local version.
+func TestResolveConflicts_PreferLocal(t *testing.T) {
+	// Save and restore global store
+	oldStore := store
+	store = nil
+	defer func() { store = oldStore }()
+
+	localTime := time.Now().Add(-1 * time.Hour) // Local is OLDER
+	gitlabTime := time.Now()                     // GitLab is newer
+
+	var fetchCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(gitlab.Issue{})
+	}))
+	defer server.Close()
+
+	client := gitlab.NewClient("token", server.URL, "123")
+	ctx := context.Background()
+
+	conflicts := []gitlab.Conflict{
+		{
+			IssueID:       "bd-1",
+			LocalUpdated:  localTime,
+			GitLabUpdated: gitlabTime, // GitLab is newer, but we prefer local
+			GitLabIID:     42,
+			GitLabID:      100,
+		},
+	}
+
+	// Should NOT fetch from GitLab when preferring local
+	err := resolveGitLabConflicts(ctx, client, nil, conflicts, ConflictStrategyPreferLocal)
+	if err != nil {
+		t.Fatalf("resolveGitLabConflicts() error = %v", err)
+	}
+
+	if fetchCalled {
+		t.Error("GitLab API was called when --prefer-local should skip remote fetch")
+	}
+}
+
+// TestResolveConflicts_PreferGitLab verifies --prefer-gitlab always fetches from GitLab.
+func TestResolveConflicts_PreferGitLab(t *testing.T) {
+	// Save and restore global store
+	oldStore := store
+	store = nil
+	defer func() { store = oldStore }()
+
+	localTime := time.Now()                       // Local is newer
+	gitlabTime := time.Now().Add(-1 * time.Hour) // GitLab is OLDER
+
+	var fetchCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(gitlab.Issue{
+			ID:          100,
+			IID:         42,
+			ProjectID:   123,
+			Title:       "GitLab title",
+			Description: "GitLab description",
+			State:       "opened",
+			UpdatedAt:   &gitlabTime,
+			WebURL:      "https://gitlab.example.com/-/issues/42",
+		})
+	}))
+	defer server.Close()
+
+	client := gitlab.NewClient("token", server.URL, "123")
+	config := gitlab.DefaultMappingConfig()
+	ctx := context.Background()
+
+	conflicts := []gitlab.Conflict{
+		{
+			IssueID:       "bd-1",
+			LocalUpdated:  localTime, // Local is newer, but we prefer gitlab
+			GitLabUpdated: gitlabTime,
+			GitLabIID:     42,
+			GitLabID:      100,
+		},
+	}
+
+	// Should fetch from GitLab even though local is newer
+	err := resolveGitLabConflicts(ctx, client, config, conflicts, ConflictStrategyPreferGitLab)
+	if err != nil {
+		t.Fatalf("resolveGitLabConflicts() error = %v", err)
+	}
+
+	if !fetchCalled {
+		t.Error("GitLab API was NOT called when --prefer-gitlab should always fetch")
+	}
+}
+
+// TestResolveConflicts_PreferNewer verifies default behavior uses timestamps.
+func TestResolveConflicts_PreferNewer(t *testing.T) {
+	// Save and restore global store
+	oldStore := store
+	store = nil
+	defer func() { store = oldStore }()
+
+	localTime := time.Now().Add(-1 * time.Hour) // Local is older
+	gitlabTime := time.Now()                     // GitLab is newer
+
+	var fetchCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(gitlab.Issue{
+			ID:        100,
+			IID:       42,
+			ProjectID: 123,
+			Title:     "GitLab title",
+			State:     "opened",
+			UpdatedAt: &gitlabTime,
+			WebURL:    "https://gitlab.example.com/-/issues/42",
+		})
+	}))
+	defer server.Close()
+
+	client := gitlab.NewClient("token", server.URL, "123")
+	config := gitlab.DefaultMappingConfig()
+	ctx := context.Background()
+
+	conflicts := []gitlab.Conflict{
+		{
+			IssueID:       "bd-1",
+			LocalUpdated:  localTime,
+			GitLabUpdated: gitlabTime, // GitLab is newer
+			GitLabIID:     42,
+			GitLabID:      100,
+		},
+	}
+
+	// GitLab is newer, so should fetch from GitLab
+	err := resolveGitLabConflicts(ctx, client, config, conflicts, ConflictStrategyPreferNewer)
+	if err != nil {
+		t.Fatalf("resolveGitLabConflicts() error = %v", err)
+	}
+
+	if !fetchCalled {
+		t.Error("GitLab API was NOT called when GitLab version is newer")
+	}
+}
+
 // TestParseGitLabSourceSystem verifies parsing source system string.
 func TestParseGitLabSourceSystem(t *testing.T) {
 	tests := []struct {
