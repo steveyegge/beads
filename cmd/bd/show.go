@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -723,7 +723,7 @@ func showIssueRefs(ctx context.Context, args []string, resolvedIDs []string, rou
 	if daemonClient != nil {
 		for _, id := range resolvedIDs {
 			// Need to open direct connection for GetDependentsWithMetadata
-			dbStore, err := sqlite.New(ctx, dbPath)
+			dbStore, err := factory.NewFromConfig(ctx, getBeadsDir())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 				continue
@@ -925,7 +925,7 @@ func showIssueChildren(ctx context.Context, args []string, resolvedIDs []string,
 	if daemonClient != nil {
 		for _, id := range resolvedIDs {
 			// Need to open direct connection for GetDependentsWithMetadata
-			dbStore, err := sqlite.New(ctx, dbPath)
+			dbStore, err := factory.NewFromConfig(ctx, getBeadsDir())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 				continue

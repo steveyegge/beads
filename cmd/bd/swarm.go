@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -161,7 +161,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = sqlite.New(ctx, dbPath)
+				store, err = factory.NewFromConfig(ctx, getBeadsDir())
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -627,7 +627,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = sqlite.New(ctx, dbPath)
+				store, err = factory.NewFromConfig(ctx, getBeadsDir())
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -921,7 +921,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = sqlite.New(ctx, dbPath)
+				store, err = factory.NewFromConfig(ctx, getBeadsDir())
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -1103,7 +1103,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = sqlite.New(ctx, dbPath)
+				store, err = factory.NewFromConfig(ctx, getBeadsDir())
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
