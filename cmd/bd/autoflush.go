@@ -851,6 +851,7 @@ type flushState struct {
 //   - Store already closed (storeActive=false)
 //   - Database not dirty (isDirty=false) AND forceDirty=false
 //   - No dirty issues found (incremental mode only)
+//   - Sync mode is dolt-native (JSONL export disabled)
 func flushToJSONLWithState(state flushState) {
 	// Check if store is still active (not closed) and not nil
 	storeMutex.Lock()
@@ -859,6 +860,14 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
+
+	ctx := rootCtx
+
+	// Check if JSONL export is enabled for current sync mode (bd-48h)
+	// In dolt-native mode, JSONL export is disabled - Dolt is the source of truth
+	if !ShouldExportJSONL(ctx, store) {
+		return
+	}
 
 	jsonlPath := findJSONLPath()
 
@@ -869,8 +878,6 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
-
-	ctx := rootCtx
 
 	// Validate JSONL integrity BEFORE checking isDirty
 	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)
