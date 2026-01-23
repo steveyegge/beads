@@ -358,18 +358,21 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, pinned, is_template, crystallizes
+			sender, ephemeral, pinned, is_template, crystallizes,
+			await_type, await_id, timeout_ns, waiters
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
 		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
 		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 	)
 	return err
 }
@@ -381,12 +384,15 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	var estimatedMinutes sql.NullInt64
 	var assignee, owner, contentHash sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	var awaitType, awaitID, waiters sql.NullString
+	var timeoutNs sql.NullInt64
 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes
+		       ephemeral, pinned, is_template, crystallizes,
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -395,6 +401,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
 		&ephemeral, &pinned, &isTemplate, &crystallizes,
+		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
 
 	if err == sql.ErrNoRows {
@@ -439,6 +446,19 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 	if crystallizes.Valid && crystallizes.Int64 != 0 {
 		issue.Crystallizes = true
+	}
+	// Gate fields
+	if awaitType.Valid {
+		issue.AwaitType = awaitType.String
+	}
+	if awaitID.Valid {
+		issue.AwaitID = awaitID.String
+	}
+	if timeoutNs.Valid {
+		issue.Timeout = time.Duration(timeoutNs.Int64)
+	}
+	if waiters.Valid && waiters.String != "" {
+		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
 
 	return &issue, nil
