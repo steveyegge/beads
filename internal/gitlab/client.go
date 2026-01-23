@@ -311,7 +311,9 @@ func (c *Client) FetchIssueByIID(ctx context.Context, iid int) (*Issue, error) {
 	return &issue, nil
 }
 
-// CreateIssueLink creates a link between two issues.
+// CreateIssueLink creates a link between two issues in the SAME project.
+// Cross-project links are not supported by this function; attempting to link
+// issues from different projects will result in an error from the GitLab API.
 // linkType can be: "relates_to", "blocks", or "is_blocked_by".
 func (c *Client) CreateIssueLink(ctx context.Context, sourceIID, targetIID int, linkType string) (*IssueLink, error) {
 	body := map[string]interface{}{
