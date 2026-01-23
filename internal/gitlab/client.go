@@ -36,6 +36,23 @@ func (c *Client) WithHTTPClient(httpClient *http.Client) *Client {
 	}
 }
 
+// WithEndpoint returns a new client configured to use a custom API endpoint.
+// This is useful for testing with mock servers or self-hosted GitLab instances.
+func (c *Client) WithEndpoint(endpoint string) *Client {
+	return &Client{
+		Token:      c.Token,
+		BaseURL:    endpoint,
+		ProjectID:  c.ProjectID,
+		HTTPClient: c.HTTPClient,
+	}
+}
+
+// projectPath returns the URL-encoded project path for API calls.
+// This handles both numeric IDs (e.g., "123") and path-based IDs (e.g., "group/project").
+func (c *Client) projectPath() string {
+	return url.PathEscape(c.ProjectID)
+}
+
 // buildURL constructs a full API URL from path and optional query parameters.
 func (c *Client) buildURL(path string, params map[string]string) string {
 	u := c.BaseURL + DefaultAPIEndpoint + path
@@ -126,7 +143,7 @@ func (c *Client) FetchIssues(ctx context.Context, state string) ([]Issue, error)
 			params["state"] = state
 		}
 
-		urlStr := c.buildURL("/projects/"+c.ProjectID+"/issues", params)
+		urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues", params)
 		respBody, headers, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch issues: %w", err)
@@ -168,7 +185,7 @@ func (c *Client) FetchIssuesSince(ctx context.Context, state string, since time.
 			params["state"] = state
 		}
 
-		urlStr := c.buildURL("/projects/"+c.ProjectID+"/issues", params)
+		urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues", params)
 		respBody, headers, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch issues since %s: %w", sinceStr, err)
@@ -202,7 +219,7 @@ func (c *Client) CreateIssue(ctx context.Context, title, description string, lab
 		body["labels"] = labels
 	}
 
-	urlStr := c.buildURL("/projects/"+c.ProjectID+"/issues", nil)
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues", nil)
 	respBody, _, err := c.doRequest(ctx, http.MethodPost, urlStr, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create issue: %w", err)
@@ -218,7 +235,7 @@ func (c *Client) CreateIssue(ctx context.Context, title, description string, lab
 
 // UpdateIssue updates an existing issue in GitLab.
 func (c *Client) UpdateIssue(ctx context.Context, iid int, updates map[string]interface{}) (*Issue, error) {
-	urlStr := c.buildURL("/projects/"+c.ProjectID+"/issues/"+strconv.Itoa(iid), nil)
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues/"+strconv.Itoa(iid), nil)
 	respBody, _, err := c.doRequest(ctx, http.MethodPut, urlStr, updates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update issue: %w", err)
@@ -234,7 +251,7 @@ func (c *Client) UpdateIssue(ctx context.Context, iid int, updates map[string]in
 
 // GetIssueLinks retrieves issue links for the specified issue IID.
 func (c *Client) GetIssueLinks(ctx context.Context, iid int) ([]IssueLink, error) {
-	urlStr := c.buildURL("/projects/"+c.ProjectID+"/issues/"+strconv.Itoa(iid)+"/links", nil)
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues/"+strconv.Itoa(iid)+"/links", nil)
 	respBody, _, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get issue links: %w", err)
@@ -246,4 +263,43 @@ func (c *Client) GetIssueLinks(ctx context.Context, iid int) ([]IssueLink, error
 	}
 
 	return links, nil
+}
+
+// FetchIssueByIID retrieves a single issue by its project-scoped IID.
+func (c *Client) FetchIssueByIID(ctx context.Context, iid int) (*Issue, error) {
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues/"+strconv.Itoa(iid), nil)
+	respBody, _, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch issue %d: %w", iid, err)
+	}
+
+	var issue Issue
+	if err := json.Unmarshal(respBody, &issue); err != nil {
+		return nil, fmt.Errorf("failed to parse issue response: %w", err)
+	}
+
+	return &issue, nil
+}
+
+// CreateIssueLink creates a link between two issues.
+// linkType can be: "relates_to", "blocks", or "is_blocked_by".
+func (c *Client) CreateIssueLink(ctx context.Context, sourceIID, targetIID int, linkType string) (*IssueLink, error) {
+	body := map[string]interface{}{
+		"target_project_id": c.ProjectID,
+		"target_issue_iid":  targetIID,
+		"link_type":         linkType,
+	}
+
+	urlStr := c.buildURL("/projects/"+c.projectPath()+"/issues/"+strconv.Itoa(sourceIID)+"/links", nil)
+	respBody, _, err := c.doRequest(ctx, http.MethodPost, urlStr, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create issue link: %w", err)
+	}
+
+	var link IssueLink
+	if err := json.Unmarshal(respBody, &link); err != nil {
+		return nil, fmt.Errorf("failed to parse issue link response: %w", err)
+	}
+
+	return &link, nil
 }
