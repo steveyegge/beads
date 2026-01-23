@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/gitlab"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // GitLabConfig holds GitLab connection configuration.
@@ -256,36 +257,102 @@ func runGitLabSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !gitlabSyncDryRun {
+		CheckReadonly("gitlab sync")
+	}
+
+	if gitlabSyncPullOnly && gitlabSyncPushOnly {
+		return fmt.Errorf("cannot use both --pull-only and --push-only")
+	}
+
+	if err := ensureStoreActive(); err != nil {
+		return fmt.Errorf("database not available: %w", err)
+	}
+
 	out := cmd.OutOrStdout()
 	client := getGitLabClient(config)
 	ctx := context.Background()
+	mappingConfig := gitlab.DefaultMappingConfig()
 
 	if gitlabSyncDryRun {
 		fmt.Fprintln(out, "Dry run mode - no changes will be made")
 		fmt.Fprintln(out)
 	}
 
-	// Fetch issues from GitLab
-	fmt.Fprintln(out, "Fetching issues from GitLab...")
-	issues, err := client.FetchIssues(ctx, "all")
-	if err != nil {
-		return fmt.Errorf("failed to fetch issues: %w", err)
-	}
+	// Default: both pull and push
+	pull := !gitlabSyncPushOnly
+	push := !gitlabSyncPullOnly
 
-	fmt.Fprintf(out, "Found %d issues\n", len(issues))
-	fmt.Fprintln(out)
+	result := &gitlab.SyncResult{Success: true}
 
-	// Display issues for dry run
-	if gitlabSyncDryRun {
-		fmt.Fprintln(out, "Issues to sync:")
-		fmt.Fprintln(out, "---------------")
-		for _, issue := range issues {
-			fmt.Fprintf(out, "#%d: %s [%s]\n", issue.IID, issue.Title, issue.State)
+	// Pull from GitLab
+	if pull {
+		if gitlabSyncDryRun {
+			fmt.Fprintln(out, "→ [DRY RUN] Would pull issues from GitLab")
+		} else {
+			fmt.Fprintln(out, "→ Pulling issues from GitLab...")
 		}
-		return nil
+
+		pullStats, err := doPullFromGitLab(ctx, client, mappingConfig, gitlabSyncDryRun, "all", nil)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			fmt.Fprintf(out, "Error pulling from GitLab: %v\n", err)
+			return err
+		}
+
+		result.Stats.Pulled = pullStats.Created + pullStats.Updated
+		result.Stats.Created += pullStats.Created
+		result.Stats.Updated += pullStats.Updated
+		result.Stats.Skipped += pullStats.Skipped
+
+		if !gitlabSyncDryRun {
+			fmt.Fprintf(out, "✓ Pulled %d issues (%d created, %d updated)\n",
+				result.Stats.Pulled, pullStats.Created, pullStats.Updated)
+		}
 	}
 
-	// TODO: Implement actual sync with beads
-	fmt.Fprintln(out, "Full sync not yet implemented - use --dry-run to preview")
+	// Push to GitLab
+	if push {
+		if gitlabSyncDryRun {
+			fmt.Fprintln(out, "→ [DRY RUN] Would push issues to GitLab")
+		} else {
+			fmt.Fprintln(out, "→ Pushing issues to GitLab...")
+		}
+
+		// Get local issues to push
+		var localIssues []*types.Issue
+		if store != nil {
+			var err error
+			localIssues, err = store.SearchIssues(ctx, "", types.IssueFilter{})
+			if err != nil {
+				return fmt.Errorf("failed to get local issues: %w", err)
+			}
+		}
+
+		pushStats, err := doPushToGitLab(ctx, client, mappingConfig, localIssues, gitlabSyncDryRun, false, nil, nil)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			fmt.Fprintf(out, "Error pushing to GitLab: %v\n", err)
+			return err
+		}
+
+		result.Stats.Pushed = pushStats.Created + pushStats.Updated
+		result.Stats.Created += pushStats.Created
+		result.Stats.Updated += pushStats.Updated
+		result.Stats.Skipped += pushStats.Skipped
+
+		if !gitlabSyncDryRun {
+			fmt.Fprintf(out, "✓ Pushed %d issues (%d created, %d updated)\n",
+				result.Stats.Pushed, pushStats.Created, pushStats.Updated)
+		}
+	}
+
+	if gitlabSyncDryRun {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Run without --dry-run to apply changes")
+	}
+
 	return nil
 }
