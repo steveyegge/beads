@@ -138,6 +138,17 @@ func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPat
 		return writeErr
 	}
 
+	// Update export_hashes for all exported issues (GH#1278)
+	// This ensures child issues created with --parent are properly registered
+	for _, issue := range issues {
+		if issue.ContentHash != "" {
+			if err := store.SetExportHash(ctx, issue.ID, issue.ContentHash); err != nil {
+				// Non-fatal warning - continue with other issues
+				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issue.ID, err)
+			}
+		}
+	}
+
 	return nil
 }
 

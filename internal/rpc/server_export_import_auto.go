@@ -205,6 +205,17 @@ func (s *Server) handleExport(req *Request) Response {
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear dirty flags: %v\n", err)
 	}
 
+	// Update export_hashes for all exported issues (GH#1278)
+	// This ensures child issues created with --parent are properly registered
+	for _, issue := range issues {
+		if issue.ContentHash != "" {
+			if err := store.SetExportHash(ctx, issue.ID, issue.ContentHash); err != nil {
+				// Non-fatal, just log
+				fmt.Fprintf(os.Stderr, "Warning: failed to set export hash for %s: %v\n", issue.ID, err)
+			}
+		}
+	}
+
 	// Write manifest if configured
 	if manifest != nil {
 		manifest.ExportedCount = len(exportedIDs)
