@@ -248,11 +248,11 @@ func runVikunjaSync(cmd *cobra.Command, args []string) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	preferLocal, _ := cmd.Flags().GetBool("prefer-local")
 	preferVikunja, _ := cmd.Flags().GetBool("prefer-vikunja")
-	// createOnly, _ := cmd.Flags().GetBool("create-only")
-	// updateRefs, _ := cmd.Flags().GetBool("update-refs")
-	// state, _ := cmd.Flags().GetString("state")
-	// typeFilters, _ := cmd.Flags().GetStringSlice("type")
-	// excludeTypes, _ := cmd.Flags().GetStringSlice("exclude-type")
+	createOnly, _ := cmd.Flags().GetBool("create-only")
+	updateRefs, _ := cmd.Flags().GetBool("update-refs")
+	state, _ := cmd.Flags().GetString("state")
+	typeFilters, _ := cmd.Flags().GetStringSlice("type")
+	excludeTypes, _ := cmd.Flags().GetStringSlice("exclude-type")
 
 	if !dryRun {
 		CheckReadonly("vikunja sync")
@@ -278,8 +278,72 @@ func runVikunjaSync(cmd *cobra.Command, args []string) {
 		push = true
 	}
 
-	// TODO: Implement sync logic in Task 5
-	fmt.Println("Vikunja sync not yet implemented")
+	ctx := rootCtx
+	result := &vikunja.SyncResult{Success: true}
+	var forceUpdateIDs map[string]bool
+	var skipUpdateIDs map[string]bool
+
+	// Reserve preferLocal and preferVikunja for future conflict resolution
+	_ = preferLocal
+	_ = preferVikunja
+
+	if pull {
+		if dryRun {
+			fmt.Println("-> [DRY RUN] Would pull tasks from Vikunja")
+		} else {
+			fmt.Println("-> Pulling tasks from Vikunja...")
+		}
+
+		pullStats, err := doPullFromVikunja(ctx, dryRun, state)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			fmt.Fprintf(os.Stderr, "Error pulling from Vikunja: %v\n", err)
+			os.Exit(1)
+		}
+
+		result.Stats.Pulled = pullStats.Created + pullStats.Updated
+		result.Stats.Created += pullStats.Created
+		result.Stats.Updated += pullStats.Updated
+		result.Stats.Skipped += pullStats.Skipped
+
+		if !dryRun {
+			fmt.Printf("Pulled %d tasks (%d created, %d updated)\n",
+				result.Stats.Pulled, pullStats.Created, pullStats.Updated)
+		}
+	}
+
+	if push {
+		if dryRun {
+			fmt.Println("-> [DRY RUN] Would push issues to Vikunja")
+		} else {
+			fmt.Println("-> Pushing issues to Vikunja...")
+		}
+
+		pushStats, err := doPushToVikunja(ctx, dryRun, createOnly, updateRefs,
+			forceUpdateIDs, skipUpdateIDs, typeFilters, excludeTypes)
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			fmt.Fprintf(os.Stderr, "Error pushing to Vikunja: %v\n", err)
+			os.Exit(1)
+		}
+
+		result.Stats.Pushed = pushStats.Created + pushStats.Updated
+		result.Stats.Created += pushStats.Created
+		result.Stats.Updated += pushStats.Updated
+		result.Stats.Skipped += pushStats.Skipped
+		result.Stats.Errors += pushStats.Errors
+
+		if !dryRun {
+			fmt.Printf("Pushed %d issues (%d created, %d updated)\n",
+				result.Stats.Pushed, pushStats.Created, pushStats.Updated)
+		}
+	}
+
+	if result.Success && !dryRun {
+		fmt.Println("Sync completed successfully")
+	}
 }
 
 func runVikunjaStatus(cmd *cobra.Command, args []string) {
