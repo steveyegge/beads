@@ -425,12 +425,27 @@ func (rs *RoutedStorage) Close() error {
 	return nil
 }
 
+// StorageOpener is a function that opens storage for a given beads directory.
+// This allows callers to provide custom storage opening logic (e.g., using factory).
+type StorageOpener func(ctx context.Context, beadsDir string) (storage.Storage, error)
+
 // GetRoutedStorageForID returns a storage connection for the given issue ID.
+// If the ID matches a route, it opens a connection to the routed database using SQLite.
+// Otherwise, it returns nil (caller should use their existing storage).
+//
+// DEPRECATED: Use GetRoutedStorageWithOpener for proper backend support.
+// The caller is responsible for closing the returned RoutedStorage.
+func GetRoutedStorageForID(ctx context.Context, id, currentBeadsDir string) (*RoutedStorage, error) {
+	return GetRoutedStorageWithOpener(ctx, id, currentBeadsDir, nil)
+}
+
+// GetRoutedStorageWithOpener returns a storage connection for the given issue ID.
 // If the ID matches a route, it opens a connection to the routed database.
+// The opener function is used to create storage; if nil, defaults to SQLite.
 // Otherwise, it returns nil (caller should use their existing storage).
 //
 // The caller is responsible for closing the returned RoutedStorage.
-func GetRoutedStorageForID(ctx context.Context, id, currentBeadsDir string) (*RoutedStorage, error) {
+func GetRoutedStorageWithOpener(ctx context.Context, id, currentBeadsDir string, opener StorageOpener) (*RoutedStorage, error) {
 	beadsDir, routed, err := ResolveBeadsDirForID(ctx, id, currentBeadsDir)
 	if err != nil {
 		return nil, err

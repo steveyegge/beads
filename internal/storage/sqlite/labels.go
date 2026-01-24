@@ -19,8 +19,8 @@ func (s *SQLiteStorage) executeLabelOperation(
 	eventComment string,
 	operationError string,
 ) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, labelSQL, labelSQLArgs...)
+	return s.withTx(ctx, func(conn *sql.Conn) error {
+		result, err := conn.ExecContext(ctx, labelSQL, labelSQLArgs...)
 		if err != nil {
 			return fmt.Errorf("%s: %w", operationError, err)
 		}
@@ -34,7 +34,7 @@ func (s *SQLiteStorage) executeLabelOperation(
 			return nil
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			INSERT INTO events (issue_id, event_type, actor, comment)
 			VALUES (?, ?, ?, ?)
 		`, issueID, eventType, actor, eventComment)
@@ -43,7 +43,7 @@ func (s *SQLiteStorage) executeLabelOperation(
 		}
 
 		// Mark issue as dirty for incremental export
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			INSERT INTO dirty_issues (issue_id, marked_at)
 			VALUES (?, ?)
 			ON CONFLICT (issue_id) DO UPDATE SET marked_at = excluded.marked_at

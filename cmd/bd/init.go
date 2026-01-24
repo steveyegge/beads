@@ -40,7 +40,12 @@ to prevent deleted issues from being resurrected during re-initialization.
 With --stealth: configures per-repository git settings for invisible beads usage:
   • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
-  Perfect for personal use without affecting repo collaborators.`,
+  Perfect for personal use without affecting repo collaborators.
+
+With --backend dolt --server: configures Dolt to connect to an external dolt sql-server
+instead of using the embedded driver. This enables multi-writer access for multi-agent
+environments. Connection settings can be customized with --server-host, --server-port,
+and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -54,6 +59,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
 
+		// Dolt server mode flags (bd-dolt.2.2)
+		serverMode, _ := cmd.Flags().GetBool("server")
+		serverHost, _ := cmd.Flags().GetString("server-host")
+		serverPort, _ := cmd.Flags().GetInt("server-port")
+		serverUser, _ := cmd.Flags().GetString("server-user")
+
 		// Validate backend flag
 		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
@@ -61,6 +72,12 @@ With --stealth: configures per-repository git settings for invisible beads usage
 		}
 		if backend == "" {
 			backend = configfile.BackendSQLite // Default to SQLite
+		}
+
+		// Validate server mode requires dolt backend
+		if serverMode && backend != configfile.BackendDolt {
+			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
+			os.Exit(1)
 		}
 
 		// Initialize config (PersistentPreRun doesn't run for init command)
@@ -427,6 +444,20 @@ With --stealth: configures per-repository git settings for invisible beads usage
 				if cfg.Database == "" || cfg.Database == beads.CanonicalDatabaseName {
 					cfg.Database = "dolt"
 				}
+
+				// Save server mode configuration (bd-dolt.2.2)
+				if serverMode {
+					cfg.DoltMode = configfile.DoltModeServer
+					if serverHost != "" {
+						cfg.DoltServerHost = serverHost
+					}
+					if serverPort != 0 {
+						cfg.DoltServerPort = serverPort
+					}
+					if serverUser != "" {
+						cfg.DoltServerUser = serverUser
+					}
+				}
 			}
 
 			if err := cfg.Save(beadsDir); err != nil {
@@ -622,6 +653,22 @@ With --stealth: configures per-repository git settings for invisible beads usage
 
 		fmt.Printf("\n%s bd initialized successfully!\n\n", ui.RenderPass("✓"))
 		fmt.Printf("  Backend: %s\n", ui.RenderAccent(backend))
+		if serverMode {
+			host := serverHost
+			if host == "" {
+				host = configfile.DefaultDoltServerHost
+			}
+			port := serverPort
+			if port == 0 {
+				port = configfile.DefaultDoltServerPort
+			}
+			user := serverUser
+			if user == "" {
+				user = configfile.DefaultDoltServerUser
+			}
+			fmt.Printf("  Mode: %s\n", ui.RenderAccent("server"))
+			fmt.Printf("  Server: %s\n", ui.RenderAccent(fmt.Sprintf("%s@%s:%d", user, host, port)))
+		}
 		fmt.Printf("  Database: %s\n", ui.RenderAccent(storagePath))
 		fmt.Printf("  Issue prefix: %s\n", ui.RenderAccent(prefix))
 		fmt.Printf("  Issues will be named: %s\n\n", ui.RenderAccent(prefix+"-<hash> (e.g., "+prefix+"-a3f2dd)"))
@@ -663,6 +710,13 @@ func init() {
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+
+	// Dolt server mode flags (bd-dolt.2.2)
+	initCmd.Flags().Bool("server", false, "Configure Dolt in server mode (connect to external dolt sql-server)")
+	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
+	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3306)")
+	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
+
 	rootCmd.AddCommand(initCmd)
 }
 

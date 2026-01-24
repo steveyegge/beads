@@ -75,7 +75,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		dep.CreatedBy = actor
 	}
 
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(conn *sql.Conn) error {
 		// Cycle Detection and Prevention
 		//
 		// We prevent cycles across most dependency types to maintain a directed acyclic graph (DAG).
@@ -105,7 +105,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		// Skip cycle detection for relates-to (inherently bidirectional)
 		if dep.Type != types.DepRelatesTo {
 			var cycleExists bool
-			err = tx.QueryRowContext(ctx, `
+			err = conn.QueryRowContext(ctx, `
 				WITH RECURSIVE paths AS (
 					SELECT
 						issue_id,
@@ -140,24 +140,24 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 			}
 		}
 
-	// Insert dependency (including metadata and thread_id for edge consolidation - Decision 004)
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, dep.Metadata, dep.ThreadID)
-	if err != nil {
-		return fmt.Errorf("failed to add dependency: %w", err)
-	}
+		// Insert dependency (including metadata and thread_id for edge consolidation - Decision 004)
+		_, err = conn.ExecContext(ctx, `
+			INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, dep.IssueID, dep.DependsOnID, dep.Type, dep.CreatedAt, dep.CreatedBy, dep.Metadata, dep.ThreadID)
+		if err != nil {
+			return fmt.Errorf("failed to add dependency: %w", err)
+		}
 
-	// Record event
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (issue_id, event_type, actor, comment)
-		VALUES (?, ?, ?, ?)
-	`, dep.IssueID, types.EventDependencyAdded, actor,
-		fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID))
-	if err != nil {
-		return fmt.Errorf("failed to record event: %w", err)
-	}
+		// Record event
+		_, err = conn.ExecContext(ctx, `
+			INSERT INTO events (issue_id, event_type, actor, comment)
+			VALUES (?, ?, ?, ?)
+		`, dep.IssueID, types.EventDependencyAdded, actor,
+			fmt.Sprintf("Added dependency: %s %s %s", dep.IssueID, dep.Type, dep.DependsOnID))
+		if err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
 
 		// Mark issues as dirty for incremental export
 		// For external refs, only mark the source issue (target doesn't exist locally)
@@ -165,14 +165,14 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		if !isExternalRef {
 			issueIDsToMark = append(issueIDsToMark, dep.DependsOnID)
 		}
-		if err := markIssuesDirtyTx(ctx, tx, issueIDsToMark); err != nil {
+		if err := markIssuesDirtyTx(ctx, conn, issueIDsToMark); err != nil {
 			return wrapDBError("mark issues dirty after adding dependency", err)
 		}
 
 		// Invalidate blocked issues cache since dependencies changed
 		// Only invalidate for types that affect ready work calculation
 		if dep.Type.AffectsReadyWork() {
-			if err := s.invalidateBlockedCache(ctx, tx); err != nil {
+			if err := s.invalidateBlockedCache(ctx, conn); err != nil {
 				return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 			}
 		}
@@ -183,10 +183,10 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 
 // RemoveDependency removes a dependency
 func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(conn *sql.Conn) error {
 		// First, check what type of dependency is being removed
 		var depType types.DependencyType
-		err := tx.QueryRowContext(ctx, `
+		err := conn.QueryRowContext(ctx, `
 			SELECT type FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 		`, issueID, dependsOnID).Scan(&depType)
 
@@ -196,7 +196,7 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 			needsCacheInvalidation = depType.AffectsReadyWork()
 		}
 
-		result, err := tx.ExecContext(ctx, `
+		result, err := conn.ExecContext(ctx, `
 			DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 		`, issueID, dependsOnID)
 		if err != nil {
@@ -212,7 +212,7 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 			return fmt.Errorf("dependency from %s to %s does not exist", issueID, dependsOnID)
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			INSERT INTO events (issue_id, event_type, actor, comment)
 			VALUES (?, ?, ?, ?)
 		`, issueID, types.EventDependencyRemoved, actor,
@@ -227,13 +227,13 @@ func (s *SQLiteStorage) RemoveDependency(ctx context.Context, issueID, dependsOn
 		if !strings.HasPrefix(dependsOnID, "external:") {
 			issueIDsToMark = append(issueIDsToMark, dependsOnID)
 		}
-		if err := markIssuesDirtyTx(ctx, tx, issueIDsToMark); err != nil {
+		if err := markIssuesDirtyTx(ctx, conn, issueIDsToMark); err != nil {
 			return wrapDBError("mark issues dirty after removing dependency", err)
 		}
 
 		// Invalidate blocked issues cache if this was a blocking dependency
 		if needsCacheInvalidation {
-			if err := s.invalidateBlockedCache(ctx, tx); err != nil {
+			if err := s.invalidateBlockedCache(ctx, conn); err != nil {
 				return fmt.Errorf("failed to invalidate blocked cache: %w", err)
 			}
 		}

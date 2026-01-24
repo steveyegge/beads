@@ -31,9 +31,10 @@ type Options struct {
 	// Dolt server mode options (federation)
 	ServerMode     bool   // Connect to dolt sql-server instead of embedded
 	ServerHost     string // Server host (default: 127.0.0.1)
-	ServerPort     int    // Server port (default: 3306)
-	ServerUser     string // Server user (default: root)
+	ServerPort     int    // Server port (default: 3307)
+	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // Server password (or use BEADS_DOLT_PASSWORD env)
+	Database       string // Database name for Dolt server mode (default: beads)
 }
 
 // New creates a storage backend based on the backend type.
@@ -91,13 +92,23 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	case configfile.BackendSQLite:
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
 	case configfile.BackendDolt:
-		// Check if Dolt server mode is enabled in config
+		// Merge Dolt server mode config into options (config provides defaults, opts can override)
 		if cfg.IsDoltServerMode() {
 			opts.ServerMode = true
-			opts.ServerHost = cfg.GetDoltServerHost()
-			opts.ServerPort = cfg.GetDoltServerPort()
-			opts.ServerUser = cfg.GetDoltServerUser()
-			if cfg.DoltServerPassword != "" {
+			if opts.ServerHost == "" {
+				opts.ServerHost = cfg.GetDoltServerHost()
+			}
+			if opts.ServerPort == 0 {
+				opts.ServerPort = cfg.GetDoltServerPort()
+			}
+			if opts.ServerUser == "" {
+				opts.ServerUser = cfg.GetDoltServerUser()
+			}
+			if opts.Database == "" {
+				opts.Database = cfg.GetDoltDatabase()
+			}
+			// Password from config (env var is usually preferred)
+			if opts.ServerPassword == "" && cfg.DoltServerPassword != "" {
 				opts.ServerPassword = cfg.DoltServerPassword
 			}
 		}

@@ -100,9 +100,15 @@ func doltExists(doltPath string) bool {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			doltDir := filepath.Join(doltPath, entry.Name(), ".dolt")
-			if info, err := os.Stat(doltDir); err == nil && info.IsDir() {
+		// Use os.Stat to follow symlinks - entry.IsDir() returns false for symlinks
+		fullPath := filepath.Join(doltPath, entry.Name())
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			doltDir := filepath.Join(fullPath, ".dolt")
+			if doltInfo, err := os.Stat(doltDir); err == nil && doltInfo.IsDir() {
 				return true
 			}
 		}

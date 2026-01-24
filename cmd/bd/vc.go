@@ -164,6 +164,8 @@ Examples:
 			FatalErrorRespectJSON("commit requires Dolt backend (current backend does not support versioning)")
 		}
 
+		// We are explicitly creating a Dolt commit; avoid redundant auto-commit in PersistentPostRun.
+		commandDidExplicitDoltCommit = true
 		if err := vs.Commit(ctx, vcCommitMessage); err != nil {
 			FatalErrorRespectJSON("failed to commit: %v", err)
 		}

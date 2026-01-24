@@ -6,6 +6,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -41,7 +42,8 @@ func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.Stora
 	}
 
 	beadsDir := filepath.Dir(dbPath)
-	routedStorage, err := routing.GetRoutedStorageForID(ctx, id, beadsDir)
+	// Use factory.NewFromConfig as the storage opener to respect backend configuration
+	routedStorage, err := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 	if err != nil {
 		return nil, err
 	}

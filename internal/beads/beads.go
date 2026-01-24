@@ -242,11 +242,8 @@ func findDatabaseInBeadsDir(beadsDir string, warnOnIssues bool) string {
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil {
 		backend := cfg.GetBackend()
 		if backend == configfile.BackendDolt {
-			// For Dolt server mode, don't require local database to exist
-			// We'll connect to the remote server instead
+			// For Dolt server mode, database is on the server - no local directory required
 			if cfg.IsDoltServerMode() {
-				// Return the configured path even if it doesn't exist locally
-				// The factory will connect to the server at cfg.DoltServerHost:cfg.DoltServerPort
 				return cfg.DatabasePath(beadsDir)
 			}
 			// For embedded Dolt, check if the configured database directory exists

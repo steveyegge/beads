@@ -41,6 +41,7 @@ Tool-level settings you can configure:
 | `conflict.strategy` | - | `BD_CONFLICT_STRATEGY` | `newest` | Conflict resolution: `newest`, `ours`, `theirs`, `manual` |
 | `federation.remote` | - | `BD_FEDERATION_REMOTE` | (none) | Dolt remote URL for federation |
 | `federation.sovereignty` | - | `BD_FEDERATION_SOVEREIGNTY` | (none) | Data sovereignty tier: `T1`, `T2`, `T3`, `T4` |
+| `dolt.auto-commit` | `--dolt-auto-commit` | `BD_DOLT_AUTO_COMMIT` | `on` | (Dolt backend) Automatically create a Dolt commit after successful write commands |
 | `create.require-description` | - | `BD_CREATE_REQUIRE_DESCRIPTION` | `false` | Require description when creating issues |
 | `validation.on-create` | - | `BD_VALIDATION_ON_CREATE` | `none` | Template validation on create: `none`, `warn`, `error` |
 | `validation.on-sync` | - | `BD_VALIDATION_ON_SYNC` | `none` | Template validation before sync: `none`, `warn`, `error` |
@@ -60,6 +61,31 @@ Tool-level settings you can configure:
 **Backend note (SQLite vs Dolt):**
 - **SQLite** supports daemon mode and auto-start.
 - **Dolt (embedded)** is treated as **single-process-only**. Daemon mode and auto-start are disabled; `auto-start-daemon` has no effect. If you need daemon mode, use the SQLite backend (`bd init --backend sqlite`).
+
+### Dolt Auto-Commit (SQL commit vs Dolt commit)
+
+When using the **Dolt backend**, there are two different kinds of “commit”:
+
+- **SQL transaction commit**: what happens when a `bd` command updates tables successfully (durable in the Dolt *working set*).
+- **Dolt version-control commit**: what records those changes into Dolt’s *history* (visible in `bd vc log`, push/pull/merge workflows).
+
+By default, `bd` is configured to **auto-commit Dolt history after each successful write command**:
+
+- **Default**: `dolt.auto-commit: on`
+- **Disable for a single command**:
+
+```bash
+bd --dolt-auto-commit off create "No commit for this one"
+```
+
+- **Disable in config** (`.beads/config.yaml` or `~/.config/bd/config.yaml`):
+
+```yaml
+dolt:
+  auto-commit: off
+```
+
+**Caveat:** enabling this creates **more Dolt commits** over time (one per write command). This is intentional so changes are not left only in the working set.
 
 ### Actor Identity Resolution
 
