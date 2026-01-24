@@ -326,6 +326,14 @@ func (s *Server) handleCreate(req *Request) Response {
 		AwaitID:   createArgs.AwaitID,
 		Timeout:   createArgs.Timeout,
 		Waiters:   createArgs.Waiters,
+		// Skill fields (only valid when IssueType == "skill")
+		SkillName:       createArgs.SkillName,
+		SkillVersion:    createArgs.SkillVersion,
+		SkillCategory:   createArgs.SkillCategory,
+		SkillInputs:     createArgs.SkillInputs,
+		SkillOutputs:    createArgs.SkillOutputs,
+		SkillExamples:   createArgs.SkillExamples,
+		ClaudeSkillPath: createArgs.ClaudeSkillPath,
 	}
 	
 	// Check if any dependencies are discovered-from type

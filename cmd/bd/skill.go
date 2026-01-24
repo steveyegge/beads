@@ -255,16 +255,65 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 	// Build title from name
 	title := strings.Title(strings.ReplaceAll(skillName, "-", " "))
 
-	// Create the skill issue
+	// Use daemon if available
+	if daemonClient != nil {
+		createArgs := &rpc.CreateArgs{
+			ID:              skillID,
+			Title:           title,
+			Description:     skillDescription,
+			IssueType:       string(types.TypeSkill),
+			Priority:        2,
+			Pinned:          true, // Skills are pinned by default
+			SkillName:       skillName,
+			SkillVersion:    skillVersion,
+			SkillCategory:   skillCategory,
+			SkillInputs:     skillInputs,
+			SkillOutputs:    skillOutputs,
+			SkillExamples:   skillExamples,
+			ClaudeSkillPath: skillClaudePath,
+		}
+		resp, err := daemonClient.Create(createArgs)
+		if err != nil {
+			return fmt.Errorf("failed to create skill via daemon: %w", err)
+		}
+		if !resp.Success {
+			return fmt.Errorf("failed to create skill: %s", resp.Error)
+		}
+
+		// Parse response for output
+		var issue types.Issue
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			return fmt.Errorf("parsing create response: %w", err)
+		}
+
+		if jsonOutput {
+			output := map[string]interface{}{
+				"id":             issue.ID,
+				"skill_name":     skillName,
+				"skill_version":  skillVersion,
+				"skill_category": skillCategory,
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(output)
+		}
+
+		fmt.Printf("Created skill: %s\n", ui.RenderID(issue.ID))
+		return nil
+	}
+
+	// Fall back to direct storage
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first or start daemon")
+	}
+
 	issue := &types.Issue{
 		ID:          skillID,
 		Title:       title,
 		Description: skillDescription,
 		IssueType:   types.TypeSkill,
-		Status:      types.StatusPinned, // Skills are pinned by default
-		Priority:    2,                  // Default priority
-
-		// Skill-specific fields
+		Status:      types.StatusPinned,
+		Priority:    2,
 		SkillName:       skillName,
 		SkillVersion:    skillVersion,
 		SkillCategory:   skillCategory,
@@ -274,17 +323,11 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		ClaudeSkillPath: skillClaudePath,
 	}
 
-	// Use direct storage mode for skill creation
-	// TODO: Add skill fields to RPC CreateArgs for daemon support
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
 	actor := getActor()
 	if err := store.CreateIssue(ctx, issue, actor); err != nil {
 		return fmt.Errorf("failed to create skill: %w", err)
 	}
 
-	// Output based on format
 	if jsonOutput {
 		output := map[string]interface{}{
 			"id":             skillID,
@@ -311,15 +354,29 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
-	// Get skill using withStorage for daemon mode support
+	// Get skill via daemon or direct storage
 	var issue *types.Issue
-	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
-		var err error
-		issue, err = s.GetIssue(ctx, skillID)
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("skill not found: %s", skillID)
+	if daemonClient != nil {
+		showArgs := &rpc.ShowArgs{ID: skillID}
+		resp, err := daemonClient.Show(showArgs)
+		if err != nil {
+			return fmt.Errorf("skill not found: %s", skillID)
+		}
+		if !resp.Success {
+			return fmt.Errorf("skill not found: %s", skillID)
+		}
+		if err := json.Unmarshal(resp.Data, &issue); err != nil {
+			return fmt.Errorf("parsing show response: %w", err)
+		}
+	} else {
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			var err error
+			issue, err = s.GetIssue(ctx, skillID)
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("skill not found: %s", skillID)
+		}
 	}
 
 	// Verify it's a skill

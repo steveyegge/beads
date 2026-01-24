@@ -118,6 +118,14 @@ type CreateArgs struct {
 	AwaitID   string        `json:"await_id,omitempty"`   // Condition identifier (run ID, PR number, etc.)
 	Timeout   time.Duration `json:"timeout,omitempty"`    // Max wait time before escalation
 	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
+	// Skill fields (only valid when IssueType == "skill")
+	SkillName       string   `json:"skill_name,omitempty"`
+	SkillVersion    string   `json:"skill_version,omitempty"`
+	SkillCategory   string   `json:"skill_category,omitempty"`
+	SkillInputs     []string `json:"skill_inputs,omitempty"`
+	SkillOutputs    []string `json:"skill_outputs,omitempty"`
+	SkillExamples   []string `json:"skill_examples,omitempty"`
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"`
 }
 
 // UpdateArgs represents arguments for the update operation
