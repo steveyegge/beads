@@ -54,6 +54,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
 		includeDeferred, _ := cmd.Flags().GetBool("include-deferred")
+		withSkills, _ := cmd.Flags().GetBool("with-skills")
 		var molType *types.MolType
 		if molTypeStr != "" {
 			mt := types.MolType(molTypeStr)
@@ -133,6 +134,13 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 				os.Exit(1)
 			}
+
+			// Apply skill filtering if requested (requires direct store access)
+			if withSkills {
+				fmt.Fprintf(os.Stderr, "Warning: --with-skills requires direct database access\n")
+				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon ready --with-skills\n")
+			}
+
 			if jsonOutput {
 				if issues == nil {
 					issues = []*types.Issue{}
@@ -210,6 +218,17 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			}
 		}
 	}
+
+		// Apply skill filtering if requested
+		if withSkills {
+			agentID := getActor()
+			issues, err = filterByAgentSkills(issues, agentID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: skill filtering failed: %v\n", err)
+				// Continue with unfiltered list
+			}
+		}
+
 		if jsonOutput {
 			// Always output array, even if empty
 			if issues == nil {
@@ -462,7 +481,77 @@ func init() {
 	readyCmd.Flags().Bool("pretty", false, "Display issues in a tree format with status/priority symbols")
 	readyCmd.Flags().Bool("include-deferred", false, "Include issues with future defer_until timestamps")
 	readyCmd.Flags().Bool("gated", false, "Find molecules ready for gate-resume dispatch")
+	readyCmd.Flags().Bool("with-skills", false, "Filter to issues where current agent has all required skills")
 	rootCmd.AddCommand(readyCmd)
 	blockedCmd.Flags().String("parent", "", "Filter to descendants of this bead/epic")
 	rootCmd.AddCommand(blockedCmd)
+}
+
+// filterByAgentSkills filters issues to only those where the current agent
+// has all required skills. Returns the filtered list and any error.
+func filterByAgentSkills(issues []*types.Issue, agentID string) ([]*types.Issue, error) {
+	if store == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	ctx := rootCtx
+
+	// Get skills the agent provides
+	agentSkills := make(map[string]bool)
+
+	// Try to find an agent bead for this actor
+	// Agents can be stored as "agent-<name>" or just referenced by their actor name
+	// We look for provides-skill edges where the agent is the source
+
+	// First, try to get dependencies where agent provides skills
+	deps, err := store.GetDependenciesWithMetadata(ctx, agentID)
+	if err == nil {
+		for _, dep := range deps {
+			if dep.DependencyType == types.DepProvidesSkill {
+				agentSkills[dep.ID] = true
+			}
+		}
+	}
+
+	// If no skills found with the raw agentID, try common agent ID patterns
+	if len(agentSkills) == 0 {
+		// Try "agent-<name>" pattern
+		altAgentID := "agent-" + agentID
+		deps, err = store.GetDependenciesWithMetadata(ctx, altAgentID)
+		if err == nil {
+			for _, dep := range deps {
+				if dep.DependencyType == types.DepProvidesSkill {
+					agentSkills[dep.ID] = true
+				}
+			}
+		}
+	}
+
+	// Filter issues by required skills
+	var filtered []*types.Issue
+	for _, issue := range issues {
+		// Get skills this issue requires
+		deps, err := store.GetDependenciesWithMetadata(ctx, issue.ID)
+		if err != nil {
+			// If we can't get dependencies, include the issue (fail open)
+			filtered = append(filtered, issue)
+			continue
+		}
+
+		// Check if agent has all required skills
+		hasAllSkills := true
+		for _, dep := range deps {
+			if dep.DependencyType == types.DepRequiresSkill {
+				if !agentSkills[dep.ID] {
+					hasAllSkills = false
+					break
+				}
+			}
+		}
+
+		if hasAllSkills {
+			filtered = append(filtered, issue)
+		}
+	}
+
+	return filtered, nil
 }
