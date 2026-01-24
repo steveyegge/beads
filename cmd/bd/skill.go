@@ -142,6 +142,9 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 
 	// Use direct storage mode for skill creation
 	// TODO: Add skill fields to RPC CreateArgs for daemon support
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first")
+	}
 	actor := getActor()
 	if err := store.CreateIssue(ctx, issue, actor); err != nil {
 		return fmt.Errorf("failed to create skill: %w", err)
@@ -175,6 +178,9 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Use direct storage mode for skill show
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first")
+	}
 	issue, err := store.GetIssue(ctx, skillID)
 	if err != nil {
 		return fmt.Errorf("skill not found: %s", skillID)
@@ -222,6 +228,9 @@ func runSkillList(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
 	// Get all skills using SearchIssues with skill type filter
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first")
+	}
 	skillType := types.TypeSkill
 	filter := types.IssueFilter{
 		IssueType: &skillType,
