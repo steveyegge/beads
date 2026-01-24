@@ -41,6 +41,13 @@ func init() {
 			fmt.Fprintf(os.Stderr, "\n  Dolt database ready\n")
 		}
 
+		// Auto-start dolt sql-server if server mode is enabled but server isn't running
+		if opts.ServerMode {
+			if err := dolt.EnsureServerRunning(ctx, path, opts.ServerHost, opts.ServerPort); err != nil {
+				return nil, fmt.Errorf("failed to ensure dolt server is running: %w", err)
+			}
+		}
+
 		return dolt.New(ctx, &dolt.Config{
 			Path:       path,
 			ReadOnly:   opts.ReadOnly,
