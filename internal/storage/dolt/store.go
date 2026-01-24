@@ -284,9 +284,9 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 		return nil, "", fmt.Errorf("failed to open Dolt server connection: %w", err)
 	}
 
-	// Server mode supports multi-writer, configure reasonable pool size
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	// Server mode supports multi-writer, configure large pool for multi-agent workloads
+	db.SetMaxOpenConns(1000)
+	db.SetMaxIdleConns(100)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	// Ensure database exists (may need to create it)
