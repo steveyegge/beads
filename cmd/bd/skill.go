@@ -196,6 +196,7 @@ var (
 	skillExamples       []string
 	skillClaudePath     string
 	skillFilterCategory string
+	skillTown           bool // Create/list skills at town level (hq- prefix)
 )
 
 func init() {
@@ -207,9 +208,11 @@ func init() {
 	skillCreateCmd.Flags().StringSliceVar(&skillOutputs, "outputs", nil, "What the skill produces (comma-separated)")
 	skillCreateCmd.Flags().StringSliceVar(&skillExamples, "examples", nil, "Usage examples (comma-separated)")
 	skillCreateCmd.Flags().StringVar(&skillClaudePath, "claude-skill-path", "", "Path to SKILL.md for Claude integration")
+	skillCreateCmd.Flags().BoolVar(&skillTown, "town", false, "Create skill at town level (accessible from all rigs)")
 
 	// skill list flags
 	skillListCmd.Flags().StringVar(&skillFilterCategory, "category", "", "Filter by category")
+	skillListCmd.Flags().BoolVar(&skillTown, "town", false, "List town-level skills only")
 
 	// Add subcommands
 	skillCmd.AddCommand(skillCreateCmd)
@@ -249,11 +252,19 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 	// Normalize skill name (lowercase, hyphens for spaces)
 	skillName = strings.ToLower(strings.ReplaceAll(skillName, " ", "-"))
 
-	// Generate skill ID
-	skillID := "skill-" + skillName
+	// Generate skill ID - use hq-skill- prefix for town-level skills
+	var skillID string
+	if skillTown {
+		skillID = "hq-skill-" + skillName
+	} else {
+		skillID = "skill-" + skillName
+	}
 
 	// Build title from name
 	title := strings.Title(strings.ReplaceAll(skillName, "-", " "))
+	if skillTown {
+		title = "[Town] " + title
+	}
 
 	// Use daemon if available
 	if daemonClient != nil {
@@ -348,9 +359,9 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 	skillArg := args[0]
 	ctx := rootCtx
 
-	// Normalize skill ID
+	// Normalize skill ID - accept full ID, skill name, or hq-skill- prefix
 	skillID := skillArg
-	if !strings.HasPrefix(skillID, "skill-") {
+	if !strings.HasPrefix(skillID, "skill-") && !strings.HasPrefix(skillID, "hq-skill-") {
 		skillID = "skill-" + skillID
 	}
 
@@ -448,12 +459,19 @@ func runSkillList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Filter by category if specified
+	// Filter by category and town flag
 	var skills []*types.Issue
 	for _, issue := range issues {
 		// Apply category filter if specified
 		if skillFilterCategory != "" && issue.SkillCategory != skillFilterCategory {
 			continue
+		}
+		// Apply town filter if specified
+		if skillTown {
+			// Only include town-level skills (hq-skill- prefix)
+			if !strings.HasPrefix(issue.ID, "hq-skill-") {
+				continue
+			}
 		}
 		skills = append(skills, issue)
 	}
@@ -509,7 +527,7 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 
 	// Normalize skill ID
 	skillID := skillArg
-	if !strings.HasPrefix(skillID, "skill-") {
+	if !strings.HasPrefix(skillID, "skill-") && !strings.HasPrefix(skillID, "hq-skill-") {
 		skillID = "skill-" + skillID
 	}
 
@@ -624,7 +642,7 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 
 	// Normalize skill ID
 	skillID := skillArg
-	if !strings.HasPrefix(skillID, "skill-") {
+	if !strings.HasPrefix(skillID, "skill-") && !strings.HasPrefix(skillID, "hq-skill-") {
 		skillID = "skill-" + skillID
 	}
 
@@ -723,7 +741,7 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 
 	// Normalize skill ID
 	skillID := skillArg
-	if !strings.HasPrefix(skillID, "skill-") {
+	if !strings.HasPrefix(skillID, "skill-") && !strings.HasPrefix(skillID, "hq-skill-") {
 		skillID = "skill-" + skillID
 	}
 
@@ -850,7 +868,7 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 
 	// Normalize skill ID
 	skillID := skillArg
-	if !strings.HasPrefix(skillID, "skill-") {
+	if !strings.HasPrefix(skillID, "skill-") && !strings.HasPrefix(skillID, "hq-skill-") {
 		skillID = "skill-" + skillID
 	}
 
