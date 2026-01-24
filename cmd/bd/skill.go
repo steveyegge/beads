@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -220,9 +221,13 @@ func init() {
 	skillCmd.AddCommand(skillLoadCmd)
 	skillCmd.AddCommand(skillPrimeCmd)
 	skillCmd.AddCommand(skillSyncCmd)
+	skillCmd.AddCommand(skillSpyCmd)
 
 	// skill sync flags
 	skillSyncCmd.Flags().BoolVar(&skillSyncClean, "clean", false, "Remove existing .claude/skills/ before syncing")
+
+	// skill spy flags
+	skillSpyCmd.Flags().IntVar(&spyLines, "lines", 200, "Number of lines to capture from session")
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -1178,4 +1183,88 @@ func findSkillFile(skillPath, repoRoot string) string {
 	}
 
 	return ""
+}
+
+// Spy command for monitoring polecat sessions
+var skillSpyCmd = &cobra.Command{
+	Use:   "spy <session-name> [marker]",
+	Short: "Check a polecat session for skill activation markers",
+	Long: `Capture output from a polecat tmux session and check for skill markers.
+
+This is used for E2E testing to verify that skills are being loaded and used.
+If no marker is specified, checks for the standard E2E test marker: [E2E-SKILL-ACTIVE]
+
+Examples:
+  bd skill spy gt-beads-polecat-alpha              # Check for default marker
+  bd skill spy gt-beads-polecat-alpha "[CUSTOM]"   # Check for custom marker
+  bd skill spy gt-beads-polecat-alpha --lines 500  # Capture more lines`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runSkillSpy,
+}
+
+var spyLines int
+
+// runSkillSpy captures session output and checks for skill markers
+func runSkillSpy(cmd *cobra.Command, args []string) error {
+	sessionName := args[0]
+	marker := "[E2E-SKILL-ACTIVE]"
+	if len(args) > 1 {
+		marker = args[1]
+	}
+
+	// Capture tmux pane output
+	captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines))
+	output, err := captureCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to capture session %s: %w (is tmux session running?)", sessionName, err)
+	}
+
+	outputStr := string(output)
+	found := strings.Contains(outputStr, marker)
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"session":      sessionName,
+			"marker":       marker,
+			"found":        found,
+			"lines":        spyLines,
+			"output_bytes": len(output),
+		})
+		return nil
+	}
+
+	if found {
+		fmt.Printf("%s Marker found in session %s\n", ui.RenderPass("✓"), sessionName)
+		fmt.Printf("  Marker: %s\n", marker)
+
+		// Show context around the marker
+		lines := strings.Split(outputStr, "\n")
+		for i, line := range lines {
+			if strings.Contains(line, marker) {
+				fmt.Printf("\n  Context (line %d):\n", i+1)
+				start := i - 2
+				if start < 0 {
+					start = 0
+				}
+				end := i + 3
+				if end > len(lines) {
+					end = len(lines)
+				}
+				for j := start; j < end; j++ {
+					prefix := "    "
+					if j == i {
+						prefix = "  > "
+					}
+					fmt.Printf("%s%s\n", prefix, lines[j])
+				}
+				break
+			}
+		}
+		return nil
+	}
+
+	fmt.Printf("%s Marker NOT found in session %s\n", ui.RenderFail("✗"), sessionName)
+	fmt.Printf("  Marker: %s\n", marker)
+	fmt.Printf("  Captured %d lines (%d bytes)\n", len(strings.Split(outputStr, "\n")), len(output))
+	return fmt.Errorf("skill marker not found")
 }
