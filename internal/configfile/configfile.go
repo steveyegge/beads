@@ -23,7 +23,7 @@ type Config struct {
 	// This enables multi-writer access for multi-agent environments.
 	DoltMode       string `json:"dolt_mode,omitempty"`        // "embedded" (default) or "server"
 	DoltServerHost string `json:"dolt_server_host,omitempty"` // Server host (default: 127.0.0.1)
-	DoltServerPort int    `json:"dolt_server_port,omitempty"` // Server port (default: 3306)
+	DoltServerPort int    `json:"dolt_server_port,omitempty"` // Server port (default: 3307)
 	DoltServerUser string `json:"dolt_server_user,omitempty"` // MySQL user (default: root)
 	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
 
@@ -222,13 +222,13 @@ const (
 // Default Dolt server settings
 const (
 	DefaultDoltServerHost = "127.0.0.1"
-	DefaultDoltServerPort = 3306
+	DefaultDoltServerPort = 3307 // Use 3307 to avoid conflict with MySQL on 3306
 	DefaultDoltServerUser = "root"
 )
 
 // IsDoltServerMode returns true if Dolt is configured for server mode.
 func (c *Config) IsDoltServerMode() bool {
-	return c.GetBackend() == BackendDolt && c.DoltMode == DoltModeServer
+	return c.GetBackend() == BackendDolt && strings.ToLower(c.DoltMode) == DoltModeServer
 }
 
 // GetDoltMode returns the Dolt connection mode, defaulting to embedded.
@@ -247,9 +247,9 @@ func (c *Config) GetDoltServerHost() string {
 	return c.DoltServerHost
 }
 
-// GetDoltServerPort returns the Dolt server port, defaulting to 3306.
+// GetDoltServerPort returns the Dolt server port, defaulting to 3307.
 func (c *Config) GetDoltServerPort() int {
-	if c.DoltServerPort == 0 {
+	if c.DoltServerPort <= 0 {
 		return DefaultDoltServerPort
 	}
 	return c.DoltServerPort

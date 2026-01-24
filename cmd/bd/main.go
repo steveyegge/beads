@@ -838,6 +838,18 @@ var rootCmd = &cobra.Command{
 		if backend == configfile.BackendDolt {
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
+
+			// Check if server mode is configured in metadata.json
+			cfg, cfgErr := configfile.Load(beadsDir)
+			if cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
+				opts.ServerMode = true
+				opts.ServerHost = cfg.GetDoltServerHost()
+				opts.ServerPort = cfg.GetDoltServerPort()
+				if cfg.Database != "" {
+					opts.Database = cfg.Database
+				}
+			}
+
 			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
 		} else {
 			// SQLite backend

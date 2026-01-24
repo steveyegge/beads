@@ -262,6 +262,11 @@ func openEmbeddedConnection(ctx context.Context, cfg *Config) (*sql.DB, string, 
 		return nil, "", fmt.Errorf("failed to connect to Dolt database after %d retries: %w", cfg.LockRetries, lastErr)
 	}
 
+	// Disable statistics collection to avoid stats subdatabase lock issues
+	// The stats database can cause "cannot update manifest: database is read only"
+	// errors when multiple processes access the embedded Dolt database
+	_, _ = db.ExecContext(ctx, "SET @@dolt_stats_enabled = 0")
+
 	return db, connStr, nil
 }
 
