@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,6 +104,83 @@ func runDeepValidation(path string) {
 
 	if !result.OverallOK {
 		os.Exit(1)
+	}
+}
+
+// runServerHealth runs Dolt server mode health checks
+func runServerHealth(path string) {
+	result := doctor.RunServerHealthChecks(path)
+
+	if jsonOutput {
+		jsonBytes, _ := json.Marshal(result)
+		fmt.Println(string(jsonBytes))
+	} else {
+		fmt.Println("Dolt Server Mode Health Check")
+		fmt.Println()
+		printServerHealthResult(result)
+	}
+
+	if !result.OverallOK {
+		os.Exit(1)
+	}
+}
+
+// printServerHealthResult prints the server health check results
+func printServerHealthResult(result doctor.ServerHealthResult) {
+	var passCount, warnCount, failCount int
+
+	for _, check := range result.Checks {
+		var statusIcon string
+		switch check.Status {
+		case statusOK:
+			statusIcon = "✓"
+			passCount++
+		case statusWarning:
+			statusIcon = "⚠"
+			warnCount++
+		case statusError:
+			statusIcon = "✗"
+			failCount++
+		}
+
+		fmt.Printf("  %s  %s", statusIcon, check.Name)
+		if check.Message != "" {
+			fmt.Printf(" %s", check.Message)
+		}
+		fmt.Println()
+
+		if check.Detail != "" {
+			// Indent detail lines
+			for _, line := range strings.Split(check.Detail, "\n") {
+				fmt.Printf("     └─ %s\n", line)
+			}
+		}
+	}
+
+	fmt.Println()
+
+	// Summary line
+	fmt.Printf("─────────────────────────────────────────\n")
+	fmt.Printf("✓ %d passed  ⚠ %d warnings  ✗ %d failed\n", passCount, warnCount, failCount)
+
+	// Print fixes for any errors/warnings
+	var fixes []doctor.DoctorCheck
+	for _, check := range result.Checks {
+		if check.Fix != "" && (check.Status == statusError || check.Status == statusWarning) {
+			fixes = append(fixes, check)
+		}
+	}
+
+	if len(fixes) > 0 {
+		fmt.Println()
+		fmt.Println("⚠  FIXES NEEDED")
+		for i, check := range fixes {
+			fmt.Printf("  %d. %s: %s\n", i+1, check.Name, check.Message)
+			fmt.Printf("     └─ %s\n", check.Fix)
+		}
+	} else if result.OverallOK {
+		fmt.Println()
+		fmt.Println("✓ All server health checks passed")
 	}
 }
 
