@@ -179,3 +179,204 @@ func TestGetDeletionsRetentionDays(t *testing.T) {
 		})
 	}
 }
+
+// TestDoltServerMode tests the Dolt server mode configuration (bd-dolt.2.2)
+func TestDoltServerMode(t *testing.T) {
+	t.Run("IsDoltServerMode", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want bool
+		}{
+			{
+				name: "sqlite backend",
+				cfg:  &Config{Backend: BackendSQLite},
+				want: false,
+			},
+			{
+				name: "dolt embedded mode",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},
+				want: false,
+			},
+			{
+				name: "dolt server mode",
+				cfg:  &Config{Backend: BackendDolt, DoltMode: DoltModeServer},
+				want: true,
+			},
+			{
+				name: "dolt default mode",
+				cfg:  &Config{Backend: BackendDolt},
+				want: false, // Default is embedded
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.cfg.IsDoltServerMode()
+				if got != tt.want {
+					t.Errorf("IsDoltServerMode() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("GetDoltMode", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want string
+		}{
+			{
+				name: "empty defaults to embedded",
+				cfg:  &Config{},
+				want: DoltModeEmbedded,
+			},
+			{
+				name: "explicit embedded",
+				cfg:  &Config{DoltMode: DoltModeEmbedded},
+				want: DoltModeEmbedded,
+			},
+			{
+				name: "explicit server",
+				cfg:  &Config{DoltMode: DoltModeServer},
+				want: DoltModeServer,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.cfg.GetDoltMode()
+				if got != tt.want {
+					t.Errorf("GetDoltMode() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("GetDoltServerHost", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want string
+		}{
+			{
+				name: "empty defaults to 127.0.0.1",
+				cfg:  &Config{},
+				want: DefaultDoltServerHost,
+			},
+			{
+				name: "custom host",
+				cfg:  &Config{DoltServerHost: "192.168.1.100"},
+				want: "192.168.1.100",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.cfg.GetDoltServerHost()
+				if got != tt.want {
+					t.Errorf("GetDoltServerHost() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("GetDoltServerPort", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want int
+		}{
+			{
+				name: "zero defaults to 3306",
+				cfg:  &Config{},
+				want: DefaultDoltServerPort,
+			},
+			{
+				name: "custom port",
+				cfg:  &Config{DoltServerPort: 13306},
+				want: 13306,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.cfg.GetDoltServerPort()
+				if got != tt.want {
+					t.Errorf("GetDoltServerPort() = %d, want %d", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("GetDoltServerUser", func(t *testing.T) {
+		tests := []struct {
+			name string
+			cfg  *Config
+			want string
+		}{
+			{
+				name: "empty defaults to root",
+				cfg:  &Config{},
+				want: DefaultDoltServerUser,
+			},
+			{
+				name: "custom user",
+				cfg:  &Config{DoltServerUser: "beads"},
+				want: "beads",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.cfg.GetDoltServerUser()
+				if got != tt.want {
+					t.Errorf("GetDoltServerUser() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
+}
+
+// TestDoltServerModeRoundtrip tests that server mode config survives save/load
+func TestDoltServerModeRoundtrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatalf("failed to create .beads directory: %v", err)
+	}
+
+	cfg := &Config{
+		Database:       "dolt",
+		Backend:        BackendDolt,
+		DoltMode:       DoltModeServer,
+		DoltServerHost: "192.168.1.50",
+		DoltServerPort: 13306,
+		DoltServerUser: "beads_admin",
+	}
+
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	loaded, err := Load(beadsDir)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if !loaded.IsDoltServerMode() {
+		t.Error("IsDoltServerMode() = false after load, want true")
+	}
+	if loaded.GetDoltMode() != DoltModeServer {
+		t.Errorf("GetDoltMode() = %q, want %q", loaded.GetDoltMode(), DoltModeServer)
+	}
+	if loaded.GetDoltServerHost() != "192.168.1.50" {
+		t.Errorf("GetDoltServerHost() = %q, want %q", loaded.GetDoltServerHost(), "192.168.1.50")
+	}
+	if loaded.GetDoltServerPort() != 13306 {
+		t.Errorf("GetDoltServerPort() = %d, want %d", loaded.GetDoltServerPort(), 13306)
+	}
+	if loaded.GetDoltServerUser() != "beads_admin" {
+		t.Errorf("GetDoltServerUser() = %q, want %q", loaded.GetDoltServerUser(), "beads_admin")
+	}
+}

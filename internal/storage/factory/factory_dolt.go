@@ -47,6 +47,7 @@ func init() {
 			ServerMode: opts.ServerMode,
 			ServerHost: opts.ServerHost,
 			ServerPort: opts.ServerPort,
+			ServerUser: opts.ServerUser,
 		})
 	})
 }
