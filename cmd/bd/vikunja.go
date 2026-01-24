@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -193,12 +194,34 @@ func validateVikunjaConfig() error {
 	return nil
 }
 
+// normalizeVikunjaURL ensures the API URL ends with /api/v1.
+func normalizeVikunjaURL(url string) string {
+	// Remove trailing slash
+	url = strings.TrimSuffix(url, "/")
+
+	// Check if URL already ends with /api/v1
+	if strings.HasSuffix(url, "/api/v1") {
+		return url
+	}
+
+	// Check if URL ends with /api (missing /v1)
+	if strings.HasSuffix(url, "/api") {
+		return url + "/v1"
+	}
+
+	// Append /api/v1
+	return url + "/api/v1"
+}
+
 // getVikunjaClient creates a configured Vikunja client.
 func getVikunjaClient(ctx context.Context) (*vikunja.Client, error) {
 	apiURL, _ := getVikunjaConfig(ctx, "vikunja.api_url")
 	if apiURL == "" {
 		return nil, fmt.Errorf("Vikunja API URL not configured")
 	}
+
+	// Normalize URL to ensure it ends with /api/v1
+	apiURL = normalizeVikunjaURL(apiURL)
 
 	apiToken, _ := getVikunjaConfig(ctx, "vikunja.api_token")
 	if apiToken == "" {
