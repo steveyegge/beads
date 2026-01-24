@@ -312,8 +312,13 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 
 	_, err = initDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.Database))
 	if err != nil {
-		_ = db.Close()
-		return nil, "", fmt.Errorf("failed to create database: %w", err)
+		// Dolt may return error 1007 even with IF NOT EXISTS - ignore if database already exists
+		errLower := strings.ToLower(err.Error())
+		if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
+			_ = db.Close()
+			return nil, "", fmt.Errorf("failed to create database: %w", err)
+		}
+		// Database already exists - that's fine, continue
 	}
 
 	return db, connStr, nil
