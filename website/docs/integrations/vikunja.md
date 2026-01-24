@@ -12,7 +12,33 @@ Sync issues bidirectionally between beads and [Vikunja](https://vikunja.io/).
 
 ### 1. Get API Token
 
-Get your Vikunja API token from **Settings > API Tokens** in Vikunja.
+Create an API token in Vikunja at **Settings > API Tokens** with the following scopes:
+
+| Scope | Permissions | Purpose |
+|-------|-------------|---------|
+| `projects` | `read_all`, `read_one` | List and read projects |
+| `projects_views_tasks` | `read_all` | Fetch tasks from views |
+| `tasks` | `create`, `read_one`, `update` | Create/read/update tasks |
+| `tasks_relations` | `create`, `delete` | Sync task relations (optional) |
+
+**Minimal token permissions (JSON):**
+```json
+{
+  "projects": ["read_all", "read_one"],
+  "projects_views_tasks": ["read_all"],
+  "tasks": ["create", "read_one", "update"]
+}
+```
+
+**With relation sync:**
+```json
+{
+  "projects": ["read_all", "read_one"],
+  "projects_views_tasks": ["read_all"],
+  "tasks": ["create", "read_one", "update"],
+  "tasks_relations": ["create", "delete"]
+}
+```
 
 ### 2. Configure beads
 
