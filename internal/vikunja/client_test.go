@@ -33,15 +33,6 @@ func TestClientWithProjectID(t *testing.T) {
 	}
 }
 
-func TestClientWithViewID(t *testing.T) {
-	client := NewClient("https://vikunja.example.com/api/v1", "test-token")
-	client = client.WithViewID(456)
-
-	if client.ViewID != 456 {
-		t.Errorf("ViewID = %d, want 456", client.ViewID)
-	}
-}
-
 func TestClientRequest(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +129,14 @@ func TestClientRequestError(t *testing.T) {
 
 func TestFetchTasks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/projects/1/views/2/tasks" {
-			t.Errorf("Path = %q, want /projects/1/views/2/tasks", r.URL.Path)
+		if r.URL.Path != "/tasks" {
+			t.Errorf("Path = %q, want /tasks", r.URL.Path)
+		}
+
+		// Check filter includes project_id
+		filter := r.URL.Query().Get("filter")
+		if filter == "" || !contains(filter, "project_id = 1") {
+			t.Errorf("filter should contain project_id = 1, got %q", filter)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -152,8 +149,7 @@ func TestFetchTasks(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").
-		WithProjectID(1).
-		WithViewID(2)
+		WithProjectID(1)
 
 	ctx := context.Background()
 	tasks, err := client.FetchTasks(ctx, "all")
@@ -169,11 +165,26 @@ func TestFetchTasks(t *testing.T) {
 	}
 }
 
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
+
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFetchTasksFilterOpen(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		filter := r.URL.Query().Get("filter")
-		if filter != "done = false" {
-			t.Errorf("filter = %q, want %q", filter, "done = false")
+		// Should contain both project_id and done = false
+		if !contains(filter, "project_id = 1") || !contains(filter, "done = false") {
+			t.Errorf("filter should contain project_id and done = false, got %q", filter)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -183,8 +194,7 @@ func TestFetchTasksFilterOpen(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").
-		WithProjectID(1).
-		WithViewID(2)
+		WithProjectID(1)
 
 	ctx := context.Background()
 	tasks, err := client.FetchTasks(ctx, "open")
@@ -198,7 +208,7 @@ func TestFetchTasksFilterOpen(t *testing.T) {
 }
 
 func TestFetchTasksRequiresProjectID(t *testing.T) {
-	client := NewClient("https://example.com", "test-token").WithViewID(1)
+	client := NewClient("https://example.com", "test-token")
 	ctx := context.Background()
 
 	_, err := client.FetchTasks(ctx, "all")
@@ -207,22 +217,12 @@ func TestFetchTasksRequiresProjectID(t *testing.T) {
 	}
 }
 
-func TestFetchTasksRequiresViewID(t *testing.T) {
-	client := NewClient("https://example.com", "test-token").WithProjectID(1)
-	ctx := context.Background()
-
-	_, err := client.FetchTasks(ctx, "all")
-	if err == nil {
-		t.Error("expected error when ViewID is not set")
-	}
-}
-
 func TestFetchTasksSince(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		filter := r.URL.Query().Get("filter")
-		// Should contain updated > "timestamp"
-		if filter == "" {
-			t.Error("filter should be set for incremental sync")
+		// Should contain project_id and updated > "timestamp"
+		if !contains(filter, "project_id = 1") || !contains(filter, "updated >") {
+			t.Errorf("filter should contain project_id and updated, got %q", filter)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -232,8 +232,7 @@ func TestFetchTasksSince(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").
-		WithProjectID(1).
-		WithViewID(2)
+		WithProjectID(1)
 
 	ctx := context.Background()
 	since := time.Now().Add(-24 * time.Hour)
@@ -519,8 +518,7 @@ func TestPagination(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").
-		WithProjectID(1).
-		WithViewID(2)
+		WithProjectID(1)
 
 	ctx := context.Background()
 	tasks, err := client.FetchTasks(ctx, "all")

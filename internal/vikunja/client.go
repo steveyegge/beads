@@ -25,7 +25,6 @@ type Client struct {
 	BaseURL    string
 	Token      string
 	ProjectID  int64
-	ViewID     int64
 	HTTPClient *http.Client
 }
 
@@ -46,18 +45,6 @@ func (c *Client) WithProjectID(projectID int64) *Client {
 		BaseURL:    c.BaseURL,
 		Token:      c.Token,
 		ProjectID:  projectID,
-		ViewID:     c.ViewID,
-		HTTPClient: c.HTTPClient,
-	}
-}
-
-// WithViewID returns a new client configured for a specific view.
-func (c *Client) WithViewID(viewID int64) *Client {
-	return &Client{
-		BaseURL:    c.BaseURL,
-		Token:      c.Token,
-		ProjectID:  c.ProjectID,
-		ViewID:     viewID,
 		HTTPClient: c.HTTPClient,
 	}
 }
@@ -156,29 +143,26 @@ func (c *Client) requestWithPagination(ctx context.Context, path string, params 
 	return allResults, nil
 }
 
-// FetchTasks retrieves tasks from the configured project and view.
+// FetchTasks retrieves tasks from the configured project.
 // state can be "all", "open", or "closed".
 func (c *Client) FetchTasks(ctx context.Context, state string) ([]Task, error) {
 	if c.ProjectID == 0 {
 		return nil, fmt.Errorf("project ID not configured")
 	}
-	if c.ViewID == 0 {
-		return nil, fmt.Errorf("view ID not configured")
-	}
 
-	path := fmt.Sprintf("/projects/%d/views/%d/tasks", c.ProjectID, c.ViewID)
 	params := url.Values{}
 
-	// Apply state filter
+	// Build filter with project ID and optional state
+	filter := fmt.Sprintf("project_id = %d", c.ProjectID)
 	switch state {
 	case "open":
-		params.Set("filter", "done = false")
+		filter += " && done = false"
 	case "closed":
-		params.Set("filter", "done = true")
-	// "all" - no filter
+		filter += " && done = true"
 	}
+	params.Set("filter", filter)
 
-	rawResults, err := c.requestWithPagination(ctx, path, params)
+	rawResults, err := c.requestWithPagination(ctx, "/tasks", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch tasks: %w", err)
 	}
@@ -200,15 +184,11 @@ func (c *Client) FetchTasksSince(ctx context.Context, state string, since time.T
 	if c.ProjectID == 0 {
 		return nil, fmt.Errorf("project ID not configured")
 	}
-	if c.ViewID == 0 {
-		return nil, fmt.Errorf("view ID not configured")
-	}
 
-	path := fmt.Sprintf("/projects/%d/views/%d/tasks", c.ProjectID, c.ViewID)
 	params := url.Values{}
 
-	// Build filter for incremental sync
-	filter := fmt.Sprintf("updated > %q", since.Format(time.RFC3339))
+	// Build filter with project ID, time, and optional state
+	filter := fmt.Sprintf("project_id = %d && updated > %q", c.ProjectID, since.Format(time.RFC3339))
 	switch state {
 	case "open":
 		filter += " && done = false"
@@ -217,7 +197,7 @@ func (c *Client) FetchTasksSince(ctx context.Context, state string, since time.T
 	}
 	params.Set("filter", filter)
 
-	rawResults, err := c.requestWithPagination(ctx, path, params)
+	rawResults, err := c.requestWithPagination(ctx, "/tasks", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch tasks: %w", err)
 	}

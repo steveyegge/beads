@@ -16,7 +16,7 @@ func TestIntegration_FetchAndConvertTasks(t *testing.T) {
 	// Mock Vikunja API server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/projects/1/views/1/tasks":
+		case "/tasks":
 			tasks := []Task{
 				{
 					ID:          1,
@@ -52,8 +52,7 @@ func TestIntegration_FetchAndConvertTasks(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "test-token").
-		WithProjectID(1).
-		WithViewID(1)
+		WithProjectID(1)
 
 	ctx := context.Background()
 	tasks, err := client.FetchTasks(ctx, "all")

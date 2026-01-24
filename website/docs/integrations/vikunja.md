@@ -17,16 +17,14 @@ Create an API token in Vikunja at **Settings > API Tokens** with the following s
 | Scope | Permissions | Purpose |
 |-------|-------------|---------|
 | `projects` | `read_all`, `read_one` | List and read projects |
-| `projects_views_tasks` | `read_all` | Fetch tasks from views |
-| `tasks` | `create`, `read_one`, `update` | Create/read/update tasks |
+| `tasks` | `read_all`, `create`, `read_one`, `update` | Read/create/update tasks |
 | `tasks_relations` | `create`, `delete` | Sync task relations (optional) |
 
 **Minimal token permissions (JSON):**
 ```json
 {
   "projects": ["read_all", "read_one"],
-  "projects_views_tasks": ["read_all"],
-  "tasks": ["create", "read_one", "update"]
+  "tasks": ["read_all", "create", "read_one", "update"]
 }
 ```
 
@@ -34,8 +32,7 @@ Create an API token in Vikunja at **Settings > API Tokens** with the following s
 ```json
 {
   "projects": ["read_all", "read_one"],
-  "projects_views_tasks": ["read_all"],
-  "tasks": ["create", "read_one", "update"],
+  "tasks": ["read_all", "create", "read_one", "update"],
   "tasks_relations": ["create", "delete"]
 }
 ```
@@ -54,7 +51,7 @@ export VIKUNJA_API_URL="https://your-vikunja-instance.com/api/v1"
 export VIKUNJA_API_TOKEN="YOUR_API_TOKEN"
 ```
 
-### 3. Select Project and View
+### 3. Select Project
 
 List available projects:
 
@@ -62,11 +59,10 @@ List available projects:
 bd vikunja projects
 ```
 
-Configure the project and view to sync:
+Configure the project to sync:
 
 ```bash
 bd config set vikunja.project_id "123"
-bd config set vikunja.view_id "456"
 ```
 
 ## Usage
@@ -122,7 +118,6 @@ bd vikunja status
 | `vikunja.api_url` | Vikunja API base URL | Required |
 | `vikunja.api_token` | API token for authentication | Required |
 | `vikunja.project_id` | Project ID to sync | Required |
-| `vikunja.view_id` | View ID within project | Required |
 | `vikunja.id_mode` | ID generation: "hash" or "db" | "hash" |
 | `vikunja.hash_length` | Hash ID length (3-8) | 6 |
 | `vikunja.last_sync` | Last sync timestamp (auto-managed) | - |
@@ -181,7 +176,6 @@ bd vikunja projects
 
 # Configure
 bd config set vikunja.project_id 42
-bd config set vikunja.view_id 1
 
 # Import all tasks
 bd vikunja sync --pull

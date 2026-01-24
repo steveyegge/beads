@@ -24,7 +24,6 @@ Configuration:
   bd config set vikunja.api_url "https://vikunja.example.com/api/v1"
   bd config set vikunja.api_token "YOUR_API_TOKEN"
   bd config set vikunja.project_id "123"
-  bd config set vikunja.view_id "456"
 
 Environment variables (alternative to config):
   VIKUNJA_API_URL   - Vikunja API base URL
@@ -106,8 +105,7 @@ Use this to find the project ID needed for configuration.
 
 Example:
   bd vikunja projects
-  bd config set vikunja.project_id "123"
-  bd config set vikunja.view_id "456"`,
+  bd config set vikunja.project_id "123"`,
 	Run: runVikunjaProjects,
 }
 
@@ -230,18 +228,12 @@ func getVikunjaClient(ctx context.Context) (*vikunja.Client, error) {
 
 	client := vikunja.NewClient(apiURL, apiToken)
 
-	// Apply optional project/view config
+	// Apply optional project config
 	if store != nil {
 		if projectIDStr, _ := store.GetConfig(ctx, "vikunja.project_id"); projectIDStr != "" {
 			var projectID int64
 			if _, err := fmt.Sscanf(projectIDStr, "%d", &projectID); err == nil {
 				client = client.WithProjectID(projectID)
-			}
-		}
-		if viewIDStr, _ := store.GetConfig(ctx, "vikunja.view_id"); viewIDStr != "" {
-			var viewID int64
-			if _, err := fmt.Sscanf(viewIDStr, "%d", &viewID); err == nil {
-				client = client.WithViewID(viewID)
 			}
 		}
 	}
@@ -400,9 +392,6 @@ func runVikunjaStatus(cmd *cobra.Command, args []string) {
 		if projectID, _ := store.GetConfig(ctx, "vikunja.project_id"); projectID != "" {
 			fmt.Printf("Project ID: %s\n", projectID)
 		}
-		if viewID, _ := store.GetConfig(ctx, "vikunja.view_id"); viewID != "" {
-			fmt.Printf("View ID: %s\n", viewID)
-		}
 		if lastSync, _ := store.GetConfig(ctx, "vikunja.last_sync"); lastSync != "" {
 			fmt.Printf("Last Sync: %s\n", lastSync)
 		} else {
@@ -455,5 +444,4 @@ func runVikunjaProjects(cmd *cobra.Command, args []string) {
 
 	fmt.Println("\nTo configure sync, run:")
 	fmt.Println("  bd config set vikunja.project_id <PROJECT_ID>")
-	fmt.Println("  bd config set vikunja.view_id <VIEW_ID>")
 }
