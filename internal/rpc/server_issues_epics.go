@@ -1646,30 +1646,11 @@ func (s *Server) handleShow(req *Request) Response {
 
 	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	
+
 	// Get dependencies and dependents with metadata (including dependency type)
-	var deps []*types.IssueWithDependencyMetadata
-	var dependents []*types.IssueWithDependencyMetadata
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		deps, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
-		dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-	} else {
-		// Fallback for non-SQLite storage (won't have dependency type metadata)
-		regularDeps, _ := store.GetDependencies(ctx, issue.ID)
-		for _, d := range regularDeps {
-			deps = append(deps, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-		regularDependents, _ := store.GetDependents(ctx, issue.ID)
-		for _, d := range regularDependents {
-			dependents = append(dependents, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-	}
+	// These methods are on the Storage interface, no type assertion needed
+	deps, _ := store.GetDependenciesWithMetadata(ctx, issue.ID)
+	dependents, _ := store.GetDependentsWithMetadata(ctx, issue.ID)
 
 	// Fetch comments
 	comments, _ := store.GetIssueComments(ctx, issue.ID)
