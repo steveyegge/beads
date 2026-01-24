@@ -82,6 +82,7 @@ type Issue struct {
 	// ===== Context Markers =====
 	Pinned     bool `json:"pinned,omitempty"`      // Persistent context marker, not a work item
 	IsTemplate bool `json:"is_template,omitempty"` // Read-only template molecule
+	AutoClose  bool `json:"auto_close,omitempty"`  // Epic auto-closes when all children close
 
 	// ===== Bonding Fields (compound molecule lineage) =====
 	BondedFrom []BondRef `json:"bonded_from,omitempty"` // For compounds: constituent protos

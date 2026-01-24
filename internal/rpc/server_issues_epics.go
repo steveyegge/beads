@@ -303,6 +303,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		Sender:    createArgs.Sender,
 		Ephemeral: createArgs.Ephemeral,
 		Pinned:    createArgs.Pinned,
+		AutoClose: createArgs.AutoClose,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,

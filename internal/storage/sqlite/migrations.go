@@ -60,6 +60,7 @@ var migrationsList = []Migration{
 	{"decision_point_columns", migrations.MigrateDecisionPointColumns},
 	{"reminder_count_column", migrations.MigrateReminderCountColumn},
 	{"skill_columns", migrations.MigrateSkillColumns},
+	{"auto_close_column", migrations.MigrateAutoCloseColumn},
 }
 
 // MigrationInfo contains metadata about a migration for inspection

@@ -45,6 +45,10 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 	if issue.Crystallizes {
 		crystallizes = 1
 	}
+	autoClose := 0
+	if issue.AutoClose {
+		autoClose = 1
+	}
 
 	_, err := conn.ExecContext(ctx, `
 		INSERT OR IGNORE INTO issues (
@@ -52,12 +56,12 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template, crystallizes,
+			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
 			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -65,7 +69,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, wisp, pinned, isTemplate, crystallizes,
+		issue.Sender, wisp, pinned, isTemplate, crystallizes, autoClose,
 		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
@@ -111,6 +115,10 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 	if issue.Crystallizes {
 		crystallizes = 1
 	}
+	autoClose := 0
+	if issue.AutoClose {
+		autoClose = 1
+	}
 
 	_, err := conn.ExecContext(ctx, `
 		INSERT INTO issues (
@@ -118,12 +126,12 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template, crystallizes,
+			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
 			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -131,7 +139,7 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 		issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 		issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-		issue.Sender, wisp, pinned, isTemplate, crystallizes,
+		issue.Sender, wisp, pinned, isTemplate, crystallizes, autoClose,
 		issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 		string(issue.MolType),
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
@@ -154,12 +162,12 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template, crystallizes,
+			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
 			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -188,6 +196,10 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 		if issue.Crystallizes {
 			crystallizes = 1
 		}
+		autoClose := 0
+		if issue.AutoClose {
+			autoClose = 1
+		}
 
 		_, err = stmt.ExecContext(ctx,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
@@ -196,7 +208,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, wisp, pinned, isTemplate, crystallizes,
+			issue.Sender, wisp, pinned, isTemplate, crystallizes, autoClose,
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,
@@ -228,12 +240,12 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 			deleted_at, deleted_by, delete_reason, original_type,
-			sender, ephemeral, pinned, is_template, crystallizes,
+			sender, ephemeral, pinned, is_template, crystallizes, auto_close,
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
 			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -262,6 +274,10 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 		if issue.Crystallizes {
 			crystallizes = 1
 		}
+		autoClose := 0
+		if issue.AutoClose {
+			autoClose = 1
+		}
 
 		_, err = stmt.ExecContext(ctx,
 			issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
@@ -270,7 +286,7 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			issue.EstimatedMinutes, issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt,
 			issue.ClosedAt, issue.ExternalRef, sourceRepo, issue.CloseReason,
 			issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
-			issue.Sender, wisp, pinned, isTemplate, crystallizes,
+			issue.Sender, wisp, pinned, isTemplate, crystallizes, autoClose,
 			issue.AwaitType, issue.AwaitID, int64(issue.Timeout), formatJSONStringArray(issue.Waiters),
 			string(issue.MolType),
 			issue.EventKind, issue.Actor, issue.Target, issue.Payload,

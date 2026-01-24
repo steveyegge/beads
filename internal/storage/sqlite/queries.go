@@ -669,6 +669,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
+	// Auto-close field
+	var autoClose sql.NullInt64
 
 	var owner sql.NullString
 	err := s.db.QueryRowContext(ctx, `
@@ -678,7 +680,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -689,7 +691,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
 	)
 
 	if err == sql.ErrNoRows {
@@ -782,6 +784,10 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
+	}
+	// Auto-close field
+	if autoClose.Valid && autoClose.Int64 != 0 {
+		issue.AutoClose = true
 	}
 
 	// Fetch labels for this issue
@@ -2080,7 +2086,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
