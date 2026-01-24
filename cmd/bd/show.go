@@ -16,18 +16,28 @@ import (
 )
 
 var showCmd = &cobra.Command{
-	Use:     "show [id...]",
+	Use:     "show [id...] [--id=<id>...]",
 	Aliases: []string{"view"},
 	GroupID: "issues",
 	Short:   "Show issue details",
-	Args:    cobra.MinimumNArgs(1),
+	Args:    cobra.ArbitraryArgs, // Allow zero positional args when --id is used
 	Run: func(cmd *cobra.Command, args []string) {
 		showThread, _ := cmd.Flags().GetBool("thread")
 		shortMode, _ := cmd.Flags().GetBool("short")
 		showRefs, _ := cmd.Flags().GetBool("refs")
 		showChildren, _ := cmd.Flags().GetBool("children")
 		asOfRef, _ := cmd.Flags().GetString("as-of")
+		idFlags, _ := cmd.Flags().GetStringArray("id")
 		ctx := rootCtx
+
+		// Merge --id flag values with positional args
+		// This allows IDs that look like flags (e.g., --xyz or gt--abc) to be passed safely
+		args = append(args, idFlags...)
+
+		// Validate that at least one ID is provided
+		if len(args) == 0 {
+			FatalErrorRespectJSON("at least one issue ID is required (use positional args or --id flag)")
+		}
 
 		// Handle --as-of flag: show issue at a specific point in history
 		if asOfRef != "" {
@@ -1103,6 +1113,7 @@ func init() {
 	showCmd.Flags().Bool("refs", false, "Show issues that reference this issue (reverse lookup)")
 	showCmd.Flags().Bool("children", false, "Show only the children of this issue")
 	showCmd.Flags().String("as-of", "", "Show issue as it existed at a specific commit hash or branch (requires Dolt)")
+	showCmd.Flags().StringArray("id", nil, "Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }
