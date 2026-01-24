@@ -965,3 +965,148 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		log.log("Sync cycle complete")
 	}
 }
+
+// =============================================================================
+// Dolt-Native Sync Functions (hq-c005e8)
+// =============================================================================
+// These functions provide lightweight sync for dolt-native mode, bypassing
+// all JSONL export/import logic since Dolt handles versioning natively.
+
+// createDoltNativeExportFunc creates a function that commits to Dolt and
+// optionally pushes. This replaces the JSONL export workflow for dolt-native mode.
+func createDoltNativeExportFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log daemonLogger) func() {
+	return func() {
+		exportCtx, exportCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer exportCancel()
+
+		log.log("Starting dolt-native export...")
+
+		// Get the remote storage interface
+		rs, ok := storage.AsRemote(store)
+		if !ok {
+			log.log("Error: store does not support remote operations")
+			return
+		}
+
+		// Commit changes if autoCommit enabled
+		if autoCommit {
+			message := fmt.Sprintf("bd daemon: %s", time.Now().Format("2006-01-02 15:04:05"))
+			if err := rs.Commit(exportCtx, message); err != nil {
+				// "nothing to commit" is not an error
+				if !strings.Contains(err.Error(), "nothing to commit") {
+					log.log("Dolt commit failed: %v", err)
+					return
+				}
+				log.log("No changes to commit")
+			} else {
+				log.log("Committed to Dolt")
+			}
+		}
+
+		// Push if autoPush enabled
+		if autoPush {
+			if err := rs.Push(exportCtx); err != nil {
+				// "nothing to push" or "no remote" is not an error
+				if !strings.Contains(err.Error(), "nothing to push") &&
+					!strings.Contains(err.Error(), "remote") {
+					log.log("Dolt push failed: %v", err)
+					return
+				}
+			} else {
+				log.log("Pushed to Dolt remote")
+			}
+		}
+
+		log.log("Dolt-native export complete")
+	}
+}
+
+// createDoltNativePullFunc creates a function that pulls from Dolt remote.
+// This replaces the JSONL auto-import workflow for dolt-native mode.
+func createDoltNativePullFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+	return func() {
+		pullCtx, pullCancel := context.WithTimeout(ctx, 60*time.Second)
+		defer pullCancel()
+
+		log.log("Starting dolt-native pull...")
+
+		// Get the remote storage interface
+		rs, ok := storage.AsRemote(store)
+		if !ok {
+			log.log("Error: store does not support remote operations")
+			return
+		}
+
+		if err := rs.Pull(pullCtx); err != nil {
+			// "nothing to pull" or "no remote" is not an error
+			if !strings.Contains(err.Error(), "nothing to pull") &&
+				!strings.Contains(err.Error(), "remote") &&
+				!strings.Contains(err.Error(), "up to date") {
+				log.log("Dolt pull failed: %v", err)
+				return
+			}
+		} else {
+			log.log("Pulled from Dolt remote")
+		}
+
+		log.log("Dolt-native pull complete")
+	}
+}
+
+// createDoltNativeSyncFunc creates a sync function for dolt-native mode.
+// This is a no-op sync cycle since dolt-native uses event-driven commit/push.
+func createDoltNativeSyncFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush, autoPull bool, log daemonLogger) func() {
+	return func() {
+		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer syncCancel()
+
+		log.log("Starting dolt-native sync cycle...")
+
+		rs, ok := storage.AsRemote(store)
+		if !ok {
+			log.log("Error: store does not support remote operations")
+			return
+		}
+
+		// Pull first if autoPull enabled
+		if autoPull {
+			if err := rs.Pull(syncCtx); err != nil {
+				if !strings.Contains(err.Error(), "remote") &&
+					!strings.Contains(err.Error(), "up to date") {
+					log.log("Dolt pull failed: %v", err)
+					// Continue anyway - push might still work
+				}
+			} else {
+				log.log("Pulled from Dolt remote")
+			}
+		}
+
+		// Commit if autoCommit enabled
+		if autoCommit {
+			message := fmt.Sprintf("bd daemon sync: %s", time.Now().Format("2006-01-02 15:04:05"))
+			if err := rs.Commit(syncCtx, message); err != nil {
+				if !strings.Contains(err.Error(), "nothing to commit") {
+					log.log("Dolt commit failed: %v", err)
+					return
+				}
+			} else {
+				log.log("Committed to Dolt")
+			}
+		}
+
+		// Push if autoPush enabled
+		if autoPush {
+			if err := rs.Push(syncCtx); err != nil {
+				if !strings.Contains(err.Error(), "nothing to push") &&
+					!strings.Contains(err.Error(), "remote") {
+					log.log("Dolt push failed: %v", err)
+					return
+				}
+			} else {
+				log.log("Pushed to Dolt remote")
+			}
+		}
+
+		log.log("Dolt-native sync cycle complete")
+	}
+}
