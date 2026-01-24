@@ -434,12 +434,6 @@ func runVikunjaProjects(cmd *cobra.Command, args []string) {
 		if project.Description != "" {
 			fmt.Printf("  Description: %s\n", project.Description)
 		}
-		if len(project.Views) > 0 {
-			fmt.Println("  Views:")
-			for _, view := range project.Views {
-				fmt.Printf("    - %s (ID: %d, Type: %s)\n", view.Title, view.ID, view.ViewKind)
-			}
-		}
 	}
 
 	fmt.Println("\nTo configure sync, run:")
