@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -161,6 +162,28 @@ Examples:
 	RunE: runSkillPrime,
 }
 
+var skillSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync beads skills to .claude/skills/ for Claude Code discovery",
+	Long: `Sync beads skills to .claude/skills/ directory.
+
+This makes beads skills discoverable by Claude Code's native Skill tool.
+For each skill bead with a claude_skill_path set, creates a symlink or
+copies the SKILL.md file to .claude/skills/<skill-name>/.
+
+Run this:
+- After creating new skills: bd skill create ... && bd skill sync
+- At session start via hook
+- Manually to update skill availability
+
+Examples:
+  bd skill sync              # Sync all skills with claude_skill_path
+  bd skill sync --clean      # Remove .claude/skills/ first, then sync`,
+	RunE: runSkillSync,
+}
+
+var skillSyncClean bool
+
 // Flag variables for skill commands
 var (
 	skillDescription    string
@@ -196,6 +219,10 @@ func init() {
 	skillCmd.AddCommand(skillRequiredCmd)
 	skillCmd.AddCommand(skillLoadCmd)
 	skillCmd.AddCommand(skillPrimeCmd)
+	skillCmd.AddCommand(skillSyncCmd)
+
+	// skill sync flags
+	skillSyncCmd.Flags().BoolVar(&skillSyncClean, "clean", false, "Remove existing .claude/skills/ before syncing")
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -272,11 +299,13 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
-	// Use direct storage mode for skill show
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
-	issue, err := store.GetIssue(ctx, skillID)
+	// Get skill using withStorage for daemon mode support
+	var issue *types.Issue
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		var err error
+		issue, err = s.GetIssue(ctx, skillID)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("skill not found: %s", skillID)
 	}
@@ -322,17 +351,32 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 func runSkillList(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
-	// Get all skills using SearchIssues with skill type filter
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
-	skillType := types.TypeSkill
-	filter := types.IssueFilter{
-		IssueType: &skillType,
-	}
-	issues, err := store.SearchIssues(ctx, "", filter)
-	if err != nil {
-		return fmt.Errorf("failed to list skills: %w", err)
+	// Get all skills using List with skill type filter
+	var issues []*types.Issue
+	if daemonClient != nil {
+		listArgs := &rpc.ListArgs{
+			IssueType: string(types.TypeSkill),
+		}
+		resp, err := daemonClient.List(listArgs)
+		if err != nil {
+			return fmt.Errorf("failed to list skills: %w", err)
+		}
+		if err := json.Unmarshal(resp.Data, &issues); err != nil {
+			return fmt.Errorf("failed to decode skills: %w", err)
+		}
+	} else {
+		skillType := types.TypeSkill
+		filter := types.IssueFilter{
+			IssueType: &skillType,
+		}
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			var err error
+			issues, err = s.SearchIssues(ctx, "", filter)
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list skills: %w", err)
+		}
 	}
 
 	// Filter by category if specified
@@ -601,29 +645,32 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
+	var resolvedSkillID string
+	var skill *types.Issue
+	var dependents []*types.IssueWithDependencyMetadata
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		// Resolve skill ID
+		var err error
+		resolvedSkillID, err = utils.ResolvePartialID(ctx, s, skillID)
+		if err != nil {
+			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
+		}
 
-	// Resolve skill ID
-	resolvedSkillID, err := utils.ResolvePartialID(ctx, store, skillID)
-	if err != nil {
-		return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
-	}
+		// Verify it's a skill
+		skill, err = s.GetIssue(ctx, resolvedSkillID)
+		if err != nil {
+			return fmt.Errorf("skill not found: %s", resolvedSkillID)
+		}
+		if skill.IssueType != types.TypeSkill {
+			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
+		}
 
-	// Verify it's a skill
-	skill, err := store.GetIssue(ctx, resolvedSkillID)
+		// Get dependents with provides-skill type
+		dependents, err = s.GetDependentsWithMetadata(ctx, resolvedSkillID)
+		return err
+	})
 	if err != nil {
-		return fmt.Errorf("skill not found: %s", resolvedSkillID)
-	}
-	if skill.IssueType != types.TypeSkill {
-		return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
-	}
-
-	// Get dependents with provides-skill type
-	dependents, err := store.GetDependentsWithMetadata(ctx, resolvedSkillID)
-	if err != nil {
-		return fmt.Errorf("failed to get skill providers: %w", err)
+		return err
 	}
 
 	// Filter to only provides-skill edges
@@ -660,26 +707,29 @@ func runSkillRequired(cmd *cobra.Command, args []string) error {
 	issueArg := args[0]
 	ctx := rootCtx
 
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
+	var issueID string
+	var issue *types.Issue
+	var deps []*types.IssueWithDependencyMetadata
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		// Resolve issue ID
+		var err error
+		issueID, err = utils.ResolvePartialID(ctx, s, issueArg)
+		if err != nil {
+			return fmt.Errorf("resolving issue ID %s: %w", issueArg, err)
+		}
 
-	// Resolve issue ID
-	issueID, err := utils.ResolvePartialID(ctx, store, issueArg)
-	if err != nil {
-		return fmt.Errorf("resolving issue ID %s: %w", issueArg, err)
-	}
+		// Get the issue to display its title
+		issue, err = s.GetIssue(ctx, issueID)
+		if err != nil {
+			return fmt.Errorf("issue not found: %s", issueID)
+		}
 
-	// Get the issue to display its title
-	issue, err := store.GetIssue(ctx, issueID)
+		// Get dependencies with requires-skill type
+		deps, err = s.GetDependenciesWithMetadata(ctx, issueID)
+		return err
+	})
 	if err != nil {
-		return fmt.Errorf("issue not found: %s", issueID)
-	}
-
-	// Get dependencies with requires-skill type
-	deps, err := store.GetDependenciesWithMetadata(ctx, issueID)
-	if err != nil {
-		return fmt.Errorf("failed to get skill requirements: %w", err)
+		return err
 	}
 
 	// Filter to only requires-skill edges
@@ -722,23 +772,28 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 		skillID = "skill-" + skillID
 	}
 
-	if store == nil {
-		return fmt.Errorf("database not initialized - run 'bd init' first")
-	}
+	var resolvedSkillID string
+	var skill *types.Issue
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		// Resolve skill ID
+		var err error
+		resolvedSkillID, err = utils.ResolvePartialID(ctx, s, skillID)
+		if err != nil {
+			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
+		}
 
-	// Resolve skill ID
-	resolvedSkillID, err := utils.ResolvePartialID(ctx, store, skillID)
+		// Get the skill
+		skill, err = s.GetIssue(ctx, resolvedSkillID)
+		if err != nil {
+			return fmt.Errorf("skill not found: %s", resolvedSkillID)
+		}
+		if skill.IssueType != types.TypeSkill {
+			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
-	}
-
-	// Get the skill
-	skill, err := store.GetIssue(ctx, resolvedSkillID)
-	if err != nil {
-		return fmt.Errorf("skill not found: %s", resolvedSkillID)
-	}
-	if skill.IssueType != types.TypeSkill {
-		return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
+		return err
 	}
 
 	// If claude_skill_path is set, try to load the file
@@ -841,11 +896,6 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 func runSkillPrime(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
-	if store == nil {
-		// No database - nothing to output
-		return nil
-	}
-
 	agentID := getActor()
 	if agentID == "" {
 		return nil // No agent, no skills
@@ -859,19 +909,25 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 	}
 
 	var agentSkillIDs []string
-	for _, pattern := range agentPatterns {
-		deps, err := store.GetDependenciesWithMetadata(ctx, pattern)
-		if err != nil {
-			continue
-		}
-		for _, dep := range deps {
-			if dep.DependencyType == types.DepProvidesSkill {
-				agentSkillIDs = append(agentSkillIDs, dep.ID)
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		for _, pattern := range agentPatterns {
+			deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
+			if err != nil {
+				continue
+			}
+			for _, dep := range deps {
+				if dep.DependencyType == types.DepProvidesSkill {
+					agentSkillIDs = append(agentSkillIDs, dep.ID)
+				}
+			}
+			if len(agentSkillIDs) > 0 {
+				break
 			}
 		}
-		if len(agentSkillIDs) > 0 {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return nil // Silently fail for prime
 	}
 
 	if len(agentSkillIDs) == 0 {
@@ -884,27 +940,33 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		Content string
 	}
 
-	for _, skillID := range agentSkillIDs {
-		skill, err := store.GetIssue(ctx, skillID)
-		if err != nil || skill.IssueType != types.TypeSkill {
-			continue
-		}
+	err = withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		for _, skillID := range agentSkillIDs {
+			skill, err := s.GetIssue(ctx, skillID)
+			if err != nil || skill.IssueType != types.TypeSkill {
+				continue
+			}
 
-		if skill.ClaudeSkillPath == "" {
-			continue // No SKILL.md to load
-		}
+			if skill.ClaudeSkillPath == "" {
+				continue // No SKILL.md to load
+			}
 
-		// Try to load the file
-		content := loadSkillFile(skill.ClaudeSkillPath)
-		if content != "" {
-			loadedSkills = append(loadedSkills, struct {
-				Name    string
-				Content string
-			}{
-				Name:    skill.SkillName,
-				Content: content,
-			})
+			// Try to load the file
+			content := loadSkillFile(skill.ClaudeSkillPath)
+			if content != "" {
+				loadedSkills = append(loadedSkills, struct {
+					Name    string
+					Content string
+				}{
+					Name:    skill.SkillName,
+					Content: content,
+				})
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil // Silently fail for prime
 	}
 
 	if len(loadedSkills) == 0 {
@@ -952,6 +1014,153 @@ func loadSkillFile(skillPath string) string {
 	for _, candidate := range candidates {
 		if data, err := os.ReadFile(candidate); err == nil {
 			return string(data)
+		}
+	}
+
+	return ""
+}
+
+// runSkillSync syncs beads skills to .claude/skills/ for Claude Code discovery
+func runSkillSync(cmd *cobra.Command, args []string) error {
+	ctx := rootCtx
+
+	// Find repo root (where .claude should be)
+	repoRoot := ""
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for dir != "/" {
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				repoRoot = dir
+				break
+			}
+			dir = filepath.Dir(dir)
+		}
+	}
+	if repoRoot == "" {
+		return fmt.Errorf("not in a git repository")
+	}
+
+	claudeSkillsDir := filepath.Join(repoRoot, ".claude", "skills")
+
+	// Clean if requested
+	if skillSyncClean {
+		if err := os.RemoveAll(claudeSkillsDir); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to clean %s: %w", claudeSkillsDir, err)
+		}
+		if !quietFlag {
+			fmt.Printf("Cleaned %s\n", claudeSkillsDir)
+		}
+	}
+
+	// Get all skills
+	var skills []*types.Issue
+	if daemonClient != nil {
+		listArgs := &rpc.ListArgs{
+			IssueType: string(types.TypeSkill),
+		}
+		resp, err := daemonClient.List(listArgs)
+		if err != nil {
+			return fmt.Errorf("failed to list skills: %w", err)
+		}
+		if err := json.Unmarshal(resp.Data, &skills); err != nil {
+			return fmt.Errorf("failed to decode skills: %w", err)
+		}
+	} else {
+		skillType := types.TypeSkill
+		filter := types.IssueFilter{
+			IssueType: &skillType,
+		}
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			var err error
+			skills, err = s.SearchIssues(ctx, "", filter)
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list skills: %w", err)
+		}
+	}
+
+	// Filter to skills with claude_skill_path
+	var syncedCount int
+	for _, skill := range skills {
+		if skill.ClaudeSkillPath == "" {
+			continue
+		}
+
+		// Find the source SKILL.md
+		sourcePath := findSkillFile(skill.ClaudeSkillPath, repoRoot)
+		if sourcePath == "" {
+			fmt.Fprintf(os.Stderr, "Warning: skill %s: claude_skill_path '%s' not found, skipping\n",
+				skill.SkillName, skill.ClaudeSkillPath)
+			continue
+		}
+
+		// Create target directory
+		targetDir := filepath.Join(claudeSkillsDir, skill.SkillName)
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return fmt.Errorf("failed to create %s: %w", targetDir, err)
+		}
+
+		// Create symlink to SKILL.md
+		targetPath := filepath.Join(targetDir, "SKILL.md")
+
+		// Remove existing file/symlink
+		_ = os.Remove(targetPath)
+
+		// Try to create relative symlink for portability
+		relPath, err := filepath.Rel(targetDir, sourcePath)
+		if err != nil {
+			relPath = sourcePath // Fall back to absolute
+		}
+
+		if err := os.Symlink(relPath, targetPath); err != nil {
+			// If symlink fails (e.g., on some Windows configs), copy instead
+			content, readErr := os.ReadFile(sourcePath)
+			if readErr != nil {
+				return fmt.Errorf("failed to read %s: %w", sourcePath, readErr)
+			}
+			if writeErr := os.WriteFile(targetPath, content, 0644); writeErr != nil {
+				return fmt.Errorf("failed to write %s: %w", targetPath, writeErr)
+			}
+		}
+
+		syncedCount++
+		if !quietFlag {
+			fmt.Printf("Synced: %s -> %s\n", skill.SkillName, targetPath)
+		}
+	}
+
+	if jsonOutput {
+		outputJSON(map[string]interface{}{
+			"synced":      syncedCount,
+			"target_dir":  claudeSkillsDir,
+			"total_skills": len(skills),
+		})
+		return nil
+	}
+
+	if syncedCount == 0 {
+		fmt.Println("No skills with claude_skill_path to sync")
+	} else {
+		fmt.Printf("\nSynced %d skill(s) to %s\n", syncedCount, claudeSkillsDir)
+		fmt.Println("Skills are now discoverable by Claude Code's Skill tool")
+	}
+
+	return nil
+}
+
+// findSkillFile finds a skill file from various locations
+func findSkillFile(skillPath, repoRoot string) string {
+	candidates := []string{
+		skillPath,
+		filepath.Join(".", skillPath),
+		filepath.Join(repoRoot, skillPath),
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			absPath, _ := filepath.Abs(candidate)
+			return absPath
 		}
 	}
 
