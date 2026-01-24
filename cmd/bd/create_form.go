@@ -341,6 +341,21 @@ func runCreateForm(cmd *cobra.Command) {
 	// Parse the form input
 	fv := parseCreateFormInput(raw)
 
+	// Reconnect to daemon after form completion - the connection may have gone stale
+	// while the user was filling out the form. This prevents "broken pipe" errors.
+	if daemonClient != nil {
+		// Close stale connection
+		_ = daemonClient.Close()
+		daemonClient = nil
+
+		// Try to reconnect
+		socketPath := getSocketPath()
+		if client, err := rpc.TryConnect(socketPath); err == nil && client != nil {
+			client.SetActor(actor)
+			daemonClient = client
+		}
+	}
+
 	// If daemon is running, use RPC
 	if daemonClient != nil {
 		createArgs := &rpc.CreateArgs{
