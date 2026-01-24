@@ -483,10 +483,11 @@ func cookFormulaToSubgraph(f *formula.Formula, protoID string) (*TemplateSubgrap
 	}
 
 	return &TemplateSubgraph{
-		Root:         rootIssue,
-		Issues:       issues,
-		Dependencies: deps,
-		IssueMap:     issueMap,
+		Root:           rootIssue,
+		Issues:         issues,
+		Dependencies:   deps,
+		IssueMap:       issueMap,
+		RequiredSkills: f.RequiresSkills, // Propagate formula-level skill requirements
 	}, nil
 }
 

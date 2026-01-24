@@ -26,12 +26,13 @@ var variablePattern = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 
 // TemplateSubgraph holds a template epic and all its descendants
 type TemplateSubgraph struct {
-	Root         *types.Issue                // The template epic
-	Issues       []*types.Issue              // All issues in the subgraph (including root)
-	Dependencies []*types.Dependency         // All dependencies within the subgraph
-	IssueMap     map[string]*types.Issue     // ID -> Issue for quick lookup
-	VarDefs      map[string]formula.VarDef   // Variable definitions from formula (for defaults)
-	Phase        string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
+	Root           *types.Issue                // The template epic
+	Issues         []*types.Issue              // All issues in the subgraph (including root)
+	Dependencies   []*types.Dependency         // All dependencies within the subgraph
+	IssueMap       map[string]*types.Issue     // ID -> Issue for quick lookup
+	VarDefs        map[string]formula.VarDef   // Variable definitions from formula (for defaults)
+	Phase          string                      // Recommended phase: "liquid" (pour) or "vapor" (wisp)
+	RequiredSkills []string                    // Skill IDs required by the formula (creates requires-skill deps on instantiation)
 }
 
 // InstantiateResult holds the result of template instantiation
@@ -759,6 +760,28 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 		}
 	}
 
+	// Third pass: add requires-skill dependencies for all new issues
+	// This enables skill-based work routing via bd ready --with-skills
+	if len(subgraph.RequiredSkills) > 0 {
+		for _, skillID := range subgraph.RequiredSkills {
+			// Normalize skill ID (add skill- prefix if needed)
+			normalizedSkillID := skillID
+			if !strings.HasPrefix(skillID, "skill-") {
+				normalizedSkillID = "skill-" + skillID
+			}
+
+			// Add requires-skill dependency for each new issue
+			for _, newID := range idMapping {
+				// Ignore errors - skill may not exist yet
+				_, _ = client.AddDependency(&rpc.DepAddArgs{
+					FromID:  newID,
+					ToID:    normalizedSkillID,
+					DepType: string(types.DepRequiresSkill),
+				})
+			}
+		}
+	}
+
 	return &InstantiateResult{
 		NewEpicID: idMapping[subgraph.Root.ID],
 		IDMapping: idMapping,
@@ -1002,6 +1025,29 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 			}
 			if err := tx.AddDependency(ctx, newDep, opts.Actor); err != nil {
 				return fmt.Errorf("failed to create dependency: %w", err)
+			}
+		}
+
+		// Third pass: add requires-skill dependencies for all new issues
+		// This enables skill-based work routing via bd ready --with-skills
+		if len(subgraph.RequiredSkills) > 0 {
+			for _, skillID := range subgraph.RequiredSkills {
+				// Normalize skill ID (add skill- prefix if needed)
+				normalizedSkillID := skillID
+				if !strings.HasPrefix(skillID, "skill-") {
+					normalizedSkillID = "skill-" + skillID
+				}
+
+				// Add requires-skill dependency for each new issue
+				for _, newID := range idMapping {
+					skillDep := &types.Dependency{
+						IssueID:     newID,
+						DependsOnID: normalizedSkillID,
+						Type:        types.DepRequiresSkill,
+					}
+					// Ignore errors - skill may not exist yet
+					_ = tx.AddDependency(ctx, skillDep, opts.Actor)
+				}
 			}
 		}
 
