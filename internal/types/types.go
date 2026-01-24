@@ -521,6 +521,7 @@ const (
 	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
 	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
 	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
+	TypeWisp         IssueType = "wisp"          // Ephemeral molecule instance (not synced via git)
 	TypeGate         IssueType = "gate"          // Async coordination gate
 	TypeAgent        IssueType = "agent"         // Agent identity bead
 	TypeRole         IssueType = "role"          // Agent role definition
@@ -542,7 +543,7 @@ func (t IssueType) IsValid() bool {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
 	// Extended types (Gas Town, molecules, coordination)
-	case TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
+	case TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
 		return true
 	}
 	return false

@@ -972,6 +972,12 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 				issueAssignee = opts.Assignee
 			}
 
+			// Determine issue type: wisps (ephemeral) get their own type to avoid cluttering epic listings
+			issueType := oldIssue.IssueType
+			if opts.Ephemeral && oldIssue.IssueType == types.TypeEpic {
+				issueType = types.TypeWisp
+			}
+
 			newIssue := &types.Issue{
 				// ID will be set below based on bonding options
 				Title:              substituteVariables(oldIssue.Title, opts.Vars),
@@ -981,7 +987,7 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 				Notes:              substituteVariables(oldIssue.Notes, opts.Vars),
 				Status:             types.StatusOpen, // Always start fresh
 				Priority:           oldIssue.Priority,
-				IssueType:          oldIssue.IssueType,
+				IssueType:          issueType,
 				Assignee:           issueAssignee,
 				EstimatedMinutes:   oldIssue.EstimatedMinutes,
 				Ephemeral:          opts.Ephemeral, // mark for cleanup when closed
