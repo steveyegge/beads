@@ -144,6 +144,23 @@ Examples:
 	RunE: runSkillLoad,
 }
 
+var skillPrimeCmd = &cobra.Command{
+	Use:   "prime",
+	Short: "Output skill content for current agent (for gt prime integration)",
+	Long: `Output the SKILL.md content for all skills the current agent provides.
+
+This is designed to be called by gt prime to inject skill documentation
+into Claude's context at session start. Only loads skills that have
+claude_skill_path set.
+
+The agent is determined by BD_ACTOR or --actor flag.
+
+Examples:
+  bd skill prime              # Output skills for current agent
+  bd skill prime --actor foo  # Output skills for specific agent`,
+	RunE: runSkillPrime,
+}
+
 // Flag variables for skill commands
 var (
 	skillDescription    string
@@ -178,6 +195,7 @@ func init() {
 	skillCmd.AddCommand(skillProvidersCmd)
 	skillCmd.AddCommand(skillRequiredCmd)
 	skillCmd.AddCommand(skillLoadCmd)
+	skillCmd.AddCommand(skillPrimeCmd)
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -817,4 +835,125 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// runSkillPrime outputs skill content for the current agent's skills
+func runSkillPrime(cmd *cobra.Command, args []string) error {
+	ctx := rootCtx
+
+	if store == nil {
+		// No database - nothing to output
+		return nil
+	}
+
+	agentID := getActor()
+	if agentID == "" {
+		return nil // No agent, no skills
+	}
+
+	// Get skills this agent provides
+	// Try multiple ID patterns for the agent
+	agentPatterns := []string{
+		agentID,
+		"agent-" + agentID,
+	}
+
+	var agentSkillIDs []string
+	for _, pattern := range agentPatterns {
+		deps, err := store.GetDependenciesWithMetadata(ctx, pattern)
+		if err != nil {
+			continue
+		}
+		for _, dep := range deps {
+			if dep.DependencyType == types.DepProvidesSkill {
+				agentSkillIDs = append(agentSkillIDs, dep.ID)
+			}
+		}
+		if len(agentSkillIDs) > 0 {
+			break
+		}
+	}
+
+	if len(agentSkillIDs) == 0 {
+		return nil // No skills to output
+	}
+
+	// Load each skill's content
+	var loadedSkills []struct {
+		Name    string
+		Content string
+	}
+
+	for _, skillID := range agentSkillIDs {
+		skill, err := store.GetIssue(ctx, skillID)
+		if err != nil || skill.IssueType != types.TypeSkill {
+			continue
+		}
+
+		if skill.ClaudeSkillPath == "" {
+			continue // No SKILL.md to load
+		}
+
+		// Try to load the file
+		content := loadSkillFile(skill.ClaudeSkillPath)
+		if content != "" {
+			loadedSkills = append(loadedSkills, struct {
+				Name    string
+				Content string
+			}{
+				Name:    skill.SkillName,
+				Content: content,
+			})
+		}
+	}
+
+	if len(loadedSkills) == 0 {
+		return nil
+	}
+
+	// Output skills section
+	if jsonOutput {
+		outputJSON(loadedSkills)
+		return nil
+	}
+
+	fmt.Println("\n---\n")
+	fmt.Printf("## Your Skills (%d loaded)\n\n", len(loadedSkills))
+	fmt.Println("The following skill documentation has been loaded for your capabilities:\n")
+
+	for _, skill := range loadedSkills {
+		fmt.Printf("### %s\n\n", skill.Name)
+		fmt.Println(skill.Content)
+		fmt.Println("\n---\n")
+	}
+
+	return nil
+}
+
+// loadSkillFile tries to load a skill file from various locations
+func loadSkillFile(skillPath string) string {
+	candidates := []string{
+		skillPath,
+		filepath.Join(".", skillPath),
+	}
+
+	// Find the repo root by looking for .git
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for dir != "/" {
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				candidates = append(candidates, filepath.Join(dir, skillPath))
+				break
+			}
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	for _, candidate := range candidates {
+		if data, err := os.ReadFile(candidate); err == nil {
+			return string(data)
+		}
+	}
+
+	return ""
 }
