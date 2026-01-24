@@ -255,11 +255,12 @@ Stops the daemon gracefully, then starts a new one.`,
 		}
 		workspace := targetDaemon.WorkspacePath
 
-		// Guardrail: don't (re)start daemons for single-process backends (e.g., Dolt).
+		// Guardrail: don't (re)start daemons for single-process backends (e.g., embedded Dolt).
 		// This command may be run from a different workspace, so check the target workspace.
+		// Note: Dolt server mode supports multi-process, so GetCapabilities() is used.
 		targetBeadsDir := beads.FollowRedirect(filepath.Join(workspace, ".beads"))
 		if cfg, err := configfile.Load(targetBeadsDir); err == nil && cfg != nil {
-			if configfile.CapabilitiesForBackend(cfg.GetBackend()).SingleProcessOnly {
+			if cfg.GetCapabilities().SingleProcessOnly {
 				if jsonOutput {
 					outputJSON(map[string]string{"error": fmt.Sprintf("daemon mode is not supported for backend %q (single-process only)", cfg.GetBackend())})
 				} else {

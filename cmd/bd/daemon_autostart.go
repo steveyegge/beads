@@ -69,7 +69,8 @@ func singleProcessOnlyBackend() bool {
 	if err != nil || cfg == nil {
 		return false
 	}
-	return configfile.CapabilitiesForBackend(cfg.GetBackend()).SingleProcessOnly
+	// Use GetCapabilities() to properly handle Dolt server mode
+	return cfg.GetCapabilities().SingleProcessOnly
 }
 
 // shouldAutoStartDaemon checks if daemon auto-start is enabled

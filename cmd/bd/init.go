@@ -40,7 +40,12 @@ to prevent deleted issues from being resurrected during re-initialization.
 With --stealth: configures per-repository git settings for invisible beads usage:
   • .git/info/exclude to prevent beads files from being committed
   • Claude Code settings with bd onboard instruction
-  Perfect for personal use without affecting repo collaborators.`,
+  Perfect for personal use without affecting repo collaborators.
+
+With --backend dolt --server: configures Dolt to connect to an external dolt sql-server
+instead of using the embedded driver. This enables multi-writer access for multi-agent
+environments. Connection settings can be customized with --server-host, --server-port,
+and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")

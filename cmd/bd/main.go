@@ -623,13 +623,14 @@ var rootCmd = &cobra.Command{
 			debug.Logf("wisp operation detected, using direct mode")
 		}
 
-		// Dolt backend (embedded) is single-process-only; never use daemon/RPC.
+		// Embedded Dolt is single-process-only; never use daemon/RPC.
+		// (Dolt server mode supports multi-process and won't trigger this.)
 		// This must be checked after dbPath is resolved.
 		if !noDaemon && singleProcessOnlyBackend() {
 			noDaemon = true
 			daemonStatus.AutoStartEnabled = false
 			daemonStatus.FallbackReason = FallbackSingleProcessOnly
-			daemonStatus.Detail = "backend is single-process-only (dolt): daemon mode disabled; using direct mode"
+			daemonStatus.Detail = "backend is single-process-only (embedded dolt): daemon mode disabled; using direct mode"
 			debug.Logf("single-process backend detected, using direct mode")
 		}
 

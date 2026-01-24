@@ -338,6 +338,45 @@ func TestDoltServerMode(t *testing.T) {
 	})
 }
 
+// TestGetCapabilities tests that GetCapabilities properly handles server mode
+func TestGetCapabilities(t *testing.T) {
+	tests := []struct {
+		name           string
+		cfg            *Config
+		wantSingleProc bool
+	}{
+		{
+			name:           "sqlite is multi-process",
+			cfg:            &Config{Backend: BackendSQLite},
+			wantSingleProc: false,
+		},
+		{
+			name:           "dolt embedded is single-process",
+			cfg:            &Config{Backend: BackendDolt, DoltMode: DoltModeEmbedded},
+			wantSingleProc: true,
+		},
+		{
+			name:           "dolt default (empty) is single-process",
+			cfg:            &Config{Backend: BackendDolt},
+			wantSingleProc: true,
+		},
+		{
+			name:           "dolt server mode is multi-process",
+			cfg:            &Config{Backend: BackendDolt, DoltMode: DoltModeServer},
+			wantSingleProc: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.GetCapabilities().SingleProcessOnly
+			if got != tt.wantSingleProc {
+				t.Errorf("GetCapabilities().SingleProcessOnly = %v, want %v", got, tt.wantSingleProc)
+			}
+		})
+	}
+}
+
 // TestDoltServerModeRoundtrip tests that server mode config survives save/load
 func TestDoltServerModeRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()

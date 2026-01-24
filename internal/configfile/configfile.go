@@ -176,15 +176,33 @@ type BackendCapabilities struct {
 
 // CapabilitiesForBackend returns capabilities for a backend string.
 // Unknown backends are treated conservatively as single-process-only.
+//
+// Note: For Dolt, this returns SingleProcessOnly=true for embedded mode.
+// Use Config.GetCapabilities() when you have the full config to properly
+// handle server mode (which supports multi-process access).
 func CapabilitiesForBackend(backend string) BackendCapabilities {
 	switch strings.TrimSpace(strings.ToLower(backend)) {
 	case "", BackendSQLite:
 		return BackendCapabilities{SingleProcessOnly: false}
 	case BackendDolt:
+		// Embedded Dolt is single-process-only.
+		// Server mode is handled by Config.GetCapabilities().
 		return BackendCapabilities{SingleProcessOnly: true}
 	default:
 		return BackendCapabilities{SingleProcessOnly: true}
 	}
+}
+
+// GetCapabilities returns the backend capabilities for this config.
+// Unlike CapabilitiesForBackend(string), this considers Dolt server mode
+// which supports multi-process access.
+func (c *Config) GetCapabilities() BackendCapabilities {
+	backend := c.GetBackend()
+	if backend == BackendDolt && c.IsDoltServerMode() {
+		// Server mode supports multi-writer, so NOT single-process-only
+		return BackendCapabilities{SingleProcessOnly: false}
+	}
+	return CapabilitiesForBackend(backend)
 }
 
 // GetBackend returns the configured backend type, defaulting to SQLite.
