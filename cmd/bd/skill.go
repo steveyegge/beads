@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -128,6 +129,21 @@ Examples:
 	RunE: runSkillRequired,
 }
 
+var skillLoadCmd = &cobra.Command{
+	Use:   "load <skill-id>",
+	Short: "Load and display a skill's SKILL.md content",
+	Long: `Load a skill's documentation from its claude_skill_path.
+
+This outputs the SKILL.md content that teaches Claude how to use the skill.
+If the skill has no claude_skill_path set, shows the skill's metadata instead.
+
+Examples:
+  bd skill load go-testing
+  bd skill load skill-beads-usage`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSkillLoad,
+}
+
 // Flag variables for skill commands
 var (
 	skillDescription    string
@@ -161,6 +177,7 @@ func init() {
 	skillCmd.AddCommand(skillRequireCmd)
 	skillCmd.AddCommand(skillProvidersCmd)
 	skillCmd.AddCommand(skillRequiredCmd)
+	skillCmd.AddCommand(skillLoadCmd)
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -671,6 +688,132 @@ func runSkillRequired(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Skills required by %s (%d):\n", issue.Title, len(requiredSkills))
 	for _, s := range requiredSkills {
 		fmt.Printf("  %s: %s\n", ui.RenderID(s.ID), s.Title)
+	}
+
+	return nil
+}
+
+// runSkillLoad loads and displays a skill's SKILL.md content
+func runSkillLoad(cmd *cobra.Command, args []string) error {
+	skillArg := args[0]
+	ctx := rootCtx
+
+	// Normalize skill ID
+	skillID := skillArg
+	if !strings.HasPrefix(skillID, "skill-") {
+		skillID = "skill-" + skillID
+	}
+
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first")
+	}
+
+	// Resolve skill ID
+	resolvedSkillID, err := utils.ResolvePartialID(ctx, store, skillID)
+	if err != nil {
+		return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
+	}
+
+	// Get the skill
+	skill, err := store.GetIssue(ctx, resolvedSkillID)
+	if err != nil {
+		return fmt.Errorf("skill not found: %s", resolvedSkillID)
+	}
+	if skill.IssueType != types.TypeSkill {
+		return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
+	}
+
+	// If claude_skill_path is set, try to load the file
+	if skill.ClaudeSkillPath != "" {
+		// Resolve the path relative to the .beads directory
+		skillPath := skill.ClaudeSkillPath
+
+		// Try multiple locations: absolute, relative to cwd, relative to repo root
+		candidates := []string{
+			skillPath,
+			filepath.Join(".", skillPath),
+		}
+
+		// Find the repo root by looking for .git
+		if cwd, err := os.Getwd(); err == nil {
+			dir := cwd
+			for dir != "/" {
+				if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+					candidates = append(candidates, filepath.Join(dir, skillPath))
+					break
+				}
+				dir = filepath.Dir(dir)
+			}
+		}
+
+		var content []byte
+		var loadedFrom string
+		for _, candidate := range candidates {
+			if data, err := os.ReadFile(candidate); err == nil {
+				content = data
+				loadedFrom = candidate
+				break
+			}
+		}
+
+		if content != nil {
+			if jsonOutput {
+				outputJSON(map[string]interface{}{
+					"skill_id":          resolvedSkillID,
+					"skill_name":        skill.SkillName,
+					"claude_skill_path": skill.ClaudeSkillPath,
+					"loaded_from":       loadedFrom,
+					"content":           string(content),
+				})
+				return nil
+			}
+
+			// Output the skill content directly for Claude to read
+			fmt.Printf("# Skill: %s\n\n", skill.SkillName)
+			fmt.Printf("Source: %s\n\n", loadedFrom)
+			fmt.Printf("---\n\n")
+			fmt.Print(string(content))
+			return nil
+		}
+
+		// Path set but file not found - warn and fall through to metadata
+		fmt.Fprintf(os.Stderr, "Warning: claude_skill_path '%s' not found, showing metadata instead\n\n", skill.ClaudeSkillPath)
+	}
+
+	// No claude_skill_path or file not found - show metadata
+	if jsonOutput {
+		outputJSON(skill)
+		return nil
+	}
+
+	fmt.Printf("# Skill: %s\n\n", skill.SkillName)
+	fmt.Printf("**No SKILL.md file associated with this skill.**\n\n")
+	fmt.Printf("## Metadata\n\n")
+	fmt.Printf("- **ID**: %s\n", skill.ID)
+	fmt.Printf("- **Version**: %s\n", skill.SkillVersion)
+	if skill.SkillCategory != "" {
+		fmt.Printf("- **Category**: %s\n", skill.SkillCategory)
+	}
+	if skill.Description != "" {
+		fmt.Printf("\n## Description\n\n%s\n", skill.Description)
+	}
+	if len(skill.SkillInputs) > 0 {
+		fmt.Printf("\n## Inputs\n\n")
+		for _, input := range skill.SkillInputs {
+			fmt.Printf("- %s\n", input)
+		}
+	}
+	if len(skill.SkillOutputs) > 0 {
+		fmt.Printf("\n## Outputs\n\n")
+		for _, output := range skill.SkillOutputs {
+			fmt.Printf("- %s\n", output)
+		}
+	}
+	if len(skill.SkillExamples) > 0 {
+		fmt.Printf("\n## Examples\n\n")
+		for _, example := range skill.SkillExamples {
+			fmt.Printf("- %s\n", example)
+		}
 	}
 
 	return nil
