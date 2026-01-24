@@ -245,11 +245,47 @@ var showCmd = &cobra.Command{
 						fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(details.Labels, ", "))
 					}
 
-					// Dependencies with semantic colors
+					// Dependencies grouped by type with semantic colors
 					if len(details.Dependencies) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+						var blocks, parent, related, discovered []*types.IssueWithDependencyMetadata
 						for _, dep := range details.Dependencies {
-							fmt.Println(formatDependencyLine("→", dep))
+							switch dep.DependencyType {
+							case types.DepBlocks:
+								blocks = append(blocks, dep)
+							case types.DepParentChild:
+								parent = append(parent, dep)
+							case types.DepRelated:
+								related = append(related, dep)
+							case types.DepDiscoveredFrom:
+								discovered = append(discovered, dep)
+							default:
+								blocks = append(blocks, dep)
+							}
+						}
+
+						if len(parent) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
+							for _, dep := range parent {
+								fmt.Println(formatDependencyLine("↑", dep))
+							}
+						}
+						if len(blocks) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+							for _, dep := range blocks {
+								fmt.Println(formatDependencyLine("→", dep))
+							}
+						}
+						if len(related) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
+							for _, dep := range related {
+								fmt.Println(formatDependencyLine("↔", dep))
+							}
+						}
+						if len(discovered) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
+							for _, dep := range discovered {
+								fmt.Println(formatDependencyLine("◊", dep))
+							}
 						}
 					}
 
@@ -433,18 +469,67 @@ var showCmd = &cobra.Command{
 				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
 			}
 
-			// Show dependencies with semantic colors
-			deps, _ := issueStore.GetDependencies(ctx, issue.ID)
-			if len(deps) > 0 {
-				fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
-				for _, dep := range deps {
-					fmt.Println(formatSimpleDependencyLine("→", dep))
+			// Show dependencies - grouped by dependency type for clarity
+			// Use GetDependenciesWithMetadata to get the dependency type
+			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+			if ok {
+				depsWithMeta, _ := sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+				if len(depsWithMeta) > 0 {
+					// Group by dependency type
+					var blocks, parent, related, discovered []*types.IssueWithDependencyMetadata
+					for _, dep := range depsWithMeta {
+						switch dep.DependencyType {
+						case types.DepBlocks:
+							blocks = append(blocks, dep)
+						case types.DepParentChild:
+							parent = append(parent, dep)
+						case types.DepRelated:
+							related = append(related, dep)
+						case types.DepDiscoveredFrom:
+							discovered = append(discovered, dep)
+						default:
+							blocks = append(blocks, dep) // Default to blocks
+						}
+					}
+
+					if len(parent) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
+						for _, dep := range parent {
+							fmt.Println(formatDependencyLine("↑", dep))
+						}
+					}
+					if len(blocks) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+						for _, dep := range blocks {
+							fmt.Println(formatDependencyLine("→", dep))
+						}
+					}
+					if len(related) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
+						for _, dep := range related {
+							fmt.Println(formatDependencyLine("↔", dep))
+						}
+					}
+					if len(discovered) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
+						for _, dep := range discovered {
+							fmt.Println(formatDependencyLine("◊", dep))
+						}
+					}
+				}
+			} else {
+				// Fallback for non-SQLite storage (no dependency type metadata)
+				deps, _ := issueStore.GetDependencies(ctx, issue.ID)
+				if len(deps) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+					for _, dep := range deps {
+						fmt.Println(formatSimpleDependencyLine("→", dep))
+					}
 				}
 			}
 
 			// Show dependents - grouped by dependency type for clarity
-			// Use GetDependentsWithMetadata to get the dependency type
-			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+			// Use GetDependentsWithMetadata to get the dependency type (sqliteStore already checked above)
 			if ok {
 				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 				if len(dependentsWithMeta) > 0 {
