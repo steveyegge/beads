@@ -1322,10 +1322,20 @@ func (s *Server) handleList(req *Request) Response {
 
 	// Get dependency counts in bulk (single query instead of N queries)
 	issueIDs := make([]string, len(issues))
+	var epicIDs []string
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
+		if issue.IssueType == types.TypeEpic {
+			epicIDs = append(epicIDs, issue.ID)
+		}
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+
+	// Get epic progress in bulk for epics
+	epicProgress, _ := store.GetEpicProgress(ctx, epicIDs)
+	if epicProgress == nil {
+		epicProgress = make(map[string]*types.EpicProgress)
+	}
 
 	// Build response with counts
 	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
@@ -1334,11 +1344,17 @@ func (s *Server) handleList(req *Request) Response {
 		if counts == nil {
 			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
 		}
-		issuesWithCounts[i] = &types.IssueWithCounts{
+		iwc := &types.IssueWithCounts{
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
 		}
+		// Add epic progress if this is an epic
+		if progress, ok := epicProgress[issue.ID]; ok {
+			iwc.EpicTotalChildren = progress.TotalChildren
+			iwc.EpicClosedChildren = progress.ClosedChildren
+		}
+		issuesWithCounts[i] = iwc
 	}
 
 	data, _ := json.Marshal(issuesWithCounts)

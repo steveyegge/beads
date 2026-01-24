@@ -711,8 +711,10 @@ type IssueWithDependencyMetadata struct {
 // IssueWithCounts extends Issue with dependency relationship counts
 type IssueWithCounts struct {
 	*Issue
-	DependencyCount int `json:"dependency_count"`
-	DependentCount  int `json:"dependent_count"`
+	DependencyCount    int `json:"dependency_count"`
+	DependentCount     int `json:"dependent_count"`
+	EpicTotalChildren  int `json:"epic_total_children,omitempty"`
+	EpicClosedChildren int `json:"epic_closed_children,omitempty"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.
@@ -1084,6 +1086,13 @@ type EpicStatus struct {
 	TotalChildren    int    `json:"total_children"`
 	ClosedChildren   int    `json:"closed_children"`
 	EligibleForClose bool   `json:"eligible_for_close"`
+}
+
+// EpicProgress holds progress info for an epic (total and closed children)
+// Used by bd list to show inline progress like [3/5] for epics
+type EpicProgress struct {
+	TotalChildren  int `json:"total_children"`
+	ClosedChildren int `json:"closed_children"`
 }
 
 // BondRef tracks compound molecule lineage.

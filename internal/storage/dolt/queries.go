@@ -400,6 +400,61 @@ func (s *DoltStore) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.Ep
 	return results, rows.Err()
 }
 
+// GetEpicProgress returns progress (total/closed children) for a list of epic IDs
+// Returns a map from epic ID to progress. Epics not found or with no children have 0/0.
+func (s *DoltStore) GetEpicProgress(ctx context.Context, epicIDs []string) (map[string]*types.EpicProgress, error) {
+	if len(epicIDs) == 0 {
+		return make(map[string]*types.EpicProgress), nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(epicIDs))
+	args := make([]interface{}, len(epicIDs))
+	for i, id := range epicIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := `
+		WITH epic_children AS (
+			SELECT
+				d.depends_on_id AS epic_id,
+				i.status AS child_status
+			FROM dependencies d
+			JOIN issues i ON i.id = d.issue_id
+			WHERE d.type = 'parent-child'
+			  AND d.depends_on_id IN (` + strings.Join(placeholders, ",") + `)
+		)
+		SELECT
+			epic_id,
+			COUNT(*) AS total_children,
+			SUM(CASE WHEN child_status = 'closed' THEN 1 ELSE 0 END) AS closed_children
+		FROM epic_children
+		GROUP BY epic_id
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*types.EpicProgress)
+	for rows.Next() {
+		var epicID string
+		var total, closed int
+		if err := rows.Scan(&epicID, &total, &closed); err != nil {
+			return nil, err
+		}
+		result[epicID] = &types.EpicProgress{
+			TotalChildren:  total,
+			ClosedChildren: closed,
+		}
+	}
+
+	return result, rows.Err()
+}
+
 // GetStaleIssues returns issues that haven't been updated recently
 func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -filter.Days)

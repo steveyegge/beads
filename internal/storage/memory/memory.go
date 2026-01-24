@@ -1351,6 +1351,11 @@ func (m *MemoryStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*type
 	return nil, nil
 }
 
+func (m *MemoryStorage) GetEpicProgress(ctx context.Context, epicIDs []string) (map[string]*types.EpicProgress, error) {
+	// Memory storage is primarily for testing; return empty map
+	return make(map[string]*types.EpicProgress), nil
+}
+
 func (m *MemoryStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

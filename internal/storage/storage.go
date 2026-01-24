@@ -123,6 +123,7 @@ type Storage interface {
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	IsBlocked(ctx context.Context, issueID string) (bool, []string, error) // GH#962: Check if issue has open blockers
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+	GetEpicProgress(ctx context.Context, epicIDs []string) (map[string]*types.EpicProgress, error)
 	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) // GH#679
 
