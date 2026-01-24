@@ -18,8 +18,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
@@ -911,6 +913,13 @@ var listCmd = &cobra.Command{
 			filter.Overdue = true
 		}
 
+		// Handle --rig flag: list from a different rig (hq-5e851d)
+		rigName, _ := cmd.Flags().GetString("rig")
+		if rigName != "" {
+			listInRig(cmd, rigName, filter, sortBy, reverse, prettyFormat, longFormat, noPager)
+			return
+		}
+
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
@@ -1397,8 +1406,137 @@ func init() {
 	// Ready filter: show only issues ready to be worked on (bd-ihu31)
 	listCmd.Flags().Bool("ready", false, "Show only ready issues (status=open, excludes hooked/in_progress/blocked/deferred)")
 
+	// Cross-rig listing (hq-5e851d)
+	listCmd.Flags().String("rig", "", "List issues from a different rig (e.g., --rig gastown)")
+
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
+}
+
+// listInRig lists issues from a different rig using --rig flag.
+// This bypasses the normal daemon/direct flow and directly queries the target rig.
+func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sortBy string, reverse bool, prettyFormat, longFormat, noPager bool) {
+	ctx := rootCtx
+
+	// Find the town-level beads directory (where routes.jsonl lives)
+	townBeadsDir, err := findTownBeadsDir()
+	if err != nil {
+		FatalError("cannot use --rig: %v", err)
+	}
+
+	// Resolve the target rig's beads directory
+	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
+	if err != nil {
+		FatalError("%v", err)
+	}
+
+	// Open storage for the target rig using factory to respect backend config
+	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
+	if err != nil {
+		FatalError("failed to open rig %q database: %v", rigName, err)
+	}
+	defer func() {
+		if err := targetStore.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
+		}
+	}()
+
+	// Perform the search
+	issues, err := targetStore.SearchIssues(ctx, "", filter)
+	if err != nil {
+		FatalError("failed to list issues from rig %q: %v", rigName, err)
+	}
+
+	// Apply sorting
+	sortIssues(issues, sortBy, reverse)
+
+	// Handle JSON output
+	if jsonOutput {
+		// Get labels and dependency counts in bulk
+		issueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			issueIDs[i] = issue.ID
+		}
+		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, issueIDs)
+		depCounts, _ := targetStore.GetDependencyCounts(ctx, issueIDs)
+
+		// Populate labels for JSON output
+		for _, issue := range issues {
+			issue.Labels = labelsMap[issue.ID]
+		}
+
+		// Build response with counts
+		issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+		for i, issue := range issues {
+			counts := depCounts[issue.ID]
+			if counts == nil {
+				counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
+			}
+			issuesWithCounts[i] = &types.IssueWithCounts{
+				Issue:           issue,
+				DependencyCount: counts.DependencyCount,
+				DependentCount:  counts.DependentCount,
+			}
+		}
+		outputJSON(issuesWithCounts)
+		return
+	}
+
+	// Handle pretty format
+	if prettyFormat {
+		// Load dependencies for tree structure
+		allDeps, _ := targetStore.GetAllDependencyRecords(ctx)
+		// Fetch epic progress for display
+		progressMap := getEpicProgressForIssues(ctx, targetStore, "", 0, issues)
+		displayPrettyListWithDeps(issues, false, allDeps, progressMap)
+		if filter.Limit > 0 && len(issues) == filter.Limit {
+			fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+		}
+		return
+	}
+
+	// Load labels in bulk for display
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	labelsMap, _ := targetStore.GetLabelsForIssues(ctx, issueIDs)
+
+	// Build output in buffer for pager support
+	var buf strings.Builder
+	if ui.IsAgentMode() {
+		// Agent mode: ultra-compact, no colors, no pager
+		for _, issue := range issues {
+			formatAgentIssue(&buf, issue)
+		}
+		fmt.Print(buf.String())
+		return
+	} else if longFormat {
+		// Long format: multi-line with details
+		buf.WriteString(fmt.Sprintf("\n[%s] Found %d issues:\n\n", rigName, len(issues)))
+		for _, issue := range issues {
+			labels := labelsMap[issue.ID]
+			formatIssueLong(&buf, issue, labels)
+		}
+	} else {
+		// Compact format: one line per issue
+		for _, issue := range issues {
+			labels := labelsMap[issue.ID]
+			formatIssueCompact(&buf, issue, labels)
+		}
+	}
+
+	// Output with pager support
+	if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
+		if _, writeErr := fmt.Fprint(os.Stdout, buf.String()); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", writeErr)
+		}
+	}
+
+	// Show truncation hint if we hit the limit
+	if filter.Limit > 0 && len(issues) == filter.Limit {
+		fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+	}
 }
 
 // outputDotFormat outputs issues in Graphviz DOT format

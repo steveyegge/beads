@@ -812,9 +812,12 @@ var rootCmd = &cobra.Command{
 		// Direct mode creates a new connection pool per bd invocation, causing
 		// massive connection churn and CPU overhead. Require daemon mode instead.
 		// Exclude daemon commands - they need direct mode to start/manage the daemon.
+		// Also exclude --rig flag usage - it opens a different rig's database directly (hq-5e851d).
 		isDaemonCommand := cmd.Name() == "daemon" || cmd.Name() == "daemons" ||
 			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
-		if daemonClient == nil && !noDaemon && !isDaemonCommand {
+		rigFlag, _ := cmd.Flags().GetString("rig")
+		isCrossRig := rigFlag != ""
+		if daemonClient == nil && !noDaemon && !isDaemonCommand && !isCrossRig {
 			// Check if Dolt server mode is enabled
 			checkBeadsDir := beads.FindBeadsDir()
 			if checkBeadsDir == "" && dbPath != "" {
