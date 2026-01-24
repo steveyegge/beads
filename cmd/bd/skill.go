@@ -116,6 +116,18 @@ Examples:
 	RunE: runSkillProviders,
 }
 
+var skillRequiredCmd = &cobra.Command{
+	Use:   "required <issue-id>",
+	Short: "List skills required by an issue",
+	Long: `Show all skills that an issue requires.
+
+Examples:
+  bd skill required bd-abc123
+  bd skill required gt-xyz`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSkillRequired,
+}
+
 // Flag variables for skill commands
 var (
 	skillDescription    string
@@ -148,6 +160,7 @@ func init() {
 	skillCmd.AddCommand(skillAddCmd)
 	skillCmd.AddCommand(skillRequireCmd)
 	skillCmd.AddCommand(skillProvidersCmd)
+	skillCmd.AddCommand(skillRequiredCmd)
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -602,6 +615,62 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Agents providing %s (%d):\n", skill.SkillName, len(providers))
 	for _, p := range providers {
 		fmt.Printf("  %s: %s\n", ui.RenderID(p.ID), p.Title)
+	}
+
+	return nil
+}
+
+// runSkillRequired lists skills required by an issue
+func runSkillRequired(cmd *cobra.Command, args []string) error {
+	issueArg := args[0]
+	ctx := rootCtx
+
+	if store == nil {
+		return fmt.Errorf("database not initialized - run 'bd init' first")
+	}
+
+	// Resolve issue ID
+	issueID, err := utils.ResolvePartialID(ctx, store, issueArg)
+	if err != nil {
+		return fmt.Errorf("resolving issue ID %s: %w", issueArg, err)
+	}
+
+	// Get the issue to display its title
+	issue, err := store.GetIssue(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("issue not found: %s", issueID)
+	}
+
+	// Get dependencies with requires-skill type
+	deps, err := store.GetDependenciesWithMetadata(ctx, issueID)
+	if err != nil {
+		return fmt.Errorf("failed to get skill requirements: %w", err)
+	}
+
+	// Filter to only requires-skill edges
+	var requiredSkills []*types.IssueWithDependencyMetadata
+	for _, dep := range deps {
+		if dep.DependencyType == types.DepRequiresSkill {
+			requiredSkills = append(requiredSkills, dep)
+		}
+	}
+
+	if jsonOutput {
+		if requiredSkills == nil {
+			requiredSkills = []*types.IssueWithDependencyMetadata{}
+		}
+		outputJSON(requiredSkills)
+		return nil
+	}
+
+	if len(requiredSkills) == 0 {
+		fmt.Printf("Issue %s has no skill requirements\n", issueID)
+		return nil
+	}
+
+	fmt.Printf("Skills required by %s (%d):\n", issue.Title, len(requiredSkills))
+	for _, s := range requiredSkills {
+		fmt.Printf("  %s: %s\n", ui.RenderID(s.ID), s.Title)
 	}
 
 	return nil
