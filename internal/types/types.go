@@ -125,6 +125,15 @@ type Issue struct {
 	Target    string `json:"target,omitempty"`     // Entity URI or bead ID affected
 	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
 
+	// ===== Skill Fields (capability tracking - hq-yhdzq) =====
+	SkillName       string   `json:"skill_name,omitempty"`        // Canonical skill name: "go-testing"
+	SkillVersion    string   `json:"skill_version,omitempty"`     // Semver: "1.0.0"
+	SkillCategory   string   `json:"skill_category,omitempty"`    // Category: "testing", "devops", "docs"
+	SkillInputs     []string `json:"skill_inputs,omitempty"`      // What the skill needs
+	SkillOutputs    []string `json:"skill_outputs,omitempty"`     // What the skill produces
+	SkillExamples   []string `json:"skill_examples,omitempty"`    // Usage examples
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // Path to SKILL.md if exists
+
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -204,6 +213,21 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Actor)
 	w.str(i.Target)
 	w.str(i.Payload)
+
+	// Skill fields
+	w.str(i.SkillName)
+	w.str(i.SkillVersion)
+	w.str(i.SkillCategory)
+	for _, input := range i.SkillInputs {
+		w.str(input)
+	}
+	for _, output := range i.SkillOutputs {
+		w.str(output)
+	}
+	for _, example := range i.SkillExamples {
+		w.str(example)
+	}
+	w.str(i.ClaudeSkillPath)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -505,6 +529,7 @@ const (
 	TypeEvent        IssueType = "event"         // Operational state change record
 	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 	TypeWarrant      IssueType = "warrant"       // Session termination warrant
+	TypeSkill        IssueType = "skill"         // Capability definition bead (hq-yhdzq)
 )
 
 // IsValid checks if the issue type is a defined type constant.
@@ -517,7 +542,7 @@ func (t IssueType) IsValid() bool {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
 	// Extended types (Gas Town, molecules, coordination)
-	case TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant:
+	case TypeMergeRequest, TypeMolecule, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
 		return true
 	}
 	return false
@@ -737,6 +762,10 @@ const (
 
 	// Delegation types (work delegation chains)
 	DepDelegatedFrom DependencyType = "delegated-from" // Work delegated from parent; completion cascades up
+
+	// Skill types (capability matching - hq-yhdzq)
+	DepRequiresSkill DependencyType = "requires-skill" // Issue/formula requires a skill
+	DepProvidesSkill DependencyType = "provides-skill" // Agent provides/has a skill
 )
 
 // IsValid checks if the dependency type value is valid.
@@ -753,7 +782,8 @@ func (d DependencyType) IsWellKnown() bool {
 	case DepBlocks, DepParentChild, DepConditionalBlocks, DepWaitsFor, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
 		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepAttests, DepTracks,
-		DepUntil, DepCausedBy, DepValidates, DepDelegatedFrom:
+		DepUntil, DepCausedBy, DepValidates, DepDelegatedFrom,
+		DepRequiresSkill, DepProvidesSkill:
 		return true
 	}
 	return false

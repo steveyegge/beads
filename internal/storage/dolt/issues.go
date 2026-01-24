@@ -378,7 +378,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until
+			due_at, defer_until,
+			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -390,7 +391,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?
+			?, ?,
+			?, ?, ?, ?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
@@ -404,6 +406,9 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil,
+		issue.SkillName, issue.SkillVersion, issue.SkillCategory,
+		formatJSONStringArray(issue.SkillInputs), formatJSONStringArray(issue.SkillOutputs),
+		formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath,
 	)
 	return err
 }
@@ -421,6 +426,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
+	// Skill fields (hq-a72961)
+	var skillName, skillVersion, skillCategory sql.NullString
+	var skillInputs, skillOutputs, skillExamples, claudeSkillPath sql.NullString
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -433,7 +441,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system,
+		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -449,6 +458,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem,
+		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath,
 	)
 
 	if err == sql.ErrNoRows {
@@ -591,6 +601,28 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
+	}
+	// Skill fields (hq-a72961)
+	if skillName.Valid {
+		issue.SkillName = skillName.String
+	}
+	if skillVersion.Valid {
+		issue.SkillVersion = skillVersion.String
+	}
+	if skillCategory.Valid {
+		issue.SkillCategory = skillCategory.String
+	}
+	if skillInputs.Valid && skillInputs.String != "" {
+		issue.SkillInputs = parseJSONStringArray(skillInputs.String)
+	}
+	if skillOutputs.Valid && skillOutputs.String != "" {
+		issue.SkillOutputs = parseJSONStringArray(skillOutputs.String)
+	}
+	if skillExamples.Valid && skillExamples.String != "" {
+		issue.SkillExamples = parseJSONStringArray(skillExamples.String)
+	}
+	if claudeSkillPath.Valid {
+		issue.ClaudeSkillPath = claudeSkillPath.String
 	}
 
 	return &issue, nil

@@ -556,6 +556,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeSlot, true},
 		{TypeRig, true},
 		{TypeWarrant, true},
+		{TypeSkill, true},
 		// Message type is still custom (not a defined constant in IsValid)
 		{TypeMessage, false},
 		// Invalid types

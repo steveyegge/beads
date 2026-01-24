@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,
+    -- Skill fields (capability tracking - hq-a72961)
+    skill_name VARCHAR(255) DEFAULT '',
+    skill_version VARCHAR(32) DEFAULT '',
+    skill_category VARCHAR(64) DEFAULT '',
+    skill_inputs TEXT DEFAULT '',
+    skill_outputs TEXT DEFAULT '',
+    skill_examples TEXT DEFAULT '',
+    claude_skill_path VARCHAR(512) DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
