@@ -447,7 +447,14 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 	// Resolve IDs
 	var agentID, resolvedSkillID string
 
-	if daemonClient != nil {
+	// Check if agent ID looks like a Gas Town path (contains /)
+	// These are canonical identifiers that don't need resolution
+	isGasTownPath := strings.Contains(agentArg, "/")
+
+	if isGasTownPath {
+		// Use the agent path directly without resolution
+		agentID = agentArg
+	} else if daemonClient != nil {
 		// Resolve agent ID
 		resolveArgs := &rpc.ResolveIDArgs{ID: agentArg}
 		resp, err := daemonClient.ResolveID(resolveArgs)
@@ -455,16 +462,6 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("resolving agent ID %s: %w", agentArg, err)
 		}
 		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
-			return fmt.Errorf("unmarshaling resolved ID: %w", err)
-		}
-
-		// Resolve skill ID
-		resolveArgs = &rpc.ResolveIDArgs{ID: skillID}
-		resp, err = daemonClient.ResolveID(resolveArgs)
-		if err != nil {
-			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
-		}
-		if err := json.Unmarshal(resp.Data, &resolvedSkillID); err != nil {
 			return fmt.Errorf("unmarshaling resolved ID: %w", err)
 		}
 	} else {
@@ -476,7 +473,23 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolving agent ID %s: %w", agentArg, err)
 		}
+	}
 
+	// Resolve skill ID
+	if daemonClient != nil {
+		resolveArgs := &rpc.ResolveIDArgs{ID: skillID}
+		resp, err := daemonClient.ResolveID(resolveArgs)
+		if err != nil {
+			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
+		}
+		if err := json.Unmarshal(resp.Data, &resolvedSkillID); err != nil {
+			return fmt.Errorf("unmarshaling resolved ID: %w", err)
+		}
+	} else {
+		if store == nil {
+			return fmt.Errorf("database not initialized - run 'bd init' first")
+		}
+		var err error
 		resolvedSkillID, err = utils.ResolvePartialID(ctx, store, skillID)
 		if err != nil {
 			return fmt.Errorf("resolving skill ID %s: %w", skillID, err)
