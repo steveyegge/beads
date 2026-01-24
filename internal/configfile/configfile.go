@@ -262,3 +262,16 @@ func (c *Config) GetDoltServerUser() string {
 	}
 	return c.DoltServerUser
 }
+
+// GetDoltDatabase returns the database name for Dolt server mode.
+// This is different from DatabasePath which returns the on-disk path.
+// For server mode, Database field contains the database name on the server
+// (e.g., "hq", "gastown", "beads"). Defaults to "beads".
+func (c *Config) GetDoltDatabase() string {
+	db := strings.TrimSpace(c.Database)
+	if db == "" || db == "beads.db" || db == "dolt" {
+		return "beads"
+	}
+	// Strip any path components - just want the database name
+	return filepath.Base(db)
+}

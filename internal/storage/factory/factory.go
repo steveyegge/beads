@@ -32,6 +32,7 @@ type Options struct {
 	ServerHost string // Server host (default: 127.0.0.1)
 	ServerPort int    // Server port (default: 3306)
 	ServerUser string // MySQL user (default: root)
+	Database   string // Database name for Dolt server mode (default: beads)
 }
 
 // New creates a storage backend based on the backend type.
@@ -100,6 +101,9 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 			}
 			if opts.ServerUser == "" {
 				opts.ServerUser = cfg.GetDoltServerUser()
+			}
+			if opts.Database == "" {
+				opts.Database = cfg.GetDoltDatabase()
 			}
 		}
 		return NewWithOptions(ctx, backend, cfg.DatabasePath(beadsDir), opts)
