@@ -237,6 +237,9 @@ func (c *Client) CreateTask(ctx context.Context, task *Task) (*Task, error) {
 		return nil, fmt.Errorf("project ID not configured")
 	}
 
+	// Ensure task has the project ID set
+	task.ProjectID = c.ProjectID
+
 	path := fmt.Sprintf("/projects/%d/tasks", c.ProjectID)
 
 	resp, err := c.request(ctx, "PUT", path, task)
