@@ -174,7 +174,7 @@ type Conflict struct {
 
 // IssueConversion holds converted issue and extracted dependencies.
 type IssueConversion struct {
-	Issue        interface{} // *types.Issue - avoiding circular import
+	Issue        any // *types.Issue - avoiding circular import
 	Dependencies []DependencyInfo
 }
 

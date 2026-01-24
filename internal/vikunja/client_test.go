@@ -73,7 +73,7 @@ func TestClientRequest(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestClientRequestRetry(t *testing.T) {
 		t.Fatalf("request failed after retries: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(resp, &result); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestUpdateTask(t *testing.T) {
 	client := NewClient(server.URL, "test-token")
 	ctx := context.Background()
 
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"title": "Updated Task",
 		"done":  true,
 	}
@@ -503,14 +503,14 @@ func TestPagination(t *testing.T) {
 		// Return full page for first request, partial for second
 		if pageParam == "1" {
 			// Return DefaultPerPage items
-			tasks := make([]map[string]interface{}, 50)
+			tasks := make([]map[string]any, 50)
 			for i := 0; i < 50; i++ {
-				tasks[i] = map[string]interface{}{"id": i + 1, "title": "Task"}
+				tasks[i] = map[string]any{"id": i + 1, "title": "Task"}
 			}
 			json.NewEncoder(w).Encode(tasks)
 		} else {
 			// Return less than DefaultPerPage to signal end
-			tasks := []map[string]interface{}{
+			tasks := []map[string]any{
 				{"id": 51, "title": "Last Task"},
 			}
 			json.NewEncoder(w).Encode(tasks)

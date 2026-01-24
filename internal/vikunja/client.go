@@ -63,7 +63,7 @@ func (c *Client) WithViewID(viewID int64) *Client {
 }
 
 // request sends an HTTP request to the Vikunja API.
-func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
+func (c *Client) request(ctx context.Context, method, path string, body any) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= MaxRetries; attempt++ {
 		var bodyReader io.Reader
@@ -273,7 +273,7 @@ func (c *Client) CreateTask(ctx context.Context, task *Task) (*Task, error) {
 }
 
 // UpdateTask updates an existing task.
-func (c *Client) UpdateTask(ctx context.Context, taskID int64, updates map[string]interface{}) (*Task, error) {
+func (c *Client) UpdateTask(ctx context.Context, taskID int64, updates map[string]any) (*Task, error) {
 	path := fmt.Sprintf("/tasks/%d", taskID)
 
 	resp, err := c.request(ctx, "POST", path, updates)
