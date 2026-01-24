@@ -1133,7 +1133,12 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		_ = os.Remove(targetPath)
 
 		// Try to create relative symlink for portability
-		relPath, err := filepath.Rel(targetDir, sourcePath)
+		// If .claude is a symlink, resolve it first to get correct relative path
+		resolvedTargetDir := targetDir
+		if resolved, err := filepath.EvalSymlinks(targetDir); err == nil {
+			resolvedTargetDir = resolved
+		}
+		relPath, err := filepath.Rel(resolvedTargetDir, sourcePath)
 		if err != nil {
 			relPath = sourcePath // Fall back to absolute
 		}
