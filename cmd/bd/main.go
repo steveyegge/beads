@@ -766,7 +766,10 @@ var rootCmd = &cobra.Command{
 		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
 		// Direct mode creates a new connection pool per bd invocation, causing
 		// massive connection churn and CPU overhead. Require daemon mode instead.
-		if daemonClient == nil && !noDaemon {
+		// Exclude daemon commands - they need direct mode to start/manage the daemon.
+		isDaemonCommand := cmd.Name() == "daemon" || cmd.Name() == "daemons" ||
+			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
+		if daemonClient == nil && !noDaemon && !isDaemonCommand {
 			// Check if Dolt server mode is enabled
 			checkBeadsDir := beads.FindBeadsDir()
 			if checkBeadsDir == "" && dbPath != "" {
