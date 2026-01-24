@@ -16,14 +16,17 @@ var epicCmd = &cobra.Command{
 var epicStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show epic completion status",
+	Long: `Show completion status for all open epics.
+
+To see only epics eligible for closure, use:
+  bd epic close-eligible --dry-run`,
 	Run: func(cmd *cobra.Command, args []string) {
-		eligibleOnly, _ := cmd.Flags().GetBool("eligible-only")
 		// Use global jsonOutput set by PersistentPreRun
 		var epics []*types.EpicStatus
 		var err error
 		if daemonClient != nil {
 			resp, err := daemonClient.EpicStatus(&rpc.EpicStatusArgs{
-				EligibleOnly: eligibleOnly,
+				EligibleOnly: false,
 			})
 			if err != nil {
 				FatalErrorRespectJSON("communicating with daemon: %v", err)
@@ -39,15 +42,6 @@ var epicStatusCmd = &cobra.Command{
 			epics, err = store.GetEpicsEligibleForClosure(ctx)
 			if err != nil {
 				FatalErrorRespectJSON("getting epic status: %v", err)
-			}
-			if eligibleOnly {
-				filtered := []*types.EpicStatus{}
-				for _, epic := range epics {
-					if epic.EligibleForClose {
-						filtered = append(filtered, epic)
-					}
-				}
-				epics = filtered
 			}
 		}
 		if jsonOutput {
@@ -194,7 +188,6 @@ var closeEligibleEpicsCmd = &cobra.Command{
 func init() {
 	epicCmd.AddCommand(epicStatusCmd)
 	epicCmd.AddCommand(closeEligibleEpicsCmd)
-	epicStatusCmd.Flags().Bool("eligible-only", false, "Show only epics eligible for closure")
 	closeEligibleEpicsCmd.Flags().Bool("dry-run", false, "Preview what would be closed without making changes")
 	rootCmd.AddCommand(epicCmd)
 }

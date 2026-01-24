@@ -528,7 +528,7 @@ Abandoned wisps are deleted without creating a digest. Use 'bd mol squash'
 if you want to preserve a summary before garbage collection.
 
 Note: This uses time-based cleanup, appropriate for ephemeral wisps.
-For graph-pressure staleness detection (blocking other work), see 'bd mol stale'.
+For finding epics eligible for closure, see 'bd epic close-eligible --dry-run'.
 
 Examples:
   bd mol wisp gc                # Clean abandoned wisps (default: 1h threshold)
