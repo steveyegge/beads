@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -222,12 +223,18 @@ func init() {
 	skillCmd.AddCommand(skillPrimeCmd)
 	skillCmd.AddCommand(skillSyncCmd)
 	skillCmd.AddCommand(skillSpyCmd)
+	skillCmd.AddCommand(skillTestCmd)
 
 	// skill sync flags
 	skillSyncCmd.Flags().BoolVar(&skillSyncClean, "clean", false, "Remove existing .claude/skills/ before syncing")
 
 	// skill spy flags
 	skillSpyCmd.Flags().IntVar(&spyLines, "lines", 200, "Number of lines to capture from session")
+
+	// skill test flags
+	skillTestCmd.Flags().BoolVar(&testSetupOnly, "setup-only", false, "Only perform setup, don't monitor")
+	skillTestCmd.Flags().IntVar(&testTimeout, "timeout", 60, "Timeout in seconds for monitoring")
+	skillTestCmd.Flags().IntVar(&testInterval, "interval", 5, "Poll interval in seconds")
 
 	// Add to root
 	rootCmd.AddCommand(skillCmd)
@@ -1267,4 +1274,170 @@ func runSkillSpy(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Marker: %s\n", marker)
 	fmt.Printf("  Captured %d lines (%d bytes)\n", len(strings.Split(outputStr, "\n")), len(output))
 	return fmt.Errorf("skill marker not found")
+}
+
+// Test command for running E2E skill integration tests
+var skillTestCmd = &cobra.Command{
+	Use:   "test [session-name]",
+	Short: "Run E2E skill integration test",
+	Long: `Run end-to-end test to verify skill integration works.
+
+This command orchestrates:
+1. Ensures e2e-test skill exists
+2. Syncs skills to .claude/skills/
+3. If session-name provided: monitors it for skill activation
+4. Reports PASS/FAIL
+
+The e2e-test skill instructs Claude to output [E2E-SKILL-ACTIVE] when activated.
+
+Examples:
+  bd skill test                          # Setup only, shows how to test manually
+  bd skill test gt-beads-polecat-alpha   # Test existing session
+  bd skill test --setup-only             # Only setup, don't monitor`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runSkillTest,
+}
+
+var (
+	testSetupOnly bool
+	testTimeout   int
+	testInterval  int
+)
+
+func runSkillTest(cmd *cobra.Command, args []string) error {
+	ctx := rootCtx
+	_ = ctx // ctx available for future use
+
+	fmt.Println("=== Skill E2E Integration Test ===\n")
+
+	// Step 1: Check if e2e-test skill exists
+	fmt.Println("Step 1: Checking e2e-test skill...")
+	skillID := "skill-e2e-test"
+
+	var skillExists bool
+	if store != nil {
+		_, err := store.GetIssue(ctx, skillID)
+		skillExists = err == nil
+	}
+
+	if !skillExists {
+		fmt.Println("  Creating e2e-test skill...")
+		// Check if we have the skill file
+		skillPath := "claude-plugin/skills/e2e-test/SKILL.md"
+		if _, err := os.Stat(skillPath); err != nil {
+			return fmt.Errorf("e2e-test skill file not found at %s", skillPath)
+		}
+
+		issue := &types.Issue{
+			ID:              skillID,
+			Title:           "E2e Test",
+			Description:     "Test skill for validating skill integration end-to-end",
+			IssueType:       types.TypeSkill,
+			Status:          types.StatusPinned,
+			Priority:        2,
+			SkillName:       "e2e-test",
+			SkillVersion:    "1.0.0",
+			SkillCategory:   "testing",
+			ClaudeSkillPath: skillPath,
+		}
+		if store != nil {
+			actor := getActor()
+			if err := store.CreateIssue(ctx, issue, actor); err != nil {
+				fmt.Printf("  Warning: Could not create skill bead: %v\n", err)
+			} else {
+				fmt.Printf("  %s Created skill bead: %s\n", ui.RenderPass("✓"), skillID)
+			}
+		} else {
+			fmt.Println("  Note: No database, skill bead not persisted")
+		}
+	} else {
+		fmt.Printf("  %s e2e-test skill exists\n", ui.RenderPass("✓"))
+	}
+
+	// Step 2: Sync skills
+	fmt.Println("\nStep 2: Syncing skills to .claude/skills/...")
+	syncCmd := exec.Command("bd", "skill", "sync")
+	syncCmd.Stdout = os.Stdout
+	syncCmd.Stderr = os.Stderr
+	if err := syncCmd.Run(); err != nil {
+		return fmt.Errorf("skill sync failed: %w", err)
+	}
+
+	// Step 3: Verify sync
+	fmt.Println("\nStep 3: Verifying skill symlink...")
+	claudeSkillPath := ".claude/skills/e2e-test/SKILL.md"
+	if info, err := os.Lstat(claudeSkillPath); err != nil {
+		return fmt.Errorf("skill symlink not found: %s", claudeSkillPath)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		target, _ := os.Readlink(claudeSkillPath)
+		fmt.Printf("  %s Symlink exists: %s -> %s\n", ui.RenderPass("✓"), claudeSkillPath, target)
+	} else {
+		fmt.Printf("  %s File exists (not symlink): %s\n", ui.RenderPass("✓"), claudeSkillPath)
+	}
+
+	// If setup-only, stop here
+	if testSetupOnly || len(args) == 0 {
+		fmt.Println("\n=== Setup Complete ===")
+		fmt.Println("\nTo complete E2E testing manually:")
+		fmt.Println("  1. Spawn a test polecat: gt polecat spawn test-skill")
+		fmt.Println("  2. Give it a simple task that uses the e2e-test skill")
+		fmt.Println("  3. Monitor for activation: bd skill spy <session-name>")
+		fmt.Println("\nOr provide a session name to monitor:")
+		fmt.Println("  bd skill test gt-beads-polecat-alpha")
+		return nil
+	}
+
+	// Step 4: Monitor session
+	sessionName := args[0]
+	fmt.Printf("\nStep 4: Monitoring session %s for skill activation...\n", sessionName)
+
+	marker := "[E2E-SKILL-ACTIVE]"
+	attempts := testTimeout / testInterval
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	for i := 0; i < attempts; i++ {
+		captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines))
+		output, err := captureCmd.Output()
+		if err != nil {
+			fmt.Printf("  Attempt %d/%d: Session not ready (%v)\n", i+1, attempts, err)
+		} else if strings.Contains(string(output), marker) {
+			fmt.Printf("\n%s TEST PASSED: Skill marker found!\n", ui.RenderPass("✓"))
+
+			// Show context
+			lines := strings.Split(string(output), "\n")
+			for j, line := range lines {
+				if strings.Contains(line, marker) {
+					fmt.Printf("\n  Context (line %d):\n", j+1)
+					start := j - 1
+					if start < 0 {
+						start = 0
+					}
+					end := j + 3
+					if end > len(lines) {
+						end = len(lines)
+					}
+					for k := start; k < end; k++ {
+						prefix := "    "
+						if k == j {
+							prefix = "  > "
+						}
+						fmt.Printf("%s%s\n", prefix, lines[k])
+					}
+					break
+				}
+			}
+			return nil
+		} else {
+			fmt.Printf("  Attempt %d/%d: Marker not found yet\n", i+1, attempts)
+		}
+
+		if i < attempts-1 {
+			time.Sleep(time.Duration(testInterval) * time.Second)
+		}
+	}
+
+	fmt.Printf("\n%s TEST FAILED: Skill marker not found after %d seconds\n", ui.RenderFail("✗"), testTimeout)
+	return fmt.Errorf("skill activation not detected")
 }
