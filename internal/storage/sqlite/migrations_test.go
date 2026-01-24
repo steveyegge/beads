@@ -455,6 +455,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 
 		// Drop the column to simulate fresh migration
 		// Note: Schema must include owner column for GetIssue to work
+		// Note: Schema must include skill columns for GetIssue to work (hq-a72961)
 		_, err = s.db.Exec(`
 			CREATE TABLE issues_backup AS SELECT * FROM issues;
 			DROP TABLE issues;
@@ -467,7 +468,7 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				notes TEXT NOT NULL DEFAULT '',
 				status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'blocked', 'closed', 'tombstone')),
 				priority INTEGER NOT NULL,
-				issue_type TEXT NOT NULL CHECK (issue_type IN ('bug', 'feature', 'task', 'epic', 'chore', 'message', 'agent', 'role')),
+				issue_type TEXT NOT NULL CHECK (issue_type IN ('bug', 'feature', 'task', 'epic', 'chore', 'message', 'agent', 'role', 'skill')),
 				assignee TEXT,
 				estimated_minutes INTEGER,
 				created_at DATETIME NOT NULL,
@@ -509,9 +510,16 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				payload TEXT DEFAULT '',
 				due_at DATETIME,
 				defer_until DATETIME,
+				skill_name TEXT DEFAULT '',
+				skill_version TEXT DEFAULT '',
+				skill_category TEXT DEFAULT '',
+				skill_inputs TEXT DEFAULT '',
+				skill_outputs TEXT DEFAULT '',
+				skill_examples TEXT DEFAULT '',
+				claude_skill_path TEXT DEFAULT '',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL, '', '', '', '', '', '', '' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

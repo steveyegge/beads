@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -60,7 +61,53 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
+	// Generate ID if not set (hq-8af330.10: fix duplicate primary key error)
+	if issue.ID == "" {
+		// Get configured prefix
+		var prefix string
+		err := t.tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = 'issue_prefix'`).Scan(&prefix)
+		if err != nil || prefix == "" {
+			prefix = "hq-" // fallback default
+		}
+
+		// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
+		if issue.IDPrefix != "" {
+			prefix = strings.TrimSuffix(prefix, "-") + "-" + issue.IDPrefix + "-"
+		}
+
+		// Generate hash-based ID with collision avoidance
+		generated, err := generateIssueIDInTx(ctx, t.tx, prefix, issue, actor)
+		if err != nil {
+			return fmt.Errorf("failed to generate issue ID: %w", err)
+		}
+		issue.ID = generated
+	}
+
 	return insertIssueTx(ctx, t.tx, issue)
+}
+
+// generateIssueIDInTx generates a unique hash-based ID within a transaction
+func generateIssueIDInTx(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Use adaptive length starting at 6, up to 8
+	for length := 6; length <= 8; length++ {
+		// Try up to 10 nonces at each length
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+
+			// Check if this ID already exists
+			var exists bool
+			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE id = ?)`, candidate).Scan(&exists)
+			if err != nil {
+				return "", fmt.Errorf("failed to check for ID collision: %w", err)
+			}
+
+			if !exists {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
 }
 
 // CreateIssues creates multiple issues within the transaction
@@ -382,7 +429,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash sql.NullString
+	var assignee, owner, contentHash, createdBy sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var awaitType, awaitID, waiters sql.NullString
 	var timeoutNs sql.NullInt64
@@ -399,7 +446,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
+		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt,
 		&ephemeral, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
@@ -435,6 +482,9 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	if owner.Valid {
 		issue.Owner = owner.String
 	}
+	if createdBy.Valid {
+		issue.CreatedBy = createdBy.String
+	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
 	}
@@ -462,124 +512,4 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 
 	return &issue, nil
-}
-
-// CreateDecisionPoint creates a new decision point within the transaction.
-func (t *doltTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	if dp.CreatedAt.IsZero() {
-		dp.CreatedAt = time.Now()
-	}
-
-	_, err := t.tx.ExecContext(ctx, `
-		INSERT INTO decision_points (
-			issue_id, prompt, options, default_option, selected_option,
-			response_text, responded_at, responded_by, iteration,
-			max_iterations, prior_id, guidance, reminder_count, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		dp.IssueID, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
-		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration,
-		dp.MaxIterations, dp.PriorID, dp.Guidance, dp.ReminderCount, dp.CreatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create decision point: %w", err)
-	}
-	return nil
-}
-
-// GetDecisionPoint retrieves the decision point for an issue within the transaction.
-func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
-	row := t.tx.QueryRowContext(ctx, `
-		SELECT issue_id, prompt, options, default_option, selected_option,
-			response_text, responded_at, responded_by, iteration,
-			max_iterations, prior_id, guidance, reminder_count, created_at
-		FROM decision_points WHERE issue_id = ?
-	`, issueID)
-
-	dp := &types.DecisionPoint{}
-	var defaultOption, selectedOption, responseText, respondedBy, priorID, guidance sql.NullString
-	var respondedAt sql.NullTime
-
-	err := row.Scan(
-		&dp.IssueID, &dp.Prompt, &dp.Options, &defaultOption, &selectedOption,
-		&responseText, &respondedAt, &respondedBy, &dp.Iteration,
-		&dp.MaxIterations, &priorID, &guidance, &dp.ReminderCount, &dp.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get decision point: %w", err)
-	}
-
-	if defaultOption.Valid {
-		dp.DefaultOption = defaultOption.String
-	}
-	if selectedOption.Valid {
-		dp.SelectedOption = selectedOption.String
-	}
-	if responseText.Valid {
-		dp.ResponseText = responseText.String
-	}
-	if respondedAt.Valid {
-		dp.RespondedAt = &respondedAt.Time
-	}
-	if respondedBy.Valid {
-		dp.RespondedBy = respondedBy.String
-	}
-	if priorID.Valid {
-		dp.PriorID = priorID.String
-	}
-	if guidance.Valid {
-		dp.Guidance = guidance.String
-	}
-
-	return dp, nil
-}
-
-// UpdateDecisionPoint updates an existing decision point within the transaction.
-func (t *doltTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
-	result, err := t.tx.ExecContext(ctx, `
-		UPDATE decision_points SET
-			prompt = ?, options = ?, default_option = ?, selected_option = ?,
-			response_text = ?, responded_at = ?, responded_by = ?, iteration = ?,
-			max_iterations = ?, prior_id = ?, guidance = ?, reminder_count = ?
-		WHERE issue_id = ?
-	`,
-		dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
-		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration,
-		dp.MaxIterations, dp.PriorID, dp.Guidance, dp.ReminderCount,
-		dp.IssueID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update decision point: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("decision point not found for issue %s", dp.IssueID)
-	}
-
-	return nil
-}
-
-// ListPendingDecisions returns all decision points that haven't been responded to within the transaction.
-func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
-	rows, err := t.tx.QueryContext(ctx, `
-		SELECT issue_id, prompt, options, default_option, selected_option,
-			response_text, responded_at, responded_by, iteration,
-			max_iterations, prior_id, guidance, reminder_count, created_at
-		FROM decision_points
-		WHERE responded_at IS NULL
-		ORDER BY created_at ASC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pending decisions: %w", err)
-	}
-	defer rows.Close()
-
-	return scanDecisionPoints(rows)
 }

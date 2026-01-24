@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -962,6 +961,17 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		}
 	}()
 
+	// Auto-fix missing issue_prefix: if database config is missing but config.yaml has it,
+	// populate the database config (fixes hq-8af330.15)
+	if existingPrefix, _ := targetStore.GetConfig(ctx, "issue_prefix"); existingPrefix == "" {
+		// Try to get prefix from config.yaml in target beads directory
+		if cfgPrefix := readIssuePrefixFromConfig(targetBeadsDir); cfgPrefix != "" {
+			if err := targetStore.SetConfig(ctx, "issue_prefix", cfgPrefix); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to auto-set issue_prefix from config.yaml: %v\n", err)
+			}
+		}
+	}
+
 	// Prepare prefix override from routes.jsonl for cross-rig creation
 	// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
 	var prefixOverride string
@@ -1138,13 +1148,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 		}
 	}
 
-	// Initialize database - it will be created when sqlite.New is called
+	// Initialize database - it will be created when factory.NewFromConfig is called
 	// But we need to set the prefix if source store has one (T012: prefix inheritance)
 	if sourceStore != nil {
 		sourcePrefix, err := sourceStore.GetConfig(ctx, "issue_prefix")
 		if err == nil && sourcePrefix != "" {
 			// Open target store temporarily to set prefix
-			tempStore, err := sqlite.New(ctx, dbPath)
+			tempStore, err := factory.NewFromConfig(ctx, beadsDir)
 			if err != nil {
 				return fmt.Errorf("failed to initialize target database: %w", err)
 			}
@@ -1159,4 +1169,28 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 	}
 
 	return nil
+}
+
+// readIssuePrefixFromConfig reads the issue-prefix from a config.yaml file in the given beads directory.
+// Returns empty string if not found or on error.
+func readIssuePrefixFromConfig(beadsDir string) string {
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	// Simple parsing: look for "issue-prefix: " line
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "issue-prefix:") {
+			value := strings.TrimPrefix(line, "issue-prefix:")
+			value = strings.TrimSpace(value)
+			// Remove quotes if present
+			value = strings.Trim(value, `"'`)
+			return value
+		}
+	}
+	return ""
 }

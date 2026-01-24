@@ -59,6 +59,7 @@ var migrationsList = []Migration{
 	{"quality_score_column", migrations.MigrateQualityScoreColumn},
 	{"decision_point_columns", migrations.MigrateDecisionPointColumns},
 	{"reminder_count_column", migrations.MigrateReminderCountColumn},
+	{"skill_columns", migrations.MigrateSkillColumns},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -125,6 +126,7 @@ func getMigrationDescription(name string) string {
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
 		"decision_point_columns":       "Creates decision_points table for human-in-the-loop choices (prompt, options, response, iteration tracking)",
 		"reminder_count_column":        "Adds reminder_count column to decision_points for tracking notification reminders",
+		"skill_columns":                "Adds skill columns (skill_name, skill_version, skill_category, etc.) for capability tracking (hq-yhdzq)",
 	}
 
 	if desc, ok := descriptions[name]; ok {

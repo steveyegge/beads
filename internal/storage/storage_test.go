@@ -195,6 +195,18 @@ func (m *mockStorage) RenameDependencyPrefix(ctx context.Context, oldPrefix, new
 func (m *mockStorage) RenameCounterPrefix(ctx context.Context, oldPrefix, newPrefix string) error {
 	return nil
 }
+func (m *mockStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return nil
+}
+func (m *mockStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, nil
+}
+func (m *mockStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return nil
+}
+func (m *mockStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, nil
+}
 func (m *mockStorage) RunInTransaction(ctx context.Context, fn func(tx Transaction) error) error {
 	return nil
 }
@@ -272,6 +284,18 @@ func (m *mockTransaction) ImportIssueComment(ctx context.Context, issueID, autho
 	return nil, nil
 }
 func (m *mockTransaction) GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error) {
+	return nil, nil
+}
+func (m *mockTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return nil
+}
+func (m *mockTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, nil
+}
+func (m *mockTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return nil
+}
+func (m *mockTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
 	return nil, nil
 }
 

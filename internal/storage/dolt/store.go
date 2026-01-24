@@ -289,9 +289,9 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 		return nil, "", fmt.Errorf("failed to open Dolt server connection: %w", err)
 	}
 
-	// Server mode supports multi-writer, configure reasonable pool size
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	// Server mode supports multi-writer, configure large pool for multi-agent workloads
+	db.SetMaxOpenConns(1000)
+	db.SetMaxIdleConns(100)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	// Ensure database exists (may need to create it)
@@ -343,6 +343,11 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 		}
 	}
 
+	// Run schema migrations for columns added after initial table creation
+	if err := s.migrateSchema(ctx); err != nil {
+		return fmt.Errorf("failed to migrate schema: %w", err)
+	}
+
 	// Insert default config values
 	for _, stmt := range splitStatements(defaultConfig) {
 		stmt = strings.TrimSpace(stmt)
@@ -363,6 +368,42 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, blockedIssuesView); err != nil {
 		return fmt.Errorf("failed to create blocked_issues view: %w", err)
+	}
+
+	return nil
+}
+
+// migrateSchema adds new columns to existing tables.
+// This handles the case where the database was created with an older schema.
+func (s *DoltStore) migrateSchema(ctx context.Context) error {
+	// Skill columns migration (hq-a72961)
+	skillColumns := []struct {
+		name    string
+		sqlType string
+	}{
+		{"skill_name", "VARCHAR(255) DEFAULT ''"},
+		{"skill_version", "VARCHAR(32) DEFAULT ''"},
+		{"skill_category", "VARCHAR(64) DEFAULT ''"},
+		{"skill_inputs", "TEXT DEFAULT ''"},
+		{"skill_outputs", "TEXT DEFAULT ''"},
+		{"skill_examples", "TEXT DEFAULT ''"},
+		{"claude_skill_path", "VARCHAR(512) DEFAULT ''"},
+	}
+
+	for _, col := range skillColumns {
+		// Check if column exists by attempting to select it
+		// MySQL/Dolt doesn't have a direct way to check column existence like SQLite's pragma
+		_, err := s.db.ExecContext(ctx, fmt.Sprintf("SELECT %s FROM issues LIMIT 0", col.name))
+		if err != nil {
+			// Column doesn't exist, add it
+			_, addErr := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE issues ADD COLUMN %s %s", col.name, col.sqlType))
+			if addErr != nil {
+				// Ignore "duplicate column" errors - might be race condition
+				if !strings.Contains(addErr.Error(), "Duplicate column") {
+					return fmt.Errorf("failed to add %s column: %w", col.name, addErr)
+				}
+			}
+		}
 	}
 
 	return nil

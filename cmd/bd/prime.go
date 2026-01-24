@@ -426,6 +426,36 @@ bd create --title="Implement feature X" --type=feature
 bd create --title="Write tests for X" --type=task
 bd dep add beads-yyy beads-xxx  # Tests depend on Feature (Feature blocks tests)
 ` + "```" + `
+
+## Human Decisions
+
+When you need human input (approval, choices, clarification), use decision points:
+
+**Blocking mode (wait for response):**
+` + "```bash" + `
+# Create decision and wait for response
+id=$(bd decision create --prompt="Deploy to production?" \
+  --options='[{"id":"y","label":"Yes, deploy"},{"id":"n","label":"No, abort"}]' \
+  --json | jq -r .id)
+response=$(bd decision await $id --timeout 5m)
+selected=$(echo $response | jq -r .selected)
+# Continue based on selection...
+` + "```" + `
+
+**Async mode (response via hook):**
+` + "```bash" + `
+# Create decision, continue later when response arrives
+bd decision create --prompt="Which approach?" \
+  --options='[{"id":"a","label":"Option A"},{"id":"b","label":"Option B"}]'
+# Response will be injected via bd decision check --inject hook
+` + "```" + `
+
+**Decision commands:**
+- ` + "`bd decision create --prompt=\"...\" --options='[...]'`" + ` - Create decision point
+- ` + "`bd decision await <id> --timeout 5m`" + ` - Block until response
+- ` + "`bd decision check --inject`" + ` - Check for responses (hook mode)
+- ` + "`bd decision list`" + ` - Show pending decisions
+- ` + "`bd decision show <id>`" + ` - Decision details
 `
 	_, _ = fmt.Fprint(w, context)
 	return nil

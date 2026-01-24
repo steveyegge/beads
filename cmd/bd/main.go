@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/molecules"
@@ -805,6 +806,34 @@ var rootCmd = &cobra.Command{
 			}
 
 			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
+		}
+
+		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
+		// Direct mode creates a new connection pool per bd invocation, causing
+		// massive connection churn and CPU overhead. Require daemon mode instead.
+		// Exclude daemon commands - they need direct mode to start/manage the daemon.
+		isDaemonCommand := cmd.Name() == "daemon" || cmd.Name() == "daemons" ||
+			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
+		if daemonClient == nil && !noDaemon && !isDaemonCommand {
+			// Check if Dolt server mode is enabled
+			checkBeadsDir := beads.FindBeadsDir()
+			if checkBeadsDir == "" && dbPath != "" {
+				checkBeadsDir = filepath.Dir(dbPath)
+			}
+			if checkBeadsDir != "" {
+				if cfg, cfgErr := configfile.Load(checkBeadsDir); cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
+					fmt.Fprintf(os.Stderr, "Error: daemon connection required for Dolt server mode\n")
+					fmt.Fprintf(os.Stderr, "Direct mode is disabled to prevent connection churn (see hq-463d49)\n")
+					fmt.Fprintf(os.Stderr, "\nDaemon status: %s\n", daemonStatus.FallbackReason)
+					if daemonStatus.Detail != "" {
+						fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
+					}
+					fmt.Fprintf(os.Stderr, "\nTo fix:\n")
+					fmt.Fprintf(os.Stderr, "  1. Start daemon: bd daemon start\n")
+					fmt.Fprintf(os.Stderr, "  2. Or use --no-daemon to force direct mode (not recommended)\n")
+					os.Exit(1)
+				}
+			}
 		}
 
 		// Check if this is a read-only command (GH#804)

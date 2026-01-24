@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestServerModeConfig(t *testing.T) {
@@ -86,11 +88,11 @@ func TestServerModeConnection(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Try a simple query - get a known issue
-	issue, err := store.GetIssue(ctx, "hq-f37cb5")
+	// Try a simple query - search issues to verify connection works
+	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
-		t.Fatalf("Failed to get issue: %v", err)
+		t.Fatalf("Failed to search issues: %v", err)
 	}
 
-	t.Logf("SUCCESS: Connected via server mode, got issue: %s - %s", issue.ID, issue.Title)
+	t.Logf("SUCCESS: Connected via server mode, found %d issues", len(issues))
 }

@@ -138,6 +138,12 @@ type Storage interface {
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
 
+	// Decision Points
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
+
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)
 

@@ -24,13 +24,24 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("invalid dependency type: %q (must be non-empty string, max 50 chars)", dep.Type)
 	}
 
-	// Validate that source issue exists
-	issueExists, err := s.GetIssue(ctx, dep.IssueID)
-	if err != nil {
-		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
-	}
-	if issueExists == nil {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
+	// Check for skill dependency patterns that allow soft references
+	// Gas Town paths (containing "/") are canonical agent identifiers that may not have beads
+	isGasTownSource := strings.Contains(dep.IssueID, "/")
+	isSkillDep := dep.Type == types.DepProvidesSkill || dep.Type == types.DepRequiresSkill
+
+	// Skip source validation for provides-skill dependencies from Gas Town paths
+	// These represent agent capabilities where the agent may not have a bead yet
+	var issueExists *types.Issue
+	var err error
+	if !(isSkillDep && isGasTownSource) {
+		// Validate that source issue exists
+		issueExists, err = s.GetIssue(ctx, dep.IssueID)
+		if err != nil {
+			return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
+		}
+		if issueExists == nil {
+			return fmt.Errorf("issue %s not found", dep.IssueID)
+		}
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
@@ -56,7 +67,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		// In parent-child relationships: child depends on parent (child is part of parent)
 		// Parent should NOT depend on child (semantically backwards)
 		// Consistent with dependency semantics: IssueID depends on DependsOnID
-		if dep.Type == types.DepParentChild {
+		if dep.Type == types.DepParentChild && issueExists != nil {
 			// issueExists is the dependent (the one that depends on something)
 			// dependsOnExists is what it depends on
 			// Correct: Task (child) depends on Epic (parent) - child belongs to parent

@@ -618,9 +618,17 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Check for dolt-native mode (hq-c005e8)
+	// Dolt-native mode uses lightweight sync without JSONL export/import
+	syncMode := GetSyncMode(ctx, store)
+	isDoltNative := syncMode == SyncModeDoltNative
+
 	// Create sync function based on mode
 	var doSync func()
-	if localMode {
+	if isDoltNative {
+		doSync = createDoltNativeSyncFunc(ctx, store, autoCommit, autoPush, autoPull, log)
+		log.Info("using dolt-native sync mode (no JSONL)")
+	} else if localMode {
 		doSync = createLocalSyncFunc(ctx, store, log)
 	} else {
 		doSync = createSyncFunc(ctx, store, autoCommit, autoPush, log)
@@ -635,22 +643,32 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	switch daemonMode {
 	case "events":
 		log.Info("using event-driven mode")
-		jsonlPath := findJSONLPath()
-		if jsonlPath == "" {
-			log.Error("JSONL path not found, cannot use event-driven mode")
-			log.Info("falling back to polling mode")
-			runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
+
+		// Event-driven mode uses separate export-only and import-only functions
+		var doExport, doAutoImport func()
+
+		if isDoltNative {
+			// Dolt-native: lightweight commit/push without JSONL
+			doExport = createDoltNativeExportFunc(ctx, store, autoCommit, autoPush, log)
+			doAutoImport = createDoltNativePullFunc(ctx, store, log)
+			// Use empty jsonlPath since we don't need file watching
+			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, "", doExport, doAutoImport, autoPull, parentPID, log)
 		} else {
-			// Event-driven mode uses separate export-only and import-only functions
-			var doExport, doAutoImport func()
-			if localMode {
-				doExport = createLocalExportFunc(ctx, store, log)
-				doAutoImport = createLocalAutoImportFunc(ctx, store, log)
+			jsonlPath := findJSONLPath()
+			if jsonlPath == "" {
+				log.Error("JSONL path not found, cannot use event-driven mode")
+				log.Info("falling back to polling mode")
+				runEventLoop(ctx, cancel, ticker, doSync, server, serverErrChan, parentPID, log)
 			} else {
-				doExport = createExportFunc(ctx, store, autoCommit, autoPush, log)
-				doAutoImport = createAutoImportFunc(ctx, store, log)
+				if localMode {
+					doExport = createLocalExportFunc(ctx, store, log)
+					doAutoImport = createLocalAutoImportFunc(ctx, store, log)
+				} else {
+					doExport = createExportFunc(ctx, store, autoCommit, autoPush, log)
+					doAutoImport = createAutoImportFunc(ctx, store, log)
+				}
+				runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, autoPull, parentPID, log)
 			}
-			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, autoPull, parentPID, log)
 		}
 	case "poll":
 		log.Info("using polling mode", "interval", interval)

@@ -695,10 +695,18 @@ func (m *MemoryStorage) AddDependency(ctx context.Context, dep *types.Dependency
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check that both issues exist
-	if _, exists := m.issues[dep.IssueID]; !exists {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
+	// Check for skill dependency patterns that allow soft references
+	// Gas Town paths (containing "/") are canonical agent identifiers that may not have beads
+	isGasTownSource := strings.Contains(dep.IssueID, "/")
+	isSkillDep := dep.Type == types.DepProvidesSkill || dep.Type == types.DepRequiresSkill
+
+	// Check that source issue exists (skip for skill deps from Gas Town paths)
+	if !(isSkillDep && isGasTownSource) {
+		if _, exists := m.issues[dep.IssueID]; !exists {
+			return fmt.Errorf("issue %s not found", dep.IssueID)
+		}
 	}
+	// Check that target issue exists
 	if _, exists := m.issues[dep.DependsOnID]; !exists {
 		return fmt.Errorf("issue %s not found", dep.DependsOnID)
 	}

@@ -52,3 +52,8 @@ sync-branch: "beads-metadata"
 # - linear.api-key
 # - github.org
 # - github.repo
+
+# Sync mode configuration
+# dolt-native: Use Dolt remotes only, no JSONL export
+sync:
+  mode: "dolt-native"

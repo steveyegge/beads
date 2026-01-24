@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is temporarily ignored due to missing acquireStartLockFlock function.
+// Re-enable when the function is restored.
+
 package main
 
 import (

@@ -107,6 +107,11 @@ type Formula struct {
 
 	// Source tracks where this formula was loaded from (set by parser).
 	Source string `json:"source,omitempty"`
+
+	// RequiresSkills lists skill IDs that are required to execute this formula.
+	// When cooking, these skills are propagated to all generated issues.
+	// Enables skill-based work routing: agents without required skills won't see this work.
+	RequiresSkills []string `json:"requires_skills,omitempty"`
 }
 
 // VarDef defines a template variable with optional validation.
@@ -200,6 +205,11 @@ type Step struct {
 	// OnComplete defines actions triggered when this step completes.
 	// Used for runtime expansion over step output (the for-each construct).
 	OnComplete *OnCompleteSpec `json:"on_complete,omitempty"`
+
+	// RequiresSkills lists skill IDs required to work on this step.
+	// Merged with formula-level RequiresSkills when cooking.
+	// Enables fine-grained skill-based routing at the step level.
+	RequiresSkills []string `json:"requires_skills,omitempty"`
 
 	// Source tracing fields: track where this step came from.
 	// These are set during parsing/transformation and copied to Issues during cooking.
