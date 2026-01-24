@@ -40,7 +40,7 @@ issue-prefix: "bd"
 # Export events (audit trail) to .beads/events.jsonl on each flush/sync
 # When enabled, new events are appended incrementally using a high-water mark.
 # Use 'bd export --events' to trigger manually regardless of this setting.
-# events.export: false
+# events-export: false
 
 # Sync branch for multi-clone setups
 # When set, .beads changes are committed to this branch via worktree

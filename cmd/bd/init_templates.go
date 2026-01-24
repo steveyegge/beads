@@ -69,7 +69,7 @@ func createConfigYaml(beadsDir string, noDbMode bool, prefix string) error {
 # Export events (audit trail) to .beads/events.jsonl on each flush/sync
 # When enabled, new events are appended incrementally using a high-water mark.
 # Use 'bd export --events' to trigger manually regardless of this setting.
-# events.export: false
+# events-export: false
 
 # Git branch for beads commits (bd sync will commit to this branch)
 # IMPORTANT: Set this for team projects so all clones use the same sync branch.

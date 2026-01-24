@@ -463,7 +463,7 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 		log.log("Exported to JSONL")
 
 		// Export events to JSONL (non-fatal, opt-in via config)
-		if config.GetBool("events.export") {
+		if config.GetBool("events-export") {
 			eventsPath := filepath.Join(filepath.Dir(jsonlPath), "events.jsonl")
 			if err := exportEventsToJSONL(exportCtx, store, eventsPath); err != nil {
 				log.log("Warning: events export failed: %v", err)
@@ -774,7 +774,7 @@ func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPus
 		log.log("Exported to JSONL")
 
 		// Export events to JSONL (non-fatal, opt-in via config)
-		if config.GetBool("events.export") {
+		if config.GetBool("events-export") {
 			syncEventsPath := filepath.Join(beadsDir, "events.jsonl")
 			if err := exportEventsToJSONL(syncCtx, store, syncEventsPath); err != nil {
 				log.log("Warning: events export failed: %v", err)
