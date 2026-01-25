@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 )
@@ -14,8 +15,18 @@ import (
 func startRPCServer(ctx context.Context, socketPath string, store storage.Storage, workspacePath string, dbPath string, log daemonLogger) (*rpc.Server, chan error, error) {
 	// Sync daemon version with CLI version
 	rpc.ServerVersion = Version
-	
+
 	server := rpc.NewServer(socketPath, store, workspacePath, dbPath)
+
+	// Configure task watcher from config
+	taskWatcherEnabled := config.GetBool("tasks.enabled")
+	taskWatcherPollInterval := config.GetDuration("tasks.poll-interval")
+	taskWatcherDir := config.GetString("tasks.dir")
+	server.ConfigureTaskWatcher(taskWatcherEnabled, taskWatcherPollInterval, taskWatcherDir)
+	if taskWatcherEnabled {
+		log.Info("task watcher enabled", "poll_interval", taskWatcherPollInterval)
+	}
+
 	serverErrChan := make(chan error, 1)
 
 	go func() {

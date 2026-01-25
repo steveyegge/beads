@@ -169,6 +169,13 @@ func Initialize() error {
 	// Maps project names to paths for resolving external: blocked_by references
 	v.SetDefault("external_projects", map[string]string{})
 
+	// Task watcher configuration (Claude Code task sync)
+	// Daemon monitors ~/.claude/tasks/ and syncs tasks to beads
+	_ = v.BindEnv("tasks.enabled", "BEADS_TASK_WATCHER")
+	v.SetDefault("tasks.enabled", true)                     // Enable task watcher by default
+	v.SetDefault("tasks.poll-interval", "2s")               // How often to check for changes
+	v.SetDefault("tasks.dir", "")                           // Override ~/.claude/tasks/ (empty = default)
+
 	// Read config file if it was found
 	if configFileSet {
 		if err := v.ReadInConfig(); err != nil {

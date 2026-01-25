@@ -49,6 +49,21 @@ func (s *Server) Start(_ context.Context) error {
 
 	go s.handleSignals()
 
+	// Start task watcher if enabled
+	if s.taskWatcherEnabled && s.taskWatcher != nil {
+		go func() {
+			// Create a context that cancels when shutdown is signaled
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				<-s.shutdownChan
+				cancel()
+			}()
+			if err := s.taskWatcher.Run(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "task watcher stopped: %v\n", err)
+			}
+		}()
+	}
+
 	// Ensure cleanup is signaled when this function returns
 	defer close(s.doneChan)
 

@@ -63,6 +63,9 @@ type Server struct {
 	localMode    bool
 	syncInterval string
 	daemonMode   string
+	// Task watcher for Claude Code task tracking sync
+	taskWatcher        *TaskWatcher
+	taskWatcherEnabled bool
 }
 
 // Mutation event types
@@ -119,24 +122,37 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		}
 	}
 
+	// Check if task watcher should be enabled (default: true)
+	taskWatcherEnabled := true
+	if env := os.Getenv("BEADS_TASK_WATCHER"); env == "false" || env == "0" {
+		taskWatcherEnabled = false
+	}
+
 	s := &Server{
-		socketPath:        socketPath,
-		workspacePath:     workspacePath,
-		dbPath:            dbPath,
-		storage:           store,
-		shutdownChan:      make(chan struct{}),
-		doneChan:          make(chan struct{}),
-		startTime:         time.Now(),
-		metrics:           NewMetrics(),
-		maxConns:          maxConns,
-		connSemaphore:     make(chan struct{}, maxConns),
-		requestTimeout:    requestTimeout,
-		readyChan:         make(chan struct{}),
-		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
-		recentMutations:   make([]MutationEvent, 0, 100),
-		maxMutationBuffer: 100,
+		socketPath:         socketPath,
+		workspacePath:      workspacePath,
+		dbPath:             dbPath,
+		storage:            store,
+		shutdownChan:       make(chan struct{}),
+		doneChan:           make(chan struct{}),
+		startTime:          time.Now(),
+		metrics:            NewMetrics(),
+		maxConns:           maxConns,
+		connSemaphore:      make(chan struct{}, maxConns),
+		requestTimeout:     requestTimeout,
+		readyChan:          make(chan struct{}),
+		mutationChan:       make(chan MutationEvent, mutationBufferSize), // Configurable buffer
+		recentMutations:    make([]MutationEvent, 0, 100),
+		maxMutationBuffer:  100,
+		taskWatcherEnabled: taskWatcherEnabled,
 	}
 	s.lastActivityTime.Store(time.Now())
+
+	// Initialize task watcher if storage supports it
+	if taskWatcherEnabled {
+		s.taskWatcher = NewTaskWatcher(store)
+	}
+
 	return s
 }
 
@@ -196,6 +212,41 @@ func (s *Server) SetConfig(autoCommit, autoPush, autoPull, localMode bool, syncI
 	s.localMode = localMode
 	s.syncInterval = syncInterval
 	s.daemonMode = daemonMode
+}
+
+// SetTaskWatcherEnabled enables or disables the task watcher for Claude Code task sync
+func (s *Server) SetTaskWatcherEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskWatcherEnabled = enabled
+	if s.taskWatcher != nil {
+		s.taskWatcher.SetEnabled(enabled)
+	}
+}
+
+// ConfigureTaskWatcher configures the task watcher settings.
+// Call this after NewServer and before Start to customize the watcher.
+func (s *Server) ConfigureTaskWatcher(enabled bool, pollInterval time.Duration, tasksDir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskWatcherEnabled = enabled
+
+	if s.taskWatcher != nil {
+		s.taskWatcher.SetEnabled(enabled)
+		if pollInterval > 0 {
+			s.taskWatcher.SetPollInterval(pollInterval)
+		}
+		if tasksDir != "" {
+			s.taskWatcher.SetTasksDir(tasksDir)
+		}
+	}
+}
+
+// GetTaskWatcher returns the task watcher instance (may be nil if not initialized)
+func (s *Server) GetTaskWatcher() *TaskWatcher {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.taskWatcher
 }
 
 // ResetDroppedEventsCount resets the dropped events counter and returns the previous value
