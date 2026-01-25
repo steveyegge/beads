@@ -1027,26 +1027,45 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 	var hookBeadID string
 
 	// Use daemon RPC if available (for Dolt backend support)
+	debugSkillPrime := os.Getenv("BD_DEBUG_SKILL_PRIME") != ""
+	if debugSkillPrime {
+		fmt.Fprintf(os.Stderr, "[skill prime] agentID=%s patterns=%v daemonClient=%v\n", agentID, agentPatterns, daemonClient != nil)
+	}
 	if daemonClient != nil {
 		for _, pattern := range agentPatterns {
 			showArgs := &rpc.ShowArgs{ID: pattern}
 			resp, err := daemonClient.Show(showArgs)
+			if debugSkillPrime {
+				fmt.Fprintf(os.Stderr, "[skill prime] Show(%s) err=%v success=%v\n", pattern, err, resp != nil && resp.Success)
+			}
 			if err != nil || !resp.Success {
 				continue
 			}
 			var details types.IssueDetails
 			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				if debugSkillPrime {
+					fmt.Fprintf(os.Stderr, "[skill prime] unmarshal error: %v\n", err)
+				}
 				continue
+			}
+			if debugSkillPrime {
+				fmt.Fprintf(os.Stderr, "[skill prime] Found agent: %s hook_bead=%s deps=%d\n", details.ID, details.HookBead, len(details.Dependencies))
 			}
 			// Get skills this agent provides
 			for _, dep := range details.Dependencies {
 				if dep.DependencyType == types.DepProvidesSkill {
 					skillIDSet[dep.ID] = true
+					if debugSkillPrime {
+						fmt.Fprintf(os.Stderr, "[skill prime] Agent provides skill: %s\n", dep.ID)
+					}
 				}
 			}
 			// Get hook_bead from agent (stored in HookBead field)
-			if details.Issue.HookBead != "" {
-				hookBeadID = details.Issue.HookBead
+			if details.HookBead != "" {
+				hookBeadID = details.HookBead
+				if debugSkillPrime {
+					fmt.Fprintf(os.Stderr, "[skill prime] Hook bead from details.HookBead: %s\n", hookBeadID)
+				}
 			}
 			break // Found agent, stop searching patterns
 		}
@@ -1055,12 +1074,21 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		if hookBeadID != "" {
 			showArgs := &rpc.ShowArgs{ID: hookBeadID}
 			resp, err := daemonClient.Show(showArgs)
+			if debugSkillPrime {
+				fmt.Fprintf(os.Stderr, "[skill prime] Show hook work(%s) err=%v success=%v\n", hookBeadID, err, resp != nil && resp.Success)
+			}
 			if err == nil && resp.Success {
 				var workDetails types.IssueDetails
 				if err := json.Unmarshal(resp.Data, &workDetails); err == nil {
+					if debugSkillPrime {
+						fmt.Fprintf(os.Stderr, "[skill prime] Hook work: %s deps=%d\n", workDetails.ID, len(workDetails.Dependencies))
+					}
 					for _, dep := range workDetails.Dependencies {
 						if dep.DependencyType == types.DepRequiresSkill {
 							skillIDSet[dep.ID] = true
+							if debugSkillPrime {
+								fmt.Fprintf(os.Stderr, "[skill prime] Work requires skill: %s\n", dep.ID)
+							}
 						}
 					}
 				}
