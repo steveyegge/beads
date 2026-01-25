@@ -448,6 +448,20 @@ For users who want complete separation between code history and issue tracking, 
 
 ### Setup
 
+**Option A: Initialize with BEADS_DIR (simplest)**
+```bash
+# 1. Create the directory structure
+mkdir -p ~/my-project-beads/.beads
+
+# 2. Set BEADS_DIR and initialize from anywhere
+export BEADS_DIR=~/my-project-beads/.beads
+bd init --prefix myproj    # Creates database at $BEADS_DIR
+
+# 3. Initialize git in the beads repo (optional, for sync)
+cd ~/my-project-beads && git init
+```
+
+**Option B: Traditional approach**
 ```bash
 # 1. Create a dedicated beads repository (one-time)
 mkdir ~/my-project-beads

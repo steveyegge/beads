@@ -144,9 +144,15 @@ Examples:
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Determine path to check
-		checkPath := "."
+		// Precedence: explicit arg > BEADS_DIR (parent) > CWD
+		var checkPath string
 		if len(args) > 0 {
 			checkPath = args[0]
+		} else if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+			// BEADS_DIR points to .beads directory, doctor needs parent
+			checkPath = filepath.Dir(beadsDir)
+		} else {
+			checkPath = "."
 		}
 
 		// Convert to absolute path
