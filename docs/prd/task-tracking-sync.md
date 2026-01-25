@@ -1353,6 +1353,45 @@ Your current tasks:
 Continue with the current in-progress task.
 ```
 
+### 10.6 Session Completion Verification
+
+A Stop hook warns about incomplete tasks before session end:
+
+```bash
+# Installed by bd setup claude (only if .beads/ exists)
+# Hook configuration:
+{
+  "Stop": [{
+    "matcher": "",
+    "hooks": [{
+      "type": "command",
+      "command": "bash -c 'if [ -n \"$CLAUDE_CODE_TASK_LIST_ID\" ]; then bd tasks verify --task-list \"$CLAUDE_CODE_TASK_LIST_ID\"; fi'"
+    }]
+  }]
+}
+```
+
+**Verification checks:**
+- Tasks still `in_progress` → warns to complete or defer
+- Tasks still `pending` with completed tasks → warns about partial completion
+- Completed tasks linked to open beads → warns about unclosed beads
+
+**Example output:**
+```
+⚠️  Task verification warnings for session abc123:
+
+  • Task still in progress: 'Implement JWT validation'
+  • Task 'Write tests' completed but bead bd-f7k2 (Auth feature) is still open
+  • 2 task(s) still pending - work may be incomplete
+
+Consider completing these tasks or updating their status before ending the session.
+```
+
+**Key behaviors:**
+- Only runs if `CLAUDE_CODE_TASK_LIST_ID` is set (identifies current session)
+- Always exits 0 (warns, does not block session end)
+- Silent if no tasks or no issues found
+
 ---
 
 ## 11. Migration Strategy

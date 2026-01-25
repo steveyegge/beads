@@ -421,6 +421,188 @@ func init() {
 	tasksListCmd.Flags().Bool("active", false, "Show all in-progress tasks")
 	tasksListCmd.Flags().Bool("by-bead", false, "Group tasks by bead (use with --task-list)")
 
+	tasksVerifyCmd.Flags().String("task-list", "", "Task list ID to verify (defaults to CLAUDE_CODE_TASK_LIST_ID env var)")
+
 	tasksCmd.AddCommand(tasksListCmd)
+	tasksCmd.AddCommand(tasksVerifyCmd)
 	rootCmd.AddCommand(tasksCmd)
+}
+
+// tasksVerifyCmd verifies task completion status before session end
+var tasksVerifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: "Verify task completion status (for session end hooks)",
+	Long: `Verify that tasks are properly completed before ending a Claude Code session.
+
+This command is designed to be called from a Claude Code Stop hook.
+It checks for incomplete tasks and warns if work may not be finished.
+
+The task list ID is read from CLAUDE_CODE_TASK_LIST_ID environment variable,
+or can be specified with --task-list flag.
+
+Checks performed:
+  - Tasks still in_progress (should be completed or explicitly deferred)
+  - Tasks still pending (may indicate incomplete work)
+  - Completed tasks linked to beads that are still open
+
+This command always exits 0 (warnings only, does not block session end).
+
+Examples:
+  bd tasks verify                           # Uses CLAUDE_CODE_TASK_LIST_ID
+  bd tasks verify --task-list abc123        # Explicit task list`,
+	Run: runTasksVerify,
+}
+
+// VerifyResult holds the result of task verification
+type VerifyResult struct {
+	TaskListID       string          `json:"task_list_id"`
+	TotalTasks       int             `json:"total_tasks"`
+	CompletedTasks   int             `json:"completed_tasks"`
+	InProgressTasks  int             `json:"in_progress_tasks"`
+	PendingTasks     int             `json:"pending_tasks"`
+	Warnings         []VerifyWarning `json:"warnings,omitempty"`
+	HasWarnings      bool            `json:"has_warnings"`
+}
+
+// VerifyWarning represents a single verification warning
+type VerifyWarning struct {
+	Type    string `json:"type"`    // "incomplete_task", "open_bead", etc.
+	Message string `json:"message"`
+	TaskID  string `json:"task_id,omitempty"`
+	BeadID  string `json:"bead_id,omitempty"`
+}
+
+func runTasksVerify(cmd *cobra.Command, args []string) {
+	// Get task list ID from flag or environment variable
+	taskListID, _ := cmd.Flags().GetString("task-list")
+	if taskListID == "" {
+		taskListID = os.Getenv("CLAUDE_CODE_TASK_LIST_ID")
+	}
+
+	// If no task list ID, silently exit (not in a tracked session)
+	if taskListID == "" {
+		if jsonOutput {
+			outputJSON(VerifyResult{HasWarnings: false})
+		}
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get database connection
+	db, err := getTasksDB(ctx)
+	if err != nil {
+		// No database - silently exit (beads may not be set up)
+		if jsonOutput {
+			outputJSON(VerifyResult{TaskListID: taskListID, HasWarnings: false})
+		}
+		return
+	}
+
+	result := verifyTasks(ctx, db, taskListID)
+
+	if jsonOutput {
+		outputJSON(result)
+		return
+	}
+
+	// Human-readable output
+	if !result.HasWarnings {
+		fmt.Fprintf(os.Stderr, "✓ All tasks verified for session %s\n", taskListID)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\n⚠️  Task verification warnings for session %s:\n\n", taskListID)
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "  • %s\n", w.Message)
+	}
+	fmt.Fprintf(os.Stderr, "\nConsider completing these tasks or updating their status before ending the session.\n\n")
+}
+
+func verifyTasks(ctx context.Context, db *sql.DB, taskListID string) VerifyResult {
+	result := VerifyResult{
+		TaskListID: taskListID,
+		Warnings:   []VerifyWarning{},
+	}
+
+	// Query tasks for this task list
+	rows, err := db.QueryContext(ctx, `
+		SELECT ct.id, ct.bead_id, ct.content, ct.status,
+		       i.id as issue_id, i.status as issue_status, i.title as issue_title
+		FROM cc_tasks ct
+		LEFT JOIN issues i ON ct.bead_id = i.id
+		WHERE ct.task_list_id = ?
+		ORDER BY ct.ordinal
+	`, taskListID)
+	if err != nil {
+		// Tables might not exist - return empty result
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var taskID, content, taskStatus string
+		var beadID, issueID, issueStatus, issueTitle sql.NullString
+
+		err := rows.Scan(&taskID, &beadID, &content, &taskStatus,
+			&issueID, &issueStatus, &issueTitle)
+		if err != nil {
+			continue
+		}
+
+		result.TotalTasks++
+
+		switch taskStatus {
+		case "completed":
+			result.CompletedTasks++
+			// Check if linked bead is still open
+			if beadID.Valid && issueID.Valid && issueStatus.Valid {
+				if issueStatus.String == "open" || issueStatus.String == "in_progress" {
+					result.Warnings = append(result.Warnings, VerifyWarning{
+						Type:    "open_bead",
+						Message: fmt.Sprintf("Task '%s' completed but bead %s (%s) is still %s",
+							truncateString(content, 40), beadID.String,
+							truncateString(issueTitle.String, 30), issueStatus.String),
+						TaskID: taskID,
+						BeadID: beadID.String,
+					})
+				}
+			}
+
+		case "in_progress":
+			result.InProgressTasks++
+			result.Warnings = append(result.Warnings, VerifyWarning{
+				Type:    "incomplete_task",
+				Message: fmt.Sprintf("Task still in progress: '%s'", truncateString(content, 50)),
+				TaskID:  taskID,
+			})
+
+		case "pending":
+			result.PendingTasks++
+			// Only warn about pending tasks if there are also completed tasks
+			// (indicates partial completion)
+		}
+	}
+
+	// If there are pending tasks AND completed tasks, warn about incomplete work
+	if result.PendingTasks > 0 && result.CompletedTasks > 0 {
+		result.Warnings = append(result.Warnings, VerifyWarning{
+			Type:    "pending_tasks",
+			Message: fmt.Sprintf("%d task(s) still pending - work may be incomplete", result.PendingTasks),
+		})
+	}
+
+	result.HasWarnings = len(result.Warnings) > 0
+	return result
+}
+
+// truncateString truncates a string to maxLen and adds ellipsis if needed
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }

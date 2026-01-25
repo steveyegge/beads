@@ -116,6 +116,18 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		_, _ = fmt.Fprintln(env.stdout, "✓ Registered PreCompact hook")
 	}
 
+	// Add Stop hook for task verification (only if .beads/ exists in project)
+	// This hook warns about incomplete tasks before session end
+	beadsDir := filepath.Join(env.projectDir, ".beads")
+	if _, err := os.Stat(beadsDir); err == nil {
+		// .beads/ exists - install the Stop hook
+		// The hook only runs if CLAUDE_CODE_TASK_LIST_ID is set
+		stopCommand := `bash -c 'if [ -n "$CLAUDE_CODE_TASK_LIST_ID" ]; then bd tasks verify --task-list "$CLAUDE_CODE_TASK_LIST_ID"; fi'`
+		if addHookCommand(hooks, "Stop", stopCommand) {
+			_, _ = fmt.Fprintln(env.stdout, "✓ Registered Stop hook (task verification)")
+		}
+	}
+
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		_, _ = fmt.Fprintf(env.stderr, "Error: marshal settings: %v\n", err)
@@ -209,6 +221,8 @@ func removeClaude(env claudeEnv, project bool) error {
 	removeHookCommand(hooks, "PreCompact", "bd prime")
 	removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
 	removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
+	// Remove Stop hook (task verification)
+	removeHookCommand(hooks, "Stop", `bash -c 'if [ -n "$CLAUDE_CODE_TASK_LIST_ID" ]; then bd tasks verify --task-list "$CLAUDE_CODE_TASK_LIST_ID"; fi'`)
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
