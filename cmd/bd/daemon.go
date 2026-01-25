@@ -357,6 +357,25 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		backend = configfile.BackendSQLite
 	}
 
+	// Daemon is not supported with dolt backend - refuse to start
+	if backend == configfile.BackendDolt {
+		errMsg := `DAEMON NOT SUPPORTED WITH DOLT BACKEND
+
+The bd daemon is designed for SQLite backend only.
+With dolt backend, connect directly to the dolt sql-server.
+
+The daemon will now exit.`
+		log.Error(errMsg)
+
+		// Write error to file so user can see it without checking logs
+		errFile := filepath.Join(beadsDir, "daemon-error")
+		// nolint:gosec // G306: Error file needs to be readable for debugging
+		if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
+			log.Warn("could not write daemon-error file", "error", err)
+		}
+		return
+	}
+
 	// Reset backoff on daemon start (fresh start, but preserve NeedsManualSync hint)
 	if !localMode {
 		ResetBackoffOnDaemonStart(beadsDir)

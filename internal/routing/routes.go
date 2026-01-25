@@ -455,6 +455,11 @@ func GetRoutedStorageWithOpener(ctx context.Context, id, currentBeadsDir string,
 		return nil, nil // No routing needed, caller should use existing storage
 	}
 
+	// Check if target is same as current - no need to open a new store
+	if beadsDir == currentBeadsDir {
+		return nil, nil // Same directory, caller should use existing storage
+	}
+
 	// Open storage for the routed directory
 	var store storage.Storage
 	if opener != nil {
