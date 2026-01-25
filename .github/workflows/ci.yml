@@ -96,7 +96,7 @@ jobs:
           fi
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         if: matrix.coverage && success()
         with:
           file: ./coverage.out
