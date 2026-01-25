@@ -172,16 +172,24 @@ func hooksNeedDoltUpdate(beadsDir string) bool {
 		return false // No hook installed
 	}
 
-	// Check if it's a bd hook and lacks the Dolt skip logic
 	contentStr := string(content)
+
+	// Shim hooks (bd-shim) delegate to 'bd hook' which handles Dolt correctly
+	if strings.Contains(contentStr, "bd-shim") {
+		return false // Shim hooks are fine
+	}
+
+	// Check if it's a bd inline hook
 	if !strings.Contains(contentStr, "bd") {
 		return false // Not a bd hook
 	}
+
+	// Check if inline hook has the Dolt skip logic
 	if strings.Contains(contentStr, `"backend"`) && strings.Contains(contentStr, `"dolt"`) {
 		return false // Already has Dolt check
 	}
 
-	return true // bd hook without Dolt check
+	return true // bd inline hook without Dolt check
 }
 
 // handleToSQLiteMigration migrates from Dolt to SQLite backend (escape hatch).

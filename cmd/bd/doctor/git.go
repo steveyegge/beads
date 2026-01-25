@@ -800,7 +800,16 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 
 	contentStr := string(content)
 
-	// Check if it's a bd hook
+	// Shim hooks (bd-shim) delegate to 'bd hook' which handles Dolt correctly
+	if strings.Contains(contentStr, bdShimMarker) {
+		return DoctorCheck{
+			Name:    "Git Hooks Dolt Compatibility",
+			Status:  StatusOK,
+			Message: "Shim hooks (Dolt handled by bd hook command)",
+		}
+	}
+
+	// Check if it's a bd inline hook
 	if !strings.Contains(contentStr, bdInlineHookMarker) && !strings.Contains(contentStr, "bd") {
 		return DoctorCheck{
 			Name:    "Git Hooks Dolt Compatibility",
@@ -809,12 +818,12 @@ func CheckGitHooksDoltCompatibility(path string) DoctorCheck {
 		}
 	}
 
-	// Check if it has the Dolt backend skip logic
+	// Check if inline hook has the Dolt backend skip logic
 	if strings.Contains(contentStr, `"backend"`) && strings.Contains(contentStr, `"dolt"`) {
 		return DoctorCheck{
 			Name:    "Git Hooks Dolt Compatibility",
 			Status:  StatusOK,
-			Message: "Hooks have Dolt backend check",
+			Message: "Inline hooks have Dolt backend check",
 		}
 	}
 
