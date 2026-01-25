@@ -996,7 +996,12 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 func runSkillPrime(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 
+	// Get agent ID - prefer cmdCtx.Actor but fall back to global actor
+	// (daemon mode returns early before syncCommandContext, so cmdCtx.Actor may be empty)
 	agentID := getActor()
+	if agentID == "" && actor != "" {
+		agentID = actor
+	}
 	if agentID == "" {
 		return nil // No agent, no skills
 	}
@@ -1009,13 +1014,20 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 	}
 
 	var agentSkillIDs []string
-	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+
+	// Use daemon RPC if available (for Dolt backend support)
+	if daemonClient != nil {
 		for _, pattern := range agentPatterns {
-			deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
-			if err != nil {
+			showArgs := &rpc.ShowArgs{ID: pattern}
+			resp, err := daemonClient.Show(showArgs)
+			if err != nil || !resp.Success {
 				continue
 			}
-			for _, dep := range deps {
+			var details types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				continue
+			}
+			for _, dep := range details.Dependencies {
 				if dep.DependencyType == types.DepProvidesSkill {
 					agentSkillIDs = append(agentSkillIDs, dep.ID)
 				}
@@ -1024,10 +1036,28 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				break
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil // Silently fail for prime
+	} else {
+		// Direct mode: use withStorage
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			for _, pattern := range agentPatterns {
+				deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
+				if err != nil {
+					continue
+				}
+				for _, dep := range deps {
+					if dep.DependencyType == types.DepProvidesSkill {
+						agentSkillIDs = append(agentSkillIDs, dep.ID)
+					}
+				}
+				if len(agentSkillIDs) > 0 {
+					break
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil // Silently fail for prime
+		}
 	}
 
 	if len(agentSkillIDs) == 0 {
@@ -1040,18 +1070,22 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		Content string
 	}
 
-	err = withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+	if daemonClient != nil {
+		// Use daemon RPC
 		for _, skillID := range agentSkillIDs {
-			skill, err := s.GetIssue(ctx, skillID)
-			if err != nil || skill.IssueType != types.TypeSkill {
+			showArgs := &rpc.ShowArgs{ID: skillID}
+			resp, err := daemonClient.Show(showArgs)
+			if err != nil || !resp.Success {
 				continue
 			}
-
-			if skill.ClaudeSkillPath == "" {
-				continue // No SKILL.md to load
+			var details types.IssueDetails
+			if err := json.Unmarshal(resp.Data, &details); err != nil {
+				continue
 			}
-
-			// Try to load the file
+			skill := &details.Issue
+			if skill.IssueType != types.TypeSkill || skill.ClaudeSkillPath == "" {
+				continue
+			}
 			content := loadSkillFile(skill.ClaudeSkillPath)
 			if content != "" {
 				loadedSkills = append(loadedSkills, struct {
@@ -1063,10 +1097,33 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				})
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil // Silently fail for prime
+	} else {
+		// Direct mode: use withStorage
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			for _, skillID := range agentSkillIDs {
+				skill, err := s.GetIssue(ctx, skillID)
+				if err != nil || skill.IssueType != types.TypeSkill {
+					continue
+				}
+				if skill.ClaudeSkillPath == "" {
+					continue
+				}
+				content := loadSkillFile(skill.ClaudeSkillPath)
+				if content != "" {
+					loadedSkills = append(loadedSkills, struct {
+						Name    string
+						Content string
+					}{
+						Name:    skill.SkillName,
+						Content: content,
+					})
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil // Silently fail for prime
+		}
 	}
 
 	if len(loadedSkills) == 0 {

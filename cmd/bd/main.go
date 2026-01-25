@@ -408,7 +408,10 @@ var rootCmd = &cobra.Command{
 				return
 			}
 		}
-		if slices.Contains(noDbCommands, cmdName) {
+		// Special case: "skill prime" needs actor initialization even though
+		// top-level "prime" is in noDbCommands. Check full command path.
+		isSkillPrime := cmdName == "prime" && cmd.Parent() != nil && cmd.Parent().Name() == "skill"
+		if slices.Contains(noDbCommands, cmdName) && !isSkillPrime {
 			return
 		}
 
