@@ -126,11 +126,32 @@ var readOnlyCommands = map[string]bool{
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
+// readOnlySubcommands lists subcommand paths (parent/child) that are read-only.
+// This handles cases where the leaf command name alone is ambiguous.
+// Format: "parent child" (space-separated).
+var readOnlySubcommands = map[string]bool{
+	"decision check":   true, // bd decision check: only reads decision status
+	"merge-slot check": true, // bd merge-slot check: only reads slot availability
+	// NOTE: "gate check" is NOT read-only - it closes resolved gates
+}
+
 // isReadOnlyCommand returns true if the command only reads from the database.
-// This is used to open SQLite in read-only mode, preventing file modifications
+// This is used to open SQLite/Dolt in read-only mode, preventing file modifications
 // that would trigger file watchers. See GH#804.
-func isReadOnlyCommand(cmdName string) bool {
-	return readOnlyCommands[cmdName]
+// Checks both leaf command names and parent/child subcommand paths.
+func isReadOnlyCommand(cmd *cobra.Command) bool {
+	// First check leaf command name
+	if readOnlyCommands[cmd.Name()] {
+		return true
+	}
+	// Then check parent/child path for subcommands
+	if cmd.Parent() != nil && cmd.Parent().Name() != "bd" {
+		path := cmd.Parent().Name() + " " + cmd.Name()
+		if readOnlySubcommands[path] {
+			return true
+		}
+	}
+	return false
 }
 
 // getActorWithGit returns the actor for audit trails with git config fallback.
@@ -542,7 +563,7 @@ var rootCmd = &cobra.Command{
 				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
 				// This enables `bd --no-daemon show` after cold-start when DB is missing
 				canAutoBootstrap := false
-				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
+				if isReadOnlyCommand(cmd) && beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 					if _, err := os.Stat(jsonlPath); err == nil {
 						canAutoBootstrap = true
@@ -859,7 +880,7 @@ var rootCmd = &cobra.Command{
 		// Check if this is a read-only command (GH#804)
 		// Read-only commands open SQLite in read-only mode to avoid modifying
 		// the database file (which breaks file watchers).
-		useReadOnly := isReadOnlyCommand(cmd.Name())
+		useReadOnly := isReadOnlyCommand(cmd)
 
 		// Auto-migrate database on version bump
 		// Skip for read-only commands - they can't write anyway
