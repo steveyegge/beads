@@ -125,7 +125,8 @@ type CreateArgs struct {
 	SkillInputs     []string `json:"skill_inputs,omitempty"`
 	SkillOutputs    []string `json:"skill_outputs,omitempty"`
 	SkillExamples   []string `json:"skill_examples,omitempty"`
-	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"`
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Use SkillContent
+	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
 }
 
 // UpdateArgs represents arguments for the update operation

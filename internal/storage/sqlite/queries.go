@@ -361,6 +361,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var skillOutputs sql.NullString
 	var skillExamples sql.NullString
 	var claudeSkillPath sql.NullString
+	var skillContent sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -376,7 +377,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
+		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -391,7 +392,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath,
+		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath, &skillContent,
 	)
 
 	if err == sql.ErrNoRows {
@@ -549,6 +550,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if claudeSkillPath.Valid {
 		issue.ClaudeSkillPath = claudeSkillPath.String
+	}
+	if skillContent.Valid {
+		issue.SkillContent = skillContent.String
 	}
 
 	// Fetch labels for this issue

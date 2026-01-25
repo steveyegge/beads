@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS issues (
     skill_outputs TEXT DEFAULT '',
     skill_examples TEXT DEFAULT '',
     claude_skill_path VARCHAR(512) DEFAULT '',
+    skill_content TEXT DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),

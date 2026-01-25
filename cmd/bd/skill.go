@@ -203,6 +203,7 @@ var (
 	skillOutputs        []string
 	skillExamples       []string
 	skillClaudePath     string
+	skillContentFile    string // Path to SKILL.md file to read content from
 	skillFilterCategory string
 	skillTown           bool // Create/list skills at town level (hq- prefix)
 )
@@ -215,7 +216,8 @@ func init() {
 	skillCreateCmd.Flags().StringSliceVar(&skillInputs, "inputs", nil, "What the skill needs (comma-separated)")
 	skillCreateCmd.Flags().StringSliceVar(&skillOutputs, "outputs", nil, "What the skill produces (comma-separated)")
 	skillCreateCmd.Flags().StringSliceVar(&skillExamples, "examples", nil, "Usage examples (comma-separated)")
-	skillCreateCmd.Flags().StringVar(&skillClaudePath, "claude-skill-path", "", "Path to SKILL.md for Claude integration")
+	skillCreateCmd.Flags().StringVar(&skillClaudePath, "claude-skill-path", "", "DEPRECATED: Path to SKILL.md (use --content-file instead)")
+	skillCreateCmd.Flags().StringVar(&skillContentFile, "content-file", "", "Path to SKILL.md file to store content in the bead")
 	skillCreateCmd.Flags().BoolVar(&skillTown, "town", false, "Create skill at town level (accessible from all rigs)")
 
 	// skill list flags
@@ -276,6 +278,16 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		title = "[Town] " + title
 	}
 
+	// Read skill content from file if specified
+	var skillContent string
+	if skillContentFile != "" {
+		content, err := os.ReadFile(skillContentFile)
+		if err != nil {
+			return fmt.Errorf("failed to read content file %s: %w", skillContentFile, err)
+		}
+		skillContent = string(content)
+	}
+
 	// Use daemon if available
 	if daemonClient != nil {
 		createArgs := &rpc.CreateArgs{
@@ -292,6 +304,7 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 			SkillOutputs:    skillOutputs,
 			SkillExamples:   skillExamples,
 			ClaudeSkillPath: skillClaudePath,
+			SkillContent:    skillContent,
 		}
 		resp, err := daemonClient.Create(createArgs)
 		if err != nil {
@@ -342,6 +355,7 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		SkillOutputs:    skillOutputs,
 		SkillExamples:   skillExamples,
 		ClaudeSkillPath: skillClaudePath,
+		SkillContent:    skillContent,
 	}
 
 	actor := getActor()
@@ -906,7 +920,27 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// If claude_skill_path is set, try to load the file
+	// Prefer skill_content (new) over claude_skill_path (deprecated)
+	if skill.SkillContent != "" {
+		if jsonOutput {
+			outputJSON(map[string]interface{}{
+				"skill_id":     resolvedSkillID,
+				"skill_name":   skill.SkillName,
+				"loaded_from":  "bead",
+				"content":      skill.SkillContent,
+			})
+			return nil
+		}
+
+		// Output the skill content directly for Claude to read
+		fmt.Printf("# Skill: %s\n\n", skill.SkillName)
+		fmt.Printf("Source: bead (skill_content field)\n\n")
+		fmt.Printf("---\n\n")
+		fmt.Print(skill.SkillContent)
+		return nil
+	}
+
+	// Legacy: try claude_skill_path if set
 	if skill.ClaudeSkillPath != "" {
 		// Resolve the path relative to the .beads directory
 		skillPath := skill.ClaudeSkillPath
@@ -1134,10 +1168,16 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			skill := &details.Issue
-			if skill.IssueType != types.TypeSkill || skill.ClaudeSkillPath == "" {
+			if skill.IssueType != types.TypeSkill {
 				continue
 			}
-			content := loadSkillFile(skill.ClaudeSkillPath)
+			// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
+			var content string
+			if skill.SkillContent != "" {
+				content = skill.SkillContent
+			} else if skill.ClaudeSkillPath != "" {
+				content = loadSkillFile(skill.ClaudeSkillPath)
+			}
 			if content != "" {
 				loadedSkills = append(loadedSkills, struct {
 					Name    string
@@ -1156,10 +1196,13 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				if err != nil || skill.IssueType != types.TypeSkill {
 					continue
 				}
-				if skill.ClaudeSkillPath == "" {
-					continue
+				// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
+				var content string
+				if skill.SkillContent != "" {
+					content = skill.SkillContent
+				} else if skill.ClaudeSkillPath != "" {
+					content = loadSkillFile(skill.ClaudeSkillPath)
 				}
-				content := loadSkillFile(skill.ClaudeSkillPath)
 				if content != "" {
 					loadedSkills = append(loadedSkills, struct {
 						Name    string
@@ -1342,10 +1385,14 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Filter to skills with claude_skill_path (and optionally agent filtering)
+	// Filter to skills with skill content or claude_skill_path (and optionally agent filtering)
 	var syncedCount int
 	for _, skill := range skills {
-		if skill.ClaudeSkillPath == "" {
+		// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
+		hasContent := skill.SkillContent != ""
+		hasPath := skill.ClaudeSkillPath != ""
+
+		if !hasContent && !hasPath {
 			continue
 		}
 
@@ -1356,45 +1403,51 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Find the source SKILL.md
-		sourcePath := findSkillFile(skill.ClaudeSkillPath, repoRoot)
-		if sourcePath == "" {
-			fmt.Fprintf(os.Stderr, "Warning: skill %s: claude_skill_path '%s' not found, skipping\n",
-				skill.SkillName, skill.ClaudeSkillPath)
-			continue
-		}
-
 		// Create target directory
 		targetDir := filepath.Join(claudeSkillsDir, skill.SkillName)
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			return fmt.Errorf("failed to create %s: %w", targetDir, err)
 		}
 
-		// Create symlink to SKILL.md
 		targetPath := filepath.Join(targetDir, "SKILL.md")
 
 		// Remove existing file/symlink
 		_ = os.Remove(targetPath)
 
-		// Try to create relative symlink for portability
-		// If .claude is a symlink, resolve it first to get correct relative path
-		resolvedTargetDir := targetDir
-		if resolved, err := filepath.EvalSymlinks(targetDir); err == nil {
-			resolvedTargetDir = resolved
-		}
-		relPath, err := filepath.Rel(resolvedTargetDir, sourcePath)
-		if err != nil {
-			relPath = sourcePath // Fall back to absolute
-		}
-
-		if err := os.Symlink(relPath, targetPath); err != nil {
-			// If symlink fails (e.g., on some Windows configs), copy instead
-			content, readErr := os.ReadFile(sourcePath)
-			if readErr != nil {
-				return fmt.Errorf("failed to read %s: %w", sourcePath, readErr)
+		// Write content based on source
+		if hasContent {
+			// Write content directly from bead (preferred method)
+			if err := os.WriteFile(targetPath, []byte(skill.SkillContent), 0644); err != nil {
+				return fmt.Errorf("failed to write %s: %w", targetPath, err)
 			}
-			if writeErr := os.WriteFile(targetPath, content, 0644); writeErr != nil {
-				return fmt.Errorf("failed to write %s: %w", targetPath, writeErr)
+		} else if hasPath {
+			// Legacy: find and copy/symlink from claude_skill_path
+			sourcePath := findSkillFile(skill.ClaudeSkillPath, repoRoot)
+			if sourcePath == "" {
+				fmt.Fprintf(os.Stderr, "Warning: skill %s: claude_skill_path '%s' not found, skipping\n",
+					skill.SkillName, skill.ClaudeSkillPath)
+				continue
+			}
+
+			// Try to create relative symlink for portability
+			resolvedTargetDir := targetDir
+			if resolved, err := filepath.EvalSymlinks(targetDir); err == nil {
+				resolvedTargetDir = resolved
+			}
+			relPath, err := filepath.Rel(resolvedTargetDir, sourcePath)
+			if err != nil {
+				relPath = sourcePath // Fall back to absolute
+			}
+
+			if err := os.Symlink(relPath, targetPath); err != nil {
+				// If symlink fails, copy instead
+				content, readErr := os.ReadFile(sourcePath)
+				if readErr != nil {
+					return fmt.Errorf("failed to read %s: %w", sourcePath, readErr)
+				}
+				if writeErr := os.WriteFile(targetPath, content, 0644); writeErr != nil {
+					return fmt.Errorf("failed to write %s: %w", targetPath, writeErr)
+				}
 			}
 		}
 

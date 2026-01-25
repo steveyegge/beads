@@ -335,6 +335,7 @@ func (s *Server) handleCreate(req *Request) Response {
 		SkillOutputs:    createArgs.SkillOutputs,
 		SkillExamples:   createArgs.SkillExamples,
 		ClaudeSkillPath: createArgs.ClaudeSkillPath,
+		SkillContent:    createArgs.SkillContent,
 	}
 	
 	// Check if any dependencies are discovered-from type

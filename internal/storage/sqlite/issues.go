@@ -60,8 +60,8 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
-			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -76,7 +76,7 @@ func insertIssue(ctx context.Context, conn *sql.Conn, issue *types.Issue) error 
 		issue.DueAt, issue.DeferUntil,
 		issue.SkillName, issue.SkillVersion, issue.SkillCategory,
 		formatJSONStringArray(issue.SkillInputs), formatJSONStringArray(issue.SkillOutputs),
-		formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath,
+		formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath, issue.SkillContent,
 	)
 	if err != nil {
 		// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -130,8 +130,8 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
-			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design,
 		issue.AcceptanceCriteria, issue.Notes, issue.Status,
@@ -146,7 +146,7 @@ func insertIssueStrict(ctx context.Context, conn *sql.Conn, issue *types.Issue) 
 		issue.DueAt, issue.DeferUntil,
 		issue.SkillName, issue.SkillVersion, issue.SkillCategory,
 		formatJSONStringArray(issue.SkillInputs), formatJSONStringArray(issue.SkillOutputs),
-		formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath,
+		formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath, issue.SkillContent,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert issue: %w", err)
@@ -166,8 +166,8 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
-			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -215,7 +215,7 @@ func insertIssues(ctx context.Context, conn *sql.Conn, issues []*types.Issue) er
 			issue.DueAt, issue.DeferUntil,
 			issue.SkillName, issue.SkillVersion, issue.SkillCategory,
 			formatJSONStringArray(issue.SkillInputs), formatJSONStringArray(issue.SkillOutputs),
-			formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath,
+			formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath, issue.SkillContent,
 		)
 		if err != nil {
 			// INSERT OR IGNORE should handle duplicates, but driver may still return error
@@ -244,8 +244,8 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			await_type, await_id, timeout_ns, waiters, mol_type,
 			event_kind, actor, target, payload,
 			due_at, defer_until,
-			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -293,7 +293,7 @@ func insertIssuesStrict(ctx context.Context, conn *sql.Conn, issues []*types.Iss
 			issue.DueAt, issue.DeferUntil,
 			issue.SkillName, issue.SkillVersion, issue.SkillCategory,
 			formatJSONStringArray(issue.SkillInputs), formatJSONStringArray(issue.SkillOutputs),
-			formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath,
+			formatJSONStringArray(issue.SkillExamples), issue.ClaudeSkillPath, issue.SkillContent,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)

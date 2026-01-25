@@ -133,7 +133,8 @@ type Issue struct {
 	SkillInputs     []string `json:"skill_inputs,omitempty"`      // What the skill needs
 	SkillOutputs    []string `json:"skill_outputs,omitempty"`     // What the skill produces
 	SkillExamples   []string `json:"skill_examples,omitempty"`    // Usage examples
-	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // Path to SKILL.md if exists
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Path to SKILL.md
+	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
 
 }
 
@@ -229,6 +230,7 @@ func (i *Issue) ComputeContentHash() string {
 		w.str(example)
 	}
 	w.str(i.ClaudeSkillPath)
+	w.str(i.SkillContent)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
