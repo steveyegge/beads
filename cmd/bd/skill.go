@@ -170,8 +170,10 @@ var skillSyncCmd = &cobra.Command{
 	Long: `Sync beads skills to .claude/skills/ directory.
 
 This makes beads skills discoverable by Claude Code's native Skill tool.
-For each skill bead with a claude_skill_path set, creates a symlink or
-copies the SKILL.md file to .claude/skills/<skill-name>/.
+By default, only syncs skills that the current agent provides (via provides-skill
+edges) or that are required by the agent's hooked work.
+
+Use --all to sync all skills (not recommended in multi-agent environments).
 
 Run this:
 - After creating new skills: bd skill create ... && bd skill sync
@@ -179,12 +181,18 @@ Run this:
 - Manually to update skill availability
 
 Examples:
-  bd skill sync              # Sync all skills with claude_skill_path
+  bd skill sync              # Sync skills for current agent (BD_ACTOR)
+  bd skill sync --for beads/crew/skills  # Sync skills for specific agent
+  bd skill sync --all        # Sync ALL skills (ignores agent filtering)
   bd skill sync --clean      # Remove .claude/skills/ first, then sync`,
 	RunE: runSkillSync,
 }
 
-var skillSyncClean bool
+var (
+	skillSyncClean    bool
+	skillSyncForAgent string
+	skillSyncAll      bool
+)
 
 // Flag variables for skill commands
 var (
@@ -230,6 +238,8 @@ func init() {
 
 	// skill sync flags
 	skillSyncCmd.Flags().BoolVar(&skillSyncClean, "clean", false, "Remove existing .claude/skills/ before syncing")
+	skillSyncCmd.Flags().StringVar(&skillSyncForAgent, "for", "", "Agent to sync skills for (default: BD_ACTOR)")
+	skillSyncCmd.Flags().BoolVar(&skillSyncAll, "all", false, "Sync ALL skills (ignore agent filtering)")
 
 	// skill spy flags
 	skillSpyCmd.Flags().IntVar(&spyLines, "lines", 200, "Number of lines to capture from session")
@@ -1209,6 +1219,60 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Determine which skills to sync based on agent filtering
+	allowedSkillIDs := make(map[string]bool)
+
+	if !skillSyncAll {
+		// Get agent ID from flag or BD_ACTOR
+		agentID := skillSyncForAgent
+		if agentID == "" {
+			agentID = os.Getenv("BD_ACTOR")
+		}
+
+		if agentID == "" {
+			return fmt.Errorf("no agent specified: use --for or set BD_ACTOR (or use --all to sync all skills)")
+		}
+
+		if !quietFlag {
+			fmt.Printf("Syncing skills for agent: %s\n", agentID)
+		}
+
+		// Get skills the agent provides (via provides-skill edges)
+		// Try multiple ID patterns for the agent (same as skill prime)
+		agentPatterns := []string{
+			agentID,
+			"agent-" + agentID,
+		}
+
+		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+			for _, pattern := range agentPatterns {
+				deps, err := s.GetDependenciesWithMetadata(ctx, pattern)
+				if err != nil {
+					continue
+				}
+				for _, dep := range deps {
+					if dep.DependencyType == types.DepProvidesSkill {
+						allowedSkillIDs[dep.ID] = true
+					}
+				}
+				if len(allowedSkillIDs) > 0 {
+					break
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to get agent skills: %w", err)
+		}
+
+		// TODO: Also get skills required by hooked work (requires-skill edges)
+		// This would involve finding the agent's hooked work and its skill requirements
+
+		if !quietFlag && len(allowedSkillIDs) > 0 {
+			fmt.Printf("Found %d skill(s) for agent\n", len(allowedSkillIDs))
+		}
+	}
+
 	// Get all skills
 	var skills []*types.Issue
 	if daemonClient != nil {
@@ -1237,11 +1301,18 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Filter to skills with claude_skill_path
+	// Filter to skills with claude_skill_path (and optionally agent filtering)
 	var syncedCount int
 	for _, skill := range skills {
 		if skill.ClaudeSkillPath == "" {
 			continue
+		}
+
+		// Apply agent filtering unless --all is specified
+		if !skillSyncAll && len(allowedSkillIDs) > 0 {
+			if !allowedSkillIDs[skill.ID] {
+				continue
+			}
 		}
 
 		// Find the source SKILL.md
@@ -1294,15 +1365,21 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		outputJSON(map[string]interface{}{
-			"synced":      syncedCount,
-			"target_dir":  claudeSkillsDir,
+			"synced":       syncedCount,
+			"target_dir":   claudeSkillsDir,
 			"total_skills": len(skills),
+			"agent":        skillSyncForAgent,
+			"all":          skillSyncAll,
 		})
 		return nil
 	}
 
 	if syncedCount == 0 {
-		fmt.Println("No skills with claude_skill_path to sync")
+		if skillSyncAll {
+			fmt.Println("No skills with claude_skill_path to sync")
+		} else {
+			fmt.Println("No skills to sync for this agent (use --all to sync all skills)")
+		}
 	} else {
 		fmt.Printf("\nSynced %d skill(s) to %s\n", syncedCount, claudeSkillsDir)
 		fmt.Println("Skills are now discoverable by Claude Code's Skill tool")
