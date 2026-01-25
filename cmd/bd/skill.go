@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -565,6 +566,12 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 	if isGasTownPath {
 		// Use the agent path directly without resolution
 		agentID = agentArg
+
+		// Ensure agent bead exists for Gas Town paths to support JSONL export
+		// Without a bead, the provides-skill dependency would be orphaned on export
+		if err := ensureAgentBeadExists(ctx, agentID); err != nil {
+			return fmt.Errorf("failed to ensure agent bead exists: %w", err)
+		}
 	} else if daemonClient != nil {
 		// Resolve agent ID
 		resolveArgs := &rpc.ResolveIDArgs{ID: agentArg}
@@ -1498,6 +1505,76 @@ func findSkillFile(skillPath, repoRoot string) string {
 	}
 
 	return ""
+}
+
+// ensureAgentBeadExists creates a minimal agent bead if one doesn't exist for a Gas Town path.
+// This is necessary for JSONL export - without a bead, the provides-skill dependency would be
+// orphaned since dependencies are keyed by issue ID.
+func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
+	// Check if agent bead already exists
+	var exists bool
+	if daemonClient != nil {
+		showArgs := &rpc.ShowArgs{ID: agentPath}
+		resp, err := daemonClient.Show(showArgs)
+		exists = err == nil && resp.Success
+	} else if store != nil {
+		agent, err := store.GetIssue(ctx, agentPath)
+		exists = err == nil && agent != nil
+	} else {
+		// No storage available, skip check (dependency will be in-memory only)
+		return nil
+	}
+
+	if exists {
+		return nil // Agent bead already exists
+	}
+
+	// Extract agent name from path (e.g., "beads/crew/skills" -> "skills")
+	parts := strings.Split(agentPath, "/")
+	agentName := agentPath
+	if len(parts) > 0 {
+		agentName = parts[len(parts)-1]
+	}
+
+	// Create minimal agent bead
+	issue := &types.Issue{
+		ID:          agentPath,
+		Title:       fmt.Sprintf("Agent: %s", agentName),
+		Description: fmt.Sprintf("Auto-created agent bead for Gas Town path: %s", agentPath),
+		IssueType:   types.TypeAgent,
+		Status:      types.StatusPinned, // Agents are pinned by default
+		Priority:    2,
+	}
+
+	if daemonClient != nil {
+		createArgs := &rpc.CreateArgs{
+			ID:          issue.ID,
+			Title:       issue.Title,
+			Description: issue.Description,
+			IssueType:   string(issue.IssueType),
+			Priority:    issue.Priority,
+			Pinned:      true,
+		}
+		resp, err := daemonClient.Create(createArgs)
+		if err != nil {
+			return fmt.Errorf("failed to create agent bead via daemon: %w", err)
+		}
+		if !resp.Success {
+			return fmt.Errorf("failed to create agent bead: %s", resp.Error)
+		}
+	} else if store != nil {
+		actor := getActor()
+		if err := store.CreateIssue(ctx, issue, actor); err != nil {
+			return fmt.Errorf("failed to create agent bead: %w", err)
+		}
+		markDirtyAndScheduleFlush()
+	}
+
+	if !quietFlag {
+		fmt.Printf("Created agent bead: %s\n", agentPath)
+	}
+
+	return nil
 }
 
 // Spy command for monitoring polecat sessions
