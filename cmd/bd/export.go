@@ -422,6 +422,18 @@ Examples:
 			issue.Comments = commentsMap[issue.ID]
 		}
 
+		// Populate decision points for issues with AwaitType="decision"
+		for _, issue := range issues {
+			if issue.AwaitType == "decision" {
+				dp, err := store.GetDecisionPoint(ctx, issue.ID)
+				if err != nil {
+					debug.Logf("Warning: failed to get decision point for %s: %v\n", issue.ID, err)
+					continue
+				}
+				issue.DecisionPoint = dp
+			}
+		}
+
 		// Open output
 		out := os.Stdout
 		var tempFile *os.File

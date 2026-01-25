@@ -185,6 +185,10 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 		if err := importCommentsTx(ctx, tx, issues, opts); err != nil {
 			return err
 		}
+		// Import decision points
+		if err := importDecisionPointsTx(ctx, tx, issues, opts); err != nil {
+			return err
+		}
 		return nil
 	}); err != nil {
 		// Some backends (e.g., --no-db) don't support transactions.
@@ -200,6 +204,9 @@ func ImportIssues(ctx context.Context, dbPath string, store storage.Storage, iss
 				return nil, err
 			}
 			if err := importComments(ctx, store, issues, opts); err != nil {
+				return nil, err
+			}
+			if err := importDecisionPoints(ctx, store, issues, opts); err != nil {
 				return nil, err
 			}
 		} else {
@@ -1474,6 +1481,81 @@ func importComments(ctx context.Context, store storage.Storage, issues []*types.
 		}
 	}
 
+	return nil
+}
+
+// importDecisionPointsTx imports decision points for issues within a transaction
+func importDecisionPointsTx(ctx context.Context, tx storage.Transaction, issues []*types.Issue, opts Options) error {
+	for _, issue := range issues {
+		if issue.DecisionPoint == nil {
+			continue
+		}
+
+		// Check if decision point already exists
+		existing, err := tx.GetDecisionPoint(ctx, issue.ID)
+		if err != nil {
+			// GetDecisionPoint returns nil for non-existent, only error on actual failure
+			return fmt.Errorf("error checking decision point for %s: %w", issue.ID, err)
+		}
+
+		if existing != nil {
+			// Decision point already exists - update it if content differs
+			if existing.Prompt != issue.DecisionPoint.Prompt ||
+				existing.Options != issue.DecisionPoint.Options ||
+				existing.SelectedOption != issue.DecisionPoint.SelectedOption {
+				if err := tx.UpdateDecisionPoint(ctx, issue.DecisionPoint); err != nil {
+					if opts.Strict {
+						return fmt.Errorf("error updating decision point for %s: %w", issue.ID, err)
+					}
+				}
+			}
+		} else {
+			// Create new decision point
+			issue.DecisionPoint.IssueID = issue.ID
+			if err := tx.CreateDecisionPoint(ctx, issue.DecisionPoint); err != nil {
+				if opts.Strict {
+					return fmt.Errorf("error creating decision point for %s: %w", issue.ID, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// importDecisionPoints imports decision points for issues (non-transactional)
+func importDecisionPoints(ctx context.Context, store storage.Storage, issues []*types.Issue, opts Options) error {
+	for _, issue := range issues {
+		if issue.DecisionPoint == nil {
+			continue
+		}
+
+		// Check if decision point already exists
+		existing, err := store.GetDecisionPoint(ctx, issue.ID)
+		if err != nil {
+			return fmt.Errorf("error checking decision point for %s: %w", issue.ID, err)
+		}
+
+		if existing != nil {
+			// Decision point already exists - update it if content differs
+			if existing.Prompt != issue.DecisionPoint.Prompt ||
+				existing.Options != issue.DecisionPoint.Options ||
+				existing.SelectedOption != issue.DecisionPoint.SelectedOption {
+				if err := store.UpdateDecisionPoint(ctx, issue.DecisionPoint); err != nil {
+					if opts.Strict {
+						return fmt.Errorf("error updating decision point for %s: %w", issue.ID, err)
+					}
+				}
+			}
+		} else {
+			// Create new decision point
+			issue.DecisionPoint.IssueID = issue.ID
+			if err := store.CreateDecisionPoint(ctx, issue.DecisionPoint); err != nil {
+				if opts.Strict {
+					return fmt.Errorf("error creating decision point for %s: %w", issue.ID, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
