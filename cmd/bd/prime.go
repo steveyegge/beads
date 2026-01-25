@@ -239,13 +239,17 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 	context := `# Beads Issue Tracker Active
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `## 🔗 TASK TRACKING (TodoWrite Integration)
+
+Prefix tasks with bead ID for auto-sync to beads:
+  ` + "`bd-xxxx: Task description`" + ` → Syncs to bead bd-xxxx
+
+# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 ` + closeProtocol + `
 
 ## Core Rules
 - **Default**: Use beads for ALL task tracking (` + "`bd create`" + `, ` + "`bd ready`" + `, ` + "`bd close`" + `)
-- **TodoWrite**: Prefix tasks with bead ID for sync: ` + "`bd-xxxx: Task description`" + `
 - **Workflow**: Create beads issue BEFORE writing code, mark in_progress when starting
 - Persistence you don't need beats lost context
 
@@ -361,7 +365,21 @@ bd sync                     # Push to remote
 > **Context Recovery**: Run ` + "`bd prime`" + ` after compaction, clear, or new session
 > Hooks auto-call this in Claude Code when .beads/ detected
 
-` + redirectNotice + `# 🚨 SESSION CLOSE PROTOCOL 🚨
+` + redirectNotice + `## 🔗 TASK TRACKING (TodoWrite Integration)
+
+**IMPORTANT**: When using TodoWrite, prefix each task with the bead ID:
+
+` + "```" + `
+bd-f7k2: Implement JWT validation    → Synced to bead bd-f7k2
+bd-f7k2: Write unit tests            → Synced to bead bd-f7k2
+bd-x9y3: Update API docs             → Synced to different bead
+Document changes                     → Unlinked (no prefix)
+` + "```" + `
+
+This enables automatic synchronization to beads for progress visibility.
+Use ` + "`bd tasks list`" + ` to view synced tasks.
+
+# 🚨 SESSION CLOSE PROTOCOL 🚨
 
 **CRITICAL**: Before saying "done" or "complete", you MUST run this checklist:
 
@@ -373,25 +391,10 @@ bd sync                     # Push to remote
 
 ## Core Rules
 - **Default**: Use beads for ALL task tracking (` + "`bd create`" + `, ` + "`bd ready`" + `, ` + "`bd close`" + `)
-- **TodoWrite Integration**: Prefix tasks with bead ID for auto-sync: ` + "`bd-xxxx: Task description`" + `
 - **Workflow**: Create beads issue BEFORE writing code, mark in_progress when starting
 - Persistence you don't need beats lost context
 - ` + gitWorkflowRule + `
 - Session management: check ` + "`bd ready`" + ` for available work
-
-## Task Tracking Convention
-
-When using TodoWrite, prefix each task with the bead ID you're working on:
-
-` + "```" + `
-bd-f7k2: Implement JWT validation    → Linked to bead bd-f7k2
-bd-f7k2: Write unit tests            → Linked to bead bd-f7k2
-bd-x9y3: Update API docs             → Linked to different bead
-Document changes                     → Unlinked (no prefix)
-` + "```" + `
-
-This enables automatic synchronization to beads for progress visibility.
-Use ` + "`bd tasks list`" + ` to view synced tasks.
 
 ## Essential Commands
 

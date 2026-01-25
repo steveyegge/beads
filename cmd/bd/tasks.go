@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -373,47 +372,7 @@ func scanTasks(rows *sql.Rows) []rpc.CCTask {
 	return tasks
 }
 
-// getStatusIcon returns the icon for a task status
-func getStatusIcon(status string) string {
-	switch status {
-	case "completed":
-		return ui.RenderPass("✓")
-	case "in_progress":
-		return ui.RenderAccent("→")
-	default:
-		return "○"
-	}
-}
-
-// formatTimeAgo formats a time as a human-readable relative time
-func formatTimeAgo(t time.Time) string {
-	if t.IsZero() {
-		return "unknown"
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1 minute ago"
-		}
-		return fmt.Sprintf("%d minutes ago", mins)
-	case d < 24*time.Hour:
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-		return fmt.Sprintf("%d hours ago", hours)
-	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1 day ago"
-		}
-		return fmt.Sprintf("%d days ago", days)
-	}
-}
+// getStatusIcon and formatTimeAgo are defined in mol_current.go and wisp.go respectively
 
 func init() {
 	tasksListCmd.Flags().String("task-list", "", "Show tasks for a specific task list (directory name under ~/.claude/tasks/)")
@@ -596,13 +555,4 @@ func verifyTasks(ctx context.Context, db *sql.DB, taskListID string) VerifyResul
 	return result
 }
 
-// truncateString truncates a string to maxLen and adds ellipsis if needed
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
+// truncateString is defined in activity.go
