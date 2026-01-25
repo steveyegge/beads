@@ -227,9 +227,15 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	// Verify the database is accessible and structurally sound
 	if db := store.UnderlyingDB(); db != nil {
 		// Quick integrity check - just verify we can query
+		// Try SQLite PRAGMA first, fall back to simple SELECT for Dolt/MySQL
 		var result string
 		if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
-			log.log("Health check: database integrity check failed: %v", err)
+			// PRAGMA not supported (likely Dolt/MySQL) - try simple connectivity check
+			var one int
+			if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+				log.log("Health check: database connectivity check failed: %v", err)
+			}
+			// If SELECT 1 succeeds, database is accessible (skip PRAGMA-specific checks)
 		} else if result != "ok" {
 			log.log("Health check: database integrity issue: %s", result)
 		}
