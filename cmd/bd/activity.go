@@ -485,48 +485,44 @@ func printEvent(e rpc.MutationEvent) {
 
 // printEventDetails prints full issue details for text output with --details
 func printEventDetails(details *types.IssueDetails) {
-	indent := "         " // Align with timestamp prefix
-	fmt.Printf("%s├─ Status: %s  Priority: P%d  Type: %s\n",
-		indent, details.Status, details.Priority, details.IssueType)
+	fmt.Printf("Status: %s  Priority: P%d  Type: %s\n",
+		details.Status, details.Priority, details.IssueType)
 	if details.Assignee != "" {
-		fmt.Printf("%s├─ Assignee: %s\n", indent, details.Assignee)
+		fmt.Printf("Assignee: %s\n", details.Assignee)
 	}
 	if len(details.Labels) > 0 {
-		fmt.Printf("%s├─ Labels: %s\n", indent, strings.Join(details.Labels, ", "))
+		fmt.Printf("Labels: %s\n", strings.Join(details.Labels, ", "))
 	}
 	if details.Description != "" {
 		desc := truncateString(details.Description, 80)
 		desc = strings.ReplaceAll(desc, "\n", " ")
-		fmt.Printf("%s├─ Description: %s\n", indent, desc)
+		fmt.Printf("Description: %s\n", desc)
 	}
 	if len(details.Dependencies) > 0 {
 		deps := make([]string, 0, len(details.Dependencies))
 		for _, d := range details.Dependencies {
 			deps = append(deps, d.ID)
 		}
-		fmt.Printf("%s├─ Depends on: %s\n", indent, strings.Join(deps, ", "))
+		fmt.Printf("Depends on: %s\n", strings.Join(deps, ", "))
 	}
 	if len(details.Dependents) > 0 {
 		dependents := make([]string, 0, len(details.Dependents))
 		for _, d := range details.Dependents {
 			dependents = append(dependents, d.ID)
 		}
-		fmt.Printf("%s├─ Blocked by: %s\n", indent, strings.Join(dependents, ", "))
+		fmt.Printf("Blocked by: %s\n", strings.Join(dependents, ", "))
 	}
 	if len(details.Comments) > 0 {
-		fmt.Printf("%s├─ Comments: %d\n", indent, len(details.Comments))
-		for i, c := range details.Comments {
-			prefix := "│"
-			if i == len(details.Comments)-1 && details.CreatedAt.IsZero() {
-				prefix = "└"
-			}
+		fmt.Printf("Comments: %d\n", len(details.Comments))
+		for _, c := range details.Comments {
 			text := truncateString(c.Text, 60)
 			text = strings.ReplaceAll(text, "\n", " ")
-			fmt.Printf("%s%s    @%s: %s\n", indent, prefix, c.Author, text)
+			fmt.Printf("    @%s: %s\n", c.Author, text)
 		}
 	}
-	fmt.Printf("%s└─ Created: %s  Updated: %s\n",
-		indent, details.CreatedAt.Format("2006-01-02 15:04"), details.UpdatedAt.Format("2006-01-02 15:04"))
+	fmt.Printf("Created: %s  Updated: %s\n",
+		details.CreatedAt.Format("2006-01-02 15:04"), details.UpdatedAt.Format("2006-01-02 15:04"))
+	fmt.Println() // Blank line between events
 }
 
 // parseDurationString parses duration strings like "5m", "1h", "30s", "2d"
