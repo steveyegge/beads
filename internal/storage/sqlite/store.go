@@ -68,6 +68,10 @@ type SQLiteStorage struct {
 	readOnly    bool              // True if opened in read-only mode (GH#804)
 	freshness   *FreshnessChecker // Optional freshness checker for daemon mode
 	reconnectMu sync.RWMutex      // Protects reconnection and db access (GH#607)
+
+	// Cached config values to avoid DB queries on hot paths
+	excludeIDPatterns     []string   // Cached exclude patterns for GetReadyWork
+	excludeIDPatternsOnce sync.Once  // Ensures patterns are loaded only once
 }
 
 // setupWASMCache configures WASM compilation caching to reduce SQLite startup time.

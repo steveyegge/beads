@@ -1,6 +1,6 @@
 # Makefile for beads project
 
-.PHONY: all build test bench bench-quick clean install help
+.PHONY: all build test bench bench-quick bench-cli bench-concurrency clean install help
 
 # Default target
 all: build
@@ -33,6 +33,22 @@ bench-quick:
 	@echo "Running quick performance benchmarks..."
 	go test -bench=. -benchtime=100ms -tags=bench -run=^$$ ./internal/storage/sqlite/ -timeout=15m
 
+# Run CLI benchmark suite (tests actual CLI latency, throughput, percentiles)
+# Requires synthetic database - run 'make bench-quick' first to generate it
+bench-cli:
+	@echo "Running CLI benchmark suite..."
+	@if [ ! -f /tmp/beads-bench-cache/large.db ]; then \
+		echo "Synthetic database not found. Generating..."; \
+		go test -tags=bench -bench=BenchmarkGetReadyWork_Large -benchmem ./internal/storage/sqlite/ -timeout=10m; \
+	fi
+	@mkdir -p benchmarks
+	./scripts/benchmark-suite.sh --synthetic --iterations 20 --output benchmarks/baseline-$$(date +%Y%m%d).json
+
+# Run concurrency stress test
+bench-concurrency:
+	@echo "Running concurrency stress test..."
+	./scripts/test-concurrency.sh --parallel 10 --iterations 10
+
 # Install bd to GOPATH/bin
 install:
 	@echo "Installing bd to $$(go env GOPATH)/bin..."
@@ -50,10 +66,12 @@ clean:
 # Show help
 help:
 	@echo "Beads Makefile targets:"
-	@echo "  make build        - Build the bd binary"
-	@echo "  make test         - Run all tests"
-	@echo "  make bench        - Run performance benchmarks (generates CPU profiles)"
-	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
-	@echo "  make install      - Install bd to GOPATH/bin"
-	@echo "  make clean        - Remove build artifacts and profile files"
-	@echo "  make help         - Show this help message"
+	@echo "  make build            - Build the bd binary"
+	@echo "  make test             - Run all tests"
+	@echo "  make bench            - Run Go performance benchmarks (generates CPU profiles)"
+	@echo "  make bench-quick      - Run quick Go benchmarks (shorter benchtime)"
+	@echo "  make bench-cli        - Run CLI benchmark suite (latency, throughput, percentiles)"
+	@echo "  make bench-concurrency - Run concurrency stress test"
+	@echo "  make install          - Install bd to GOPATH/bin"
+	@echo "  make clean            - Remove build artifacts and profile files"
+	@echo "  make help             - Show this help message"

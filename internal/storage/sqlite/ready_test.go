@@ -1992,6 +1992,8 @@ func TestGetReadyWorkExcludeIDPatternsConfig(t *testing.T) {
 	if err := env.Store.SetConfig(ctx, ExcludeIDPatternsConfigKey, "-mol-,-wisp-,-role-"); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
 	}
+	// Reset cache to pick up new config value
+	env.Store.ResetExcludeIDPatternsCache(ctx)
 
 	ready2 := env.GetReadyWork(types.WorkFilter{})
 	readyIDs2 := make(map[string]bool)

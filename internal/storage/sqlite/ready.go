@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
@@ -844,10 +845,23 @@ var DefaultExcludeIDPatterns = []string{"-mol-", "-wisp-"}
 // getExcludeIDPatterns returns the ID patterns to exclude from GetReadyWork.
 // Reads from ready.exclude_id_patterns config, defaults to DefaultExcludeIDPatterns.
 // Config format: comma-separated patterns, e.g., "-mol-,-wisp-"
+//
+// Performance optimization: Caches the patterns on first call to avoid repeated
+// DB queries. The config rarely changes, so caching is safe and saves ~1-2ms per call.
+// Use ResetExcludeIDPatternsCache() to invalidate the cache if config changes.
 func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
+	s.excludeIDPatternsOnce.Do(func() {
+		s.loadExcludeIDPatterns(ctx)
+	})
+	return s.excludeIDPatterns
+}
+
+// loadExcludeIDPatterns loads the exclude patterns from config into the cache.
+func (s *SQLiteStorage) loadExcludeIDPatterns(ctx context.Context) {
 	value, err := s.GetConfig(ctx, ExcludeIDPatternsConfigKey)
 	if err != nil || value == "" {
-		return DefaultExcludeIDPatterns
+		s.excludeIDPatterns = DefaultExcludeIDPatterns
+		return
 	}
 
 	// Parse comma-separated patterns
@@ -861,7 +875,20 @@ func (s *SQLiteStorage) getExcludeIDPatterns(ctx context.Context) []string {
 	}
 
 	if len(patterns) == 0 {
-		return DefaultExcludeIDPatterns
+		s.excludeIDPatterns = DefaultExcludeIDPatterns
+	} else {
+		s.excludeIDPatterns = patterns
 	}
-	return patterns
+}
+
+// ResetExcludeIDPatternsCache invalidates the cached exclude ID patterns,
+// forcing them to be reloaded from config on the next GetReadyWork call.
+// This is primarily used for testing when config changes between calls.
+func (s *SQLiteStorage) ResetExcludeIDPatternsCache(ctx context.Context) {
+	s.excludeIDPatternsOnce = sync.Once{}
+	s.excludeIDPatterns = nil
+	// Pre-load to avoid race condition
+	s.excludeIDPatternsOnce.Do(func() {
+		s.loadExcludeIDPatterns(ctx)
+	})
 }
