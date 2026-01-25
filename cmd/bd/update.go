@@ -78,9 +78,16 @@ create, update, show, or close operation).`,
 			design, _ := cmd.Flags().GetString("design")
 			updates["design"] = design
 		}
+		if cmd.Flags().Changed("notes") && cmd.Flags().Changed("append-notes") {
+			FatalErrorRespectJSON("cannot specify both --notes and --append-notes")
+		}
 		if cmd.Flags().Changed("notes") {
 			notes, _ := cmd.Flags().GetString("notes")
 			updates["notes"] = notes
+		}
+		if cmd.Flags().Changed("append-notes") {
+			appendNotes, _ := cmd.Flags().GetString("append-notes")
+			updates["append_notes"] = appendNotes
 		}
 		if cmd.Flags().Changed("acceptance") || cmd.Flags().Changed("acceptance-criteria") {
 			var acceptanceCriteria string
@@ -243,6 +250,22 @@ create, update, show, or close operation).`,
 				if notes, ok := updates["notes"].(string); ok {
 					updateArgs.Notes = &notes
 				}
+				if appendNotes, ok := updates["append_notes"].(string); ok {
+					// Fetch existing issue to get current notes
+					showArgs := &rpc.ShowArgs{ID: id}
+					resp, err := daemonClient.Show(showArgs)
+					if err == nil {
+						var existingIssue types.Issue
+						if err := json.Unmarshal(resp.Data, &existingIssue); err == nil {
+							combined := existingIssue.Notes
+							if combined != "" {
+								combined += "\n"
+							}
+							combined += appendNotes
+							updateArgs.Notes = &combined
+						}
+					}
+				}
 				if acceptanceCriteria, ok := updates["acceptance_criteria"].(string); ok {
 					updateArgs.AcceptanceCriteria = &acceptanceCriteria
 				}
@@ -372,9 +395,18 @@ create, update, show, or close operation).`,
 				// Apply regular field updates if any
 				regularUpdates := make(map[string]interface{})
 				for k, v := range updates {
-					if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" {
+					if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
 						regularUpdates[k] = v
 					}
+				}
+				// Handle append_notes: combine existing notes with new content
+				if appendNotes, ok := updates["append_notes"].(string); ok {
+					combined := issue.Notes
+					if combined != "" {
+						combined += "\n"
+					}
+					combined += appendNotes
+					regularUpdates["notes"] = combined
 				}
 				if len(regularUpdates) > 0 {
 					if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
@@ -486,9 +518,18 @@ create, update, show, or close operation).`,
 			// Apply regular field updates if any
 			regularUpdates := make(map[string]interface{})
 			for k, v := range updates {
-				if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" {
+				if k != "add_labels" && k != "remove_labels" && k != "set_labels" && k != "parent" && k != "append_notes" {
 					regularUpdates[k] = v
 				}
+			}
+			// Handle append_notes: combine existing notes with new content
+			if appendNotes, ok := updates["append_notes"].(string); ok {
+				combined := issue.Notes
+				if combined != "" {
+					combined += "\n"
+				}
+				combined += appendNotes
+				regularUpdates["notes"] = combined
 			}
 			if len(regularUpdates) > 0 {
 				if err := issueStore.UpdateIssue(ctx, result.ResolvedID, regularUpdates, actor); err != nil {
