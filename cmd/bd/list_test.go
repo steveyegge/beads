@@ -755,7 +755,7 @@ func TestFormatIssueCompact(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			formatIssueCompact(&buf, tt.issue, tt.labels, nil)
+			formatIssueCompact(&buf, tt.issue, tt.labels)
 			result := buf.String()
 			if !strings.Contains(result, tt.want) {
 				t.Errorf("formatIssueCompact() = %q, want to contain %q", result, tt.want)

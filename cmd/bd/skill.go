@@ -1016,14 +1016,15 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		return nil // No agent, no skills
 	}
 
-	// Get skills this agent provides
+	// Get skills this agent provides AND skills required by hooked work
 	// Try multiple ID patterns for the agent
 	agentPatterns := []string{
 		agentID,
 		"agent-" + agentID,
 	}
 
-	var agentSkillIDs []string
+	skillIDSet := make(map[string]bool) // Dedupe skills
+	var hookBeadID string
 
 	// Use daemon RPC if available (for Dolt backend support)
 	if daemonClient != nil {
@@ -1037,13 +1038,32 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 			if err := json.Unmarshal(resp.Data, &details); err != nil {
 				continue
 			}
+			// Get skills this agent provides
 			for _, dep := range details.Dependencies {
 				if dep.DependencyType == types.DepProvidesSkill {
-					agentSkillIDs = append(agentSkillIDs, dep.ID)
+					skillIDSet[dep.ID] = true
 				}
 			}
-			if len(agentSkillIDs) > 0 {
-				break
+			// Get hook_bead from agent (stored in HookBead field)
+			if details.Issue.HookBead != "" {
+				hookBeadID = details.Issue.HookBead
+			}
+			break // Found agent, stop searching patterns
+		}
+
+		// Also get skills required by hooked work (if any)
+		if hookBeadID != "" {
+			showArgs := &rpc.ShowArgs{ID: hookBeadID}
+			resp, err := daemonClient.Show(showArgs)
+			if err == nil && resp.Success {
+				var workDetails types.IssueDetails
+				if err := json.Unmarshal(resp.Data, &workDetails); err == nil {
+					for _, dep := range workDetails.Dependencies {
+						if dep.DependencyType == types.DepRequiresSkill {
+							skillIDSet[dep.ID] = true
+						}
+					}
+				}
 			}
 		}
 	} else {
@@ -1056,11 +1076,26 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				}
 				for _, dep := range deps {
 					if dep.DependencyType == types.DepProvidesSkill {
-						agentSkillIDs = append(agentSkillIDs, dep.ID)
+						skillIDSet[dep.ID] = true
 					}
 				}
-				if len(agentSkillIDs) > 0 {
-					break
+				// Get hook_bead from agent
+				agent, err := s.GetIssue(ctx, pattern)
+				if err == nil && agent.HookBead != "" {
+					hookBeadID = agent.HookBead
+				}
+				break // Found agent, stop searching
+			}
+
+			// Also get skills required by hooked work (if any)
+			if hookBeadID != "" {
+				workDeps, err := s.GetDependenciesWithMetadata(ctx, hookBeadID)
+				if err == nil {
+					for _, dep := range workDeps {
+						if dep.DependencyType == types.DepRequiresSkill {
+							skillIDSet[dep.ID] = true
+						}
+					}
 				}
 			}
 			return nil
@@ -1068,6 +1103,12 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil // Silently fail for prime
 		}
+	}
+
+	// Convert set to slice
+	var agentSkillIDs []string
+	for skillID := range skillIDSet {
+		agentSkillIDs = append(agentSkillIDs, skillID)
 	}
 
 	if len(agentSkillIDs) == 0 {

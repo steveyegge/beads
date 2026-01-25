@@ -547,7 +547,7 @@ func formatAgentIssue(buf *strings.Builder, issue *types.Issue) {
 // formatIssueCompact formats a single issue in compact format to a buffer
 // Uses status icons for better scanability - consistent with bd graph
 // Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title
-func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, progressMap map[string]*types.EpicProgress) {
+func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string) {
 	labelsStr := ""
 	if len(labels) > 0 {
 		labelsStr = fmt.Sprintf(" %v", labels)
@@ -560,21 +560,11 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 	// Get styled status icon
 	statusIcon := renderStatusIcon(issue.Status)
 
-	// Format type badge - include progress for epics
-	typeBadge := string(issue.IssueType)
-	if issue.IssueType == types.TypeEpic {
-		if progressMap != nil {
-			if progress, ok := progressMap[issue.ID]; ok && progress.TotalChildren > 0 {
-				typeBadge = fmt.Sprintf("epic %d/%d", progress.ClosedChildren, progress.TotalChildren)
-			}
-		}
-	}
-
 	if issue.Status == types.StatusClosed {
 		// Closed issues: entire line muted (fades visually)
 		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s",
 			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			typeBadge, assigneeStr, labelsStr, issue.Title)
+			issue.IssueType, assigneeStr, labelsStr, issue.Title)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
@@ -584,7 +574,7 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 			pinIndicator(issue),
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
-			ui.RenderType(typeBadge),
+			ui.RenderType(string(issue.IssueType)),
 			assigneeStr, labelsStr, issue.Title))
 	}
 }
@@ -1168,7 +1158,7 @@ var listCmd = &cobra.Command{
 			} else {
 				// Compact format: one line per issue
 				for _, issue := range issues {
-					formatIssueCompact(&buf, issue, issue.Labels, progressMap)
+					formatIssueCompact(&buf, issue, issue.Labels)
 				}
 			}
 
@@ -1301,9 +1291,6 @@ var listCmd = &cobra.Command{
 		}
 		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 
-		// Fetch epic progress for display
-		progressMap := getEpicProgressForIssues(ctx, store, "", 0, issues)
-
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
 		if ui.IsAgentMode() {
@@ -1324,7 +1311,7 @@ var listCmd = &cobra.Command{
 			// Compact format: one line per issue
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				formatIssueCompact(&buf, issue, labels, progressMap)
+				formatIssueCompact(&buf, issue, labels)
 			}
 		}
 
@@ -1515,9 +1502,6 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 	}
 	labelsMap, _ := targetStore.GetLabelsForIssues(ctx, issueIDs)
 
-	// Fetch epic progress for display
-	progressMap := getEpicProgressForIssues(ctx, targetStore, "", 0, issues)
-
 	// Build output in buffer for pager support
 	var buf strings.Builder
 	if ui.IsAgentMode() {
@@ -1538,7 +1522,7 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 		// Compact format: one line per issue
 		for _, issue := range issues {
 			labels := labelsMap[issue.ID]
-			formatIssueCompact(&buf, issue, labels, progressMap)
+			formatIssueCompact(&buf, issue, labels)
 		}
 	}
 
