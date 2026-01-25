@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/notification"
 	"github.com/steveyegge/beads/internal/storage"
@@ -210,6 +211,11 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	}
 
 	markDirtyAndScheduleFlush()
+
+	// Trigger decision create hook (hq-e0adf6.4)
+	if hookRunner != nil {
+		hookRunner.RunDecision(hooks.EventDecisionCreate, decisionPoint, nil)
+	}
 
 	// Output
 	if jsonOutput {

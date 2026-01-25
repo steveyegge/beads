@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/decision"
+	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -211,6 +212,18 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 	}
 
 	markDirtyAndScheduleFlush()
+
+	// Trigger decision respond hook (hq-e0adf6.4)
+	// This allows external systems (like gt nudge) to wake the requesting agent
+	if hookRunner != nil {
+		response := &hooks.DecisionResponsePayload{
+			Selected:    selectOpt,
+			Text:        textResponse,
+			RespondedBy: respondedBy,
+			IsTimeout:   false,
+		}
+		hookRunner.RunDecision(hooks.EventDecisionRespond, dp, response)
+	}
 
 	// Output
 	if jsonOutput {

@@ -38,6 +38,10 @@ type DecisionHookPayload struct {
 
 	// Guidance is the prior iteration's text guidance (if iteration > 1)
 	Guidance string `json:"guidance,omitempty"`
+
+	// RequestedBy is the agent who created the decision (for wake notifications)
+	// Added by hq-e0adf6.4
+	RequestedBy string `json:"requested_by,omitempty"`
 }
 
 // DecisionResponsePayload contains the response details.
@@ -57,7 +61,8 @@ type DecisionResponsePayload struct {
 
 // RunDecision executes a decision hook if it exists.
 // Runs asynchronously - returns immediately, hook runs in background.
-func (r *Runner) RunDecision(event string, dp *types.DecisionPoint, response *DecisionResponsePayload) {
+// The requestedBy parameter identifies who created the decision (for wake notifications).
+func (r *Runner) RunDecision(event string, dp *types.DecisionPoint, response *DecisionResponsePayload, requestedBy ...string) {
 	hookName := eventToHook(event)
 	if hookName == "" {
 		return
@@ -75,15 +80,21 @@ func (r *Runner) RunDecision(event string, dp *types.DecisionPoint, response *De
 		return // Not executable, skip
 	}
 
+	// Extract requestedBy if provided
+	var reqBy string
+	if len(requestedBy) > 0 {
+		reqBy = requestedBy[0]
+	}
+
 	// Run asynchronously (ignore error as this is fire-and-forget)
 	go func() {
-		_ = r.runDecisionHook(hookPath, event, dp, response)
+		_ = r.runDecisionHook(hookPath, event, dp, response, reqBy)
 	}()
 }
 
 // RunDecisionSync executes a decision hook synchronously and returns any error.
 // Useful for testing or when you need to wait for the hook.
-func (r *Runner) RunDecisionSync(event string, dp *types.DecisionPoint, response *DecisionResponsePayload) error {
+func (r *Runner) RunDecisionSync(event string, dp *types.DecisionPoint, response *DecisionResponsePayload, requestedBy ...string) error {
 	hookName := eventToHook(event)
 	if hookName == "" {
 		return nil
@@ -101,11 +112,17 @@ func (r *Runner) RunDecisionSync(event string, dp *types.DecisionPoint, response
 		return nil // Not executable, skip
 	}
 
-	return r.runDecisionHook(hookPath, event, dp, response)
+	// Extract requestedBy if provided
+	var reqBy string
+	if len(requestedBy) > 0 {
+		reqBy = requestedBy[0]
+	}
+
+	return r.runDecisionHook(hookPath, event, dp, response, reqBy)
 }
 
 // runDecisionHook executes the decision hook script.
-func (r *Runner) runDecisionHook(hookPath, event string, dp *types.DecisionPoint, response *DecisionResponsePayload) error {
+func (r *Runner) runDecisionHook(hookPath, event string, dp *types.DecisionPoint, response *DecisionResponsePayload, requestedBy string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
@@ -118,6 +135,7 @@ func (r *Runner) runDecisionHook(hookPath, event string, dp *types.DecisionPoint
 		Iteration:     dp.Iteration,
 		MaxIterations: dp.MaxIterations,
 		Guidance:      dp.Guidance,
+		RequestedBy:   requestedBy,
 	}
 
 	// Parse options
