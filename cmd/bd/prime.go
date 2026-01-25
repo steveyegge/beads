@@ -244,9 +244,10 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 ` + closeProtocol + `
 
 ## Core Rules
-- Track strategic work in beads (multi-session, dependencies, discovered work)
-- TodoWrite is fine for simple single-session linear tasks
-- When in doubt, prefer bd—persistence you don't need beats lost context
+- **Default**: Use beads for ALL task tracking (` + "`bd create`" + `, ` + "`bd ready`" + `, ` + "`bd close`" + `)
+- **Prohibited**: Do NOT use TodoWrite, TaskCreate, or markdown files for task tracking
+- **Workflow**: Create beads issue BEFORE writing code, mark in_progress when starting
+- Persistence you don't need beats lost context
 
 Start: Check ` + "`ready`" + ` tool for available work.
 `
@@ -371,9 +372,10 @@ bd sync                     # Push to remote
 ` + closeNote + `
 
 ## Core Rules
-- Track strategic work in beads (multi-session, dependencies, discovered work)
-- Use ` + "`bd create`" + ` for issues, TodoWrite for simple single-session execution
-- When in doubt, prefer bd—persistence you don't need beats lost context
+- **Default**: Use beads for ALL task tracking (` + "`bd create`" + `, ` + "`bd ready`" + `, ` + "`bd close`" + `)
+- **Prohibited**: Do NOT use TodoWrite, TaskCreate, or markdown files for task tracking
+- **Workflow**: Create beads issue BEFORE writing code, mark in_progress when starting
+- Persistence you don't need beats lost context
 - ` + gitWorkflowRule + `
 - Session management: check ` + "`bd ready`" + ` for available work
 
