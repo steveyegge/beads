@@ -32,7 +32,7 @@
 
 This PRD proposes extending beads to capture and persist Claude Code's in-session task tracking data (TodoWrite tasks) alongside bead records. The feature enables visibility into real-time agent work, improves work attribution, and creates a bridge between ephemeral session tasks and persistent bead-based issue tracking.
 
-**Key deliverable:** A `PostToolUse` hook that detects TodoWrite tool usage and synchronizes task state to beads via a background sub-agent, with minimal impact on session performance.
+**Key deliverable:** A daemon-based file watcher that monitors `~/.claude/tasks/` for changes, parses bead IDs embedded in task content, and synchronizes task state to beads automatically.
 
 ---
 
@@ -142,8 +142,39 @@ interface Todo {
 **Key characteristics:**
 - Tasks exist only during session lifetime
 - Complete task list is sent with each invocation (not differential)
-- No persistent storage mechanism
 - Session ID available via `CLAUDE_SESSION_ID` env var
+
+### 4.2.1 Task File Storage Location
+
+Claude Code persists task state to the filesystem:
+
+```
+~/.claude/tasks/
+└── {SESSION_ID or TASK_LIST_ID}/
+    └── tasks.json           # Current task state
+```
+
+**Example path:** `~/.claude/tasks/abc123-def456/tasks.json`
+
+**File format:**
+```json
+{
+  "todos": [
+    {
+      "content": "Implement user authentication",
+      "activeForm": "Implementing user authentication",
+      "status": "in_progress"
+    },
+    {
+      "content": "Write tests",
+      "activeForm": "Writing tests",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+**Key insight:** This persistent file storage enables daemon-based monitoring without requiring hooks. The daemon can simply watch for changes to these files and sync to beads.
 
 ### 4.3 Claude Code Hooks
 
@@ -188,13 +219,379 @@ ClosedBySession string `json:"closed_by_session,omitempty"`
 
 ### Overview
 
+Two approaches are considered. **Approach A (Recommended)** uses daemon-based file monitoring with embedded bead IDs in task content. **Approach B (Alternative)** uses PostToolUse hooks.
+
+---
+
+## 5.1 Approach A: Daemon-Based File Monitoring (Recommended)
+
+### Core Concept
+
+Instead of complex hook-based session linking, leverage Claude Code's natural behavior:
+
+1. **Instruct Claude Code** (via `bd prime`) to prefix tasks with bead IDs
+2. **Daemon monitors** `~/.claude/tasks/` directory for file changes
+3. **Parse bead IDs** from task content using regex
+4. **Sync automatically** when changes detected via MD5 hash comparison
+
+### Why This Approach
+
+| Advantage | Description |
+|-----------|-------------|
+| **Zero explicit linking** | No `bd tasks link` command needed |
+| **Natural workflow** | Claude already includes context in task descriptions |
+| **Daemon already exists** | Beads RPC daemon can be extended |
+| **Robust** | Works even if hooks fail or aren't installed |
+| **Simple parsing** | Regex extraction is trivial |
+| **Multi-bead support** | Different tasks can reference different beads |
+
+### Task Content Convention
+
+Claude Code creates tasks with embedded bead IDs:
+
+```
+# Example TodoWrite input
+todos: [
+  { content: "bd-f7k2: Research existing auth patterns", status: "completed" },
+  { content: "bd-f7k2: Implement JWT validation", status: "in_progress" },
+  { content: "bd-f7k2: Add refresh token logic", status: "pending" },
+  { content: "bd-x9y3: Update API documentation", status: "pending" }
+]
+```
+
+The `bd-XXXX:` prefix is extracted via regex: `^(bd-[a-z0-9]+):\s*(.+)$`
+
+### Architecture Diagram (Approach A)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Claude Code Session                              │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ bd prime injects: "Prefix tasks with bead ID (bd-XXXX: ...)"    │   │
+│  │ User works → TodoWrite("bd-f7k2: Implement auth")               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          │ Tasks written to file
+                                          ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                ~/.claude/tasks/{session_id}/tasks.json                   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ {                                                                │   │
+│  │   "todos": [                                                     │   │
+│  │     {"content": "bd-f7k2: Implement JWT", "status": "in_progress"}│   │
+│  │   ]                                                              │   │
+│  │ }                                                                │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          │ Daemon watches for changes
+                                          ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Beads Daemon (bd daemon)                              │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Task Watcher Goroutine:                                         │   │
+│  │   1. Poll ~/.claude/tasks/ every N seconds (or use fsnotify)    │   │
+│  │   2. Compute MD5 of each session's task file                    │   │
+│  │   3. Compare to cached hash → detect changes                    │   │
+│  │   4. Parse tasks, extract bead IDs via regex                    │   │
+│  │   5. Upsert to cc_tasks table                                   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Beads Storage                                    │
+│  ┌──────────────────────┐  ┌──────────────────────┐                    │
+│  │ cc_tasks             │  │ task_file_state      │                    │
+│  │ - id (PK)            │  │ - session_id (PK)    │                    │
+│  │ - session_id         │  │ - file_path          │                    │
+│  │ - bead_id (FK,null)  │  │ - md5_hash           │                    │
+│  │ - content            │  │ - last_checked_at    │                    │
+│  │ - status             │  │ - last_modified_at   │                    │
+│  │ - ordinal            │  └──────────────────────┘                    │
+│  │ - created_at         │                                              │
+│  │ - updated_at         │                                              │
+│  └──────────────────────┘                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### bd prime Enhancement
+
+Update `bd prime` output to instruct Claude Code:
+
+```markdown
+## Task Tracking Convention
+
+When creating tasks with TodoWrite, **prefix each task with the bead ID** you're working on:
+
+Format: `bd-XXXX: Task description`
+
+Examples:
+- `bd-f7k2: Implement JWT token validation`
+- `bd-f7k2: Add refresh token rotation`
+- `bd-x9y3: Update API documentation`
+
+This enables automatic synchronization of your progress to beads.
+If working on multiple beads, use appropriate prefixes for each task.
+Tasks without a bead prefix will be tracked but not linked to any bead.
+```
+
+### Daemon Implementation
+
+```go
+// internal/rpc/task_watcher.go
+
+type TaskWatcher struct {
+    tasksDir     string                    // ~/.claude/tasks/
+    pollInterval time.Duration             // Default: 2 seconds
+    hashCache    map[string]string         // session_id -> MD5 hash
+    store        storage.Store
+    mu           sync.RWMutex
+}
+
+func NewTaskWatcher(store storage.Store) *TaskWatcher {
+    homeDir, _ := os.UserHomeDir()
+    return &TaskWatcher{
+        tasksDir:     filepath.Join(homeDir, ".claude", "tasks"),
+        pollInterval: 2 * time.Second,
+        hashCache:    make(map[string]string),
+        store:        store,
+    }
+}
+
+func (w *TaskWatcher) Run(ctx context.Context) error {
+    ticker := time.NewTicker(w.pollInterval)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+        case <-ticker.C:
+            if err := w.scanForChanges(); err != nil {
+                log.Warnf("task watcher error: %v", err)
+            }
+        }
+    }
+}
+
+func (w *TaskWatcher) scanForChanges() error {
+    // List session directories
+    entries, err := os.ReadDir(w.tasksDir)
+    if os.IsNotExist(err) {
+        return nil // No tasks yet
+    }
+    if err != nil {
+        return err
+    }
+
+    for _, entry := range entries {
+        if !entry.IsDir() {
+            continue
+        }
+
+        sessionID := entry.Name()
+        taskFile := filepath.Join(w.tasksDir, sessionID, "tasks.json")
+
+        if err := w.checkAndSync(sessionID, taskFile); err != nil {
+            log.Warnf("sync error for session %s: %v", sessionID, err)
+        }
+    }
+
+    return nil
+}
+
+func (w *TaskWatcher) checkAndSync(sessionID, taskFile string) error {
+    // Read file and compute MD5
+    data, err := os.ReadFile(taskFile)
+    if os.IsNotExist(err) {
+        return nil
+    }
+    if err != nil {
+        return err
+    }
+
+    hash := fmt.Sprintf("%x", md5.Sum(data))
+
+    // Check cache
+    w.mu.RLock()
+    cachedHash := w.hashCache[sessionID]
+    w.mu.RUnlock()
+
+    if hash == cachedHash {
+        return nil // No changes
+    }
+
+    // Parse and sync
+    if err := w.syncTasks(sessionID, data); err != nil {
+        return err
+    }
+
+    // Update cache
+    w.mu.Lock()
+    w.hashCache[sessionID] = hash
+    w.mu.Unlock()
+
+    return nil
+}
+
+func (w *TaskWatcher) syncTasks(sessionID string, data []byte) error {
+    var taskFile struct {
+        Todos []struct {
+            Content    string `json:"content"`
+            ActiveForm string `json:"activeForm"`
+            Status     string `json:"status"`
+        } `json:"todos"`
+    }
+
+    if err := json.Unmarshal(data, &taskFile); err != nil {
+        return fmt.Errorf("parsing task file: %w", err)
+    }
+
+    // Parse bead IDs from content
+    beadIDRegex := regexp.MustCompile(`^(bd-[a-z0-9]+):\s*(.+)$`)
+
+    db := w.store.UnderlyingDB()
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+
+    // Clear existing tasks for this session (full replace)
+    _, err = tx.Exec(`DELETE FROM cc_tasks WHERE session_id = ?`, sessionID)
+    if err != nil {
+        return err
+    }
+
+    // Insert new tasks
+    for i, todo := range taskFile.Todos {
+        var beadID *string
+        content := todo.Content
+
+        // Extract bead ID if present
+        if matches := beadIDRegex.FindStringSubmatch(todo.Content); len(matches) == 3 {
+            beadID = &matches[1]
+            content = matches[2] // Strip prefix from stored content
+        }
+
+        taskID := generateTaskID(sessionID, content, i)
+
+        _, err := tx.Exec(`
+            INSERT INTO cc_tasks (id, session_id, bead_id, ordinal, content, active_form, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, taskID, sessionID, beadID, i, content, todo.ActiveForm, todo.Status)
+        if err != nil {
+            return err
+        }
+    }
+
+    // Update file state tracking
+    _, err = tx.Exec(`
+        INSERT INTO task_file_state (session_id, file_path, md5_hash, last_modified_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(session_id) DO UPDATE SET
+            md5_hash = excluded.md5_hash,
+            last_modified_at = CURRENT_TIMESTAMP
+    `, sessionID, filepath.Join(w.tasksDir, sessionID, "tasks.json"), fmt.Sprintf("%x", md5.Sum(data)))
+    if err != nil {
+        return err
+    }
+
+    return tx.Commit()
+}
+```
+
+### File Watching Alternatives
+
+| Method | Pros | Cons |
+|--------|------|------|
+| **Polling (recommended)** | Simple, cross-platform, reliable | Slight delay (configurable) |
+| **fsnotify** | Instant detection | Platform quirks, inotify limits |
+| **Hybrid** | Best of both | More complex |
+
+**Recommendation:** Start with polling (2-second interval), add fsnotify as optimization later.
+
+### Multi-Bead Task Support
+
+Tasks can reference different beads within the same session:
+
+```
+Session abc123:
+  ✓ bd-f7k2: Research existing auth patterns
+  → bd-f7k2: Implement JWT validation
+  ○ bd-x9y3: Update API docs (different bead!)
+  ○ Write tests (no bead prefix - unlinked)
+```
+
+Query tasks grouped by bead:
+```bash
+$ bd tasks list --session abc123 --by-bead
+bd-f7k2 (Implement user authentication):
+  ✓ Research existing auth patterns
+  → Implement JWT validation
+
+bd-x9y3 (Update documentation):
+  ○ Update API docs
+
+Unlinked:
+  ○ Write tests
+```
+
+### Daemon Integration
+
+Extend the existing beads daemon to include task watching:
+
+```go
+// internal/rpc/server.go
+
+func (s *Server) Start(ctx context.Context) error {
+    // ... existing daemon setup ...
+
+    // Start task watcher if enabled
+    if s.config.TaskWatcherEnabled {
+        watcher := NewTaskWatcher(s.store)
+        go func() {
+            if err := watcher.Run(ctx); err != nil {
+                log.Errorf("task watcher stopped: %v", err)
+            }
+        }()
+    }
+
+    // ... rest of daemon startup ...
+}
+```
+
+### Configuration
+
+```yaml
+# .beads/config.yaml
+tasks:
+  watcher:
+    enabled: true
+    poll_interval_sec: 2      # How often to check for changes
+    tasks_dir: ~/.claude/tasks  # Override if needed
+  parsing:
+    bead_id_pattern: "^(bd-[a-z0-9]+):\\s*(.+)$"
+    require_prefix: false     # If false, unlinked tasks are allowed
+```
+
+---
+
+## 5.2 Approach B: Hook-Based Sync (Alternative)
+
+This approach uses PostToolUse hooks to trigger sync on each TodoWrite call. It's more immediate but requires hook installation and is less robust if hooks fail.
+
+### Overview
+
 Implement a three-component system:
 
 1. **New `cc_tasks` table** in beads SQLite to store task state
 2. **PostToolUse hook** to detect TodoWrite invocations
 3. **Background sync agent** to update beads without blocking Claude Code
 
-### Architecture Diagram
+### Architecture Diagram (Approach B)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -452,8 +849,9 @@ Individual task records from TodoWrite.
 CREATE TABLE cc_tasks (
     id TEXT PRIMARY KEY,                   -- Generated: hash(session_id + content + ordinal)
     session_id TEXT NOT NULL,              -- FK to session_task_lists
+    bead_id TEXT,                          -- FK to issues.id (nullable - extracted from content prefix)
     ordinal INTEGER NOT NULL,              -- Position in task list
-    content TEXT NOT NULL,                 -- Task description (imperative form)
+    content TEXT NOT NULL,                 -- Task description (with bead prefix stripped)
     active_form TEXT,                      -- Present continuous form
     status TEXT NOT NULL DEFAULT 'pending', -- pending, in_progress, completed
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -461,12 +859,30 @@ CREATE TABLE cc_tasks (
     completed_at TIMESTAMP,                -- Set when status → completed
 
     FOREIGN KEY (session_id) REFERENCES session_task_lists(session_id) ON DELETE CASCADE,
+    FOREIGN KEY (bead_id) REFERENCES issues(id) ON DELETE SET NULL,
     UNIQUE(session_id, ordinal)
 );
 
 CREATE INDEX idx_cc_tasks_session ON cc_tasks(session_id);
+CREATE INDEX idx_cc_tasks_bead ON cc_tasks(bead_id);
 CREATE INDEX idx_cc_tasks_status ON cc_tasks(status);
 CREATE INDEX idx_cc_tasks_session_status ON cc_tasks(session_id, status);
+```
+
+#### `task_file_state` (Daemon-based approach only)
+
+Tracks MD5 hashes for change detection.
+
+```sql
+CREATE TABLE task_file_state (
+    session_id TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL,               -- Full path to tasks.json
+    md5_hash TEXT NOT NULL,                -- Current file hash
+    last_checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_at TIMESTAMP             -- When file content last changed
+);
+
+CREATE INDEX idx_task_file_state_hash ON task_file_state(md5_hash);
 ```
 
 ### 7.2 Task Identity
@@ -1154,8 +1570,15 @@ Synced 1 task for session test
 2. **Infer from context:** Parse bd prime output for current bead
 3. **Environment variable:** Set `BD_ACTIVE_BEAD` in session
 4. **Prompt detection:** Parse user prompts for bead references
+5. **✅ Embedded in task content:** Instruct Claude to prefix tasks with `bd-XXXX:`
 
-**Recommendation:** Start with explicit linking (option 1), add inference later.
+**Recommendation:** Option 5 (embedded bead IDs) is now the recommended approach. It's:
+- Zero-friction (no explicit commands)
+- Supports multi-bead workflows (different tasks can link to different beads)
+- Natural for Claude (it already includes context in task descriptions)
+- Robust (parsed at sync time, not dependent on hooks)
+
+See **Section 5.1** for the full daemon-based implementation.
 
 ### 14.2 Task Conflict Resolution
 
@@ -1330,4 +1753,21 @@ Existing fields that interact with task tracking:
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0 | 2026-01-25 | Claude | Initial draft |
+| 1.0 | 2026-01-25 | Claude | Initial draft with hook-based approach |
+| 1.1 | 2026-01-25 | Claude | Added daemon-based approach with embedded bead IDs as recommended solution |
+
+---
+
+## Approach Comparison Summary
+
+| Aspect | Approach A (Daemon) | Approach B (Hooks) |
+|--------|--------------------|--------------------|
+| **Bead association** | Embedded in task content (`bd-XXXX:`) | Explicit `bd tasks link` command |
+| **Trigger mechanism** | File polling / fsnotify | PostToolUse hook |
+| **Multi-bead support** | Natural (per-task prefix) | Requires re-linking |
+| **Robustness** | Works without hooks | Fails if hooks not installed |
+| **Latency** | 2-sec polling (configurable) | Immediate on tool use |
+| **Complexity** | Simpler overall | More moving parts |
+| **Daemon dependency** | Requires daemon running | Can work without daemon |
+
+**Recommendation:** Approach A (daemon-based) for its simplicity and natural workflow integration.
