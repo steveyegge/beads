@@ -376,11 +376,13 @@ func (s *DoltStore) initSchema(ctx context.Context) error {
 // migrateSchema adds new columns to existing tables.
 // This handles the case where the database was created with an older schema.
 func (s *DoltStore) migrateSchema(ctx context.Context) error {
-	// Skill columns migration (hq-a72961)
-	skillColumns := []struct {
+	// Define all columns that need to exist on the issues table
+	// Each migration adds new columns as needed
+	issueColumns := []struct {
 		name    string
 		sqlType string
 	}{
+		// Skill columns migration (hq-a72961)
 		{"skill_name", "VARCHAR(255) DEFAULT ''"},
 		{"skill_version", "VARCHAR(32) DEFAULT ''"},
 		{"skill_category", "VARCHAR(64) DEFAULT ''"},
@@ -388,9 +390,12 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 		{"skill_outputs", "TEXT DEFAULT ''"},
 		{"skill_examples", "TEXT DEFAULT ''"},
 		{"claude_skill_path", "VARCHAR(512) DEFAULT ''"},
+		// Auto-close and skill_content columns (hq-e0adf6)
+		{"auto_close", "INT DEFAULT 0"},
+		{"skill_content", "TEXT DEFAULT ''"},
 	}
 
-	for _, col := range skillColumns {
+	for _, col := range issueColumns {
 		// Check if column exists by attempting to select it
 		// MySQL/Dolt doesn't have a direct way to check column existence like SQLite's pragma
 		_, err := s.db.ExecContext(ctx, fmt.Sprintf("SELECT %s FROM issues LIMIT 0", col.name))
@@ -403,6 +408,15 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 					return fmt.Errorf("failed to add %s column: %w", col.name, addErr)
 				}
 			}
+		}
+	}
+
+	// Decision points table: add requested_by column (hq-e0adf6.4)
+	_, err := s.db.ExecContext(ctx, "SELECT requested_by FROM decision_points LIMIT 0")
+	if err != nil {
+		_, addErr := s.db.ExecContext(ctx, "ALTER TABLE decision_points ADD COLUMN requested_by TEXT")
+		if addErr != nil && !strings.Contains(addErr.Error(), "Duplicate column") {
+			return fmt.Errorf("failed to add requested_by column to decision_points: %w", addErr)
 		}
 	}
 
