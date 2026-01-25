@@ -251,7 +251,14 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 			columnName = "ephemeral"
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		if key == "waiters" {
+			waitersJSON, _ := json.Marshal(value)
+			args = append(args, string(waitersJSON))
+		} else {
+			args = append(args, value)
+		}
 	}
 
 	// Auto-manage closed_at
@@ -631,7 +638,7 @@ func isAllowedUpdateField(key string) bool {
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
 		"role_type": true, "rig": true, "mol_type": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
-		"due_at": true, "defer_until": true, "await_id": true,
+		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 	}
 	return allowed[key]
 }
