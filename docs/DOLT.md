@@ -101,6 +101,79 @@ Server mode is required for:
 - Gas Town multi-rig setups
 - Federation with remote peers
 
+## Federation (Peer-to-Peer Sync)
+
+Federation enables direct sync between Dolt installations without a central hub.
+
+### Architecture
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│   Gas Town A    │◄───────►│   Gas Town B    │
+│  dolt sql-server│  sync   │  dolt sql-server│
+│  :3306 (sql)    │         │  :3306 (sql)    │
+│  :8080 (remote) │         │  :8080 (remote) │
+└─────────────────┘         └─────────────────┘
+```
+
+The daemon in federation mode exposes two ports:
+- **MySQL (3306)**: Multi-writer SQL access
+- **remotesapi (8080)**: Peer-to-peer push/pull
+
+### Quick Start
+
+```bash
+# Start daemon in federation mode
+bd daemon start --federation
+
+# Add a peer
+bd federation add-peer town-beta 192.168.1.100:8080/beads
+
+# With authentication
+bd federation add-peer town-beta host:8080/beads --user sync-bot
+
+# Sync with all peers
+bd federation sync
+
+# Handle conflicts
+bd federation sync --strategy theirs  # or 'ours'
+
+# Check status
+bd federation status
+```
+
+### Topologies
+
+| Pattern | Description | Use Case |
+|---------|-------------|----------|
+| Hub-spoke | Central hub, satellites sync to hub | Team with central coordination |
+| Mesh | All peers sync with each other | Decentralized collaboration |
+| Hierarchical | Tree of hubs | Multi-team organizations |
+
+### Credentials
+
+Peer credentials are AES-256 encrypted, stored locally, and used automatically during sync:
+
+```bash
+# Credentials prompted interactively
+bd federation add-peer name url --user admin
+
+# Stored in federation_peers table (encrypted)
+```
+
+### Troubleshooting
+
+```bash
+# Check federation health
+bd doctor --deep
+
+# Verify peer connectivity
+bd federation status
+
+# View daemon federation logs
+bd daemon logs | grep -i federation
+```
+
 ## Contributor Onboarding (Clone Bootstrap)
 
 When someone clones a repository that uses Dolt backend:
