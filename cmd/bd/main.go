@@ -707,6 +707,15 @@ var rootCmd = &cobra.Command{
 						debug.Logf("connected to daemon at %s (health: %s)", socketPath, health.Status)
 						// Warn if using daemon with git worktrees
 						warnWorktreeDaemon(dbPath)
+						// Initialize hook runner (hooks run on client side, not daemon)
+						if dbPath != "" {
+							beadsDir := filepath.Dir(dbPath)
+							hooksDir := filepath.Join(beadsDir, "hooks")
+							debug.Logf("initializing hook runner: dbPath=%s, hooksDir=%s", dbPath, hooksDir)
+							hookRunner = hooks.NewRunner(hooksDir)
+						} else {
+							debug.Logf("hook runner not initialized: dbPath is empty")
+						}
 						return // Skip direct storage initialization
 					}
 				} else {
@@ -761,6 +770,11 @@ var rootCmd = &cobra.Command{
 							debug.Logf("auto-start succeeded; connected at %s in %dms", socketPath, elapsed)
 							// Warn if using daemon with git worktrees
 							warnWorktreeDaemon(dbPath)
+							// Initialize hook runner (hooks run on client side, not daemon)
+							if dbPath != "" {
+								beadsDir := filepath.Dir(dbPath)
+								hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+							}
 							return // Skip direct storage initialization
 						} else {
 							// Auto-started daemon is unhealthy

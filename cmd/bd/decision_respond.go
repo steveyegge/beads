@@ -215,6 +215,7 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 
 	// Trigger decision respond hook (hq-e0adf6.4)
 	// This allows external systems (like gt nudge) to wake the requesting agent
+	// Use RunDecisionSync to ensure hook completes before program exits
 	if hookRunner != nil {
 		response := &hooks.DecisionResponsePayload{
 			Selected:    selectOpt,
@@ -222,7 +223,7 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			RespondedBy: respondedBy,
 			IsTimeout:   false,
 		}
-		hookRunner.RunDecision(hooks.EventDecisionRespond, dp, response, dp.RequestedBy)
+		_ = hookRunner.RunDecisionSync(hooks.EventDecisionRespond, dp, response, dp.RequestedBy)
 	}
 
 	// Output

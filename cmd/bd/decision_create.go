@@ -216,8 +216,9 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	markDirtyAndScheduleFlush()
 
 	// Trigger decision create hook (hq-e0adf6.4)
+	// Use RunDecisionSync to ensure hook completes before program exits
 	if hookRunner != nil {
-		hookRunner.RunDecision(hooks.EventDecisionCreate, decisionPoint, nil, requestedBy)
+		_ = hookRunner.RunDecisionSync(hooks.EventDecisionCreate, decisionPoint, nil, requestedBy)
 	}
 
 	// Output
