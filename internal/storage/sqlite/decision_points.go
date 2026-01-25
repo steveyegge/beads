@@ -35,11 +35,11 @@ func (s *SQLiteStorage) CreateDecisionPoint(ctx context.Context, dp *types.Decis
 		INSERT INTO decision_points (
 			issue_id, prompt, options, default_option, selected_option,
 			response_text, responded_at, responded_by, iteration, max_iterations,
-			prior_id, guidance, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			prior_id, guidance, requested_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`, dp.IssueID, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
-		priorID, dp.Guidance)
+		priorID, dp.Guidance, dp.RequestedBy)
 	if err != nil {
 		return fmt.Errorf("failed to insert decision point: %w", err)
 	}
@@ -60,7 +60,7 @@ func (s *SQLiteStorage) GetDecisionPoint(ctx context.Context, issueID string) (*
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(requested_by, ''), created_at
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -68,7 +68,7 @@ func (s *SQLiteStorage) GetDecisionPoint(ctx context.Context, issueID string) (*
 		&dp.DefaultOption, &dp.SelectedOption,
 		&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
-		&dp.PriorID, &dp.Guidance, &dp.CreatedAt,
+		&dp.PriorID, &dp.Guidance, &dp.RequestedBy, &dp.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -132,7 +132,7 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(requested_by, ''), created_at
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -150,7 +150,7 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 			&dp.DefaultOption, &dp.SelectedOption,
 			&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
-			&dp.PriorID, &dp.Guidance, &dp.CreatedAt,
+			&dp.PriorID, &dp.Guidance, &dp.RequestedBy, &dp.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)

@@ -1161,6 +1161,7 @@ type DecisionPoint struct {
 	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
 	ReminderCount  int        `json:"reminder_count"`             // Number of reminders sent
 	CreatedAt      time.Time  `json:"created_at"`
+	RequestedBy    string     `json:"requested_by,omitempty"`     // Agent/session that requested this decision (for wake notifications)
 }
 
 // DecisionAcceptOptionID is the ID for the special "accept-as-is" option (hq-946577.24).

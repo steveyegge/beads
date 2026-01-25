@@ -59,6 +59,7 @@ func init() {
 	decisionCreateCmd.Flags().String("blocks", "", "Issue ID this decision blocks")
 	decisionCreateCmd.Flags().Int("max-iterations", 3, "Maximum refinement iterations")
 	decisionCreateCmd.Flags().Bool("no-notify", false, "Don't send notifications (for testing)")
+	decisionCreateCmd.Flags().String("requested-by", "", "Agent/session that requested this decision (for wake notifications)")
 
 	_ = decisionCreateCmd.MarkFlagRequired("prompt")
 
@@ -82,6 +83,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	blocks, _ := cmd.Flags().GetString("blocks")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	noNotify, _ := cmd.Flags().GetBool("no-notify")
+	requestedBy, _ := cmd.Flags().GetString("requested-by")
 
 	ctx := rootCtx
 
@@ -158,6 +160,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		Iteration:     1,
 		MaxIterations: maxIterations,
 		CreatedAt:     now,
+		RequestedBy:   requestedBy,
 	}
 
 	// Use transaction to create both atomically
@@ -214,7 +217,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 
 	// Trigger decision create hook (hq-e0adf6.4)
 	if hookRunner != nil {
-		hookRunner.RunDecision(hooks.EventDecisionCreate, decisionPoint, nil)
+		hookRunner.RunDecision(hooks.EventDecisionCreate, decisionPoint, nil, requestedBy)
 	}
 
 	// Output

@@ -274,6 +274,7 @@ CREATE TABLE IF NOT EXISTS decision_points (
     guidance TEXT,
     reminder_count INT DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_by TEXT,
     INDEX idx_decision_points_prior (prior_id),
     CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
     CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL

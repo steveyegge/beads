@@ -222,7 +222,7 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			RespondedBy: respondedBy,
 			IsTimeout:   false,
 		}
-		hookRunner.RunDecision(hooks.EventDecisionRespond, dp, response)
+		hookRunner.RunDecision(hooks.EventDecisionRespond, dp, response, dp.RequestedBy)
 	}
 
 	// Output
