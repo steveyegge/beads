@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/inject"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -185,30 +188,57 @@ func runDecisionCheck(cmd *cobra.Command, args []string) {
 	}
 
 	// Inject mode for hooks
+	// Uses injection queue to avoid API 400 errors when Claude is mid-tool-use.
+	// The queued content will be drained by PostToolUse hook (gt inject drain).
 	if checkInject {
 		if len(responses) == 0 {
 			// Silent - no output
 			os.Exit(0)
 		}
 
-		fmt.Println("<system-reminder>")
-		fmt.Printf("Decision response(s) received:\n\n")
+		// Build the system-reminder content
+		var buf bytes.Buffer
+		buf.WriteString("<system-reminder>\n")
+		buf.WriteString("Decision response(s) received:\n\n")
 		for _, r := range responses {
-			fmt.Printf("Decision: %s\n", r.ID)
-			fmt.Printf("  Prompt: %s\n", r.Prompt)
+			buf.WriteString(fmt.Sprintf("Decision: %s\n", r.ID))
+			buf.WriteString(fmt.Sprintf("  Prompt: %s\n", r.Prompt))
 			if r.Selected != "" {
-				fmt.Printf("  Selected: %s (%s)\n", r.Selected, r.SelectedLbl)
+				buf.WriteString(fmt.Sprintf("  Selected: %s (%s)\n", r.Selected, r.SelectedLbl))
 			}
 			if r.Text != "" {
-				fmt.Printf("  Text: %s\n", r.Text)
+				buf.WriteString(fmt.Sprintf("  Text: %s\n", r.Text))
 			}
 			if r.RespondedBy != "" {
-				fmt.Printf("  By: %s\n", r.RespondedBy)
+				buf.WriteString(fmt.Sprintf("  By: %s\n", r.RespondedBy))
 			}
-			fmt.Println()
+			buf.WriteString("\n")
 		}
-		fmt.Println("Use this response to continue your work.")
-		fmt.Println("</system-reminder>")
+		buf.WriteString("Use this response to continue your work.\n")
+		buf.WriteString("</system-reminder>\n")
+
+		// Check if we should queue or output directly
+		sessionID := os.Getenv("CLAUDE_SESSION_ID")
+		if sessionID != "" {
+			// Find workspace root for queue storage (search for .runtime directory)
+			workDir, _ := os.Getwd()
+			for dir := workDir; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+				runtimeDir := filepath.Join(dir, inject.DirRuntime)
+				if _, err := os.Stat(runtimeDir); err == nil {
+					workDir = dir
+					break
+				}
+			}
+
+			queue := inject.NewQueue(workDir, sessionID)
+			if err := queue.Enqueue(inject.TypeDecision, buf.String()); err != nil {
+				// Fall back to direct output on queue error
+				fmt.Print(buf.String())
+			}
+		} else {
+			// No session ID - output directly (legacy behavior)
+			fmt.Print(buf.String())
+		}
 		os.Exit(0)
 	}
 
