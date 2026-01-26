@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -252,7 +254,7 @@ func TestCreateLocalAutoImportFunc(t *testing.T) {
 
 	log := newTestLogger()
 
-	doImport := createLocalAutoImportFunc(ctx, testStore, log)
+	doImport := createLocalAutoImportFunc(ctx, testStore, nil, log) // nil server: no import lock in tests
 	doImport()
 
 	// Verify issue was imported
@@ -268,6 +270,96 @@ func TestCreateLocalAutoImportFunc(t *testing.T) {
 	if len(issues) > 0 && issues[0].Title != "Imported issue" {
 		t.Errorf("Expected imported issue title 'Imported issue', got '%s'", issues[0].Title)
 	}
+}
+
+// TestImportLockCoordinationWithRPCServer tests that the event-driven import
+// respects the RPC server's import lock to prevent concurrent imports.
+// This prevents deadlocks when both paths try to import simultaneously.
+func TestImportLockCoordinationWithRPCServer(t *testing.T) {
+	// Create temp directory and store
+	tempDir := t.TempDir()
+	beadsDir := filepath.Join(tempDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create .beads dir: %v", err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	ctx := context.Background()
+	testStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer func() { _ = testStore.Close() }()
+
+	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("Failed to set prefix: %v", err)
+	}
+
+	// Create a mock RPC server to test lock coordination
+	socketPath := filepath.Join(beadsDir, "bd.sock")
+	server := rpc.NewServer(socketPath, testStore, tempDir, dbPath)
+
+	// Create JSONL file
+	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(`{"id":"test-1","title":"Test issue"}`+"\n"), 0644); err != nil {
+		t.Fatalf("Failed to write JSONL: %v", err)
+	}
+
+	var logBuf strings.Builder
+	log := newTestLoggerWithWriter(&logBuf)
+
+	t.Run("import skipped when RPC holds lock", func(t *testing.T) {
+		logBuf.Reset()
+
+		// Simulate RPC server holding the import lock
+		if !server.TryAcquireImportLock() {
+			t.Fatal("Failed to acquire import lock")
+		}
+
+		// Try to run event-driven import - should be skipped
+		doImport := createLocalAutoImportFunc(ctx, testStore, server, log)
+		doImport()
+
+		// Verify the import was skipped due to lock
+		logOutput := logBuf.String()
+		if !strings.Contains(logOutput, "RPC import already in progress") {
+			t.Errorf("Expected log to indicate RPC import in progress, got:\n%s", logOutput)
+		}
+
+		// Release the lock
+		server.ReleaseImportLock()
+	})
+
+	t.Run("import runs when RPC releases lock", func(t *testing.T) {
+		logBuf.Reset()
+
+		// Ensure lock is released
+		server.ReleaseImportLock()
+
+		// Run event-driven import - should proceed
+		doImport := createLocalAutoImportFunc(ctx, testStore, server, log)
+		doImport()
+
+		// Verify the import ran (either started or skipped for other reasons, not lock)
+		logOutput := logBuf.String()
+		if strings.Contains(logOutput, "RPC import already in progress") {
+			t.Errorf("Import should not be blocked by RPC lock, got:\n%s", logOutput)
+		}
+	})
+
+	t.Run("nil server skips lock check", func(t *testing.T) {
+		logBuf.Reset()
+
+		// With nil server, lock check is skipped entirely
+		doImport := createLocalAutoImportFunc(ctx, testStore, nil, log)
+		doImport()
+
+		// Verify no lock-related messages
+		logOutput := logBuf.String()
+		if strings.Contains(logOutput, "RPC import already in progress") {
+			t.Errorf("nil server should skip lock check, got:\n%s", logOutput)
+		}
+	})
 }
 
 // TestLocalModeNoGitOperations verifies local functions don't call git
@@ -462,7 +554,7 @@ func TestLocalModeExportImportRoundTrip(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Import
-	doImport := createLocalAutoImportFunc(ctx, testStore, log)
+	doImport := createLocalAutoImportFunc(ctx, testStore, nil, log) // nil server: no import lock in tests
 	doImport()
 
 	// Verify issues exist (import may dedupe if content unchanged)

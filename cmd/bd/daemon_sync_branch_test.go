@@ -2114,7 +2114,7 @@ func TestDaemonAutoImportSkipsSameBranch(t *testing.T) {
 	log := newTestLoggerWithWriter(&logBuf)
 
 	// Call performAutoImport (via createAutoImportFunc) - this should be skipped
-	importFn := createAutoImportFunc(ctx, store, log)
+	importFn := createAutoImportFunc(ctx, store, nil, log) // nil server: no import lock in tests
 	importFn()
 
 	// Verify the operation was skipped by checking log output
