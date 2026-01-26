@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1097,5 +1098,24 @@ func TestChildIDGeneration(t *testing.T) {
 
 	if len(ids) != 5 {
 		t.Errorf("expected 5 unique IDs, got %d", len(ids))
+	}
+}
+
+// TestGetNextChildID_ParentNotExists tests that GetNextChildID fails gracefully
+// when the parent issue doesn't exist (hq-e6988b fix).
+func TestGetNextChildID_ParentNotExists(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Try to get child ID for non-existent parent
+	_, err := store.GetNextChildID(ctx, "nonexistent-parent")
+	if err == nil {
+		t.Error("expected error when parent doesn't exist, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' in error, got: %v", err)
 	}
 }

@@ -597,6 +597,16 @@ func (s *DoltStore) GetNextChildID(ctx context.Context, parentID string) (string
 	}
 	defer tx.Rollback()
 
+	// Verify parent issue exists (FK constraint requires this)
+	var exists bool
+	err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM issues WHERE id = ?)", parentID).Scan(&exists)
+	if err != nil {
+		return "", fmt.Errorf("failed to check parent issue existence: %w", err)
+	}
+	if !exists {
+		return "", fmt.Errorf("parent issue %s does not exist", parentID)
+	}
+
 	// Get or create counter
 	var lastChild int
 	err = tx.QueryRowContext(ctx, "SELECT last_child FROM child_counters WHERE parent_id = ?", parentID).Scan(&lastChild)
