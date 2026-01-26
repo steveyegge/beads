@@ -862,13 +862,22 @@ func isTransientDoltError(err error) bool {
 // These errors occur when multiple writers try to commit conflicting changes:
 // - Error 1213 (40001): Serialization failure (InnoDB-style)
 // - Error 1105: Optimistic lock failed on database Root update
+//
+// Note: Error 1105 is also used for "nothing to commit" which is NOT a serialization
+// error and should not be retried. We explicitly exclude that case.
 func isSerializationError(err error) bool {
 	if err == nil {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
+
+	// Exclude "nothing to commit" errors - these use Error 1105 but are not serialization failures
+	if strings.Contains(errStr, "nothing to commit") || strings.Contains(errStr, "no changes") {
+		return false
+	}
+
 	// Error 1213: serialization failure (MySQL error code for deadlock/serialization)
-	// Error 1105: generic Dolt error for optimistic lock failures
+	// Error 1105: generic Dolt error for optimistic lock failures (when not "nothing to commit")
 	return strings.Contains(errStr, "error 1213") ||
 		strings.Contains(errStr, "serialization failure") ||
 		strings.Contains(errStr, "error 1105") ||
