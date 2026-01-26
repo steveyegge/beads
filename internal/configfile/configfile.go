@@ -39,6 +39,12 @@ type Config struct {
 	// 0 = disabled (default), positive = threshold in days
 	StaleClosedIssuesDays int `json:"stale_closed_issues_days,omitempty"`
 
+	// Routing configuration
+	// When false, disables prefix-based routing to multiple databases.
+	// With single central database, routing is not needed.
+	// nil/missing = enabled (for backwards compatibility), explicit false = disabled
+	RoutingEnabled *bool `json:"routing_enabled,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -171,6 +177,15 @@ func (c *Config) GetStaleClosedIssuesDays() int {
 		return 0
 	}
 	return c.StaleClosedIssuesDays
+}
+
+// IsRoutingEnabled returns whether prefix-based routing is enabled.
+// Returns true by default (for backwards compatibility), false if explicitly disabled.
+func (c *Config) IsRoutingEnabled() bool {
+	if c.RoutingEnabled == nil {
+		return true // Default: enabled for backwards compatibility
+	}
+	return *c.RoutingEnabled
 }
 
 // Backend constants
