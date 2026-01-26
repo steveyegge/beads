@@ -12,6 +12,7 @@
 - [Advanced Operations](#advanced-operations)
 - [Molecular Chemistry](#molecular-chemistry)
 - [Database Management](#database-management)
+- [Decision Points](#decision-points-planned)
 - [Editor Integration](#editor-integration)
 
 ## Basic Operations
@@ -631,6 +632,24 @@ bd sync
 # 5. Push to remote
 ```
 
+## Decision Points (Planned)
+
+Decision points provide human-in-the-loop gates for agent workflows. See [DECISIONS.md](DECISIONS.md) for full documentation.
+
+**Note:** CLI commands are planned but not yet implemented. The storage layer is available for programmatic use.
+
+```bash
+# List pending decisions (planned)
+bd decision list --json
+
+# Show decision details (planned)
+bd decision show <issue-id> --json
+
+# Respond to decision (planned)
+bd decision respond <issue-id> --option <option-id> --json
+bd decision respond <issue-id> --text "Custom response" --json
+```
+
 ## Issue Types
 
 - `bug` - Something broken that needs fixing
@@ -808,6 +827,7 @@ See also:
 ## See Also
 
 - [AGENTS.md](../AGENTS.md) - Main agent workflow guide
+- [DECISIONS.md](DECISIONS.md) - Human-in-the-loop decision gates
 - [MOLECULES.md](MOLECULES.md) - Molecular chemistry metaphor (protos, pour, bond, squash, burn)
 - [DAEMON.md](DAEMON.md) - Daemon management and event-driven mode
 - [GIT_INTEGRATION.md](GIT_INTEGRATION.md) - Git workflows and merge strategies
