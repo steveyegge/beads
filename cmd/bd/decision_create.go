@@ -177,6 +177,14 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		decisionID = gateIssue.ID
 		decisionPoint.IssueID = decisionID
 
+		// Add labels for gt decision integration (hq-3q571)
+		// Labels are stored in a separate table, so we must add them explicitly
+		for _, label := range gateIssue.Labels {
+			if err := tx.AddLabel(ctx, decisionID, label, actor); err != nil {
+				return fmt.Errorf("adding label %s: %w", label, err)
+			}
+		}
+
 		// Create the decision point record
 		if err := tx.CreateDecisionPoint(ctx, decisionPoint); err != nil {
 			return fmt.Errorf("creating decision point: %w", err)
