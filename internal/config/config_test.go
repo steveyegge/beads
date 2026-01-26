@@ -1093,7 +1093,11 @@ func TestSyncConfigDefaults(t *testing.T) {
 	restore := envSnapshot(t)
 	defer restore()
 
-	// Initialize config
+	// Isolate from config files by running in temp directory
+	t.Chdir(t.TempDir())
+
+	// Initialize config (no config file in temp dir = defaults only)
+	ResetForTesting()
 	if err := Initialize(); err != nil {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
@@ -1430,15 +1434,19 @@ func TestGetSovereigntyInvalid(t *testing.T) {
 	restore := envSnapshot(t)
 	defer restore()
 
-	// Initialize config
+	// Isolate from config files by running in temp directory
+	t.Chdir(t.TempDir())
+
+	// Initialize config (no config file in temp dir = defaults only)
+	ResetForTesting()
 	if err := Initialize(); err != nil {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Set invalid sovereignty - should return empty
+	// Set invalid sovereignty - should return T1 as fallback
 	Set("federation.sovereignty", "T99")
-	if got := GetSovereignty(); got != "" {
-		t.Errorf("GetSovereignty() with invalid tier = %q, want empty (fallback)", got)
+	if got := GetSovereignty(); got != SovereigntyT1 {
+		t.Errorf("GetSovereignty() with invalid tier = %q, want %q (fallback)", got, SovereigntyT1)
 	}
 }
 
