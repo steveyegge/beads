@@ -87,11 +87,24 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 
 	ctx := rootCtx
 
-	// Validate options JSON if provided
+	// Validate options JSON - at least one option is required
+	if optionsJSON == "" {
+		fmt.Fprintf(os.Stderr, "Error: --options is required (at least one option must be provided)\n")
+		fmt.Fprintf(os.Stderr, "Example: --options='[{\"id\":\"yes\",\"label\":\"Yes\"},{\"id\":\"no\",\"label\":\"No\"}]'\n")
+		os.Exit(1)
+	}
+
 	var options []types.DecisionOption
 	if optionsJSON != "" {
 		if err := json.Unmarshal([]byte(optionsJSON), &options); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: invalid options JSON: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Require at least one option
+		if len(options) == 0 {
+			fmt.Fprintf(os.Stderr, "Error: at least one option is required\n")
+			fmt.Fprintf(os.Stderr, "Example: --options='[{\"id\":\"yes\",\"label\":\"Yes\"},{\"id\":\"no\",\"label\":\"No\"}]'\n")
 			os.Exit(1)
 		}
 
