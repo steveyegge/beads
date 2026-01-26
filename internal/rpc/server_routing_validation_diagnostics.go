@@ -253,6 +253,15 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleGateClose(req)
 	case OpGateWait:
 		resp = s.handleGateWait(req)
+	// Decision point operations
+	case OpDecisionCreate:
+		resp = s.handleDecisionCreate(req)
+	case OpDecisionGet:
+		resp = s.handleDecisionGet(req)
+	case OpDecisionResolve:
+		resp = s.handleDecisionResolve(req)
+	case OpDecisionList:
+		resp = s.handleDecisionList(req)
 	default:
 		s.metrics.RecordError(req.Operation)
 		return Response{

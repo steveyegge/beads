@@ -2280,3 +2280,249 @@ func (s *Server) handleGateWait(req *Request) Response {
 		Data:    data,
 	}
 }
+
+// Decision point handlers
+
+// handleDecisionCreate creates a new decision point for an issue
+func (s *Server) handleDecisionCreate(req *Request) Response {
+	var args DecisionCreateArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision create args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Verify issue exists
+	issue, err := store.GetIssue(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+		}
+	}
+
+	// Serialize options to JSON
+	optionsJSON, err := json.Marshal(args.Options)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to serialize options: %v", err),
+		}
+	}
+
+	// Set defaults
+	maxIterations := args.MaxIterations
+	if maxIterations == 0 {
+		maxIterations = 3
+	}
+
+	dp := &types.DecisionPoint{
+		IssueID:       args.IssueID,
+		Prompt:        args.Prompt,
+		Options:       string(optionsJSON),
+		DefaultOption: args.DefaultOption,
+		MaxIterations: maxIterations,
+		Iteration:     1,
+		RequestedBy:   args.RequestedBy,
+		CreatedAt:     time.Now(),
+	}
+
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create decision point: %v", err),
+		}
+	}
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionGet retrieves a decision point for an issue
+func (s *Server) handleDecisionGet(req *Request) Response {
+	var args DecisionGetArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision get args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
+		}
+	}
+
+	// Get associated issue for context
+	issue, _ := store.GetIssue(ctx, args.IssueID)
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionResolve resolves a decision point
+func (s *Server) handleDecisionResolve(req *Request) Response {
+	var args DecisionResolveArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision resolve args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Get existing decision point
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
+		}
+	}
+
+	// Update decision point with response
+	now := time.Now()
+	dp.SelectedOption = args.SelectedOption
+	dp.ResponseText = args.ResponseText
+	dp.RespondedAt = &now
+	dp.RespondedBy = args.RespondedBy
+	if args.Guidance != "" {
+		dp.Guidance = args.Guidance
+	}
+
+	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to update decision point: %v", err),
+		}
+	}
+
+	// Get associated issue for context
+	issue, _ := store.GetIssue(ctx, args.IssueID)
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionList returns pending decision points
+func (s *Server) handleDecisionList(req *Request) Response {
+	var args DecisionListArgs
+	if req.Args != nil {
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid decision list args: %v", err),
+			}
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	decisions, err := store.ListPendingDecisions(ctx)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list decisions: %v", err),
+		}
+	}
+
+	// Build response with associated issues
+	responses := make([]*DecisionResponse, 0, len(decisions))
+	for _, dp := range decisions {
+		issue, _ := store.GetIssue(ctx, dp.IssueID)
+		responses = append(responses, &DecisionResponse{
+			Decision: dp,
+			Issue:    issue,
+		})
+	}
+
+	result := &DecisionListResponse{
+		Decisions: responses,
+		Count:     len(responses),
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
