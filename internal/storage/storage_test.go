@@ -105,6 +105,9 @@ func (m *mockStorage) IsBlocked(ctx context.Context, issueID string) (bool, []st
 func (m *mockStorage) GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetEpicProgress(ctx context.Context, epicIDs []string) (map[string]*types.EpicProgress, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error) {
 	return nil, nil
 }

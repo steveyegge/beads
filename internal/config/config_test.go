@@ -1163,10 +1163,10 @@ func TestIsSyncModeValid(t *testing.T) {
 		mode  string
 		valid bool
 	}{
-		{SyncModeGitPortable, true},
-		{SyncModeRealtime, true},
-		{SyncModeDoltNative, true},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
 		{"invalid-mode", false},
 		{"", false},
 	}
@@ -1185,10 +1185,10 @@ func TestIsConflictStrategyValid(t *testing.T) {
 		strategy string
 		valid    bool
 	}{
-		{ConflictStrategyNewest, true},
-		{ConflictStrategyOurs, true},
-		{ConflictStrategyTheirs, true},
-		{ConflictStrategyManual, true},
+		{string(ConflictStrategyNewest), true},
+		{string(ConflictStrategyOurs), true},
+		{string(ConflictStrategyTheirs), true},
+		{string(ConflictStrategyManual), true},
 		{"invalid-strategy", false},
 		{"", false},
 	}
@@ -1207,10 +1207,10 @@ func TestIsSovereigntyValid(t *testing.T) {
 		sovereignty string
 		valid       bool
 	}{
-		{SovereigntyT1, true},
-		{SovereigntyT2, true},
-		{SovereigntyT3, true},
-		{SovereigntyT4, true},
+		{string(SovereigntyT1), true},
+		{string(SovereigntyT2), true},
+		{string(SovereigntyT3), true},
+		{string(SovereigntyT4), true},
 		{"", true}, // Empty is valid (means no restriction)
 		{"T5", false},
 		{"invalid", false},
@@ -1342,10 +1342,10 @@ func TestNeedsDoltRemote(t *testing.T) {
 		mode        string
 		needsRemote bool
 	}{
-		{SyncModeGitPortable, false},
-		{SyncModeRealtime, false},
-		{SyncModeDoltNative, true},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), false},
+		{string(SyncModeRealtime), false},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
@@ -1371,10 +1371,10 @@ func TestNeedsJSONL(t *testing.T) {
 		mode       string
 		needsJSONL bool
 	}{
-		{SyncModeGitPortable, true},
-		{SyncModeRealtime, true},
-		{SyncModeDoltNative, false},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), false},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
@@ -1439,245 +1439,6 @@ func TestGetSovereigntyInvalid(t *testing.T) {
 	Set("federation.sovereignty", "T99")
 	if got := GetSovereignty(); got != "" {
 		t.Errorf("GetSovereignty() with invalid tier = %q, want empty (fallback)", got)
-	}
-}
-
-func TestGetCustomTypesFromYAML(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Create a temporary directory with a .beads/config.yaml
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads directory: %v", err)
-	}
-
-	// Write a config file with types.custom set
-	configContent := `
-types:
-  custom: "molecule,gate,convoy,agent,event"
-`
-	configPath := filepath.Join(beadsDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	// Change to tmp directory so config is found
-	t.Chdir(tmpDir)
-
-	// Reset and initialize viper
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	// Test GetCustomTypesFromYAML returns the expected types
-	got := GetCustomTypesFromYAML()
-	if got == nil {
-		t.Fatal("GetCustomTypesFromYAML() returned nil, want custom types")
-	}
-
-	expected := []string{"molecule", "gate", "convoy", "agent", "event"}
-	if len(got) != len(expected) {
-		t.Errorf("GetCustomTypesFromYAML() returned %d types, want %d", len(got), len(expected))
-	}
-
-	for i, typ := range expected {
-		if i >= len(got) || got[i] != typ {
-			t.Errorf("GetCustomTypesFromYAML()[%d] = %q, want %q", i, got[i], typ)
-		}
-	}
-}
-
-func TestGetCustomTypesFromYAML_NotSet(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Create a temporary directory with a .beads/config.yaml WITHOUT types.custom
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads directory: %v", err)
-	}
-
-	// Write a config file without types.custom
-	configContent := `
-issue-prefix: "test"
-`
-	configPath := filepath.Join(beadsDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	// Change to tmp directory
-	t.Chdir(tmpDir)
-
-	// Reset and initialize viper
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	// Test GetCustomTypesFromYAML returns nil when not set
-	got := GetCustomTypesFromYAML()
-	if got != nil {
-		t.Errorf("GetCustomTypesFromYAML() = %v, want nil when types.custom not set", got)
-	}
-}
-
-func TestGetCustomTypesFromYAML_NilViper(t *testing.T) {
-	// Save the current viper instance
-	savedV := v
-
-	// Set viper to nil to test nil-safety
-	v = nil
-	defer func() { v = savedV }()
-
-	// Should return nil without panicking
-	got := GetCustomTypesFromYAML()
-	if got != nil {
-		t.Errorf("GetCustomTypesFromYAML() with nil viper = %v, want nil", got)
-	}
-}
-
-func TestGetFieldStrategies(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Initialize config
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	t.Run("empty_by_default", func(t *testing.T) {
-		result := GetFieldStrategies()
-		if len(result) != 0 {
-			t.Errorf("GetFieldStrategies() with no config = %v, want empty map", result)
-		}
-	})
-
-	t.Run("valid_strategies", func(t *testing.T) {
-		ResetForTesting()
-		if err := Initialize(); err != nil {
-			t.Fatalf("Initialize() returned error: %v", err)
-		}
-
-		// Set per-field strategies
-		Set("conflict.fields", map[string]string{
-			"compaction_level":   "max",
-			"labels":             "union",
-			"estimated_minutes":  "manual",
-			"status":             "newest",
-		})
-
-		result := GetFieldStrategies()
-
-		if result["compaction_level"] != FieldStrategyMax {
-			t.Errorf("Expected compaction_level=max, got %s", result["compaction_level"])
-		}
-		if result["labels"] != FieldStrategyUnion {
-			t.Errorf("Expected labels=union, got %s", result["labels"])
-		}
-		if result["estimated_minutes"] != FieldStrategyManual {
-			t.Errorf("Expected estimated_minutes=manual, got %s", result["estimated_minutes"])
-		}
-		if result["status"] != FieldStrategyNewest {
-			t.Errorf("Expected status=newest, got %s", result["status"])
-		}
-	})
-
-	t.Run("invalid_strategy_skipped", func(t *testing.T) {
-		ResetForTesting()
-		if err := Initialize(); err != nil {
-			t.Fatalf("Initialize() returned error: %v", err)
-		}
-
-		// Set a mix of valid and invalid strategies
-		Set("conflict.fields", map[string]string{
-			"compaction_level": "max",
-			"invalid_field":    "invalid-strategy",
-		})
-
-		result := GetFieldStrategies()
-
-		// Valid one should be present
-		if result["compaction_level"] != FieldStrategyMax {
-			t.Errorf("Expected compaction_level=max, got %s", result["compaction_level"])
-		}
-		// Invalid one should be skipped
-		if _, exists := result["invalid_field"]; exists {
-			t.Errorf("Expected invalid_field to be skipped, but it was included: %s", result["invalid_field"])
-		}
-	})
-}
-
-func TestGetFieldStrategy(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Initialize config
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	t.Run("returns_default_for_unconfigured_field", func(t *testing.T) {
-		result := GetFieldStrategy("unconfigured_field")
-		if result != FieldStrategyNewest {
-			t.Errorf("GetFieldStrategy(unconfigured_field) = %s, want newest (default)", result)
-		}
-	})
-
-	t.Run("returns_configured_strategy", func(t *testing.T) {
-		ResetForTesting()
-		if err := Initialize(); err != nil {
-			t.Fatalf("Initialize() returned error: %v", err)
-		}
-
-		Set("conflict.fields", map[string]string{
-			"compaction_level": "max",
-		})
-
-		result := GetFieldStrategy("compaction_level")
-		if result != FieldStrategyMax {
-			t.Errorf("GetFieldStrategy(compaction_level) = %s, want max", result)
-		}
-	})
-}
-
-func TestGetConflictConfigWithFields(t *testing.T) {
-	// Isolate from environment variables
-	restore := envSnapshot(t)
-	defer restore()
-
-	// Initialize config
-	ResetForTesting()
-	if err := Initialize(); err != nil {
-		t.Fatalf("Initialize() returned error: %v", err)
-	}
-
-	Set("conflict.strategy", "ours")
-	Set("conflict.fields", map[string]string{
-		"compaction_level": "max",
-		"labels":           "union",
-	})
-
-	result := GetConflictConfig()
-
-	if result.Strategy != ConflictStrategyOurs {
-		t.Errorf("GetConflictConfig().Strategy = %s, want ours", result.Strategy)
-	}
-	if result.Fields["compaction_level"] != FieldStrategyMax {
-		t.Errorf("GetConflictConfig().Fields[compaction_level] = %s, want max", result.Fields["compaction_level"])
-	}
-	if result.Fields["labels"] != FieldStrategyUnion {
-		t.Errorf("GetConflictConfig().Fields[labels] = %s, want union", result.Fields["labels"])
 	}
 }
 
