@@ -256,30 +256,28 @@ Without the pre-push hook, you can have database changes committed locally but s
 
 ## Decision Points
 
-When you need **human input on a choice**, create a decision point. This blocks the workflow until a human responds via email, web, or SMS notification.
+When you need **human input on a choice**, create a decision point. This blocks the workflow until a human responds. Use `gt decision request` (the high-level Gas Town workflow) which properly notifies the human overseer and syncs to `gt decision watch`.
 
 ### Creating a Decision Point
 
 ```bash
 # Create a decision that blocks another issue
-bd decision create \
-  --prompt="Which caching strategy should we use?" \
-  --options='[
-    {"id":"redis","short":"Redis","label":"Use Redis for distributed caching"},
-    {"id":"memory","short":"Memory","label":"Use in-memory caching"}
-  ]' \
-  --default=redis \
-  --timeout=24h \
-  --blocks=<blocked-issue-id>
+gt decision request \
+  --prompt "Which caching strategy should we use?" \
+  --option "Redis: Distributed caching, handles scaling" \
+  --option "In-memory: Simple and fast, single-process only" \
+  --recommend 1 \
+  --blocks <blocked-issue-id>
 ```
 
 **Key options:**
 - `--prompt` - The question to ask (required)
-- `--options` - JSON array of choices with id, short, and label
-- `--default` - Default option if timeout expires
-- `--timeout` - How long to wait (default: 24h)
-- `--blocks` - Issue to unblock when decision is resolved
-- `--parent` - Parent molecule for the decision
+- `--option` - Option in "Label: Description" format (repeatable, 2-4 required)
+- `--recommend` - Mark option N as recommended (1-indexed)
+- `--context` - Background information or analysis
+- `--blocks` - Bead to unblock when decision is resolved
+- `--parent` - Parent bead for hierarchy
+- `--urgency` - Priority level: high, medium, low (default: medium)
 
 ### Responding to Decisions
 
@@ -324,23 +322,24 @@ Use decision points when:
 
 ```bash
 # Architecture decision
-bd decision create \
-  --prompt="Should we use REST or GraphQL for the new API?" \
-  --options='[{"id":"rest","label":"REST API"},{"id":"graphql","label":"GraphQL"}]'
+gt decision request \
+  --prompt "Should we use REST or GraphQL for the new API?" \
+  --option "REST API: Well-established, simpler tooling" \
+  --option "GraphQL: Flexible queries, reduces over-fetching"
 
 # Approval gate
-bd decision create \
-  --prompt="Approve deployment to production?" \
-  --options='[{"id":"yes","label":"Yes, deploy"},{"id":"no","label":"No, wait"}]' \
-  --blocks=bd-deploy.1
+gt decision request \
+  --prompt "Approve deployment to production?" \
+  --option "Yes: Deploy now, all tests passing" \
+  --option "No: Wait for maintenance window" \
+  --blocks bd-deploy.1 \
+  --urgency high
 
 # Design choice
-bd decision create \
-  --prompt="Which color scheme for the dashboard?" \
-  --options='[
-    {"id":"light","label":"Light theme (better readability)"},
-    {"id":"dark","label":"Dark theme (reduced eye strain)"}
-  ]'
+gt decision request \
+  --prompt "Which color scheme for the dashboard?" \
+  --option "Light theme: Better readability in bright environments" \
+  --option "Dark theme: Reduced eye strain for long sessions"
 ```
 
 ### Iterative Refinement
