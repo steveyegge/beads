@@ -137,7 +137,7 @@ type DialogOption struct {
 // DialogResponse is sent back to server
 type DialogResponse struct {
 	ID        string `json:"id"`
-	Cancelled bool   `json:"cancelled"`
+	Canceled bool   `json:"cancelled"` //nolint:misspell // JSON API compatibility
 	Text      string `json:"text,omitempty"`
 	Selected  string `json:"selected,omitempty"`
 	Error     string `json:"error,omitempty"`
@@ -161,7 +161,7 @@ func runDialogClient(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", dialogClientPort, err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	fmt.Printf("Listening on 127.0.0.1:%d\n", dialogClientPort)
 
 	var sshCmd *exec.Cmd
@@ -179,7 +179,7 @@ func runDialogClient(cmd *cobra.Command, args []string) error {
 		}
 		sshArgs = append(sshArgs, dialogClientHost)
 
-		sshCmd = exec.Command("ssh", sshArgs...)
+		sshCmd = exec.Command("ssh", sshArgs...) //nolint:gosec // SSH args are from trusted CLI flags
 		sshCmd.Stdout = os.Stdout
 		sshCmd.Stderr = os.Stderr
 
@@ -195,9 +195,9 @@ func runDialogClient(cmd *cobra.Command, args []string) error {
 			<-sigCh
 			fmt.Println("\nShutting down...")
 			if sshCmd.Process != nil {
-				sshCmd.Process.Kill()
+				_ = sshCmd.Process.Kill()
 			}
-			listener.Close()
+			_ = listener.Close()
 			os.Exit(0)
 		}()
 	}
@@ -218,13 +218,13 @@ func runDialogClient(cmd *cobra.Command, args []string) error {
 	}
 
 	if sshCmd != nil {
-		sshCmd.Wait()
+		_ = sshCmd.Wait()
 	}
 	return nil
 }
 
 func handleDialogConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	fmt.Printf("Connection from %s\n", conn.RemoteAddr())
 
 	reader := bufio.NewReader(conn)
@@ -257,14 +257,14 @@ func handleDialogConnection(conn net.Conn) {
 
 		// Send response
 		respJSON, _ := json.Marshal(resp)
-		conn.Write(append(respJSON, '\n'))
+		_, _ = conn.Write(append(respJSON, '\n'))
 	}
 }
 
 func sendDialogError(conn net.Conn, id, errMsg string) {
 	resp := DialogResponse{ID: id, Error: errMsg}
 	respJSON, _ := json.Marshal(resp)
-	conn.Write(append(respJSON, '\n'))
+	_, _ = conn.Write(append(respJSON, '\n'))
 }
 
 func showDialogCLI(req DialogRequest) DialogResponse {
@@ -286,7 +286,7 @@ func showDialogCLI(req DialogRequest) DialogResponse {
 		}
 		input = strings.TrimSpace(input)
 		if strings.ToLower(input) == "cancel" {
-			resp.Cancelled = true
+			resp.Canceled = true
 		} else {
 			resp.Text = input
 		}
@@ -310,7 +310,7 @@ func showDialogCLI(req DialogRequest) DialogResponse {
 		input = strings.TrimSpace(input)
 
 		if input == "0" || strings.ToLower(input) == "cancel" {
-			resp.Cancelled = true
+			resp.Canceled = true
 			return resp
 		}
 
@@ -352,7 +352,7 @@ func showDialogCLI(req DialogRequest) DialogResponse {
 		case "n", "no":
 			resp.Selected = "No"
 		case "c", "cancel", "":
-			resp.Cancelled = true
+			resp.Canceled = true
 		default:
 			resp.Error = fmt.Sprintf("invalid input: %s", input)
 		}
@@ -380,12 +380,12 @@ func showDialogOSA(req DialogRequest) DialogResponse {
 		return resp
 	}
 
-	cmd := exec.Command("osascript", "-e", script)
+	cmd := exec.Command("osascript", "-e", script) //nolint:gosec // Script is generated internally
 	output, err := cmd.Output()
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			resp.Cancelled = true
+			resp.Canceled = true
 			return resp
 		}
 		resp.Error = fmt.Sprintf("osascript error: %v", err)
@@ -529,8 +529,8 @@ func runDialogServer(cmd *cobra.Command, args []string) error {
 		fmt.Println("Shutting down...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(shutdownCtx)
-		gateway.close()
+		_ = server.Shutdown(shutdownCtx)
+		_ = gateway.close()
 	}()
 
 	fmt.Printf("Ready - listening on http://localhost:%d\n", dialogServerPort)
@@ -577,8 +577,8 @@ func (g *DialogGateway) send(req *DialogRequest) (*DialogResponse, error) {
 		return nil, fmt.Errorf("not connected")
 	}
 
-	g.conn.SetDeadline(time.Now().Add(10 * time.Minute))
-	defer g.conn.SetDeadline(time.Time{})
+	_ = g.conn.SetDeadline(time.Now().Add(10 * time.Minute))
+	defer func() { _ = g.conn.SetDeadline(time.Time{}) }()
 
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
@@ -621,7 +621,7 @@ func (g *DialogGateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(health)
+	_ = json.NewEncoder(w).Encode(health)
 }
 
 func (g *DialogGateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -685,20 +685,20 @@ func (g *DialogGateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if g.verbose {
-		fmt.Printf("Dialog response for %s: cancelled=%v selected=%q\n", payload.ID, resp.Cancelled, resp.Selected)
+		fmt.Printf("Dialog response for %s: canceled=%v selected=%q\n", payload.ID, resp.Canceled, resp.Selected)
 	}
 
 	result := map[string]interface{}{
 		"decision_id":   payload.ID,
-		"cancelled":     resp.Cancelled,
+		"cancelled":     resp.Canceled, //nolint:misspell // JSON API compatibility
 		"selected":      resp.Selected,
 		"response_time": time.Since(start).String(),
 	}
 
-	if resp.Cancelled {
+	if resp.Canceled {
 		result["success"] = true
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		_ = json.NewEncoder(w).Encode(result)
 		return
 	}
 
@@ -716,7 +716,7 @@ func (g *DialogGateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (g *DialogGateway) handleDialog(w http.ResponseWriter, r *http.Request) {
@@ -749,7 +749,7 @@ func (g *DialogGateway) handleDialog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (g *DialogGateway) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -758,7 +758,7 @@ func (g *DialogGateway) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprint(w, `<!DOCTYPE html>
 <html>
 <head><title>Dialog Gateway</title></head>
 <body>
@@ -786,7 +786,7 @@ func (g *DialogGateway) recordResponse(decisionID, selected, text string) error 
 		fmt.Printf("Executing: %s %s\n", g.bdPath, strings.Join(args, " "))
 	}
 
-	cmd := exec.Command(g.bdPath, args...)
+	cmd := exec.Command(g.bdPath, args...) //nolint:gosec // bdPath is from LookPath, args are controlled
 	cmd.Env = os.Environ()
 
 	output, err := cmd.CombinedOutput()
@@ -804,5 +804,5 @@ func (g *DialogGateway) recordResponse(decisionID, selected, text string) error 
 func sendGatewayJSONError(w http.ResponseWriter, msg string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

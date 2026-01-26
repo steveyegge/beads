@@ -570,6 +570,8 @@ func (s *DoltStore) Close() error {
 }
 
 // getDB returns the underlying database connection for testing purposes.
+//
+//nolint:unparam // error return for interface compatibility
 func (s *DoltStore) getDB(_ context.Context) (*sql.DB, error) {
 	return s.db, nil
 }

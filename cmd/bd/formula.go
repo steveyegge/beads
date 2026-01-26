@@ -630,6 +630,8 @@ func countSteps(steps []*formula.Step) int {
 }
 
 // truncateDescription truncates a description to maxLen characters.
+//
+//nolint:unparam // maxLen is always 60 for now but may vary in future
 func truncateDescription(desc string, maxLen int) string {
 	// Take first line only
 	if idx := strings.Index(desc, "\n"); idx >= 0 {

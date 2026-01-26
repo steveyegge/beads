@@ -393,6 +393,8 @@ func burnPersistentMolecule(ctx context.Context, resolvedID string, dryRun, forc
 
 // burnWisps deletes all wisp issues without creating a digest
 // Works with any storage backend that implements storage.Storage (SQLite, Dolt, etc.)
+//
+//nolint:unparam // error return reserved for future storage errors
 func burnWisps(ctx context.Context, s storage.Storage, ids []string) (*BurnResult, error) {
 	result := &BurnResult{
 		DeletedIDs: make([]string, 0, len(ids)),

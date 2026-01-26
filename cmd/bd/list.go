@@ -1443,6 +1443,8 @@ func init() {
 
 // listInRig lists issues from a different rig using --rig flag.
 // This bypasses the normal daemon/direct flow and directly queries the target rig.
+//
+//nolint:unparam // cmd reserved for future flag access
 func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sortBy string, reverse bool, prettyFormat, longFormat, noPager bool) {
 	ctx := rootCtx
 

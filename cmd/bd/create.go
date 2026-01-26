@@ -1186,7 +1186,7 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 // Returns empty string if not found or on error.
 func readIssuePrefixFromConfig(beadsDir string) string {
 	configPath := filepath.Join(beadsDir, "config.yaml")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) //nolint:gosec // Path is derived from trusted beadsDir
 	if err != nil {
 		return ""
 	}

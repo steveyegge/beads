@@ -96,7 +96,7 @@ func NewDispatcher(beadsDir, baseURL string) (*Dispatcher, error) {
 func LoadEscalationConfig(beadsDir string) (*EscalationConfig, error) {
 	configPath := filepath.Join(beadsDir, "settings", "escalation.json")
 
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) //nolint:gosec // Path is derived from trusted beadsDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read escalation config: %w", err)
 	}
@@ -305,7 +305,7 @@ func (d *Dispatcher) sendEmail(payload *DecisionPayload, to string) error {
 	}
 
 	// Try to send via system mail command (plain text)
-	cmd := exec.Command("mail", "-s", email.Subject, to)
+	cmd := exec.Command("mail", "-s", email.Subject, to) //nolint:gosec // email.Subject is rendered from templates, to is from config
 	cmd.Stdin = strings.NewReader(email.PlainText)
 
 	if err := cmd.Run(); err != nil {
@@ -349,6 +349,8 @@ func (d *Dispatcher) sendWebhook(payload *DecisionPayload, webhookURL string) er
 }
 
 // sendSMS sends an SMS notification.
+//
+//nolint:unparam // Returns nil for now; future implementation may return errors
 func (d *Dispatcher) sendSMS(payload *DecisionPayload, phone string) error {
 	// Build compact SMS message
 	var msg strings.Builder

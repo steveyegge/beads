@@ -40,7 +40,7 @@ type Option struct {
 // Response from the UI client
 type Response struct {
 	ID        string `json:"id"`
-	Cancelled bool   `json:"cancelled"`
+	Canceled bool   `json:"cancelled"` //nolint:misspell // JSON API compatibility
 	Text      string `json:"text,omitempty"`
 	Selected  string `json:"selected,omitempty"`
 	Error     string `json:"error,omitempty"`
@@ -115,8 +115,8 @@ func (c *Client) Send(req *Request) (*Response, error) {
 	}
 
 	// Set deadline for this request
-	c.conn.SetDeadline(time.Now().Add(c.timeout))
-	defer c.conn.SetDeadline(time.Time{})
+	_ = c.conn.SetDeadline(time.Now().Add(c.timeout))
+	defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
 
 	// Send request
 	reqJSON, err := json.Marshal(req)
@@ -160,7 +160,7 @@ func (c *Client) ShowEntry(id, title, prompt, defaultValue string) (string, bool
 	if err != nil {
 		return "", false, err
 	}
-	return resp.Text, resp.Cancelled, nil
+	return resp.Text, resp.Canceled, nil
 }
 
 // ShowChoice shows a choice dialog
@@ -175,7 +175,7 @@ func (c *Client) ShowChoice(id, title, prompt string, options []Option) (string,
 	if err != nil {
 		return "", false, err
 	}
-	return resp.Selected, resp.Cancelled, nil
+	return resp.Selected, resp.Canceled, nil
 }
 
 // ShowConfirm shows a yes/no confirmation dialog
@@ -189,7 +189,7 @@ func (c *Client) ShowConfirm(id, title, prompt string) (bool, bool, error) {
 	if err != nil {
 		return false, false, err
 	}
-	return resp.Selected == "Yes", resp.Cancelled, nil
+	return resp.Selected == "Yes", resp.Canceled, nil
 }
 
 // Global client for convenience

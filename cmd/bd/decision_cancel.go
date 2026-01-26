@@ -17,8 +17,8 @@ var decisionCancelCmd = &cobra.Command{
 	Short: "Cancel a pending decision point",
 	Long: `Cancel a decision point without providing a response.
 
-This closes the decision gate with a 'cancelled' status. Any issues blocked
-by this decision will be unblocked and can see that the decision was cancelled
+This closes the decision gate with a 'canceled' status. Any issues blocked
+by this decision will be unblocked and can see that the decision was canceled
 rather than answered.
 
 Use this when a decision is no longer needed (e.g., the approach changed,
@@ -39,7 +39,7 @@ Examples:
 
 func init() {
 	decisionCancelCmd.Flags().StringP("reason", "r", "", "Reason for cancellation")
-	decisionCancelCmd.Flags().String("by", "", "Who cancelled the decision (email, user ID)")
+	decisionCancelCmd.Flags().String("by", "", "Who canceled the decision (email, user ID)")
 
 	decisionCmd.AddCommand(decisionCancelCmd)
 }
@@ -55,7 +55,7 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 
 	decisionID := args[0]
 	reason, _ := cmd.Flags().GetString("reason")
-	cancelledBy, _ := cmd.Flags().GetString("by")
+	canceledBy, _ := cmd.Flags().GetString("by")
 
 	ctx := rootCtx
 
@@ -105,11 +105,11 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Update decision point to mark as cancelled
+	// Update decision point to mark as canceled
 	now := time.Now()
 	dp.RespondedAt = &now
-	dp.RespondedBy = cancelledBy
-	dp.SelectedOption = "_cancelled" // Special marker for cancelled decisions
+	dp.RespondedBy = canceledBy
+	dp.SelectedOption = "_canceled" // Special marker for canceled decisions
 	if reason != "" {
 		dp.ResponseText = reason
 	}
@@ -120,9 +120,9 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 	}
 
 	// Close the gate issue
-	closeReason := "Decision cancelled"
+	closeReason := "Decision canceled"
 	if reason != "" {
-		closeReason = fmt.Sprintf("Decision cancelled: %s", reason)
+		closeReason = fmt.Sprintf("Decision canceled: %s", reason)
 	}
 
 	if err := store.CloseIssue(ctx, resolvedID, closeReason, actor, ""); err != nil {
@@ -136,10 +136,10 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 	if jsonOutput {
 		result := map[string]interface{}{
 			"id":           resolvedID,
-			"status":       "cancelled",
+			"status":       "canceled",
 			"reason":       reason,
-			"cancelled_by": cancelledBy,
-			"cancelled_at": now.Format(time.RFC3339),
+			"canceled_by": canceledBy,
+			"canceled_at": now.Format(time.RFC3339),
 			"prompt":       dp.Prompt,
 		}
 		outputJSON(result)
@@ -147,16 +147,16 @@ func runDecisionCancel(cmd *cobra.Command, args []string) {
 	}
 
 	// Human-readable output
-	fmt.Printf("%s Decision cancelled: %s\n\n", ui.RenderPass("✓"), ui.RenderID(resolvedID))
+	fmt.Printf("%s Decision canceled: %s\n\n", ui.RenderPass("✓"), ui.RenderID(resolvedID))
 	fmt.Printf("  Prompt: %s\n", dp.Prompt)
 
 	if reason != "" {
 		fmt.Printf("  Reason: %s\n", reason)
 	}
 
-	if cancelledBy != "" {
-		fmt.Printf("  Cancelled by: %s\n", cancelledBy)
+	if canceledBy != "" {
+		fmt.Printf("  Canceled by: %s\n", canceledBy)
 	}
 
-	fmt.Printf("\n  %s Gate closed - blocked issues now unblocked (decision: cancelled)\n", ui.RenderPass("✓"))
+	fmt.Printf("\n  %s Gate closed - blocked issues now unblocked (decision: canceled)\n", ui.RenderPass("✓"))
 }

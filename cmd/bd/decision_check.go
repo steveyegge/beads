@@ -96,7 +96,7 @@ func runDecisionCheck(cmd *cobra.Command, args []string) {
 			// Parse options to get label
 			var options []types.DecisionOption
 			if dp.Options != "" {
-				json.Unmarshal([]byte(dp.Options), &options)
+				_ = json.Unmarshal([]byte(dp.Options), &options)
 			}
 
 			selectedLabel := dp.SelectedOption
@@ -149,7 +149,7 @@ func runDecisionCheck(cmd *cobra.Command, args []string) {
 			// Parse options for label
 			var options []types.DecisionOption
 			if freshDP.Options != "" {
-				json.Unmarshal([]byte(freshDP.Options), &options)
+				_ = json.Unmarshal([]byte(freshDP.Options), &options)
 			}
 
 			selectedLabel := freshDP.SelectedOption

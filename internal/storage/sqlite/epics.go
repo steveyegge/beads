@@ -101,6 +101,7 @@ func (s *SQLiteStorage) GetEpicProgress(ctx context.Context, epicIDs []string) (
 		args[i] = id
 	}
 
+	//nolint:gosec // SQL uses ? placeholders for values, string concat is for placeholder count only
 	query := `
 		WITH epic_children AS (
 			SELECT

@@ -16,13 +16,13 @@ var decisionAwaitCmd = &cobra.Command{
 	Short: "Wait for a decision point response (blocking)",
 	Long: `Wait for a decision point to receive a response.
 
-This command blocks until the decision is responded to, times out, or is cancelled.
+This command blocks until the decision is responded to, times out, or is canceled.
 Useful for scripts and Claude Code integration where you need to wait for human input.
 
 Exit codes:
   0 - Decision was responded to
   1 - Timeout reached without response
-  2 - Decision was cancelled
+  2 - Decision was canceled
   3 - Error occurred
 
 The response is output as JSON for easy parsing:
@@ -62,7 +62,7 @@ type AwaitResponse struct {
 	Text        string `json:"text,omitempty"`
 	RespondedBy string `json:"responded_by,omitempty"`
 	RespondedAt string `json:"responded_at,omitempty"`
-	Cancelled   bool   `json:"cancelled,omitempty"`
+	Canceled   bool   `json:"canceled,omitempty"`
 	TimedOut    bool   `json:"timed_out,omitempty"`
 }
 
@@ -115,11 +115,11 @@ func runDecisionAwait(cmd *cobra.Command, args []string) {
 		os.Exit(0)
 	}
 
-	// Check if already cancelled/closed
+	// Check if already canceled/closed
 	if issue.Status == types.StatusClosed {
 		resp := AwaitResponse{
 			ID:        resolvedID,
-			Cancelled: true,
+			Canceled: true,
 		}
 		outputJSON(resp)
 		os.Exit(2)
@@ -148,12 +148,12 @@ func runDecisionAwait(cmd *cobra.Command, args []string) {
 				os.Exit(0)
 			}
 
-			// Check if cancelled
+			// Check if canceled
 			issue, _ = store.GetIssue(ctx, resolvedID)
 			if issue != nil && issue.Status == types.StatusClosed {
 				resp := AwaitResponse{
 					ID:        resolvedID,
-					Cancelled: true,
+					Canceled: true,
 				}
 				outputJSON(resp)
 				os.Exit(2)
@@ -171,10 +171,10 @@ func runDecisionAwait(cmd *cobra.Command, args []string) {
 			}
 
 		case <-ctx.Done():
-			// Context cancelled
+			// Context canceled
 			resp := AwaitResponse{
 				ID:        resolvedID,
-				Cancelled: true,
+				Canceled: true,
 			}
 			outputJSON(resp)
 			os.Exit(2)

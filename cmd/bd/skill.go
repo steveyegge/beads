@@ -282,7 +282,7 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 	// Read skill content from file if specified
 	var skillContent string
 	if skillContentFile != "" {
-		content, err := os.ReadFile(skillContentFile)
+		content, err := os.ReadFile(skillContentFile) //nolint:gosec // Path from CLI flag
 		if err != nil {
 			return fmt.Errorf("failed to read content file %s: %w", skillContentFile, err)
 		}
@@ -973,7 +973,7 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 		var content []byte
 		var loadedFrom string
 		for _, candidate := range candidates {
-			if data, err := os.ReadFile(candidate); err == nil {
+			if data, err := os.ReadFile(candidate); err == nil { //nolint:gosec // Candidates are constructed from repo paths
 				content = data
 				loadedFrom = candidate
 				break
@@ -1270,7 +1270,7 @@ func loadSkillFile(skillPath string) string {
 	}
 
 	for _, candidate := range candidates {
-		if data, err := os.ReadFile(candidate); err == nil {
+		if data, err := os.ReadFile(candidate); err == nil { //nolint:gosec // Candidates are constructed from repo paths
 			return string(data)
 		}
 	}
@@ -1424,7 +1424,7 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 		// Write content based on source
 		if hasContent {
 			// Write content directly from bead (preferred method)
-			if err := os.WriteFile(targetPath, []byte(skill.SkillContent), 0644); err != nil {
+			if err := os.WriteFile(targetPath, []byte(skill.SkillContent), 0644); err != nil { //nolint:gosec // Skill files need to be readable
 				return fmt.Errorf("failed to write %s: %w", targetPath, err)
 			}
 		} else if hasPath {
@@ -1448,11 +1448,11 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 
 			if err := os.Symlink(relPath, targetPath); err != nil {
 				// If symlink fails, copy instead
-				content, readErr := os.ReadFile(sourcePath)
+				content, readErr := os.ReadFile(sourcePath) //nolint:gosec // sourcePath derived from findSkillFile
 				if readErr != nil {
 					return fmt.Errorf("failed to read %s: %w", sourcePath, readErr)
 				}
-				if writeErr := os.WriteFile(targetPath, content, 0644); writeErr != nil {
+				if writeErr := os.WriteFile(targetPath, content, 0644); writeErr != nil { //nolint:gosec // Skill files need to be readable
 					return fmt.Errorf("failed to write %s: %w", targetPath, writeErr)
 				}
 			}
@@ -1605,7 +1605,7 @@ func runSkillSpy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Capture tmux pane output
-	captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines))
+	captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines)) //nolint:gosec // sessionName is from CLI args
 	output, err := captureCmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to capture session %s: %w (is tmux session running?)", sessionName, err)
@@ -1783,7 +1783,7 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 	}
 
 	for i := 0; i < attempts; i++ {
-		captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines))
+		captureCmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", spyLines)) //nolint:gosec // sessionName is from CLI args
 		output, err := captureCmd.Output()
 		if err != nil {
 			fmt.Printf("  Attempt %d/%d: Session not ready (%v)\n", i+1, attempts, err)
