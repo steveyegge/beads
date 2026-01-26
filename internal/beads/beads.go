@@ -725,52 +725,75 @@ func FindAllDatabases() []DatabaseInfo {
 			// Follow redirect if present
 			beadsDir = FollowRedirect(beadsDir)
 
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-				dbPath := matches[0]
-
-				// Resolve symlinks to get canonical path for deduplication
-				canonicalPath := dbPath
-				if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
-					canonicalPath = resolved
-				}
-
-				// Skip if we've already seen this database (via symlink or other path)
-				if seen[canonicalPath] {
-					// Move up one directory
-					parent := filepath.Dir(dir)
-					if parent == dir {
-						break
-					}
-					dir = parent
-					continue
-				}
-				seen[canonicalPath] = true
-
-				// Count issues if we can open the database (best-effort)
-				issueCount := -1
-				// Don't fail if we can't open/query the database - it might be locked
-				// or corrupted, but we still want to detect and warn about it
-				ctx := context.Background()
-				store, err := sqlite.New(ctx, dbPath)
-				if err == nil {
-					if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
-						issueCount = len(issues)
-					}
-					_ = store.Close()
-				}
-
-				databases = append(databases, DatabaseInfo{
-					Path:       dbPath,
-					BeadsDir:   beadsDir,
-					IssueCount: issueCount,
-				})
-
-				// Stop searching upward - the closest .beads is the one to use
-				// Parent directories are out of scope in multi-workspace setups
-				break
+			// Found .beads/ directory - get database path from config
+			cfg, _ := configfile.Load(beadsDir)
+			if cfg == nil {
+				cfg = configfile.DefaultConfig()
 			}
+
+			// Skip Dolt backends for now (can't import factory due to import cycle)
+			if cfg.GetBackend() == configfile.BackendDolt {
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+
+			dbPath := cfg.DatabasePath(beadsDir)
+
+			// Verify database exists
+			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+				// No database file, move up
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+
+			// Resolve symlinks to get canonical path for deduplication
+			canonicalPath := dbPath
+			if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
+				canonicalPath = resolved
+			}
+
+			// Skip if we've already seen this database (via symlink or other path)
+			if seen[canonicalPath] {
+				// Move up one directory
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+			seen[canonicalPath] = true
+
+			// Count issues if we can open the database (best-effort)
+			issueCount := -1
+			// Don't fail if we can't open/query the database - it might be locked
+			// or corrupted, but we still want to detect and warn about it
+			ctx := context.Background()
+			store, err := sqlite.New(ctx, dbPath)
+			if err == nil {
+				if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
+					issueCount = len(issues)
+				}
+				_ = store.Close()
+			}
+
+			databases = append(databases, DatabaseInfo{
+				Path:       dbPath,
+				BeadsDir:   beadsDir,
+				IssueCount: issueCount,
+			})
+
+			// Stop searching upward - the closest .beads is the one to use
+			// Parent directories are out of scope in multi-workspace setups
+			break
 		}
 
 		// Move up one directory
