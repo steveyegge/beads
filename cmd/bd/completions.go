@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	storagefactory "github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -21,16 +20,16 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 		ctx = rootCtx
 	}
 
-	// Get database path - use same logic as in PersistentPreRun
-	currentDBPath := dbPath
-	if currentDBPath == "" {
-		// Try to find database path
+	// Get beads directory - use same logic as in PersistentPreRun
+	beadsDir := filepath.Dir(dbPath)
+	if dbPath == "" {
+		// Try to find beads directory
 		foundDB := beads.FindDatabasePath()
 		if foundDB != "" {
-			currentDBPath = foundDB
+			beadsDir = filepath.Dir(foundDB)
 		} else {
 			// Default path
-			currentDBPath = filepath.Join(".beads", beads.CanonicalDatabaseName)
+			beadsDir = ".beads"
 		}
 	}
 
@@ -38,11 +37,7 @@ func issueIDCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 	currentStore := store
 	if currentStore == nil {
 		var err error
-		timeout := 30 * time.Second
-		if lockTimeout > 0 {
-			timeout = lockTimeout
-		}
-		currentStore, err = sqlite.NewReadOnlyWithTimeout(ctx, currentDBPath, timeout)
+		currentStore, err = storagefactory.NewFromConfigWithOptions(ctx, beadsDir, storagefactory.Options{ReadOnly: true})
 		if err != nil {
 			// If we can't open database, return empty completion
 			return nil, cobra.ShellCompDirectiveNoFileComp
