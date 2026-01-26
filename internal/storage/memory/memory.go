@@ -1880,6 +1880,7 @@ func (m *MemoryStorage) MarkIssueDirty(ctx context.Context, issueID string) erro
 }
 
 // CreateDecisionPoint creates a new decision point for an issue.
+<<<<<<< HEAD
 func (m *MemoryStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1959,4 +1960,27 @@ func (m *MemoryStorage) ListAllDecisionPoints(ctx context.Context) ([]*types.Dec
 	})
 
 	return results, nil
+=======
+// Decision points are not supported in memory storage.
+func (m *MemoryStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not supported in --no-db mode: use SQLite storage")
+}
+
+// GetDecisionPoint retrieves the decision point for an issue.
+// Decision points are not supported in memory storage.
+func (m *MemoryStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not supported in --no-db mode: use SQLite storage")
+}
+
+// UpdateDecisionPoint updates an existing decision point.
+// Decision points are not supported in memory storage.
+func (m *MemoryStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not supported in --no-db mode: use SQLite storage")
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to.
+// Decision points are not supported in memory storage.
+func (m *MemoryStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not supported in --no-db mode: use SQLite storage")
+>>>>>>> e404f316 (feat(storage): add decision points types and SQLite implementation)
 }
