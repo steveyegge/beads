@@ -139,6 +139,8 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	}
 
 	// Create the gate issue
+	// Note: We add gt:decision and decision:pending labels so that decisions
+	// show up in 'gt decision list' and 'gt decision watch' (hq-3q571)
 	now := time.Now()
 	gateIssue := &types.Issue{
 		ID:        decisionID, // May be empty - CreateIssue will generate
@@ -148,6 +150,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		Priority:  2,
 		AwaitType: "decision",
 		Timeout:   timeout,
+		Labels:    []string{"gt:decision", "decision:pending"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

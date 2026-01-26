@@ -206,6 +206,11 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error closing gate: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Update labels to sync with gt decision system (hq-3q571)
+		// Remove decision:pending and add decision:resolved
+		_ = store.RemoveLabel(ctx, resolvedID, "decision:pending", actor)
+		_ = store.AddLabel(ctx, resolvedID, "decision:resolved", actor)
 	} else if shouldIterate {
 		// Trigger iterative refinement (hq-946577.23)
 		iterationResult, iterationErr = decision.CreateNextIteration(ctx, store, dp, issue, textResponse, respondedBy, actor)
