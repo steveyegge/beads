@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
@@ -118,13 +119,37 @@ func NewFromConfigWithOptions(ctx context.Context, beadsDir string, opts Options
 	}
 }
 
-// GetBackendFromConfig returns the backend type from metadata.json
+// GetBackendFromConfig returns the backend type from metadata.json, falling back
+// to config.yaml's storage-backend setting if metadata.json doesn't specify one.
+// This enables town-level config inheritance: when town's config.yaml has
+// storage-backend: dolt, rig-level workspaces will inherit it even if their
+// local metadata.json doesn't have Backend set. (hq-5813b7)
 func GetBackendFromConfig(beadsDir string) string {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
+		// No metadata.json - fall back to config.yaml
+		return getBackendFromYamlConfig()
+	}
+
+	// If metadata.json has an explicit backend, use it
+	if cfg.Backend != "" {
+		return cfg.Backend
+	}
+
+	// metadata.json exists but Backend is empty - check config.yaml
+	// This enables town-level inheritance via viper's directory walking
+	return getBackendFromYamlConfig()
+}
+
+// getBackendFromYamlConfig returns the storage-backend from config.yaml.
+// The config package uses viper which walks up parent directories to find
+// .beads/config.yaml, enabling town-level config inheritance.
+func getBackendFromYamlConfig() string {
+	backend := config.GetString("storage-backend")
+	if backend == "" {
 		return configfile.BackendSQLite
 	}
-	return cfg.GetBackend()
+	return backend
 }
 
 // LoadConfig loads and returns the config from the specified beads directory.
