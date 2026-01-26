@@ -48,6 +48,12 @@ func (s *DoltStore) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string)
 		return nil
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	placeholders := make([]string, len(issueIDs))
 	args := make([]interface{}, len(issueIDs))
 	for i, id := range issueIDs {
@@ -57,11 +63,11 @@ func (s *DoltStore) ClearDirtyIssuesByID(ctx context.Context, issueIDs []string)
 
 	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 	query := fmt.Sprintf("DELETE FROM dirty_issues WHERE issue_id IN (%s)", strings.Join(placeholders, ","))
-	_, err := s.db.ExecContext(ctx, query, args...)
+	_, err = tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to clear dirty issues: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetExportHash returns the last export hash for an issue
@@ -78,7 +84,13 @@ func (s *DoltStore) GetExportHash(ctx context.Context, issueID string) (string, 
 
 // SetExportHash stores the export hash for an issue
 func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO export_hashes (issue_id, content_hash, exported_at)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE content_hash = VALUES(content_hash), exported_at = VALUES(exported_at)
@@ -86,16 +98,22 @@ func (s *DoltStore) SetExportHash(ctx context.Context, issueID, contentHash stri
 	if err != nil {
 		return fmt.Errorf("failed to set export hash: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ClearAllExportHashes removes all export hashes (for full re-export)
 func (s *DoltStore) ClearAllExportHashes(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM export_hashes")
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM export_hashes")
 	if err != nil {
 		return fmt.Errorf("failed to clear export hashes: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetJSONLFileHash returns the stored JSONL file hash
