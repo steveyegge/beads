@@ -432,12 +432,26 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 		}
 	}
 
-	// Decision points table: add requested_by column (hq-e0adf6.4)
-	_, err := s.db.ExecContext(ctx, "SELECT requested_by FROM decision_points LIMIT 0")
-	if err != nil {
-		_, addErr := s.db.ExecContext(ctx, "ALTER TABLE decision_points ADD COLUMN requested_by TEXT")
-		if addErr != nil && !strings.Contains(addErr.Error(), "Duplicate column") {
-			return fmt.Errorf("failed to add requested_by column to decision_points: %w", addErr)
+	// Decision points table migrations
+	decisionPointColumns := []struct {
+		name    string
+		sqlType string
+	}{
+		// requested_by column (hq-e0adf6.4)
+		{"requested_by", "TEXT"},
+		// Workflow columns for canonical design alignment (hq-946577.38)
+		{"context", "TEXT"},
+		{"rationale", "TEXT"},
+		{"urgency", "TEXT"},
+	}
+
+	for _, col := range decisionPointColumns {
+		_, err := s.db.ExecContext(ctx, fmt.Sprintf("SELECT %s FROM decision_points LIMIT 0", col.name))
+		if err != nil {
+			_, addErr := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE decision_points ADD COLUMN %s %s", col.name, col.sqlType))
+			if addErr != nil && !strings.Contains(addErr.Error(), "Duplicate column") {
+				return fmt.Errorf("failed to add %s column to decision_points: %w", col.name, addErr)
+			}
 		}
 	}
 

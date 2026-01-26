@@ -1149,10 +1149,12 @@ type DecisionOption struct {
 type DecisionPoint struct {
 	IssueID        string     `json:"issue_id"`
 	Prompt         string     `json:"prompt"`
+	Context        string     `json:"context,omitempty"`          // Background/analysis for the decision
 	Options        string     `json:"options"`                    // JSON array of DecisionOption
 	DefaultOption  string     `json:"default_option,omitempty"`   // Option ID selected if timeout
 	SelectedOption string     `json:"selected_option,omitempty"`  // Option ID the human chose
 	ResponseText   string     `json:"response_text,omitempty"`    // Custom text input from human
+	Rationale      string     `json:"rationale,omitempty"`        // Explanation for why this choice was made
 	RespondedAt    *time.Time `json:"responded_at,omitempty"`     // When the human responded
 	RespondedBy    string     `json:"responded_by,omitempty"`     // Who responded (email, user ID)
 	Iteration      int        `json:"iteration"`                  // Current iteration number (1-indexed)
@@ -1160,6 +1162,7 @@ type DecisionPoint struct {
 	PriorID        string     `json:"prior_id,omitempty"`         // Previous iteration's decision point
 	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
 	ReminderCount  int        `json:"reminder_count"`             // Number of reminders sent
+	Urgency        string     `json:"urgency,omitempty"`          // Priority level: high, medium, low
 	CreatedAt      time.Time  `json:"created_at"`
 	RequestedBy    string     `json:"requested_by,omitempty"`     // Agent/session that requested this decision (for wake notifications)
 }

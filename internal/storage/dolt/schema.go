@@ -262,10 +262,12 @@ CREATE TABLE IF NOT EXISTS federation_peers (
 CREATE TABLE IF NOT EXISTS decision_points (
     issue_id VARCHAR(255) PRIMARY KEY,
     prompt TEXT NOT NULL,
+    context TEXT,
     options TEXT NOT NULL,
     default_option TEXT,
     selected_option TEXT,
     response_text TEXT,
+    rationale TEXT,
     responded_at DATETIME,
     responded_by TEXT,
     iteration INT DEFAULT 1,
@@ -273,9 +275,11 @@ CREATE TABLE IF NOT EXISTS decision_points (
     prior_id VARCHAR(255),
     guidance TEXT,
     reminder_count INT DEFAULT 0,
+    urgency TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     requested_by TEXT,
     INDEX idx_decision_points_prior (prior_id),
+    INDEX idx_decision_points_urgency (urgency),
     CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
     CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
 );
