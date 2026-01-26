@@ -48,6 +48,10 @@ type DoltStore struct {
 	committerEmail string
 	remote         string // Default remote for push/pull
 	branch         string // Current branch
+
+	// Retry config for operations (commit, push, etc.)
+	lockRetries    int
+	lockRetryDelay time.Duration
 }
 
 // Config holds Dolt database configuration
@@ -173,6 +177,8 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remote:         cfg.Remote,
 		branch:         "main",
 		readOnly:       cfg.ReadOnly,
+		lockRetries:    cfg.LockRetries,
+		lockRetryDelay: cfg.LockRetryDelay,
 	}
 
 	// Initialize schema (skip for read-only mode)
@@ -604,15 +610,48 @@ func (s *DoltStore) commitAuthorString() string {
 	return fmt.Sprintf("%s <%s>", s.committerName, s.committerEmail)
 }
 
-// Commit creates a Dolt commit with the given message
+// Commit creates a Dolt commit with the given message.
+// Includes retry logic for optimistic lock failures which can occur when multiple
+// writers try to commit conflicting changes simultaneously.
 func (s *DoltStore) Commit(ctx context.Context, message string) error {
 	// NOTE: In SQL procedure mode, Dolt defaults author to the authenticated SQL user
 	// (e.g. root@localhost). Always pass an explicit author for deterministic history.
-	_, err := s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString())
-	if err != nil {
-		return fmt.Errorf("failed to commit: %w", err)
+	retries := s.lockRetries
+	if retries == 0 {
+		retries = 5 // Sensible default for commit operations
 	}
-	return nil
+	retryDelay := s.lockRetryDelay
+	if retryDelay == 0 {
+		retryDelay = 100 * time.Millisecond
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			// Log retry for debugging
+			fmt.Fprintf(os.Stderr, "Dolt commit retry (attempt %d/%d) after %v: %v\n",
+				attempt, retries, retryDelay, lastErr)
+			time.Sleep(retryDelay)
+			// Exponential backoff with cap
+			retryDelay *= 2
+			if retryDelay > 5*time.Second {
+				retryDelay = 5 * time.Second
+			}
+		}
+
+		_, lastErr = s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', ?, '--author', ?)", message, s.commitAuthorString())
+		if lastErr == nil {
+			return nil
+		}
+
+		// Check if error is retryable (optimistic lock failure)
+		if !isSerializationError(lastErr) {
+			return fmt.Errorf("failed to commit: %w", lastErr)
+		}
+		// Serialization error - retry
+	}
+
+	return fmt.Errorf("failed to commit after %d retries: %w", retries, lastErr)
 }
 
 // Push pushes commits to the remote
@@ -797,8 +836,8 @@ type StatusEntry struct {
 }
 
 // isTransientDoltError detects if an error is transient and should be retried.
-// This includes lock errors, format version errors, and serialization conflicts
-// which can occur during concurrent access.
+// This includes lock errors, serialization conflicts, and format version errors
+// which can occur during concurrent access when the manifest is being updated.
 func isTransientDoltError(err error) bool {
 	if err == nil {
 		return false
@@ -807,7 +846,7 @@ func isTransientDoltError(err error) bool {
 	if isLockError(err) {
 		return true
 	}
-	// Check for serialization/concurrency errors
+	// Check for serialization/concurrency errors (optimistic lock failures)
 	if isSerializationError(err) {
 		return true
 	}

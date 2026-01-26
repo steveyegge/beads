@@ -1029,25 +1029,25 @@ func TestIsTransientDoltError(t *testing.T) {
 			err:      fmt.Errorf("Invalid Format Version in manifest"),
 			expected: true,
 		},
-		// Serialization conflict errors (hq-a0ef40)
-		{
-			name:     "error 1213 serialization failure",
-			err:      fmt.Errorf("Error 1213 (40001): serialization failure"),
-			expected: true,
-		},
+		// Serialization conflict errors (hq-jkr56x)
 		{
 			name:     "error 1105 optimistic lock failed",
 			err:      fmt.Errorf("Error 1105 (HY000): optimistic lock failed on database Root update"),
 			expected: true,
 		},
 		{
-			name:     "serialization failure lowercase",
-			err:      fmt.Errorf("serialization failure during commit"),
+			name:     "optimistic lock failed generic",
+			err:      fmt.Errorf("optimistic lock failed"),
 			expected: true,
 		},
 		{
-			name:     "optimistic lock failed generic",
-			err:      fmt.Errorf("optimistic lock failed"),
+			name:     "error 1213 serialization failure",
+			err:      fmt.Errorf("Error 1213 (40001): Serialization failure"),
+			expected: true,
+		},
+		{
+			name:     "serialization failure generic",
+			err:      fmt.Errorf("serialization failure during commit"),
 			expected: true,
 		},
 	}
@@ -1057,6 +1057,64 @@ func TestIsTransientDoltError(t *testing.T) {
 			result := isTransientDoltError(tt.err)
 			if result != tt.expected {
 				t.Errorf("isTransientDoltError(%v) = %v, expected %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsSerializationError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "error 1105 optimistic lock failed",
+			err:      fmt.Errorf("Error 1105 (HY000): optimistic lock failed on database Root update"),
+			expected: true,
+		},
+		{
+			name:     "optimistic lock failed generic",
+			err:      fmt.Errorf("optimistic lock failed"),
+			expected: true,
+		},
+		{
+			name:     "error 1213 serialization failure",
+			err:      fmt.Errorf("Error 1213 (40001): Serialization failure"),
+			expected: true,
+		},
+		{
+			name:     "serialization failure generic",
+			err:      fmt.Errorf("serialization failure during commit"),
+			expected: true,
+		},
+		{
+			name:     "non-serialization error",
+			err:      fmt.Errorf("table does not exist"),
+			expected: false,
+		},
+		{
+			name:     "lock error is not serialization",
+			err:      fmt.Errorf("database is locked"),
+			expected: false, // lock errors are separate from serialization errors
+		},
+		{
+			name:     "case insensitive error 1105",
+			err:      fmt.Errorf("error 1105 in statement"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSerializationError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isSerializationError(%v) = %v, expected %v", tt.err, result, tt.expected)
 			}
 		})
 	}
