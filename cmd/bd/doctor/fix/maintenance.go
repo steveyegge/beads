@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -51,21 +50,8 @@ func StaleClosedIssues(path string) error {
 		return nil
 	}
 
-	// Get database path
-	var dbPath string
-	if cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		fmt.Println("  No database found, nothing to clean up")
-		return nil
-	}
-
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -213,16 +199,8 @@ func PatrolPollution(path string) error {
 		return nil
 	}
 
-	// Get database path
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
