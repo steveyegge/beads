@@ -1029,6 +1029,27 @@ func TestIsTransientDoltError(t *testing.T) {
 			err:      fmt.Errorf("Invalid Format Version in manifest"),
 			expected: true,
 		},
+		// Serialization conflict errors (hq-a0ef40)
+		{
+			name:     "error 1213 serialization failure",
+			err:      fmt.Errorf("Error 1213 (40001): serialization failure"),
+			expected: true,
+		},
+		{
+			name:     "error 1105 optimistic lock failed",
+			err:      fmt.Errorf("Error 1105 (HY000): optimistic lock failed on database Root update"),
+			expected: true,
+		},
+		{
+			name:     "serialization failure lowercase",
+			err:      fmt.Errorf("serialization failure during commit"),
+			expected: true,
+		},
+		{
+			name:     "optimistic lock failed generic",
+			err:      fmt.Errorf("optimistic lock failed"),
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {

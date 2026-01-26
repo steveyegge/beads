@@ -760,8 +760,8 @@ type StatusEntry struct {
 }
 
 // isTransientDoltError detects if an error is transient and should be retried.
-// This includes lock errors and format version errors which can occur during
-// concurrent access when the manifest is being updated.
+// This includes lock errors, format version errors, and serialization conflicts
+// which can occur during concurrent access.
 func isTransientDoltError(err error) bool {
 	if err == nil {
 		return false
@@ -770,12 +770,33 @@ func isTransientDoltError(err error) bool {
 	if isLockError(err) {
 		return true
 	}
+	// Check for serialization/concurrency errors
+	if isSerializationError(err) {
+		return true
+	}
 	// Check for format version errors - these can occur transiently during
 	// concurrent manifest updates (e.g., during push/pull operations)
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "invalid format version") ||
 		strings.Contains(errStr, "failed to load database") ||
 		strings.Contains(errStr, "manifest") && strings.Contains(errStr, "invalid")
+}
+
+// isSerializationError checks if an error is a Dolt serialization conflict.
+// These errors occur when multiple writers try to commit conflicting changes:
+// - Error 1213 (40001): Serialization failure (InnoDB-style)
+// - Error 1105: Optimistic lock failed on database Root update
+func isSerializationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// Error 1213: serialization failure (MySQL error code for deadlock/serialization)
+	// Error 1105: generic Dolt error for optimistic lock failures
+	return strings.Contains(errStr, "error 1213") ||
+		strings.Contains(errStr, "serialization failure") ||
+		strings.Contains(errStr, "error 1105") ||
+		strings.Contains(errStr, "optimistic lock failed")
 }
 
 // isLockError checks if an error is related to lock contention

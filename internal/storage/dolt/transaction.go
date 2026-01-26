@@ -4,12 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+)
+
+const (
+	// maxTransactionRetries is the maximum number of retry attempts for
+	// transaction commit failures due to serialization conflicts
+	maxTransactionRetries = 5
+	// initialRetryDelay is the initial delay before retrying a failed transaction
+	initialRetryDelay = 50 * time.Millisecond
 )
 
 // doltTransaction implements storage.Transaction for Dolt
@@ -24,8 +33,43 @@ func (t *doltTransaction) CreateIssueImport(ctx context.Context, issue *types.Is
 	return t.CreateIssue(ctx, issue, actor)
 }
 
-// RunInTransaction executes a function within a database transaction
+// RunInTransaction executes a function within a database transaction.
+// If the transaction fails due to a serialization conflict (Error 1213, 1105),
+// it will be automatically retried with exponential backoff.
 func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	var lastErr error
+	retryDelay := initialRetryDelay
+
+	for attempt := 0; attempt <= maxTransactionRetries; attempt++ {
+		if attempt > 0 {
+			// Log retry for debugging
+			fmt.Fprintf(os.Stderr, "Dolt transaction retry (attempt %d/%d) after serialization conflict, waiting %v...\n",
+				attempt, maxTransactionRetries, retryDelay)
+			time.Sleep(retryDelay)
+			// Exponential backoff with jitter
+			retryDelay = retryDelay * 2
+			if retryDelay > 2*time.Second {
+				retryDelay = 2 * time.Second
+			}
+		}
+
+		lastErr = s.runTransactionOnce(ctx, fn)
+		if lastErr == nil {
+			return nil
+		}
+
+		// Check if this is a retryable error
+		if !isSerializationError(lastErr) {
+			return lastErr
+		}
+		// Continue to retry
+	}
+
+	return fmt.Errorf("transaction failed after %d retries: %w", maxTransactionRetries, lastErr)
+}
+
+// runTransactionOnce executes a single transaction attempt
+func (s *DoltStore) runTransactionOnce(ctx context.Context, fn func(tx storage.Transaction) error) error {
 	sqlTx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
