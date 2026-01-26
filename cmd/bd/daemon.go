@@ -63,6 +63,7 @@ Run 'bd daemon --help' to see all subcommands.`,
 		foreground, _ := cmd.Flags().GetBool("foreground")
 		logLevel, _ := cmd.Flags().GetString("log-level")
 		logJSON, _ := cmd.Flags().GetBool("log-json")
+		federation, _ := cmd.Flags().GetBool("federation")
 
 		// If no operation flags provided, show help
 		if !start && !stop && !stopAll && !status && !health && !metrics {
@@ -139,6 +140,15 @@ Run 'bd daemon --help' to see all subcommands.`,
 			fmt.Fprintf(os.Stderr, "Error: --start flag is required to start the daemon\n")
 			fmt.Fprintf(os.Stderr, "Run 'bd daemon --help' to see available options\n")
 			os.Exit(1)
+		}
+
+		// Guard: refuse to start daemon with Dolt backend (unless --federation)
+		// This matches guardDaemonStartForDolt which guards the 'bd daemon start' subcommand.
+		if !federation {
+			if err := guardDaemonStartForDolt(cmd, args); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// Skip daemon-running check if we're the forked child (BD_DAEMON_FOREGROUND=1)
@@ -237,7 +247,6 @@ Run 'bd daemon --help' to see all subcommands.`,
 			fmt.Printf("Logging to: %s\n", logFile)
 		}
 
-		federation, _ := cmd.Flags().GetBool("federation")
 		federationPort, _ := cmd.Flags().GetInt("federation-port")
 		remotesapiPort, _ := cmd.Flags().GetInt("remotesapi-port")
 		startDaemon(interval, autoCommit, autoPush, autoPull, localMode, foreground, logFile, pidFile, logLevel, logJSON, federation, federationPort, remotesapiPort)
@@ -355,6 +364,25 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	backend := factory.GetBackendFromConfig(beadsDir)
 	if backend == "" {
 		backend = configfile.BackendSQLite
+	}
+
+	// Daemon is not supported with dolt backend - refuse to start
+	if backend == configfile.BackendDolt {
+		errMsg := `DAEMON NOT SUPPORTED WITH DOLT BACKEND
+
+The bd daemon is designed for SQLite backend only.
+With dolt backend, connect directly to the dolt sql-server.
+
+The daemon will now exit.`
+		log.Error(errMsg)
+
+		// Write error to file so user can see it without checking logs
+		errFile := filepath.Join(beadsDir, "daemon-error")
+		// nolint:gosec // G306: Error file needs to be readable for debugging
+		if err := os.WriteFile(errFile, []byte(errMsg), 0644); err != nil {
+			log.Warn("could not write daemon-error file", "error", err)
+		}
+		return
 	}
 
 	// Reset backoff on daemon start (fresh start, but preserve NeedsManualSync hint)
@@ -527,6 +555,13 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 			return // Use return instead of os.Exit to allow defers to run
 		}
 		log.Warn("repository mismatch ignored (BEADS_IGNORE_REPO_MISMATCH=1)")
+	}
+
+	// GH#1258: Warn at startup if sync-branch == current-branch (misconfiguration)
+	// This is a one-time warning - per-operation skipping is handled by shouldSkipDueToSameBranch()
+	// Skip check in local mode (no sync-branch is used)
+	if !localMode {
+		warnIfSyncBranchMisconfigured(ctx, store, log)
 	}
 
 	// Validate schema version matches daemon version

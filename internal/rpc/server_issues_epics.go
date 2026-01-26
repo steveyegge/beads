@@ -1333,6 +1333,12 @@ func (s *Server) handleList(req *Request) Response {
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
+	// Populate dependencies for JSON output
+	allDeps, _ := store.GetAllDependencyRecords(ctx)
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
 	// Get epic progress in bulk for epics
 	epicProgress, _ := store.GetEpicProgress(ctx, epicIDs)
 	if epicProgress == nil {

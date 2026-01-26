@@ -296,6 +296,13 @@ if [ -z "$BEADS_DIR" ]; then
     exit 0
 fi
 
+# Skip for Dolt backend (uses its own sync mechanism, not JSONL)
+if [ -f "$BEADS_DIR/metadata.json" ]; then
+    if grep -q '"backend"[[:space:]]*:[[:space:]]*"dolt"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
+        exit 0
+    fi
+fi
+
 # Flush pending changes to JSONL
 if ! bd sync --flush-only >/dev/null 2>&1; then
     echo "Error: Failed to flush bd changes to JSONL" >&2
@@ -390,6 +397,13 @@ fi
 
 if [ -z "$BEADS_DIR" ]; then
     exit 0
+fi
+
+# Skip for Dolt backend (uses its own sync mechanism, not JSONL import)
+if [ -f "$BEADS_DIR/metadata.json" ]; then
+    if grep -q '"backend"[[:space:]]*:[[:space:]]*"dolt"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
+        exit 0
+    fi
 fi
 
 # Check if issues.jsonl exists and was updated

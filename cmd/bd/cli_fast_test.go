@@ -400,6 +400,64 @@ func TestCLI_UpdateEphemeralMutualExclusion(t *testing.T) {
 	}
 }
 
+func TestCLI_UpdateAppendNotes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow CLI test in short mode")
+	}
+	tmpDir := setupCLITestDB(t)
+	out := runBDInProcess(t, tmpDir, "create", "Issue for append-notes test", "-p", "2", "--notes", "Original notes", "--json")
+
+	var issue map[string]interface{}
+	json.Unmarshal([]byte(out), &issue)
+	id := issue["id"].(string)
+
+	// Test appending notes
+	runBDInProcess(t, tmpDir, "update", id, "--append-notes", "Appended content")
+
+	out = runBDInProcess(t, tmpDir, "show", id, "--json")
+	var updated []map[string]interface{}
+	json.Unmarshal([]byte(out), &updated)
+	notes := updated[0]["notes"].(string)
+	if notes != "Original notes\nAppended content" {
+		t.Errorf("Expected 'Original notes\\nAppended content', got: %q", notes)
+	}
+
+	// Test appending to empty notes
+	out = runBDInProcess(t, tmpDir, "create", "Issue with empty notes", "-p", "2", "--json")
+	json.Unmarshal([]byte(out), &issue)
+	id2 := issue["id"].(string)
+
+	runBDInProcess(t, tmpDir, "update", id2, "--append-notes", "First note")
+
+	out = runBDInProcess(t, tmpDir, "show", id2, "--json")
+	json.Unmarshal([]byte(out), &updated)
+	notes = updated[0]["notes"].(string)
+	if notes != "First note" {
+		t.Errorf("Expected 'First note', got: %q", notes)
+	}
+}
+
+func TestCLI_UpdateAppendNotesMutualExclusion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow CLI test in short mode")
+	}
+	tmpDir := setupCLITestDB(t)
+	out := runBDInProcess(t, tmpDir, "create", "Issue for notes mutual exclusion", "-p", "2", "--json")
+
+	var issue map[string]interface{}
+	json.Unmarshal([]byte(out), &issue)
+	id := issue["id"].(string)
+
+	// Both --notes and --append-notes should error
+	_, stderr, err := runBDInProcessAllowError(t, tmpDir, "update", id, "--notes", "New notes", "--append-notes", "Appended")
+	if err == nil {
+		t.Errorf("Expected error when both --notes and --append-notes specified, got none")
+	}
+	if !strings.Contains(stderr, "cannot specify both --notes and --append-notes") {
+		t.Errorf("Expected mutual exclusion error message, got: %v", stderr)
+	}
+}
+
 func TestCLI_Close(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow CLI test in short mode")

@@ -35,6 +35,10 @@ type Config struct {
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
+	// Stale closed issues check configuration
+	// 0 = disabled (default), positive = threshold in days
+	StaleClosedIssuesDays int `json:"stale_closed_issues_days,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -158,6 +162,15 @@ func (c *Config) GetDeletionsRetentionDays() int {
 		return DefaultDeletionsRetentionDays
 	}
 	return c.DeletionsRetentionDays
+}
+
+// GetStaleClosedIssuesDays returns the configured threshold for stale closed issues.
+// Returns 0 if disabled (the default), or a positive value if enabled.
+func (c *Config) GetStaleClosedIssuesDays() int {
+	if c.StaleClosedIssuesDays < 0 {
+		return 0
+	}
+	return c.StaleClosedIssuesDays
 }
 
 // Backend constants

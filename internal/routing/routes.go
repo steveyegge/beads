@@ -455,9 +455,19 @@ func GetRoutedStorageWithOpener(ctx context.Context, id, currentBeadsDir string,
 		return nil, nil // No routing needed, caller should use existing storage
 	}
 
+	// Check if target is same as current - no need to open a new store
+	if beadsDir == currentBeadsDir {
+		return nil, nil // Same directory, caller should use existing storage
+	}
+
 	// Open storage for the routed directory using the factory to respect backend type
 	// This supports both SQLite and Dolt backends based on metadata.json
-	store, err := factory.NewFromConfig(ctx, beadsDir)
+	var store storage.Storage
+	if opener != nil {
+		store, err = opener(ctx, beadsDir)
+	} else {
+		store, err = factory.NewFromConfig(ctx, beadsDir)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to open routed storage at %s: %w", beadsDir, err)
 	}

@@ -265,8 +265,14 @@ func openEmbeddedConnection(ctx context.Context, cfg *Config) (*sql.DB, string, 
 
 	// Disable statistics collection to avoid stats subdatabase lock issues
 	// The stats database can cause "cannot update manifest: database is read only"
-	// errors when multiple processes access the embedded Dolt database
+	// errors when multiple processes access the embedded Dolt database.
+	// We disable stats via multiple methods to ensure it's fully stopped:
+	// 1. Set the enabled flag to 0
+	// 2. Call dolt_stats_stop() to stop the background stats worker
+	// 3. Set auto-refresh interval to 0 to prevent automatic restarts
 	_, _ = db.ExecContext(ctx, "SET @@dolt_stats_enabled = 0")
+	_, _ = db.ExecContext(ctx, "SET @@dolt_stats_auto_refresh_interval = 0")
+	_, _ = db.ExecContext(ctx, "CALL dolt_stats_stop()")
 
 	return db, connStr, nil
 }
@@ -317,6 +323,11 @@ func openServerConnection(ctx context.Context, cfg *Config) (*sql.DB, string, er
 		errLower := strings.ToLower(err.Error())
 		if !strings.Contains(errLower, "database exists") && !strings.Contains(errLower, "1007") {
 			_ = db.Close()
+			// Check for connection refused - server likely not running
+			if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "connect: connection refused") {
+				return nil, "", fmt.Errorf("failed to connect to Dolt server at %s:%d: %w\n\nThe Dolt server may not be running. Try:\n  gt dolt start    # If using Gas Town\n  dolt sql-server  # Manual start in database directory",
+					cfg.ServerHost, cfg.ServerPort, err)
+			}
 			return nil, "", fmt.Errorf("failed to create database: %w", err)
 		}
 		// Database already exists - that's fine, continue
@@ -757,19 +768,35 @@ func isLockError(err error) bool {
 // cleanupStaleDoltLock removes stale LOCK files from the Dolt noms directory.
 // The embedded Dolt driver creates a LOCK file that persists after crashes,
 // causing subsequent opens to fail with "database is read only" errors.
+// This also cleans up the stats subdatabase LOCK which causes similar issues.
 func cleanupStaleDoltLock(dbPath string, database string) error {
-	// The LOCK file is in the noms directory under .dolt
-	// For a database at /path/to/dolt with database name "beads",
-	// the lock is at /path/to/dolt/beads/.dolt/noms/LOCK
-	lockPath := filepath.Join(dbPath, database, ".dolt", "noms", "LOCK")
+	// Clean up main database LOCK and stats subdatabase LOCK
+	// The stats subdatabase at .dolt/stats/.dolt/noms/LOCK can cause
+	// "cannot update manifest: database is read only" errors
+	lockPaths := []string{
+		filepath.Join(dbPath, database, ".dolt", "noms", "LOCK"),
+		filepath.Join(dbPath, database, ".dolt", "stats", ".dolt", "noms", "LOCK"),
+		filepath.Join(dbPath, database, ".dolt", "noms", "oldgen", "LOCK"),
+	}
 
+	for _, lockPath := range lockPaths {
+		if err := cleanupSingleLock(lockPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// cleanupSingleLock removes a single stale LOCK file if it appears to be orphaned
+func cleanupSingleLock(lockPath string) error {
 	info, err := os.Stat(lockPath)
 	if os.IsNotExist(err) {
 		// No lock file, nothing to do
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("stat lock file: %w", err)
+		return fmt.Errorf("stat lock file %s: %w", lockPath, err)
 	}
 
 	// Check if lock file is empty (Dolt creates empty LOCK files)
@@ -779,16 +806,13 @@ func cleanupStaleDoltLock(dbPath string, database string) error {
 		// it's likely stale from a crashed process
 		age := time.Since(info.ModTime())
 		if age > 5*time.Second {
-			fmt.Fprintf(os.Stderr, "Removing stale Dolt LOCK file (age: %v)\n", age.Round(time.Second))
+			fmt.Fprintf(os.Stderr, "Removing stale Dolt LOCK file: %s (age: %v)\n", lockPath, age.Round(time.Second))
 			if err := os.Remove(lockPath); err != nil {
-				return fmt.Errorf("remove stale lock: %w", err)
+				return fmt.Errorf("remove stale lock %s: %w", lockPath, err)
 			}
-			return nil
 		}
-		// Lock is recent, might be held by another process
-		return nil
 	}
 
-	// Non-empty lock file - might contain PID info, don't touch it
+	// Non-empty or recent lock file - don't touch it
 	return nil
 }

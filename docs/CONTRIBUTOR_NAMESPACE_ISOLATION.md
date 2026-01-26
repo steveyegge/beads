@@ -315,6 +315,18 @@ export BEADS_DIR=~/.beads-planning
 bd create "My task" -p 1
 ```
 
+**Note**: `bd init` and `bd doctor` also respect `BEADS_DIR`:
+
+```bash
+# Initialize directly at BEADS_DIR location (no need to cd)
+mkdir -p ~/.beads-planning/.beads
+export BEADS_DIR=~/.beads-planning/.beads
+bd init --prefix planning    # Creates database at $BEADS_DIR
+
+# Doctor checks BEADS_DIR location (not CWD)
+bd doctor                    # Diagnoses database at $BEADS_DIR
+```
+
 ## Troubleshooting
 
 ### Routing Not Working

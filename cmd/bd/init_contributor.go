@@ -95,7 +95,12 @@ func runContributorWizard(ctx context.Context, store storage.Storage) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
+	// Use BEADS_DIR as default if set (user explicitly set it and continued past warning)
+	// Otherwise fall back to ~/.beads-planning
 	defaultPlanningRepo := filepath.Join(homeDir, ".beads-planning")
+	if envBeadsDir := os.Getenv("BEADS_DIR"); envBeadsDir != "" {
+		defaultPlanningRepo = envBeadsDir
+	}
 
 	fmt.Printf("\nWhere should contributor planning issues be stored?\n")
 	fmt.Printf("Default: %s\n", ui.RenderAccent(defaultPlanningRepo))
