@@ -22,7 +22,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -38,8 +37,13 @@ func withStorage(ctx context.Context, store storage.Storage, dbPath string, lock
 	if store != nil {
 		return fn(store)
 	} else if dbPath != "" {
-		// Daemon mode: open read-only connection
-		roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout)
+		// Daemon mode: open read-only connection based on configured backend
+		// (supports both SQLite and Dolt backends)
+		beadsDir := filepath.Dir(dbPath)
+		roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+			ReadOnly:    true,
+			LockTimeout: lockTimeout,
+		})
 		if err != nil {
 			return err
 		}
@@ -1136,8 +1140,12 @@ var listCmd = &cobra.Command{
 				if store != nil {
 					allDeps, _ = store.GetAllDependencyRecords(ctx)
 				} else if dbPath != "" {
-					// Daemon mode: open read-only connection for tree deps
-					if roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout); err == nil {
+					// Daemon mode: open read-only connection for tree deps (supports Dolt)
+					beadsDir := filepath.Dir(dbPath)
+					if roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+						ReadOnly:    true,
+						LockTimeout: lockTimeout,
+					}); err == nil {
 						allDeps, _ = roStore.GetAllDependencyRecords(ctx)
 						_ = roStore.Close()
 					}
