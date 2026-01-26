@@ -427,8 +427,8 @@ silent corruption when databases are copied between repositories.
 DATABASE MISMATCH DETECTED!
 
 This database belongs to a different repository:
-  Database repo ID:  %s
-  Current repo ID:   %s
+  Database repo ID:  %s (full: %s)
+  Current repo ID:   %s (full: %s)
 
 This usually means:
   1. You copied a .beads directory from another repo (don't do this!)
@@ -446,7 +446,7 @@ Solutions:
   - If wrong database: rm -rf .beads && bd init
   - If correct database: BEADS_IGNORE_REPO_MISMATCH=1 bd daemon
     (Warning: This can cause data corruption and unwanted deletions across clones!)
-`, storedRepoID[:8], currentRepoID[:8])
+`, storedRepoID[:8], storedRepoID, currentRepoID[:8], currentRepoID)
 	}
 
 	log.log("Repository fingerprint validated: %s", currentRepoID[:8])

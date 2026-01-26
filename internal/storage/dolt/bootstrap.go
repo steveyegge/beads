@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/audit"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
@@ -225,6 +226,20 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 	if result.PrefixDetected != "" {
 		if err := store.SetConfig(ctx, "issue_prefix", result.PrefixDetected); err != nil {
 			return nil, fmt.Errorf("failed to set issue_prefix: %w", err)
+		}
+	}
+
+	// Set repository fingerprint metadata (for database identity validation)
+	if repoID, err := beads.ComputeRepoID(); err == nil {
+		if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to set repo_id: %v\n", err)
+		}
+	}
+
+	// Set clone-specific ID (for collision detection across clones)
+	if cloneID, err := beads.GetCloneID(); err == nil {
+		if err := store.SetMetadata(ctx, "clone_id", cloneID); err != nil {
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to set clone_id: %v\n", err)
 		}
 	}
 
