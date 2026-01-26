@@ -105,13 +105,26 @@ func (s *Server) validateDatabaseBinding(req *Request) error {
 		daemonPath = filepath.Clean(daemonDB)
 	}
 
-	// Compare paths
-	if expectedPath != daemonPath {
-		return fmt.Errorf("database mismatch: client expects %s but daemon serves %s. Wrong daemon connection - check socket path",
-			req.ExpectedDB, daemonDB)
+	// Compare paths - exact match is preferred
+	if expectedPath == daemonPath {
+		return nil
 	}
 
-	return nil
+	// If exact paths don't match, check if they're in the same .beads directory.
+	// This handles mixed backend scenarios where client expects beads.db but daemon
+	// serves dolt (or vice versa). Both are valid for the same workspace.
+	// See bugs: hq-2c5a32, hq-6bb492, gt-99c96f
+	expectedBeadsDir := filepath.Dir(expectedPath)
+	daemonBeadsDir := filepath.Dir(daemonPath)
+
+	// Normalize .beads directory comparison
+	if expectedBeadsDir == daemonBeadsDir && filepath.Base(expectedBeadsDir) == ".beads" {
+		// Same workspace, different backend assumptions - daemon takes precedence
+		return nil
+	}
+
+	return fmt.Errorf("database mismatch: client expects %s but daemon serves %s. Wrong daemon connection - check socket path",
+		req.ExpectedDB, daemonDB)
 }
 
 func (s *Server) handleRequest(req *Request) Response {

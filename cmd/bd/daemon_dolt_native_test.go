@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/memory"
 )
 
@@ -95,7 +96,14 @@ func TestGetSyncModeDoltNative(t *testing.T) {
 	ctx := context.Background()
 	store := memory.New("test")
 
-	// Default should be git-portable
+	// Initialize config and clear sync.mode to test default behavior
+	// This ensures the test is isolated from environment config
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+	config.Set("sync.mode", "")
+
+	// Default should be git-portable when neither database nor config.yaml has a value
 	mode := GetSyncMode(ctx, store)
 	if mode != SyncModeGitPortable {
 		t.Errorf("expected default mode %s, got %s", SyncModeGitPortable, mode)

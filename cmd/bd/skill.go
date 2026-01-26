@@ -1237,14 +1237,14 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("\n---\n")
+	fmt.Print("\n---\n\n")
 	fmt.Printf("## Your Skills (%d loaded)\n\n", len(loadedSkills))
-	fmt.Println("The following skill documentation has been loaded for your capabilities:\n")
+	fmt.Print("The following skill documentation has been loaded for your capabilities:\n\n")
 
 	for _, skill := range loadedSkills {
 		fmt.Printf("### %s\n\n", skill.Name)
 		fmt.Println(skill.Content)
-		fmt.Println("\n---\n")
+		fmt.Print("\n---\n\n")
 	}
 
 	return nil
@@ -1693,7 +1693,7 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 	ctx := rootCtx
 	_ = ctx // ctx available for future use
 
-	fmt.Println("=== Skill E2E Integration Test ===\n")
+	fmt.Print("=== Skill E2E Integration Test ===\n\n")
 
 	// Step 1: Check if e2e-test skill exists
 	fmt.Println("Step 1: Checking e2e-test skill...")

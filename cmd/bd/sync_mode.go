@@ -60,16 +60,15 @@ func GetSyncMode(ctx context.Context, s storage.Storage) string {
 
 	// Fall back to database (legacy path)
 	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
-	if err != nil || mode == "" {
-		return SyncModeGitPortable
+	if err == nil && mode != "" {
+		// Validate mode using the shared validation
+		if config.IsValidSyncMode(mode) {
+			return mode
+		}
 	}
 
-	// Validate mode using the shared validation
-	if !config.IsValidSyncMode(mode) {
-		return SyncModeGitPortable
-	}
-
-	return mode
+	// Default to git-portable
+	return SyncModeGitPortable
 }
 
 // SetSyncMode sets the sync mode configuration in the database.

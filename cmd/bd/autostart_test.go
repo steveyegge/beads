@@ -14,10 +14,12 @@ func TestDaemonAutoStart(t *testing.T) {
 	if err := config.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize config: %v", err)
 	}
-	
+
 	// Save original env
 	origAutoStart := os.Getenv("BEADS_AUTO_START_DAEMON")
 	origNoDaemon := os.Getenv("BEADS_NO_DAEMON")
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	origDBPath := dbPath
 	defer func() {
 		if origAutoStart != "" {
 			os.Setenv("BEADS_AUTO_START_DAEMON", origAutoStart)
@@ -29,7 +31,22 @@ func TestDaemonAutoStart(t *testing.T) {
 		} else {
 			os.Unsetenv("BEADS_NO_DAEMON")
 		}
+		if origBeadsDir != "" {
+			os.Setenv("BEADS_DIR", origBeadsDir)
+		} else {
+			os.Unsetenv("BEADS_DIR")
+		}
+		dbPath = origDBPath
 	}()
+
+	// Create temp beads directory without Dolt config to isolate from production config
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create test beads dir: %v", err)
+	}
+	os.Setenv("BEADS_DIR", beadsDir)
+	dbPath = filepath.Join(beadsDir, "beads.db")
 
 	// Ensure BEADS_NO_DAEMON doesn't interfere with these tests
 	os.Unsetenv("BEADS_NO_DAEMON")
