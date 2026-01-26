@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/beads"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -186,19 +186,10 @@ func CheckOrphanedDependencies(path string) DoctorCheck {
 func CheckDuplicateIssues(path string, gastownMode bool, gastownThreshold int) DoctorCheck {
 	// Follow redirect to resolve actual beads directory (bd-tvus fix)
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
-	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:    "Duplicate Issues",
-			Status:  "ok",
-			Message: "N/A (no database)",
-		}
-	}
 
 	// Open store to use existing duplicate detection
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		return DoctorCheck{
 			Name:    "Duplicate Issues",

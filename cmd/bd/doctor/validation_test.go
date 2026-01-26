@@ -263,15 +263,16 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No database file created
+	// No database file created - factory will create an empty one
 
 	check := CheckDuplicateIssues(tmpDir, false, 1000)
 
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "N/A (no database)" {
-		t.Errorf("Message = %q, want 'N/A (no database)'", check.Message)
+	// With factory approach, empty database is created and returns "No duplicate issues"
+	if check.Message != "No duplicate issues" {
+		t.Errorf("Message = %q, want 'No duplicate issues'", check.Message)
 	}
 }
 
