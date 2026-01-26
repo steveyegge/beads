@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -25,6 +26,7 @@ var (
 	activityLimit    int
 	activityInterval time.Duration
 	activityTown     bool
+	activityDetails  bool
 )
 
 // ActivityEvent represents a formatted activity event for output
@@ -40,6 +42,8 @@ type ActivityEvent struct {
 	ParentID  string `json:"parent_id,omitempty"`
 	StepCount int    `json:"step_count,omitempty"`
 	Actor     string `json:"actor,omitempty"`
+	// Full issue details (populated when --details is used)
+	Issue *types.IssueDetails `json:"issue,omitempty"`
 }
 
 var activityCmd = &cobra.Command{
@@ -67,7 +71,8 @@ Examples:
   bd activity --type update       # Only show updates
   bd activity --limit 50          # Show last 50 events
   bd activity --town              # Aggregated feed from all rigs
-  bd activity --follow --town     # Stream all rig activity`,
+  bd activity --follow --town     # Stream all rig activity
+  bd activity --details --json    # Full issue details in JSON output`,
 	Run: runActivity,
 }
 
@@ -79,6 +84,7 @@ func init() {
 	activityCmd.Flags().IntVar(&activityLimit, "limit", 100, "Maximum number of events to show")
 	activityCmd.Flags().DurationVar(&activityInterval, "interval", 500*time.Millisecond, "Polling interval for --follow mode")
 	activityCmd.Flags().BoolVar(&activityTown, "town", false, "Aggregated feed from all rigs (uses routes.jsonl)")
+	activityCmd.Flags().BoolVarP(&activityDetails, "details", "d", false, "Include full issue details in output (works best with --json)")
 
 	rootCmd.AddCommand(activityCmd)
 }
@@ -136,7 +142,11 @@ func runActivityOnce(sinceTime time.Time) {
 	if jsonOutput {
 		formatted := make([]ActivityEvent, 0, len(events))
 		for _, e := range events {
-			formatted = append(formatted, formatEvent(e))
+			var details *types.IssueDetails
+			if activityDetails {
+				details = fetchIssueDetails(daemonClient, e.IssueID)
+			}
+			formatted = append(formatted, formatEventWithDetails(e, details))
 		}
 		outputJSON(formatted)
 		return
@@ -147,8 +157,15 @@ func runActivityOnce(sinceTime time.Time) {
 		return
 	}
 
+	// For text output with --details, show full issue info
 	for _, e := range events {
 		printEvent(e)
+		if activityDetails {
+			details := fetchIssueDetails(daemonClient, e.IssueID)
+			if details != nil {
+				printEventDetails(details)
+			}
+		}
 	}
 }
 
@@ -172,10 +189,20 @@ func runActivityFollow(sinceTime time.Time) {
 	events = filterEvents(events)
 	for _, e := range events {
 		if jsonOutput {
-			data, _ := json.Marshal(formatEvent(e))
+			var details *types.IssueDetails
+			if activityDetails {
+				details = fetchIssueDetails(daemonClient, e.IssueID)
+			}
+			data, _ := json.Marshal(formatEventWithDetails(e, details))
 			fmt.Println(string(data))
 		} else {
 			printEvent(e)
+			if activityDetails {
+				details := fetchIssueDetails(daemonClient, e.IssueID)
+				if details != nil {
+					printEventDetails(details)
+				}
+			}
 		}
 		if e.Timestamp.After(lastPoll) {
 			lastPoll = e.Timestamp
@@ -243,10 +270,20 @@ func runActivityFollow(sinceTime time.Time) {
 			newEvents = filterEvents(newEvents)
 			for _, e := range newEvents {
 				if jsonOutput {
-					data, _ := json.Marshal(formatEvent(e))
+					var details *types.IssueDetails
+					if activityDetails {
+						details = fetchIssueDetails(daemonClient, e.IssueID)
+					}
+					data, _ := json.Marshal(formatEventWithDetails(e, details))
 					fmt.Println(string(data))
 				} else {
 					printEvent(e)
+					if activityDetails {
+						details := fetchIssueDetails(daemonClient, e.IssueID)
+						if details != nil {
+							printEventDetails(details)
+						}
+					}
 				}
 				if e.Timestamp.After(lastPoll) {
 					lastPoll = e.Timestamp
@@ -276,6 +313,25 @@ func fetchMutations(since time.Time) ([]rpc.MutationEvent, error) {
 	return mutations, nil
 }
 
+// fetchIssueDetails retrieves full issue details from the daemon
+func fetchIssueDetails(client *rpc.Client, issueID string) *types.IssueDetails {
+	if client == nil {
+		return nil
+	}
+
+	resp, err := client.Show(&rpc.ShowArgs{ID: issueID})
+	if err != nil || !resp.Success {
+		return nil
+	}
+
+	var details types.IssueDetails
+	if err := json.Unmarshal(resp.Data, &details); err != nil {
+		return nil
+	}
+
+	return &details
+}
+
 // filterEvents applies --mol and --type filters
 func filterEvents(events []rpc.MutationEvent) []rpc.MutationEvent {
 	if activityMol == "" && activityType == "" {
@@ -299,6 +355,11 @@ func filterEvents(events []rpc.MutationEvent) []rpc.MutationEvent {
 
 // formatEvent converts a mutation event to a formatted activity event
 func formatEvent(e rpc.MutationEvent) ActivityEvent {
+	return formatEventWithDetails(e, nil)
+}
+
+// formatEventWithDetails converts a mutation event to a formatted activity event with optional details
+func formatEventWithDetails(e rpc.MutationEvent, details *types.IssueDetails) ActivityEvent {
 	symbol, message := getEventDisplay(e)
 	return ActivityEvent{
 		Timestamp: e.Timestamp,
@@ -311,6 +372,7 @@ func formatEvent(e rpc.MutationEvent) ActivityEvent {
 		ParentID:  e.ParentID,
 		StepCount: e.StepCount,
 		Actor:     e.Actor,
+		Issue:     details,
 	}
 }
 
@@ -419,6 +481,48 @@ func printEvent(e rpc.MutationEvent) {
 	}
 
 	fmt.Printf("[%s] %s %s\n", timestamp, coloredSymbol, message)
+}
+
+// printEventDetails prints full issue details for text output with --details
+func printEventDetails(details *types.IssueDetails) {
+	fmt.Printf("Status: %s  Priority: P%d  Type: %s\n",
+		details.Status, details.Priority, details.IssueType)
+	if details.Assignee != "" {
+		fmt.Printf("Assignee: %s\n", details.Assignee)
+	}
+	if len(details.Labels) > 0 {
+		fmt.Printf("Labels: %s\n", strings.Join(details.Labels, ", "))
+	}
+	if details.Description != "" {
+		desc := truncateString(details.Description, 80)
+		desc = strings.ReplaceAll(desc, "\n", " ")
+		fmt.Printf("Description: %s\n", desc)
+	}
+	if len(details.Dependencies) > 0 {
+		deps := make([]string, 0, len(details.Dependencies))
+		for _, d := range details.Dependencies {
+			deps = append(deps, d.ID)
+		}
+		fmt.Printf("Depends on: %s\n", strings.Join(deps, ", "))
+	}
+	if len(details.Dependents) > 0 {
+		dependents := make([]string, 0, len(details.Dependents))
+		for _, d := range details.Dependents {
+			dependents = append(dependents, d.ID)
+		}
+		fmt.Printf("Blocked by: %s\n", strings.Join(dependents, ", "))
+	}
+	if len(details.Comments) > 0 {
+		fmt.Printf("Comments: %d\n", len(details.Comments))
+		for _, c := range details.Comments {
+			text := truncateString(c.Text, 60)
+			text = strings.ReplaceAll(text, "\n", " ")
+			fmt.Printf("    @%s: %s\n", c.Author, text)
+		}
+	}
+	fmt.Printf("Created: %s  Updated: %s\n",
+		details.CreatedAt.Format("2006-01-02 15:04"), details.UpdatedAt.Format("2006-01-02 15:04"))
+	fmt.Println() // Blank line between events
 }
 
 // parseDurationString parses duration strings like "5m", "1h", "30s", "2d"
@@ -545,6 +649,16 @@ func fetchTownMutations(daemons []rigDaemon, since time.Time) []rpc.MutationEven
 	return events
 }
 
+// findDaemonForIssue finds the appropriate daemon client for an issue ID based on prefix
+func findDaemonForIssue(daemons []rigDaemon, issueID string) *rpc.Client {
+	for _, d := range daemons {
+		if d.client != nil && strings.HasPrefix(issueID, d.prefix) {
+			return d.client
+		}
+	}
+	return nil
+}
+
 // fetchTownMutationsWithStatus retrieves mutations and returns count of responding daemons
 func fetchTownMutationsWithStatus(daemons []rigDaemon, since time.Time) ([]rpc.MutationEvent, int) {
 	var allEvents []rpc.MutationEvent
@@ -613,7 +727,12 @@ func runTownActivityOnce(sinceTime time.Time) {
 	if jsonOutput {
 		formatted := make([]ActivityEvent, 0, len(events))
 		for _, e := range events {
-			formatted = append(formatted, formatEvent(e))
+			var details *types.IssueDetails
+			if activityDetails {
+				client := findDaemonForIssue(daemons, e.IssueID)
+				details = fetchIssueDetails(client, e.IssueID)
+			}
+			formatted = append(formatted, formatEventWithDetails(e, details))
 		}
 		outputJSON(formatted)
 		return
@@ -626,6 +745,13 @@ func runTownActivityOnce(sinceTime time.Time) {
 
 	for _, e := range events {
 		printEvent(e)
+		if activityDetails {
+			client := findDaemonForIssue(daemons, e.IssueID)
+			details := fetchIssueDetails(client, e.IssueID)
+			if details != nil {
+				printEventDetails(details)
+			}
+		}
 	}
 }
 
@@ -667,10 +793,22 @@ func runTownActivityFollow(sinceTime time.Time) {
 
 	for _, e := range events {
 		if jsonOutput {
-			data, _ := json.Marshal(formatEvent(e))
+			var details *types.IssueDetails
+			if activityDetails {
+				client := findDaemonForIssue(daemons, e.IssueID)
+				details = fetchIssueDetails(client, e.IssueID)
+			}
+			data, _ := json.Marshal(formatEventWithDetails(e, details))
 			fmt.Println(string(data))
 		} else {
 			printEvent(e)
+			if activityDetails {
+				client := findDaemonForIssue(daemons, e.IssueID)
+				details := fetchIssueDetails(client, e.IssueID)
+				if details != nil {
+					printEventDetails(details)
+				}
+			}
 		}
 		if e.Timestamp.After(lastPoll) {
 			lastPoll = e.Timestamp
@@ -722,10 +860,22 @@ func runTownActivityFollow(sinceTime time.Time) {
 
 			for _, e := range newEvents {
 				if jsonOutput {
-					data, _ := json.Marshal(formatEvent(e))
+					var details *types.IssueDetails
+					if activityDetails {
+						client := findDaemonForIssue(daemons, e.IssueID)
+						details = fetchIssueDetails(client, e.IssueID)
+					}
+					data, _ := json.Marshal(formatEventWithDetails(e, details))
 					fmt.Println(string(data))
 				} else {
 					printEvent(e)
+					if activityDetails {
+						client := findDaemonForIssue(daemons, e.IssueID)
+						details := fetchIssueDetails(client, e.IssueID)
+						if details != nil {
+							printEventDetails(details)
+						}
+					}
 				}
 				if e.Timestamp.After(lastPoll) {
 					lastPoll = e.Timestamp
