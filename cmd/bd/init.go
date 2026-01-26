@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -356,11 +355,10 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 		if backend == configfile.BackendDolt {
 			// Dolt uses a directory, not a file
 			storagePath = filepath.Join(beadsDir, "dolt")
-			store, err = factory.New(ctx, backend, storagePath)
 		} else {
 			storagePath = initDBPath
-			store, err = sqlite.New(ctx, storagePath)
 		}
+		store, err = factory.New(ctx, backend, storagePath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
 			os.Exit(1)
