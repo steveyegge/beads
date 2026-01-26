@@ -10,24 +10,60 @@ import (
 
 // AddLabel adds a label to an issue
 func (s *DoltStore) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT IGNORE INTO labels (issue_id, label) VALUES (?, ?)
 	`, issueID, label)
 	if err != nil {
 		return fmt.Errorf("failed to add label: %w", err)
 	}
-	return nil
+
+	// Only record event if label was actually added
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := recordEvent(ctx, tx, issueID, types.EventLabelAdded, actor, "", fmt.Sprintf("Added label: %s", label)); err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
+		if err := markDirty(ctx, tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark dirty: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // RemoveLabel removes a label from an issue
 func (s *DoltStore) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM labels WHERE issue_id = ? AND label = ?
 	`, issueID, label)
 	if err != nil {
 		return fmt.Errorf("failed to remove label: %w", err)
 	}
-	return nil
+
+	// Only record event if label was actually removed
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := recordEvent(ctx, tx, issueID, types.EventLabelRemoved, actor, "", fmt.Sprintf("Removed label: %s", label)); err != nil {
+			return fmt.Errorf("failed to record event: %w", err)
+		}
+		if err := markDirty(ctx, tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark dirty: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetLabels retrieves all labels for an issue

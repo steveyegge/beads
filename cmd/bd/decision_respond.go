@@ -209,8 +209,12 @@ func runDecisionRespond(cmd *cobra.Command, args []string) {
 
 		// Update labels to sync with gt decision system (hq-3q571)
 		// Remove decision:pending and add decision:resolved
-		_ = store.RemoveLabel(ctx, resolvedID, "decision:pending", actor)
-		_ = store.AddLabel(ctx, resolvedID, "decision:resolved", actor)
+		if err := store.RemoveLabel(ctx, resolvedID, "decision:pending", actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove decision:pending label: %v\n", err)
+		}
+		if err := store.AddLabel(ctx, resolvedID, "decision:resolved", actor); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add decision:resolved label: %v\n", err)
+		}
 	} else if shouldIterate {
 		// Trigger iterative refinement (hq-946577.23)
 		iterationResult, iterationErr = decision.CreateNextIteration(ctx, store, dp, issue, textResponse, respondedBy, actor)
