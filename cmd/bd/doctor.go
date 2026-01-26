@@ -58,6 +58,7 @@ var (
 	doctorDeep                  bool // full graph integrity validation
 	doctorGastown               bool // running in gastown multi-workspace mode
 	gastownDuplicatesThreshold  int  // duplicate tolerance threshold for gastown mode
+	doctorServer                bool // run server mode health checks
 )
 
 // ConfigKeyHintsDoctor is the config key for suppressing doctor hints
@@ -114,6 +115,14 @@ Deep Validation Mode (--deep):
   - Mail thread integrity: Thread IDs reference existing issues
   - Molecule integrity: Molecules have valid parent-child structures
 
+Server Mode (--server):
+  Run health checks for Dolt server mode connections (bd-dolt.2.3):
+  - Server reachable: Can connect to configured host:port?
+  - Dolt version: Is it a Dolt server (not vanilla MySQL)?
+  - Database exists: Does the 'beads' database exist?
+  - Schema compatible: Can query beads tables?
+  - Connection pool: Pool health metrics
+
 Examples:
   bd doctor              # Check current directory
   bd doctor /path/to/repo # Check specific repository
@@ -129,14 +138,21 @@ Examples:
   bd doctor --output diagnostics.json  # Export diagnostics to file
   bd doctor --check=pollution          # Show potential test issues
   bd doctor --check=pollution --clean  # Delete test issues (with confirmation)
-  bd doctor --deep             # Full graph integrity validation`,
+  bd doctor --deep             # Full graph integrity validation
+  bd doctor --server           # Dolt server mode health checks`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun
 
 		// Determine path to check
-		checkPath := "."
+		// Precedence: explicit arg > BEADS_DIR (parent) > CWD
+		var checkPath string
 		if len(args) > 0 {
 			checkPath = args[0]
+		} else if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+			// BEADS_DIR points to .beads directory, doctor needs parent
+			checkPath = filepath.Dir(beadsDir)
+		} else {
+			checkPath = "."
 		}
 
 		// Convert to absolute path
@@ -174,6 +190,12 @@ Examples:
 		// Run deep validation if --deep flag is set
 		if doctorDeep {
 			runDeepValidation(absPath)
+			return
+		}
+
+		// Run server mode health checks if --server flag is set
+		if doctorServer {
+			runServerHealth(absPath)
 			return
 		}
 
@@ -230,6 +252,7 @@ func init() {
 	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
 	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
 	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
+	doctorCmd.Flags().BoolVar(&doctorServer, "server", false, "Run Dolt server mode health checks (connectivity, version, schema)")
 }
 
 func runDiagnostics(path string) doctorResult {
@@ -255,6 +278,13 @@ func runDiagnostics(path string) doctorResult {
 	syncBranchHookCheck := convertWithCategory(doctor.CheckSyncBranchHookCompatibility(path), doctor.CategoryGit)
 	result.Checks = append(result.Checks, syncBranchHookCheck)
 	if syncBranchHookCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	// Check git hooks Dolt compatibility (hooks without Dolt check cause errors)
+	doltHooksCheck := convertWithCategory(doctor.CheckGitHooksDoltCompatibility(path), doctor.CategoryGit)
+	result.Checks = append(result.Checks, doltHooksCheck)
+	if doltHooksCheck.Status == statusError {
 		result.OverallOK = false
 	}
 

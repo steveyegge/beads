@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -251,7 +252,14 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 			columnName = "ephemeral"
 		}
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
-		args = append(args, value)
+
+		// Handle JSON serialization for array fields stored as TEXT
+		if key == "waiters" {
+			waitersJSON, _ := json.Marshal(value)
+			args = append(args, string(waitersJSON))
+		} else {
+			args = append(args, value)
+		}
 	}
 
 	// Auto-manage closed_at
@@ -610,15 +618,47 @@ func markDirty(ctx context.Context, tx *sql.Tx, issueID string) error {
 	return err
 }
 
-// nolint:unparam // error return kept for interface consistency
-func generateIssueID(_ context.Context, _ *sql.Tx, prefix string, issue *types.Issue, _ string) (string, error) {
-	// Simple hash-based ID generation
-	// Use first 6 chars of content hash
-	hash := issue.ComputeContentHash()
-	if len(hash) > 6 {
-		hash = hash[:6]
+// generateIssueID generates a unique hash-based ID for an issue
+// Uses adaptive length based on database size and tries multiple nonces on collision
+func generateIssueID(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Get adaptive base length based on current database size
+	baseLength, err := GetAdaptiveIDLengthTx(ctx, tx, prefix)
+	if err != nil {
+		// Fallback to 6 on error
+		baseLength = 6
 	}
-	return fmt.Sprintf("%s-%s", prefix, hash), nil
+
+	// Try baseLength, baseLength+1, baseLength+2, up to max of 8
+	maxLength := 8
+	if baseLength > maxLength {
+		baseLength = maxLength
+	}
+
+	for length := baseLength; length <= maxLength; length++ {
+		// Try up to 10 nonces at each length
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := generateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+
+			// Check if this ID already exists
+			var count int
+			err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, candidate).Scan(&count)
+			if err != nil {
+				return "", fmt.Errorf("failed to check for ID collision: %w", err)
+			}
+
+			if count == 0 {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths %d-%d with 10 nonces each", baseLength, maxLength)
+}
+
+// generateHashID creates a hash-based ID for a top-level issue.
+// Uses base36 encoding (0-9, a-z) for better information density than hex.
+func generateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
+	return idgen.GenerateHashID(prefix, title, description, creator, timestamp, length, nonce)
 }
 
 func isAllowedUpdateField(key string) bool {
@@ -631,7 +671,7 @@ func isAllowedUpdateField(key string) bool {
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
 		"role_type": true, "rig": true, "mol_type": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
-		"due_at": true, "defer_until": true, "await_id": true,
+		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 	}
 	return allowed[key]
 }

@@ -69,9 +69,9 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	backend := cfg.GetBackend()
-	if configfile.CapabilitiesForBackend(backend).SingleProcessOnly {
-		return fmt.Errorf("%s", singleProcessBackendHelp(backend))
+	// Use GetCapabilities() to properly handle Dolt server mode
+	if cfg.GetCapabilities().SingleProcessOnly {
+		return fmt.Errorf("%s", singleProcessBackendHelp(cfg.GetBackend()))
 	}
 
 	return nil

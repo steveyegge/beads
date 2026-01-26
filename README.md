@@ -59,7 +59,7 @@ Beads supports hierarchical IDs for epics:
 ## 📦 Installation
 
 * **npm:** `npm install -g @beads/bd`
-* **Homebrew:** `brew install steveyegge/beads/bd`
+* **Homebrew:** `brew install beads`
 * **Go:** `go install github.com/steveyegge/beads/cmd/bd@latest`
 
 **Requirements:** Linux, FreeBSD, macOS, or Windows.
@@ -70,5 +70,5 @@ See [docs/COMMUNITY_TOOLS.md](docs/COMMUNITY_TOOLS.md) for a curated list of com
 
 ## 📝 Documentation
 
-* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
+* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
 * [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/steveyegge/beads)

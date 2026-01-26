@@ -623,13 +623,14 @@ var rootCmd = &cobra.Command{
 			debug.Logf("wisp operation detected, using direct mode")
 		}
 
-		// Dolt backend (embedded) is single-process-only; never use daemon/RPC.
+		// Embedded Dolt is single-process-only; never use daemon/RPC.
+		// (Dolt server mode supports multi-process and won't trigger this.)
 		// This must be checked after dbPath is resolved.
 		if !noDaemon && singleProcessOnlyBackend() {
 			noDaemon = true
 			daemonStatus.AutoStartEnabled = false
 			daemonStatus.FallbackReason = FallbackSingleProcessOnly
-			daemonStatus.Detail = "backend is single-process-only (dolt): daemon mode disabled; using direct mode"
+			daemonStatus.Detail = "backend is single-process-only (embedded dolt): daemon mode disabled; using direct mode"
 			debug.Logf("single-process backend detected, using direct mode")
 		}
 
@@ -837,6 +838,18 @@ var rootCmd = &cobra.Command{
 		if backend == configfile.BackendDolt {
 			// For Dolt, use the dolt subdirectory
 			doltPath := filepath.Join(beadsDir, "dolt")
+
+			// Check if server mode is configured in metadata.json
+			cfg, cfgErr := configfile.Load(beadsDir)
+			if cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
+				opts.ServerMode = true
+				opts.ServerHost = cfg.GetDoltServerHost()
+				opts.ServerPort = cfg.GetDoltServerPort()
+				if cfg.Database != "" {
+					opts.Database = cfg.Database
+				}
+			}
+
 			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
 		} else {
 			// SQLite backend

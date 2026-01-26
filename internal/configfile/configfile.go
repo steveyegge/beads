@@ -18,6 +18,19 @@ type Config struct {
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
+// Dolt server mode configuration (bd-dolt.2.2)
+	// When Mode is "server", connects to external dolt sql-server instead of embedded.
+	// This enables multi-writer access for multi-agent environments.
+	DoltMode       string `json:"dolt_mode,omitempty"`        // "embedded" (default) or "server"
+	DoltServerHost string `json:"dolt_server_host,omitempty"` // Server host (default: 127.0.0.1)
+	DoltServerPort int    `json:"dolt_server_port,omitempty"` // Server port (default: 3307)
+	DoltServerUser string `json:"dolt_server_user,omitempty"` // MySQL user (default: root)
+	// Note: Password should be set via BEADS_DOLT_PASSWORD env var for security
+
+	// Stale closed issues check configuration
+	// 0 = disabled (default), positive = threshold in days
+	StaleClosedIssuesDays int `json:"stale_closed_issues_days,omitempty"`
+
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -143,6 +156,15 @@ func (c *Config) GetDeletionsRetentionDays() int {
 	return c.DeletionsRetentionDays
 }
 
+// GetStaleClosedIssuesDays returns the configured threshold for stale closed issues.
+// Returns 0 if disabled (the default), or a positive value if enabled.
+func (c *Config) GetStaleClosedIssuesDays() int {
+	if c.StaleClosedIssuesDays < 0 {
+		return 0
+	}
+	return c.StaleClosedIssuesDays
+}
+
 // Backend constants
 const (
 	BackendSQLite = "sqlite"
@@ -167,15 +189,33 @@ type BackendCapabilities struct {
 
 // CapabilitiesForBackend returns capabilities for a backend string.
 // Unknown backends are treated conservatively as single-process-only.
+//
+// Note: For Dolt, this returns SingleProcessOnly=true for embedded mode.
+// Use Config.GetCapabilities() when you have the full config to properly
+// handle server mode (which supports multi-process access).
 func CapabilitiesForBackend(backend string) BackendCapabilities {
 	switch strings.TrimSpace(strings.ToLower(backend)) {
 	case "", BackendSQLite:
 		return BackendCapabilities{SingleProcessOnly: false}
 	case BackendDolt:
+		// Embedded Dolt is single-process-only.
+		// Server mode is handled by Config.GetCapabilities().
 		return BackendCapabilities{SingleProcessOnly: true}
 	default:
 		return BackendCapabilities{SingleProcessOnly: true}
 	}
+}
+
+// GetCapabilities returns the backend capabilities for this config.
+// Unlike CapabilitiesForBackend(string), this considers Dolt server mode
+// which supports multi-process access.
+func (c *Config) GetCapabilities() BackendCapabilities {
+	backend := c.GetBackend()
+	if backend == BackendDolt && c.IsDoltServerMode() {
+		// Server mode supports multi-writer, so NOT single-process-only
+		return BackendCapabilities{SingleProcessOnly: false}
+	}
+	return CapabilitiesForBackend(backend)
 }
 
 // GetBackend returns the configured backend type, defaulting to SQLite.
@@ -184,4 +224,67 @@ func (c *Config) GetBackend() string {
 		return BackendSQLite
 	}
 	return c.Backend
+}
+
+// Dolt mode constants
+const (
+	DoltModeEmbedded = "embedded"
+	DoltModeServer   = "server"
+)
+
+// Default Dolt server settings
+const (
+	DefaultDoltServerHost = "127.0.0.1"
+	DefaultDoltServerPort = 3307 // Use 3307 to avoid conflict with MySQL on 3306
+	DefaultDoltServerUser = "root"
+)
+
+// IsDoltServerMode returns true if Dolt is configured for server mode.
+func (c *Config) IsDoltServerMode() bool {
+	return c.GetBackend() == BackendDolt && strings.ToLower(c.DoltMode) == DoltModeServer
+}
+
+// GetDoltMode returns the Dolt connection mode, defaulting to embedded.
+func (c *Config) GetDoltMode() string {
+	if c.DoltMode == "" {
+		return DoltModeEmbedded
+	}
+	return c.DoltMode
+}
+
+// GetDoltServerHost returns the Dolt server host, defaulting to 127.0.0.1.
+func (c *Config) GetDoltServerHost() string {
+	if c.DoltServerHost == "" {
+		return DefaultDoltServerHost
+	}
+	return c.DoltServerHost
+}
+
+// GetDoltServerPort returns the Dolt server port, defaulting to 3307.
+func (c *Config) GetDoltServerPort() int {
+	if c.DoltServerPort <= 0 {
+		return DefaultDoltServerPort
+	}
+	return c.DoltServerPort
+}
+
+// GetDoltServerUser returns the Dolt server user, defaulting to root.
+func (c *Config) GetDoltServerUser() string {
+	if c.DoltServerUser == "" {
+		return DefaultDoltServerUser
+	}
+	return c.DoltServerUser
+}
+
+// GetDoltDatabase returns the database name for Dolt server mode.
+// This is different from DatabasePath which returns the on-disk path.
+// For server mode, Database field contains the database name on the server
+// (e.g., "hq", "gastown", "beads"). Defaults to "beads".
+func (c *Config) GetDoltDatabase() string {
+	db := strings.TrimSpace(c.Database)
+	if db == "" || db == "beads.db" || db == "dolt" {
+		return "beads"
+	}
+	// Strip any path components - just want the database name
+	return filepath.Base(db)
 }

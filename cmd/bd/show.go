@@ -16,18 +16,28 @@ import (
 )
 
 var showCmd = &cobra.Command{
-	Use:     "show [id...]",
+	Use:     "show [id...] [--id=<id>...]",
 	Aliases: []string{"view"},
 	GroupID: "issues",
 	Short:   "Show issue details",
-	Args:    cobra.MinimumNArgs(1),
+	Args:    cobra.ArbitraryArgs, // Allow zero positional args when --id is used
 	Run: func(cmd *cobra.Command, args []string) {
 		showThread, _ := cmd.Flags().GetBool("thread")
 		shortMode, _ := cmd.Flags().GetBool("short")
 		showRefs, _ := cmd.Flags().GetBool("refs")
 		showChildren, _ := cmd.Flags().GetBool("children")
 		asOfRef, _ := cmd.Flags().GetString("as-of")
+		idFlags, _ := cmd.Flags().GetStringArray("id")
 		ctx := rootCtx
+
+		// Merge --id flag values with positional args
+		// This allows IDs that look like flags (e.g., --xyz or gt--abc) to be passed safely
+		args = append(args, idFlags...)
+
+		// Validate that at least one ID is provided
+		if len(args) == 0 {
+			FatalErrorRespectJSON("at least one issue ID is required (use positional args or --id flag)")
+		}
 
 		// Handle --as-of flag: show issue at a specific point in history
 		if asOfRef != "" {
@@ -245,11 +255,47 @@ var showCmd = &cobra.Command{
 						fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(details.Labels, ", "))
 					}
 
-					// Dependencies with semantic colors
+					// Dependencies grouped by type with semantic colors
 					if len(details.Dependencies) > 0 {
-						fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+						var blocks, parent, related, discovered []*types.IssueWithDependencyMetadata
 						for _, dep := range details.Dependencies {
-							fmt.Println(formatDependencyLine("→", dep))
+							switch dep.DependencyType {
+							case types.DepBlocks:
+								blocks = append(blocks, dep)
+							case types.DepParentChild:
+								parent = append(parent, dep)
+							case types.DepRelated:
+								related = append(related, dep)
+							case types.DepDiscoveredFrom:
+								discovered = append(discovered, dep)
+							default:
+								blocks = append(blocks, dep)
+							}
+						}
+
+						if len(parent) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
+							for _, dep := range parent {
+								fmt.Println(formatDependencyLine("↑", dep))
+							}
+						}
+						if len(blocks) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+							for _, dep := range blocks {
+								fmt.Println(formatDependencyLine("→", dep))
+							}
+						}
+						if len(related) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
+							for _, dep := range related {
+								fmt.Println(formatDependencyLine("↔", dep))
+							}
+						}
+						if len(discovered) > 0 {
+							fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
+							for _, dep := range discovered {
+								fmt.Println(formatDependencyLine("◊", dep))
+							}
 						}
 					}
 
@@ -433,18 +479,67 @@ var showCmd = &cobra.Command{
 				fmt.Printf("\n%s %s\n", ui.RenderBold("LABELS:"), strings.Join(labels, ", "))
 			}
 
-			// Show dependencies with semantic colors
-			deps, _ := issueStore.GetDependencies(ctx, issue.ID)
-			if len(deps) > 0 {
-				fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
-				for _, dep := range deps {
-					fmt.Println(formatSimpleDependencyLine("→", dep))
+			// Show dependencies - grouped by dependency type for clarity
+			// Use GetDependenciesWithMetadata to get the dependency type
+			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+			if ok {
+				depsWithMeta, _ := sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
+				if len(depsWithMeta) > 0 {
+					// Group by dependency type
+					var blocks, parent, related, discovered []*types.IssueWithDependencyMetadata
+					for _, dep := range depsWithMeta {
+						switch dep.DependencyType {
+						case types.DepBlocks:
+							blocks = append(blocks, dep)
+						case types.DepParentChild:
+							parent = append(parent, dep)
+						case types.DepRelated:
+							related = append(related, dep)
+						case types.DepDiscoveredFrom:
+							discovered = append(discovered, dep)
+						default:
+							blocks = append(blocks, dep) // Default to blocks
+						}
+					}
+
+					if len(parent) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("PARENT"))
+						for _, dep := range parent {
+							fmt.Println(formatDependencyLine("↑", dep))
+						}
+					}
+					if len(blocks) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+						for _, dep := range blocks {
+							fmt.Println(formatDependencyLine("→", dep))
+						}
+					}
+					if len(related) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("RELATED"))
+						for _, dep := range related {
+							fmt.Println(formatDependencyLine("↔", dep))
+						}
+					}
+					if len(discovered) > 0 {
+						fmt.Printf("\n%s\n", ui.RenderBold("DISCOVERED FROM"))
+						for _, dep := range discovered {
+							fmt.Println(formatDependencyLine("◊", dep))
+						}
+					}
+				}
+			} else {
+				// Fallback for non-SQLite storage (no dependency type metadata)
+				deps, _ := issueStore.GetDependencies(ctx, issue.ID)
+				if len(deps) > 0 {
+					fmt.Printf("\n%s\n", ui.RenderBold("DEPENDS ON"))
+					for _, dep := range deps {
+						fmt.Println(formatSimpleDependencyLine("→", dep))
+					}
 				}
 			}
 
 			// Show dependents - grouped by dependency type for clarity
-			// Use GetDependentsWithMetadata to get the dependency type
-			sqliteStore, ok := issueStore.(*sqlite.SQLiteStorage)
+			// Use GetDependentsWithMetadata to get the dependency type (sqliteStore already checked above)
 			if ok {
 				dependentsWithMeta, _ := sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
 				if len(dependentsWithMeta) > 0 {
@@ -1103,6 +1198,7 @@ func init() {
 	showCmd.Flags().Bool("refs", false, "Show issues that reference this issue (reverse lookup)")
 	showCmd.Flags().Bool("children", false, "Show only the children of this issue")
 	showCmd.Flags().String("as-of", "", "Show issue as it existed at a specific commit hash or branch (requires Dolt)")
+	showCmd.Flags().StringArray("id", nil, "Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }

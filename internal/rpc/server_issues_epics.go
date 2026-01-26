@@ -1313,6 +1313,12 @@ func (s *Server) handleList(req *Request) Response {
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
+	// Populate dependencies for JSON output
+	allDeps, _ := store.GetAllDependencyRecords(ctx)
+	for _, issue := range issues {
+		issue.Dependencies = allDeps[issue.ID]
+	}
+
 	// Build response with counts
 	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 	for i, issue := range issues {

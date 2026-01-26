@@ -261,11 +261,12 @@ This is used by 'gt done --phase-complete' to register for gate wake notificatio
 
 		// Update the gate
 		if daemonClient != nil {
-			updateArgs := &rpc.UpdateArgs{
+			// Use GateWait RPC which handles waiters correctly (bypasses allowedUpdateFields)
+			gateWaitArgs := &rpc.GateWaitArgs{
 				ID:      gateID,
-				Waiters: newWaiters,
+				Waiters: []string{waiter}, // GateWait handles deduplication internally
 			}
-			resp, uerr := daemonClient.Update(updateArgs)
+			resp, uerr := daemonClient.GateWait(gateWaitArgs)
 			if uerr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", uerr)
 				os.Exit(1)
