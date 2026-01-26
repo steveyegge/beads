@@ -560,3 +560,27 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 
 	return &issue, nil
 }
+
+// CreateDecisionPoint creates a new decision point within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// GetDecisionPoint retrieves the decision point for an issue within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// UpdateDecisionPoint updates an existing decision point within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
+}

@@ -32,6 +32,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // DoltStore implements the Storage interface using Dolt
@@ -945,4 +946,28 @@ func cleanupSingleLock(lockPath string) error {
 
 	// Non-empty or recent lock file - don't touch it
 	return nil
+}
+
+// CreateDecisionPoint creates a new decision point for an issue.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (s *DoltStore) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// GetDecisionPoint retrieves the decision point for an issue.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// UpdateDecisionPoint updates an existing decision point.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (s *DoltStore) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
 }
