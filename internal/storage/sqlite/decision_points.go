@@ -33,13 +33,13 @@ func (s *SQLiteStorage) CreateDecisionPoint(ctx context.Context, dp *types.Decis
 	// Insert decision point
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO decision_points (
-			issue_id, prompt, options, default_option, selected_option,
-			response_text, responded_at, responded_by, iteration, max_iterations,
-			prior_id, guidance, requested_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, dp.IssueID, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
-		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
-		priorID, dp.Guidance, dp.RequestedBy)
+			issue_id, prompt, context, options, default_option, selected_option,
+			response_text, rationale, responded_at, responded_by, iteration, max_iterations,
+			prior_id, guidance, urgency, requested_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, dp.IssueID, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
+		priorID, dp.Guidance, dp.Urgency, dp.RequestedBy)
 	if err != nil {
 		return fmt.Errorf("failed to insert decision point: %w", err)
 	}
@@ -56,19 +56,19 @@ func (s *SQLiteStorage) GetDecisionPoint(ctx context.Context, issueID string) (*
 
 	dp := &types.DecisionPoint{}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT issue_id, prompt, options,
+		SELECT issue_id, prompt, COALESCE(context, ''), options,
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
-			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
+			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
-		&dp.IssueID, &dp.Prompt, &dp.Options,
+		&dp.IssueID, &dp.Prompt, &dp.Context, &dp.Options,
 		&dp.DefaultOption, &dp.SelectedOption,
-		&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
+		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
-		&dp.PriorID, &dp.Guidance, &dp.RequestedBy, &dp.CreatedAt,
+		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -91,20 +91,23 @@ func (s *SQLiteStorage) UpdateDecisionPoint(ctx context.Context, dp *types.Decis
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE decision_points SET
 			prompt = ?,
+			context = ?,
 			options = ?,
 			default_option = ?,
 			selected_option = ?,
 			response_text = ?,
+			rationale = ?,
 			responded_at = ?,
 			responded_by = ?,
 			iteration = ?,
 			max_iterations = ?,
 			prior_id = ?,
-			guidance = ?
+			guidance = ?,
+			urgency = ?
 		WHERE issue_id = ?
-	`, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
-		dp.ResponseText, dp.RespondedAt, dp.RespondedBy,
-		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.IssueID)
+	`, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy,
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, dp.IssueID)
 	if err != nil {
 		return fmt.Errorf("failed to update decision point: %w", err)
 	}
@@ -128,11 +131,11 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 	defer s.reconnectMu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT issue_id, prompt, options,
+		SELECT issue_id, prompt, COALESCE(context, ''), options,
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
-			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
+			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -146,11 +149,11 @@ func (s *SQLiteStorage) ListPendingDecisions(ctx context.Context) ([]*types.Deci
 	for rows.Next() {
 		dp := &types.DecisionPoint{}
 		err := rows.Scan(
-			&dp.IssueID, &dp.Prompt, &dp.Options,
+			&dp.IssueID, &dp.Prompt, &dp.Context, &dp.Options,
 			&dp.DefaultOption, &dp.SelectedOption,
-			&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
+			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
-			&dp.PriorID, &dp.Guidance, &dp.RequestedBy, &dp.CreatedAt,
+			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
