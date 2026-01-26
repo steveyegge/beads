@@ -167,9 +167,9 @@ func runSlotSet(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Verify agent bead is actually an agent
-	if agent.IssueType != "agent" {
-		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+	// Verify agent bead is actually an agent (check gt:agent label)
+	if !isAgentBead(agent.Labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 	}
 
 	// Check cardinality - error if slot is already occupied (for hook)
@@ -272,9 +272,9 @@ func runSlotClear(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Verify agent bead is actually an agent
-	if agent.IssueType != "agent" {
-		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+	// Verify agent bead is actually an agent (check gt:agent label)
+	if !isAgentBead(agent.Labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 	}
 
 	// Clear the slot (set to empty string)
@@ -365,9 +365,9 @@ func runSlotShow(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Verify agent bead is actually an agent
-	if agent.IssueType != "agent" {
-		return fmt.Errorf("%s is not an agent bead (type=%s)", agentID, agent.IssueType)
+	// Verify agent bead is actually an agent (check gt:agent label)
+	if !isAgentBead(agent.Labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
 	}
 
 	if jsonOutput {
