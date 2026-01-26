@@ -885,6 +885,20 @@ func (m *MemoryStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 	return result, nil
 }
 
+// GetDependencyRecordsForIssues returns dependency records for specific issues
+func (m *MemoryStorage) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make(map[string][]*types.Dependency)
+	for _, id := range issueIDs {
+		if deps, ok := m.dependencies[id]; ok {
+			result[id] = deps
+		}
+	}
+	return result, nil
+}
+
 // GetDirtyIssueHash returns the hash for dirty issue tracking
 func (m *MemoryStorage) GetDirtyIssueHash(ctx context.Context, issueID string) (string, error) {
 	// Memory storage doesn't track dirty hashes, return empty string

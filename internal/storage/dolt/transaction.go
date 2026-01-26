@@ -114,8 +114,11 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 			prefix = "hq-" // fallback default
 		}
 
-		// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
-		if issue.IDPrefix != "" {
+		// Support PrefixOverride if set (from upstream)
+		if issue.PrefixOverride != "" {
+			prefix = issue.PrefixOverride
+		} else if issue.IDPrefix != "" {
+			// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
 			prefix = strings.TrimSuffix(prefix, "-") + "-" + issue.IDPrefix + "-"
 		}
 

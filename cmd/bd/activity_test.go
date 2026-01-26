@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/types"
 )
 
 // TestParseDurationString tests the duration parsing function
@@ -301,5 +302,152 @@ func TestFormatEvent(t *testing.T) {
 	}
 	if result.Message == "" {
 		t.Error("expected non-empty message")
+	}
+}
+
+// TestFormatEventWithDetails tests that issue details are included when provided
+func TestFormatEventWithDetails(t *testing.T) {
+	now := time.Now()
+	event := rpc.MutationEvent{
+		Type:      rpc.MutationCreate,
+		IssueID:   "bd-test",
+		Timestamp: now,
+	}
+
+	t.Run("without details", func(t *testing.T) {
+		result := formatEventWithDetails(event, nil)
+		if result.Issue != nil {
+			t.Error("expected nil issue when no details provided")
+		}
+		if result.IssueID != "bd-test" {
+			t.Errorf("expected issue ID bd-test, got %s", result.IssueID)
+		}
+	})
+
+	t.Run("with details", func(t *testing.T) {
+		details := &types.IssueDetails{
+			Issue: types.Issue{
+				ID:          "bd-test",
+				Title:       "Test Issue",
+				Description: "A test description",
+				Status:      types.StatusOpen,
+				Priority:    2,
+				IssueType:   types.TypeTask,
+				Assignee:    "testuser",
+			},
+			Labels:       []string{"bug", "urgent"},
+			Dependencies: nil,
+			Dependents:   nil,
+		}
+
+		result := formatEventWithDetails(event, details)
+
+		if result.Issue == nil {
+			t.Fatal("expected issue details to be included")
+		}
+		if result.Issue.ID != "bd-test" {
+			t.Errorf("expected issue ID bd-test, got %s", result.Issue.ID)
+		}
+		if result.Issue.Title != "Test Issue" {
+			t.Errorf("expected title 'Test Issue', got %s", result.Issue.Title)
+		}
+		if result.Issue.Assignee != "testuser" {
+			t.Errorf("expected assignee 'testuser', got %s", result.Issue.Assignee)
+		}
+		if len(result.Issue.Labels) != 2 {
+			t.Errorf("expected 2 labels, got %d", len(result.Issue.Labels))
+		}
+	})
+}
+
+// TestFindDaemonForIssue tests daemon lookup by issue ID prefix
+func TestFindDaemonForIssue(t *testing.T) {
+	// Create mock daemons (without actual connections)
+	daemons := []rigDaemon{
+		{prefix: "bd-", rig: "beads", client: nil},  // No client
+		{prefix: "app-", rig: "app", client: nil},   // No client
+		{prefix: "test-", rig: "test", client: nil}, // No client
+	}
+
+	t.Run("no matching prefix returns nil", func(t *testing.T) {
+		result := findDaemonForIssue(daemons, "other-123")
+		if result != nil {
+			t.Error("expected nil for non-matching prefix")
+		}
+	})
+
+	t.Run("matching prefix but nil client returns nil", func(t *testing.T) {
+		result := findDaemonForIssue(daemons, "bd-abc123")
+		if result != nil {
+			t.Error("expected nil when daemon client is nil")
+		}
+	})
+
+	t.Run("empty daemons list returns nil", func(t *testing.T) {
+		result := findDaemonForIssue([]rigDaemon{}, "bd-abc")
+		if result != nil {
+			t.Error("expected nil for empty daemon list")
+		}
+	})
+}
+
+// TestFetchIssueDetails tests the issue details fetching function
+func TestFetchIssueDetails(t *testing.T) {
+	t.Run("nil client returns nil", func(t *testing.T) {
+		result := fetchIssueDetails(nil, "bd-123")
+		if result != nil {
+			t.Error("expected nil when client is nil")
+		}
+	})
+}
+
+// TestFormatEventWithDetailsIncludesComments verifies comments are preserved in details
+func TestFormatEventWithDetailsIncludesComments(t *testing.T) {
+	now := time.Now()
+	event := rpc.MutationEvent{
+		Type:      rpc.MutationUpdate,
+		IssueID:   "bd-test",
+		Timestamp: now,
+	}
+
+	details := &types.IssueDetails{
+		Issue: types.Issue{
+			ID:     "bd-test",
+			Title:  "Test Issue",
+			Status: types.StatusInProgress,
+		},
+		Comments: []*types.Comment{
+			{
+				ID:        1,
+				IssueID:   "bd-test",
+				Author:    "alice",
+				Text:      "First comment with full text that should not be truncated in JSON",
+				CreatedAt: now.Add(-time.Hour),
+			},
+			{
+				ID:        2,
+				IssueID:   "bd-test",
+				Author:    "bob",
+				Text:      "Second comment",
+				CreatedAt: now.Add(-30 * time.Minute),
+			},
+		},
+	}
+
+	result := formatEventWithDetails(event, details)
+
+	if result.Issue == nil {
+		t.Fatal("expected issue details to be included")
+	}
+	if len(result.Issue.Comments) != 2 {
+		t.Errorf("expected 2 comments, got %d", len(result.Issue.Comments))
+	}
+	if result.Issue.Comments[0].Author != "alice" {
+		t.Errorf("expected first comment author 'alice', got %s", result.Issue.Comments[0].Author)
+	}
+	// Verify full text is preserved (not truncated) for JSON output
+	expectedText := "First comment with full text that should not be truncated in JSON"
+	if result.Issue.Comments[0].Text != expectedText {
+		t.Errorf("expected full comment text preserved, got %s", result.Issue.Comments[0].Text)
 	}
 }

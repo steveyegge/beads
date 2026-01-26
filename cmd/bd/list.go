@@ -1096,7 +1096,12 @@ var listCmd = &cobra.Command{
 			sortIssues(issues, sortBy, reverse)
 
 			// Handle watch mode (GH#654)
+			// Watch mode requires direct store access for file watching
 			if watchMode {
+				if err := ensureDirectMode("watch mode requires direct database access"); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 				watchIssues(ctx, store, filter, sortBy, reverse)
 				return
 			}
@@ -1276,7 +1281,7 @@ var listCmd = &cobra.Command{
 			}
 			labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 			depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
-			allDeps, _ := store.GetAllDependencyRecords(ctx)
+			allDeps, _ := store.GetDependencyRecordsForIssues(ctx, issueIDs)
 
 			// Populate labels and dependencies for JSON output
 			for _, issue := range issues {
