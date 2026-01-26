@@ -11,14 +11,20 @@ import (
 
 // SetConfig sets a configuration value
 func (s *DoltStore) SetConfig(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO config (` + "`key`" + `, value) VALUES (?, ?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO config (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {
 		return fmt.Errorf("failed to set config %s: %w", key, err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetConfig retrieves a configuration value
@@ -55,23 +61,35 @@ func (s *DoltStore) GetAllConfig(ctx context.Context) (map[string]string, error)
 
 // DeleteConfig removes a configuration value
 func (s *DoltStore) DeleteConfig(ctx context.Context, key string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM config WHERE `key` = ?", key)
 	if err != nil {
 		return fmt.Errorf("failed to delete config %s: %w", key, err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // SetMetadata sets a metadata value
 func (s *DoltStore) SetMetadata(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO metadata (` + "`key`" + `, value) VALUES (?, ?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO metadata (`+"`key`"+`, value) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE value = VALUES(value)
 	`, key, value)
 	if err != nil {
 		return fmt.Errorf("failed to set metadata %s: %w", key, err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // GetMetadata retrieves a metadata value
