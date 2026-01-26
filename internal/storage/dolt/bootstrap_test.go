@@ -410,9 +410,10 @@ func TestBootstrapWithRoutesAndInteractions(t *testing.T) {
 		t.Errorf("expected 1 issue imported, got %d", result.IssuesImported)
 	}
 
-	// Verify routes imported
-	if result.RoutesImported != 2 {
-		t.Errorf("expected 2 routes imported, got %d", result.RoutesImported)
+	// Note: Routes importing is disabled to avoid import cycle (routing -> factory -> dolt -> routing)
+	// Routes can be imported separately via bd import if needed
+	if result.RoutesImported != 0 {
+		t.Errorf("expected 0 routes imported (disabled), got %d", result.RoutesImported)
 	}
 
 	// Verify interactions imported
@@ -427,14 +428,14 @@ func TestBootstrapWithRoutesAndInteractions(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Verify routes table
+	// Verify routes table (empty since route importing is disabled)
 	var routeCount int
 	err = store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM routes").Scan(&routeCount)
 	if err != nil {
 		t.Fatalf("failed to count routes: %v", err)
 	}
-	if routeCount != 2 {
-		t.Errorf("expected 2 routes in table, got %d", routeCount)
+	if routeCount != 0 {
+		t.Errorf("expected 0 routes in table (importing disabled), got %d", routeCount)
 	}
 
 	// Verify interactions table
