@@ -882,14 +882,6 @@ var rootCmd = &cobra.Command{
 		// the database file (which breaks file watchers).
 		useReadOnly := isReadOnlyCommand(cmd)
 
-		// Auto-migrate database on version bump
-		// Skip for read-only commands - they can't write anyway
-		// Do this AFTER daemon check but BEFORE opening database for main operation
-		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
-		if !useReadOnly {
-			autoMigrateOnVersionBump(dbPath)
-		}
-
 		// Fall back to direct storage access
 		var err error
 		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
@@ -899,6 +891,14 @@ var rootCmd = &cobra.Command{
 		beadsDir := beads.FindBeadsDir()
 		if beadsDir == "" {
 			beadsDir = filepath.Dir(dbPath)
+		}
+
+		// Auto-migrate database on version bump
+		// Skip for read-only commands - they can't write anyway
+		// Do this AFTER daemon check but BEFORE opening database for main operation
+		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
+		if !useReadOnly {
+			autoMigrateOnVersionBump(beadsDir)
 		}
 
 		// Create storage with appropriate options using NewFromConfig
