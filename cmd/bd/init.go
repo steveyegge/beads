@@ -64,25 +64,35 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 
+		// Initialize config first (needed for backend inheritance check)
+		// PersistentPreRun doesn't run for init command
+		if err := config.Initialize(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+			// Non-fatal - continue with defaults
+		}
+
 		// Validate backend flag
 		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
 			os.Exit(1)
 		}
 		if backend == "" {
-			backend = configfile.BackendSQLite // Default to SQLite
+			// Inherit storage-backend from parent config.yaml if available (hq-be3912)
+			// This enables new rigs to automatically use dolt when town uses dolt
+			if inherited := config.GetString("storage-backend"); inherited != "" {
+				backend = inherited
+				if !quiet {
+					fmt.Printf("Inheriting storage backend '%s' from parent config\n", backend)
+				}
+			} else {
+				backend = configfile.BackendSQLite // Default to SQLite
+			}
 		}
 
 		// Validate server mode requires dolt backend
 		if serverMode && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
 			os.Exit(1)
-		}
-
-		// Initialize config (PersistentPreRun doesn't run for init command)
-		if err := config.Initialize(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
-			// Non-fatal - continue with defaults
 		}
 
 		// Safety guard: check for existing JSONL with issues
