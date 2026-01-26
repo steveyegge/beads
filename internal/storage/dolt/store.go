@@ -442,7 +442,7 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 		// Workflow columns for canonical design alignment (hq-946577.38)
 		{"context", "TEXT"},
 		{"rationale", "TEXT"},
-		{"urgency", "TEXT"},
+		{"urgency", "VARCHAR(16)"},
 	}
 
 	for _, col := range decisionPointColumns {

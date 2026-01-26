@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS decision_points (
     prior_id VARCHAR(255),
     guidance TEXT,
     reminder_count INT DEFAULT 0,
-    urgency TEXT,
+    urgency VARCHAR(16),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     requested_by TEXT,
     INDEX idx_decision_points_prior (prior_id),
