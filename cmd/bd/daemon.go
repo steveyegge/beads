@@ -682,10 +682,10 @@ The daemon will now exit.`, strings.ToUpper(backend))
 			var doExport, doAutoImport func()
 			if localMode {
 				doExport = createLocalExportFunc(ctx, store, log)
-				doAutoImport = createLocalAutoImportFunc(ctx, store, log)
+				doAutoImport = createLocalAutoImportFunc(ctx, store, server, log)
 			} else {
 				doExport = createExportFunc(ctx, store, autoCommit, autoPush, log)
-				doAutoImport = createAutoImportFunc(ctx, store, log)
+				doAutoImport = createAutoImportFunc(ctx, store, server, log)
 			}
 			runEventDrivenLoop(ctx, cancel, server, serverErrChan, store, jsonlPath, doExport, doAutoImport, autoPull, parentPID, log)
 		}

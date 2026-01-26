@@ -203,6 +203,20 @@ func (s *Server) ResetDroppedEventsCount() int64 {
 	return s.droppedEvents.Swap(0)
 }
 
+// TryAcquireImportLock attempts to acquire the import lock.
+// Returns true if the lock was acquired, false if an import is already in progress.
+// This is used to coordinate between the RPC server's checkAndAutoImportIfStale
+// and the daemon's event-driven import loop to prevent concurrent imports.
+func (s *Server) TryAcquireImportLock() bool {
+	return s.importInProgress.CompareAndSwap(false, true)
+}
+
+// ReleaseImportLock releases the import lock.
+// Must only be called after a successful TryAcquireImportLock.
+func (s *Server) ReleaseImportLock() {
+	s.importInProgress.Store(false)
+}
+
 // GetRecentMutations returns mutations since the given timestamp
 func (s *Server) GetRecentMutations(sinceMillis int64) []MutationEvent {
 	s.recentMutationsMu.RLock()

@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -611,20 +612,35 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 
 // createAutoImportFunc creates a function that pulls from git and imports JSONL
 // to database (no export). Used for file system change events.
-func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
-	return performAutoImport(ctx, store, false, log)
+// server is used to coordinate with RPC auto-import to prevent concurrent imports.
+func createAutoImportFunc(ctx context.Context, store storage.Storage, server *rpc.Server, log daemonLogger) func() {
+	return performAutoImport(ctx, store, server, false, log)
 }
 
 // createLocalAutoImportFunc creates a function that imports from JSONL to database
 // without any git operations. Used for local-only mode with file system change events.
-func createLocalAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
-	return performAutoImport(ctx, store, true, log)
+// server is used to coordinate with RPC auto-import to prevent concurrent imports.
+func createLocalAutoImportFunc(ctx context.Context, store storage.Storage, server *rpc.Server, log daemonLogger) func() {
+	return performAutoImport(ctx, store, server, true, log)
 }
 
 // performAutoImport is the shared implementation for import-only functions.
 // skipGit: if true, skips git pull operations.
-func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool, log daemonLogger) func() {
+// server: RPC server for coordinating import lock with checkAndAutoImportIfStale.
+func performAutoImport(ctx context.Context, store storage.Storage, server *rpc.Server, skipGit bool, log daemonLogger) func() {
 	return func() {
+		// Coordinate with RPC server's checkAndAutoImportIfStale to prevent concurrent imports.
+		// Both code paths can trigger imports - this prevents deadlocks when they race.
+		// If RPC is already importing, skip this event-driven import (it will retry).
+		if server != nil && !server.TryAcquireImportLock() {
+			log.log("Skipping event-driven import: RPC import already in progress")
+			return
+		}
+		// Release the lock when done (if we acquired it)
+		if server != nil {
+			defer server.ReleaseImportLock()
+		}
+
 		importCtx, importCancel := context.WithTimeout(ctx, 1*time.Minute)
 		defer importCancel()
 
