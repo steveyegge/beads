@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -50,25 +51,8 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 		thresholdDays = cfg.GetStaleClosedIssuesDays()
 	}
 
-	// Get database path
-	var dbPath string
-	if cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Stale Closed Issues",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryMaintenance,
-		}
-	}
-
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Closed Issues",
@@ -215,25 +199,8 @@ func CheckExpiredTombstones(path string) DoctorCheck {
 func CheckStaleMolecules(path string) DoctorCheck {
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Stale Molecules",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryMaintenance,
-		}
-	}
-
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Molecules",
@@ -292,26 +259,28 @@ func CheckStaleMolecules(path string) DoctorCheck {
 }
 
 // CheckCompactionCandidates detects issues eligible for compaction.
+// Note: Compaction is SQLite-specific; Dolt backends use their own maintenance.
 func CheckCompactionCandidates(path string) DoctorCheck {
 	// Follow redirect to resolve actual beads directory
 	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Check backend - compaction is SQLite-specific
+	backend, _ := getBackendAndBeadsDir(path)
+	if backend == configfile.BackendDolt {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "N/A (Dolt uses its own maintenance)",
 			Category: CategoryMaintenance,
 		}
 	}
+
+	// SQLite backend - need SQLite-specific store for GetTier1Candidates
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		cfg = configfile.DefaultConfig()
+	}
+	dbPath := cfg.DatabasePath(beadsDir)
 
 	ctx := context.Background()
 	store, err := sqlite.New(ctx, dbPath)
