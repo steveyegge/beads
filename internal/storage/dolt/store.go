@@ -455,6 +455,41 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 		}
 	}
 
+	// Remove FK constraint on depends_on_id to allow external references (bd-3q6.6-1)
+	// External refs like "external:project:capability" don't exist in the issues table
+	if err := s.dropDependsOnFK(ctx); err != nil {
+		// Log but don't fail - constraint may already be removed or not exist
+		fmt.Fprintf(os.Stderr, "Note: Could not drop fk_dep_depends_on constraint (may already be removed): %v\n", err)
+	}
+
+	return nil
+}
+
+// dropDependsOnFK removes the FK constraint on depends_on_id to allow external references.
+// This is a migration from older schemas that had this constraint.
+func (s *DoltStore) dropDependsOnFK(ctx context.Context) error {
+	// Check if the constraint exists by querying information_schema
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+		WHERE CONSTRAINT_NAME = 'fk_dep_depends_on'
+		  AND TABLE_NAME = 'dependencies'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for FK constraint: %w", err)
+	}
+
+	if count == 0 {
+		// Constraint doesn't exist, nothing to do
+		return nil
+	}
+
+	// Drop the FK constraint
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE dependencies DROP FOREIGN KEY fk_dep_depends_on`)
+	if err != nil {
+		return fmt.Errorf("failed to drop FK constraint: %w", err)
+	}
+
 	return nil
 }
 

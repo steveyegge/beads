@@ -32,12 +32,17 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
 
-	// Mark both issues as dirty for incremental export
+	// Mark source issue as dirty for incremental export
 	if err := markDirty(ctx, tx, dep.IssueID); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)
 	}
-	if err := markDirty(ctx, tx, dep.DependsOnID); err != nil {
-		return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+
+	// Only mark depends_on as dirty if it's a local issue (not an external reference)
+	// External refs like "external:project:capability" don't exist in the issues table
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		if err := markDirty(ctx, tx, dep.DependsOnID); err != nil {
+			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+		}
 	}
 
 	return tx.Commit()

@@ -577,4 +577,51 @@ func TestGetNewlyUnblockedByClose_ClosedDependent(t *testing.T) {
 	}
 }
 
+// TestAddExternalDependency tests that external references (external:project:capability)
+// can be added as dependencies without FK violation (bd-3q6.6-1 fix).
+func TestAddExternalDependency(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create source issue
+	source := &types.Issue{
+		ID:        "test-source",
+		Title:     "Source issue",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, source, "tester"); err != nil {
+		t.Fatalf("failed to create source issue: %v", err)
+	}
+
+	// Add dependency on external reference (doesn't exist in local DB)
+	externalRef := "external:other-project:some-capability"
+	dep := &types.Dependency{
+		IssueID:     source.ID,
+		DependsOnID: externalRef,
+		Type:        types.DepBlocks,
+	}
+
+	// This should succeed after FK constraint removal
+	if err := store.AddDependency(ctx, dep, "tester"); err != nil {
+		t.Fatalf("failed to add external dependency: %v", err)
+	}
+
+	// Verify the dependency was added
+	deps, err := store.GetDependencyRecords(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("failed to get dependency records: %v", err)
+	}
+
+	if len(deps) != 1 {
+		t.Errorf("expected 1 dependency, got %d", len(deps))
+	}
+	if deps[0].DependsOnID != externalRef {
+		t.Errorf("expected depends_on_id %q, got %q", externalRef, deps[0].DependsOnID)
+	}
+}
+
 // Note: testContext is already defined in dolt_test.go for this package
