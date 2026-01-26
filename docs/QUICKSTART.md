@@ -58,6 +58,15 @@ Notes:
 
 **Note:** Issue IDs are hash-based (e.g., `bd-a1b2`, `bd-f14c`) to prevent collisions when multiple agents/branches work concurrently.
 
+**Dependency visibility:** When issues have blocking dependencies, `bd list` shows them inline:
+```
+○ bd-a1b2 [P1] [task] - Set up database
+○ bd-f14c [P2] [feature] - Create API (blocked by: bd-a1b2)
+○ bd-g25d [P2] [feature] - Add authentication (blocked by: bd-f14c)
+```
+
+This makes dependencies unmissable when reviewing epic subtasks.
+
 ## Hierarchical Issues (Epics)
 
 For large features, use hierarchical IDs to organize work:

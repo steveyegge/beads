@@ -695,9 +695,20 @@ Default output without `--json`:
 
 ```bash
 bd ready
-# bd-42  Fix authentication bug  [P1, bug, in_progress]
-# bd-43  Add user settings page  [P2, feature, open]
+# ○ bd-42 [P1] [bug] - Fix authentication bug
+# ○ bd-43 [P2] [feature] - Add user settings page
 ```
+
+**Dependency visibility:** When issues have blocking dependencies, they appear inline:
+
+```bash
+bd list --parent epic-123
+# ○ bd-123.1 [P1] [task] - Design API (blocks: bd-123.2, bd-123.3)
+# ○ bd-123.2 [P1] [task] - Implement endpoints (blocked by: bd-123.1, blocks: bd-123.3)
+# ○ bd-123.3 [P1] [task] - Add tests (blocked by: bd-123.1, bd-123.2)
+```
+
+This makes blocking relationships visible without running `bd show` on each issue.
 
 ## Common Patterns for AI Agents
 
