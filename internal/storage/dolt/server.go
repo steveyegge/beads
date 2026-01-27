@@ -289,6 +289,63 @@ func GetRunningServerPID(dataDir string) int {
 	return pid
 }
 
+// EnsureServerRunning checks if a dolt sql-server is running on the specified port.
+// If not running, it starts one as a background process.
+// This enables auto-start when dolt_server_enabled is configured in metadata.json.
+func EnsureServerRunning(ctx context.Context, dataDir string, host string, port int) error {
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if port == 0 {
+		port = DefaultSQLPort
+	}
+
+	// Check if server is already running by trying to connect
+	addr := fmt.Sprintf("%s:%d", host, port)
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		return nil // Server already running
+	}
+
+	// Check for stale PID file and clean up
+	pid := GetRunningServerPID(dataDir)
+	if pid > 0 {
+		// PID file exists but we couldn't connect - server may be starting or stale
+		// Wait a bit and try again
+		time.Sleep(1 * time.Second)
+		conn, err = net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		// Still can't connect, clean up stale PID file
+		pidFile := filepath.Join(dataDir, "dolt-server.pid")
+		_ = os.Remove(pidFile)
+	}
+
+	// Start a new server
+	logFile := filepath.Join(dataDir, "sql-server.log")
+	server := NewServer(ServerConfig{
+		DataDir:        dataDir,
+		SQLPort:        port,
+		RemotesAPIPort: 0, // Don't need remotesapi for basic server mode
+		Host:           host,
+		LogFile:        logFile,
+	})
+
+	if err := server.Start(ctx); err != nil {
+		return fmt.Errorf("failed to auto-start dolt sql-server: %w", err)
+	}
+
+	// Server started successfully - it will run as a background process
+	// The PID file is written by server.Start()
+	fmt.Fprintf(os.Stderr, "Auto-started dolt sql-server on %s:%d (PID file: %s)\n",
+		host, port, filepath.Join(dataDir, "dolt-server.pid"))
+
+	return nil
+}
+
 // StopServerByPID stops a dolt sql-server by its PID
 func StopServerByPID(pid int) error {
 	process, err := os.FindProcess(pid)

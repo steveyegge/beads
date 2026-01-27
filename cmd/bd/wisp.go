@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -529,7 +528,7 @@ Abandoned wisps are deleted without creating a digest. Use 'bd mol squash'
 if you want to preserve a summary before garbage collection.
 
 Note: This uses time-based cleanup, appropriate for ephemeral wisps.
-For graph-pressure staleness detection (blocking other work), see 'bd mol stale'.
+For finding epics eligible for closure, see 'bd epic close-eligible --dry-run'.
 
 Examples:
   bd mol wisp gc                # Clean abandoned wisps (default: 1h threshold)
@@ -636,16 +635,10 @@ func runWispGC(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Delete abandoned wisps
+	// Delete abandoned wisps (DeleteIssue is on Storage interface - works with SQLite and Dolt)
 	var cleanedIDs []string
-	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: wisp gc requires SQLite storage backend\n")
-		os.Exit(1)
-	}
-
 	for _, issue := range abandoned {
-		if err := sqliteStore.DeleteIssue(ctx, issue.ID); err != nil {
+		if err := store.DeleteIssue(ctx, issue.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", issue.ID, err)
 			continue
 		}

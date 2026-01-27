@@ -493,7 +493,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 				Name:    "Repo Fingerprint",
 				Status:  StatusError,
 				Message: "Database belongs to different repository",
-				Detail:  fmt.Sprintf("stored: %s, current: %s", storedRepoID[:8], currentRepoID[:8]),
+				Detail:  fmt.Sprintf("stored: %s (full: %s), current: %s (full: %s)", storedRepoID[:8], storedRepoID, currentRepoID[:8], currentRepoID),
 				Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init --backend dolt' if wrong database",
 			}
 		}
@@ -585,7 +585,7 @@ func CheckRepoFingerprint(path string) DoctorCheck {
 			Name:    "Repo Fingerprint",
 			Status:  StatusError,
 			Message: "Database belongs to different repository",
-			Detail:  fmt.Sprintf("stored: %s, current: %s", storedRepoID[:8], currentRepoID[:8]),
+			Detail:  fmt.Sprintf("stored: %s (full: %s), current: %s (full: %s)", storedRepoID[:8], storedRepoID, currentRepoID[:8], currentRepoID),
 			Fix:     "Run 'bd migrate --update-repo-id' if URL changed, or 'rm -rf .beads && bd init' if wrong database",
 		}
 	}

@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -98,8 +97,7 @@ Examples:
 		}
 
 		// Step 4: Open storage for the target rig
-		targetDBPath := filepath.Join(targetBeadsDir, "beads.db")
-		targetStore, err := sqlite.New(ctx, targetDBPath)
+		targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			FatalError("failed to open target rig database: %v", err)
 		}

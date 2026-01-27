@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // RoutesFileName is the name of the routes configuration file
@@ -154,6 +155,9 @@ func lookupRigForgivingWithTown(input, beadsDir string) (Route, string, bool) {
 // ResolveBeadsDirForRig returns the beads directory for a given rig identifier.
 // This is used by --rig and --prefix flags to create issues in a different rig.
 //
+// If routing is disabled in config (routing_enabled: false), this returns an error
+// since cross-rig operations require routing.
+//
 // The input is forgiving - accepts any of:
 //   - "beads", "gastown" (rig names)
 //   - "bd-", "gt-" (exact prefixes)
@@ -168,6 +172,12 @@ func lookupRigForgivingWithTown(input, beadsDir string) (Route, string, bool) {
 //   - prefix: the issue prefix for that rig (e.g., "bd-")
 //   - err: error if rig not found or path doesn't exist
 func ResolveBeadsDirForRig(rigOrPrefix, currentBeadsDir string) (beadsDir string, prefix string, err error) {
+	// Check if routing is disabled in config
+	cfg, _ := configfile.Load(currentBeadsDir)
+	if cfg != nil && !cfg.IsRoutingEnabled() {
+		return "", "", fmt.Errorf("routing is disabled; cross-rig operations require routing_enabled: true in config")
+	}
+
 	route, townRoot, found := lookupRigForgivingWithTown(rigOrPrefix, currentBeadsDir)
 	if !found {
 		return "", "", fmt.Errorf("rig or prefix %q not found in routes.jsonl", rigOrPrefix)
@@ -233,6 +243,9 @@ func ResolveToExternalRef(id, beadsDir string) string {
 // It first checks the local beads directory, then consults routes.jsonl for prefix-based routing.
 // If routes.jsonl is not found locally, it searches up to the town root.
 //
+// If routing is disabled in config (routing_enabled: false), this always returns
+// the current beads directory without routing.
+//
 // Parameters:
 //   - ctx: context for database operations
 //   - id: the issue ID to look up
@@ -243,6 +256,15 @@ func ResolveToExternalRef(id, beadsDir string) string {
 //   - routed: true if the ID was routed to a different directory
 //   - err: any error encountered
 func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (string, bool, error) {
+	// Check if routing is disabled in config
+	cfg, _ := configfile.Load(currentBeadsDir)
+	if cfg != nil && !cfg.IsRoutingEnabled() {
+		if os.Getenv("BD_DEBUG_ROUTING") != "" {
+			fmt.Fprintf(os.Stderr, "[routing] Routing disabled in config, using local store for %s\n", id)
+		}
+		return currentBeadsDir, false, nil
+	}
+
 	// Step 1: Check for routes.jsonl based on ID prefix
 	// First try local, then walk up to find town-level routes
 	routes, townRoot := findTownRoutes(currentBeadsDir)
@@ -283,10 +305,10 @@ func ResolveBeadsDirForID(ctx context.Context, id, currentBeadsDir string) (stri
 	return currentBeadsDir, false, nil
 }
 
-// findTownRoot walks up from startDir looking for a town root.
+// FindTownRoot walks up from startDir looking for a town root.
 // Returns the town root path, or empty string if not found.
 // A town root is identified by the presence of mayor/town.json.
-func findTownRoot(startDir string) string {
+func FindTownRoot(startDir string) string {
 	current := startDir
 	for {
 		// Check for primary marker (mayor/town.json)
@@ -310,7 +332,7 @@ func findTownRootFromCWD() string {
 	if err != nil {
 		return ""
 	}
-	return findTownRoot(cwd)
+	return FindTownRoot(cwd)
 }
 
 // findTownRoutes searches for routes.jsonl at the town level.
@@ -320,13 +342,13 @@ func findTownRootFromCWD() string {
 //
 // IMPORTANT: This function handles symlinked .beads directories correctly.
 // When .beads is a symlink (e.g., ~/gt/.beads -> ~/gt/olympus/.beads), we must
-// use findTownRoot() starting from CWD to determine the actual town root rather
+// use FindTownRoot() starting from CWD to determine the actual town root rather
 // than starting from currentBeadsDir, which may be the resolved symlink path.
 func findTownRoutes(currentBeadsDir string) ([]Route, string) {
 	// First try the current beads dir (works if we're already at town level)
 	routes, err := LoadRoutes(currentBeadsDir)
 	if err == nil && len(routes) > 0 {
-		// Use findTownRoot() starting from CWD to determine the actual town root.
+		// Use FindTownRoot() starting from CWD to determine the actual town root.
 		// We must NOT use currentBeadsDir as the starting point because if .beads
 		// is a symlink (e.g., ~/gt/.beads -> ~/gt/olympus/.beads), currentBeadsDir
 		// will be the resolved path (e.g., ~/gt/olympus/.beads) and walking up
@@ -460,17 +482,16 @@ func GetRoutedStorageWithOpener(ctx context.Context, id, currentBeadsDir string,
 		return nil, nil // Same directory, caller should use existing storage
 	}
 
-	// Open storage for the routed directory
+	// Open storage for the routed directory using the factory to respect backend type
+	// This supports both SQLite and Dolt backends based on metadata.json
 	var store storage.Storage
 	if opener != nil {
 		store, err = opener(ctx, beadsDir)
 	} else {
-		// Default to SQLite for backward compatibility
-		dbPath := filepath.Join(beadsDir, "beads.db")
-		store, err = sqlite.New(ctx, dbPath)
+		store, err = factory.NewFromConfig(ctx, beadsDir)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open routed storage at %s: %w", beadsDir, err)
 	}
 
 	return &RoutedStorage{

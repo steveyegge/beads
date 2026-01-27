@@ -73,6 +73,15 @@ CREATE TABLE IF NOT EXISTS issues (
     -- Time-based scheduling fields
     due_at DATETIME,
     defer_until DATETIME,
+    -- Skill fields (capability tracking - hq-a72961)
+    skill_name VARCHAR(255) DEFAULT '',
+    skill_version VARCHAR(32) DEFAULT '',
+    skill_category VARCHAR(64) DEFAULT '',
+    skill_inputs TEXT DEFAULT '',
+    skill_outputs TEXT DEFAULT '',
+    skill_examples TEXT DEFAULT '',
+    claude_skill_path VARCHAR(512) DEFAULT '',
+    skill_content TEXT DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
@@ -94,8 +103,9 @@ CREATE TABLE IF NOT EXISTS dependencies (
     INDEX idx_dependencies_depends_on (depends_on_id),
     INDEX idx_dependencies_depends_on_type (depends_on_id, type),
     INDEX idx_dependencies_thread (thread_id),
-    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
-    CONSTRAINT fk_dep_depends_on FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
+    CONSTRAINT fk_dep_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+    -- Note: No FK on depends_on_id to allow external references (external:<project>:<capability>)
+    -- See bd-3q6.6-1 for context
 );
 
 -- Labels table
@@ -247,6 +257,32 @@ CREATE TABLE IF NOT EXISTS federation_peers (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_federation_peers_sovereignty (sovereignty)
+);
+
+-- Decision points table (human-in-the-loop choices)
+CREATE TABLE IF NOT EXISTS decision_points (
+    issue_id VARCHAR(255) PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    context TEXT,
+    options TEXT NOT NULL,
+    default_option TEXT,
+    selected_option TEXT,
+    response_text TEXT,
+    rationale TEXT,
+    responded_at DATETIME,
+    responded_by TEXT,
+    iteration INT DEFAULT 1,
+    max_iterations INT DEFAULT 3,
+    prior_id VARCHAR(255),
+    guidance TEXT,
+    reminder_count INT DEFAULT 0,
+    urgency VARCHAR(16),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_by TEXT,
+    INDEX idx_decision_points_prior (prior_id),
+    INDEX idx_decision_points_urgency (urgency),
+    CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
+    CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
 );
 `
 

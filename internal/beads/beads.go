@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
@@ -21,6 +22,10 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
+
+// redirectChainWarned tracks whether we've already warned about redirect chains
+// to avoid spamming the same warning multiple times in a single process.
+var redirectChainWarned sync.Once
 
 // CanonicalDatabaseName is the required database filename for all beads repositories
 const CanonicalDatabaseName = "beads.db"
@@ -87,7 +92,9 @@ func FollowRedirect(beadsDir string) string {
 	// Prevent redirect chains - don't follow if target also has a redirect
 	targetRedirect := filepath.Join(target, RedirectFileName)
 	if _, err := os.Stat(targetRedirect); err == nil {
-		fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
+		redirectChainWarned.Do(func() {
+			fmt.Fprintf(os.Stderr, "Warning: redirect chains not allowed, ignoring redirect in %s\n", target)
+		})
 	}
 
 	return target
@@ -171,6 +178,7 @@ func findLocalBdsDirInRepo() string {
 
 // findLocalBeadsDir finds the local .beads directory without following redirects.
 // This is used to detect if a redirect is configured.
+// Stops at the temp directory root to avoid finding stray .beads directories in /tmp.
 func findLocalBeadsDir() string {
 	// Check BEADS_DIR environment variable first
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
@@ -193,7 +201,16 @@ func findLocalBeadsDir() string {
 		return ""
 	}
 
+	// Get temp directory root to stop traversal
+	tempDir := filepath.Clean(os.TempDir())
+
 	for dir := cwd; dir != "/" && dir != "."; {
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanDir := filepath.Clean(dir)
+		if cleanDir == tempDir {
+			break
+		}
+
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return beadsDir
@@ -596,6 +613,8 @@ func findGitRoot() string {
 
 // findDatabaseInTree walks up the directory tree looking for .beads/*.db
 // Stops at the git repository root to avoid finding unrelated databases.
+// When not in a git repo, stops at the temp directory root to avoid finding
+// stray .beads directories in /tmp.
 // For worktrees, searches the main repository root first, then falls back to worktree.
 // Prefers config.json, falls back to beads.db, and warns if multiple .db files exist.
 // Redirect files are supported: if a .beads/redirect file exists, its contents
@@ -640,8 +659,17 @@ func findDatabaseInTree() string {
 		gitRoot = mainRepoRoot
 	}
 
+	// Get temp directory root to stop traversal when not in a git repo
+	tempDir := filepath.Clean(os.TempDir())
+
 	// Walk up directory tree (regular repository or worktree fallback)
 	for {
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanDir := filepath.Clean(dir)
+		if cleanDir == tempDir {
+			break
+		}
+
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			// Follow redirect if present
@@ -697,52 +725,75 @@ func FindAllDatabases() []DatabaseInfo {
 			// Follow redirect if present
 			beadsDir = FollowRedirect(beadsDir)
 
-			// Found .beads/ directory, look for *.db files
-			matches, err := filepath.Glob(filepath.Join(beadsDir, "*.db"))
-			if err == nil && len(matches) > 0 {
-				dbPath := matches[0]
-
-				// Resolve symlinks to get canonical path for deduplication
-				canonicalPath := dbPath
-				if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
-					canonicalPath = resolved
-				}
-
-				// Skip if we've already seen this database (via symlink or other path)
-				if seen[canonicalPath] {
-					// Move up one directory
-					parent := filepath.Dir(dir)
-					if parent == dir {
-						break
-					}
-					dir = parent
-					continue
-				}
-				seen[canonicalPath] = true
-
-				// Count issues if we can open the database (best-effort)
-				issueCount := -1
-				// Don't fail if we can't open/query the database - it might be locked
-				// or corrupted, but we still want to detect and warn about it
-				ctx := context.Background()
-				store, err := sqlite.New(ctx, dbPath)
-				if err == nil {
-					if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
-						issueCount = len(issues)
-					}
-					_ = store.Close()
-				}
-
-				databases = append(databases, DatabaseInfo{
-					Path:       dbPath,
-					BeadsDir:   beadsDir,
-					IssueCount: issueCount,
-				})
-
-				// Stop searching upward - the closest .beads is the one to use
-				// Parent directories are out of scope in multi-workspace setups
-				break
+			// Found .beads/ directory - get database path from config
+			cfg, _ := configfile.Load(beadsDir)
+			if cfg == nil {
+				cfg = configfile.DefaultConfig()
 			}
+
+			// Skip Dolt backends for now (can't import factory due to import cycle)
+			if cfg.GetBackend() == configfile.BackendDolt {
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+
+			dbPath := cfg.DatabasePath(beadsDir)
+
+			// Verify database exists
+			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+				// No database file, move up
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+
+			// Resolve symlinks to get canonical path for deduplication
+			canonicalPath := dbPath
+			if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
+				canonicalPath = resolved
+			}
+
+			// Skip if we've already seen this database (via symlink or other path)
+			if seen[canonicalPath] {
+				// Move up one directory
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+				continue
+			}
+			seen[canonicalPath] = true
+
+			// Count issues if we can open the database (best-effort)
+			issueCount := -1
+			// Don't fail if we can't open/query the database - it might be locked
+			// or corrupted, but we still want to detect and warn about it
+			ctx := context.Background()
+			store, err := sqlite.New(ctx, dbPath)
+			if err == nil {
+				if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
+					issueCount = len(issues)
+				}
+				_ = store.Close()
+			}
+
+			databases = append(databases, DatabaseInfo{
+				Path:       dbPath,
+				BeadsDir:   beadsDir,
+				IssueCount: issueCount,
+			})
+
+			// Stop searching upward - the closest .beads is the one to use
+			// Parent directories are out of scope in multi-workspace setups
+			break
 		}
 
 		// Move up one directory

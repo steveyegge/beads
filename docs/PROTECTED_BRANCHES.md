@@ -426,7 +426,7 @@ No! This is a pure git solution that works on any platform. Just protect your `m
 
 ### Can I use a different branch name?
 
-Yes! Use any branch name except `main` or `master` (git worktrees cannot checkout the same branch in multiple locations):
+Yes! Use any branch name you want:
 
 ```bash
 bd init --branch my-custom-branch

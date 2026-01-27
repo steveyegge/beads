@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/audit"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/lockfile"
-	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
@@ -229,13 +229,23 @@ func performBootstrap(ctx context.Context, cfg BootstrapConfig, jsonlPath string
 		}
 	}
 
-	// Import routes first (no dependencies)
-	routesImported, err := importRoutesBootstrap(ctx, store, cfg.BeadsDir)
-	if err != nil {
-		// Non-fatal - routes.jsonl may not exist
-		fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to import routes: %v\n", err)
+	// Set repository fingerprint metadata (for database identity validation)
+	if repoID, err := beads.ComputeRepoID(); err == nil {
+		if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to set repo_id: %v\n", err)
+		}
 	}
-	result.RoutesImported = routesImported
+
+	// Set clone-specific ID (for collision detection across clones)
+	if cloneID, err := beads.GetCloneID(); err == nil {
+		if err := store.SetMetadata(ctx, "clone_id", cloneID); err != nil {
+			fmt.Fprintf(os.Stderr, "Bootstrap: warning: failed to set clone_id: %v\n", err)
+		}
+	}
+
+	// Note: importRoutesBootstrap disabled to avoid import cycle (routing -> factory -> dolt -> routing)
+	// Routes can be imported separately via bd import if needed
+	result.RoutesImported = 0
 
 	// Import issues in a transaction
 	imported, skipped, err := importIssuesBootstrap(ctx, store, issues)
@@ -459,43 +469,6 @@ func importIssuesBootstrap(ctx context.Context, store *DoltStore, issues []*type
 	}
 
 	return imported, skipped, nil
-}
-
-// importRoutesBootstrap imports routes from routes.jsonl during bootstrap
-// Returns the number of routes imported
-func importRoutesBootstrap(ctx context.Context, store *DoltStore, beadsDir string) (int, error) {
-	routes, err := routing.LoadRoutes(beadsDir)
-	if err != nil {
-		return 0, err
-	}
-	if len(routes) == 0 {
-		return 0, nil // No routes to import
-	}
-
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	imported := 0
-	for _, route := range routes {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO routes (prefix, path, created_at)
-			VALUES (?, ?, ?)
-			ON DUPLICATE KEY UPDATE path = VALUES(path)
-		`, route.Prefix, route.Path, time.Now().UTC())
-		if err != nil {
-			return imported, fmt.Errorf("failed to insert route %s: %w", route.Prefix, err)
-		}
-		imported++
-	}
-
-	if err := tx.Commit(); err != nil {
-		return imported, fmt.Errorf("failed to commit routes: %w", err)
-	}
-
-	return imported, nil
 }
 
 // importInteractionsBootstrap imports interactions from interactions.jsonl during bootstrap

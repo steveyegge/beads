@@ -126,7 +126,13 @@ func (s *DoltStore) AddFederationPeer(ctx context.Context, peer *storage.Federat
 	}
 
 	// Upsert the peer credentials
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO federation_peers (name, remote_url, username, password_encrypted, sovereignty)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -139,6 +145,10 @@ func (s *DoltStore) AddFederationPeer(ctx context.Context, peer *storage.Federat
 
 	if err != nil {
 		return fmt.Errorf("failed to add federation peer: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Also add the Dolt remote
@@ -235,7 +245,13 @@ func (s *DoltStore) ListFederationPeers(ctx context.Context) ([]*storage.Federat
 
 // RemoveFederationPeer removes a federation peer and its credentials.
 func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM federation_peers WHERE name = ?", name)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM federation_peers WHERE name = ?", name)
 	if err != nil {
 		return fmt.Errorf("failed to remove federation peer: %w", err)
 	}
@@ -246,7 +262,11 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 		// Continue to try removing the remote
 	}
 
-	// Also remove the Dolt remote (best-effort)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Also remove the Dolt remote (best-effort, outside transaction)
 	_ = s.RemoveRemote(ctx, name)
 
 	return nil
@@ -254,8 +274,17 @@ func (s *DoltStore) RemoveFederationPeer(ctx context.Context, name string) error
 
 // UpdatePeerLastSync updates the last sync time for a peer.
 func (s *DoltStore) UpdatePeerLastSync(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE federation_peers SET last_sync = CURRENT_TIMESTAMP WHERE name = ?", name)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, "UPDATE federation_peers SET last_sync = CURRENT_TIMESTAMP WHERE name = ?", name)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // setFederationCredentials sets DOLT_REMOTE_USER and DOLT_REMOTE_PASSWORD env vars.

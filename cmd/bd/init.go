@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -65,25 +64,35 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 		serverPort, _ := cmd.Flags().GetInt("server-port")
 		serverUser, _ := cmd.Flags().GetString("server-user")
 
+		// Initialize config first (needed for backend inheritance check)
+		// PersistentPreRun doesn't run for init command
+		if err := config.Initialize(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+			// Non-fatal - continue with defaults
+		}
+
 		// Validate backend flag
 		if backend != "" && backend != configfile.BackendSQLite && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: invalid backend '%s' (must be 'sqlite' or 'dolt')\n", backend)
 			os.Exit(1)
 		}
 		if backend == "" {
-			backend = configfile.BackendSQLite // Default to SQLite
+			// Inherit storage-backend from parent config.yaml if available (hq-be3912)
+			// This enables new rigs to automatically use dolt when town uses dolt
+			if inherited := config.GetString("storage-backend"); inherited != "" {
+				backend = inherited
+				if !quiet {
+					fmt.Printf("Inheriting storage backend '%s' from parent config\n", backend)
+				}
+			} else {
+				backend = configfile.BackendSQLite // Default to SQLite
+			}
 		}
 
 		// Validate server mode requires dolt backend
 		if serverMode && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
 			os.Exit(1)
-		}
-
-		// Initialize config (PersistentPreRun doesn't run for init command)
-		if err := config.Initialize(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
-			// Non-fatal - continue with defaults
 		}
 
 		// Safety guard: check for existing JSONL with issues
@@ -116,13 +125,37 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 			}
 		}
 
-		// Determine prefix with precedence: flag > config > auto-detect from git > auto-detect from directory name
-		if prefix == "" {
-			// Try to get from config file
-			prefix = config.GetString("issue-prefix")
+		// Get current working directory early - needed for prefix detection and later
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
+			os.Exit(1)
 		}
 
-		// auto-detect prefix from first issue in JSONL file
+		// Determine prefix with precedence: flag > local config > auto-detect from local JSONL > auto-detect from git > auto-detect from directory name
+		//
+		// IMPORTANT (GH#hq-3b9eb3): Only use config.GetString("issue-prefix") if a LOCAL config
+		// file exists in cwd/.beads/. The config module walks UP directories to find config files,
+		// which means running `bd init` in a subdirectory could inherit the parent's prefix.
+		// This is wrong for init, which should create a NEW beads instance.
+		if prefix == "" {
+			// Only use config file if it's local to the current directory
+			localConfigPath := filepath.Join(cwd, ".beads", "config.yaml")
+			if _, err := os.Stat(localConfigPath); err == nil {
+				prefix = config.GetString("issue-prefix")
+			}
+		}
+
+		// For --from-jsonl, prefer prefix detected from the local JSONL file (GH#hq-3b9eb3)
+		// This ensures we use the correct prefix even if config inheritance happened
+		if prefix == "" && fromJSONL {
+			localJSONLPath := filepath.Join(cwd, ".beads", "issues.jsonl")
+			if firstIssue, err := readFirstIssueFromJSONL(localJSONLPath); err == nil && firstIssue != nil {
+				prefix = utils.ExtractIssuePrefix(firstIssue.ID)
+			}
+		}
+
+		// auto-detect prefix from first issue in JSONL file (from git history)
 		if prefix == "" {
 			issueCount, jsonlPath, gitRef := checkGitForIssues()
 			if issueCount > 0 {
@@ -135,12 +168,6 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 
 		// auto-detect prefix from directory name
 		if prefix == "" {
-			// Auto-detect from directory name
-			cwd, err := os.Getwd()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-				os.Exit(1)
-			}
 			prefix = filepath.Base(cwd)
 		}
 
@@ -188,11 +215,7 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 
 		// Determine if we should create .beads/ directory in CWD or main repo root
 		// For worktrees, .beads should always be in the main repository root
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to get current directory: %v\n", err)
-			os.Exit(1)
-		}
+		// Note: cwd is already defined earlier for prefix detection
 
 		// Check if we're in a git worktree
 		// Guard with isGitRepo() check first - on Windows, git commands may hang
@@ -342,11 +365,10 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 		if backend == configfile.BackendDolt {
 			// Dolt uses a directory, not a file
 			storagePath = filepath.Join(beadsDir, "dolt")
-			store, err = factory.New(ctx, backend, storagePath)
 		} else {
 			storagePath = initDBPath
-			store, err = sqlite.New(ctx, storagePath)
 		}
+		store, err = factory.New(ctx, backend, storagePath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to create %s database: %v\n", backend, err)
 			os.Exit(1)
@@ -385,7 +407,7 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 			if err := store.SetMetadata(ctx, "repo_id", repoID); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to set repo_id: %v\n", err)
 			} else if !quiet {
-				fmt.Printf("  Repository ID: %s\n", repoID[:8])
+				fmt.Printf("  Repository ID: %s (full: %s)\n", repoID[:8], repoID)
 			}
 		}
 
@@ -632,23 +654,6 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 			if err := installMergeDriver(); err != nil && !quiet {
 				fmt.Fprintf(os.Stderr, "\n%s Failed to install merge driver: %v\n", ui.RenderWarn("⚠"), err)
 				fmt.Fprintf(os.Stderr, "You can try again with: %s\n\n", ui.RenderAccent("bd doctor --fix"))
-			}
-		}
-
-		// Set git index flags to hide JSONL from git status when sync.branch is configured.
-		// These flags are local-only (don't transfer via git clone), so each clone needs them set.
-		// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
-		if isGitRepo() {
-			if branch != "" {
-				// --branch flag was passed: set flags directly (in-memory config not updated yet)
-				if err := doctor.SetSyncBranchGitignoreFlags(cwd); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set git index flags: %v\n", err)
-				}
-			} else {
-				// No --branch flag: check if sync-branch exists in config.yaml (cloned repo scenario)
-				if err := doctor.FixSyncBranchGitignore(); err != nil && !quiet {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set git index flags: %v\n", err)
-				}
 			}
 		}
 
