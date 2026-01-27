@@ -10,7 +10,7 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 )
 
 // localVersionFile is the gitignored file that stores the last bd version used locally.
@@ -202,22 +202,15 @@ func findActualJSONLFile(beadsDir string) string {
 //
 // IMPORTANT: This must be called AFTER determining we're in direct mode (no daemon)
 // and BEFORE opening the database, to avoid: 1) conflicts with daemon, 2) opening DB twice.
-func autoMigrateOnVersionBump(dbPath string) {
+func autoMigrateOnVersionBump(beadsDir string) {
 	// Only migrate if version upgrade was detected
 	if !versionUpgradeDetected {
 		return
 	}
 
-	// Validate dbPath
-	if dbPath == "" {
-		debug.Logf("auto-migrate: skipping migration, no database path")
-		return
-	}
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database file - nothing to migrate
-		debug.Logf("auto-migrate: skipping migration, database does not exist: %s", dbPath)
+	// Validate beadsDir
+	if beadsDir == "" {
+		debug.Logf("auto-migrate: skipping migration, no beads directory")
 		return
 	}
 
@@ -229,7 +222,7 @@ func autoMigrateOnVersionBump(dbPath string) {
 		ctx = context.Background()
 	}
 
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
 	if err != nil {
 		// Failed to open database - skip migration
 		debug.Logf("auto-migrate: failed to open database: %v", err)

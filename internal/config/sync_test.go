@@ -7,6 +7,9 @@ import (
 )
 
 func TestGetSyncMode(t *testing.T) {
+	// Isolate from config files by running in temp directory
+	t.Chdir(t.TempDir())
+
 	tests := []struct {
 		name           string
 		configValue    string

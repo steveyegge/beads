@@ -126,11 +126,32 @@ var readOnlyCommands = map[string]bool{
 	// NOTE: "export" is NOT read-only - it writes to clear dirty issues and update jsonl_file_hash
 }
 
+// readOnlySubcommands lists subcommand paths (parent/child) that are read-only.
+// This handles cases where the leaf command name alone is ambiguous.
+// Format: "parent child" (space-separated).
+var readOnlySubcommands = map[string]bool{
+	"decision check":   true, // bd decision check: only reads decision status
+	"merge-slot check": true, // bd merge-slot check: only reads slot availability
+	// NOTE: "gate check" is NOT read-only - it closes resolved gates
+}
+
 // isReadOnlyCommand returns true if the command only reads from the database.
-// This is used to open SQLite in read-only mode, preventing file modifications
+// This is used to open SQLite/Dolt in read-only mode, preventing file modifications
 // that would trigger file watchers. See GH#804.
-func isReadOnlyCommand(cmdName string) bool {
-	return readOnlyCommands[cmdName]
+// Checks both leaf command names and parent/child subcommand paths.
+func isReadOnlyCommand(cmd *cobra.Command) bool {
+	// First check leaf command name
+	if readOnlyCommands[cmd.Name()] {
+		return true
+	}
+	// Then check parent/child path for subcommands
+	if cmd.Parent() != nil && cmd.Parent().Name() != "bd" {
+		path := cmd.Parent().Name() + " " + cmd.Name()
+		if readOnlySubcommands[path] {
+			return true
+		}
+	}
+	return false
 }
 
 // getActorWithGit returns the actor for audit trails with git config fallback.
@@ -408,7 +429,10 @@ var rootCmd = &cobra.Command{
 				return
 			}
 		}
-		if slices.Contains(noDbCommands, cmdName) {
+		// Special case: "skill prime" needs actor initialization even though
+		// top-level "prime" is in noDbCommands. Check full command path.
+		isSkillPrime := cmdName == "prime" && cmd.Parent() != nil && cmd.Parent().Name() == "skill"
+		if slices.Contains(noDbCommands, cmdName) && !isSkillPrime {
 			return
 		}
 
@@ -539,7 +563,7 @@ var rootCmd = &cobra.Command{
 				// Allow read-only commands to auto-bootstrap from JSONL (GH#b09)
 				// This enables `bd --no-daemon show` after cold-start when DB is missing
 				canAutoBootstrap := false
-				if isReadOnlyCommand(cmd.Name()) && beadsDir != "" {
+				if isReadOnlyCommand(cmd) && beadsDir != "" {
 					jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 					if _, err := os.Stat(jsonlPath); err == nil {
 						canAutoBootstrap = true
@@ -704,6 +728,15 @@ var rootCmd = &cobra.Command{
 						debug.Logf("connected to daemon at %s (health: %s)", socketPath, health.Status)
 						// Warn if using daemon with git worktrees
 						warnWorktreeDaemon(dbPath)
+						// Initialize hook runner (hooks run on client side, not daemon)
+						if dbPath != "" {
+							beadsDir := filepath.Dir(dbPath)
+							hooksDir := filepath.Join(beadsDir, "hooks")
+							debug.Logf("initializing hook runner: dbPath=%s, hooksDir=%s", dbPath, hooksDir)
+							hookRunner = hooks.NewRunner(hooksDir)
+						} else {
+							debug.Logf("hook runner not initialized: dbPath is empty")
+						}
 						return // Skip direct storage initialization
 					}
 				} else {
@@ -758,6 +791,11 @@ var rootCmd = &cobra.Command{
 							debug.Logf("auto-start succeeded; connected at %s in %dms", socketPath, elapsed)
 							// Warn if using daemon with git worktrees
 							warnWorktreeDaemon(dbPath)
+							// Initialize hook runner (hooks run on client side, not daemon)
+							if dbPath != "" {
+								beadsDir := filepath.Dir(dbPath)
+								hookRunner = hooks.NewRunner(filepath.Join(beadsDir, "hooks"))
+							}
 							return // Skip direct storage initialization
 						} else {
 							// Auto-started daemon is unhealthy
@@ -808,60 +846,76 @@ var rootCmd = &cobra.Command{
 			debug.Logf("using direct mode (reason: %s)", daemonStatus.FallbackReason)
 		}
 
+		// SOFT DISABLE: Direct mode is disabled for Dolt server backend (hq-463d49)
+		// Direct mode creates a new connection pool per bd invocation, causing
+		// massive connection churn and CPU overhead. Require daemon mode instead.
+		// Exclude daemon commands - they need direct mode to start/manage the daemon.
+		// Also exclude --rig flag usage - it opens a different rig's database directly (hq-5e851d).
+		isDaemonCommand := cmd.Name() == "daemon" || cmd.Name() == "daemons" ||
+			(cmd.Parent() != nil && (cmd.Parent().Name() == "daemon" || cmd.Parent().Name() == "daemons"))
+		rigFlag, _ := cmd.Flags().GetString("rig")
+		isCrossRig := rigFlag != ""
+		if daemonClient == nil && !noDaemon && !isDaemonCommand && !isCrossRig {
+			// Check if Dolt server mode is enabled
+			checkBeadsDir := beads.FindBeadsDir()
+			if checkBeadsDir == "" && dbPath != "" {
+				checkBeadsDir = filepath.Dir(dbPath)
+			}
+			if checkBeadsDir != "" {
+				if cfg, cfgErr := configfile.Load(checkBeadsDir); cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
+					fmt.Fprintf(os.Stderr, "Error: daemon connection required for Dolt server mode\n")
+					fmt.Fprintf(os.Stderr, "Direct mode is disabled to prevent connection churn (see hq-463d49)\n")
+					fmt.Fprintf(os.Stderr, "\nDaemon status: %s\n", daemonStatus.FallbackReason)
+					if daemonStatus.Detail != "" {
+						fmt.Fprintf(os.Stderr, "Detail: %s\n", daemonStatus.Detail)
+					}
+					fmt.Fprintf(os.Stderr, "\nTo fix:\n")
+					fmt.Fprintf(os.Stderr, "  1. Start daemon: bd daemon start\n")
+					fmt.Fprintf(os.Stderr, "  2. Or use --no-daemon to force direct mode (not recommended)\n")
+					os.Exit(1)
+				}
+			}
+		}
+
 		// Check if this is a read-only command (GH#804)
 		// Read-only commands open SQLite in read-only mode to avoid modifying
 		// the database file (which breaks file watchers).
-		useReadOnly := isReadOnlyCommand(cmd.Name())
+		useReadOnly := isReadOnlyCommand(cmd)
+
+		// Fall back to direct storage access
+		var err error
+		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
+
+		// Find the beads directory - prefer FindBeadsDir() which respects BEADS_DIR env
+		// and follows redirects. Fall back to deriving from dbPath for explicit --db usage.
+		beadsDir := beads.FindBeadsDir()
+		if beadsDir == "" {
+			beadsDir = filepath.Dir(dbPath)
+		}
 
 		// Auto-migrate database on version bump
 		// Skip for read-only commands - they can't write anyway
 		// Do this AFTER daemon check but BEFORE opening database for main operation
 		// This ensures: 1) no daemon has DB open, 2) we don't open DB twice
 		if !useReadOnly {
-			autoMigrateOnVersionBump(dbPath)
+			autoMigrateOnVersionBump(beadsDir)
 		}
 
-		// Fall back to direct storage access
-		var err error
-		var needsBootstrap bool // Track if DB needs initial import (GH#b09)
-		beadsDir := filepath.Dir(dbPath)
-
-		// Detect backend from metadata.json
-		backend := factory.GetBackendFromConfig(beadsDir)
-
-		// Create storage with appropriate options
+		// Create storage with appropriate options using NewFromConfig
+		// This ensures server mode settings from metadata.json are respected
 		opts := factory.Options{
 			ReadOnly:    useReadOnly,
 			LockTimeout: lockTimeout,
 		}
 
-		if backend == configfile.BackendDolt {
-			// For Dolt, use the dolt subdirectory
-			doltPath := filepath.Join(beadsDir, "dolt")
-
-			// Check if server mode is configured in metadata.json
-			cfg, cfgErr := configfile.Load(beadsDir)
-			if cfgErr == nil && cfg != nil && cfg.IsDoltServerMode() {
-				opts.ServerMode = true
-				opts.ServerHost = cfg.GetDoltServerHost()
-				opts.ServerPort = cfg.GetDoltServerPort()
-				if cfg.Database != "" {
-					opts.Database = cfg.Database
-				}
-			}
-
-			store, err = factory.NewWithOptions(rootCtx, backend, doltPath, opts)
-		} else {
-			// SQLite backend
-			store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-			if err != nil && useReadOnly {
-				// If read-only fails (e.g., DB doesn't exist), fall back to read-write
-				// This handles the case where user runs "bd list" before "bd init"
-				debug.Logf("read-only open failed, falling back to read-write: %v", err)
-				opts.ReadOnly = false
-				store, err = factory.NewWithOptions(rootCtx, backend, dbPath, opts)
-				needsBootstrap = true // New DB needs auto-import (GH#b09)
-			}
+		store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, opts)
+		if err != nil && useReadOnly {
+			// If read-only fails (e.g., DB doesn't exist), fall back to read-write
+			// This handles the case where user runs "bd list" before "bd init"
+			debug.Logf("read-only open failed, falling back to read-write: %v", err)
+			opts.ReadOnly = false
+			store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, opts)
+			needsBootstrap = true // New DB needs auto-import (GH#b09)
 		}
 
 		// Track final read-only state for staleness checks (GH#1089)

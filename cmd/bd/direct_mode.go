@@ -84,11 +84,10 @@ func ensureStoreActive() error {
 	// based on metadata.json configuration
 	store, err := factory.NewFromConfig(getRootContext(), beadsDir)
 	if err != nil {
-		// Check for fresh clone scenario (JSONL exists but no database)
-		if _, statErr := os.Stat(jsonlPath); statErr == nil {
-			return fmt.Errorf("found JSONL file but no database: %s\n"+
-				"Hint: run 'bd init' to create the database and import issues,\n"+
-				"      or use 'bd --no-db' for JSONL-only mode", jsonlPath)
+		// Check for fresh clone scenario
+		if isFreshCloneError(err) {
+			handleFreshCloneError(err, beadsDir)
+			return fmt.Errorf("database not initialized")
 		}
 		return fmt.Errorf("failed to open database: %w", err)
 	}

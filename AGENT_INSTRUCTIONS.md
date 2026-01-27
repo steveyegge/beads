@@ -254,6 +254,107 @@ Without the pre-push hook, you can have database changes committed locally but s
 
 **Note:** Hooks are embedded in the bd binary and work for all bd users (not just source repo users).
 
+## Decision Points
+
+When you need **human input on a choice**, create a decision point. This blocks the workflow until a human responds. Use `gt decision request` (the high-level Gas Town workflow) which properly notifies the human overseer and syncs to `gt decision watch`.
+
+### Creating a Decision Point
+
+```bash
+# Create a decision that blocks another issue
+gt decision request \
+  --prompt "Which caching strategy should we use?" \
+  --option "Redis: Distributed caching, handles scaling" \
+  --option "In-memory: Simple and fast, single-process only" \
+  --recommend 1 \
+  --blocks <blocked-issue-id>
+```
+
+**Key options:**
+- `--prompt` - The question to ask (required)
+- `--option` - Option in "Label: Description" format (repeatable, 2-4 required)
+- `--recommend` - Mark option N as recommended (1-indexed)
+- `--context` - Background information or analysis
+- `--blocks` - Bead to unblock when decision is resolved
+- `--parent` - Parent bead for hierarchy
+- `--urgency` - Priority level: high, medium, low (default: medium)
+
+### Responding to Decisions
+
+Humans can respond by selecting an option or providing custom text:
+
+```bash
+# Select an option
+bd decision respond <decision-id> --select=redis
+
+# Provide custom guidance (may trigger refinement iteration)
+bd decision respond <decision-id> --text="I'd prefer a hybrid approach"
+
+# Select AND add notes
+bd decision respond <decision-id> --select=redis --text="Also add TTL support"
+
+# Accept text guidance directly (skip iteration)
+bd decision respond <decision-id> --text="Use approach X" --accept-guidance
+```
+
+### Checking Decision Status
+
+```bash
+# List pending decisions
+bd decision list --pending
+
+# Show details of a specific decision
+bd decision show <decision-id>
+
+# Send a reminder for a pending decision
+bd decision remind <decision-id>
+```
+
+### When to Use Decision Points
+
+Use decision points when:
+- You need human approval before proceeding (design review, deployment)
+- There are multiple valid approaches and you need human preference
+- A choice has significant impact and shouldn't be made autonomously
+- You need async human input (human may not respond immediately)
+
+**Example patterns:**
+
+```bash
+# Architecture decision
+gt decision request \
+  --prompt "Should we use REST or GraphQL for the new API?" \
+  --option "REST API: Well-established, simpler tooling" \
+  --option "GraphQL: Flexible queries, reduces over-fetching"
+
+# Approval gate
+gt decision request \
+  --prompt "Approve deployment to production?" \
+  --option "Yes: Deploy now, all tests passing" \
+  --option "No: Wait for maintenance window" \
+  --blocks bd-deploy.1 \
+  --urgency high
+
+# Design choice
+gt decision request \
+  --prompt "Which color scheme for the dashboard?" \
+  --option "Light theme: Better readability in bright environments" \
+  --option "Dark theme: Reduced eye strain for long sessions"
+```
+
+### Iterative Refinement
+
+When a human provides text guidance without selecting an option, the system may create a new iteration with refined options:
+
+1. Human provides text: "I'd prefer something in between"
+2. Agent receives guidance and creates new decision point (iteration 2)
+3. Agent generates refined options based on guidance
+4. Human responds again
+
+After iteration 1, an "_accept" option appears that lets humans say "accept my guidance as-is".
+
+Max iterations: 3 (configurable via `--max-iterations`)
+
 ## Common Development Tasks
 
 ### CLI Design Principles

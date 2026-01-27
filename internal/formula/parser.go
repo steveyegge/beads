@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/steveyegge/beads/internal/routing"
 )
 
 // Formula file extensions. TOML is preferred, JSON is legacy fallback.
@@ -54,22 +55,35 @@ func NewParser(searchPaths ...string) *Parser {
 }
 
 // defaultSearchPaths returns the default formula search paths.
+// Implements three-tier resolution:
+//  1. Project (rig-level): .beads/formulas/ in current directory
+//  2. Town (user-level): $GT_ROOT/.beads/formulas/ or auto-detected town root
+//  3. User fallback: ~/.beads/formulas/ (only if not in a Gas Town workspace)
 func defaultSearchPaths() []string {
 	var paths []string
 
-	// Project-level formulas
+	// Tier 1: Project-level formulas
 	if cwd, err := os.Getwd(); err == nil {
 		paths = append(paths, filepath.Join(cwd, ".beads", "formulas"))
 	}
 
-	// User-level formulas
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, ".beads", "formulas"))
+	// Tier 2: Town-level formulas (GT_ROOT or auto-detected)
+	townRoot := os.Getenv("GT_ROOT")
+	if townRoot == "" {
+		// Auto-detect town root by walking up from CWD
+		cwd, err := os.Getwd()
+		if err == nil {
+			townRoot = routing.FindTownRoot(cwd)
+		}
 	}
 
-	// Orchestrator formulas (via GT_ROOT)
-	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-		paths = append(paths, filepath.Join(gtRoot, ".beads", "formulas"))
+	if townRoot != "" {
+		paths = append(paths, filepath.Join(townRoot, ".beads", "formulas"))
+	} else {
+		// Tier 3: User-level formulas (only if not in a Gas Town workspace)
+		if home, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(home, ".beads", "formulas"))
+		}
 	}
 
 	return paths

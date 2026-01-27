@@ -209,7 +209,9 @@ func TestValidateFieldUpdateWithCustom(t *testing.T) {
 		{"valid built-in type bug", "issue_type", "bug", customStatuses, customTypes, false},
 		{"invalid type", "issue_type", "invalid_type", customStatuses, customTypes, true},
 		{"valid type without custom types", "issue_type", "task", customStatuses, nil, false},
-		{"custom type without custom types configured", "issue_type", "agent", customStatuses, nil, true},
+		// Note: In groblegark fork, "agent" is a built-in type (Gas Town extension).
+		// Use a truly custom type to test the "custom type without config" case.
+		{"custom type without custom types configured", "issue_type", "my_custom_type", customStatuses, nil, true},
 
 		// Custom status validation
 		{"valid custom status", "status", "awaiting_review", customStatuses, customTypes, false},

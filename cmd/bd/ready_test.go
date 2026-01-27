@@ -365,6 +365,76 @@ func TestReadyWorkDeferUntil(t *testing.T) {
 	})
 }
 
+// TestReadyPendingDecisions tests that pending decisions are included in ready output (hq-946577.25)
+func TestReadyPendingDecisions(t *testing.T) {
+	tmpDir := t.TempDir()
+	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
+	s := newTestStore(t, testDB)
+	ctx := context.Background()
+
+	// Create an issue that will have a decision point attached
+	decisionIssue := &types.Issue{
+		ID:        "test-decision-1",
+		Title:     "Which option?",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+		CreatedAt: time.Now(),
+	}
+	if err := s.CreateIssue(ctx, decisionIssue, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a decision point for it
+	dp := &types.DecisionPoint{
+		IssueID: "test-decision-1",
+		Prompt:  "Which caching strategy should we use?",
+		Options: `[{"id":"a","short":"Redis","label":"Use Redis for distributed caching"},{"id":"b","short":"In-memory","label":"Use in-memory for local caching"}]`,
+	}
+	if err := s.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Query pending decisions
+	pending, err := s.ListPendingDecisions(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingDecisions failed: %v", err)
+	}
+
+	// Should have 1 pending decision
+	if len(pending) != 1 {
+		t.Errorf("Expected 1 pending decision, got %d", len(pending))
+	}
+
+	if len(pending) > 0 {
+		if pending[0].IssueID != "test-decision-1" {
+			t.Errorf("Expected decision for test-decision-1, got %s", pending[0].IssueID)
+		}
+		if pending[0].Prompt != "Which caching strategy should we use?" {
+			t.Errorf("Unexpected prompt: %s", pending[0].Prompt)
+		}
+	}
+
+	// Respond to the decision (should no longer be pending)
+	now := time.Now()
+	dp.SelectedOption = "a"
+	dp.RespondedAt = &now
+	dp.RespondedBy = "test@example.com"
+	if err := s.UpdateDecisionPoint(ctx, dp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Query again - should be empty
+	pending2, err := s.ListPendingDecisions(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingDecisions failed after response: %v", err)
+	}
+
+	if len(pending2) != 0 {
+		t.Errorf("Expected 0 pending decisions after response, got %d", len(pending2))
+	}
+}
+
 func TestReadyWorkUnassigned(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")

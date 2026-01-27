@@ -1,0 +1,201 @@
+# Upgrade Beads Formula
+#
+# Simple workflow for upgrading the local beads CLI to the latest version
+# from groblegark/beads main branch.
+#
+# Usage:
+#   bd mol pour upgrade-beads
+#   gt sling beads/crew/upgrade-beads --formula upgrade-beads
+
+formula = "upgrade-beads"
+description = """
+Upgrade beads CLI to latest version from groblegark/beads main.
+
+Steps:
+1. Fetch and pull latest from origin/main
+2. Build the bd binary
+3. Install to local path
+4. Verify version shows correct git hash
+
+This formula ensures the local beads CLI is always up to date with
+the latest fixes and features from the main repository.
+"""
+type = "workflow"
+version = 1
+
+# =============================================================================
+# Step 1: Fetch latest
+# =============================================================================
+
+[[steps]]
+id = "fetch-latest"
+title = "Fetch latest from origin"
+description = """
+Fetch the latest commits from origin/main.
+
+```bash
+git fetch origin main
+```
+
+Check what's new:
+```bash
+git log HEAD..origin/main --oneline
+```
+"""
+
+# =============================================================================
+# Step 2: Pull changes
+# =============================================================================
+
+[[steps]]
+id = "pull-changes"
+title = "Pull latest changes"
+needs = ["fetch-latest"]
+description = """
+Pull latest changes from origin/main.
+
+```bash
+# Stash any local changes first
+git stash
+
+# Pull with rebase to keep history clean
+git pull --rebase origin main
+
+# Restore local changes if any
+git stash pop 2>/dev/null || true
+```
+
+Verify we're up to date:
+```bash
+git log --oneline -3
+```
+"""
+
+# =============================================================================
+# Step 3: Build binary
+# =============================================================================
+
+[[steps]]
+id = "build-binary"
+title = "Build bd binary"
+needs = ["pull-changes"]
+description = """
+Build the bd binary with version info embedded.
+
+```bash
+cd cmd/bd
+
+# Build with ldflags to embed git info
+go build -ldflags "-X main.Commit=$(git rev-parse HEAD) -X main.Branch=$(git rev-parse --abbrev-ref HEAD)" -o bd .
+```
+
+This embeds the git commit hash and branch into the binary so
+`bd version` shows the exact build source.
+"""
+
+# =============================================================================
+# Step 4: Install binary
+# =============================================================================
+
+[[steps]]
+id = "install-binary"
+title = "Install bd to PATH"
+needs = ["build-binary"]
+description = """
+Install the built binary to a location in PATH.
+
+```bash
+# Option 1: Install to /usr/local/bin (requires sudo)
+sudo cp cmd/bd/bd /usr/local/bin/bd
+
+# Option 2: Install to ~/bin (if in PATH)
+mkdir -p ~/bin
+cp cmd/bd/bd ~/bin/bd
+
+# Option 3: Install to go bin
+go install ./cmd/bd
+```
+
+Choose the option that matches your setup.
+"""
+
+# =============================================================================
+# Step 5: Verify version
+# =============================================================================
+
+[[steps]]
+id = "verify-version"
+title = "Verify version with git hash"
+needs = ["install-binary"]
+description = """
+Verify the installed version shows the correct git hash.
+
+```bash
+bd version
+```
+
+Expected output format:
+```
+bd version X.Y.Z (dev: main@<12-char-hash>)
+```
+
+Verify the hash matches current HEAD:
+```bash
+# Get current commit
+CURRENT=$(git rev-parse --short=12 HEAD)
+echo "Current commit: $CURRENT"
+
+# Check bd version shows it
+bd version | grep "$CURRENT"
+```
+
+If the hash matches, upgrade is complete!
+"""
+
+# =============================================================================
+# Step 6: Restart daemons
+# =============================================================================
+
+[[steps]]
+id = "restart-daemons"
+title = "Restart bd daemons"
+needs = ["verify-version"]
+description = """
+Kill any running daemons so they restart with the new version.
+
+```bash
+bd daemons killall
+```
+
+Daemons will auto-restart on next bd command.
+
+Verify daemon version:
+```bash
+bd daemon start --local
+bd version --daemon
+```
+"""
+
+# =============================================================================
+# Complete
+# =============================================================================
+
+[[steps]]
+id = "upgrade-complete"
+title = "Upgrade complete"
+needs = ["restart-daemons"]
+description = """
+Beads CLI upgrade complete!
+
+Summary:
+- Pulled latest from origin/main
+- Built bd binary with embedded git hash
+- Installed to PATH
+- Verified version shows correct hash
+- Restarted daemons
+
+Run `bd version` to confirm:
+```bash
+bd version
+```
+"""

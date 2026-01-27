@@ -53,7 +53,7 @@ func TestListPinIndicator(t *testing.T) {
 
 func TestListFormatPrettyIssue_BadgesAndDefaults(t *testing.T) {
 	iss := &types.Issue{ID: "bd-1", Title: "Hello", Status: "wat", Priority: 99, IssueType: "bug"}
-	out := formatPrettyIssue(iss)
+	out := formatPrettyIssue(iss, nil)
 	if !strings.Contains(out, "bd-1") || !strings.Contains(out, "Hello") {
 		t.Fatalf("unexpected output: %q", out)
 	}

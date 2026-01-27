@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -52,6 +51,8 @@ var (
 	doctorForce          bool   // force repair mode, bypass validation where safe
 	doctorSource         string // source of truth selection: auto, jsonl, db
 	perfMode             bool
+	perfDoltMode         bool   // Dolt-specific performance diagnostics
+	perfCompareMode      bool   // Compare embedded vs server mode
 	checkHealthMode      bool
 	doctorCheckFlag      string // run specific check (e.g., "pollution")
 	doctorClean          bool   // for pollution check, delete detected issues
@@ -162,9 +163,40 @@ Examples:
 			os.Exit(1)
 		}
 
+		// Run Dolt mode comparison if --perf-compare flag is set
+		if perfCompareMode {
+			if err := doctor.CompareDoltModes(absPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Run Dolt-specific performance diagnostics if --perf-dolt flag is set
+		if perfDoltMode {
+			metrics, err := doctor.RunDoltPerformanceDiagnostics(absPath, true)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			doctor.PrintDoltPerfReport(metrics)
+			return
+		}
+
 		// Run performance diagnostics if --perf flag is set
+		// Automatically detect backend and use appropriate diagnostics
 		if perfMode {
-			doctor.RunPerformanceDiagnostics(absPath)
+			beadsDir := filepath.Join(absPath, ".beads")
+			if doctor.IsDoltBackend(beadsDir) {
+				metrics, err := doctor.RunDoltPerformanceDiagnostics(absPath, true)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				doctor.PrintDoltPerfReport(metrics)
+			} else {
+				doctor.RunPerformanceDiagnostics(absPath)
+			}
 			return
 		}
 
@@ -250,6 +282,8 @@ func init() {
 	doctorCmd.Flags().BoolVarP(&doctorVerbose, "verbose", "v", false, "Show detailed output during fixes (e.g., list each removed dependency)")
 	doctorCmd.Flags().BoolVar(&doctorForce, "force", false, "Force repair mode: attempt recovery even when database cannot be opened")
 	doctorCmd.Flags().StringVar(&doctorSource, "source", "auto", "Choose source of truth for recovery: auto (detect), jsonl (prefer JSONL), db (prefer database)")
+	doctorCmd.Flags().BoolVar(&perfDoltMode, "perf-dolt", false, "Run Dolt-specific performance diagnostics")
+	doctorCmd.Flags().BoolVar(&perfCompareMode, "perf-compare", false, "Compare Dolt embedded vs server mode performance")
 	doctorCmd.Flags().BoolVar(&doctorGastown, "gastown", false, "Running in gastown multi-workspace mode (routes.jsonl is expected, higher duplicate tolerance)")
 	doctorCmd.Flags().IntVar(&gastownDuplicatesThreshold, "gastown-duplicates-threshold", 1000, "Duplicate tolerance threshold for gastown mode (wisps are ephemeral)")
 	doctorCmd.Flags().BoolVar(&doctorServer, "server", false, "Run Dolt server mode health checks (connectivity, version, schema)")
@@ -314,6 +348,31 @@ func runDiagnostics(path string) doctorResult {
 	if schemaCheck.Status == statusError {
 		result.OverallOK = false
 	}
+
+	// Dolt-specific checks (only run for Dolt backend)
+	doltConnCheck := convertDoctorCheck(doctor.CheckDoltConnection(path))
+	result.Checks = append(result.Checks, doltConnCheck)
+	if doltConnCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	doltSchemaCheck := convertDoctorCheck(doctor.CheckDoltSchema(path))
+	result.Checks = append(result.Checks, doltSchemaCheck)
+	if doltSchemaCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
+	doltSyncCheck := convertDoctorCheck(doctor.CheckDoltIssueCount(path))
+	result.Checks = append(result.Checks, doltSyncCheck)
+	// Don't fail overall for sync warnings
+
+	doltStatusCheck := convertDoctorCheck(doctor.CheckDoltStatus(path))
+	result.Checks = append(result.Checks, doltStatusCheck)
+	// Don't fail overall for uncommitted changes
+
+	doltPerfCheck := convertDoctorCheck(doctor.CheckDoltPerformance(path))
+	result.Checks = append(result.Checks, doltPerfCheck)
+	// Don't fail overall for performance warnings
 
 	// Check 2b: Repo fingerprint (detects wrong database or URL change)
 	fingerprintCheck := convertWithCategory(doctor.CheckRepoFingerprint(path), doctor.CategoryCore)
@@ -840,15 +899,7 @@ func printDiagnostics(result doctorResult) {
 				fmt.Printf("  %s  %s %s\n", ui.RenderWarnIcon(), ui.RenderWarn(fmt.Sprintf("%d.", i+1)), line)
 			}
 			if check.Fix != "" {
-				// Handle multiline Fix messages with proper indentation
-				lines := strings.Split(check.Fix, "\n")
-				for i, line := range lines {
-					if i == 0 {
-						fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), line)
-					} else {
-						fmt.Printf("          %s\n", line)
-					}
-				}
+				fmt.Printf("        %s%s\n", ui.MutedStyle.Render(ui.TreeLast), check.Fix)
 			}
 		}
 	} else {

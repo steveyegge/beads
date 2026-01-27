@@ -15,9 +15,6 @@ import (
 	"github.com/steveyegge/beads/internal/syncbranch"
 )
 
-// gitSSHRemotePattern matches standard git SSH remote URLs (user@host:path)
-var gitSSHRemotePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+@[a-zA-Z0-9][a-zA-Z0-9._-]*:.+$`)
-
 var configCmd = &cobra.Command{
 	Use:     "config",
 	GroupID: "setup",
@@ -351,7 +348,7 @@ func validateSyncConfig(repoPath string) []string {
 	var issues []string
 
 	// Load config.yaml directly from the repo path
-	configPath := filepath.Join(repoPath, ".beads", "config.yaml")
+	configPath := repoPath + "/.beads/config.yaml"
 	v := viper.New()
 	v.SetConfigType("yaml")
 	v.SetConfigFile(configPath)
@@ -437,19 +434,33 @@ func isValidRemoteURL(url string) bool {
 	}
 
 	// Also allow standard git remote patterns (user@host:path)
-	return gitSSHRemotePattern.MatchString(url)
+	// The host must have at least one character before the colon
+	// Pattern: username@hostname:path where hostname has at least 2 chars
+	gitSSHPattern := regexp.MustCompile(`^[a-zA-Z0-9._-]+@[a-zA-Z0-9][a-zA-Z0-9._-]*:.+$`)
+	return gitSSHPattern.MatchString(url)
 }
 
-// findBeadsRepoRoot walks up from the given path to find the repo root (containing .beads)
+// findBeadsRepoRoot walks up from the given path to find the repo root (containing .beads).
+// Stops at the system temp directory root to avoid finding stray .beads directories in /tmp.
 func findBeadsRepoRoot(startPath string) string {
 	path := startPath
+	tempDir := filepath.Clean(os.TempDir())
+
 	for {
+		// Don't traverse into the temp directory root - it's a system directory
+		cleanPath := filepath.Clean(path)
+		if cleanPath == tempDir {
+			return ""
+		}
+
 		beadsDir := filepath.Join(path, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			return path
 		}
+
 		parent := filepath.Dir(path)
 		if parent == path {
+			// Reached filesystem root
 			return ""
 		}
 		path = parent

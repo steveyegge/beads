@@ -820,3 +820,73 @@ func TestRPCUpdateWithExternalRef(t *testing.T) {
 
 	_ = server // Silence unused warning
 }
+
+// TestRPCCreateWithAwaitType verifies that gate fields (await_type, await_id, timeout, waiters)
+// are persisted when creating issues via RPC. This is a regression test for hq-b0b22c.3.
+func TestRPCCreateWithAwaitType(t *testing.T) {
+	server, client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create gate issue with await_type via RPC
+	createArgs := &CreateArgs{
+		Title:       "Test decision gate",
+		Description: "Testing await_type in daemon mode",
+		IssueType:   "gate",
+		Priority:    2,
+		AwaitType:   "decision",
+		AwaitID:     "d-001",
+		Timeout:     time.Hour * 24,
+		Waiters:     []string{"user@example.com"},
+	}
+
+	resp, err := client.Create(createArgs)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	var issue types.Issue
+	if err := json.Unmarshal(resp.Data, &issue); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	// Verify await_type was saved
+	if issue.AwaitType != "decision" {
+		t.Errorf("Expected AwaitType='decision', got '%s'", issue.AwaitType)
+	}
+	if issue.AwaitID != "d-001" {
+		t.Errorf("Expected AwaitID='d-001', got '%s'", issue.AwaitID)
+	}
+	if issue.Timeout != time.Hour*24 {
+		t.Errorf("Expected Timeout=24h, got '%v'", issue.Timeout)
+	}
+	if len(issue.Waiters) != 1 || issue.Waiters[0] != "user@example.com" {
+		t.Errorf("Expected Waiters=['user@example.com'], got %v", issue.Waiters)
+	}
+
+	// Verify via Show operation to ensure persistence
+	showArgs := &ShowArgs{ID: issue.ID}
+	resp, err = client.Show(showArgs)
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+
+	var retrieved types.Issue
+	if err := json.Unmarshal(resp.Data, &retrieved); err != nil {
+		t.Fatalf("Failed to unmarshal show response: %v", err)
+	}
+
+	if retrieved.AwaitType != "decision" {
+		t.Errorf("Expected retrieved AwaitType='decision', got '%s'", retrieved.AwaitType)
+	}
+	if retrieved.AwaitID != "d-001" {
+		t.Errorf("Expected retrieved AwaitID='d-001', got '%s'", retrieved.AwaitID)
+	}
+	if retrieved.Timeout != time.Hour*24 {
+		t.Errorf("Expected retrieved Timeout=24h, got '%v'", retrieved.Timeout)
+	}
+	if len(retrieved.Waiters) != 1 || retrieved.Waiters[0] != "user@example.com" {
+		t.Errorf("Expected retrieved Waiters=['user@example.com'], got %v", retrieved.Waiters)
+	}
+
+	_ = server // Silence unused warning
+}

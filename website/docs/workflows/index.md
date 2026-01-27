@@ -54,6 +54,13 @@ Async coordination primitives:
 - **Timer gates** - Wait for duration
 - **GitHub gates** - Wait for PR merge, CI, etc.
 
+### Decision Points
+
+Human-in-the-loop gates for agent decisions:
+- Present questions with multiple options
+- Support iterative refinement via text guidance
+- Configurable timeouts and notifications
+
 ### Wisps
 
 Ephemeral operations that don't sync to git:
@@ -70,6 +77,8 @@ Ephemeral operations that don't sync to git:
 | `bd mol list` | List molecules |
 | `bd pin` | Pin work to agent |
 | `bd hook` | Show pinned work |
+| `bd decision list` | List pending decisions |
+| `bd decision respond` | Respond to a decision |
 
 ## Simple Example
 
@@ -91,4 +100,5 @@ bd close release-1.0.0.1
 - [Molecules](/workflows/molecules) - Work graphs and execution
 - [Formulas](/workflows/formulas) - Declarative templates
 - [Gates](/workflows/gates) - Async coordination
+- [Decision Points](/workflows/decisions) - Human-in-the-loop decisions
 - [Wisps](/workflows/wisps) - Ephemeral operations

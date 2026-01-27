@@ -302,6 +302,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Messaging fields
 		Sender:    createArgs.Sender,
 		Ephemeral: createArgs.Ephemeral,
+		Pinned:    createArgs.Pinned,
+		AutoClose: createArgs.AutoClose,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,
@@ -320,6 +322,20 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Time-based scheduling (GH#820, GH#950, GH#952)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Gate fields (async coordination - hq-b0b22c.3)
+		AwaitType: createArgs.AwaitType,
+		AwaitID:   createArgs.AwaitID,
+		Timeout:   createArgs.Timeout,
+		Waiters:   createArgs.Waiters,
+		// Skill fields (only valid when IssueType == "skill")
+		SkillName:       createArgs.SkillName,
+		SkillVersion:    createArgs.SkillVersion,
+		SkillCategory:   createArgs.SkillCategory,
+		SkillInputs:     createArgs.SkillInputs,
+		SkillOutputs:    createArgs.SkillOutputs,
+		SkillExamples:   createArgs.SkillExamples,
+		ClaudeSkillPath: createArgs.ClaudeSkillPath,
+		SkillContent:    createArgs.SkillContent,
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -1308,8 +1324,12 @@ func (s *Server) handleList(req *Request) Response {
 
 	// Get dependency counts in bulk (single query instead of N queries)
 	issueIDs := make([]string, len(issues))
+	var epicIDs []string
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
+		if issue.IssueType == types.TypeEpic {
+			epicIDs = append(epicIDs, issue.ID)
+		}
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
@@ -1319,6 +1339,12 @@ func (s *Server) handleList(req *Request) Response {
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
+	// Get epic progress in bulk for epics
+	epicProgress, _ := store.GetEpicProgress(ctx, epicIDs)
+	if epicProgress == nil {
+		epicProgress = make(map[string]*types.EpicProgress)
+	}
+
 	// Build response with counts
 	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 	for i, issue := range issues {
@@ -1326,11 +1352,17 @@ func (s *Server) handleList(req *Request) Response {
 		if counts == nil {
 			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
 		}
-		issuesWithCounts[i] = &types.IssueWithCounts{
+		iwc := &types.IssueWithCounts{
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
 		}
+		// Add epic progress if this is an epic
+		if progress, ok := epicProgress[issue.ID]; ok {
+			iwc.EpicTotalChildren = progress.TotalChildren
+			iwc.EpicClosedChildren = progress.ClosedChildren
+		}
+		issuesWithCounts[i] = iwc
 	}
 
 	data, _ := json.Marshal(issuesWithCounts)
@@ -1638,30 +1670,11 @@ func (s *Server) handleShow(req *Request) Response {
 
 	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	
+
 	// Get dependencies and dependents with metadata (including dependency type)
-	var deps []*types.IssueWithDependencyMetadata
-	var dependents []*types.IssueWithDependencyMetadata
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		deps, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
-		dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-	} else {
-		// Fallback for non-SQLite storage (won't have dependency type metadata)
-		regularDeps, _ := store.GetDependencies(ctx, issue.ID)
-		for _, d := range regularDeps {
-			deps = append(deps, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-		regularDependents, _ := store.GetDependents(ctx, issue.ID)
-		for _, d := range regularDependents {
-			dependents = append(dependents, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-	}
+	// These methods are on the Storage interface, no type assertion needed
+	deps, _ := store.GetDependenciesWithMetadata(ctx, issue.ID)
+	dependents, _ := store.GetDependentsWithMetadata(ctx, issue.ID)
 
 	// Fetch comments
 	comments, _ := store.GetIssueComments(ctx, issue.ID)
@@ -1921,110 +1934,6 @@ func (s *Server) handleGetConfig(req *Request) Response {
 	result := GetConfigResponse{
 		Key:   args.Key,
 		Value: value,
-	}
-
-	data, _ := json.Marshal(result)
-	return Response{
-		Success: true,
-		Data:    data,
-	}
-}
-
-// handleMolStale finds stale molecules (complete-but-unclosed)
-func (s *Server) handleMolStale(req *Request) Response {
-	var args MolStaleArgs
-	if err := json.Unmarshal(req.Args, &args); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("invalid mol_stale args: %v", err),
-		}
-	}
-
-	store := s.storage
-	if store == nil {
-		return Response{
-			Success: false,
-			Error:   "storage not available",
-		}
-	}
-
-	ctx := s.reqCtx(req)
-
-	// Get all epics eligible for closure (complete but unclosed)
-	epicStatuses, err := store.GetEpicsEligibleForClosure(ctx)
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to query epics: %v", err),
-		}
-	}
-
-	// Get blocked issues to find what each stale molecule is blocking
-	blockedIssues, err := store.GetBlockedIssues(ctx, types.WorkFilter{})
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to query blocked issues: %v", err),
-		}
-	}
-
-	// Build map of issue ID -> what issues it's blocking
-	blockingMap := make(map[string][]string)
-	for _, blocked := range blockedIssues {
-		for _, blockerID := range blocked.BlockedBy {
-			blockingMap[blockerID] = append(blockingMap[blockerID], blocked.ID)
-		}
-	}
-
-	var staleMolecules []*StaleMolecule
-	blockingCount := 0
-
-	for _, es := range epicStatuses {
-		// Skip if not eligible for close (not all children closed)
-		if !es.EligibleForClose {
-			continue
-		}
-
-		// Skip if no children and not showing all
-		if es.TotalChildren == 0 && !args.ShowAll {
-			continue
-		}
-
-		// Filter by unassigned if requested
-		if args.UnassignedOnly && es.Epic.Assignee != "" {
-			continue
-		}
-
-		// Find what this molecule is blocking
-		blocking := blockingMap[es.Epic.ID]
-		blockingIssueCount := len(blocking)
-
-		// Filter by blocking if requested
-		if args.BlockingOnly && blockingIssueCount == 0 {
-			continue
-		}
-
-		mol := &StaleMolecule{
-			ID:             es.Epic.ID,
-			Title:          es.Epic.Title,
-			TotalChildren:  es.TotalChildren,
-			ClosedChildren: es.ClosedChildren,
-			Assignee:       es.Epic.Assignee,
-			BlockingIssues: blocking,
-			BlockingCount:  blockingIssueCount,
-		}
-
-		staleMolecules = append(staleMolecules, mol)
-
-		if blockingIssueCount > 0 {
-			blockingCount++
-		}
-	}
-
-	result := &MolStaleResponse{
-		StaleMolecules: staleMolecules,
-		TotalCount:     len(staleMolecules),
-		BlockingCount:  blockingCount,
 	}
 
 	data, _ := json.Marshal(result)
@@ -2366,6 +2275,252 @@ func (s *Server) handleGateWait(req *Request) Response {
 	}
 
 	data, _ := json.Marshal(GateWaitResult{AddedCount: addedCount})
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// Decision point handlers
+
+// handleDecisionCreate creates a new decision point for an issue
+func (s *Server) handleDecisionCreate(req *Request) Response {
+	var args DecisionCreateArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision create args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Verify issue exists
+	issue, err := store.GetIssue(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get issue: %v", err),
+		}
+	}
+	if issue == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("issue %s not found", args.IssueID),
+		}
+	}
+
+	// Serialize options to JSON
+	optionsJSON, err := json.Marshal(args.Options)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to serialize options: %v", err),
+		}
+	}
+
+	// Set defaults
+	maxIterations := args.MaxIterations
+	if maxIterations == 0 {
+		maxIterations = 3
+	}
+
+	dp := &types.DecisionPoint{
+		IssueID:       args.IssueID,
+		Prompt:        args.Prompt,
+		Options:       string(optionsJSON),
+		DefaultOption: args.DefaultOption,
+		MaxIterations: maxIterations,
+		Iteration:     1,
+		RequestedBy:   args.RequestedBy,
+		CreatedAt:     time.Now(),
+	}
+
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create decision point: %v", err),
+		}
+	}
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionGet retrieves a decision point for an issue
+func (s *Server) handleDecisionGet(req *Request) Response {
+	var args DecisionGetArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision get args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
+		}
+	}
+
+	// Get associated issue for context
+	issue, _ := store.GetIssue(ctx, args.IssueID)
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionResolve resolves a decision point
+func (s *Server) handleDecisionResolve(req *Request) Response {
+	var args DecisionResolveArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("invalid decision resolve args: %v", err),
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	// Get existing decision point
+	dp, err := store.GetDecisionPoint(ctx, args.IssueID)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get decision point: %v", err),
+		}
+	}
+	if dp == nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("no decision point for issue %s", args.IssueID),
+		}
+	}
+
+	// Update decision point with response
+	now := time.Now()
+	dp.SelectedOption = args.SelectedOption
+	dp.ResponseText = args.ResponseText
+	dp.RespondedAt = &now
+	dp.RespondedBy = args.RespondedBy
+	if args.Guidance != "" {
+		dp.Guidance = args.Guidance
+	}
+
+	if err := store.UpdateDecisionPoint(ctx, dp); err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to update decision point: %v", err),
+		}
+	}
+
+	// Get associated issue for context
+	issue, _ := store.GetIssue(ctx, args.IssueID)
+
+	result := &DecisionResponse{
+		Decision: dp,
+		Issue:    issue,
+	}
+	data, _ := json.Marshal(result)
+	return Response{
+		Success: true,
+		Data:    data,
+	}
+}
+
+// handleDecisionList returns pending decision points
+func (s *Server) handleDecisionList(req *Request) Response {
+	var args DecisionListArgs
+	if req.Args != nil {
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return Response{
+				Success: false,
+				Error:   fmt.Sprintf("invalid decision list args: %v", err),
+			}
+		}
+	}
+
+	store := s.storage
+	if store == nil {
+		return Response{
+			Success: false,
+			Error:   "storage not available",
+		}
+	}
+
+	ctx := s.reqCtx(req)
+
+	decisions, err := store.ListPendingDecisions(ctx)
+	if err != nil {
+		return Response{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list decisions: %v", err),
+		}
+	}
+
+	// Build response with associated issues
+	responses := make([]*DecisionResponse, 0, len(decisions))
+	for _, dp := range decisions {
+		issue, _ := store.GetIssue(ctx, dp.IssueID)
+		responses = append(responses, &DecisionResponse{
+			Decision: dp,
+			Issue:    issue,
+		})
+	}
+
+	result := &DecisionListResponse{
+		Decisions: responses,
+		Count:     len(responses),
+	}
+	data, _ := json.Marshal(result)
 	return Response{
 		Success: true,
 		Data:    data,

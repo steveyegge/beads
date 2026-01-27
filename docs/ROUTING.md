@@ -196,11 +196,36 @@ bd doctor
    - **Cause:** Upgraded before hydration was automatic
    - **Fix:** `bd repo add <routing-target>` to enable hydration manually
 
+## Disabling Routing
+
+For deployments using a single consolidated database, routing can be disabled entirely via the `routing_enabled` config option in `metadata.json`:
+
+```json
+{
+  "backend": "dolt",
+  "routing_enabled": false
+}
+```
+
+When `routing_enabled` is `false`:
+- **ResolveBeadsDirForID** always returns the local beads directory (no prefix-based routing)
+- **Cross-rig operations** (`--rig`, `--prefix` flags) return an error
+- All issues are stored in and read from the single central database
+
+This simplifies multi-agent deployments by eliminating routing complexity when all rigs share one database.
+
+**To disable routing:**
+```bash
+# Edit metadata.json directly, or use jq:
+jq '. + {"routing_enabled": false}' .beads/metadata.json > tmp && mv tmp .beads/metadata.json
+```
+
 ## Backward Compatibility
 
 - **Single-repo workflows unchanged**: If no multi-repo config exists, all issues go to current repo
 - **Explicit --repo always wins**: `--repo` flag overrides any auto-routing
 - **No schema changes**: Routing is pure config-based, no database migrations
+- **routing_enabled defaults to true**: Existing deployments continue to work without config changes
 
 ## Implementation
 

@@ -22,6 +22,8 @@ bd init
 # Tell your agent
 echo "Use 'bd' for task tracking" >> AGENTS.md
 
+# Verify installation
+bd version
 ```
 
 ## 🛠 Features
@@ -31,6 +33,7 @@ echo "Use 'bd' for task tracking" >> AGENTS.md
 * **Zero Conflict:** Hash-based IDs (`bd-a1b2`) prevent merge collisions in multi-agent/multi-branch workflows.
 * **Invisible Infrastructure:** SQLite local cache for speed; background daemon for auto-sync.
 * **Compaction:** Semantic "memory decay" summarizes old closed tasks to save context window.
+* **Decision Points:** Human-in-the-loop gates for structured input during agent workflows.
 
 ## 📖 Essential Commands
 
@@ -70,5 +73,5 @@ See [docs/COMMUNITY_TOOLS.md](docs/COMMUNITY_TOOLS.md) for a curated list of com
 
 ## 📝 Documentation
 
-* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
+* [Installing](docs/INSTALLING.md) | [Agent Workflow](AGENT_INSTRUCTIONS.md) | [Decisions](docs/DECISIONS.md) | [Articles](ARTICLES.md) | [Sync Branch Mode](docs/PROTECTED_BRANCHES.md) | [Troubleshooting](docs/TROUBLESHOOTING.md) | [FAQ](docs/FAQ.md)
 * [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/steveyegge/beads)
