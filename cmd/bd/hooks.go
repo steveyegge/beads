@@ -927,72 +927,37 @@ func detectAgentIdentity() *agentIdentity {
 }
 
 // parseAgentIdentity parses a GT_ROLE value into agent identity.
+// Only supports compound format (e.g., "beads/crew/dave").
+// Simple format role names are Gas Town concepts and should be
+// expanded to compound format by gastown before being set.
 func parseAgentIdentity(role string) *agentIdentity {
-	// GT_ROLE can be:
-	// - Simple: "crew", "polecat", "witness", "refinery", "mayor"
-	// - Compound: "beads/crew/dave", "gastown/polecat/Nux-123"
-
-	if strings.Contains(role, "/") {
-		// Compound format
-		parts := strings.Split(role, "/")
-		identity := &agentIdentity{FullIdentity: role}
-
-		if len(parts) >= 1 {
-			identity.Rig = parts[0]
-		}
-		if len(parts) >= 2 {
-			identity.Role = parts[1]
-		}
-
-		// Check for molecule
-		identity.Molecule = getPinnedMolecule()
-
-		return identity
-	}
-
-	// Simple format - need to combine with env vars
-	rig := os.Getenv("GT_RIG")
-	identity := &agentIdentity{Role: role, Rig: rig}
-
-	// Handle crew role (the only role beads knows about directly)
-	// Other roles (polecat, witness, refinery, mayor, deacon) are Gas Town
-	// concepts and should be handled by gastown, not beads core.
-	if role == "crew" {
-		crew := os.Getenv("GT_CREW")
-		if rig != "" && crew != "" {
-			identity.FullIdentity = fmt.Sprintf("%s/crew/%s", rig, crew)
-		}
-	}
-
-	if identity.FullIdentity == "" {
+	// Only support compound format: "beads/crew/dave", "gastown/polecats/Nux-123"
+	// Simple formats like "crew" or "polecat" are Gas Town concepts -
+	// gastown should expand them to compound format before setting GT_ROLE.
+	if !strings.Contains(role, "/") {
 		return nil
 	}
 
+	parts := strings.Split(role, "/")
+	identity := &agentIdentity{FullIdentity: role}
+
+	if len(parts) >= 1 {
+		identity.Rig = parts[0]
+	}
+	if len(parts) >= 2 {
+		identity.Role = parts[1]
+	}
+
+	// Check for molecule
 	identity.Molecule = getPinnedMolecule()
+
 	return identity
 }
 
-// detectAgentFromPath detects agent identity from cwd path patterns.
-// Only detects crew pattern - other Gas Town roles (polecat, witness,
-// refinery, mayor, deacon) should be detected by gastown, not beads.
+// detectAgentFromPath is deprecated - path-based agent detection is a
+// Gas Town concept and should be handled by gastown, not beads.
+// Returns nil - agents should set GT_ROLE in compound format instead.
 func detectAgentFromPath(cwd string) *agentIdentity {
-	// Crew pattern: /Users/.../gt/<rig>/crew/<name>/...
-	if strings.Contains(cwd, "/crew/") {
-		parts := strings.Split(cwd, "/crew/")
-		if len(parts) >= 2 {
-			rigPath := parts[0]
-			crewPath := parts[1]
-			rig := filepath.Base(rigPath)
-			crew := strings.Split(crewPath, "/")[0]
-			return &agentIdentity{
-				FullIdentity: fmt.Sprintf("%s/crew/%s", rig, crew),
-				Rig:          rig,
-				Role:         "crew",
-				Molecule:     getPinnedMolecule(),
-			}
-		}
-	}
-
 	return nil
 }
 
