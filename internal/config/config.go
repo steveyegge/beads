@@ -700,26 +700,7 @@ func NeedsJSONL() bool {
 // (e.g., during bd init auto-import before the database is fully configured).
 // Returns nil if no custom types are configured in config.yaml.
 func GetCustomTypesFromYAML() []string {
-	if v == nil {
-		return nil
-	}
-
-	// Try to get types.custom from viper (config.yaml or env var)
-	value := v.GetString("types.custom")
-	if value == "" {
-		return nil
-	}
-
-	// Parse comma-separated list
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
+	return getConfigList("types.custom")
 }
 
 // GetCustomStatusesFromYAML retrieves custom statuses from config.yaml.
@@ -727,17 +708,45 @@ func GetCustomTypesFromYAML() []string {
 // or when the database connection is temporarily unavailable.
 // Returns nil if no custom statuses are configured in config.yaml.
 func GetCustomStatusesFromYAML() []string {
+	return getConfigList("status.custom")
+}
+
+// ===== Agent Role Configuration =====
+// These functions return agent role types from config.yaml for agent ID parsing.
+// Each role category has different parsing semantics:
+//   - Town-level: <prefix>-<role> (singleton, no rig)
+//   - Rig-level: <prefix>-<rig>-<role> (singleton per rig)
+//   - Named: <prefix>-<rig>-<role>-<name> (multiple per rig)
+
+// GetTownLevelRoles returns roles that are town-level singletons (e.g., "mayor,deacon").
+// These roles have no rig association and appear as: <prefix>-<role>
+func GetTownLevelRoles() []string {
+	return getConfigList("agent_roles.town_level")
+}
+
+// GetRigLevelRoles returns roles that are rig-level singletons (e.g., "witness,refinery").
+// These roles have one instance per rig: <prefix>-<rig>-<role>
+func GetRigLevelRoles() []string {
+	return getConfigList("agent_roles.rig_level")
+}
+
+// GetNamedRoles returns roles that can have multiple named instances per rig (e.g., "crew,polecat").
+// These roles include a name suffix: <prefix>-<rig>-<role>-<name>
+func GetNamedRoles() []string {
+	return getConfigList("agent_roles.named")
+}
+
+// getConfigList is a helper that retrieves a comma-separated list from config.yaml.
+func getConfigList(key string) []string {
 	if v == nil {
 		return nil
 	}
 
-	// Try to get status.custom from viper (config.yaml or env var)
-	value := v.GetString("status.custom")
+	value := v.GetString(key)
 	if value == "" {
 		return nil
 	}
 
-	// Parse comma-separated list
 	parts := strings.Split(value, ",")
 	result := make([]string, 0, len(parts))
 	for _, p := range parts {

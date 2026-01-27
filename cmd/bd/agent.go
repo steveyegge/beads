@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -784,11 +785,23 @@ func isAgentBead(labels []string) bool {
 	return false
 }
 
+// sliceToSet converts a string slice to a map for O(1) lookup.
+func sliceToSet(slice []string) map[string]bool {
+	if len(slice) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(slice))
+	for _, s := range slice {
+		m[s] = true
+	}
+	return m
+}
+
 // parseAgentIDFields extracts role_type and rig from an agent bead ID.
-// Agent ID patterns:
-//   - Town-level: <prefix>-<role> (e.g., gt-mayor) → role="mayor", rig=""
-//   - Per-rig singleton: <prefix>-<rig>-<role> (e.g., gt-gastown-witness) → role="witness", rig="gastown"
-//   - Per-rig named: <prefix>-<rig>-<role>-<name> (e.g., gt-gastown-polecat-nux) → role="polecat", rig="gastown"
+// Roles must be configured via agent_roles.* in config.yaml:
+//   - agent_roles.town_level: Singleton roles with no rig (pattern: <prefix>-<role>)
+//   - agent_roles.rig_level: One per rig (pattern: <prefix>-<rig>-<role>)
+//   - agent_roles.named: Multiple per rig with names (pattern: <prefix>-<rig>-<role>-<name>)
 func parseAgentIDFields(agentID string) (roleType, rig string) {
 	// Must contain a hyphen to have a prefix
 	hyphenIdx := strings.Index(agentID, "-")
@@ -804,10 +817,15 @@ func parseAgentIDFields(agentID string) (roleType, rig string) {
 		return "", ""
 	}
 
-	// Known roles for classification
-	townLevelRoles := map[string]bool{"mayor": true, "deacon": true}
-	rigLevelRoles := map[string]bool{"witness": true, "refinery": true}
-	namedRoles := map[string]bool{"crew": true, "polecat": true}
+	// Load role classifications from config (application-defined)
+	townLevelRoles := sliceToSet(config.GetTownLevelRoles())
+	rigLevelRoles := sliceToSet(config.GetRigLevelRoles())
+	namedRoles := sliceToSet(config.GetNamedRoles())
+
+	// If no roles configured, agent ID parsing is disabled
+	if townLevelRoles == nil && rigLevelRoles == nil && namedRoles == nil {
+		return "", ""
+	}
 
 	// Case 1: Town-level roles (gt-mayor, gt-deacon) - single part after prefix
 	if len(parts) == 1 {
