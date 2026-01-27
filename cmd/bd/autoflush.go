@@ -865,6 +865,7 @@ func flushToJSONLWithState(state flushState) {
 	// Check if JSONL export is enabled for current sync mode (bd-48h)
 	// In dolt-native mode, JSONL export is disabled - Dolt is the source of truth
 	if !ShouldExportJSONL(ctx, store) {
+		debug.Logf("skipping autoflush (dolt-native mode)")
 		return
 	}
 

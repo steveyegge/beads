@@ -850,8 +850,15 @@ func generateSemanticID(ctx context.Context, store storage.Storage, prefix, issu
 
 // flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
 // This is critical for multi-repo hydration to work correctly (bd-fix-routing).
+// Respects sync mode: skips JSONL export in dolt-native mode (bd-a9ka).
 func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 	ctx := context.Background()
+
+	// Check sync mode before JSONL export (bd-a9ka: dolt-native mode should skip JSONL)
+	if !ShouldExportJSONL(ctx, targetStore) {
+		debug.Logf("skipping JSONL flush for routed repo (dolt-native mode)")
+		return
+	}
 
 	// Expand the repo path and construct the .beads directory path
 	targetBeadsDir := routing.ExpandPath(repoPath)
