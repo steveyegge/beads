@@ -51,6 +51,12 @@ const (
 	OpGateShow   = "gate_show"
 	OpGateClose  = "gate_close"
 	OpGateWait   = "gate_wait"
+
+	// Decision point operations
+	OpDecisionCreate  = "decision_create"
+	OpDecisionGet     = "decision_get"
+	OpDecisionResolve = "decision_resolve"
+	OpDecisionList    = "decision_list"
 )
 
 // Request represents an RPC request from client to daemon
@@ -627,5 +633,48 @@ type GetConfigArgs struct {
 type GetConfigResponse struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// Decision point operations
+
+// DecisionCreateArgs represents arguments for creating a decision point
+type DecisionCreateArgs struct {
+	IssueID       string   `json:"issue_id"`                 // Issue ID to attach decision to
+	Prompt        string   `json:"prompt"`                   // Question to ask
+	Options       []string `json:"options"`                  // Available choices
+	DefaultOption string   `json:"default_option,omitempty"` // Default option if no response
+	MaxIterations int      `json:"max_iterations,omitempty"` // Max follow-up iterations (default 3)
+	RequestedBy   string   `json:"requested_by,omitempty"`   // Who requested this decision
+}
+
+// DecisionGetArgs represents arguments for getting a decision point
+type DecisionGetArgs struct {
+	IssueID string `json:"issue_id"` // Issue ID to get decision for
+}
+
+// DecisionResolveArgs represents arguments for resolving a decision point
+type DecisionResolveArgs struct {
+	IssueID        string `json:"issue_id"`                  // Issue ID
+	SelectedOption string `json:"selected_option"`           // Chosen option
+	ResponseText   string `json:"response_text,omitempty"`   // Additional response text
+	RespondedBy    string `json:"responded_by,omitempty"`    // Who responded
+	Guidance       string `json:"guidance,omitempty"`        // Follow-up guidance
+}
+
+// DecisionListArgs represents arguments for listing pending decisions
+type DecisionListArgs struct {
+	All bool `json:"all,omitempty"` // Include resolved decisions
+}
+
+// DecisionResponse represents a single decision with its associated issue
+type DecisionResponse struct {
+	Decision *types.DecisionPoint `json:"decision"`
+	Issue    *types.Issue         `json:"issue,omitempty"`
+}
+
+// DecisionListResponse represents a list of decisions
+type DecisionListResponse struct {
+	Decisions []*DecisionResponse `json:"decisions"`
+	Count     int                 `json:"count"`
 }
 
