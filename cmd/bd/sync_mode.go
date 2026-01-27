@@ -50,6 +50,7 @@ const (
 
 // GetSyncMode returns the configured sync mode, checking config.yaml first (where bd config set writes),
 // then falling back to database. This fixes GH#1277 where yaml and database were inconsistent.
+// hq-3446fc.18: If storage-backend is "dolt", defaults to dolt-native instead of git-portable.
 func GetSyncMode(ctx context.Context, s storage.Storage) string {
 	// First check config.yaml (where bd config set writes for sync.* keys)
 	yamlMode := config.GetSyncMode()
@@ -67,7 +68,15 @@ func GetSyncMode(ctx context.Context, s storage.Storage) string {
 		}
 	}
 
-	// Default to git-portable
+	// hq-3446fc.18: When storage-backend is "dolt", default to dolt-native
+	// This ensures Dolt users get the expected behavior without explicit sync.mode config.
+	// The storage-backend check is from config.yaml, which viper reads at startup.
+	storageBackend := config.GetString("storage-backend")
+	if storageBackend == "dolt" {
+		return SyncModeDoltNative
+	}
+
+	// Default to git-portable for SQLite and other backends
 	return SyncModeGitPortable
 }
 
