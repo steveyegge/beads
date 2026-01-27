@@ -61,6 +61,12 @@ Examples:
 		// (the BD_DAEMON_FOREGROUND=1 child spawned by startDaemon).
 		if foreground {
 			autoCommit, autoPush, autoPull = loadDaemonAutoSettings(cmd, autoCommit, autoPush, autoPull)
+		} else {
+			// In background mode, load YAML/env settings for the startup message
+			// (full settings including database are loaded in the child process)
+			if yamlCommit, yamlPush, yamlPull, hasSettings := loadYAMLDaemonSettings(); hasSettings {
+				autoCommit, autoPush, autoPull = yamlCommit, yamlPush, yamlPull
+			}
 		}
 
 		if interval <= 0 {
