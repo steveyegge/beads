@@ -14,6 +14,9 @@ from .models import (
     BlockedIssue,
     BlockedParams,
     CloseIssueParams,
+    Comment,
+    CommentAddParams,
+    CommentListParams,
     CreateIssueParams,
     InitParams,
     Issue,
@@ -173,13 +176,37 @@ class BdClientBase(ABC):
     @abstractmethod
     async def validate(self, checks: str | None = None, fix_all: bool = False) -> dict[str, Any]:
         """Run database validation checks.
-        
+
         Args:
             checks: Comma-separated list of checks (orphans,duplicates,pollution,conflicts)
             fix_all: If True, auto-fix all fixable issues
-            
+
         Returns:
             Dict with validation results for each check
+        """
+        pass
+
+    @abstractmethod
+    async def comment_list(self, params: CommentListParams) -> list[Comment]:
+        """List all comments on an issue.
+
+        Args:
+            params: CommentListParams with issue_id
+
+        Returns:
+            List of comments on the issue
+        """
+        pass
+
+    @abstractmethod
+    async def comment_add(self, params: CommentAddParams) -> Comment:
+        """Add a comment to an issue.
+
+        Args:
+            params: CommentAddParams with issue_id, text, and optional author
+
+        Returns:
+            The created comment
         """
         pass
 
@@ -665,6 +692,10 @@ class BdCliClient(BdClientBase):
         if not isinstance(data, dict):
             raise BdCommandError("Invalid response for stats")
 
+        # CLI returns {"summary": {...}}, extract the summary
+        if "summary" in data:
+            data = data["summary"]
+
         return Stats.model_validate(data)
 
     async def blocked(self, params: BlockedParams | None = None) -> list[BlockedIssue]:
@@ -765,6 +796,41 @@ class BdCliClient(BdClientBase):
         if not isinstance(data, dict):
             raise BdCommandError("Invalid response for validate")
         return data
+
+    async def comment_list(self, params: CommentListParams) -> list[Comment]:
+        """List all comments on an issue.
+
+        Args:
+            params: CommentListParams with issue_id
+
+        Returns:
+            List of comments on the issue
+        """
+        data = await self._run_command("comments", params.issue_id)
+        if not isinstance(data, list):
+            return []
+
+        return [Comment.model_validate(comment) for comment in data]
+
+    async def comment_add(self, params: CommentAddParams) -> Comment:
+        """Add a comment to an issue.
+
+        Args:
+            params: CommentAddParams with issue_id, text, and optional author
+
+        Returns:
+            The created comment
+        """
+        args = ["comments", "add", params.issue_id, params.text]
+
+        if params.author:
+            args.extend(["--author", params.author])
+
+        data = await self._run_command(*args)
+        if not isinstance(data, dict):
+            raise BdCommandError("Invalid response for comment add")
+
+        return Comment.model_validate(data)
 
     async def init(self, params: InitParams | None = None) -> str:
         """Initialize bd in current directory.

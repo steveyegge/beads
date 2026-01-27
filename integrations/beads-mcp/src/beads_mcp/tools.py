@@ -20,6 +20,9 @@ from .models import (
     BlockedIssue,
     BlockedParams,
     CloseIssueParams,
+    Comment,
+    CommentAddParams,
+    CommentListParams,
     CreateIssueParams,
     DependencyType,
     InitParams,
@@ -701,3 +704,34 @@ async def beads_init(
     client = await _get_client()
     params = InitParams(prefix=prefix)
     return await client.init(params)
+
+
+# =============================================================================
+# COMMENT TOOLS
+# =============================================================================
+
+async def beads_comment_list(
+    issue_id: Annotated[str, "Issue ID to list comments for (e.g., bd-1)"],
+) -> list[Comment]:
+    """List all comments on an issue.
+
+    Returns comments in chronological order (oldest first).
+    """
+    client = await _get_client()
+    params = CommentListParams(issue_id=issue_id)
+    return await client.comment_list(params)
+
+
+async def beads_comment_add(
+    issue_id: Annotated[str, "Issue ID to add comment to (e.g., bd-1)"],
+    text: Annotated[str, "Comment text"],
+    author: Annotated[str | None, "Author name (defaults to current user)"] = None,
+) -> Comment:
+    """Add a comment to an issue.
+
+    Use comments to add notes, progress updates, or discussion to issues.
+    Comments are append-only and will be synced via JSONL export.
+    """
+    client = await _get_client()
+    params = CommentAddParams(issue_id=issue_id, text=text, author=author)
+    return await client.comment_add(params)

@@ -28,6 +28,7 @@ from beads_mcp.models import (
     BlockedIssue,
     BriefDep,
     BriefIssue,
+    Comment,
     CompactedResult,
     DependencyType,
     Issue,
@@ -42,6 +43,8 @@ from beads_mcp.tools import (
     beads_add_dependency,
     beads_blocked,
     beads_close_issue,
+    beads_comment_add,
+    beads_comment_list,
     beads_create_issue,
     beads_detect_pollution,
     beads_get_schema_info,
@@ -318,6 +321,8 @@ _TOOL_CATALOG = {
     "close": "Close/complete an issue",
     "reopen": "Reopen closed issues",
     "dep": "Add dependency between issues",
+    "comment_list": "List all comments on an issue",
+    "comment_add": "Add a comment to an issue",
     "stats": "Get issue statistics",
     "blocked": "Show blocked issues and what blocks them",
     "context": "Manage workspace context (set, show, init)",
@@ -525,6 +530,28 @@ async def get_tool_info(tool_name: str) -> dict[str, Any]:
             },
             "returns": "String with context information or confirmation",
             "example": "context(action='set', workspace_root='/path/to/project')"
+        },
+        "comment_list": {
+            "name": "comment_list",
+            "description": "List all comments on an issue",
+            "parameters": {
+                "issue_id": "str (required) - e.g., 'bd-a1b2'",
+                "workspace_root": "str (optional)"
+            },
+            "returns": "List of Comment objects with id, issue_id, author, text, created_at",
+            "example": "comment_list(issue_id='bd-a1b2')"
+        },
+        "comment_add": {
+            "name": "comment_add",
+            "description": "Add a comment to an issue",
+            "parameters": {
+                "issue_id": "str (required) - e.g., 'bd-a1b2'",
+                "text": "str (required) - Comment text",
+                "author": "str (optional) - Author name, defaults to current user",
+                "workspace_root": "str (optional)"
+            },
+            "returns": "Comment object with id, issue_id, author, text, created_at",
+            "example": "comment_add(issue_id='bd-a1b2', text='Progress update: completed step 1')"
         },
     }
 
@@ -931,6 +958,7 @@ async def show_issue(
     brief_deps: bool = False,
     fields: list[str] | None = None,
     max_description_length: int | None = None,
+    include_latest_comment: bool = False,
 ) -> Issue | BriefIssue | dict[str, Any]:
     """Show detailed information about a specific issue.
 
@@ -941,11 +969,18 @@ async def show_issue(
         brief_deps: If True, return full issue but with compact dependencies
         fields: Return only specified fields (custom projections)
         max_description_length: Truncate description to this length
+        include_latest_comment: If True, fetch and include the most recent comment
     """
     issue = await beads_show_issue(issue_id=issue_id)
 
     if max_description_length:
         issue = _truncate_description(issue, max_description_length)
+
+    # Fetch latest comment if requested
+    if include_latest_comment:
+        comments = await beads_comment_list(issue_id=issue_id)
+        if comments:
+            issue.latest_comment = comments[-1]  # Last one is most recent
 
     # Brief mode - just identification
     if brief:
@@ -1236,6 +1271,51 @@ async def admin(
 
     else:
         raise ValueError(f"Unknown action: {action}. Use 'validate', 'repair', 'schema', 'debug', 'migration', or 'pollution'")
+
+
+# =============================================================================
+# COMMENT TOOLS
+# =============================================================================
+
+@mcp.tool(
+    name="comment_list",
+    description="List all comments on an issue. Returns comments in chronological order.",
+)
+@with_workspace
+async def comment_list(
+    issue_id: str,
+    workspace_root: str | None = None,
+) -> list[Comment]:
+    """List all comments on an issue.
+
+    Args:
+        issue_id: The issue ID to list comments for (e.g., 'bd-a1b2')
+        workspace_root: Workspace path override
+    """
+    return await beads_comment_list(issue_id=issue_id)
+
+
+@mcp.tool(
+    name="comment_add",
+    description="Add a comment to an issue. Comments are append-only and sync via JSONL.",
+)
+@with_workspace
+@require_context
+async def comment_add(
+    issue_id: str,
+    text: str,
+    author: str | None = None,
+    workspace_root: str | None = None,
+) -> Comment:
+    """Add a comment to an issue.
+
+    Args:
+        issue_id: The issue ID to add comment to (e.g., 'bd-a1b2')
+        text: Comment text
+        author: Author name (defaults to current user)
+        workspace_root: Workspace path override
+    """
+    return await beads_comment_add(issue_id=issue_id, text=text, author=author)
 
 
 async def async_main() -> None:
