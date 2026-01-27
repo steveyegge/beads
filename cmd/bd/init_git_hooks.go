@@ -411,18 +411,17 @@ if [ ! -f "$BEADS_DIR/issues.jsonl" ]; then
     exit 0
 fi
 
-# Sync the updated JSONL using the robust sync command
-# This handles store initialization, custom types, and error recovery better than raw import
-SYNC_OUTPUT=$(bd sync --import-only --no-git-history --no-daemon 2>&1)
-SYNC_EXIT=$?
+# Sync the updated JSONL, capturing stderr for better error reporting
+IMPORT_OUTPUT=$(bd sync --import-only --no-git-history --no-daemon 2>&1)
+IMPORT_EXIT=$?
 
-if [ $SYNC_EXIT -ne 0 ]; then
-    echo "Warning: Failed to sync bd changes after merge (exit code $SYNC_EXIT)" >&2
-    if [ -n "$SYNC_OUTPUT" ]; then
+if [ $IMPORT_EXIT -ne 0 ]; then
+    echo "Warning: Failed to import bd changes after merge (exit code $IMPORT_EXIT)" >&2
+    if [ -n "$IMPORT_OUTPUT" ]; then
         echo "Error details:" >&2
-        echo "$SYNC_OUTPUT" | head -5 >&2
+        echo "$IMPORT_OUTPUT" | head -5 >&2
     fi
-    echo "Run 'bd sync --import-only --no-daemon' manually to diagnose" >&2
+    echo "Run 'bd sync --import-only' manually to diagnose" >&2
 fi
 
 exit 0
