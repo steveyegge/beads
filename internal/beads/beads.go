@@ -394,9 +394,24 @@ type Storage = storage.Storage
 type Transaction = storage.Transaction
 
 // NewSQLiteStorage opens a bd SQLite database for programmatic access.
-// Most extensions should use this to query ready work and update issue status.
+// This function explicitly uses SQLite regardless of configuration.
+//
+// Note: This bypasses backend configuration. If your .beads directory is
+// configured to use Dolt, this will still open SQLite (and likely fail or
+// access wrong data). For most use cases, callers should use storage/factory
+// package to respect backend configuration.
 func NewSQLiteStorage(ctx context.Context, dbPath string) (Storage, error) {
 	return sqlite.New(ctx, dbPath)
+}
+
+// GetConfiguredBackend returns the backend type from the beads directory config.
+// Returns "sqlite" if no config exists or backend is not specified.
+func GetConfiguredBackend(beadsDir string) string {
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return configfile.BackendSQLite
+	}
+	return cfg.GetBackend()
 }
 
 // FindDatabasePath discovers the bd database path using bd's standard search order:
@@ -724,13 +739,20 @@ func FindAllDatabases() []DatabaseInfo {
 				issueCount := -1
 				// Don't fail if we can't open/query the database - it might be locked
 				// or corrupted, but we still want to detect and warn about it
-				ctx := context.Background()
-				store, err := sqlite.New(ctx, dbPath)
-				if err == nil {
-					if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
-						issueCount = len(issues)
+				//
+				// Note: We only count for SQLite backend. For Dolt, we skip counting
+				// due to import cycle constraints (beads package cannot import factory).
+				// Callers needing Dolt support should use storage/factory directly.
+				backend := GetConfiguredBackend(beadsDir)
+				if backend == configfile.BackendSQLite {
+					ctx := context.Background()
+					store, err := sqlite.New(ctx, dbPath)
+					if err == nil {
+						if issues, err := store.SearchIssues(ctx, "", types.IssueFilter{}); err == nil {
+							issueCount = len(issues)
+						}
+						_ = store.Close()
 					}
-					_ = store.Close()
 				}
 
 				databases = append(databases, DatabaseInfo{
