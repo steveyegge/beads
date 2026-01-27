@@ -187,6 +187,45 @@ func (s *DoltStore) GetAllDependencyRecords(ctx context.Context) (map[string][]*
 	return result, rows.Err()
 }
 
+// GetDependencyRecordsForIssues returns dependency records for specific issues
+func (s *DoltStore) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string][]*types.Dependency), nil
+	}
+
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+		FROM dependencies
+		WHERE issue_id IN (%s)
+		ORDER BY issue_id
+	`, inClause)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependency records for issues: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]*types.Dependency)
+	for rows.Next() {
+		dep, err := scanDependencyRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		result[dep.IssueID] = append(result[dep.IssueID], dep)
+	}
+	return result, rows.Err()
+}
+
 // GetDependencyCounts returns dependency counts for multiple issues
 func (s *DoltStore) GetDependencyCounts(ctx context.Context, issueIDs []string) (map[string]*types.DependencyCounts, error) {
 	if len(issueIDs) == 0 {

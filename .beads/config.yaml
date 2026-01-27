@@ -52,3 +52,5 @@ sync-branch: "beads-metadata"
 # - linear.api-key
 # - github.org
 # - github.repo
+# Custom issue types for Gas Town (fallback when database is unavailable)
+types.custom: "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"

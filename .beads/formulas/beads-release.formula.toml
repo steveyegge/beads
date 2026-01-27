@@ -711,22 +711,49 @@ needs = ["verify-github", "verify-npm", "verify-pypi"]
 description = """
 Update local bd to the new version.
 
-Option 1 - Homebrew:
+**Step 1: Install release binary**
+
+Option A - Homebrew:
 ```bash
 brew upgrade bd
 ```
 
-Option 2 - Install script:
+Option B - Install script:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 ```
 
-Verify:
+**Step 2: Check for dev builds (developers only)**
+
+If you build bd from source, you may have multiple `bd` binaries in your PATH:
 ```bash
-bd --version
+which -a bd
 ```
 
-Should show {{version}}.
+Common locations:
+- `~/.local/bin/bd` - release binary (installed above)
+- `~/go/bin/bd` - Go dev build
+- Project worktree builds
+
+**If you have a dev build that takes precedence**, rebuild from source:
+```bash
+# From the beads source directory
+make install
+
+# Or using go install directly
+go install -ldflags="-X main.Build=$(git rev-parse --short HEAD)" ./cmd/bd
+```
+
+**Verify ALL bd binaries are updated:**
+```bash
+# Check which bd runs by default
+which bd && bd --version
+
+# If you have go/bin/bd, verify it too
+test -f ~/go/bin/bd && ~/go/bin/bd --version
+```
+
+All should show {{version}}.
 """
 
 [[steps]]

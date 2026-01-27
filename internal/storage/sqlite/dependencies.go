@@ -478,6 +478,64 @@ func (s *SQLiteStorage) GetAllDependencyRecords(ctx context.Context) (map[string
 	return depsMap, nil
 }
 
+// GetDependencyRecordsForIssues returns dependency records for specific issues
+// This is optimized for operations that only need deps for a subset of issues
+func (s *SQLiteStorage) GetDependencyRecordsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Dependency, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string][]*types.Dependency), nil
+	}
+
+	// Hold read lock during database operations to prevent reconnect() from
+	// closing the connection mid-query (GH#607 race condition fix)
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	// Build parameterized IN clause
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// nolint:gosec // G201: inClause contains only ? placeholders, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id, depends_on_id, type, created_at, created_by,
+		       COALESCE(metadata, '{}') as metadata, COALESCE(thread_id, '') as thread_id
+		FROM dependencies
+		WHERE issue_id IN (%s)
+		ORDER BY issue_id, created_at ASC
+	`, inClause)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependency records for issues: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// Group dependencies by issue ID
+	depsMap := make(map[string][]*types.Dependency)
+	for rows.Next() {
+		var dep types.Dependency
+		err := rows.Scan(
+			&dep.IssueID,
+			&dep.DependsOnID,
+			&dep.Type,
+			&dep.CreatedAt,
+			&dep.CreatedBy,
+			&dep.Metadata,
+			&dep.ThreadID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan dependency: %w", err)
+		}
+		depsMap[dep.IssueID] = append(depsMap[dep.IssueID], &dep)
+	}
+
+	return depsMap, nil
+}
+
 // GetDependencyTree returns the full dependency tree with optional deduplication
 // When showAllPaths is false (default), nodes appearing via multiple paths (diamond dependencies)
 // appear only once at their shallowest depth in the tree.
