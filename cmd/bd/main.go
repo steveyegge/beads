@@ -908,6 +908,10 @@ var rootCmd = &cobra.Command{
 			LockTimeout: lockTimeout,
 		}
 
+		// Use NewFromConfigWithOptions which handles:
+		// - Backend detection from config
+		// - Dolt server mode with GetDoltDatabase() for proper database name (7e3b828f)
+		// - All server connection settings from metadata.json
 		store, err = factory.NewFromConfigWithOptions(rootCtx, beadsDir, opts)
 		if err != nil && useReadOnly {
 			// If read-only fails (e.g., DB doesn't exist), fall back to read-write
