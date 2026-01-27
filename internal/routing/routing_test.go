@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -997,5 +998,226 @@ func TestAutoDetectTargetRig(t *testing.T) {
 				t.Errorf("AutoDetectTargetRig() gotShouldRoute = %v, want %v", gotShouldRoute, tt.wantShouldRoute)
 			}
 		})
+	}
+}
+
+// TestResolveBeadsDirForID_UnknownPrefix verifies that an ID with a prefix
+// not found in routes returns the local beads directory with routed=false.
+func TestResolveBeadsDirForID_UnknownPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create routes.jsonl with only gt- prefix
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create mayor/town.json marker
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmpDir)
+
+	ctx := context.Background()
+	// Try to resolve an ID with unknown prefix "bd-"
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "bd-abc123", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	if routed {
+		t.Error("Expected routed=false for unknown prefix, got true")
+	}
+	if resolvedDir != beadsDir {
+		t.Errorf("Expected local beadsDir %q, got %q", beadsDir, resolvedDir)
+	}
+}
+
+// TestResolveBeadsDirForID_NoPrefix verifies that an ID without a prefix
+// returns the local beads directory with routed=false.
+func TestResolveBeadsDirForID_NoPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create routes.jsonl
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create mayor/town.json marker
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmpDir)
+
+	ctx := context.Background()
+	// Try to resolve an ID without any prefix (no hyphen)
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "abc123xyz", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	if routed {
+		t.Error("Expected routed=false for ID without prefix, got true")
+	}
+	if resolvedDir != beadsDir {
+		t.Errorf("Expected local beadsDir %q, got %q", beadsDir, resolvedDir)
+	}
+}
+
+// TestResolveBeadsDirForID_SuccessfulRouting verifies that an ID with a known prefix
+// routes to the correct target beads directory when it exists.
+func TestResolveBeadsDirForID_SuccessfulRouting(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create routes.jsonl
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create mayor/town.json marker
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create the target rig directory
+	targetBeadsDir := filepath.Join(tmpDir, "gastown", "mayor", "rig", ".beads")
+	if err := os.MkdirAll(targetBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmpDir)
+
+	ctx := context.Background()
+	// Resolve an ID with matching prefix
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "gt-abc123", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	if !routed {
+		t.Error("Expected routed=true for matching prefix, got false")
+	}
+	if resolvedDir != targetBeadsDir {
+		t.Errorf("Expected target beadsDir %q, got %q", targetBeadsDir, resolvedDir)
+	}
+}
+
+// TestResolveBeadsDirForID_NonExistentTargetDir verifies that when an ID's prefix
+// matches a route but the target directory doesn't exist, it falls back to local.
+func TestResolveBeadsDirForID_NonExistentTargetDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create routes.jsonl pointing to non-existent target
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create mayor/town.json marker
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Note: We deliberately do NOT create gastown/mayor/rig/.beads
+	t.Chdir(tmpDir)
+
+	ctx := context.Background()
+	// Resolve an ID with matching prefix but non-existent target
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "gt-abc123", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	if routed {
+		t.Error("Expected routed=false for non-existent target, got true")
+	}
+	if resolvedDir != beadsDir {
+		t.Errorf("Expected local beadsDir %q, got %q", beadsDir, resolvedDir)
+	}
+}
+
+// TestResolveBeadsDirForID_DotPath verifies that path="." correctly resolves
+// to the town root beads directory.
+func TestResolveBeadsDirForID_DotPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create routes.jsonl with path="."
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"hq-","path":"."}` + "\n"
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create mayor/town.json marker
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tmpDir)
+
+	ctx := context.Background()
+	// Resolve an ID with prefix matching path="."
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "hq-abc123", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	// path="." resolves to townRoot/.beads which is the same as beadsDir
+	// This should still count as routed since a route matched
+	if !routed {
+		t.Error("Expected routed=true for path='.' match, got false")
+	}
+	if resolvedDir != beadsDir {
+		t.Errorf("Expected beadsDir %q, got %q", beadsDir, resolvedDir)
+	}
+}
+
+// TestResolveBeadsDirForID_NoRoutes verifies that when no routes.jsonl exists,
+// the local beads directory is returned with routed=false.
+func TestResolveBeadsDirForID_NoRoutes(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// No routes.jsonl file created
+
+	ctx := context.Background()
+	resolvedDir, routed, err := ResolveBeadsDirForID(ctx, "gt-abc123", beadsDir)
+	if err != nil {
+		t.Fatalf("ResolveBeadsDirForID unexpected error: %v", err)
+	}
+	if routed {
+		t.Error("Expected routed=false when no routes file exists, got true")
+	}
+	if resolvedDir != beadsDir {
+		t.Errorf("Expected local beadsDir %q, got %q", beadsDir, resolvedDir)
 	}
 }

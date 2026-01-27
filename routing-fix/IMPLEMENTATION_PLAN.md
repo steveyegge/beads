@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-004 completed)
+**Last Updated**: 2026-01-27 (TASK-005 completed)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -28,7 +28,7 @@ Investigation of the beads routing functionality revealed:
 | TASK-002 | Add BD_DEBUG_ROUTING to LoadRoutes | completed | P0 |
 | TASK-003 | Add unit tests for LoadRoutes error paths | completed | P1 |
 | TASK-004 | Add unit tests for ResolveBeadsDirForRig | completed | P1 |
-| TASK-005 | Add unit tests for ResolveBeadsDirForID | pending | P1 |
+| TASK-005 | Add unit tests for ResolveBeadsDirForID | completed | P1 |
 | TASK-006 | Add documentation comments for edge cases | pending | P2 |
 | TASK-007 | Add warning for malformed routes.jsonl | pending | P2 |
 | TASK-000 | Core routing implementation | completed | - |
@@ -141,21 +141,24 @@ Investigation of the beads routing functionality revealed:
 ---
 
 #### TASK-005: Add unit tests for ResolveBeadsDirForID
-**Status**: pending
+**Status**: completed
 **File**: `internal/routing/routing_test.go`
 **Spec**: `routing-fix/specs/04-test-coverage.md`
+**Completed**: 2026-01-27
 
-**Currently Untested Scenarios** (verified - no dedicated tests exist):
-1. ID with unknown prefix → should return local, routed=false
-2. ID routing to non-existent directory → should return local
-3. ID with no prefix → should return local
-4. ID routing to existing directory → should route successfully
+**Tests Implemented**:
+1. `TestResolveBeadsDirForID_UnknownPrefix` - ID with unknown prefix returns local, routed=false
+2. `TestResolveBeadsDirForID_NoPrefix` - ID without any prefix returns local, routed=false
+3. `TestResolveBeadsDirForID_SuccessfulRouting` - ID with known prefix routes to target directory
+4. `TestResolveBeadsDirForID_NonExistentTargetDir` - ID matching route but non-existent target falls back to local
+5. `TestResolveBeadsDirForID_DotPath` - path="." correctly resolves to town root beads directory
+6. `TestResolveBeadsDirForID_NoRoutes` - no routes.jsonl returns local, routed=false
 
 **Acceptance Criteria**:
-- [ ] Test unknown prefix handling
-- [ ] Test no-prefix handling
-- [ ] Test successful routing
-- [ ] Test non-existent target directory
+- [x] Test unknown prefix handling
+- [x] Test no-prefix handling
+- [x] Test successful routing
+- [x] Test non-existent target directory
 
 ---
 
