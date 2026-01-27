@@ -151,7 +151,6 @@ var showCmd = &cobra.Command{
 					// Get labels and deps for JSON output
 					details := &types.IssueDetails{Issue: *issue}
 					details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
-					// GetDependenciesWithMetadata and GetDependentsWithMetadata are on Storage interface
 					details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
 					details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 					details.Comments, _ = issueStore.GetIssueComments(ctx, issue.ID)
@@ -415,7 +414,6 @@ var showCmd = &cobra.Command{
 				details := &types.IssueDetails{Issue: *issue}
 				details.Labels, _ = issueStore.GetLabels(ctx, issue.ID)
 
-				// Get dependencies and dependents with metadata (on Storage interface)
 				details.Dependencies, _ = issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
 				details.Dependents, _ = issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 
@@ -477,7 +475,6 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show dependencies - grouped by dependency type for clarity
-			// GetDependenciesWithMetadata is on Storage interface (works with SQLite and Dolt)
 			depsWithMeta, _ := issueStore.GetDependenciesWithMetadata(ctx, issue.ID)
 			if len(depsWithMeta) > 0 {
 				// Group by dependency type
@@ -524,7 +521,6 @@ var showCmd = &cobra.Command{
 			}
 
 			// Show dependents - grouped by dependency type for clarity
-			// GetDependentsWithMetadata is on Storage interface (works with SQLite and Dolt)
 			dependentsWithMeta, _ := issueStore.GetDependentsWithMetadata(ctx, issue.ID)
 			if len(dependentsWithMeta) > 0 {
 				// Group by dependency type

@@ -77,7 +77,7 @@ Examples:
 		}
 
 		// Step 4: Open storage for the target rig
-		targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
+targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
 		if err != nil {
 			FatalError("failed to open target rig database: %v", err)
 		}

@@ -285,10 +285,11 @@ var blockedCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
 		// If daemon is running but doesn't support this command, use direct storage
+		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 		ctx := rootCtx
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = factory.NewFromConfig(ctx, getBeadsDir())
+store, err = factory.NewFromConfig(ctx, getBeadsDir())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)

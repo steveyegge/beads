@@ -197,7 +197,17 @@ func CheckExpiredTombstones(path string) DoctorCheck {
 // CheckStaleMolecules detects complete-but-unclosed molecules.
 // A molecule is stale if all children are closed but the root is still open.
 func CheckStaleMolecules(path string) DoctorCheck {
-	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+	backend, beadsDir := getBackendAndBeadsDir(path)
+
+	// Dolt backend: this check uses SQLite-specific queries, skip for now
+	if backend == configfile.BackendDolt {
+		return DoctorCheck{
+			Name:     "Stale Molecules",
+			Status:   StatusOK,
+			Message:  "N/A (dolt backend)",
+			Category: CategoryMaintenance,
+		}
+	}
 
 	ctx := context.Background()
 	store, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{})
@@ -276,14 +286,9 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 
 	// SQLite backend - need SQLite-specific store for GetTier1Candidates
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		cfg = configfile.DefaultConfig()
-	}
-	dbPath := cfg.DatabasePath(beadsDir)
-
+	// Open database using factory
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
@@ -294,7 +299,18 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 	defer func() { _ = store.Close() }()
 
-	tier1, err := store.GetTier1Candidates(ctx)
+	// Type assert to SQLiteStorage for compaction methods
+	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
+	if !ok {
+		return DoctorCheck{
+			Name:     "Compaction Candidates",
+			Status:   StatusOK,
+			Message:  "N/A (backend does not support compaction)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	tier1, err := sqliteStore.GetTier1Candidates(ctx)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
