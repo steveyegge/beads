@@ -61,7 +61,7 @@ func TestParseAgentIDFields(t *testing.T) {
 		t.Fatalf("failed to create .beads directory: %v", err)
 	}
 
-	// Write config with Gas Town-style agent roles
+	// Write config with test agent roles
 	configContent := `
 agent_roles:
   town_level: "mayor,deacon"
@@ -74,11 +74,7 @@ agent_roles:
 	}
 
 	// Change to tmp directory and initialize config
-	oldDir, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldDir) }()
+	t.Chdir(tmpDir)
 
 	config.ResetForTesting()
 	if err := config.Initialize(); err != nil {

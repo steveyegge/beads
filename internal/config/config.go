@@ -718,19 +718,19 @@ func GetCustomStatusesFromYAML() []string {
 //   - Rig-level: <prefix>-<rig>-<role> (singleton per rig)
 //   - Named: <prefix>-<rig>-<role>-<name> (multiple per rig)
 
-// GetTownLevelRoles returns roles that are town-level singletons (e.g., "mayor,deacon").
+// GetTownLevelRoles returns roles that are town-level singletons.
 // These roles have no rig association and appear as: <prefix>-<role>
 func GetTownLevelRoles() []string {
 	return getConfigList("agent_roles.town_level")
 }
 
-// GetRigLevelRoles returns roles that are rig-level singletons (e.g., "witness,refinery").
+// GetRigLevelRoles returns roles that are rig-level singletons.
 // These roles have one instance per rig: <prefix>-<rig>-<role>
 func GetRigLevelRoles() []string {
 	return getConfigList("agent_roles.rig_level")
 }
 
-// GetNamedRoles returns roles that can have multiple named instances per rig (e.g., "crew,polecat").
+// GetNamedRoles returns roles that can have multiple named instances per rig.
 // These roles include a name suffix: <prefix>-<rig>-<role>-<name>
 func GetNamedRoles() []string {
 	return getConfigList("agent_roles.named")
