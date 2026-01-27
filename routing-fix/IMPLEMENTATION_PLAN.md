@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-005 completed)
+**Last Updated**: 2026-01-27 (TASK-006 completed)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -29,7 +29,7 @@ Investigation of the beads routing functionality revealed:
 | TASK-003 | Add unit tests for LoadRoutes error paths | completed | P1 |
 | TASK-004 | Add unit tests for ResolveBeadsDirForRig | completed | P1 |
 | TASK-005 | Add unit tests for ResolveBeadsDirForID | completed | P1 |
-| TASK-006 | Add documentation comments for edge cases | pending | P2 |
+| TASK-006 | Add documentation comments for edge cases | completed | P2 |
 | TASK-007 | Add warning for malformed routes.jsonl | pending | P2 |
 | TASK-000 | Core routing implementation | completed | - |
 
@@ -165,19 +165,23 @@ Investigation of the beads routing functionality revealed:
 ### P2: Nice to Have (Could Fix)
 
 #### TASK-006: Add documentation comments for edge cases
-**Status**: pending
+**Status**: completed
 **Files**: `internal/routing/routes.go`
 **Spec**: `routing-fix/specs/05-code-clarity.md`
+**Completed**: 2026-01-27
 
-**Required Comments** (verified in code):
-1. **ExtractProjectFromPath** (lines 80-90): Document that "." path returns "." not empty string
-2. **AutoDetectTargetRig** (lines 455-458): Already has comment explaining prefix return ✓
-3. **findTownRootFromCWD** (lines 304-324): Document CWD dependency for symlink handling
+**Documentation Added**:
+1. **Package-level documentation**: Added comprehensive package doc explaining Gas Town architecture,
+   multi-repository setup terminology, routes.jsonl format, and symlink handling overview
+2. **ExtractProjectFromPath**: Documented that "." path returns "." not empty string, with
+   explanation of why this matters for town-root-as-rig configurations
+3. **findTownRootFromCWD**: Enhanced documentation with concrete example showing why CWD-based
+   lookup is required when .beads is symlinked (e.g., ~/gt/.beads -> ~/gt/olympus/.beads)
 
 **Acceptance Criteria**:
-- [ ] ExtractProjectFromPath documents "." edge case
-- [ ] findTownRootFromCWD documents symlink handling rationale
-- [ ] Gas Town terminology explained in package doc
+- [x] ExtractProjectFromPath documents "." edge case
+- [x] findTownRootFromCWD documents symlink handling rationale
+- [x] Gas Town terminology explained in package doc
 
 ---
 

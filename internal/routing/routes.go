@@ -1,3 +1,34 @@
+// Package routing provides prefix-based routing for multi-repository beads setups.
+//
+// # Gas Town Architecture
+//
+// "Gas Town" is the terminology used for a multi-repository setup where multiple
+// independent projects ("rigs") are orchestrated under a single "town" root directory.
+// Each rig maintains its own .beads directory with its own database, but they share
+// a common routes.jsonl configuration at the town level for cross-rig references.
+//
+// Example Gas Town structure:
+//
+//	~/gastown/                    # Town root (contains mayor/town.json)
+//	├── mayor/
+//	│   └── town.json             # Town configuration
+//	├── .beads/
+//	│   └── routes.jsonl          # Routing configuration
+//	├── project-a/                # Rig with prefix "pa-"
+//	│   └── .beads/
+//	└── project-b/                # Rig with prefix "pb-"
+//	    └── .beads/
+//
+// The routes.jsonl file maps prefixes to rig paths:
+//
+//	{"prefix": "pa-", "path": "project-a"}
+//	{"prefix": "pb-", "path": "project-b"}
+//
+// # Symlink Handling
+//
+// The routing system correctly handles symlinked .beads directories. When .beads
+// is a symlink, functions like findTownRootFromCWD use the current working directory
+// rather than the resolved symlink path to determine the actual town root.
 package routing
 
 import (
@@ -106,6 +137,10 @@ func ExtractPrefix(id string) string {
 // ExtractProjectFromPath extracts the project name from a route path.
 // For "beads/mayor/rig", returns "beads".
 // For "gastown/crew/max", returns "gastown".
+//
+// Special case: For path ".", returns "." (not empty string). This allows
+// routes to use "." to indicate the town root's beads directory rather than
+// a subdirectory, which is useful when the town root itself is a rig.
 func ExtractProjectFromPath(path string) string {
 	// Get the first component of the path
 	parts := strings.Split(path, "/")
@@ -328,9 +363,19 @@ func findTownRoot(startDir string) string {
 }
 
 // findTownRootFromCWD walks up from the current working directory looking for a town root.
-// This is used to handle symlinked .beads directories correctly.
+//
+// This function is critical for handling symlinked .beads directories correctly.
 // By starting from CWD instead of the beads directory path, we find the correct
 // town root even when .beads is a symlink that points elsewhere.
+//
+// Example: If ~/gt/.beads is a symlink to ~/gt/olympus/.beads:
+//   - CWD is ~/gt/myrig
+//   - currentBeadsDir resolves to ~/gt/olympus/.beads (following symlink)
+//   - Walking up from currentBeadsDir would incorrectly find ~/gt/olympus as town root
+//   - Walking up from CWD correctly finds ~/gt as town root
+//
+// This function depends on the current working directory, so callers must ensure
+// they are running from a directory within the Gas Town structure.
 func findTownRootFromCWD() string {
 	cwd, err := os.Getwd()
 	if err != nil {
