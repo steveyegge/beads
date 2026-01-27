@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/idgen"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -116,6 +117,16 @@ func (s *DoltStore) CreateIssue(ctx context.Context, issue *types.Issue, actor s
 
 // CreateIssues creates multiple issues in a single transaction
 func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
+	return s.CreateIssuesWithFullOptions(ctx, issues, actor, storage.BatchCreateOptions{
+		OrphanHandling:       storage.OrphanAllow,
+		SkipPrefixValidation: false,
+	})
+}
+
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// This is the backend-agnostic batch creation method that supports orphan handling
+// and prefix validation options.
+func (s *DoltStore) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -135,6 +146,15 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Get prefix from config for validation
+	var configPrefix string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
+	if err == sql.ErrNoRows || configPrefix == "" {
+		return fmt.Errorf("database not initialized: issue_prefix config is missing (run 'bd init --prefix <prefix>' first)")
+	} else if err != nil {
+		return fmt.Errorf("failed to get config: %w", err)
+	}
 
 	for _, issue := range issues {
 		now := time.Now().UTC()
@@ -174,6 +194,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 			issue.ContentHash = issue.ComputeContentHash()
 		}
 
+		// Validate prefix if not skipped (for imports with different prefixes)
+		if !opts.SkipPrefixValidation && issue.ID != "" {
+			if err := validateIssueIDPrefix(issue.ID, configPrefix); err != nil {
+				return fmt.Errorf("prefix validation failed for %s: %w", issue.ID, err)
+			}
+		}
+
+		// Handle orphan checking for hierarchical IDs
+		if issue.ID != "" {
+			if parentID, _, ok := parseHierarchicalID(issue.ID); ok {
+				var parentCount int
+				err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE id = ?`, parentID).Scan(&parentCount)
+				if err != nil {
+					return fmt.Errorf("failed to check parent existence: %w", err)
+				}
+				if parentCount == 0 {
+					switch opts.OrphanHandling {
+					case storage.OrphanStrict:
+						return fmt.Errorf("parent issue %s does not exist (strict mode)", parentID)
+					case storage.OrphanSkip:
+						// Skip this issue
+						continue
+					case storage.OrphanResurrect, storage.OrphanAllow:
+						// Allow orphan - continue with insert
+					}
+				}
+			}
+		}
+
 		if err := insertIssue(ctx, tx, issue); err != nil {
 			return fmt.Errorf("failed to insert issue %s: %w", issue.ID, err)
 		}
@@ -186,6 +235,35 @@ func (s *DoltStore) CreateIssues(ctx context.Context, issues []*types.Issue, act
 	}
 
 	return tx.Commit()
+}
+
+// validateIssueIDPrefix validates that the issue ID has the correct prefix
+func validateIssueIDPrefix(id, prefix string) error {
+	if !strings.HasPrefix(id, prefix+"-") {
+		return fmt.Errorf("issue ID %s does not match configured prefix %s", id, prefix)
+	}
+	return nil
+}
+
+// parseHierarchicalID checks if an ID is hierarchical (e.g., "bd-abc.1") and returns the parent ID and child number
+func parseHierarchicalID(id string) (parentID string, childNum int, ok bool) {
+	// Find the last dot that separates parent from child number
+	lastDot := strings.LastIndex(id, ".")
+	if lastDot == -1 {
+		return "", 0, false
+	}
+
+	parentID = id[:lastDot]
+	suffix := id[lastDot+1:]
+
+	// Parse child number
+	var num int
+	_, err := fmt.Sscanf(suffix, "%d", &num)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return parentID, num, true
 }
 
 // GetIssue retrieves an issue by ID

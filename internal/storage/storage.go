@@ -85,6 +85,7 @@ type Storage interface {
 	// Issues
 	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
 	CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error
+	CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts BatchCreateOptions) error
 	GetIssue(ctx context.Context, id string) (*types.Issue, error)
 	GetIssueByExternalRef(ctx context.Context, externalRef string) (*types.Issue, error)
 	UpdateIssue(ctx context.Context, id string, updates map[string]interface{}, actor string) error

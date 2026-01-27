@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -908,7 +909,7 @@ func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
 
 	// Use batch create with SkipPrefixValidation to simulate multi-repo hydration
 	// (in real multi-repo mode, issues from other repos are imported with prefix validation skipped)
-	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", sqlite.BatchCreateOptions{SkipPrefixValidation: true}); err != nil {
+	if err := store.CreateIssuesWithFullOptions(ctx, []*types.Issue{primaryIssue, additionalIssue}, "test", storage.BatchCreateOptions{SkipPrefixValidation: true, OrphanHandling: storage.OrphanAllow}); err != nil {
 		t.Fatalf("Failed to batch create issues: %v", err)
 	}
 

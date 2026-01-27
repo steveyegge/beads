@@ -15,24 +15,21 @@ import (
 	"github.com/steveyegge/beads/internal/linear"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
 )
 
-// OrphanHandling defines how to handle hierarchical child issues whose parents are missing.
-// This mirrors the string values historically used by the SQLite backend config.
-type OrphanHandling string
+// OrphanHandling is an alias for storage.OrphanHandling for backward compatibility.
+// Deprecated: Use storage.OrphanHandling directly.
+type OrphanHandling = storage.OrphanHandling
 
+// Orphan handling constants - aliases for storage package constants.
+// Deprecated: Use storage.OrphanStrict, etc. directly.
 const (
-	// OrphanStrict fails import on missing parent (safest)
-	OrphanStrict OrphanHandling = "strict"
-	// OrphanResurrect auto-resurrects missing parents from JSONL history
-	OrphanResurrect OrphanHandling = "resurrect"
-	// OrphanSkip skips orphaned issues with warning
-	OrphanSkip OrphanHandling = "skip"
-	// OrphanAllow imports orphans without validation (default, works around bugs)
-	OrphanAllow OrphanHandling = "allow"
+	OrphanStrict    = storage.OrphanStrict
+	OrphanResurrect = storage.OrphanResurrect
+	OrphanSkip      = storage.OrphanSkip
+	OrphanAllow     = storage.OrphanAllow
 )
 
 // Options contains import configuration
@@ -908,25 +905,13 @@ func upsertIssues(ctx context.Context, store storage.Storage, issues []*types.Is
 				}
 			}
 			if len(batchForDepth) > 0 {
-				// Prefer a backend-specific import/batch API when available, so we can honor
-				// options like SkipPrefixValidation (multi-repo mode) without requiring the
-				// entire importer to be SQLite-specific.
-				type importBatchCreator interface {
-					CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts sqlite.BatchCreateOptions) error
+				// Use the backend-agnostic batch creation API with full options.
+				batchOpts := storage.BatchCreateOptions{
+					OrphanHandling:       opts.OrphanHandling,
+					SkipPrefixValidation: opts.SkipPrefixValidation,
 				}
-				if bc, ok := store.(importBatchCreator); ok {
-					batchOpts := sqlite.BatchCreateOptions{
-						OrphanHandling:       sqlite.OrphanHandling(opts.OrphanHandling),
-						SkipPrefixValidation: opts.SkipPrefixValidation,
-					}
-					if err := bc.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
-				} else {
-					// Generic fallback. OrphanSkip and OrphanStrict are enforced above.
-					if err := store.CreateIssues(ctx, batchForDepth, "import"); err != nil {
-						return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
-					}
+				if err := store.CreateIssuesWithFullOptions(ctx, batchForDepth, "import", batchOpts); err != nil {
+					return fmt.Errorf("error creating depth-%d issues: %w", depth, err)
 				}
 				result.Created += len(batchForDepth)
 			}

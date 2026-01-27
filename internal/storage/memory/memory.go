@@ -322,6 +322,15 @@ func (m *MemoryStorage) CreateIssues(ctx context.Context, issues []*types.Issue,
 	return nil
 }
 
+// CreateIssuesWithFullOptions creates multiple issues with full options control.
+// For MemoryStorage, this delegates to CreateIssues as the options (orphan handling,
+// prefix validation) are primarily relevant for persistent storage backends.
+func (m *MemoryStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts storage.BatchCreateOptions) error {
+	// MemoryStorage doesn't enforce prefix validation or orphan handling
+	// as it's primarily used for testing and no-db mode
+	return m.CreateIssues(ctx, issues, actor)
+}
+
 // GetIssue retrieves an issue by ID
 func (m *MemoryStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	m.mu.RLock()

@@ -27,6 +27,9 @@ func (m *mockStorage) CreateIssue(ctx context.Context, issue *types.Issue, actor
 func (m *mockStorage) CreateIssues(ctx context.Context, issues []*types.Issue, actor string) error {
 	return nil
 }
+func (m *mockStorage) CreateIssuesWithFullOptions(ctx context.Context, issues []*types.Issue, actor string, opts BatchCreateOptions) error {
+	return nil
+}
 func (m *mockStorage) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	return nil, nil
 }
@@ -321,6 +324,7 @@ func TestInterfaceDocumentation(t *testing.T) {
 		// Verify issue operations
 		_ = s.CreateIssue
 		_ = s.CreateIssues
+		_ = s.CreateIssuesWithFullOptions
 		_ = s.GetIssue
 		_ = s.GetIssueByExternalRef
 		_ = s.UpdateIssue
