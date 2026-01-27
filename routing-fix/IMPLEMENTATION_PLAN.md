@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-002 completed)
+**Last Updated**: 2026-01-27 (TASK-001 completed)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -24,7 +24,7 @@ Investigation of the beads routing functionality revealed:
 
 | Task | Description | Status | Priority |
 |------|-------------|--------|----------|
-| TASK-001 | Fix routing documentation | pending | P0 |
+| TASK-001 | Fix routing documentation | completed | P0 |
 | TASK-002 | Add BD_DEBUG_ROUTING to LoadRoutes | completed | P0 |
 | TASK-003 | Add unit tests for LoadRoutes error paths | pending | P1 |
 | TASK-004 | Add unit tests for ResolveBeadsDirForRig | pending | P1 |
@@ -40,33 +40,31 @@ Investigation of the beads routing functionality revealed:
 ### P0: Critical (Must Fix)
 
 #### TASK-001: Fix routing documentation
-**Status**: pending
+**Status**: completed
 **File**: `website/docs/multi-agent/routing.md`
 **Spec**: `routing-fix/specs/02-documentation-mismatch.md`
+**Completed**: 2026-01-27
 
 **Problem**: Documentation describes pattern-based routing with priority fields that doesn't exist.
 
-**Current State (WRONG)**:
-```jsonl
-{"pattern": "frontend/**", "target": "frontend-repo", "priority": 10}
-```
-- Claims commands exist: `bd routes list`, `bd routes add`, `bd routes remove`, `bd routes test`
-- Describes glob pattern matching against title/labels
-
-**Required State (CORRECT)**:
-```jsonl
-{"prefix": "gt-", "path": "gastown/mayor/rig"}
-```
-- Prefix-based routing only (no pattern matching)
-- No CLI commands - manual editing of routes.jsonl required
+**Solution Implemented**:
+- Completely rewrote documentation to describe actual prefix-based routing
+- Removed all references to non-existent commands (bd routes list/add/remove/test)
+- Added correct routes.jsonl format with prefix/path fields
+- Documented Gas Town multi-rig setup with directory structure example
+- Added --rig flag usage documentation
+- Documented symlinked .beads directory handling
+- Added redirect file documentation
+- Added troubleshooting section with BD_DEBUG_ROUTING usage
+- Documented manual configuration workflow
 
 **Acceptance Criteria**:
-- [ ] Documentation accurately describes prefix-based routing
-- [ ] Remove all references to non-existent commands (lines 53-67)
-- [ ] Add examples of actual routes.jsonl format
-- [ ] Document manual configuration workflow
-- [ ] Add section on Gas Town multi-rig setup
-- [ ] Document BD_DEBUG_ROUTING for troubleshooting
+- [x] Documentation accurately describes prefix-based routing
+- [x] Remove all references to non-existent commands (lines 53-67)
+- [x] Add examples of actual routes.jsonl format
+- [x] Document manual configuration workflow
+- [x] Add section on Gas Town multi-rig setup
+- [x] Document BD_DEBUG_ROUTING for troubleshooting
 
 ---
 
