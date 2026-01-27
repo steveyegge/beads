@@ -28,6 +28,7 @@ var showCmd = &cobra.Command{
 		showChildren, _ := cmd.Flags().GetBool("children")
 		asOfRef, _ := cmd.Flags().GetString("as-of")
 		idFlags, _ := cmd.Flags().GetStringArray("id")
+		fullMode, _ := cmd.Flags().GetBool("full")
 		ctx := rootCtx
 
 		// Merge --id flag values with positional args
@@ -41,7 +42,7 @@ var showCmd = &cobra.Command{
 
 		// Handle --as-of flag: show issue at a specific point in history
 		if asOfRef != "" {
-			showIssueAsOf(ctx, args, asOfRef, shortMode)
+			showIssueAsOf(ctx, args, asOfRef, shortMode, fullMode)
 			return
 		}
 
@@ -162,7 +163,7 @@ var showCmd = &cobra.Command{
 					// Metadata: Owner · Type | Created · Updated
 					fmt.Println(formatIssueMetadata(issue))
 					if issue.Description != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), renderContent(issue.Description, fullMode))
 					}
 					fmt.Println()
 					displayIdx++
@@ -238,16 +239,16 @@ var showCmd = &cobra.Command{
 
 					// Content sections
 					if issue.Description != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), renderContent(issue.Description, fullMode))
 					}
 					if issue.Design != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), ui.RenderMarkdown(issue.Design))
+						fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), renderContent(issue.Design, fullMode))
 					}
 					if issue.Notes != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), ui.RenderMarkdown(issue.Notes))
+						fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), renderContent(issue.Notes, fullMode))
 					}
 					if issue.AcceptanceCriteria != "" {
-						fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), ui.RenderMarkdown(issue.AcceptanceCriteria))
+						fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), renderContent(issue.AcceptanceCriteria, fullMode))
 					}
 
 					if len(details.Labels) > 0 {
@@ -448,16 +449,16 @@ var showCmd = &cobra.Command{
 
 			// Content sections
 			if issue.Description != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), renderContent(issue.Description, fullMode))
 			}
 			if issue.Design != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), ui.RenderMarkdown(issue.Design))
+				fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESIGN"), renderContent(issue.Design, fullMode))
 			}
 			if issue.Notes != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), ui.RenderMarkdown(issue.Notes))
+				fmt.Printf("\n%s\n%s\n", ui.RenderBold("NOTES"), renderContent(issue.Notes, fullMode))
 			}
 			if issue.AcceptanceCriteria != "" {
-				fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), ui.RenderMarkdown(issue.AcceptanceCriteria))
+				fmt.Printf("\n%s\n%s\n", ui.RenderBold("ACCEPTANCE CRITERIA"), renderContent(issue.AcceptanceCriteria, fullMode))
 			}
 
 			// Show labels
@@ -1079,9 +1080,23 @@ func containsStr(slice []string, val string) bool {
 	return false
 }
 
+// renderContent renders text content with optional truncation.
+// If fullMode is true, renders full content. Otherwise, truncates long text.
+func renderContent(text string, fullMode bool) string {
+	if text == "" {
+		return ""
+	}
+	if fullMode || !ui.ShouldTruncate(text, ui.DefaultMaxLines, 0) {
+		return ui.RenderMarkdown(text)
+	}
+	// Truncate long content
+	truncated := ui.TruncateLines(text, ui.DefaultMaxLines, ui.DefaultContextLines)
+	return ui.RenderMarkdown(truncated)
+}
+
 // showIssueAsOf displays issues as they existed at a specific commit or branch ref.
 // This requires a versioned storage backend (e.g., Dolt).
-func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode bool) {
+func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode bool, fullMode bool) {
 	// Check if storage supports versioning
 	vs, ok := storage.AsVersioned(store)
 	if !ok {
@@ -1119,7 +1134,7 @@ func showIssueAsOf(ctx context.Context, args []string, ref string, shortMode boo
 		fmt.Println(formatIssueMetadata(issue))
 
 		if issue.Description != "" {
-			fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), ui.RenderMarkdown(issue.Description))
+			fmt.Printf("\n%s\n%s\n", ui.RenderBold("DESCRIPTION"), renderContent(issue.Description, fullMode))
 		}
 		fmt.Println()
 	}
@@ -1136,6 +1151,7 @@ func init() {
 	showCmd.Flags().Bool("children", false, "Show only the children of this issue")
 	showCmd.Flags().String("as-of", "", "Show issue as it existed at a specific commit hash or branch (requires Dolt)")
 	showCmd.Flags().StringArray("id", nil, "Issue ID (use for IDs that look like flags, e.g., --id=gt--xyz)")
+	showCmd.Flags().BoolP("full", "f", false, "Show complete text without truncation")
 	showCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(showCmd)
 }
