@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-003 completed)
+**Last Updated**: 2026-01-27 (TASK-004 completed)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -27,7 +27,7 @@ Investigation of the beads routing functionality revealed:
 | TASK-001 | Fix routing documentation | completed | P0 |
 | TASK-002 | Add BD_DEBUG_ROUTING to LoadRoutes | completed | P0 |
 | TASK-003 | Add unit tests for LoadRoutes error paths | completed | P1 |
-| TASK-004 | Add unit tests for ResolveBeadsDirForRig | pending | P1 |
+| TASK-004 | Add unit tests for ResolveBeadsDirForRig | completed | P1 |
 | TASK-005 | Add unit tests for ResolveBeadsDirForID | pending | P1 |
 | TASK-006 | Add documentation comments for edge cases | pending | P2 |
 | TASK-007 | Add warning for malformed routes.jsonl | pending | P2 |
@@ -120,22 +120,23 @@ Investigation of the beads routing functionality revealed:
 ---
 
 #### TASK-004: Add unit tests for ResolveBeadsDirForRig
-**Status**: pending
+**Status**: completed
 **File**: `internal/routing/routing_test.go`
 **Spec**: `routing-fix/specs/04-test-coverage.md`
+**Completed**: 2026-01-27
 
-**Currently Untested Scenarios** (verified - no dedicated tests exist):
-1. Non-existent rig name → should return error
-2. Rig with non-existent target directory → should return error
-3. All three input formats: "gt", "gt-", "gastown" → should all work
-4. Route with path="." (town-level beads) → should resolve to town root
-5. Redirect file handling → should follow redirect
+**Tests Implemented**:
+1. `TestResolveBeadsDirForRig_NonExistentRig` - non-existent rig name returns error
+2. `TestResolveBeadsDirForRig_NonExistentTargetDir` - rig pointing to non-existent directory returns error
+3. `TestResolveBeadsDirForRig_AllInputFormats` - all three formats work (prefix, prefix-, rigname)
+4. `TestResolveBeadsDirForRig_DotPath` - path="." resolves to town root beads directory
+5. `TestResolveBeadsDirForRig_Redirect` - redirect files are followed correctly
 
 **Acceptance Criteria**:
-- [ ] Test all three input formats (prefix, prefix-, rigname)
-- [ ] Test non-existent rig returns error
-- [ ] Test non-existent target directory returns error
-- [ ] Test path="." handling
+- [x] Test all three input formats (prefix, prefix-, rigname)
+- [x] Test non-existent rig returns error
+- [x] Test non-existent target directory returns error
+- [x] Test path="." handling
 
 ---
 
