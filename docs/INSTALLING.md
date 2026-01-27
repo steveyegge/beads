@@ -17,11 +17,14 @@ Beads has several components - here's what they are and when you need them:
 - The **Plugin** enhances Claude Code with slash commands but *requires* the CLI installed
 - The **MCP server** is an *alternative* to the CLI for environments without shell access
 
+**Important:** Beads is installed system-wide, not cloned into your project. The `.beads/` directory in your project only contains the issue database.
+
 **Typical setups:**
 
 | Environment | What to Install |
 |-------------|-----------------|
 | Claude Code, Cursor, Windsurf | bd CLI (+ optional Plugin for Claude Code) |
+| GitHub Copilot (VS Code) | bd CLI + MCP server |
 | Claude Desktop (no shell) | MCP server only |
 | Terminal / scripts | bd CLI only |
 | CI/CD pipelines | bd CLI only |
@@ -225,6 +228,47 @@ The plugin adds:
 - Task agent for autonomous execution
 
 See [PLUGIN.md](PLUGIN.md) for complete plugin documentation.
+
+### GitHub Copilot (VS Code)
+
+For VS Code with GitHub Copilot:
+
+1. **Install beads-mcp:**
+   ```bash
+   uv tool install beads-mcp
+   ```
+
+2. **Configure MCP** - Create `.vscode/mcp.json` in your project:
+   ```json
+   {
+     "servers": {
+       "beads": {
+         "command": "beads-mcp"
+       }
+     }
+   }
+   ```
+
+   **For all projects:** Add to VS Code `~/Library/Application Support/Code/User/mcp.json`:
+   ```json
+   {
+     "servers": {
+       "beads": {
+         "command": "beads-mcp",
+         "args": []
+       }
+     }
+   }
+   ```
+
+3. **Initialize project:**
+   ```bash
+   bd init --quiet
+   ```
+
+4. **Reload VS Code**
+
+See [COPILOT_INTEGRATION.md](COPILOT_INTEGRATION.md) for complete setup guide.
 
 ### MCP Server (Alternative - for MCP-only environments)
 

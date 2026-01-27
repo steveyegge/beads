@@ -74,6 +74,37 @@ Add to MCP settings:
 }
 ```
 
+### VS Code / GitHub Copilot
+
+Create `.vscode/mcp.json` in your project:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+**For all projects:** Add to VS Code `~/Library/Application Support/Code/User/mcp.json`:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+**Note:** Requires VS Code 1.96+ with MCP support enabled.
+
+See [GitHub Copilot Integration](/integrations/github-copilot) for complete setup guide.
+
 ## Available Tools
 
 The MCP server exposes these tools:

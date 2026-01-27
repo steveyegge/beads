@@ -73,6 +73,48 @@ This creates/updates `.aider.conf.yml` with beads context.
 bd setup aider --check
 ```
 
+## GitHub Copilot
+
+For VS Code with GitHub Copilot, use the MCP server:
+
+```bash
+# Install MCP server
+uv tool install beads-mcp
+```
+
+Create `.vscode/mcp.json` in your project:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp"
+    }
+  }
+}
+```
+
+**For all projects:** Add to VS Code `~/Library/Application Support/Code/User/mcp.json`:
+
+```json
+{
+  "servers": {
+    "beads": {
+      "command": "beads-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Initialize beads and reload VS Code:
+
+```bash
+bd init --quiet
+```
+
+See [GitHub Copilot Integration](/integrations/github-copilot) for detailed setup.
+
 ## Context Injection with `bd prime`
 
 All integrations use `bd prime` to inject context:
