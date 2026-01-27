@@ -127,4 +127,7 @@ state.json
 .agents/
 output
 bd_test
-.beads/export-state/
+
+# Gas Town (added by gt)
+.beads/
+.logs/

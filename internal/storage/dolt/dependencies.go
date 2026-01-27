@@ -12,12 +12,18 @@ import (
 
 // AddDependency adds a dependency between two issues
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	metadata := dep.Metadata
 	if metadata == "" {
 		metadata = "{}"
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id)
 		VALUES (?, ?, ?, NOW(), ?, ?, ?)
 		ON DUPLICATE KEY UPDATE type = VALUES(type), metadata = VALUES(metadata)
@@ -25,18 +31,50 @@ func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, ac
 	if err != nil {
 		return fmt.Errorf("failed to add dependency: %w", err)
 	}
-	return nil
+
+	// Mark source issue as dirty for incremental export
+	if err := markDirty(ctx, tx, dep.IssueID); err != nil {
+		return fmt.Errorf("failed to mark issue dirty: %w", err)
+	}
+
+	// Only mark depends_on as dirty if it's a local issue (not an external reference)
+	// External refs like "external:project:capability" don't exist in the issues table
+	if !strings.HasPrefix(dep.DependsOnID, "external:") {
+		if err := markDirty(ctx, tx, dep.DependsOnID); err != nil {
+			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // RemoveDependency removes a dependency between two issues
 func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID string, actor string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?
 	`, issueID, dependsOnID)
 	if err != nil {
 		return fmt.Errorf("failed to remove dependency: %w", err)
 	}
-	return nil
+
+	// Only mark dirty if something was actually deleted
+	rows, _ := result.RowsAffected()
+	if rows > 0 {
+		if err := markDirty(ctx, tx, issueID); err != nil {
+			return fmt.Errorf("failed to mark issue dirty: %w", err)
+		}
+		if err := markDirty(ctx, tx, dependsOnID); err != nil {
+			return fmt.Errorf("failed to mark depends_on issue dirty: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetDependencies retrieves issues that this issue depends on
@@ -565,7 +603,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
-	var assignee, externalRef, compactedAtCommit, owner sql.NullString
+	var assignee, externalRef, compactedAtCommit, owner, createdBy sql.NullString
 	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
 	var workType, sourceSystem sql.NullString
 	var sender, molType, eventKind, actor, target, payload sql.NullString
@@ -578,7 +616,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
+		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt, &externalRef,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
@@ -615,6 +653,9 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	}
 	if owner.Valid {
 		issue.Owner = owner.String
+	}
+	if createdBy.Valid {
+		issue.CreatedBy = createdBy.String
 	}
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String

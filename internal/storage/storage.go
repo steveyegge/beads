@@ -78,6 +78,12 @@ type Transaction interface {
 	AddComment(ctx context.Context, issueID, actor, comment string) error
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
+
+	// Decision point operations
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
 }
 
 // Storage defines the interface for issue storage backends
@@ -118,6 +124,7 @@ type Storage interface {
 	GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error)
 	IsBlocked(ctx context.Context, issueID string) (bool, []string, error) // GH#962: Check if issue has open blockers
 	GetEpicsEligibleForClosure(ctx context.Context) ([]*types.EpicStatus, error)
+	GetEpicProgress(ctx context.Context, epicIDs []string) (map[string]*types.EpicProgress, error)
 	GetStaleIssues(ctx context.Context, filter types.StaleFilter) ([]*types.Issue, error)
 	GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) // GH#679
 
@@ -132,6 +139,12 @@ type Storage interface {
 	ImportIssueComment(ctx context.Context, issueID, author, text string, createdAt time.Time) (*types.Comment, error)
 	GetIssueComments(ctx context.Context, issueID string) ([]*types.Comment, error)
 	GetCommentsForIssues(ctx context.Context, issueIDs []string) (map[string][]*types.Comment, error)
+
+	// Decision Points
+	CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error)
+	UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error
+	ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error)
 
 	// Statistics
 	GetStatistics(ctx context.Context) (*types.Statistics, error)

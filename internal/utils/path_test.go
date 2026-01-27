@@ -128,6 +128,16 @@ func TestFindJSONLInDir(t *testing.T) {
 			expected: "issues.jsonl",
 		},
 		{
+			name:     "only routes.jsonl - returns default issues.jsonl (hq-o85zi5)",
+			files:    []string{"routes.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
+			name:     "routes.jsonl with issues.jsonl - prefers issues",
+			files:    []string{"routes.jsonl", "issues.jsonl"},
+			expected: "issues.jsonl",
+		},
+		{
 			name:     "no files - returns default issues.jsonl",
 			files:    []string{},
 			expected: "issues.jsonl",

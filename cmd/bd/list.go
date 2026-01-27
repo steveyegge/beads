@@ -18,9 +18,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -36,8 +37,13 @@ func withStorage(ctx context.Context, store storage.Storage, dbPath string, lock
 	if store != nil {
 		return fn(store)
 	} else if dbPath != "" {
-		// Daemon mode: open read-only connection
-		roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout)
+		// Daemon mode: open read-only connection based on configured backend
+		// (supports both SQLite and Dolt backends)
+		beadsDir := filepath.Dir(dbPath)
+		roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+			ReadOnly:    true,
+			LockTimeout: lockTimeout,
+		})
 		if err != nil {
 			return err
 		}
@@ -45,6 +51,33 @@ func withStorage(ctx context.Context, store storage.Storage, dbPath string, lock
 		return fn(roStore)
 	}
 	return fmt.Errorf("no storage available")
+}
+
+// getEpicProgressForIssues fetches progress data for all epics in the issues list
+// Returns a map from epic ID to progress (total/closed children)
+func getEpicProgressForIssues(ctx context.Context, store storage.Storage, dbPath string, lockTimeout time.Duration, issues []*types.Issue) map[string]*types.EpicProgress {
+	// Collect epic IDs
+	var epicIDs []string
+	for _, issue := range issues {
+		if issue.IssueType == types.TypeEpic {
+			epicIDs = append(epicIDs, issue.ID)
+		}
+	}
+
+	if len(epicIDs) == 0 {
+		return make(map[string]*types.EpicProgress)
+	}
+
+	var progressMap map[string]*types.EpicProgress
+	err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
+		var err error
+		progressMap, err = s.GetEpicProgress(ctx, epicIDs)
+		return err
+	})
+	if err != nil || progressMap == nil {
+		return make(map[string]*types.EpicProgress)
+	}
+	return progressMap
 }
 
 // getHierarchicalChildren handles the --tree --parent combination logic
@@ -149,16 +182,22 @@ func renderStatusIcon(status types.Status) string {
 
 // formatPrettyIssue formats a single issue for pretty output
 // Uses semantic colors: status icon colored, priority P0/P1 colored, rest neutral
-func formatPrettyIssue(issue *types.Issue) string {
+// progressMap provides epic progress data (total/closed children) when available
+func formatPrettyIssue(issue *types.Issue, progressMap map[string]*types.EpicProgress) string {
 	// Use shared helpers from ui package
 	statusIcon := ui.RenderStatusIcon(string(issue.Status))
 	priorityTag := renderPriorityTag(issue.Priority)
 
 	// Type badge - only show for notable types
+	// For epics, include progress if available
 	typeBadge := ""
 	switch issue.IssueType {
 	case "epic":
-		typeBadge = ui.TypeEpicStyle.Render("[epic]") + " "
+		if progress, ok := progressMap[issue.ID]; ok && progress.TotalChildren > 0 {
+			typeBadge = ui.TypeEpicStyle.Render(fmt.Sprintf("[epic %d/%d]", progress.ClosedChildren, progress.TotalChildren)) + " "
+		} else {
+			typeBadge = ui.TypeEpicStyle.Render("[epic]") + " "
+		}
 	case "bug":
 		typeBadge = ui.TypeBugStyle.Render("[bug]") + " "
 	}
@@ -273,7 +312,7 @@ func compareIssuesByPriority(a, b *types.Issue) int {
 
 // printPrettyTree recursively prints the issue tree
 // Children are sorted by priority (P0 first) for intuitive reading
-func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string) {
+func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string, progressMap map[string]*types.EpicProgress) {
 	children := childrenMap[parentID]
 
 	// Sort children by priority using same comparison as roots for consistency
@@ -285,24 +324,29 @@ func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, pre
 		if isLast {
 			connector = "└── "
 		}
-		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child))
+		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child, progressMap))
 
 		extension := "│   "
 		if isLast {
 			extension = "    "
 		}
-		printPrettyTree(childrenMap, child.ID, prefix+extension)
+		printPrettyTree(childrenMap, child.ID, prefix+extension, progressMap)
 	}
 }
 
 // displayPrettyList displays issues in pretty tree format (GH#654)
 // Uses buildIssueTree which only supports dotted ID hierarchy
 func displayPrettyList(issues []*types.Issue, showHeader bool) {
-	displayPrettyListWithDeps(issues, showHeader, nil)
+	displayPrettyListWithDeps(issues, showHeader, nil, nil)
+}
+
+// displayPrettyListWithProgress displays issues with epic progress data
+func displayPrettyListWithProgress(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, progressMap map[string]*types.EpicProgress) {
+	displayPrettyListWithDeps(issues, showHeader, allDeps, progressMap)
 }
 
 // displayPrettyListWithDeps displays issues in tree format using dependency data
-func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency) {
+func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, progressMap map[string]*types.EpicProgress) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -317,11 +361,16 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 		return
 	}
 
+	// Ensure progressMap is not nil for safe access
+	if progressMap == nil {
+		progressMap = make(map[string]*types.EpicProgress)
+	}
+
 	roots, childrenMap := buildIssueTreeWithDeps(issues, allDeps)
 
 	for _, issue := range roots {
-		fmt.Println(formatPrettyIssue(issue))
-		printPrettyTree(childrenMap, issue.ID, "")
+		fmt.Println(formatPrettyIssue(issue, progressMap))
+		printPrettyTree(childrenMap, issue.ID, "", progressMap)
 	}
 
 	// Summary
@@ -502,7 +551,7 @@ func formatAgentIssue(buf *strings.Builder, issue *types.Issue) {
 // formatIssueCompact formats a single issue in compact format to a buffer
 // Uses status icons for better scanability - consistent with bd graph
 // Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title
-func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string) {
+func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, progressMap map[string]*types.EpicProgress) {
 	labelsStr := ""
 	if len(labels) > 0 {
 		labelsStr = fmt.Sprintf(" %v", labels)
@@ -515,11 +564,21 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 	// Get styled status icon
 	statusIcon := renderStatusIcon(issue.Status)
 
+	// Format type badge - include progress for epics
+	typeBadge := string(issue.IssueType)
+	if issue.IssueType == types.TypeEpic {
+		if progressMap != nil {
+			if progress, ok := progressMap[issue.ID]; ok && progress.TotalChildren > 0 {
+				typeBadge = fmt.Sprintf("epic %d/%d", progress.ClosedChildren, progress.TotalChildren)
+			}
+		}
+	}
+
 	if issue.Status == types.StatusClosed {
 		// Closed issues: entire line muted (fades visually)
 		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s",
 			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title)
+			typeBadge, assigneeStr, labelsStr, issue.Title)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
@@ -529,7 +588,7 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 			pinIndicator(issue),
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
-			ui.RenderType(string(issue.IssueType)),
+			ui.RenderType(typeBadge),
 			assigneeStr, labelsStr, issue.Title))
 	}
 }
@@ -868,6 +927,13 @@ var listCmd = &cobra.Command{
 			filter.Overdue = true
 		}
 
+		// Handle --rig flag: list from a different rig (hq-5e851d)
+		rigName, _ := cmd.Flags().GetString("rig")
+		if rigName != "" {
+			listInRig(cmd, rigName, filter, sortBy, reverse, prettyFormat, longFormat, noPager)
+			return
+		}
+
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
 		ctx := rootCtx
@@ -996,13 +1062,15 @@ var listCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
+			// Parse as IssueWithCounts to get epic progress data
+			var issuesWithCounts []*types.IssueWithCounts
+			if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
+				os.Exit(1)
+			}
+
 			if jsonOutput {
 				// For JSON output, preserve the full response with counts
-				var issuesWithCounts []*types.IssueWithCounts
-				if err := json.Unmarshal(resp.Data, &issuesWithCounts); err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-					os.Exit(1)
-				}
 				outputJSON(issuesWithCounts)
 				return
 			}
@@ -1010,10 +1078,18 @@ var listCmd = &cobra.Command{
 			// Show upgrade notification if needed
 			maybeShowUpgradeNotification()
 
-			var issues []*types.Issue
-			if err := json.Unmarshal(resp.Data, &issues); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-				os.Exit(1)
+			// Extract issues and epic progress from the response
+			issues := make([]*types.Issue, len(issuesWithCounts))
+			progressMap := make(map[string]*types.EpicProgress)
+			for i, iwc := range issuesWithCounts {
+				issues[i] = iwc.Issue
+				// Build progress map for epics
+				if iwc.Issue.IssueType == types.TypeEpic && (iwc.EpicTotalChildren > 0 || iwc.EpicClosedChildren > 0) {
+					progressMap[iwc.Issue.ID] = &types.EpicProgress{
+						TotalChildren:  iwc.EpicTotalChildren,
+						ClosedChildren: iwc.EpicClosedChildren,
+					}
+				}
 			}
 
 			// Apply sorting
@@ -1056,7 +1132,9 @@ var listCmd = &cobra.Command{
 						os.Exit(1)
 					}
 
-					displayPrettyListWithDeps(treeIssues, false, allDeps)
+					// Fetch epic progress for display
+					progressMap := getEpicProgressForIssues(ctx, store, dbPath, lockTimeout, treeIssues)
+					displayPrettyListWithDeps(treeIssues, false, allDeps, progressMap)
 					return
 				}
 
@@ -1067,13 +1145,18 @@ var listCmd = &cobra.Command{
 				if store != nil {
 					allDeps, _ = store.GetAllDependencyRecords(ctx)
 				} else if dbPath != "" {
-					// Daemon mode: open read-only connection for tree deps
-					if roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout); err == nil {
+					// Daemon mode: open read-only connection for tree deps (supports Dolt)
+					beadsDir := filepath.Dir(dbPath)
+					if roStore, err := factory.NewFromConfigWithOptions(ctx, beadsDir, factory.Options{
+						ReadOnly:    true,
+						LockTimeout: lockTimeout,
+					}); err == nil {
 						allDeps, _ = roStore.GetAllDependencyRecords(ctx)
 						_ = roStore.Close()
 					}
 				}
-				displayPrettyListWithDeps(issues, false, allDeps)
+				// Use epic progress from daemon response (already extracted above)
+				displayPrettyListWithDeps(issues, false, allDeps, progressMap)
 				if effectiveLimit > 0 && len(issues) == effectiveLimit {
 					fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
 				}
@@ -1098,7 +1181,7 @@ var listCmd = &cobra.Command{
 			} else {
 				// Compact format: one line per issue
 				for _, issue := range issues {
-					formatIssueCompact(&buf, issue, issue.Labels)
+					formatIssueCompact(&buf, issue, issue.Labels, progressMap)
 				}
 			}
 
@@ -1162,14 +1245,18 @@ var listCmd = &cobra.Command{
 
 				// Load dependencies for tree structure
 				allDeps, _ := store.GetAllDependencyRecords(ctx)
-				displayPrettyListWithDeps(treeIssues, false, allDeps)
+				// Fetch epic progress for display
+				progressMap := getEpicProgressForIssues(ctx, store, "", 0, treeIssues)
+				displayPrettyListWithDeps(treeIssues, false, allDeps, progressMap)
 				return
 			}
 
 			// Regular tree display (no parent filter)
 			// Load dependencies for tree structure
 			allDeps, _ := store.GetAllDependencyRecords(ctx)
-			displayPrettyListWithDeps(issues, false, allDeps)
+			// Fetch epic progress for display
+			progressMap := getEpicProgressForIssues(ctx, store, "", 0, issues)
+			displayPrettyListWithDeps(issues, false, allDeps, progressMap)
 			// Show truncation hint if we hit the limit (GH#788)
 			if effectiveLimit > 0 && len(issues) == effectiveLimit {
 				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
@@ -1229,6 +1316,9 @@ var listCmd = &cobra.Command{
 		}
 		labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
 
+		// Fetch epic progress for display
+		progressMap := getEpicProgressForIssues(ctx, store, "", 0, issues)
+
 		// Build output in buffer for pager support (bd-jdz3)
 		var buf strings.Builder
 		if ui.IsAgentMode() {
@@ -1249,7 +1339,7 @@ var listCmd = &cobra.Command{
 			// Compact format: one line per issue
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				formatIssueCompact(&buf, issue, labels)
+				formatIssueCompact(&buf, issue, labels, progressMap)
 			}
 		}
 
@@ -1344,8 +1434,142 @@ func init() {
 	// Ready filter: show only issues ready to be worked on (bd-ihu31)
 	listCmd.Flags().Bool("ready", false, "Show only ready issues (status=open, excludes hooked/in_progress/blocked/deferred)")
 
+	// Cross-rig listing (hq-5e851d)
+	listCmd.Flags().String("rig", "", "List issues from a different rig (e.g., --rig gastown)")
+
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(listCmd)
+}
+
+// listInRig lists issues from a different rig using --rig flag.
+// This bypasses the normal daemon/direct flow and directly queries the target rig.
+//
+//nolint:unparam // cmd reserved for future flag access
+func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sortBy string, reverse bool, prettyFormat, longFormat, noPager bool) {
+	ctx := rootCtx
+
+	// Find the town-level beads directory (where routes.jsonl lives)
+	townBeadsDir, err := findTownBeadsDir()
+	if err != nil {
+		FatalError("cannot use --rig: %v", err)
+	}
+
+	// Resolve the target rig's beads directory
+	targetBeadsDir, _, err := routing.ResolveBeadsDirForRig(rigName, townBeadsDir)
+	if err != nil {
+		FatalError("%v", err)
+	}
+
+	// Open storage for the target rig using factory to respect backend config
+	targetStore, err := factory.NewFromConfig(ctx, targetBeadsDir)
+	if err != nil {
+		FatalError("failed to open rig %q database: %v", rigName, err)
+	}
+	defer func() {
+		if err := targetStore.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
+		}
+	}()
+
+	// Perform the search
+	issues, err := targetStore.SearchIssues(ctx, "", filter)
+	if err != nil {
+		FatalError("failed to list issues from rig %q: %v", rigName, err)
+	}
+
+	// Apply sorting
+	sortIssues(issues, sortBy, reverse)
+
+	// Handle JSON output
+	if jsonOutput {
+		// Get labels and dependency counts in bulk
+		issueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			issueIDs[i] = issue.ID
+		}
+		labelsMap, _ := targetStore.GetLabelsForIssues(ctx, issueIDs)
+		depCounts, _ := targetStore.GetDependencyCounts(ctx, issueIDs)
+
+		// Populate labels for JSON output
+		for _, issue := range issues {
+			issue.Labels = labelsMap[issue.ID]
+		}
+
+		// Build response with counts
+		issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+		for i, issue := range issues {
+			counts := depCounts[issue.ID]
+			if counts == nil {
+				counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
+			}
+			issuesWithCounts[i] = &types.IssueWithCounts{
+				Issue:           issue,
+				DependencyCount: counts.DependencyCount,
+				DependentCount:  counts.DependentCount,
+			}
+		}
+		outputJSON(issuesWithCounts)
+		return
+	}
+
+	// Handle pretty format
+	if prettyFormat {
+		// Load dependencies for tree structure
+		allDeps, _ := targetStore.GetAllDependencyRecords(ctx)
+		// Fetch epic progress for display
+		progressMap := getEpicProgressForIssues(ctx, targetStore, "", 0, issues)
+		displayPrettyListWithDeps(issues, false, allDeps, progressMap)
+		if filter.Limit > 0 && len(issues) == filter.Limit {
+			fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+		}
+		return
+	}
+
+	// Load labels in bulk for display
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	labelsMap, _ := targetStore.GetLabelsForIssues(ctx, issueIDs)
+
+	// Fetch epic progress for display
+	progressMap := getEpicProgressForIssues(ctx, targetStore, "", 0, issues)
+
+	// Build output in buffer for pager support
+	var buf strings.Builder
+	if ui.IsAgentMode() {
+		// Agent mode: ultra-compact, no colors, no pager
+		for _, issue := range issues {
+			formatAgentIssue(&buf, issue)
+		}
+		fmt.Print(buf.String())
+		return
+	} else if longFormat {
+		// Long format: multi-line with details
+		buf.WriteString(fmt.Sprintf("\n[%s] Found %d issues:\n\n", rigName, len(issues)))
+		for _, issue := range issues {
+			labels := labelsMap[issue.ID]
+			formatIssueLong(&buf, issue, labels)
+		}
+	} else {
+		// Compact format: one line per issue
+		for _, issue := range issues {
+			labels := labelsMap[issue.ID]
+			formatIssueCompact(&buf, issue, labels, progressMap)
+		}
+	}
+
+	// Output with pager support
+	if err := ui.ToPager(buf.String(), ui.PagerOptions{NoPager: noPager}); err != nil {
+		if _, writeErr := fmt.Fprint(os.Stdout, buf.String()); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", writeErr)
+		}
+	}
+
+	// Show truncation hint if we hit the limit
+	if filter.Limit > 0 && len(issues) == filter.Limit {
+		fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", filter.Limit)
+	}
 }
 
 // outputDotFormat outputs issues in Graphviz DOT format

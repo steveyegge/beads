@@ -353,6 +353,15 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Skill fields (hq-yhdzq)
+	var skillName sql.NullString
+	var skillVersion sql.NullString
+	var skillCategory sql.NullString
+	var skillInputs sql.NullString
+	var skillOutputs sql.NullString
+	var skillExamples sql.NullString
+	var claudeSkillPath sql.NullString
+	var skillContent sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -367,7 +376,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until,
+		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -382,6 +392,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
+		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath, &skillContent,
 	)
 
 	if err == sql.ErrNoRows {
@@ -518,6 +529,31 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
+	// Skill fields
+	if skillName.Valid {
+		issue.SkillName = skillName.String
+	}
+	if skillVersion.Valid {
+		issue.SkillVersion = skillVersion.String
+	}
+	if skillCategory.Valid {
+		issue.SkillCategory = skillCategory.String
+	}
+	if skillInputs.Valid && skillInputs.String != "" {
+		issue.SkillInputs = parseJSONStringArray(skillInputs.String)
+	}
+	if skillOutputs.Valid && skillOutputs.String != "" {
+		issue.SkillOutputs = parseJSONStringArray(skillOutputs.String)
+	}
+	if skillExamples.Valid && skillExamples.String != "" {
+		issue.SkillExamples = parseJSONStringArray(skillExamples.String)
+	}
+	if claudeSkillPath.Valid {
+		issue.ClaudeSkillPath = claudeSkillPath.String
+	}
+	if skillContent.Valid {
+		issue.SkillContent = skillContent.String
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -637,6 +673,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
+	// Auto-close field
+	var autoClose sql.NullInt64
 
 	var owner sql.NullString
 	err := s.db.QueryRowContext(ctx, `
@@ -646,7 +684,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -657,7 +695,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
 	)
 
 	if err == sql.ErrNoRows {
@@ -750,6 +788,10 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
+	}
+	// Auto-close field
+	if autoClose.Valid && autoClose.Int64 != 0 {
+		issue.AutoClose = true
 	}
 
 	// Fetch labels for this issue
@@ -2029,9 +2071,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

@@ -17,8 +17,10 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -208,6 +210,17 @@ func autoImportIfNewer() {
 		return
 	}
 
+	// hq-c2495f: Skip auto-import for Dolt backend (Dolt is source of truth, not JSONL)
+	// This mirrors the check in internal/autoimport/autoimport.go
+	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
+	if dbPath != "" {
+		dbDir := filepath.Dir(dbPath)
+		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
+			debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
+			return
+		}
+	}
+
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
 
@@ -253,14 +266,8 @@ func autoImportIfNewer() {
 	if store != nil {
 		prefix, prefixErr := store.GetConfig(ctx, "issue_prefix")
 		if prefixErr != nil || prefix == "" {
-			// GH#1145: Check config.yaml for issue-prefix before auto-detecting
-			detectedPrefix := config.GetString("issue-prefix")
-
-			// If config.yaml doesn't have it, try to detect from JSONL
-			if detectedPrefix == "" {
-				detectedPrefix = detectPrefixFromJSONL(jsonlData)
-			}
-
+			// Database needs initialization - detect prefix from JSONL or directory
+			detectedPrefix := detectPrefixFromJSONL(jsonlData)
 			if detectedPrefix == "" {
 				// Fallback: detect from directory name
 				beadsDir := filepath.Dir(jsonlPath)
@@ -344,7 +351,7 @@ func autoImportIfNewer() {
 	if err := store.ClearAllExportHashes(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to clear export_hashes before import: %v\n", err)
 	}
-
+	
 	// Use shared import logic
 	opts := ImportOptions{
 		DryRun:               false,
@@ -424,6 +431,8 @@ func autoImportIfNewer() {
 	}
 }
 
+
+
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a flush
 // markDirtyAndScheduleFlush marks the database as dirty and schedules a debounced
 // export to JSONL. Uses FlushManager's event-driven architecture.
@@ -489,24 +498,45 @@ func clearAutoFlushState() {
 // validateJSONLIntegrity checks if JSONL file hash matches stored hash.
 // If mismatch detected, clears export_hashes and logs warning.
 // Returns (needsFullExport, error) where needsFullExport=true if export_hashes was cleared.
+//
+// hq-c2495f: Skip validation for Dolt backend since Dolt is source of truth, not JSONL.
+// JSONL in Dolt mode is export-only, so hash mismatches are not concerning.
 func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error) {
+	// Debug: Check if store is closed before calling
+	if vc, ok := store.(interface{ IsClosed() bool }); ok && vc.IsClosed() {
+		debug.Logf("validateJSONLIntegrity: store reports IsClosed()=true")
+	}
+
+	// hq-c2495f: Skip integrity validation for Dolt backend
+	// In Dolt mode, JSONL is export-only, so mismatches don't matter
+	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
+	if dbPath != "" {
+		dbDir := filepath.Dir(dbPath)
+		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
+			debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
+			return false, nil
+		}
+	}
+
 	// Get stored JSONL file hash
 	storedHash, err := store.GetJSONLFileHash(ctx)
 	if err != nil {
+		debug.Logf("validateJSONLIntegrity: GetJSONLFileHash failed: %v", err)
 		return false, fmt.Errorf("failed to get stored JSONL hash: %w", err)
 	}
-
+	
 	// If no hash stored, this is first export - skip validation
 	if storedHash == "" {
 		return false, nil
 	}
-
+	
 	// Read current JSONL file
 	jsonlData, err := os.ReadFile(jsonlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// JSONL doesn't exist but we have a stored hash - clear export_hashes and jsonl_file_hash
-			fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file missing but export_hashes exist. Clearing export_hashes.\n")
+			// bd-36869a: Log at debug level since this is normal recovery (e.g., after git checkout)
+			debug.Logf("validateJSONLIntegrity: JSONL file missing but hash exists, triggering full re-export")
 			if err := store.ClearAllExportHashes(ctx); err != nil {
 				return false, fmt.Errorf("failed to clear export_hashes: %w", err)
 			}
@@ -518,17 +548,19 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		}
 		return false, fmt.Errorf("failed to read JSONL file: %w", err)
 	}
-
+	
 	// Compute current JSONL hash
 	hasher := sha256.New()
 	hasher.Write(jsonlData)
 	currentHash := hex.EncodeToString(hasher.Sum(nil))
-
+	
 	// Compare hashes
 	if currentHash != storedHash {
-		fmt.Fprintf(os.Stderr, "⚠️  WARNING: JSONL file hash mismatch detected\n")
-		fmt.Fprintf(os.Stderr, "  This indicates JSONL and export_hashes are out of sync.\n")
-		fmt.Fprintf(os.Stderr, "  Clearing export_hashes to force full re-export.\n")
+		// bd-36869a: Log at debug level since this is normal recovery after external changes
+		// (e.g., git pull bringing in JSONL modifications). The system auto-recovers by
+		// forcing a full re-export, so users don't need to see alarming warnings.
+		debug.Logf("validateJSONLIntegrity: JSONL hash mismatch (stored=%s, current=%s), triggering full re-export",
+			storedHash[:8], currentHash[:8])
 
 		// Clear export_hashes to force full re-export
 		if err := store.ClearAllExportHashes(ctx); err != nil {
@@ -540,7 +572,7 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 		}
 		return true, nil // Signal full export needed
 	}
-
+	
 	return false, nil
 }
 
@@ -569,15 +601,15 @@ func writeJSONLAtomic(jsonlPath string, issues []*types.Issue) ([]string, error)
 	encoder := json.NewEncoder(f)
 	skippedCount := 0
 	exportedIDs := make([]string, 0, len(issues))
-
+	
 	for _, issue := range issues {
 		if err := encoder.Encode(issue); err != nil {
-			return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
+		 return nil, fmt.Errorf("failed to encode issue %s: %w", issue.ID, err)
 		}
-
+		
 		exportedIDs = append(exportedIDs, issue.ID)
 	}
-
+	
 	// Report skipped issues if any (helps debugging)
 	if skippedCount > 0 {
 		debug.Logf("auto-flush skipped %d issue(s) with timestamp-only changes", skippedCount)
@@ -736,13 +768,10 @@ func filterByMultiRepoPrefix(ctx context.Context, s storage.Storage, issues []*t
 		return issues
 	}
 
-	// Get our configured prefix (GH#1145: fallback to config.yaml)
+	// Get our configured prefix
 	prefix, prefixErr := s.GetConfig(ctx, "issue_prefix")
 	if prefixErr != nil || prefix == "" {
-		prefix = config.GetString("issue-prefix")
-		if prefix == "" {
-			return issues
-		}
+		return issues
 	}
 
 	// Determine if we're the primary repo
@@ -828,6 +857,7 @@ type flushState struct {
 //   - Store already closed (storeActive=false)
 //   - Database not dirty (isDirty=false) AND forceDirty=false
 //   - No dirty issues found (incremental mode only)
+//   - Sync mode is dolt-native (JSONL export disabled)
 func flushToJSONLWithState(state flushState) {
 	// Check if store is still active (not closed) and not nil
 	storeMutex.Lock()
@@ -836,6 +866,14 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
+
+	ctx := rootCtx
+
+	// Check if JSONL export is enabled for current sync mode (bd-48h)
+	// In dolt-native mode, JSONL export is disabled - Dolt is the source of truth
+	if !ShouldExportJSONL(ctx, store) {
+		return
+	}
 
 	jsonlPath := findJSONLPath()
 
@@ -846,8 +884,6 @@ func flushToJSONLWithState(state flushState) {
 		return
 	}
 	storeMutex.Unlock()
-
-	ctx := rootCtx
 
 	// Validate JSONL integrity BEFORE checking isDirty
 	// This detects if JSONL and export_hashes are out of sync (e.g., after git operations)

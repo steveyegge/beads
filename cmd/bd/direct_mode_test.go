@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -17,6 +18,14 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	// FIX: Initialize rootCtx for flush operations (issue #355)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Initialize config and reset sync.mode to ensure JSONL export is enabled
+	// This is needed because config.yaml may have sync.mode: dolt-native which
+	// would skip JSONL export
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("failed to initialize config: %v", err)
+	}
+	config.Set("sync.mode", "")
 
 	oldRootCtx := rootCtx
 	rootCtx = ctx
@@ -68,10 +77,11 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatalf("failed to create .beads dir: %v", err)
 	}
-	testDBPath := filepath.Join(beadsDir, "test.db")
+	// Use "beads.db" so ensureStoreActive finds the same database
+	testDBPath := filepath.Join(beadsDir, "beads.db")
 
 	// Create metadata.json so factory.NewFromConfig knows which DB to open (GH#e82f5136)
-	metadataJSON := `{"database":"test.db","jsonl_export":"issues.jsonl"}`
+	metadataJSON := `{"database":"beads.db","jsonl_export":"issues.jsonl"}`
 	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataJSON), 0644); err != nil {
 		t.Fatalf("failed to create metadata.json: %v", err)
 	}
@@ -124,6 +134,11 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	daemonStatus = DaemonStatus{}
 	autoImportEnabled = false
 	autoFlushEnabled = true
+
+	// Set BEADS_DIR to point to test directory so ensureStoreActive finds it
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", beadsDir)
+	defer os.Setenv("BEADS_DIR", origBeadsDir)
 
 	if err := fallbackToDirectMode("test fallback"); err != nil {
 		t.Fatalf("fallbackToDirectMode failed: %v", err)
@@ -267,6 +282,11 @@ func TestImportFromJSONLInlineAfterDaemonDisconnect(t *testing.T) {
 	storeMutex.Unlock()
 	daemonClient = &rpc.Client{} // Non-nil means daemon was connected
 	autoImportEnabled = false
+
+	// Set BEADS_DIR to point to test directory so ensureStoreActive finds it
+	origBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", beadsDir)
+	defer os.Setenv("BEADS_DIR", origBeadsDir)
 
 	// Simulate what sync.go does: close daemon but DON'T initialize store
 	// This is the bug scenario

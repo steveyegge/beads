@@ -343,15 +343,15 @@ func TestAutoMigrateOnVersionBump_NoUpgrade(t *testing.T) {
 	versionUpgradeDetected = false
 
 	// Should return early without doing anything
-	autoMigrateOnVersionBump("/tmp/test.db")
+	// Pass beadsDir (factory will look for beads.db inside)
+	autoMigrateOnVersionBump(t.TempDir())
 
 	// Test passes if no panic occurs
 }
 
 func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
-	// Create temp directory
+	// Create temp directory (beadsDir with no database)
 	tmpDir := t.TempDir()
-	nonExistentDB := filepath.Join(tmpDir, "nonexistent.db")
 
 	// Save original state
 	origUpgradeDetected := versionUpgradeDetected
@@ -362,8 +362,8 @@ func TestAutoMigrateOnVersionBump_NoDatabase(t *testing.T) {
 	// Simulate version upgrade
 	versionUpgradeDetected = true
 
-	// Should handle gracefully when database doesn't exist
-	autoMigrateOnVersionBump(nonExistentDB)
+	// Should handle gracefully when database doesn't exist in beadsDir
+	autoMigrateOnVersionBump(tmpDir)
 
 	// Test passes if no panic occurs
 }
@@ -381,9 +381,10 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 		previousVersion = origPreviousVersion
 	}()
 
-	// Create temp directory with unique name to avoid any possible interference
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test-migrate-version-unique.db")
+	// Create temp directory (beadsDir) with unique name to avoid any possible interference
+	beadsDir := t.TempDir()
+	// Factory will look for beads.db inside beadsDir
+	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Create database with old version
 	ctx := context.Background()
@@ -416,9 +417,9 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 
 	// Set versionUpgradeDetected immediately before calling to avoid races
 	versionUpgradeDetected = true
-	t.Logf("Calling autoMigrateOnVersionBump with dbPath=%s, versionUpgradeDetected=%v", dbPath, versionUpgradeDetected)
+	t.Logf("Calling autoMigrateOnVersionBump with beadsDir=%s, versionUpgradeDetected=%v", beadsDir, versionUpgradeDetected)
 	// Immediately call migration while flag is still true
-	autoMigrateOnVersionBump(dbPath)
+	autoMigrateOnVersionBump(beadsDir)
 
 	// Verify the flag is still true after migration
 	if !versionUpgradeDetected {
@@ -444,9 +445,10 @@ func TestAutoMigrateOnVersionBump_MigratesVersion(t *testing.T) {
 }
 
 func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
-	// Create temp directory
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
+	// Create temp directory (beadsDir)
+	beadsDir := t.TempDir()
+	// Factory will look for beads.db inside beadsDir
+	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Create database with current version
 	ctx := context.Background()
@@ -471,7 +473,7 @@ func TestAutoMigrateOnVersionBump_AlreadyMigrated(t *testing.T) {
 	versionUpgradeDetected = true
 
 	// Call auto-migration - should be a no-op
-	autoMigrateOnVersionBump(dbPath)
+	autoMigrateOnVersionBump(beadsDir)
 
 	// Verify database version is still current
 	store, err = sqlite.New(ctx, dbPath)

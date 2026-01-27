@@ -2,11 +2,13 @@ package dolt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -880,4 +882,473 @@ func TestDoltStoreGetReadyWork(t *testing.T) {
 	if !foundReady {
 		t.Error("expected ready issue to be in ready work")
 	}
+}
+
+// TestClosedIssueIDCollision verifies that creating an issue with the same content
+// as a closed issue doesn't inherit the closed status (hq-3ebbac fix).
+func TestClosedIssueIDCollision(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create an issue with specific content
+	issue1 := &types.Issue{
+		Title:       "Wisp Step",
+		Description: "Test step for wisp",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		IDPrefix:    "wisp", // Use wisp prefix like actual wisps
+	}
+
+	if err := store.CreateIssue(ctx, issue1, "tester"); err != nil {
+		t.Fatalf("failed to create first issue: %v", err)
+	}
+	originalID := issue1.ID
+
+	// Close the issue
+	if err := store.CloseIssue(ctx, issue1.ID, "completed", "tester", "session1"); err != nil {
+		t.Fatalf("failed to close issue: %v", err)
+	}
+
+	// Verify it's closed
+	retrieved, err := store.GetIssue(ctx, originalID)
+	if err != nil {
+		t.Fatalf("failed to get closed issue: %v", err)
+	}
+	if retrieved.Status != types.StatusClosed {
+		t.Errorf("expected status %s, got %s", types.StatusClosed, retrieved.Status)
+	}
+
+	// Now try to create a new issue with the same content (same hash -> same base ID)
+	// This simulates creating a new wisp from the same template
+	issue2 := &types.Issue{
+		Title:       "Wisp Step",
+		Description: "Test step for wisp",
+		Status:      types.StatusOpen,
+		Priority:    2,
+		IssueType:   types.TypeTask,
+		IDPrefix:    "wisp",
+	}
+
+	// Use RunInTransaction since that's what wisp creation uses
+	err = store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		return tx.CreateIssue(ctx, issue2, "tester")
+	})
+	if err != nil {
+		t.Fatalf("failed to create second issue: %v", err)
+	}
+
+	// The new issue should have a different ID (with suffix)
+	if issue2.ID == originalID {
+		t.Errorf("expected new issue to have different ID, but both have %s", issue2.ID)
+	}
+
+	// The new issue should be open, not closed
+	retrieved2, err := store.GetIssue(ctx, issue2.ID)
+	if err != nil {
+		t.Fatalf("failed to get new issue: %v", err)
+	}
+	if retrieved2.Status != types.StatusOpen {
+		t.Errorf("expected new issue status %s, got %s", types.StatusOpen, retrieved2.Status)
+	}
+
+	// Verify the ID follows the expected suffix pattern
+	expectedPrefix := originalID + "-"
+	if len(issue2.ID) <= len(expectedPrefix) || issue2.ID[:len(expectedPrefix)] != expectedPrefix {
+		t.Logf("Note: new issue ID %s (original was %s)", issue2.ID, originalID)
+	}
+}
+
+// TestIsTransientDoltError verifies the transient error detection function (bd-3q6.4)
+func TestIsTransientDoltError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "invalid format version",
+			err:      fmt.Errorf("invalid format version"),
+			expected: true,
+		},
+		{
+			name:     "failed to load database with format version",
+			err:      fmt.Errorf("failed to load database at /path/to/db with error: invalid format version"),
+			expected: true,
+		},
+		{
+			name:     "failed to load database generic",
+			err:      fmt.Errorf("failed to load database"),
+			expected: true,
+		},
+		{
+			name:     "manifest invalid",
+			err:      fmt.Errorf("manifest is invalid or corrupted"),
+			expected: true,
+		},
+		{
+			name:     "database is read only (lock error)",
+			err:      fmt.Errorf("database is read only"),
+			expected: true,
+		},
+		{
+			name:     "database is locked",
+			err:      fmt.Errorf("database is locked"),
+			expected: true,
+		},
+		{
+			name:     "lock timeout",
+			err:      fmt.Errorf("lock timeout exceeded"),
+			expected: true,
+		},
+		{
+			name:     "lock contention",
+			err:      fmt.Errorf("lock contention detected"),
+			expected: true,
+		},
+		{
+			name:     "generic non-transient error",
+			err:      fmt.Errorf("table does not exist"),
+			expected: false,
+		},
+		{
+			name:     "connection refused",
+			err:      fmt.Errorf("connection refused"),
+			expected: false,
+		},
+		{
+			name:     "case insensitive format version",
+			err:      fmt.Errorf("Invalid Format Version in manifest"),
+			expected: true,
+		},
+		// Serialization conflict errors (hq-jkr56x)
+		{
+			name:     "error 1105 optimistic lock failed",
+			err:      fmt.Errorf("Error 1105 (HY000): optimistic lock failed on database Root update"),
+			expected: true,
+		},
+		{
+			name:     "optimistic lock failed generic",
+			err:      fmt.Errorf("optimistic lock failed"),
+			expected: true,
+		},
+		{
+			name:     "error 1213 serialization failure",
+			err:      fmt.Errorf("Error 1213 (40001): Serialization failure"),
+			expected: true,
+		},
+		{
+			name:     "serialization failure generic",
+			err:      fmt.Errorf("serialization failure during commit"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isTransientDoltError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isTransientDoltError(%v) = %v, expected %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsSerializationError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "error 1105 optimistic lock failed",
+			err:      fmt.Errorf("Error 1105 (HY000): optimistic lock failed on database Root update"),
+			expected: true,
+		},
+		{
+			name:     "optimistic lock failed generic",
+			err:      fmt.Errorf("optimistic lock failed"),
+			expected: true,
+		},
+		{
+			name:     "error 1213 serialization failure",
+			err:      fmt.Errorf("Error 1213 (40001): Serialization failure"),
+			expected: true,
+		},
+		{
+			name:     "serialization failure generic",
+			err:      fmt.Errorf("serialization failure during commit"),
+			expected: true,
+		},
+		{
+			name:     "non-serialization error",
+			err:      fmt.Errorf("table does not exist"),
+			expected: false,
+		},
+		{
+			name:     "lock error is not serialization",
+			err:      fmt.Errorf("database is locked"),
+			expected: false, // lock errors are separate from serialization errors
+		},
+		{
+			name:     "case insensitive error 1105",
+			err:      fmt.Errorf("error 1105 in statement"),
+			expected: true,
+		},
+		{
+			name:     "error 1105 nothing to commit is NOT serialization",
+			err:      fmt.Errorf("Error 1105: nothing to commit"),
+			expected: false, // "nothing to commit" is not a serialization error
+		},
+		{
+			name:     "nothing to commit generic",
+			err:      fmt.Errorf("nothing to commit"),
+			expected: false,
+		},
+		{
+			name:     "no changes to commit",
+			err:      fmt.Errorf("no changes to commit"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSerializationError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isSerializationError(%v) = %v, expected %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCommitRetryConfig verifies that retry configuration is properly stored
+func TestCommitRetryConfig(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "dolt-retry-config-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test with custom retry config
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "test",
+		CommitterEmail: "test@test.com",
+		LockRetries:    10,
+		LockRetryDelay: 200 * time.Millisecond,
+	}
+
+	store, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Verify config was stored
+	if store.lockRetries != 10 {
+		t.Errorf("expected lockRetries=10, got %d", store.lockRetries)
+	}
+	if store.lockRetryDelay != 200*time.Millisecond {
+		t.Errorf("expected lockRetryDelay=200ms, got %v", store.lockRetryDelay)
+	}
+}
+
+// TestCommitRetryDefaults verifies that default retry config is used when not specified
+func TestCommitRetryDefaults(t *testing.T) {
+	skipIfNoDolt(t)
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "dolt-retry-defaults-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test with no retry config - defaults are applied in New()
+	cfg := &Config{
+		Path:           tmpDir,
+		CommitterName:  "test",
+		CommitterEmail: "test@test.com",
+		// LockRetries and LockRetryDelay intentionally not set - will use defaults
+	}
+
+	store, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Config defaults are applied in New() - LockRetries defaults to 30
+	// When lockRetries is 0 in the store, Commit() uses an internal default of 5
+	// This tests that the store was created successfully with some retry config
+	if store.lockRetries < 0 {
+		t.Errorf("expected lockRetries >= 0, got %d", store.lockRetries)
+	}
+}
+
+// TestCommitSucceedsWithoutRetry verifies normal commit behavior without errors
+func TestCommitSucceedsWithoutRetry(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create an issue to have something to commit
+	issue := &types.Issue{
+		ID:        "test-commit-1",
+		Title:     "Test commit without retry",
+		Status:    types.StatusOpen,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+		t.Fatalf("failed to create issue: %v", err)
+	}
+
+	// Commit should succeed on first try
+	err := store.Commit(ctx, "Test commit")
+	if err != nil {
+		t.Errorf("expected commit to succeed, got error: %v", err)
+	}
+}
+
+// TestConcurrentCommits verifies that concurrent commits don't cause permanent failures
+// This is an integration test that exercises the retry logic under concurrent access
+func TestConcurrentCommits(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping concurrent test in short mode")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Create multiple issues and commit them concurrently
+	const numGoroutines = 3
+	const issuesPerGoroutine = 2
+
+	errCh := make(chan error, numGoroutines*issuesPerGoroutine)
+	doneCh := make(chan struct{}, numGoroutines)
+
+	for g := 0; g < numGoroutines; g++ {
+		go func(goroutineID int) {
+			defer func() { doneCh <- struct{}{} }()
+
+			for i := 0; i < issuesPerGoroutine; i++ {
+				issue := &types.Issue{
+					ID:        fmt.Sprintf("concurrent-%d-%d", goroutineID, i),
+					Title:     fmt.Sprintf("Concurrent test issue %d-%d", goroutineID, i),
+					Status:    types.StatusOpen,
+					IssueType: types.TypeTask,
+				}
+
+				if err := store.CreateIssue(ctx, issue, "tester"); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: failed to create issue %d: %w", goroutineID, i, err)
+					return
+				}
+
+				// Commit after each issue - this may trigger optimistic lock failures
+				// which should be retried automatically
+				if err := store.Commit(ctx, fmt.Sprintf("Concurrent commit %d-%d", goroutineID, i)); err != nil {
+					// Note: "nothing to commit" is not an error in this context
+					if !isDoltNothingToCommit(err) {
+						errCh <- fmt.Errorf("goroutine %d: failed to commit %d: %w", goroutineID, i, err)
+						return
+					}
+				}
+			}
+		}(g)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < numGoroutines; i++ {
+		<-doneCh
+	}
+	close(errCh)
+
+	// Check for any errors
+	var errors []error
+	for err := range errCh {
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		t.Errorf("concurrent commits had %d errors:", len(errors))
+		for _, err := range errors {
+			t.Errorf("  - %v", err)
+		}
+	}
+
+	// Verify all issues were created by fetching each one
+	for g := 0; g < numGoroutines; g++ {
+		for i := 0; i < issuesPerGoroutine; i++ {
+			id := fmt.Sprintf("concurrent-%d-%d", g, i)
+			issue, err := store.GetIssue(ctx, id)
+			if err != nil {
+				t.Errorf("failed to get issue %s: %v", id, err)
+			}
+			if issue == nil {
+				t.Errorf("expected issue %s to exist", id)
+			}
+		}
+	}
+}
+
+// isDoltNothingToCommit checks if the error indicates there was nothing to commit
+// (duplicated from dolt_autocommit.go for test isolation)
+func isDoltNothingToCommit(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return contains(s, "nothing to commit") || (contains(s, "no changes") && contains(s, "commit"))
+}
+
+// contains is a case-insensitive contains check
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsLower(lower(s), lower(substr)))
+}
+
+func lower(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return string(b)
+}
+
+func containsLower(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

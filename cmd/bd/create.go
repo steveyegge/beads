@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -123,6 +122,8 @@ var createCmd = &cobra.Command{
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
 		wisp, _ := cmd.Flags().GetBool("ephemeral")
+		pinned, _ := cmd.Flags().GetBool("pinned")
+		autoClose, _ := cmd.Flags().GetBool("auto-close")
 		molTypeStr, _ := cmd.Flags().GetString("mol-type")
 		var molType types.MolType
 		if molTypeStr != "" {
@@ -150,6 +151,11 @@ var createCmd = &cobra.Command{
 		// Validate event-specific flags require --type=event
 		if (eventCategory != "" || eventActor != "" || eventTarget != "" || eventPayload != "") && issueType != "event" {
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
+		}
+
+		// Validate --auto-close requires --type=epic
+		if autoClose && issueType != "epic" {
+			FatalError("--auto-close flag requires --type=epic")
 		}
 
 		// Parse --due flag (GH#820)
@@ -201,6 +207,8 @@ var createCmd = &cobra.Command{
 				Assignee:           assignee,
 				ExternalRef:        externalRefPtr,
 				Ephemeral:          wisp,
+				Pinned:             pinned,
+				AutoClose:          autoClose,
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            molType,
@@ -274,7 +282,7 @@ var createCmd = &cobra.Command{
 								// Found a matching route - auto-route to that rig
 								rigName := routing.ExtractProjectFromPath(route.Path)
 								if rigName != "" {
-									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 									return
 								}
 							}
@@ -294,7 +302,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp, pinned, autoClose)
 			return
 		}
 
@@ -414,14 +422,18 @@ var createCmd = &cobra.Command{
 		if parentID != "" && daemonClient == nil {
 			ctx := rootCtx
 			// Validate parent exists before generating child ID
-			parentIssue, err := store.GetIssue(ctx, parentID)
+			// Use routing-aware lookup to support cross-repo parent references
+			result, err := resolveAndGetIssueWithRouting(ctx, store, parentID)
 			if err != nil {
 				FatalError("failed to check parent issue: %v", err)
 			}
-			if parentIssue == nil {
+			if result == nil || result.Issue == nil {
 				FatalError("parent issue %s not found", parentID)
 			}
-			childID, err := store.GetNextChildID(ctx, parentID)
+			defer result.Close()
+
+			// Use the routed store for GetNextChildID to ensure consistent child ID generation
+			childID, err := result.Store.GetNextChildID(ctx, result.ResolvedID)
 			if err != nil {
 				FatalError("%v", err)
 			}
@@ -430,15 +442,20 @@ var createCmd = &cobra.Command{
 
 		// Validate explicit ID format if provided
 		if explicitID != "" {
-			// For agent types, use agent-aware validation.
+			var requestedPrefix string
+			var err error
+
+			// For agent types, use agent-aware prefix extraction.
 			// This fixes the bug where 3-char polecat names like "nux" in
-			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes.
+			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes,
+			// causing prefix to be extracted as "nx-nexus-polecat" instead of "nx".
 			if issueType == "agent" {
 				if err := validation.ValidateAgentID(explicitID); err != nil {
 					FatalError("invalid agent ID: %v", err)
 				}
+				requestedPrefix = validation.ExtractAgentPrefix(explicitID)
 			} else {
-				_, err := validation.ValidateIDFormat(explicitID)
+				requestedPrefix, err = validation.ValidateIDFormat(explicitID)
 				if err != nil {
 					FatalError("%v", err)
 				}
@@ -462,18 +479,12 @@ var createCmd = &cobra.Command{
 				}
 				// If error, continue without validation (non-fatal)
 			} else {
-				// Direct mode - check config (GH#1145: fallback to config.yaml)
+				// Direct mode - check config
 				dbPrefix, _ = store.GetConfig(ctx, "issue_prefix")
-				if dbPrefix == "" {
-					dbPrefix = config.GetString("issue-prefix")
-				}
 				allowedPrefixes, _ = store.GetConfig(ctx, "allowed_prefixes")
 			}
 
-			// Use ValidateIDPrefixAllowed which handles multi-hyphen prefixes correctly (GH#1135)
-			// This checks if the ID starts with an allowed prefix, rather than extracting
-			// the prefix first (which can fail for IDs like "hq-cv-test" where "test" looks like a word)
-			if err := validation.ValidateIDPrefixAllowed(explicitID, dbPrefix, allowedPrefixes, forceCreate); err != nil {
+			if err := validation.ValidatePrefixWithAllowed(requestedPrefix, dbPrefix, allowedPrefixes, forceCreate); err != nil {
 				FatalError("%v", err)
 			}
 		}
@@ -503,6 +514,8 @@ var createCmd = &cobra.Command{
 				WaitsFor:           waitsFor,
 				WaitsForGate:       waitsForGate,
 				Ephemeral:          wisp,
+				Pinned:             pinned,
+				AutoClose:          autoClose,
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            string(molType),
@@ -563,6 +576,8 @@ var createCmd = &cobra.Command{
 			ExternalRef:        externalRefPtr,
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
+			Pinned:             pinned,
+			AutoClose:          autoClose,
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
 			MolType:            molType,
@@ -902,6 +917,8 @@ func init() {
 	createCmd.Flags().String("prefix", "", "Create issue in rig by prefix (e.g., --prefix bd- or --prefix bd or --prefix beads)")
 	createCmd.Flags().IntP("estimate", "e", 0, "Time estimate in minutes (e.g., 60 for 1 hour)")
 	createCmd.Flags().Bool("ephemeral", false, "Create as ephemeral (ephemeral, not exported to JSONL)")
+	createCmd.Flags().Bool("pinned", false, "Pin the issue (keeps it visible, used for agent beads)")
+	createCmd.Flags().Bool("auto-close", false, "Auto-close this epic when all children are closed (requires --type=epic)")
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
@@ -928,7 +945,7 @@ func init() {
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp, pinned, autoClose bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -953,6 +970,17 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 			fmt.Fprintf(os.Stderr, "warning: failed to close rig database: %v\n", err)
 		}
 	}()
+
+	// Auto-fix missing issue_prefix: if database config is missing but config.yaml has it,
+	// populate the database config (fixes hq-8af330.15)
+	if existingPrefix, _ := targetStore.GetConfig(ctx, "issue_prefix"); existingPrefix == "" {
+		// Try to get prefix from config.yaml in target beads directory
+		if cfgPrefix := readIssuePrefixFromConfig(targetBeadsDir); cfgPrefix != "" {
+			if err := targetStore.SetConfig(ctx, "issue_prefix", cfgPrefix); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to auto-set issue_prefix from config.yaml: %v\n", err)
+			}
+		}
+	}
 
 	// Prepare prefix override from routes.jsonl for cross-rig creation
 	// Strip trailing hyphen - database stores prefix without it (e.g., "aops" not "aops-")
@@ -1016,6 +1044,8 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Assignee:           assignee,
 		ExternalRef:        externalRefPtr,
 		Ephemeral:          wisp,
+		Pinned:             pinned,
+		AutoClose:          autoClose,
 		CreatedBy:          getActorWithGit(),
 		Owner:              getOwner(),
 		// Event fields (bd-xwvo fix)
@@ -1129,13 +1159,13 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 		}
 	}
 
-	// Initialize database - it will be created when sqlite.New is called
+	// Initialize database - it will be created when factory.NewFromConfig is called
 	// But we need to set the prefix if source store has one (T012: prefix inheritance)
 	if sourceStore != nil {
 		sourcePrefix, err := sourceStore.GetConfig(ctx, "issue_prefix")
 		if err == nil && sourcePrefix != "" {
 			// Open target store temporarily to set prefix
-			tempStore, err := sqlite.New(ctx, dbPath)
+			tempStore, err := factory.NewFromConfig(ctx, beadsDir)
 			if err != nil {
 				return fmt.Errorf("failed to initialize target database: %w", err)
 			}
@@ -1150,4 +1180,28 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 	}
 
 	return nil
+}
+
+// readIssuePrefixFromConfig reads the issue-prefix from a config.yaml file in the given beads directory.
+// Returns empty string if not found or on error.
+func readIssuePrefixFromConfig(beadsDir string) string {
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath) //nolint:gosec // Path is derived from trusted beadsDir
+	if err != nil {
+		return ""
+	}
+
+	// Simple parsing: look for "issue-prefix: " line
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "issue-prefix:") {
+			value := strings.TrimPrefix(line, "issue-prefix:")
+			value = strings.TrimSpace(value)
+			// Remove quotes if present
+			value = strings.Trim(value, `"'`)
+			return value
+		}
+	}
+	return ""
 }

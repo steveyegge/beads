@@ -1093,7 +1093,11 @@ func TestSyncConfigDefaults(t *testing.T) {
 	restore := envSnapshot(t)
 	defer restore()
 
-	// Initialize config
+	// Isolate from config files by running in temp directory
+	t.Chdir(t.TempDir())
+
+	// Initialize config (no config file in temp dir = defaults only)
+	ResetForTesting()
 	if err := Initialize(); err != nil {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
@@ -1148,14 +1152,13 @@ func TestFederationConfigDefaults(t *testing.T) {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Test federation config defaults
+	// Test federation config defaults (empty)
 	cfg := GetFederationConfig()
 	if cfg.Remote != "" {
 		t.Errorf("GetFederationConfig().Remote = %q, want empty", cfg.Remote)
 	}
-	// Default sovereignty is empty (no restriction) when not configured
-	if cfg.Sovereignty != SovereigntyNone {
-		t.Errorf("GetFederationConfig().Sovereignty = %q, want %q (no restriction)", cfg.Sovereignty, SovereigntyNone)
+	if cfg.Sovereignty != "" {
+		t.Errorf("GetFederationConfig().Sovereignty = %q, want empty", cfg.Sovereignty)
 	}
 }
 
@@ -1340,21 +1343,21 @@ func TestNeedsDoltRemote(t *testing.T) {
 	defer restore()
 
 	tests := []struct {
-		mode        SyncMode
+		mode        string
 		needsRemote bool
 	}{
-		{SyncModeGitPortable, false},
-		{SyncModeRealtime, false},
-		{SyncModeDoltNative, true},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), false},
+		{string(SyncModeRealtime), false},
+		{string(SyncModeDoltNative), true},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.mode), func(t *testing.T) {
+		t.Run(tt.mode, func(t *testing.T) {
 			if err := Initialize(); err != nil {
 				t.Fatalf("Initialize() returned error: %v", err)
 			}
-			Set("sync.mode", string(tt.mode))
+			Set("sync.mode", tt.mode)
 
 			if got := NeedsDoltRemote(); got != tt.needsRemote {
 				t.Errorf("NeedsDoltRemote() with mode=%s = %v, want %v", tt.mode, got, tt.needsRemote)
@@ -1369,21 +1372,21 @@ func TestNeedsJSONL(t *testing.T) {
 	defer restore()
 
 	tests := []struct {
-		mode       SyncMode
+		mode       string
 		needsJSONL bool
 	}{
-		{SyncModeGitPortable, true},
-		{SyncModeRealtime, true},
-		{SyncModeDoltNative, false},
-		{SyncModeBeltAndSuspenders, true},
+		{string(SyncModeGitPortable), true},
+		{string(SyncModeRealtime), true},
+		{string(SyncModeDoltNative), false},
+		{string(SyncModeBeltAndSuspenders), true},
 	}
 
 	for _, tt := range tests {
-		t.Run(string(tt.mode), func(t *testing.T) {
+		t.Run(tt.mode, func(t *testing.T) {
 			if err := Initialize(); err != nil {
 				t.Fatalf("Initialize() returned error: %v", err)
 			}
-			Set("sync.mode", string(tt.mode))
+			Set("sync.mode", tt.mode)
 
 			if got := NeedsJSONL(); got != tt.needsJSONL {
 				t.Errorf("NeedsJSONL() with mode=%s = %v, want %v", tt.mode, got, tt.needsJSONL)
@@ -1431,12 +1434,16 @@ func TestGetSovereigntyInvalid(t *testing.T) {
 	restore := envSnapshot(t)
 	defer restore()
 
-	// Initialize config
+	// Isolate from config files by running in temp directory
+	t.Chdir(t.TempDir())
+
+	// Initialize config (no config file in temp dir = defaults only)
+	ResetForTesting()
 	if err := Initialize(); err != nil {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	// Set invalid sovereignty - should return T1 (default) with warning
+	// Set invalid sovereignty - should return T1 as fallback
 	Set("federation.sovereignty", "T99")
 	if got := GetSovereignty(); got != SovereigntyT1 {
 		t.Errorf("GetSovereignty() with invalid tier = %q, want %q (fallback)", got, SovereigntyT1)

@@ -141,11 +141,20 @@ func (s *DoltStore) getLastSyncTime(ctx context.Context, peer string) time.Time 
 
 // setLastSyncTime records the last sync time for a peer in metadata.
 func (s *DoltStore) setLastSyncTime(ctx context.Context, peer string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	key := "last_sync_" + peer
 	value := time.Now().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		"REPLACE INTO metadata (`key`, value) VALUES (?, ?)", key, value)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Sync performs a full bidirectional sync with a peer:

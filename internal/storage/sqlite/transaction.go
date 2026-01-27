@@ -342,9 +342,7 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -1376,9 +1374,7 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       await_type, await_id, timeout_ns, waiters, auto_close
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1435,17 +1431,8 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
-	// Agent fields
-	var hookBead sql.NullString
-	var roleBead sql.NullString
-	var agentState sql.NullString
-	var lastActivity sql.NullTime
-	var roleType sql.NullString
-	var rig sql.NullString
-	var molType sql.NullString
-	// Time-based scheduling fields
-	var dueAt sql.NullTime
-	var deferUntil sql.NullTime
+	// Auto-close field
+	var autoClose sql.NullInt64
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -1455,9 +1442,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
-		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&dueAt, &deferUntil,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1547,34 +1532,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
-	// Agent fields
-	if hookBead.Valid {
-		issue.HookBead = hookBead.String
-	}
-	if roleBead.Valid {
-		issue.RoleBead = roleBead.String
-	}
-	if agentState.Valid {
-		issue.AgentState = types.AgentState(agentState.String)
-	}
-	if lastActivity.Valid {
-		issue.LastActivity = &lastActivity.Time
-	}
-	if roleType.Valid {
-		issue.RoleType = roleType.String
-	}
-	if rig.Valid {
-		issue.Rig = rig.String
-	}
-	if molType.Valid {
-		issue.MolType = types.MolType(molType.String)
-	}
-	// Time-based scheduling fields
-	if dueAt.Valid {
-		issue.DueAt = &dueAt.Time
-	}
-	if deferUntil.Valid {
-		issue.DeferUntil = &deferUntil.Time
+	// Auto-close field
+	if autoClose.Valid && autoClose.Int64 != 0 {
+		issue.AutoClose = true
 	}
 
 	return &issue, nil
@@ -1650,4 +1610,167 @@ func (t *sqliteTxStorage) getLabelsForIssues(ctx context.Context, issueIDs []str
 	}
 
 	return result, rows.Err()
+}
+
+// CreateDecisionPoint creates a new decision point within the transaction.
+func (t *sqliteTxStorage) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	// Verify issue exists
+	issue, err := t.GetIssue(ctx, dp.IssueID)
+	if err != nil {
+		return fmt.Errorf("failed to check issue existence: %w", err)
+	}
+	if issue == nil {
+		return fmt.Errorf("issue %s not found", dp.IssueID)
+	}
+
+	// Convert empty strings to NULL for optional FK fields
+	var priorID interface{}
+	if dp.PriorID != "" {
+		priorID = dp.PriorID
+	}
+
+	// Insert decision point
+	_, err = t.conn.ExecContext(ctx, `
+		INSERT INTO decision_points (
+			issue_id, prompt, options, default_option, selected_option,
+			response_text, responded_at, responded_by, iteration, max_iterations,
+			prior_id, guidance, requested_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, dp.IssueID, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
+		priorID, dp.Guidance, dp.RequestedBy)
+	if err != nil {
+		return fmt.Errorf("failed to insert decision point: %w", err)
+	}
+
+	return nil
+}
+
+// GetDecisionPoint retrieves the decision point for an issue within the transaction.
+func (t *sqliteTxStorage) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	dp := &types.DecisionPoint{}
+	err := t.conn.QueryRowContext(ctx, `
+		SELECT issue_id, prompt, options,
+			COALESCE(default_option, ''), COALESCE(selected_option, ''),
+			COALESCE(response_text, ''), responded_at, COALESCE(responded_by, ''),
+			iteration, max_iterations,
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(requested_by, ''), created_at
+		FROM decision_points
+		WHERE issue_id = ?
+	`, issueID).Scan(
+		&dp.IssueID, &dp.Prompt, &dp.Options,
+		&dp.DefaultOption, &dp.SelectedOption,
+		&dp.ResponseText, &dp.RespondedAt, &dp.RespondedBy,
+		&dp.Iteration, &dp.MaxIterations,
+		&dp.PriorID, &dp.Guidance, &dp.RequestedBy, &dp.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision point: %w", err)
+	}
+
+	return dp, nil
+}
+
+// UpdateDecisionPoint updates an existing decision point within the transaction.
+func (t *sqliteTxStorage) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	// Convert empty strings to NULL for optional FK fields
+	var priorID interface{}
+	if dp.PriorID != "" {
+		priorID = dp.PriorID
+	}
+
+	result, err := t.conn.ExecContext(ctx, `
+		UPDATE decision_points SET
+			prompt = ?,
+			options = ?,
+			default_option = ?,
+			selected_option = ?,
+			response_text = ?,
+			responded_at = ?,
+			responded_by = ?,
+			iteration = ?,
+			max_iterations = ?,
+			prior_id = ?,
+			guidance = ?
+		WHERE issue_id = ?
+	`, dp.Prompt, dp.Options, dp.DefaultOption, dp.SelectedOption,
+		dp.ResponseText, dp.RespondedAt, dp.RespondedBy,
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.IssueID)
+	if err != nil {
+		return fmt.Errorf("failed to update decision point: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("decision point not found for issue %s", dp.IssueID)
+	}
+
+	return nil
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to within the transaction.
+func (t *sqliteTxStorage) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	rows, err := t.conn.QueryContext(ctx, `
+		SELECT issue_id, prompt, options, default_option, selected_option,
+			response_text, responded_at, responded_by, iteration,
+			max_iterations, prior_id, guidance, reminder_count, created_at
+		FROM decision_points
+		WHERE responded_at IS NULL
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*types.DecisionPoint
+	for rows.Next() {
+		dp := &types.DecisionPoint{}
+		var defaultOption, selectedOption, responseText, respondedBy, priorID, guidance sql.NullString
+		var respondedAt sql.NullTime
+		var reminderCount sql.NullInt64
+
+		err := rows.Scan(
+			&dp.IssueID, &dp.Prompt, &dp.Options, &defaultOption, &selectedOption,
+			&responseText, &respondedAt, &respondedBy, &dp.Iteration,
+			&dp.MaxIterations, &priorID, &guidance, &reminderCount, &dp.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan decision point: %w", err)
+		}
+
+		if defaultOption.Valid {
+			dp.DefaultOption = defaultOption.String
+		}
+		if selectedOption.Valid {
+			dp.SelectedOption = selectedOption.String
+		}
+		if responseText.Valid {
+			dp.ResponseText = responseText.String
+		}
+		if respondedAt.Valid {
+			dp.RespondedAt = &respondedAt.Time
+		}
+		if respondedBy.Valid {
+			dp.RespondedBy = respondedBy.String
+		}
+		if priorID.Valid {
+			dp.PriorID = priorID.String
+		}
+		if guidance.Valid {
+			dp.Guidance = guidance.String
+		}
+		if reminderCount.Valid {
+			dp.ReminderCount = int(reminderCount.Int64)
+		}
+
+		results = append(results, dp)
+	}
+	return results, rows.Err()
 }

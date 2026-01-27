@@ -302,6 +302,8 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Messaging fields
 		Sender:    createArgs.Sender,
 		Ephemeral: createArgs.Ephemeral,
+		Pinned:    createArgs.Pinned,
+		AutoClose: createArgs.AutoClose,
 		// NOTE: RepliesTo now handled via replies-to dependency (Decision 004)
 		// ID generation
 		IDPrefix:  createArgs.IDPrefix,
@@ -320,6 +322,20 @@ func (s *Server) handleCreate(req *Request) Response {
 		// Time-based scheduling (GH#820, GH#950, GH#952)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Gate fields (async coordination - hq-b0b22c.3)
+		AwaitType: createArgs.AwaitType,
+		AwaitID:   createArgs.AwaitID,
+		Timeout:   createArgs.Timeout,
+		Waiters:   createArgs.Waiters,
+		// Skill fields (only valid when IssueType == "skill")
+		SkillName:       createArgs.SkillName,
+		SkillVersion:    createArgs.SkillVersion,
+		SkillCategory:   createArgs.SkillCategory,
+		SkillInputs:     createArgs.SkillInputs,
+		SkillOutputs:    createArgs.SkillOutputs,
+		SkillExamples:   createArgs.SkillExamples,
+		ClaudeSkillPath: createArgs.ClaudeSkillPath,
+		SkillContent:    createArgs.SkillContent,
 	}
 	
 	// Check if any dependencies are discovered-from type
@@ -1308,8 +1324,12 @@ func (s *Server) handleList(req *Request) Response {
 
 	// Get dependency counts in bulk (single query instead of N queries)
 	issueIDs := make([]string, len(issues))
+	var epicIDs []string
 	for i, issue := range issues {
 		issueIDs[i] = issue.ID
+		if issue.IssueType == types.TypeEpic {
+			epicIDs = append(epicIDs, issue.ID)
+		}
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
 
@@ -1319,6 +1339,12 @@ func (s *Server) handleList(req *Request) Response {
 		issue.Dependencies = allDeps[issue.ID]
 	}
 
+	// Get epic progress in bulk for epics
+	epicProgress, _ := store.GetEpicProgress(ctx, epicIDs)
+	if epicProgress == nil {
+		epicProgress = make(map[string]*types.EpicProgress)
+	}
+
 	// Build response with counts
 	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 	for i, issue := range issues {
@@ -1326,11 +1352,17 @@ func (s *Server) handleList(req *Request) Response {
 		if counts == nil {
 			counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
 		}
-		issuesWithCounts[i] = &types.IssueWithCounts{
+		iwc := &types.IssueWithCounts{
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
 		}
+		// Add epic progress if this is an epic
+		if progress, ok := epicProgress[issue.ID]; ok {
+			iwc.EpicTotalChildren = progress.TotalChildren
+			iwc.EpicClosedChildren = progress.ClosedChildren
+		}
+		issuesWithCounts[i] = iwc
 	}
 
 	data, _ := json.Marshal(issuesWithCounts)
@@ -1638,30 +1670,11 @@ func (s *Server) handleShow(req *Request) Response {
 
 	// Populate labels, dependencies (with metadata), and dependents (with metadata)
 	labels, _ := store.GetLabels(ctx, issue.ID)
-	
+
 	// Get dependencies and dependents with metadata (including dependency type)
-	var deps []*types.IssueWithDependencyMetadata
-	var dependents []*types.IssueWithDependencyMetadata
-	if sqliteStore, ok := store.(*sqlite.SQLiteStorage); ok {
-		deps, _ = sqliteStore.GetDependenciesWithMetadata(ctx, issue.ID)
-		dependents, _ = sqliteStore.GetDependentsWithMetadata(ctx, issue.ID)
-	} else {
-		// Fallback for non-SQLite storage (won't have dependency type metadata)
-		regularDeps, _ := store.GetDependencies(ctx, issue.ID)
-		for _, d := range regularDeps {
-			deps = append(deps, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-		regularDependents, _ := store.GetDependents(ctx, issue.ID)
-		for _, d := range regularDependents {
-			dependents = append(dependents, &types.IssueWithDependencyMetadata{
-				Issue:          *d,
-				DependencyType: types.DepBlocks, // default
-			})
-		}
-	}
+	// These methods are on the Storage interface, no type assertion needed
+	deps, _ := store.GetDependenciesWithMetadata(ctx, issue.ID)
+	dependents, _ := store.GetDependentsWithMetadata(ctx, issue.ID)
 
 	// Fetch comments
 	comments, _ := store.GetIssueComments(ctx, issue.ID)
@@ -1921,110 +1934,6 @@ func (s *Server) handleGetConfig(req *Request) Response {
 	result := GetConfigResponse{
 		Key:   args.Key,
 		Value: value,
-	}
-
-	data, _ := json.Marshal(result)
-	return Response{
-		Success: true,
-		Data:    data,
-	}
-}
-
-// handleMolStale finds stale molecules (complete-but-unclosed)
-func (s *Server) handleMolStale(req *Request) Response {
-	var args MolStaleArgs
-	if err := json.Unmarshal(req.Args, &args); err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("invalid mol_stale args: %v", err),
-		}
-	}
-
-	store := s.storage
-	if store == nil {
-		return Response{
-			Success: false,
-			Error:   "storage not available",
-		}
-	}
-
-	ctx := s.reqCtx(req)
-
-	// Get all epics eligible for closure (complete but unclosed)
-	epicStatuses, err := store.GetEpicsEligibleForClosure(ctx)
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to query epics: %v", err),
-		}
-	}
-
-	// Get blocked issues to find what each stale molecule is blocking
-	blockedIssues, err := store.GetBlockedIssues(ctx, types.WorkFilter{})
-	if err != nil {
-		return Response{
-			Success: false,
-			Error:   fmt.Sprintf("failed to query blocked issues: %v", err),
-		}
-	}
-
-	// Build map of issue ID -> what issues it's blocking
-	blockingMap := make(map[string][]string)
-	for _, blocked := range blockedIssues {
-		for _, blockerID := range blocked.BlockedBy {
-			blockingMap[blockerID] = append(blockingMap[blockerID], blocked.ID)
-		}
-	}
-
-	var staleMolecules []*StaleMolecule
-	blockingCount := 0
-
-	for _, es := range epicStatuses {
-		// Skip if not eligible for close (not all children closed)
-		if !es.EligibleForClose {
-			continue
-		}
-
-		// Skip if no children and not showing all
-		if es.TotalChildren == 0 && !args.ShowAll {
-			continue
-		}
-
-		// Filter by unassigned if requested
-		if args.UnassignedOnly && es.Epic.Assignee != "" {
-			continue
-		}
-
-		// Find what this molecule is blocking
-		blocking := blockingMap[es.Epic.ID]
-		blockingIssueCount := len(blocking)
-
-		// Filter by blocking if requested
-		if args.BlockingOnly && blockingIssueCount == 0 {
-			continue
-		}
-
-		mol := &StaleMolecule{
-			ID:             es.Epic.ID,
-			Title:          es.Epic.Title,
-			TotalChildren:  es.TotalChildren,
-			ClosedChildren: es.ClosedChildren,
-			Assignee:       es.Epic.Assignee,
-			BlockingIssues: blocking,
-			BlockingCount:  blockingIssueCount,
-		}
-
-		staleMolecules = append(staleMolecules, mol)
-
-		if blockingIssueCount > 0 {
-			blockingCount++
-		}
-	}
-
-	result := &MolStaleResponse{
-		StaleMolecules: staleMolecules,
-		TotalCount:     len(staleMolecules),
-		BlockingCount:  blockingCount,
 	}
 
 	data, _ := json.Marshal(result)

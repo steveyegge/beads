@@ -4,11 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+)
+
+const (
+	// maxTransactionRetries is the maximum number of retry attempts for
+	// transaction commit failures due to serialization conflicts
+	maxTransactionRetries = 5
+	// initialRetryDelay is the initial delay before retrying a failed transaction
+	initialRetryDelay = 50 * time.Millisecond
 )
 
 // doltTransaction implements storage.Transaction for Dolt
@@ -23,8 +33,43 @@ func (t *doltTransaction) CreateIssueImport(ctx context.Context, issue *types.Is
 	return t.CreateIssue(ctx, issue, actor)
 }
 
-// RunInTransaction executes a function within a database transaction
+// RunInTransaction executes a function within a database transaction.
+// If the transaction fails due to a serialization conflict (Error 1213, 1105),
+// it will be automatically retried with exponential backoff.
 func (s *DoltStore) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	var lastErr error
+	retryDelay := initialRetryDelay
+
+	for attempt := 0; attempt <= maxTransactionRetries; attempt++ {
+		if attempt > 0 {
+			// Log retry for debugging
+			fmt.Fprintf(os.Stderr, "Dolt transaction retry (attempt %d/%d) after serialization conflict, waiting %v...\n",
+				attempt, maxTransactionRetries, retryDelay)
+			time.Sleep(retryDelay)
+			// Exponential backoff with jitter
+			retryDelay = retryDelay * 2
+			if retryDelay > 2*time.Second {
+				retryDelay = 2 * time.Second
+			}
+		}
+
+		lastErr = s.runTransactionOnce(ctx, fn)
+		if lastErr == nil {
+			return nil
+		}
+
+		// Check if this is a retryable error
+		if !isSerializationError(lastErr) {
+			return lastErr
+		}
+		// Continue to retry
+	}
+
+	return fmt.Errorf("transaction failed after %d retries: %w", maxTransactionRetries, lastErr)
+}
+
+// runTransactionOnce executes a single transaction attempt
+func (s *DoltStore) runTransactionOnce(ctx context.Context, fn func(tx storage.Transaction) error) error {
 	sqlTx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -60,34 +105,56 @@ func (t *doltTransaction) CreateIssue(ctx context.Context, issue *types.Issue, a
 		issue.ContentHash = issue.ComputeContentHash()
 	}
 
-	// Generate ID if not provided (critical for wisp creation)
+	// Generate ID if not set (hq-8af330.10: fix duplicate primary key error)
 	if issue.ID == "" {
-		// Get prefix from config
-		var configPrefix string
-		err := t.tx.QueryRowContext(ctx, "SELECT value FROM config WHERE `key` = ?", "issue_prefix").Scan(&configPrefix)
-		if err == sql.ErrNoRows || configPrefix == "" {
-			return fmt.Errorf("database not initialized: issue_prefix config is missing")
-		} else if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
+		// Get configured prefix
+		var prefix string
+		err := t.tx.QueryRowContext(ctx, `SELECT value FROM config WHERE key = 'issue_prefix'`).Scan(&prefix)
+		if err != nil || prefix == "" {
+			prefix = "hq-" // fallback default
 		}
 
-		// Determine effective prefix
-		prefix := configPrefix
+		// Support PrefixOverride if set (from upstream)
 		if issue.PrefixOverride != "" {
 			prefix = issue.PrefixOverride
 		} else if issue.IDPrefix != "" {
-			prefix = configPrefix + "-" + issue.IDPrefix
+			// Combine with IDPrefix if set (e.g., "hq" + "wisp" → "hq-wisp")
+			prefix = strings.TrimSuffix(prefix, "-") + "-" + issue.IDPrefix + "-"
 		}
 
-		// Generate ID
-		generatedID, err := generateIssueID(ctx, t.tx, prefix, issue, actor)
+		// Generate hash-based ID with collision avoidance
+		generated, err := generateIssueIDInTx(ctx, t.tx, prefix, issue, actor)
 		if err != nil {
 			return fmt.Errorf("failed to generate issue ID: %w", err)
 		}
-		issue.ID = generatedID
+		issue.ID = generated
 	}
 
 	return insertIssueTx(ctx, t.tx, issue)
+}
+
+// generateIssueIDInTx generates a unique hash-based ID within a transaction
+func generateIssueIDInTx(ctx context.Context, tx *sql.Tx, prefix string, issue *types.Issue, actor string) (string, error) {
+	// Use adaptive length starting at 6, up to 8
+	for length := 6; length <= 8; length++ {
+		// Try up to 10 nonces at each length
+		for nonce := 0; nonce < 10; nonce++ {
+			candidate := idgen.GenerateHashID(prefix, issue.Title, issue.Description, actor, issue.CreatedAt, length, nonce)
+
+			// Check if this ID already exists
+			var exists bool
+			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE id = ?)`, candidate).Scan(&exists)
+			if err != nil {
+				return "", fmt.Errorf("failed to check for ID collision: %w", err)
+			}
+
+			if !exists {
+				return candidate, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique ID after trying lengths 6-8 with 10 nonces each")
 }
 
 // CreateIssues creates multiple issues within the transaction
@@ -385,18 +452,21 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, pinned, is_template, crystallizes
+			sender, ephemeral, pinned, is_template, crystallizes,
+			await_type, await_id, timeout_ns, waiters
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
 		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
 		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 	)
 	return err
 }
@@ -406,22 +476,26 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt sql.NullTime
 	var estimatedMinutes sql.NullInt64
-	var assignee, owner, contentHash sql.NullString
+	var assignee, owner, contentHash, createdBy sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	var awaitType, awaitID, waiters sql.NullString
+	var timeoutNs sql.NullInt64
 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes
+		       ephemeral, pinned, is_template, crystallizes,
+		       await_type, await_id, timeout_ns, waiters
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
+		&createdAtStr, &createdBy, &owner, &updatedAtStr, &closedAt,
 		&ephemeral, &pinned, &isTemplate, &crystallizes,
+		&awaitType, &awaitID, &timeoutNs, &waiters,
 	)
 
 	if err == sql.ErrNoRows {
@@ -455,6 +529,9 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	if owner.Valid {
 		issue.Owner = owner.String
 	}
+	if createdBy.Valid {
+		issue.CreatedBy = createdBy.String
+	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true
 	}
@@ -467,6 +544,43 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	if crystallizes.Valid && crystallizes.Int64 != 0 {
 		issue.Crystallizes = true
 	}
+	// Gate fields
+	if awaitType.Valid {
+		issue.AwaitType = awaitType.String
+	}
+	if awaitID.Valid {
+		issue.AwaitID = awaitID.String
+	}
+	if timeoutNs.Valid {
+		issue.Timeout = time.Duration(timeoutNs.Int64)
+	}
+	if waiters.Valid && waiters.String != "" {
+		issue.Waiters = parseJSONStringArray(waiters.String)
+	}
 
 	return &issue, nil
+}
+
+// CreateDecisionPoint creates a new decision point within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) CreateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// GetDecisionPoint retrieves the decision point for an issue within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) (*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// UpdateDecisionPoint updates an existing decision point within the transaction.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionPoint) error {
+	return fmt.Errorf("decision points not yet implemented for Dolt backend")
+}
+
+// ListPendingDecisions returns all decision points that haven't been responded to.
+// TODO(dolt-parity): Implement decision point support for Dolt backend.
+func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.DecisionPoint, error) {
+	return nil, fmt.Errorf("decision points not yet implemented for Dolt backend")
 }
