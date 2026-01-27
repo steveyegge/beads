@@ -133,12 +133,11 @@ var createCmd = &cobra.Command{
 		}
 
 		// Agent-specific flags
-		roleType, _ := cmd.Flags().GetString("role-type")
 		agentRig, _ := cmd.Flags().GetString("agent-rig")
 
 		// Validate agent-specific flags require --type=agent
-		if (roleType != "" || agentRig != "") && issueType != "agent" {
-			FatalError("--role-type and --agent-rig flags require --type=agent")
+		if agentRig != "" && issueType != "agent" {
+			FatalError("--agent-rig flag requires --type=agent")
 		}
 
 		// Event-specific flags
@@ -204,7 +203,6 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            molType,
-				RoleType:           roleType,
 				Rig:                agentRig,
 				DueAt:              dueAt,
 				DeferUntil:         deferUntil,
@@ -500,7 +498,6 @@ var createCmd = &cobra.Command{
 				CreatedBy:          getActorWithGit(),
 				Owner:              getOwner(),
 				MolType:            string(molType),
-				RoleType:           roleType,
 				Rig:                agentRig,
 				EventCategory:      eventCategory,
 				EventActor:         eventActor,
@@ -560,7 +557,6 @@ var createCmd = &cobra.Command{
 			CreatedBy:          getActorWithGit(),
 			Owner:              getOwner(),
 			MolType:            molType,
-			RoleType:           roleType,
 			Rig:                agentRig,
 			EventKind:          eventCategory,
 			Actor:              eventActor,
@@ -906,7 +902,6 @@ func init() {
 	createCmd.Flags().String("mol-type", "", "Molecule type: swarm (multi-polecat), patrol (recurring ops), work (default)")
 	createCmd.Flags().Bool("validate", false, "Validate description contains required sections for issue type")
 	// Agent-specific flags (only valid when --type=agent)
-	createCmd.Flags().String("role-type", "", "Agent role type: polecat|crew|witness|refinery|mayor|deacon (requires --type=agent)")
 	createCmd.Flags().String("agent-rig", "", "Agent's rig name (requires --type=agent)")
 	// Event-specific flags (only valid when --type=event)
 	createCmd.Flags().String("event-category", "", "Event category (e.g., patrol.muted, agent.started) (requires --type=event)")
@@ -979,7 +974,6 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	if molTypeStr != "" {
 		molType = types.MolType(molTypeStr)
 	}
-	roleType, _ := cmd.Flags().GetString("role-type")
 	agentRig, _ := cmd.Flags().GetString("agent-rig")
 
 	// Extract time-based scheduling flags (bd-xwvo fix)
@@ -1025,9 +1019,8 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Target:    eventTarget,
 		Payload:   eventPayload,
 		// Molecule/agent fields (bd-xwvo fix)
-		MolType:  molType,
-		RoleType: roleType,
-		Rig:      agentRig,
+		MolType: molType,
+		Rig:     agentRig,
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
