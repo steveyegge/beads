@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -75,9 +76,10 @@ Status icons: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred`,
 		}
 
 		// If daemon is running but doesn't support this command, use direct storage
+		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = factory.NewFromConfig(ctx, getBeadsDir())
+			store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
 				os.Exit(1)

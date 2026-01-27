@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -161,7 +162,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = factory.NewFromConfig(ctx, getBeadsDir())
+				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -627,7 +628,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = factory.NewFromConfig(ctx, getBeadsDir())
+				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -921,7 +922,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = factory.NewFromConfig(ctx, getBeadsDir())
+				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
@@ -1103,7 +1104,7 @@ Examples:
 		if store == nil {
 			if daemonClient != nil {
 				var err error
-				store, err = factory.NewFromConfig(ctx, getBeadsDir())
+				store, err = factory.NewFromConfig(ctx, filepath.Dir(dbPath))
 				if err != nil {
 					FatalErrorRespectJSON("failed to open database: %v", err)
 				}
