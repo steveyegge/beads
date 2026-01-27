@@ -780,6 +780,56 @@ The daemon will now exit.`, strings.ToUpper(backend))
 //
 // 4. Fallback: all default to true when sync-branch configured
 //
+// loadYAMLDaemonSettings loads daemon auto-settings from YAML config and env vars only (no database).
+// This is safe to call from the parent process since it doesn't require database access.
+// Returns (autoCommit, autoPush, autoPull, hasSettings) where hasSettings indicates
+// if any settings were found (env var or YAML).
+func loadYAMLDaemonSettings() (autoCommit, autoPush, autoPull, hasSettings bool) {
+	// Check unified auto-sync first (env var > YAML)
+	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal == "true" || envVal == "1" {
+		return true, true, true, true
+	}
+	if yamlAutoSync := config.GetString("daemon.auto-sync"); yamlAutoSync == "true" {
+		return true, true, true, true
+	}
+
+	// Check individual settings (env var > YAML for each)
+	yamlAutoCommit := config.GetString("daemon.auto-commit")
+	yamlAutoPush := config.GetString("daemon.auto-push")
+	yamlAutoPull := config.GetString("daemon.auto-pull")
+	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
+	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
+	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
+
+	hasSettings = yamlAutoCommit != "" || yamlAutoPush != "" || yamlAutoPull != "" ||
+		envAutoCommit != "" || envAutoPush != "" || envAutoPull != ""
+
+	if !hasSettings {
+		return false, false, false, false
+	}
+
+	// For each: env var > YAML
+	if envAutoCommit != "" {
+		autoCommit = envAutoCommit == "true" || envAutoCommit == "1"
+	} else if yamlAutoCommit != "" {
+		autoCommit = yamlAutoCommit == "true"
+	}
+
+	if envAutoPush != "" {
+		autoPush = envAutoPush == "true" || envAutoPush == "1"
+	} else if yamlAutoPush != "" {
+		autoPush = yamlAutoPush == "true"
+	}
+
+	if envAutoPull != "" {
+		autoPull = envAutoPull == "true" || envAutoPull == "1"
+	} else if yamlAutoPull != "" {
+		autoPull = yamlAutoPull == "true"
+	}
+
+	return autoCommit, autoPush, autoPull, true
+}
+
 // Note: The individual auto-commit/auto-push settings are deprecated.
 // Use auto-sync for read/write mode, auto-pull for read-only mode.
 func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull bool) (bool, bool, bool) {
@@ -800,9 +850,12 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	hasSyncBranch := syncBranch != ""
 
 	// Check unified auto-sync setting first (controls auto-commit + auto-push)
+	// Priority: env var > YAML config > database config
 	unifiedAutoSync := ""
 	if envVal := os.Getenv("BEADS_AUTO_SYNC"); envVal != "" {
 		unifiedAutoSync = envVal
+	} else if configVal := config.GetString("daemon.auto-sync"); configVal != "" {
+		unifiedAutoSync = configVal
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-sync"); configVal != "" {
 		unifiedAutoSync = configVal
 	}
@@ -823,10 +876,13 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 		autoCommit = false
 		autoPush = false
 		// Auto-pull can still be enabled via CLI flag or individual config
+		// Priority: CLI flag > env var > YAML config > database config
 		if cmd.Flags().Changed("auto-pull") {
 			// Use the CLI flag value (already in autoPull)
 		} else if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"
+		} else if configVal := config.GetString("daemon.auto-pull"); configVal != "" {
+			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto-pull"); configVal != "" {
 			autoPull = configVal == "true"
 		} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_pull"); configVal != "" {
@@ -840,19 +896,61 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 		return autoCommit, autoPush, autoPull
 	}
 
-	// No unified setting - check legacy individual settings for backward compat
-	// If either legacy auto-commit or auto-push is enabled, treat as auto-sync=true
+	// Check YAML config for individual daemon settings (allows fine-grained control)
+	// Priority for each setting: CLI flag > env var > YAML config > database config
+	yamlAutoCommit := config.GetString("daemon.auto-commit")
+	yamlAutoPush := config.GetString("daemon.auto-push")
+	yamlAutoPull := config.GetString("daemon.auto-pull")
+
+	// Check individual env vars (take precedence over YAML)
+	envAutoCommit := os.Getenv("BEADS_AUTO_COMMIT")
+	envAutoPush := os.Getenv("BEADS_AUTO_PUSH")
+	envAutoPull := os.Getenv("BEADS_AUTO_PULL")
+
+	// If any YAML individual settings OR individual env vars are set, use fine-grained control
+	// This allows users to set just auto-commit without forcing auto-push/auto-pull
+	hasIndividualSettings := yamlAutoCommit != "" || yamlAutoPush != "" || yamlAutoPull != "" ||
+		envAutoCommit != "" || envAutoPush != "" || envAutoPull != ""
+
+	if hasIndividualSettings {
+		// For each setting: CLI flag > env var > YAML config
+		if !cmd.Flags().Changed("auto-commit") {
+			if envAutoCommit != "" {
+				autoCommit = envAutoCommit == "true" || envAutoCommit == "1"
+			} else if yamlAutoCommit != "" {
+				autoCommit = yamlAutoCommit == "true"
+			}
+		}
+		if !cmd.Flags().Changed("auto-push") {
+			if envAutoPush != "" {
+				autoPush = envAutoPush == "true" || envAutoPush == "1"
+			} else if yamlAutoPush != "" {
+				autoPush = yamlAutoPush == "true"
+			}
+		}
+		if !cmd.Flags().Changed("auto-pull") {
+			if envAutoPull != "" {
+				autoPull = envAutoPull == "true" || envAutoPull == "1"
+			} else if yamlAutoPull != "" {
+				autoPull = yamlAutoPull == "true"
+			}
+		}
+		return autoCommit, autoPush, autoPull
+	}
+
+	// No YAML individual settings - check legacy env vars and database config
+	// Legacy behavior: if either auto-commit or auto-push is enabled, enable full auto-sync
 	legacyCommit := false
 	legacyPush := false
 
-	// Check legacy auto-commit (env var or config)
+	// Check legacy auto-commit (env var or database config)
 	if envVal := os.Getenv("BEADS_AUTO_COMMIT"); envVal != "" {
 		legacyCommit = envVal == "true" || envVal == "1"
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_commit"); configVal != "" {
 		legacyCommit = configVal == "true"
 	}
 
-	// Check legacy auto-push (env var or config)
+	// Check legacy auto-push (env var or database config)
 	if envVal := os.Getenv("BEADS_AUTO_PUSH"); envVal != "" {
 		legacyPush = envVal == "true" || envVal == "1"
 	} else if configVal, _ := store.GetConfig(ctx, "daemon.auto_push"); configVal != "" {
@@ -869,6 +967,7 @@ func loadDaemonAutoSettings(cmd *cobra.Command, autoCommit, autoPush, autoPull b
 	}
 
 	// Neither legacy write option enabled - check auto-pull for read-only mode
+	// Priority: CLI flag > env var > database config
 	if !cmd.Flags().Changed("auto-pull") {
 		if envVal := os.Getenv("BEADS_AUTO_PULL"); envVal != "" {
 			autoPull = envVal == "true" || envVal == "1"
