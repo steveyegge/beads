@@ -147,9 +147,11 @@ func getWorktreeJSONLPath(mainJSONLPath string) string {
 	}
 	worktreePath := filepath.Join(gitCommonDir, "beads-worktrees", syncBranch)
 
-	// Check if worktree exists (it should be created by sync branch operations)
-	// If it doesn't exist, fall back to main repo JSONL
+	// Check if worktree exists (should have been created by syncbranch.EnsureWorktree
+	// during initialization). If it doesn't exist, fall back to main repo JSONL.
+	// GH#1349: This fallback should now be rare since EnsureWorktree is called early.
 	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		debug.Logf("sync-branch configured but worktree doesn't exist at %s, falling back to main JSONL", worktreePath)
 		return ""
 	}
 
