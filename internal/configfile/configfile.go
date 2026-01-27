@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -260,16 +261,23 @@ const (
 	DefaultDoltServerHost = "127.0.0.1"
 	DefaultDoltServerPort = 3307 // Use 3307 to avoid conflict with MySQL on 3306
 	DefaultDoltServerUser = "root"
+	DefaultDoltDatabase   = "beads"
 )
 
 // IsDoltServerMode returns true if Dolt SQL server mode is enabled.
 // Server mode connects via TCP instead of embedded driver, enabling multi-writer support.
-// Checks both DoltServerEnabled (legacy) and DoltMode (preferred).
+// Checks BEADS_DOLT_SERVER_MODE env var first (set by Gas Town tmux sessions),
+// then DoltServerEnabled (legacy) and DoltMode (preferred).
+// Only applies when backend is "dolt" — ignored for sqlite.
 func (c *Config) IsDoltServerMode() bool {
 	if c.GetBackend() != BackendDolt {
 		return false
 	}
-	// Check both mechanisms for backwards compatibility
+	// Check env var first (set by Gas Town tmux sessions)
+	if os.Getenv("BEADS_DOLT_SERVER_MODE") == "1" {
+		return true
+	}
+	// Check both config mechanisms for backwards compatibility
 	return c.DoltServerEnabled || strings.ToLower(c.DoltMode) == DoltModeServer
 }
 
@@ -281,41 +289,54 @@ func (c *Config) GetDoltMode() string {
 	return c.DoltMode
 }
 
-// GetDoltServerHost returns the Dolt server host, defaulting to 127.0.0.1.
+// GetDoltServerHost returns the Dolt server host.
+// Checks BEADS_DOLT_SERVER_HOST env var first, then config, then default.
 func (c *Config) GetDoltServerHost() string {
-	if c.DoltServerHost == "" {
-		return DefaultDoltServerHost
+	if h := os.Getenv("BEADS_DOLT_SERVER_HOST"); h != "" {
+		return h
 	}
-	return c.DoltServerHost
+	if c.DoltServerHost != "" {
+		return c.DoltServerHost
+	}
+	return DefaultDoltServerHost
 }
 
-// GetDoltServerPort returns the Dolt server port, defaulting to 3307.
+// GetDoltServerPort returns the Dolt server port.
+// Checks BEADS_DOLT_SERVER_PORT env var first, then config, then default.
 func (c *Config) GetDoltServerPort() int {
-	if c.DoltServerPort <= 0 {
-		return DefaultDoltServerPort
+	if p := os.Getenv("BEADS_DOLT_SERVER_PORT"); p != "" {
+		if port, err := strconv.Atoi(p); err == nil {
+			return port
+		}
 	}
-	return c.DoltServerPort
+	if c.DoltServerPort > 0 {
+		return c.DoltServerPort
+	}
+	return DefaultDoltServerPort
 }
 
-// GetDoltServerUser returns the Dolt server user, defaulting to root.
+// GetDoltServerUser returns the Dolt server MySQL user.
+// Checks BEADS_DOLT_SERVER_USER env var first, then config, then default.
 func (c *Config) GetDoltServerUser() string {
-	if c.DoltServerUser == "" {
-		return DefaultDoltServerUser
+	if u := os.Getenv("BEADS_DOLT_SERVER_USER"); u != "" {
+		return u
 	}
-	return c.DoltServerUser
+	if c.DoltServerUser != "" {
+		return c.DoltServerUser
+	}
+	return DefaultDoltServerUser
 }
 
-// GetDoltDatabase returns the database name for Dolt server mode.
-// This is different from DatabasePath which returns the on-disk path.
-// For server mode, Database field contains the database name on the server
-// (e.g., "hq", "gastown", "beads"). Defaults to "beads".
+// GetDoltDatabase returns the Dolt SQL database name.
+// Checks BEADS_DOLT_SERVER_DATABASE env var first, then config, then default.
 func (c *Config) GetDoltDatabase() string {
-	db := strings.TrimSpace(c.Database)
-	if db == "" || db == "beads.db" || db == "dolt" {
-		return "beads"
+	if d := os.Getenv("BEADS_DOLT_SERVER_DATABASE"); d != "" {
+		return d
 	}
-	// Strip any path components - just want the database name
-	return filepath.Base(db)
+	if c.DoltDatabase != "" {
+		return c.DoltDatabase
+	}
+	return DefaultDoltDatabase
 }
 
 // CapabilitiesForConfig returns capabilities based on full configuration.
