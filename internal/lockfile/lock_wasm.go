@@ -15,6 +15,12 @@ func flockExclusive(f *os.File) error {
 	return nil // No-op in WASM
 }
 
+// FlockExclusiveNonBlocking attempts to acquire an exclusive non-blocking lock.
+// In WASM, this is a no-op since we're single-process.
+func FlockExclusiveNonBlocking(f *os.File) error {
+	return nil
+}
+
 // FlockExclusiveBlocking acquires an exclusive blocking lock on the file.
 // In WASM, this is a no-op since we're single-process.
 func FlockExclusiveBlocking(f *os.File) error {

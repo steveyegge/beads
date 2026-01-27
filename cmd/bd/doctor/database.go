@@ -109,6 +109,17 @@ func CheckDatabaseVersion(path string, cliVersion string) DoctorCheck {
 		}
 	}
 
+	// Skip SQLite-specific check for Dolt backend
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Database",
+			Status:   StatusOK,
+			Message:  "Dolt backend",
+			Detail:   "Storage: Dolt (version tracking via dolt_log)",
+			Category: CategoryCore,
+		}
+	}
+
 	// Check metadata.json first for custom database name
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -259,6 +270,16 @@ func CheckSchemaCompatibility(path string) DoctorCheck {
 		}
 	}
 
+	// Skip SQLite-specific check for Dolt backend (use CheckDoltSchema instead)
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Schema Compatibility",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - see Dolt Schema check)",
+			Category: CategoryCore,
+		}
+	}
+
 	// Check metadata.json first for custom database name
 	var dbPath string
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -395,6 +416,16 @@ func CheckDatabaseIntegrity(path string) DoctorCheck {
 			Status:  StatusOK,
 			Message: "Basic query check passed",
 			Detail:  "Storage: Dolt (no SQLite integrity_check equivalent)",
+		}
+	}
+
+	// Skip SQLite PRAGMA integrity_check for Dolt backend
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "Database Integrity",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - Dolt handles integrity internally)",
+			Category: CategoryCore,
 		}
 	}
 
@@ -549,6 +580,16 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 		}
 	}
 
+	// For Dolt backend, use CheckDoltIssueCount instead
+	if IsDoltBackend(beadsDir) {
+		return DoctorCheck{
+			Name:     "DB-JSONL Sync",
+			Status:   StatusOK,
+			Message:  "N/A (Dolt backend - see Dolt-JSONL Sync check)",
+			Category: CategoryData,
+		}
+	}
+
 	// Resolve database path (respects metadata.json override).
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
@@ -618,9 +659,9 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 	}
 	defer db.Close()
 
-	// Get database count (exclude ephemeral/wisp issues - they're never exported to JSONL)
+	// Get database count
 	var dbCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM issues WHERE ephemeral = 0 OR ephemeral IS NULL").Scan(&dbCount)
+	err = db.QueryRow("SELECT COUNT(*) FROM issues").Scan(&dbCount)
 	if err != nil {
 		// Database opened but can't query. If JSONL has issues, suggest recovery.
 		if jsonlErr == nil && jsonlCount > 0 {
@@ -748,11 +789,11 @@ func CheckDatabaseJSONLSync(path string) DoctorCheck {
 			fixMsg = "Run 'bd doctor --fix' to fix automatically, or manually run 'bd sync --import-only' or 'bd export' depending on which has newer data"
 		}
 		if strings.Contains(strings.Join(issues, " "), "Prefix mismatch") {
-			fixMsg = "Run 'bd import -i .beads/issues.jsonl --rename-on-import' to fix prefixes"
+			fixMsg = "Run 'bd import -i " + filepath.Base(jsonlPath) + " --rename-on-import' to fix prefixes"
 		}
 		// GH#885: For status mismatches, provide specific guidance and include detail
 		if strings.Contains(strings.Join(issues, " "), "Status mismatch") {
-			fixMsg = "Run 'bd export -o .beads/issues.jsonl' to update JSONL from DB (DB is usually source of truth)"
+			fixMsg = "Run 'bd export -o " + filepath.Base(jsonlPath) + "' to update JSONL from DB (DB is usually source of truth)"
 			detail = statusMismatchDetail
 		}
 

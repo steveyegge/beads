@@ -11,13 +11,13 @@ import (
 
 // FindJSONLInDir finds the JSONL file in the given .beads directory.
 // It prefers issues.jsonl over other .jsonl files to prevent accidentally
-// reading/writing to deletions.jsonl or merge artifacts (bd-tqo fix).
+// reading/writing to deletions.jsonl, routes.jsonl, or merge artifacts (bd-tqo, hq-o85zi5 fix).
 // Always returns a path (defaults to issues.jsonl if nothing suitable found).
 //
 // Search order:
 // 1. issues.jsonl (canonical name)
 // 2. beads.jsonl (legacy support)
-// 3. Any other .jsonl file except deletions/merge artifacts
+// 3. Any other .jsonl file except deletions/routes/merge artifacts
 // 4. Default to issues.jsonl
 func FindJSONLInDir(dbDir string) string {
 	pattern := filepath.Join(dbDir, "*.jsonl")
@@ -42,12 +42,14 @@ func FindJSONLInDir(dbDir string) string {
 		}
 	}
 
-	// Last resort: use first match (but skip deletions.jsonl, interactions.jsonl, and merge artifacts)
+	// Last resort: use first match (but skip special files)
 	for _, match := range matches {
 		base := filepath.Base(match)
-		// Skip deletions manifest, interactions (audit trail), and merge artifacts
+		// Skip deletions manifest, interactions (audit trail), routes config, and merge artifacts
+		// routes.jsonl contains routing config (prefix->path mappings), NOT issue data (hq-o85zi5)
 		if base == "deletions.jsonl" ||
 			base == "interactions.jsonl" ||
+			base == "routes.jsonl" ||
 			base == "beads.base.jsonl" ||
 			base == "beads.left.jsonl" ||
 			base == "beads.right.jsonl" {

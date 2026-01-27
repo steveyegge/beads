@@ -24,13 +24,24 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		return fmt.Errorf("invalid dependency type: %q (must be non-empty string, max 50 chars)", dep.Type)
 	}
 
-	// Validate that source issue exists
-	issueExists, err := s.GetIssue(ctx, dep.IssueID)
-	if err != nil {
-		return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
-	}
-	if issueExists == nil {
-		return fmt.Errorf("issue %s not found", dep.IssueID)
+	// Check for skill dependency patterns that allow soft references
+	// Gas Town paths (containing "/") are canonical agent identifiers that may not have beads
+	isGasTownSource := strings.Contains(dep.IssueID, "/")
+	isSkillDep := dep.Type == types.DepProvidesSkill || dep.Type == types.DepRequiresSkill
+
+	// Skip source validation for provides-skill dependencies from Gas Town paths
+	// These represent agent capabilities where the agent may not have a bead yet
+	var issueExists *types.Issue
+	var err error
+	if !(isSkillDep && isGasTownSource) {
+		// Validate that source issue exists
+		issueExists, err = s.GetIssue(ctx, dep.IssueID)
+		if err != nil {
+			return fmt.Errorf("failed to check issue %s: %w", dep.IssueID, err)
+		}
+		if issueExists == nil {
+			return fmt.Errorf("issue %s not found", dep.IssueID)
+		}
 	}
 
 	// External refs (external:<project>:<capability>) don't need target validation
@@ -56,7 +67,7 @@ func (s *SQLiteStorage) AddDependency(ctx context.Context, dep *types.Dependency
 		// In parent-child relationships: child depends on parent (child is part of parent)
 		// Parent should NOT depend on child (semantically backwards)
 		// Consistent with dependency semantics: IssueID depends on DependsOnID
-		if dep.Type == types.DepParentChild {
+		if dep.Type == types.DepParentChild && issueExists != nil {
 			// issueExists is the dependent (the one that depends on something)
 			// dependsOnExists is what it depends on
 			// Correct: Task (child) depends on Epic (parent) - child belongs to parent
@@ -971,17 +982,8 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var awaitID sql.NullString
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
-		// Agent fields
-		var hookBead sql.NullString
-		var roleBead sql.NullString
-		var agentState sql.NullString
-		var lastActivity sql.NullTime
-		var roleType sql.NullString
-		var rig sql.NullString
-		var molType sql.NullString
-		// Time-based scheduling fields
-		var dueAt sql.NullTime
-		var deferUntil sql.NullTime
+		// Auto-close field
+		var autoClose sql.NullInt64
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -990,9 +992,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-			&awaitType, &awaitID, &timeoutNs, &waiters,
-			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-			&dueAt, &deferUntil,
+			&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1073,43 +1073,13 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if waiters.Valid && waiters.String != "" {
 			issue.Waiters = parseJSONStringArray(waiters.String)
 		}
-		// Agent fields
-		if hookBead.Valid {
-			issue.HookBead = hookBead.String
-		}
-		if roleBead.Valid {
-			issue.RoleBead = roleBead.String
-		}
-		if agentState.Valid {
-			issue.AgentState = types.AgentState(agentState.String)
-		}
-		if lastActivity.Valid {
-			issue.LastActivity = &lastActivity.Time
-		}
-		if roleType.Valid {
-			issue.RoleType = roleType.String
-		}
-		if rig.Valid {
-			issue.Rig = rig.String
-		}
-		if molType.Valid {
-			issue.MolType = types.MolType(molType.String)
-		}
-		// Time-based scheduling fields
-		if dueAt.Valid {
-			issue.DueAt = &dueAt.Time
-		}
-		if deferUntil.Valid {
-			issue.DeferUntil = &deferUntil.Time
+		// Auto-close field
+		if autoClose.Valid && autoClose.Int64 != 0 {
+			issue.AutoClose = true
 		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
-	}
-
-	// Check for errors during iteration (e.g., connection issues, context cancellation)
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating issue rows: %w", err)
 	}
 
 	// Second pass: batch-load labels for all issues
@@ -1261,11 +1231,6 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			DependencyType: depType,
 		}
 		results = append(results, result)
-	}
-
-	// Check for errors during iteration (e.g., connection issues, context cancellation)
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating issue rows with dependency type: %w", err)
 	}
 
 	return results, nil

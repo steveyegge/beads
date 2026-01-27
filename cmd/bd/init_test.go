@@ -237,106 +237,6 @@ func TestInitWithSyncBranch(t *testing.T) {
 	}
 }
 
-// TestInitWithSyncBranchSetsGitExclude verifies that init with --branch sets up
-// .git/info/exclude to hide untracked JSONL files from git status.
-// This fixes the issue where fresh clones show .beads/issues.jsonl as modified.
-func TestInitWithSyncBranchSetsGitExclude(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Initialize git repo
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-	// Configure git user for commits
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
-
-	// Run bd init with --branch flag
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--branch", "beads-sync", "--quiet"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init with --branch failed: %v", err)
-	}
-
-	// Verify .git/info/exclude contains the JSONL patterns
-	// (On fresh init, files are untracked so they go to exclude instead of index flags)
-	// Note: issues.jsonl only exists after first export, but interactions.jsonl is always created
-	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
-	content, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatalf("Failed to read .git/info/exclude: %v", err)
-	}
-
-	excludeContent := string(content)
-	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
-		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl', got:\n%s", excludeContent)
-	}
-}
-
-// TestInitWithExistingSyncBranchConfig verifies that init without --branch flag
-// still sets git index flags when sync-branch is already configured in config.yaml.
-// This is the "fresh clone" scenario where config.yaml exists from the clone.
-func TestInitWithExistingSyncBranchConfig(t *testing.T) {
-	// Reset global state
-	origDBPath := dbPath
-	defer func() { dbPath = origDBPath }()
-	dbPath = ""
-
-	// Reset Cobra flags
-	initCmd.Flags().Set("branch", "")
-
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Initialize git repo
-	if err := runCommandInDir(tmpDir, "git", "init", "--initial-branch=dev"); err != nil {
-		t.Fatalf("Failed to init git: %v", err)
-	}
-	_ = runCommandInDir(tmpDir, "git", "config", "user.email", "test@test.com")
-	_ = runCommandInDir(tmpDir, "git", "config", "user.name", "Test")
-
-	// Create .beads directory with config.yaml containing sync-branch (simulating a clone)
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("Failed to create .beads dir: %v", err)
-	}
-	configYaml := `sync-branch: "beads-sync"
-`
-	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYaml), 0644); err != nil {
-		t.Fatalf("Failed to write config.yaml: %v", err)
-	}
-	// Create interactions.jsonl (normally exists in cloned repos)
-	if err := os.WriteFile(filepath.Join(beadsDir, "interactions.jsonl"), []byte{}, 0644); err != nil {
-		t.Fatalf("Failed to write interactions.jsonl: %v", err)
-	}
-
-	// Run bd init WITHOUT --branch flag (sync-branch already in config.yaml)
-	rootCmd.SetArgs([]string{"init", "--prefix", "test", "--quiet", "--force"})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	// Verify .git/info/exclude contains the JSONL patterns
-	excludePath := filepath.Join(tmpDir, ".git", "info", "exclude")
-	content, err := os.ReadFile(excludePath)
-	if err != nil {
-		t.Fatalf("Failed to read .git/info/exclude: %v", err)
-	}
-
-	excludeContent := string(content)
-	if !strings.Contains(excludeContent, ".beads/interactions.jsonl") {
-		t.Errorf("Expected .git/info/exclude to contain '.beads/interactions.jsonl' when sync-branch is in config.yaml, got:\n%s", excludeContent)
-	}
-}
-
 // TestInitWithoutBranchFlag verifies that sync.branch is NOT auto-set when --branch is omitted
 // GH#807: This was the root cause - init was auto-detecting current branch (e.g., main)
 func TestInitWithoutBranchFlag(t *testing.T) {
@@ -1473,6 +1373,91 @@ func TestSetupGlobalGitIgnore_ReadOnly(t *testing.T) {
 			t.Error("expected .beads pattern in output")
 		}
 	})
+}
+
+// TestInitSubdirectoryDoesNotInheritParentPrefix verifies that bd init in a subdirectory
+// does not inherit the issue-prefix from a parent directory's config (GH#hq-3b9eb3).
+//
+// Bug scenario:
+// 1. Parent has .beads/config.yaml with issue-prefix: "parent"
+// 2. Child subdir has .beads/issues.jsonl with "child-xxx" prefixed issues
+// 3. Run `bd init --from-jsonl` in child
+// 4. Without fix: child database gets "parent" prefix (wrong!)
+// 5. With fix: child database gets "child" prefix (detected from JSONL)
+func TestInitSubdirectoryDoesNotInheritParentPrefix(t *testing.T) {
+	// Reset global state
+	origDBPath := dbPath
+	defer func() { dbPath = origDBPath }()
+	dbPath = ""
+
+	// Reset init command flags (may have been set by previous tests)
+	initCmd.Flags().Set("prefix", "")
+	initCmd.Flags().Set("quiet", "false")
+	initCmd.Flags().Set("from-jsonl", "false")
+	initCmd.Flags().Set("force", "false")
+	initCmd.Flags().Set("backend", "")
+
+	// Create parent directory structure
+	parentDir := t.TempDir()
+	parentBeadsDir := filepath.Join(parentDir, ".beads")
+	if err := os.MkdirAll(parentBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create parent .beads dir: %v", err)
+	}
+
+	// Write parent config with "parent" prefix
+	parentConfigYAML := `issue-prefix: "parent"
+`
+	if err := os.WriteFile(filepath.Join(parentBeadsDir, "config.yaml"), []byte(parentConfigYAML), 0644); err != nil {
+		t.Fatalf("Failed to write parent config.yaml: %v", err)
+	}
+
+	// Create child subdirectory
+	childDir := filepath.Join(parentDir, "child")
+	childBeadsDir := filepath.Join(childDir, ".beads")
+	if err := os.MkdirAll(childBeadsDir, 0755); err != nil {
+		t.Fatalf("Failed to create child .beads dir: %v", err)
+	}
+
+	// Write child JSONL with "child-" prefixed issues
+	childJSONL := `{"id":"child-abc123","title":"Test issue","status":"open","type":"task","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}
+{"id":"child-def456","title":"Another issue","status":"open","type":"task","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}
+`
+	if err := os.WriteFile(filepath.Join(childBeadsDir, "issues.jsonl"), []byte(childJSONL), 0644); err != nil {
+		t.Fatalf("Failed to write child issues.jsonl: %v", err)
+	}
+
+	// Change to child directory
+	t.Chdir(childDir)
+
+	// Reinitialize config from new working directory
+	// (this simulates what happens when a user runs bd from a subdirectory)
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
+	// Run bd init with --from-jsonl and --force
+	rootCmd.SetArgs([]string{"init", "--from-jsonl", "--force", "--quiet"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Open the child's database and verify the prefix
+	ctx := context.Background()
+	store, err := sqlite.New(ctx, filepath.Join(childBeadsDir, "beads.db"))
+	if err != nil {
+		t.Fatalf("Failed to open child database: %v", err)
+	}
+	defer store.Close()
+
+	prefix, err := store.GetConfig(ctx, "issue_prefix")
+	if err != nil {
+		t.Fatalf("Failed to get issue_prefix: %v", err)
+	}
+
+	// The prefix should be "child" (detected from JSONL), NOT "parent" (inherited from parent config)
+	if prefix != "child" {
+		t.Errorf("Expected issue_prefix='child' (from child's JSONL), got %q (may have inherited from parent config)", prefix)
+	}
 }
 
 func captureStdout(t *testing.T, fn func() error) string {

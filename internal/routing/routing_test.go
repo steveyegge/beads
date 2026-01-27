@@ -83,13 +83,13 @@ func TestDetermineTargetRepo(t *testing.T) {
 }
 
 func TestDetectUserRole_Fallback(t *testing.T) {
-	// Test fallback behavior when git is not available - local projects default to maintainer
+	// Test fallback behavior when git is not available
 	role, err := DetectUserRole("/nonexistent/path/that/does/not/exist")
 	if err != nil {
 		t.Fatalf("DetectUserRole() error = %v, want nil", err)
 	}
-	if role != Maintainer {
-		t.Errorf("DetectUserRole() = %v, want %v (local project fallback)", role, Maintainer)
+	if role != Contributor {
+		t.Errorf("DetectUserRole() = %v, want %v (fallback)", role, Contributor)
 	}
 }
 
@@ -267,7 +267,7 @@ func TestDetectUserRole_HTTPSCredentialsMaintainer(t *testing.T) {
 	}
 }
 
-func TestDetectUserRole_HTTPSNoCredentialsContributor(t *testing.T) {
+func TestDetectUserRole_DefaultContributor(t *testing.T) {
 	orig := gitCommandRunner
 	stub := &gitStub{t: t, responses: []gitResponse{
 		{expect: gitCall{"", []string{"config", "--get", "beads.role"}}, err: errors.New("missing")},
@@ -286,29 +286,6 @@ func TestDetectUserRole_HTTPSNoCredentialsContributor(t *testing.T) {
 	}
 	if role != Contributor {
 		t.Fatalf("expected %s, got %s", Contributor, role)
-	}
-}
-
-func TestDetectUserRole_NoRemoteMaintainer(t *testing.T) {
-	// When no git remote is configured, default to maintainer (local project)
-	orig := gitCommandRunner
-	stub := &gitStub{t: t, responses: []gitResponse{
-		{expect: gitCall{"/local", []string{"config", "--get", "beads.role"}}, err: errors.New("missing")},
-		{expect: gitCall{"/local", []string{"remote", "get-url", "--push", "origin"}}, err: errors.New("no remote")},
-		{expect: gitCall{"/local", []string{"remote", "get-url", "origin"}}, err: errors.New("no remote")},
-	}}
-	gitCommandRunner = stub.run
-	t.Cleanup(func() {
-		gitCommandRunner = orig
-		stub.verify()
-	})
-
-	role, err := DetectUserRole("/local")
-	if err != nil {
-		t.Fatalf("DetectUserRole error = %v", err)
-	}
-	if role != Maintainer {
-		t.Fatalf("expected %s for local project with no remote, got %s", Maintainer, role)
 	}
 }
 

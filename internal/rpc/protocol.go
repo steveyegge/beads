@@ -44,7 +44,6 @@ const (
 	OpDelete              = "delete"
 	OpGetWorkerStatus     = "get_worker_status"
 	OpGetConfig           = "get_config"
-	OpMolStale            = "mol_stale"
 
 	// Gate operations
 	OpGateCreate = "gate_create"
@@ -94,6 +93,8 @@ type CreateArgs struct {
 	// Messaging fields
 	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
 	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
+	Pinned    bool   `json:"pinned,omitempty"`    // If true, keeps visible (used for agent beads)
+	AutoClose bool   `json:"auto_close,omitempty"` // If true, epic auto-closes when all children close
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
@@ -112,6 +113,20 @@ type CreateArgs struct {
 	// Time-based scheduling fields (GH#820)
 	DueAt      string `json:"due_at,omitempty"`      // Relative or ISO format due date
 	DeferUntil string `json:"defer_until,omitempty"` // Relative or ISO format defer date
+	// Gate fields (async coordination - hq-b0b22c.3)
+	AwaitType string        `json:"await_type,omitempty"` // Condition type: gh:run, gh:pr, timer, human, mail, decision
+	AwaitID   string        `json:"await_id,omitempty"`   // Condition identifier (run ID, PR number, etc.)
+	Timeout   time.Duration `json:"timeout,omitempty"`    // Max wait time before escalation
+	Waiters   []string      `json:"waiters,omitempty"`    // Mail addresses to notify when gate clears
+	// Skill fields (only valid when IssueType == "skill")
+	SkillName       string   `json:"skill_name,omitempty"`
+	SkillVersion    string   `json:"skill_version,omitempty"`
+	SkillCategory   string   `json:"skill_category,omitempty"`
+	SkillInputs     []string `json:"skill_inputs,omitempty"`
+	SkillOutputs    []string `json:"skill_outputs,omitempty"`
+	SkillExamples   []string `json:"skill_examples,omitempty"`
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Use SkillContent
+	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -614,27 +629,3 @@ type GetConfigResponse struct {
 	Value string `json:"value"`
 }
 
-// MolStaleArgs represents arguments for the mol stale operation
-type MolStaleArgs struct {
-	BlockingOnly   bool `json:"blocking_only"`   // Only show molecules blocking other work
-	UnassignedOnly bool `json:"unassigned_only"` // Only show unassigned molecules
-	ShowAll        bool `json:"show_all"`        // Include molecules with 0 children
-}
-
-// StaleMolecule holds info about a stale molecule (for RPC response)
-type StaleMolecule struct {
-	ID             string   `json:"id"`
-	Title          string   `json:"title"`
-	TotalChildren  int      `json:"total_children"`
-	ClosedChildren int      `json:"closed_children"`
-	Assignee       string   `json:"assignee,omitempty"`
-	BlockingIssues []string `json:"blocking_issues,omitempty"`
-	BlockingCount  int      `json:"blocking_count"`
-}
-
-// MolStaleResponse holds the result of the mol stale operation
-type MolStaleResponse struct {
-	StaleMolecules []*StaleMolecule `json:"stale_molecules"`
-	TotalCount     int              `json:"total_count"`
-	BlockingCount  int              `json:"blocking_count"`
-}

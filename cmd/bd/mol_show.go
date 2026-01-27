@@ -156,15 +156,18 @@ type ParallelInfo struct {
 	BlockedBy     []string `json:"blocked_by"`      // IDs of open steps blocking this one
 	Blocks        []string `json:"blocks"`          // IDs of steps this one blocks
 	CanParallel   []string `json:"can_parallel"`    // IDs of steps that can run in parallel with this
+	IsDecision    bool     `json:"is_decision"`     // True if this is a decision point (hq-946577.28)
+	DecisionState string   `json:"decision_state"`  // PENDING/RESOLVED for decision points
 }
 
 // ParallelAnalysis holds the complete parallel analysis for a molecule
 type ParallelAnalysis struct {
-	MoleculeID     string                  `json:"molecule_id"`
-	TotalSteps     int                     `json:"total_steps"`
-	ReadySteps     int                     `json:"ready_steps"`
-	ParallelGroups map[string][]string     `json:"parallel_groups"` // group ID -> step IDs
-	Steps          map[string]*ParallelInfo `json:"steps"`
+	MoleculeID       string                   `json:"molecule_id"`
+	TotalSteps       int                      `json:"total_steps"`
+	ReadySteps       int                      `json:"ready_steps"`
+	PendingDecisions int                      `json:"pending_decisions"` // Count of pending decision points (hq-946577.28)
+	ParallelGroups   map[string][]string      `json:"parallel_groups"`   // group ID -> step IDs
+	Steps            map[string]*ParallelInfo `json:"steps"`
 }
 
 // analyzeMoleculeParallel performs parallel detection on a molecule subgraph.
@@ -210,6 +213,17 @@ func analyzeMoleculeParallel(subgraph *MoleculeSubgraph) *ParallelAnalysis {
 			Status:    string(issue.Status),
 			BlockedBy: []string{},
 			Blocks:    []string{},
+		}
+
+		// Detect decision points by await_type (hq-946577.28)
+		if issue.AwaitType == "decision" {
+			info.IsDecision = true
+			if issue.Status == types.StatusClosed {
+				info.DecisionState = "RESOLVED"
+			} else {
+				info.DecisionState = "PENDING"
+				analysis.PendingDecisions++
+			}
 		}
 
 		// Check what blocks this step
@@ -399,6 +413,11 @@ func showMoleculeWithParallel(subgraph *MoleculeSubgraph) {
 	fmt.Printf("   ID: %s\n", subgraph.Root.ID)
 	fmt.Printf("   Steps: %d (%d ready)\n", analysis.TotalSteps, analysis.ReadySteps)
 
+	// Show pending decisions count (hq-946577.28)
+	if analysis.PendingDecisions > 0 {
+		fmt.Printf("   %s Decisions: %d pending\n", ui.RenderWarn("⏳"), analysis.PendingDecisions)
+	}
+
 	// Show compound bonding info if this is a compound molecule
 	if subgraph.Root.IsCompound() {
 		showCompoundBondingInfo(subgraph.Root)
@@ -433,7 +452,8 @@ func printMoleculeTreeWithParallel(subgraph *MoleculeSubgraph, analysis *Paralle
 	if isRoot {
 		rootInfo := analysis.Steps[subgraph.Root.ID]
 		annotation := getParallelAnnotation(rootInfo)
-		fmt.Printf("%s   %s%s\n", indent, subgraph.Root.Title, annotation)
+		statusIcon := getStepStatusIcon(subgraph.Root, rootInfo)
+		fmt.Printf("%s %s %s%s\n", indent, statusIcon, subgraph.Root.Title, annotation)
 	}
 
 	// Find children of this parent
@@ -455,9 +475,39 @@ func printMoleculeTreeWithParallel(subgraph *MoleculeSubgraph, analysis *Paralle
 
 		info := analysis.Steps[child.ID]
 		annotation := getParallelAnnotation(info)
+		statusIcon := getStepStatusIcon(child, info)
 
-		fmt.Printf("%s   %s %s%s\n", indent, connector, child.Title, annotation)
+		// For decision points, show DECISION: prefix (hq-946577.28)
+		title := child.Title
+		if info != nil && info.IsDecision {
+			title = fmt.Sprintf("DECISION: %s", child.Title)
+		}
+
+		fmt.Printf("%s %s %s%s%s\n", indent, connector, statusIcon, title, annotation)
 		printMoleculeTreeWithParallel(subgraph, analysis, child.ID, depth+1, false)
+	}
+}
+
+// getStepStatusIcon returns the appropriate status icon for a step (hq-946577.28)
+func getStepStatusIcon(issue *types.Issue, info *ParallelInfo) string {
+	// Decision points get ⏳ icon
+	if info != nil && info.IsDecision {
+		if info.DecisionState == "PENDING" {
+			return ui.RenderWarn("⏳")
+		}
+		return ui.RenderPass("✓")
+	}
+
+	// Regular steps
+	switch issue.Status {
+	case types.StatusClosed:
+		return ui.RenderPass("✓")
+	case types.StatusInProgress:
+		return ui.RenderWarn("●")
+	case types.StatusBlocked:
+		return ui.RenderFail("✗")
+	default: // open
+		return ui.RenderMuted("○")
 	}
 }
 
@@ -469,18 +519,27 @@ func getParallelAnnotation(info *ParallelInfo) string {
 
 	parts := []string{}
 
-	// Status indicator
-	switch info.Status {
-	case string(types.StatusOpen):
-		if info.IsReady {
-			parts = append(parts, ui.RenderPass("ready"))
+	// Decision point indicator (hq-946577.28)
+	if info.IsDecision {
+		if info.DecisionState == "PENDING" {
+			parts = append(parts, ui.RenderWarn("PENDING"))
 		} else {
-			parts = append(parts, ui.RenderFail("blocked"))
+			parts = append(parts, ui.RenderPass("RESOLVED"))
 		}
-	case string(types.StatusInProgress):
-		parts = append(parts, ui.RenderWarn("in_progress"))
-	case string(types.StatusClosed):
-		parts = append(parts, ui.RenderPass("completed"))
+	} else {
+		// Status indicator for non-decision steps
+		switch info.Status {
+		case string(types.StatusOpen):
+			if info.IsReady {
+				parts = append(parts, ui.RenderPass("ready"))
+			} else {
+				parts = append(parts, ui.RenderFail("blocked"))
+			}
+		case string(types.StatusInProgress):
+			parts = append(parts, ui.RenderWarn("in_progress"))
+		case string(types.StatusClosed):
+			parts = append(parts, ui.RenderPass("completed"))
+		}
 	}
 
 	// Parallel group

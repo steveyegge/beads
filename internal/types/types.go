@@ -3,6 +3,7 @@ package types
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -61,9 +62,10 @@ type Issue struct {
 	PrefixOverride string `json:"-"` // Completely replace config prefix (for cross-rig creation)
 
 	// ===== Relational Data (populated for export/import) =====
-	Labels       []string      `json:"labels,omitempty"`
-	Dependencies []*Dependency `json:"dependencies,omitempty"`
-	Comments     []*Comment    `json:"comments,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Dependencies  []*Dependency  `json:"dependencies,omitempty"`
+	Comments      []*Comment     `json:"comments,omitempty"`
+	DecisionPoint *DecisionPoint `json:"decision_point,omitempty"` // Decision gate data (hq-946577.12)
 
 	// ===== Tombstone Fields (soft-delete support) =====
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`    // When deleted
@@ -80,6 +82,7 @@ type Issue struct {
 	// ===== Context Markers =====
 	Pinned     bool `json:"pinned,omitempty"`      // Persistent context marker, not a work item
 	IsTemplate bool `json:"is_template,omitempty"` // Read-only template molecule
+	AutoClose  bool `json:"auto_close,omitempty"`  // Epic auto-closes when all children close
 
 	// ===== Bonding Fields (compound molecule lineage) =====
 	BondedFrom []BondRef `json:"bonded_from,omitempty"` // For compounds: constituent protos
@@ -122,6 +125,17 @@ type Issue struct {
 	Actor     string `json:"actor,omitempty"`      // Entity URI who caused this event
 	Target    string `json:"target,omitempty"`     // Entity URI or bead ID affected
 	Payload   string `json:"payload,omitempty"`    // Event-specific JSON data
+
+	// ===== Skill Fields (capability tracking - hq-yhdzq) =====
+	SkillName       string   `json:"skill_name,omitempty"`        // Canonical skill name: "go-testing"
+	SkillVersion    string   `json:"skill_version,omitempty"`     // Semver: "1.0.0"
+	SkillCategory   string   `json:"skill_category,omitempty"`    // Category: "testing", "devops", "docs"
+	SkillInputs     []string `json:"skill_inputs,omitempty"`      // What the skill needs
+	SkillOutputs    []string `json:"skill_outputs,omitempty"`     // What the skill produces
+	SkillExamples   []string `json:"skill_examples,omitempty"`    // Usage examples
+	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Path to SKILL.md
+	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
+
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -201,6 +215,22 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.Actor)
 	w.str(i.Target)
 	w.str(i.Payload)
+
+	// Skill fields
+	w.str(i.SkillName)
+	w.str(i.SkillVersion)
+	w.str(i.SkillCategory)
+	for _, input := range i.SkillInputs {
+		w.str(input)
+	}
+	for _, output := range i.SkillOutputs {
+		w.str(output)
+	}
+	for _, example := range i.SkillExamples {
+		w.str(example)
+	}
+	w.str(i.ClaudeSkillPath)
+	w.str(i.SkillContent)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -349,12 +379,13 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	if i.Status != StatusClosed && i.Status != StatusTombstone && i.ClosedAt != nil {
 		return fmt.Errorf("non-closed issues cannot have closed_at timestamp")
 	}
-	// Enforce tombstone invariants: deleted_at must be set for tombstones, and only for tombstones
+	// Enforce tombstone invariants: deleted_at must be set for tombstones
+	// Closed issues may also have deleted_at (soft-deleted then closed through cleanup)
 	if i.Status == StatusTombstone && i.DeletedAt == nil {
 		return fmt.Errorf("tombstone issues must have deleted_at timestamp")
 	}
-	if i.Status != StatusTombstone && i.DeletedAt != nil {
-		return fmt.Errorf("non-tombstone issues cannot have deleted_at timestamp")
+	if i.Status != StatusTombstone && i.Status != StatusClosed && i.DeletedAt != nil {
+		return fmt.Errorf("non-tombstone/non-closed issues cannot have deleted_at timestamp")
 	}
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
@@ -486,16 +517,36 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
-// were removed from beads core. They are now purely custom types with no built-in constants.
-// Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// Well-known custom types - constants for code convenience.
+// These are NOT built-in types and require types.custom configuration for validation.
+// Used by Gas Town and other infrastructure that extends beads.
+const (
+	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
+	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
+	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
+	TypeWisp         IssueType = "wisp"          // Ephemeral molecule instance (not synced via git)
+	TypeGate         IssueType = "gate"          // Async coordination gate
+	TypeAgent        IssueType = "agent"         // Agent identity bead
+	TypeRole         IssueType = "role"          // Agent role definition
+	TypeRig          IssueType = "rig"           // Rig identity bead (multi-repo workspace)
+	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
+	TypeEvent        IssueType = "event"         // Operational state change record
+	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
+	TypeWarrant      IssueType = "warrant"       // Session termination warrant
+	TypeSkill        IssueType = "skill"         // Capability definition bead (hq-yhdzq)
+)
 
-// IsValid checks if the issue type is a core work type.
-// Only core work types (bug, feature, task, epic, chore) are built-in.
-// Other types (molecule, gate, convoy, etc.) require types.custom configuration.
+// IsValid checks if the issue type is a defined type constant.
+// This includes core work types (bug, feature, task, epic, chore) and
+// extended types (merge-request, molecule, gate, agent, role, rig, convoy, event, slot, warrant).
+// All defined type constants are valid without requiring custom configuration.
 func (t IssueType) IsValid() bool {
 	switch t {
+	// Core work types
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
+		return true
+	// Extended types (Gas Town, molecules, coordination)
+	case TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
 		return true
 	}
 	return false
@@ -526,12 +577,16 @@ func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 }
 
 // Normalize maps issue type aliases to their canonical form.
-// For example, "enhancement" -> "feature".
+// For example, "enhancement" -> "feature", "mr" -> "merge-request".
 // Case-insensitive to match util.NormalizeIssueType behavior.
 func (t IssueType) Normalize() IssueType {
 	switch strings.ToLower(string(t)) {
 	case "enhancement", "feat":
 		return TypeFeature
+	case "mr":
+		return TypeMergeRequest
+	case "mol":
+		return TypeMolecule
 	default:
 		return t
 	}
@@ -659,8 +714,10 @@ type IssueWithDependencyMetadata struct {
 // IssueWithCounts extends Issue with dependency relationship counts
 type IssueWithCounts struct {
 	*Issue
-	DependencyCount int `json:"dependency_count"`
-	DependentCount  int `json:"dependent_count"`
+	DependencyCount    int `json:"dependency_count"`
+	DependentCount     int `json:"dependent_count"`
+	EpicTotalChildren  int `json:"epic_total_children,omitempty"`
+	EpicClosedChildren int `json:"epic_closed_children,omitempty"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.
@@ -711,6 +768,10 @@ const (
 
 	// Delegation types (work delegation chains)
 	DepDelegatedFrom DependencyType = "delegated-from" // Work delegated from parent; completion cascades up
+
+	// Skill types (capability matching - hq-yhdzq)
+	DepRequiresSkill DependencyType = "requires-skill" // Issue/formula requires a skill
+	DepProvidesSkill DependencyType = "provides-skill" // Agent provides/has a skill
 )
 
 // IsValid checks if the dependency type value is valid.
@@ -727,7 +788,8 @@ func (d DependencyType) IsWellKnown() bool {
 	case DepBlocks, DepParentChild, DepConditionalBlocks, DepWaitsFor, DepRelated, DepDiscoveredFrom,
 		DepRepliesTo, DepRelatesTo, DepDuplicates, DepSupersedes,
 		DepAuthoredBy, DepAssignedTo, DepApprovedBy, DepAttests, DepTracks,
-		DepUntil, DepCausedBy, DepValidates, DepDelegatedFrom:
+		DepUntil, DepCausedBy, DepValidates, DepDelegatedFrom,
+		DepRequiresSkill, DepProvidesSkill:
 		return true
 	}
 	return false
@@ -1029,6 +1091,13 @@ type EpicStatus struct {
 	EligibleForClose bool   `json:"eligible_for_close"`
 }
 
+// EpicProgress holds progress info for an epic (total and closed children)
+// Used by bd list to show inline progress like [3/5] for epics
+type EpicProgress struct {
+	TotalChildren  int `json:"total_children"`
+	ClosedChildren int `json:"closed_children"`
+}
+
 // BondRef tracks compound molecule lineage.
 // When protos or molecules are bonded together, BondRefs record
 // which sources were combined and how they were attached.
@@ -1054,6 +1123,82 @@ const (
 	IDPrefixMol  = "mol"  // Persistent molecules (bd-mol-xxx)
 	IDPrefixWisp = "wisp" // Ephemeral wisps (bd-wisp-xxx)
 )
+
+// DecisionOption represents one choice in a decision point.
+// Stored as JSON array in Issue.DecisionOptions field.
+type DecisionOption struct {
+	// ID is the short identifier (e.g., "a", "b", "yes", "no")
+	ID string `json:"id"`
+
+	// Short is a 1-3 word summary for compact display (SMS, CLI lists)
+	// Example: "Redis", "In-memory", "Yes", "No"
+	Short string `json:"short"`
+
+	// Label is a sentence-length description for UI display
+	// Example: "Use Redis for distributed caching"
+	Label string `json:"label"`
+
+	// Description is optional rich content (markdown)
+	// Can contain full design documents, code snippets, etc.
+	Description string `json:"description,omitempty"`
+}
+
+// DecisionPoint represents a human-in-the-loop decision gate.
+// Decision points are stored in a separate table (decision_points) with FK to issues.
+// This allows iteration on decisions without cluttering the issue record.
+type DecisionPoint struct {
+	IssueID        string     `json:"issue_id"`
+	Prompt         string     `json:"prompt"`
+	Context        string     `json:"context,omitempty"`          // Background/analysis for the decision
+	Options        string     `json:"options"`                    // JSON array of DecisionOption
+	DefaultOption  string     `json:"default_option,omitempty"`   // Option ID selected if timeout
+	SelectedOption string     `json:"selected_option,omitempty"`  // Option ID the human chose
+	ResponseText   string     `json:"response_text,omitempty"`    // Custom text input from human
+	Rationale      string     `json:"rationale,omitempty"`        // Explanation for why this choice was made
+	RespondedAt    *time.Time `json:"responded_at,omitempty"`     // When the human responded
+	RespondedBy    string     `json:"responded_by,omitempty"`     // Who responded (email, user ID)
+	Iteration      int        `json:"iteration"`                  // Current iteration number (1-indexed)
+	MaxIterations  int        `json:"max_iterations"`             // Limit on refinement loops (default: 3)
+	PriorID        string     `json:"prior_id,omitempty"`         // Previous iteration's decision point
+	Guidance       string     `json:"guidance,omitempty"`         // Human's text that triggered this iteration
+	ReminderCount  int        `json:"reminder_count"`             // Number of reminders sent
+	Urgency        string     `json:"urgency,omitempty"`          // Priority level: high, medium, low
+	CreatedAt      time.Time  `json:"created_at"`
+	RequestedBy    string     `json:"requested_by,omitempty"`     // Agent/session that requested this decision (for wake notifications)
+}
+
+// DecisionAcceptOptionID is the ID for the special "accept-as-is" option (hq-946577.24).
+// This option is automatically injected for decisions with iteration > 1.
+const DecisionAcceptOptionID = "_accept"
+
+// AcceptOption returns the special "_accept" option for iterative decisions.
+// This option allows users to accept their guidance directly without another iteration.
+func AcceptOption() DecisionOption {
+	return DecisionOption{
+		ID:          DecisionAcceptOptionID,
+		Short:       "Accept as-is",
+		Label:       "Accept my guidance as-is and proceed",
+		Description: "The agent will interpret your guidance and proceed without generating more options.",
+	}
+}
+
+// GetOptionsWithAccept parses the options JSON and injects the _accept option
+// if the decision point is an iteration (iteration > 1). (hq-946577.24)
+func (dp *DecisionPoint) GetOptionsWithAccept() ([]DecisionOption, error) {
+	var options []DecisionOption
+	if dp.Options != "" {
+		if err := json.Unmarshal([]byte(dp.Options), &options); err != nil {
+			return nil, err
+		}
+	}
+
+	// Inject _accept option for iterations > 1
+	if dp.Iteration > 1 {
+		options = append(options, AcceptOption())
+	}
+
+	return options, nil
+}
 
 // IsCompound returns true if this issue is a compound (bonded from multiple sources).
 func (i *Issue) IsCompound() bool {

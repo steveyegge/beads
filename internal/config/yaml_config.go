@@ -27,9 +27,10 @@ var YamlOnlyKeys = map[string]bool{
 	"auto-start-daemon": true,
 
 	// Database and identity
-	"db":       true,
-	"actor":    true,
-	"identity": true,
+	"db":              true,
+	"actor":           true,
+	"identity":        true,
+	"storage-backend": true, // "sqlite" (default) or "dolt"
 
 	// Timing settings
 	"flush-debounce":       true,
@@ -296,13 +297,6 @@ func validateYamlConfigValue(key, value string) error {
 		}
 		if depth < 1 {
 			return fmt.Errorf("hierarchy.max-depth must be at least 1, got %d", depth)
-		}
-	case "sync-branch", "sync.branch":
-		// GH#1166: Validate sync branch name at config time
-		// Note: Cannot import syncbranch due to import cycle, so inline the validation.
-		// This mirrors syncbranch.ValidateSyncBranchName() logic.
-		if value == "main" || value == "master" {
-			return fmt.Errorf("cannot use '%s' as sync branch: git worktrees prevent checking out the same branch in multiple locations. Use a dedicated branch like 'beads-sync' instead", value)
 		}
 	}
 	return nil

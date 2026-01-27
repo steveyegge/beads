@@ -12,7 +12,7 @@ import (
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -440,7 +440,7 @@ Examples:
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
 				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
@@ -661,7 +661,7 @@ Examples:
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
 				FatalErrorRespectJSON("failed to open database: %v", err)
 			}
@@ -773,7 +773,7 @@ var depCyclesCmd = &cobra.Command{
 		// If daemon is running but doesn't support this command, use direct storage
 		if daemonClient != nil && store == nil {
 			var err error
-			store, err = sqlite.New(rootCtx, dbPath)
+			store, err = factory.NewFromConfig(rootCtx, getBeadsDir())
 			if err != nil {
 				FatalErrorRespectJSON("failed to open database: %v", err)
 			}

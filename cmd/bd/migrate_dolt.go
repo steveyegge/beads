@@ -167,7 +167,7 @@ func hooksNeedDoltUpdate(beadsDir string) bool {
 
 	// Check post-merge hook (most likely to cause issues)
 	postMergePath := filepath.Join(hooksDir, "post-merge")
-	content, err := os.ReadFile(postMergePath)
+	content, err := os.ReadFile(postMergePath) //nolint:gosec // Path derived from repo structure
 	if err != nil {
 		return false // No hook installed
 	}

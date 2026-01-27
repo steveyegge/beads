@@ -104,9 +104,9 @@ func installClaude(env claudeEnv, project bool, stealth bool) error {
 		}
 	}
 
-	command := "bd prime"
+	command := "bd prime && bd decision check --inject"
 	if stealth {
-		command = "bd prime --stealth"
+		command = "bd prime --stealth && bd decision check --inject"
 	}
 
 	if addHookCommand(hooks, "SessionStart", command) {
@@ -205,10 +205,16 @@ func removeClaude(env claudeEnv, project bool) error {
 		return nil
 	}
 
+	// Remove old and new hook variants
 	removeHookCommand(hooks, "SessionStart", "bd prime")
 	removeHookCommand(hooks, "PreCompact", "bd prime")
 	removeHookCommand(hooks, "SessionStart", "bd prime --stealth")
 	removeHookCommand(hooks, "PreCompact", "bd prime --stealth")
+	// New chained command variants
+	removeHookCommand(hooks, "SessionStart", "bd prime && bd decision check --inject")
+	removeHookCommand(hooks, "PreCompact", "bd prime && bd decision check --inject")
+	removeHookCommand(hooks, "SessionStart", "bd prime --stealth && bd decision check --inject")
+	removeHookCommand(hooks, "PreCompact", "bd prime --stealth && bd decision check --inject")
 
 	data, err = json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -361,9 +367,11 @@ func hasBeadsHooks(settingsPath string) bool {
 				if !ok {
 					continue
 				}
-				// Check for either variant
+				// Check for any bd prime variant (old or new)
 				cmd := cmdMap["command"]
-				if cmd == "bd prime" || cmd == "bd prime --stealth" {
+				if cmd == "bd prime" || cmd == "bd prime --stealth" ||
+					cmd == "bd prime && bd decision check --inject" ||
+					cmd == "bd prime --stealth && bd decision check --inject" {
 					return true
 				}
 			}
