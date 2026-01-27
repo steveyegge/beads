@@ -114,12 +114,6 @@ variable.`,
 			}
 		}
 
-		// Initialize config (PersistentPreRun doesn't run for init command)
-		if err := config.Initialize(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
-			// Non-fatal - continue with defaults
-		}
-
 		// Safety guard: check for existing JSONL with issues
 		// This prevents accidental re-initialization in fresh clones
 		if !force {
