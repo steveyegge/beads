@@ -158,10 +158,17 @@ Example:
 		}
 
 		if jsonOutput {
-			outputJSON(map[string]interface{}{
-				"mode":    mode,
-				"message": fmt.Sprintf("Sync mode set to %s", mode),
-			})
+			result := map[string]interface{}{
+				"mode": mode,
+			}
+			// Add description
+			for _, m := range syncModeInfo {
+				if m.Mode == mode {
+					result["description"] = m.Description
+					break
+				}
+			}
+			outputJSON(result)
 			return
 		}
 

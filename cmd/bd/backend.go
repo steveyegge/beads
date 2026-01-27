@@ -22,7 +22,7 @@ var availableBackends = []struct {
 
 var backendCmd = &cobra.Command{
 	Use:     "backend",
-	GroupID: "sync",
+	GroupID: "setup",
 	Short:   "Manage storage backend configuration",
 	Long: `Manage storage backend configuration.
 
