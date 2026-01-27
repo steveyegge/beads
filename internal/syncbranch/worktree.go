@@ -17,6 +17,54 @@ import (
 	"github.com/steveyegge/beads/internal/utils"
 )
 
+// EnsureWorktree ensures the sync branch worktree exists if sync-branch is configured.
+// This should be called early during initialization (e.g., from ensureStoreActive) to
+// guarantee the worktree exists before any JSONL operations.
+//
+// Returns the worktree path if sync-branch is configured and worktree was created/exists,
+// or empty string if sync-branch is not configured.
+//
+// This function is idempotent - safe to call multiple times. The underlying
+// CreateBeadsWorktree is also idempotent and returns early if the worktree is healthy.
+//
+// GH#1349: Fixes fresh clone scenario where findJSONLPath would fall back to main's
+// stale JSONL because the worktree didn't exist yet.
+func EnsureWorktree(ctx context.Context) (string, error) {
+	syncBranch := GetFromYAML()
+	if syncBranch == "" {
+		return "", nil // Not configured, nothing to do
+	}
+
+	// Get repo root - need beads package for this
+	// Use git directly to avoid import cycle with beads package
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", nil // Not in a git repo, nothing to do
+	}
+	repoRoot := strings.TrimSpace(string(output))
+
+	worktreePath := getBeadsWorktreePath(ctx, repoRoot, syncBranch)
+
+	// Check if worktree already exists and is healthy
+	if _, err := os.Stat(worktreePath); err == nil {
+		// Worktree directory exists - let CreateBeadsWorktree verify health
+		wtMgr := git.NewWorktreeManager(repoRoot)
+		if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
+			return "", fmt.Errorf("failed to verify/repair sync worktree: %w", err)
+		}
+		return worktreePath, nil
+	}
+
+	// Create worktree
+	wtMgr := git.NewWorktreeManager(repoRoot)
+	if err := wtMgr.CreateBeadsWorktree(syncBranch, worktreePath); err != nil {
+		return "", fmt.Errorf("failed to create sync worktree: %w", err)
+	}
+
+	return worktreePath, nil
+}
+
 // CommitResult contains information about a worktree commit operation
 type CommitResult struct {
 	Committed  bool   // True if changes were committed
