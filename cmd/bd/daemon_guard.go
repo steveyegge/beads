@@ -16,7 +16,7 @@ func singleProcessBackendHelp(backend string) string {
 		b = "unknown"
 	}
 	// Keep this short; Cobra will prefix with "Error:".
-	return fmt.Sprintf("daemon mode is not supported with the %q backend (single-process only). To use daemon mode, initialize with %q (e.g. `bd init --backend sqlite`). Otherwise run commands in direct mode (default for dolt)", b, configfile.BackendSQLite)
+	return fmt.Sprintf("daemon mode is not supported with the current backend (%s). Use a multi-process compatible backend (e.g., `bd init --backend sqlite`) or run commands in direct mode without the daemon", b)
 }
 
 // guardDaemonStartForDolt blocks daemon start/restart commands when the current

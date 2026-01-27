@@ -47,7 +47,7 @@ func initializeNoDbMode() error {
 	if _, err := os.Stat(jsonlPath); err == nil {
 		issues, err := loadIssuesFromJSONL(jsonlPath)
 		if err != nil {
-			return fmt.Errorf("failed to load issues from %s: %w", jsonlPath, err)
+			return fmt.Errorf("failed to load issues: %w", err)
 		}
 
 		if err := memStore.LoadFromIssues(issues); err != nil {

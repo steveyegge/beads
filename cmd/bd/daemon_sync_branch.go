@@ -79,7 +79,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
-		return false, fmt.Errorf("JSONL path not found")
+		return false, fmt.Errorf("beads storage file not found")
 	}
 	
 	// Convert absolute path to relative path from repo root
@@ -323,7 +323,7 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
 	if jsonlPath == "" {
-		return false, fmt.Errorf("JSONL path not found")
+		return false, fmt.Errorf("beads storage file not found")
 	}
 	
 	// Convert to relative path

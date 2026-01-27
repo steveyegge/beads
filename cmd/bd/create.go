@@ -823,7 +823,7 @@ func flushRoutedRepo(targetStore storage.Storage, repoPath string) {
 
 		// Perform atomic export (temporary file + rename)
 		if err := performAtomicExport(ctx, jsonlPath, issues, targetStore); err != nil {
-			WarnError("failed to export target repo JSONL: %v", err)
+			WarnError("failed to export to target repo: %v", err)
 			return
 		}
 
