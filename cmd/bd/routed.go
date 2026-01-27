@@ -121,7 +121,8 @@ func getIssueWithRouting(ctx context.Context, localStore storage.Storage, id str
 	}
 
 	beadsDir := filepath.Dir(dbPath)
-	routedStorage, routeErr := routing.GetRoutedStorageForID(ctx, id, beadsDir)
+	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
+	routedStorage, routeErr := routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 	if routeErr != nil || routedStorage == nil {
 		// No routing found or error - return original result
 		return &RoutedResult{
@@ -164,7 +165,8 @@ func getRoutedStoreForID(ctx context.Context, id string) (*routing.RoutedStorage
 	}
 
 	beadsDir := filepath.Dir(dbPath)
-	return routing.GetRoutedStorageForID(ctx, id, beadsDir)
+	// Use GetRoutedStorageWithOpener with factory to respect backend configuration (bd-m2jr)
+	return routing.GetRoutedStorageWithOpener(ctx, id, beadsDir, factory.NewFromConfig)
 }
 
 // needsRouting checks if an ID would be routed to a different beads directory.

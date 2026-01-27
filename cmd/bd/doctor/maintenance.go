@@ -11,7 +11,8 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
-	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -59,25 +60,9 @@ func CheckStaleClosedIssues(path string) DoctorCheck {
 		thresholdDays = cfg.GetStaleClosedIssuesDays()
 	}
 
-	// Get database path
-	var dbPath string
-	if cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Stale Closed Issues",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryMaintenance,
-		}
-	}
-
+	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Closed Issues",
@@ -234,25 +219,9 @@ func CheckStaleMolecules(path string) DoctorCheck {
 		}
 	}
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return DoctorCheck{
-			Name:     "Stale Molecules",
-			Status:   StatusOK,
-			Message:  "N/A (no database)",
-			Category: CategoryMaintenance,
-		}
-	}
-
+	// Open database using factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Stale Molecules",
@@ -311,6 +280,8 @@ func CheckStaleMolecules(path string) DoctorCheck {
 }
 
 // CheckCompactionCandidates detects issues eligible for compaction.
+// Note: Compaction is a SQLite-specific optimization. Dolt backends don't need compaction
+// as Dolt handles data management differently.
 func CheckCompactionCandidates(path string) DoctorCheck {
 	backend, beadsDir := getBackendAndBeadsDir(path)
 
@@ -324,25 +295,20 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 		}
 	}
 
-	// Check metadata.json first for custom database name
-	var dbPath string
-	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.Database != "" {
-		dbPath = cfg.DatabasePath(beadsDir)
-	} else {
-		dbPath = filepath.Join(beadsDir, beads.CanonicalDatabaseName)
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// Check if backend is SQLite - compaction only applies to SQLite
+	cfg, _ := configfile.Load(beadsDir)
+	if cfg != nil && cfg.GetBackend() != configfile.BackendSQLite {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
 			Status:   StatusOK,
-			Message:  "N/A (no database)",
+			Message:  "N/A (compaction only applies to SQLite backend)",
 			Category: CategoryMaintenance,
 		}
 	}
 
+	// Open database using factory
 	ctx := context.Background()
-	store, err := sqlite.New(ctx, dbPath)
+	store, err := factory.NewFromConfig(ctx, beadsDir)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
@@ -353,7 +319,18 @@ func CheckCompactionCandidates(path string) DoctorCheck {
 	}
 	defer func() { _ = store.Close() }()
 
-	tier1, err := store.GetTier1Candidates(ctx)
+	// Type assert to CompactableStorage for compaction methods
+	compactStore, ok := store.(storage.CompactableStorage)
+	if !ok {
+		return DoctorCheck{
+			Name:     "Compaction Candidates",
+			Status:   StatusOK,
+			Message:  "N/A (backend does not support compaction)",
+			Category: CategoryMaintenance,
+		}
+	}
+
+	tier1, err := compactStore.GetTier1Candidates(ctx)
 	if err != nil {
 		return DoctorCheck{
 			Name:     "Compaction Candidates",
