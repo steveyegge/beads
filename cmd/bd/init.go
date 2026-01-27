@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -41,10 +42,11 @@ With --stealth: configures per-repository git settings for invisible beads usage
   • Claude Code settings with bd onboard instruction
   Perfect for personal use without affecting repo collaborators.
 
-With --backend dolt --server: configures Dolt to connect to an external dolt sql-server
-instead of using the embedded driver. This enables multi-writer access for multi-agent
-environments. Connection settings can be customized with --server-host, --server-port,
-and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment variable.`,
+With --backend dolt: uses Dolt as the storage backend. If a dolt sql-server is detected
+running on port 3307 or 3306, server mode is automatically enabled for multi-writer access.
+Use --server to explicitly enable server mode, or set connection details with --server-host,
+--server-port, and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment
+variable.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		prefix, _ := cmd.Flags().GetString("prefix")
 		quiet, _ := cmd.Flags().GetBool("quiet")
@@ -93,6 +95,29 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 		if serverMode && backend != configfile.BackendDolt {
 			fmt.Fprintf(os.Stderr, "Error: --server flag requires --backend dolt\n")
 			os.Exit(1)
+		}
+
+		// Auto-detect dolt server if backend is dolt and --server wasn't explicitly specified
+		// This enables server mode by default when a dolt sql-server is already running
+		if backend == configfile.BackendDolt && !serverMode {
+			if host, port, detected := dolt.DetectRunningServer(); detected {
+				serverMode = true
+				if serverHost == "" {
+					serverHost = host
+				}
+				if serverPort == 0 {
+					serverPort = port
+				}
+				if !quiet {
+					fmt.Printf("Detected running dolt sql-server on %s:%d, enabling server mode\n", host, port)
+				}
+			}
+		}
+
+		// Initialize config (PersistentPreRun doesn't run for init command)
+		if err := config.Initialize(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
+			// Non-fatal - continue with defaults
 		}
 
 		// Safety guard: check for existing JSONL with issues
