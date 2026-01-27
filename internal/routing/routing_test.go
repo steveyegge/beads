@@ -414,3 +414,378 @@ func TestFindTownRoutes_SymlinkedBeadsDir(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadRoutes_MalformedJSON verifies that malformed JSON lines are skipped
+// and valid routes are still loaded.
+func TestLoadRoutes_MalformedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown"}
+{invalid json here}
+{"prefix":"bd-","path":"beads"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on malformed lines: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("Expected 2 valid routes, got %d", len(loaded))
+	}
+	// Verify the correct routes were loaded
+	if loaded[0].Prefix != "gt-" || loaded[0].Path != "gastown" {
+		t.Errorf("First route incorrect: got %+v", loaded[0])
+	}
+	if loaded[1].Prefix != "bd-" || loaded[1].Path != "beads" {
+		t.Errorf("Second route incorrect: got %+v", loaded[1])
+	}
+}
+
+// TestLoadRoutes_EmptyPrefix verifies that routes with empty prefix are skipped.
+func TestLoadRoutes_EmptyPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown"}
+{"prefix":"","path":"empty-prefix"}
+{"prefix":"bd-","path":"beads"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on empty prefix: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("Expected 2 valid routes (empty prefix skipped), got %d", len(loaded))
+	}
+}
+
+// TestLoadRoutes_EmptyPath verifies that routes with empty path are skipped.
+func TestLoadRoutes_EmptyPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `{"prefix":"gt-","path":"gastown"}
+{"prefix":"empty-","path":""}
+{"prefix":"bd-","path":"beads"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on empty path: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("Expected 2 valid routes (empty path skipped), got %d", len(loaded))
+	}
+}
+
+// TestLoadRoutes_EmptyFile verifies that an empty file returns nil slice, not error.
+func TestLoadRoutes_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	if err := os.WriteFile(routesPath, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on empty file: %v", err)
+	}
+	if loaded != nil && len(loaded) != 0 {
+		t.Errorf("Expected nil or empty slice for empty file, got %d routes", len(loaded))
+	}
+}
+
+// TestLoadRoutes_CommentsOnly verifies that a file with only comments and blank lines
+// returns nil slice, not error.
+func TestLoadRoutes_CommentsOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `# This is a comment
+# Another comment
+
+   # Comment with leading whitespace
+
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on comments-only file: %v", err)
+	}
+	if loaded != nil && len(loaded) != 0 {
+		t.Errorf("Expected nil or empty slice for comments-only file, got %d routes", len(loaded))
+	}
+}
+
+// TestLoadRoutes_FileNotExist verifies that a non-existent file returns nil, nil (not an error).
+func TestLoadRoutes_FileNotExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Don't create routes.jsonl
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on non-existent file: %v", err)
+	}
+	if loaded != nil {
+		t.Errorf("Expected nil slice for non-existent file, got %d routes", len(loaded))
+	}
+}
+
+// TestLoadRoutes_MixedContent verifies that LoadRoutes correctly handles a file with
+// valid routes, malformed JSON, empty fields, comments, and blank lines mixed together.
+func TestLoadRoutes_MixedContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	routes := `# Routes configuration
+{"prefix":"gt-","path":"gastown"}
+
+{broken json
+{"prefix":"","path":"no-prefix"}
+{"prefix":"bd-","path":"beads"}
+  # inline comment with whitespace
+{"prefix":"empty-","path":""}
+{"prefix":"hq-","path":"headquarters"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadRoutes(beadsDir)
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error on mixed content: %v", err)
+	}
+	// Should have: gt-, bd-, hq- (3 valid routes)
+	// Skipped: comment, blank, broken json, empty prefix, empty path, another comment
+	if len(loaded) != 3 {
+		t.Errorf("Expected 3 valid routes, got %d", len(loaded))
+	}
+	expectedPrefixes := []string{"gt-", "bd-", "hq-"}
+	for i, expected := range expectedPrefixes {
+		if i >= len(loaded) {
+			break
+		}
+		if loaded[i].Prefix != expected {
+			t.Errorf("Route %d: expected prefix %q, got %q", i, expected, loaded[i].Prefix)
+		}
+	}
+}
+
+func TestAutoDetectTargetRig(t *testing.T) {
+	tests := []struct {
+		name             string
+		setupFunc        func(t *testing.T) (beadsDir string, cleanup func())
+		configuredPrefix string
+		wantRig          string
+		wantShouldRoute  bool
+		wantErr          bool
+	}{
+		{
+			name: "no prefix configured",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				beadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(beadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				return beadsDir, func() {}
+			},
+			configuredPrefix: "",
+			wantRig:          "",
+			wantShouldRoute:  false,
+			wantErr:          false,
+		},
+		{
+			name: "no routes file",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				beadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(beadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				return beadsDir, func() {}
+			},
+			configuredPrefix: "gt",
+			wantRig:          "",
+			wantShouldRoute:  false,
+			wantErr:          false,
+		},
+		{
+			name: "prefix not in routes",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				beadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(beadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				// Create routes.jsonl with different prefix
+				routesPath := filepath.Join(beadsDir, "routes.jsonl")
+				routes := `{"prefix":"bd-","path":"beads/mayor/rig"}` + "\n"
+				if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+					t.Fatal(err)
+				}
+				return beadsDir, func() {}
+			},
+			configuredPrefix: "gt",
+			wantRig:          "",
+			wantShouldRoute:  false,
+			wantErr:          false,
+		},
+		{
+			name: "already in correct location",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				// Create town structure
+				townBeadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				// Create mayor/town.json marker
+				mayorDir := filepath.Join(tmpDir, "mayor")
+				if err := os.MkdirAll(mayorDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				// Create routes.jsonl pointing hq- to current location
+				routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
+				routes := `{"prefix":"hq-","path":"."}` + "\n"
+				if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+					t.Fatal(err)
+				}
+				return townBeadsDir, func() {}
+			},
+			configuredPrefix: "hq",
+			wantRig:          "",
+			wantShouldRoute:  false,
+			wantErr:          false,
+		},
+		{
+			name: "should route to different rig",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				// Create town structure
+				townBeadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				// Create mayor/town.json marker
+				mayorDir := filepath.Join(tmpDir, "mayor")
+				if err := os.MkdirAll(mayorDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				// Create gastown rig
+				gastownBeadsDir := filepath.Join(tmpDir, "gastown", "mayor", "rig", ".beads")
+				if err := os.MkdirAll(gastownBeadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				// Create routes.jsonl with gt- pointing to gastown
+				routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
+				routes := `{"prefix":"hq-","path":"."}` + "\n" +
+					`{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+				if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+					t.Fatal(err)
+				}
+				// Return town beads dir (simulating running from town root with gt- prefix config)
+				return townBeadsDir, func() {}
+			},
+			configuredPrefix: "gt",
+			wantRig:          "gt",
+			wantShouldRoute:  true,
+			wantErr:          false,
+		},
+		{
+			name: "should route with prefix hyphen already included",
+			setupFunc: func(t *testing.T) (string, func()) {
+				tmpDir := t.TempDir()
+				townBeadsDir := filepath.Join(tmpDir, ".beads")
+				if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				mayorDir := filepath.Join(tmpDir, "mayor")
+				if err := os.MkdirAll(mayorDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				gastownBeadsDir := filepath.Join(tmpDir, "gastown", "mayor", "rig", ".beads")
+				if err := os.MkdirAll(gastownBeadsDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				routesPath := filepath.Join(townBeadsDir, "routes.jsonl")
+				routes := `{"prefix":"hq-","path":"."}` + "\n" +
+					`{"prefix":"gt-","path":"gastown/mayor/rig"}` + "\n"
+				if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+					t.Fatal(err)
+				}
+				return townBeadsDir, func() {}
+			},
+			configuredPrefix: "gt-", // Already has hyphen
+			wantRig:          "gt",
+			wantShouldRoute:  true,
+			wantErr:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			beadsDir, cleanup := tt.setupFunc(t)
+			defer cleanup()
+
+			gotRig, gotShouldRoute, err := AutoDetectTargetRig(beadsDir, tt.configuredPrefix)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("AutoDetectTargetRig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if gotRig != tt.wantRig {
+				t.Errorf("AutoDetectTargetRig() gotRig = %v, want %v", gotRig, tt.wantRig)
+			}
+			if gotShouldRoute != tt.wantShouldRoute {
+				t.Errorf("AutoDetectTargetRig() gotShouldRoute = %v, want %v", gotShouldRoute, tt.wantShouldRoute)
+			}
+		})
+	}
+}

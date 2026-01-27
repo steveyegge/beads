@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-001 completed)
+**Last Updated**: 2026-01-27 (TASK-003 completed)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -26,7 +26,7 @@ Investigation of the beads routing functionality revealed:
 |------|-------------|--------|----------|
 | TASK-001 | Fix routing documentation | completed | P0 |
 | TASK-002 | Add BD_DEBUG_ROUTING to LoadRoutes | completed | P0 |
-| TASK-003 | Add unit tests for LoadRoutes error paths | pending | P1 |
+| TASK-003 | Add unit tests for LoadRoutes error paths | completed | P1 |
 | TASK-004 | Add unit tests for ResolveBeadsDirForRig | pending | P1 |
 | TASK-005 | Add unit tests for ResolveBeadsDirForID | pending | P1 |
 | TASK-006 | Add documentation comments for edge cases | pending | P2 |
@@ -97,50 +97,25 @@ Investigation of the beads routing functionality revealed:
 ### P1: Important (Should Fix)
 
 #### TASK-003: Add unit tests for LoadRoutes error paths
-**Status**: pending
+**Status**: completed
 **File**: `internal/routing/routing_test.go`
 **Spec**: `routing-fix/specs/04-test-coverage.md`
+**Completed**: 2026-01-27
 
-**Currently Untested Scenarios** (verified by code review):
-1. Malformed JSON in routes.jsonl (invalid syntax)
-2. Valid JSON but empty prefix field
-3. Valid JSON but empty path field
-4. File permission errors (where testable)
-5. Empty file (should return empty slice, not error)
-6. File with only comments and blank lines
-
-**Test Pattern** (from AGENTS.md):
-```go
-func TestLoadRoutes_MalformedJSON(t *testing.T) {
-    tmpDir := t.TempDir()
-    beadsDir := filepath.Join(tmpDir, ".beads")
-    if err := os.MkdirAll(beadsDir, 0755); err != nil {
-        t.Fatal(err)
-    }
-    routesPath := filepath.Join(beadsDir, "routes.jsonl")
-    routes := `{"prefix":"gt-","path":"gastown"}
-{invalid json here}
-{"prefix":"bd-","path":"beads"}
-`
-    if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
-        t.Fatal(err)
-    }
-
-    loaded, err := routing.LoadRoutes(beadsDir)
-    if err != nil {
-        t.Fatalf("LoadRoutes should not error on malformed lines: %v", err)
-    }
-    if len(loaded) != 2 {
-        t.Errorf("Expected 2 valid routes, got %d", len(loaded))
-    }
-}
-```
+**Tests Implemented**:
+1. `TestLoadRoutes_MalformedJSON` - malformed JSON lines are skipped, valid routes loaded
+2. `TestLoadRoutes_EmptyPrefix` - routes with empty prefix are skipped
+3. `TestLoadRoutes_EmptyPath` - routes with empty path are skipped
+4. `TestLoadRoutes_EmptyFile` - empty file returns nil slice, no error
+5. `TestLoadRoutes_CommentsOnly` - comments and blank lines return nil slice
+6. `TestLoadRoutes_FileNotExist` - non-existent file returns nil, nil
+7. `TestLoadRoutes_MixedContent` - comprehensive test with all edge cases combined
 
 **Acceptance Criteria**:
-- [ ] Test malformed JSON handling
-- [ ] Test empty prefix/path field handling
-- [ ] Test empty file handling
-- [ ] Test comment line handling
+- [x] Test malformed JSON handling
+- [x] Test empty prefix/path field handling
+- [x] Test empty file handling
+- [x] Test comment line handling
 
 ---
 
