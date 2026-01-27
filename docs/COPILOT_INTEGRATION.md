@@ -44,7 +44,13 @@ Create or edit `.vscode/mcp.json` in your project:
 }
 ```
 
-**For all projects:** Add to VS Code `~/Library/Application Support/Code/User/mcp.json`:
+**For all projects:** Add to VS Code user-level MCP config:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/Code/User/mcp.json` |
+| Linux | `~/.config/Code/User/mcp.json` |
+| Windows | `%APPDATA%\Code\User\mcp.json` |
 
 ```json
 {
