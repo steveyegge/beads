@@ -430,18 +430,12 @@ var createCmd = &cobra.Command{
 
 		// Validate explicit ID format if provided
 		if explicitID != "" {
-			// For agent types, use agent-aware validation.
-			// This fixes the bug where 3-char polecat names like "nux" in
-			// "nx-nexus-polecat-nux" were incorrectly treated as hash suffixes.
-			if issueType == "agent" {
-				if err := validation.ValidateAgentID(explicitID); err != nil {
-					FatalError("invalid agent ID: %v", err)
-				}
-			} else {
-				_, err := validation.ValidateIDFormat(explicitID)
-				if err != nil {
-					FatalError("%v", err)
-				}
+			// Basic format validation for all issue types.
+			// Note: Gas Town-specific agent ID validation (mayor, polecat, witness, etc.)
+			// is handled by gastown, not beads core.
+			_, err := validation.ValidateIDFormat(explicitID)
+			if err != nil {
+				FatalError("%v", err)
 			}
 
 			// Validate prefix matches database prefix
