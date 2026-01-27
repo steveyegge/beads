@@ -241,8 +241,17 @@ func outputMCPContext(w io.Writer, stealthMode bool) error {
 
 ` + redirectNotice + `## 🔗 TASK TRACKING (TodoWrite Integration)
 
-Prefix tasks with bead ID for auto-sync to beads:
-  ` + "`bd-xxxx: Task description`" + ` → Syncs to bead bd-xxxx
+**IMPORTANT**: When using TodoWrite, prefix each task with the bead ID:
+
+` + "```" + `
+bd-f7k2: Implement JWT validation    → Status synced to bead bd-f7k2
+bd-f7k2: Write unit tests            → Status synced to bead bd-f7k2
+bd-x9y3: Update API docs             → Status synced to different bead
+Document changes                     → Unlinked (no prefix)
+` + "```" + `
+
+This enables automatic synchronization to beads for progress visibility.
+Use ` + "`bd tasks list`" + ` to view synced tasks.
 
 # 🚨 SESSION CLOSE PROTOCOL 🚨
 
@@ -370,9 +379,9 @@ bd sync                     # Push to remote
 **IMPORTANT**: When using TodoWrite, prefix each task with the bead ID:
 
 ` + "```" + `
-bd-f7k2: Implement JWT validation    → Synced to bead bd-f7k2
-bd-f7k2: Write unit tests            → Synced to bead bd-f7k2
-bd-x9y3: Update API docs             → Synced to different bead
+bd-f7k2: Implement JWT validation    → Status synced to bead bd-f7k2
+bd-f7k2: Write unit tests            → Status synced to bead bd-f7k2
+bd-x9y3: Update API docs             → Status synced to different bead
 Document changes                     → Unlinked (no prefix)
 ` + "```" + `
 
