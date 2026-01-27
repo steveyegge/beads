@@ -52,6 +52,9 @@ Configuration:
   bd config set jira.project "PROJ"
   bd config set jira.api_token "YOUR_TOKEN"
   bd config set jira.username "your_email@company.com"  # For Jira Cloud
+  bd config set jira.pull_prefix "hippo"       # Imported issues get hippo-1, hippo-2, etc.
+  bd config set jira.push_prefix "hippo"       # Only push hippo-* issues to Jira
+  bd config set jira.push_prefix "proj1,proj2" # Multiple prefixes (comma-separated)
 
 Environment variables (alternative to config):
   JIRA_API_TOKEN - Jira API token
@@ -398,6 +401,12 @@ func doPullFromJira(ctx context.Context, dryRun bool, state string) (*PullStats,
 		args = append(args, "--state", state)
 	}
 
+	// Add pull prefix if configured
+	pullPrefix, _ := store.GetConfig(ctx, "jira.pull_prefix")
+	if pullPrefix != "" {
+		args = append(args, "--prefix", pullPrefix)
+	}
+
 	// Run Python script to get JSONL output
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	cmd.Stderr = os.Stderr
@@ -481,6 +490,32 @@ func doPushToJira(ctx context.Context, dryRun bool, createOnly bool, updateRefs 
 	issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 	if err != nil {
 		return stats, fmt.Errorf("failed to get issues: %w", err)
+	}
+
+	// Filter by push prefix if configured
+	pushPrefixConfig, _ := store.GetConfig(ctx, "jira.push_prefix")
+	if pushPrefixConfig != "" {
+		var filteredIssues []*types.Issue
+
+		// Parse comma-separated prefixes, normalize (remove trailing dash)
+		allowedPrefixes := make(map[string]bool)
+		for _, prefix := range strings.Split(pushPrefixConfig, ",") {
+			prefix = strings.TrimSpace(prefix)
+			prefix = strings.TrimSuffix(prefix, "-")
+			if prefix != "" {
+				allowedPrefixes[prefix] = true
+			}
+		}
+
+		for _, issue := range issues {
+			for prefix := range allowedPrefixes {
+				if strings.HasPrefix(issue.ID, prefix+"-") {
+					filteredIssues = append(filteredIssues, issue)
+					break
+				}
+			}
+		}
+		issues = filteredIssues
 	}
 
 	// Sort by ID for consistent output
