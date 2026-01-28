@@ -116,6 +116,9 @@ bd-trace-*.out
 history/
 *_SESSION.md
 *_NEXT_SESSION.md
+docs/START_HERE.md
+docs/SHADOWBOOK_IMPROVEMENTS.md
+docs/SHADOWBOOK_TECHNICAL.md
 
 # Orchestrator agent state
 state.json
