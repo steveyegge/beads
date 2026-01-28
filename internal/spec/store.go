@@ -14,4 +14,14 @@ type SpecRegistryStore interface {
 	MarkSpecsMissing(ctx context.Context, specIDs []string, missingAt time.Time) error
 	ClearSpecsMissing(ctx context.Context, specIDs []string) error
 	MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []string, changedAt time.Time) (int, error)
+	UpdateSpecRegistry(ctx context.Context, specID string, updates SpecRegistryUpdate) error
+}
+
+// SpecRegistryUpdate defines optional fields to update on a spec registry entry.
+type SpecRegistryUpdate struct {
+	Lifecycle     *string
+	CompletedAt   *time.Time
+	Summary       *string
+	SummaryTokens *int
+	ArchivedAt    *time.Time
 }

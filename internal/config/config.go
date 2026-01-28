@@ -25,11 +25,17 @@ const (
 )
 
 var v *viper.Viper
+var configInitCWD string
 
 // Initialize sets up the viper configuration singleton
 // Should be called once at application startup
 func Initialize() error {
 	v = viper.New()
+	if cwd, err := os.Getwd(); err == nil {
+		configInitCWD = cwd
+	} else {
+		configInitCWD = ""
+	}
 
 	// Set config type to yaml (we only load config.yaml, not config.json)
 	v.SetConfigType("yaml")
@@ -39,18 +45,42 @@ func Initialize() error {
 	configFileSet := false
 
 	// 1. Walk up from CWD to find project .beads/config.yaml
-	//    This allows commands to work from subdirectories
-	cwd, err := os.Getwd()
-	if err == nil && !configFileSet {
-		// Walk up parent directories to find .beads/config.yaml
-		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-			beadsDir := filepath.Join(dir, ".beads")
-			configPath := filepath.Join(beadsDir, "config.yaml")
-			if _, err := os.Stat(configPath); err == nil {
-				// Found .beads/config.yaml - set it explicitly
-				v.SetConfigFile(configPath)
-				configFileSet = true
-				break
+	//    This allows commands to work from subdirectories.
+	//    In test binaries, skip project config unless explicitly allowed.
+	allowProjectConfig := os.Getenv("BEADS_TEST_ALLOW_PROJECT_CONFIG") == "1"
+	isTestBinary := strings.HasSuffix(os.Args[0], ".test")
+	tempDir := ""
+	if isTestBinary && !allowProjectConfig {
+		tempDir = filepath.Clean(os.TempDir())
+		if resolved, err := filepath.EvalSymlinks(tempDir); err == nil {
+			tempDir = resolved
+		}
+	}
+	if !(isTestBinary && !allowProjectConfig && tempDir == "") {
+		cwd, err := os.Getwd()
+		if err == nil && !configFileSet {
+			// Walk up parent directories to find .beads/config.yaml
+			for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+				beadsDir := filepath.Join(dir, ".beads")
+				configPath := filepath.Join(beadsDir, "config.yaml")
+				if _, err := os.Stat(configPath); err == nil {
+					// Found .beads/config.yaml - set it explicitly
+					if isTestBinary && !allowProjectConfig {
+						if tempDir != "" {
+							candidate := configPath
+							if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+								candidate = resolved
+							}
+							rel, err := filepath.Rel(tempDir, candidate)
+							if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+								continue
+							}
+						}
+					}
+					v.SetConfigFile(configPath)
+					configFileSet = true
+					break
+				}
 			}
 		}
 	}
@@ -188,6 +218,24 @@ func Initialize() error {
 // WARNING: Not thread-safe. Only call from single-threaded test contexts.
 func ResetForTesting() {
 	v = nil
+	configInitCWD = ""
+}
+
+func maybeReinitializeForTests() {
+	if !strings.HasSuffix(os.Args[0], ".test") {
+		return
+	}
+	if v == nil {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	if configInitCWD == "" || cwd != configInitCWD {
+		ResetForTesting()
+		_ = Initialize()
+	}
 }
 
 // ConfigSource represents where a configuration value came from
@@ -342,6 +390,7 @@ func LogOverride(override ConfigOverride) {
 
 // GetString retrieves a string configuration value
 func GetString(key string) string {
+	maybeReinitializeForTests()
 	if v == nil {
 		return ""
 	}
@@ -350,6 +399,7 @@ func GetString(key string) string {
 
 // GetBool retrieves a boolean configuration value
 func GetBool(key string) bool {
+	maybeReinitializeForTests()
 	if v == nil {
 		return false
 	}
@@ -358,6 +408,7 @@ func GetBool(key string) bool {
 
 // GetInt retrieves an integer configuration value
 func GetInt(key string) int {
+	maybeReinitializeForTests()
 	if v == nil {
 		return 0
 	}
@@ -366,6 +417,7 @@ func GetInt(key string) int {
 
 // GetDuration retrieves a duration configuration value
 func GetDuration(key string) time.Duration {
+	maybeReinitializeForTests()
 	if v == nil {
 		return 0
 	}
@@ -392,6 +444,7 @@ func Set(key string, value interface{}) {
 
 // AllSettings returns all configuration settings as a map
 func AllSettings() map[string]interface{} {
+	maybeReinitializeForTests()
 	if v == nil {
 		return map[string]interface{}{}
 	}
@@ -402,6 +455,7 @@ func AllSettings() map[string]interface{} {
 // Returns empty string if no config file was found or viper is not initialized.
 // This is useful for resolving relative paths from the config file's directory.
 func ConfigFileUsed() string {
+	maybeReinitializeForTests()
 	if v == nil {
 		return ""
 	}
@@ -410,6 +464,7 @@ func ConfigFileUsed() string {
 
 // GetStringSlice retrieves a string slice configuration value
 func GetStringSlice(key string) []string {
+	maybeReinitializeForTests()
 	if v == nil {
 		return []string{}
 	}
@@ -418,6 +473,7 @@ func GetStringSlice(key string) []string {
 
 // GetStringMapString retrieves a map[string]string configuration value
 func GetStringMapString(key string) map[string]string {
+	maybeReinitializeForTests()
 	if v == nil {
 		return map[string]string{}
 	}
@@ -463,6 +519,7 @@ type MultiRepoConfig struct {
 // GetMultiRepoConfig retrieves multi-repo configuration
 // Returns nil if multi-repo is not configured (single-repo mode)
 func GetMultiRepoConfig() *MultiRepoConfig {
+	maybeReinitializeForTests()
 	if v == nil {
 		return nil
 	}

@@ -94,6 +94,33 @@ func (m *MemoryStorage) ClearSpecsMissing(_ context.Context, specIDs []string) e
 	return nil
 }
 
+func (m *MemoryStorage) UpdateSpecRegistry(_ context.Context, specID string, updates spec.SpecRegistryUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, ok := m.specRegistry[specID]
+	if !ok {
+		return nil
+	}
+	if updates.Lifecycle != nil {
+		entry.Lifecycle = *updates.Lifecycle
+	}
+	if updates.CompletedAt != nil {
+		entry.CompletedAt = updates.CompletedAt
+	}
+	if updates.Summary != nil {
+		entry.Summary = *updates.Summary
+	}
+	if updates.SummaryTokens != nil {
+		entry.SummaryTokens = *updates.SummaryTokens
+	}
+	if updates.ArchivedAt != nil {
+		entry.ArchivedAt = updates.ArchivedAt
+	}
+	m.specRegistry[specID] = entry
+	return nil
+}
+
 func (m *MemoryStorage) MarkSpecChangedBySpecIDs(_ context.Context, specIDs []string, changedAt time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

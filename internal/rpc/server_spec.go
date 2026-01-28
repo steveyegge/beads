@@ -180,3 +180,46 @@ func (s *Server) handleSpecCoverage(req *Request) Response {
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
 }
+
+func (s *Server) handleSpecCompact(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecCompactArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid spec compact args: %v", err)}
+	}
+	if strings.TrimSpace(args.SpecID) == "" {
+		return Response{Success: false, Error: "spec_id is required"}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	update := spec.SpecRegistryUpdate{}
+	if args.Lifecycle != "" {
+		update.Lifecycle = &args.Lifecycle
+	}
+	if args.CompletedAt != nil {
+		update.CompletedAt = args.CompletedAt
+	}
+	if args.Summary != "" {
+		update.Summary = &args.Summary
+		update.SummaryTokens = &args.SummaryTokens
+	}
+	if args.ArchivedAt != nil {
+		update.ArchivedAt = args.ArchivedAt
+	}
+
+	if err := store.UpdateSpecRegistry(ctx, args.SpecID, update); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("update spec registry: %v", err)}
+	}
+
+	entry, err := store.GetSpecRegistry(ctx, args.SpecID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("get spec: %v", err)}
+	}
+	data, _ := json.Marshal(entry)
+	return Response{Success: true, Data: data}
+}

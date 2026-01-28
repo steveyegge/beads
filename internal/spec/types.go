@@ -21,6 +21,11 @@ type SpecRegistryEntry struct {
 	DiscoveredAt  time.Time
 	LastScannedAt time.Time
 	MissingAt     *time.Time
+	Lifecycle     string
+	CompletedAt   *time.Time
+	Summary       string
+	SummaryTokens int
+	ArchivedAt    *time.Time
 }
 
 // SpecRegistryCount includes bead counts for a spec.

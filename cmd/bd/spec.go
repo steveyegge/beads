@@ -94,6 +94,94 @@ var specScanCmd = &cobra.Command{
 	},
 }
 
+var specCompactCmd = &cobra.Command{
+	Use:   "compact <spec_id>",
+	Short: "Archive a spec with a summary",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		specID := args[0]
+		summary, _ := cmd.Flags().GetString("summary")
+		summaryFile, _ := cmd.Flags().GetString("summary-file")
+		lifecycle, _ := cmd.Flags().GetString("lifecycle")
+
+		if summary == "" && summaryFile != "" {
+			data, err := os.ReadFile(summaryFile)
+			if err != nil {
+				FatalErrorRespectJSON("read summary file: %v", err)
+			}
+			summary = strings.TrimSpace(string(data))
+		}
+
+		if strings.TrimSpace(summary) == "" {
+			FatalErrorRespectJSON("summary is required (use --summary or --summary-file)")
+		}
+
+		if lifecycle == "" {
+			lifecycle = "archived"
+		}
+
+		now := time.Now().UTC().Truncate(time.Second)
+		summaryTokens := len(strings.Fields(summary))
+
+		if daemonClient != nil {
+			resp, err := daemonClient.SpecCompact(&rpc.SpecCompactArgs{
+				SpecID:        specID,
+				Lifecycle:     lifecycle,
+				Summary:       summary,
+				SummaryTokens: summaryTokens,
+				ArchivedAt:    &now,
+			})
+			if err != nil {
+				FatalErrorRespectJSON("spec compact failed: %v", err)
+			}
+			if jsonOutput {
+				var entry spec.SpecRegistryEntry
+				if err := json.Unmarshal(resp.Data, &entry); err != nil {
+					FatalErrorRespectJSON("invalid spec compact response: %v", err)
+				}
+				outputJSON(entry)
+				return
+			}
+			var entry spec.SpecRegistryEntry
+			if err := json.Unmarshal(resp.Data, &entry); err != nil {
+				FatalErrorRespectJSON("invalid spec compact response: %v", err)
+			}
+			fmt.Printf("%s Archived spec: %s\n", ui.RenderPass("✓"), entry.SpecID)
+			return
+		}
+
+		if err := ensureDatabaseFresh(rootCtx); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+
+		store, err := getSpecRegistryStore()
+		if err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+
+		update := spec.SpecRegistryUpdate{
+			Lifecycle:     &lifecycle,
+			Summary:       &summary,
+			SummaryTokens: &summaryTokens,
+			ArchivedAt:    &now,
+		}
+		if err := store.UpdateSpecRegistry(rootCtx, specID, update); err != nil {
+			FatalErrorRespectJSON("update spec registry: %v", err)
+		}
+
+		if jsonOutput {
+			entry, err := store.GetSpecRegistry(rootCtx, specID)
+			if err != nil {
+				FatalErrorRespectJSON("get spec: %v", err)
+			}
+			outputJSON(entry)
+			return
+		}
+
+		fmt.Printf("%s Archived spec: %s\n", ui.RenderPass("✓"), specID)
+	},
+}
+
 var specListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List specs in the registry",
@@ -259,11 +347,15 @@ func init() {
 	specListCmd.Flags().Bool("include-missing", false, "Include missing specs")
 	specCoverageCmd.Flags().String("prefix", "", "Filter by spec ID prefix")
 	specCoverageCmd.Flags().Bool("include-missing", false, "Include missing specs")
+	specCompactCmd.Flags().String("summary", "", "Summary text for the spec")
+	specCompactCmd.Flags().String("summary-file", "", "Read summary text from a file")
+	specCompactCmd.Flags().String("lifecycle", "archived", "Lifecycle state to set (default: archived)")
 
 	specCmd.AddCommand(specScanCmd)
 	specCmd.AddCommand(specListCmd)
 	specCmd.AddCommand(specShowCmd)
 	specCmd.AddCommand(specCoverageCmd)
+	specCmd.AddCommand(specCompactCmd)
 	rootCmd.AddCommand(specCmd)
 }
 
@@ -308,6 +400,21 @@ func renderSpecShow(result rpc.SpecShowResult) {
 	}
 	if result.Spec.SHA256 != "" {
 		fmt.Printf("Hash: %s\n", result.Spec.SHA256)
+	}
+	if result.Spec.Lifecycle != "" {
+		fmt.Printf("Lifecycle: %s\n", result.Spec.Lifecycle)
+	}
+	if result.Spec.CompletedAt != nil {
+		fmt.Printf("Completed at: %s\n", result.Spec.CompletedAt.Local().Format("2006-01-02 15:04"))
+	}
+	if result.Spec.ArchivedAt != nil {
+		fmt.Printf("Archived at: %s\n", result.Spec.ArchivedAt.Local().Format("2006-01-02 15:04"))
+	}
+	if result.Spec.Summary != "" {
+		fmt.Printf("Summary: %s\n", result.Spec.Summary)
+		if result.Spec.SummaryTokens > 0 {
+			fmt.Printf("Summary tokens: %d\n", result.Spec.SummaryTokens)
+		}
 	}
 	if !result.Spec.Mtime.IsZero() {
 		fmt.Printf("Mtime: %s\n", result.Spec.Mtime.Local().Format("2006-01-02 15:04"))

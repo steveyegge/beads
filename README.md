@@ -160,6 +160,10 @@ git merge upstream/main
 
 ## Documentation
 
+- **[Docs Index](docs/SHADOWBOOK_DOCS_INDEX.md)** — Complete documentation map
+- **[User Manual](docs/SHADOWBOOK_MANUAL.md)** — The Host's Awakening (Westworld style guide)
+- **[Engineering Spec](docs/SHADOWBOOK_ENG_SPEC.md)** — Technical implementation details
+- **[Compaction & Lifecycle](docs/SHADOWBOOK_COMPACTION_LIFECYCLE.md)** — Memory decay, archival, semantic compression (6 advanced ideas)
 - [Spec Sync Guide](docs/SPEC_SYNC.md) — How spec intelligence works
 - [Beads Docs](https://github.com/steveyegge/beads#-documentation) — Full beads documentation
 - [AGENTS.md](AGENTS.md) — Agent workflow guide

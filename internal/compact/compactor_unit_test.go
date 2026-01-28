@@ -268,9 +268,10 @@ func TestCompactTier1Batch_MixedResults(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	resMap := map[string]*Result{}
-	for _, r := range results {
-		resMap[r.IssueID] = r
+	resMap := map[string]*BatchResult{}
+	for i := range results {
+		res := &results[i]
+		resMap[res.IssueID] = res
 	}
 
 	if res := resMap["bd-1"]; res == nil || res.Err != nil || res.CompactedSize == 0 {

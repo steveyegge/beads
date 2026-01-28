@@ -16,6 +16,7 @@ func TestMain(m *testing.M) {
 	// This ensures backward compatibility with tests that manipulate globals directly.
 	enableTestModeGlobals()
 
+
 	// Prevent daemon auto-start and ensure tests don't interact with any running daemon.
 	// This prevents false positives in the test guard when a background daemon touches
 	// .beads files (like issues.jsonl via auto-sync) during test execution.

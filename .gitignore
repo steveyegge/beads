@@ -132,3 +132,4 @@ bd_test
 .beads/export-state/
 .beads/issues.jsonl
 .beads/beads.db
+bd_shadow

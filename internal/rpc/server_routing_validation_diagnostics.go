@@ -216,6 +216,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleSpecShow(req)
 	case OpSpecCoverage:
 		resp = s.handleSpecCoverage(req)
+	case OpSpecCompact:
+		resp = s.handleSpecCompact(req)
 
 	case OpCompact:
 		resp = s.handleCompact(req)

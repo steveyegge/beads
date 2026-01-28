@@ -86,6 +86,17 @@ func New(store CompactableStore, apiKey string, config *Config) (*Compactor, err
 
 // CompactTier1 compacts a single issue at Tier 1 (basic summarization).
 func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
+	eligible, reason, err := c.store.CheckEligibility(ctx, issueID, 1)
+	if err != nil {
+		return fmt.Errorf("failed to check eligibility: %w", err)
+	}
+	if !eligible {
+		if reason == "" {
+			reason = "not eligible"
+		}
+		return fmt.Errorf("issue not eligible for compaction: %s", reason)
+	}
+
 	issue, err := c.store.GetIssue(ctx, issueID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch issue: %w", err)
@@ -95,13 +106,23 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 	originalSize := len(issue.Description) + len(issue.Design) + len(issue.Notes) + len(issue.AcceptanceCriteria)
 
 	if c.config.DryRun {
-		return nil
+		return fmt.Errorf("dry-run enabled: compaction skipped")
 	}
 
 	// Get summary from AI
+	if c.summarizer == nil {
+		return fmt.Errorf("summarizer not configured")
+	}
 	summary, err := c.summarizer.SummarizeTier1(ctx, issue)
 	if err != nil {
 		return fmt.Errorf("failed to summarize: %w", err)
+	}
+
+	if len(summary) >= originalSize {
+		comment := fmt.Sprintf("Tier 1 compaction skipped: summary is not smaller (original %d bytes, summary %d bytes)",
+			originalSize, len(summary))
+		_ = c.store.AddComment(ctx, issueID, "compactor", comment)
+		return fmt.Errorf("compaction would increase size")
 	}
 
 	// Update issue with summarized content
@@ -117,13 +138,19 @@ func (c *Compactor) CompactTier1(ctx context.Context, issueID string) error {
 
 	// Record compaction metadata
 	compactedSize := len(summary)
-	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, ""); err != nil {
+	commitHash := GetCurrentCommitHash()
+	if err := c.store.ApplyCompaction(ctx, issueID, 1, originalSize, compactedSize, commitHash); err != nil {
 		return fmt.Errorf("failed to apply compaction metadata: %w", err)
 	}
 
 	// Add comment about compaction
-	comment := fmt.Sprintf("Tier 1 compaction applied. Original size: %d bytes, Compacted size: %d bytes (%.1f%% reduction)",
-		originalSize, compactedSize, float64(originalSize-compactedSize)/float64(originalSize)*100)
+	saved := originalSize - compactedSize
+	percent := 0.0
+	if originalSize > 0 {
+		percent = float64(saved) / float64(originalSize) * 100
+	}
+	comment := fmt.Sprintf("Tier 1 compaction applied. Original size: %d bytes, Compacted size: %d bytes (saved %d bytes, %.1f%% reduction)",
+		originalSize, compactedSize, saved, percent)
 	if err := c.store.AddComment(ctx, issueID, "compactor", comment); err != nil {
 		return fmt.Errorf("failed to add compaction comment: %w", err)
 	}

@@ -37,6 +37,7 @@ const (
 	OpSpecList     = "spec_list"
 	OpSpecShow     = "spec_show"
 	OpSpecCoverage = "spec_coverage"
+	OpSpecCompact  = "spec_compact"
 
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
@@ -392,6 +393,16 @@ type SpecCoverageResult struct {
 	WithoutBeads     int `json:"without_beads"`
 	Missing          int `json:"missing"`
 	WithChangedBeads int `json:"with_changed_beads"`
+}
+
+// SpecCompactArgs represents arguments for spec compaction metadata updates.
+type SpecCompactArgs struct {
+	SpecID        string     `json:"spec_id"`
+	Lifecycle     string     `json:"lifecycle,omitempty"`
+	Summary       string     `json:"summary,omitempty"`
+	SummaryTokens int        `json:"summary_tokens,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	ArchivedAt    *time.Time `json:"archived_at,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency

@@ -17,6 +17,9 @@ func envSnapshot(t *testing.T) func() {
 		if strings.HasPrefix(env, "BD_") || strings.HasPrefix(env, "BEADS_") {
 			parts := strings.SplitN(env, "=", 2)
 			key := parts[0]
+			if key == "BEADS_TEST_ALLOW_PROJECT_CONFIG" {
+				continue
+			}
 			saved[key] = os.Getenv(key)
 			os.Unsetenv(key)
 		}
@@ -26,6 +29,9 @@ func envSnapshot(t *testing.T) func() {
 		for _, env := range os.Environ() {
 			if strings.HasPrefix(env, "BD_") || strings.HasPrefix(env, "BEADS_") {
 				parts := strings.SplitN(env, "=", 2)
+				if parts[0] == "BEADS_TEST_ALLOW_PROJECT_CONFIG" {
+					continue
+				}
 				os.Unsetenv(parts[0])
 			}
 		}

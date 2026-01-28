@@ -415,6 +415,11 @@ func (c *Client) SpecCoverage(args *SpecCoverageArgs) (*Response, error) {
 	return c.Execute(OpSpecCoverage, args)
 }
 
+// SpecCompact updates spec registry lifecycle metadata via the daemon.
+func (c *Client) SpecCompact(args *SpecCompactArgs) (*Response, error) {
+	return c.Execute(OpSpecCompact, args)
+}
+
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)

@@ -87,8 +87,8 @@ func TestDoltSingleProcess_DaemonGuardBlocksStartCommand(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected daemon guard error for dolt backend without --federation")
 	}
-	if !strings.Contains(err.Error(), "single-process") {
-		t.Fatalf("expected error to mention single-process, got: %v", err)
+	if !strings.Contains(err.Error(), "daemon mode is not supported") {
+		t.Fatalf("expected error to mention daemon mode is not supported, got: %v", err)
 	}
 }
 
@@ -131,4 +131,3 @@ func TestDoltSingleProcess_StartDaemonGuardrailExitsNonZero(t *testing.T) {
 		t.Fatalf("expected output to mention daemon unsupported; got:\n%s", string(out))
 	}
 }
-

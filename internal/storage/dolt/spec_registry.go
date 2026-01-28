@@ -59,7 +59,8 @@ func (s *DoltStore) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegistryEn
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at
+		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		ORDER BY spec_id
 	`)
@@ -72,6 +73,11 @@ func (s *DoltStore) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegistryEn
 	for rows.Next() {
 		var entry spec.SpecRegistryEntry
 		var missingAt *time.Time
+		var lifecycle sql.NullString
+		var completedAt sql.NullTime
+		var summary sql.NullString
+		var summaryTokens sql.NullInt64
+		var archivedAt sql.NullTime
 		if err := rows.Scan(
 			&entry.SpecID,
 			&entry.Path,
@@ -81,10 +87,30 @@ func (s *DoltStore) ListSpecRegistry(ctx context.Context) ([]spec.SpecRegistryEn
 			&entry.DiscoveredAt,
 			&entry.LastScannedAt,
 			&missingAt,
+			&lifecycle,
+			&completedAt,
+			&summary,
+			&summaryTokens,
+			&archivedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan spec_registry: %w", err)
 		}
 		entry.MissingAt = missingAt
+		if lifecycle.Valid {
+			entry.Lifecycle = lifecycle.String
+		}
+		if completedAt.Valid {
+			entry.CompletedAt = &completedAt.Time
+		}
+		if summary.Valid {
+			entry.Summary = summary.String
+		}
+		if summaryTokens.Valid {
+			entry.SummaryTokens = int(summaryTokens.Int64)
+		}
+		if archivedAt.Valid {
+			entry.ArchivedAt = &archivedAt.Time
+		}
 		results = append(results, entry)
 	}
 	return results, rows.Err()
@@ -97,8 +123,14 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 
 	var entry spec.SpecRegistryEntry
 	var missingAt *time.Time
+	var lifecycle sql.NullString
+	var completedAt sql.NullTime
+	var summary sql.NullString
+	var summaryTokens sql.NullInt64
+	var archivedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at
+		SELECT spec_id, path, title, sha256, mtime, discovered_at, last_scanned_at, missing_at,
+		       lifecycle, completed_at, summary, summary_tokens, archived_at
 		FROM spec_registry
 		WHERE spec_id = ?
 	`, specID).Scan(
@@ -110,6 +142,11 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 		&entry.DiscoveredAt,
 		&entry.LastScannedAt,
 		&missingAt,
+		&lifecycle,
+		&completedAt,
+		&summary,
+		&summaryTokens,
+		&archivedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -118,6 +155,21 @@ func (s *DoltStore) GetSpecRegistry(ctx context.Context, specID string) (*spec.S
 		return nil, fmt.Errorf("get spec_registry: %w", err)
 	}
 	entry.MissingAt = missingAt
+	if lifecycle.Valid {
+		entry.Lifecycle = lifecycle.String
+	}
+	if completedAt.Valid {
+		entry.CompletedAt = &completedAt.Time
+	}
+	if summary.Valid {
+		entry.Summary = summary.String
+	}
+	if summaryTokens.Valid {
+		entry.SummaryTokens = int(summaryTokens.Int64)
+	}
+	if archivedAt.Valid {
+		entry.ArchivedAt = &archivedAt.Time
+	}
 	return &entry, nil
 }
 
@@ -128,6 +180,7 @@ func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.Spec
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.spec_id, s.path, s.title, s.sha256, s.mtime, s.discovered_at, s.last_scanned_at, s.missing_at,
+		       s.lifecycle, s.completed_at, s.summary, s.summary_tokens, s.archived_at,
 		       COUNT(i.id) AS bead_count,
 		       SUM(CASE WHEN i.spec_changed_at IS NOT NULL THEN 1 ELSE 0 END) AS changed_count
 		FROM spec_registry s
@@ -144,6 +197,11 @@ func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.Spec
 	for rows.Next() {
 		var entry spec.SpecRegistryEntry
 		var missingAt *time.Time
+		var lifecycle sql.NullString
+		var completedAt sql.NullTime
+		var summary sql.NullString
+		var summaryTokens sql.NullInt64
+		var archivedAt sql.NullTime
 		var beadCount, changedCount int
 		if err := rows.Scan(
 			&entry.SpecID,
@@ -154,12 +212,32 @@ func (s *DoltStore) ListSpecRegistryWithCounts(ctx context.Context) ([]spec.Spec
 			&entry.DiscoveredAt,
 			&entry.LastScannedAt,
 			&missingAt,
+			&lifecycle,
+			&completedAt,
+			&summary,
+			&summaryTokens,
+			&archivedAt,
 			&beadCount,
 			&changedCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan spec_registry with counts: %w", err)
 		}
 		entry.MissingAt = missingAt
+		if lifecycle.Valid {
+			entry.Lifecycle = lifecycle.String
+		}
+		if completedAt.Valid {
+			entry.CompletedAt = &completedAt.Time
+		}
+		if summary.Valid {
+			entry.Summary = summary.String
+		}
+		if summaryTokens.Valid {
+			entry.SummaryTokens = int(summaryTokens.Int64)
+		}
+		if archivedAt.Valid {
+			entry.ArchivedAt = &archivedAt.Time
+		}
 		results = append(results, spec.SpecRegistryCount{
 			Spec:             entry,
 			BeadCount:        beadCount,
@@ -210,6 +288,47 @@ func (s *DoltStore) ClearSpecsMissing(ctx context.Context, specIDs []string) err
 	query := fmt.Sprintf(`UPDATE spec_registry SET missing_at = NULL WHERE spec_id IN (%s)`, placeholders) // #nosec G201
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("clear specs missing: %w", err)
+	}
+	return nil
+}
+
+// UpdateSpecRegistry updates lifecycle metadata for a spec registry entry.
+func (s *DoltStore) UpdateSpecRegistry(ctx context.Context, specID string, updates spec.SpecRegistryUpdate) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	setClauses := make([]string, 0, 5)
+	args := make([]interface{}, 0, 6)
+
+	if updates.Lifecycle != nil {
+		setClauses = append(setClauses, "lifecycle = ?")
+		args = append(args, *updates.Lifecycle)
+	}
+	if updates.CompletedAt != nil {
+		setClauses = append(setClauses, "completed_at = ?")
+		args = append(args, *updates.CompletedAt)
+	}
+	if updates.Summary != nil {
+		setClauses = append(setClauses, "summary = ?")
+		args = append(args, *updates.Summary)
+	}
+	if updates.SummaryTokens != nil {
+		setClauses = append(setClauses, "summary_tokens = ?")
+		args = append(args, *updates.SummaryTokens)
+	}
+	if updates.ArchivedAt != nil {
+		setClauses = append(setClauses, "archived_at = ?")
+		args = append(args, *updates.ArchivedAt)
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	args = append(args, specID)
+	query := fmt.Sprintf(`UPDATE spec_registry SET %s WHERE spec_id = ?`, strings.Join(setClauses, ", "))
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update spec_registry: %w", err)
 	}
 	return nil
 }

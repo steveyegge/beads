@@ -96,6 +96,11 @@ CREATE TABLE IF NOT EXISTS spec_registry (
     discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     missing_at DATETIME,
+    lifecycle VARCHAR(32) DEFAULT 'active',
+    completed_at DATETIME,
+    summary TEXT DEFAULT '',
+    summary_tokens INTEGER DEFAULT 0,
+    archived_at DATETIME,
     INDEX idx_spec_registry_path (path)
 );
 

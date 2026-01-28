@@ -509,9 +509,26 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				payload TEXT DEFAULT '',
 				due_at DATETIME,
 				defer_until DATETIME,
+				spec_id TEXT DEFAULT '',
+				spec_changed_at DATETIME,
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL FROM issues_backup;
+			INSERT INTO issues (
+				id, title, description, design, acceptance_criteria, notes, status, priority, issue_type,
+				assignee, estimated_minutes, created_at, created_by, owner, updated_at, closed_at, closed_by_session,
+				external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, close_reason,
+				deleted_at, deleted_by, delete_reason, original_type, sender, ephemeral, pinned, is_template, crystallizes,
+				await_type, await_id, timeout_ns, waiters, hook_bead, role_bead, agent_state, last_activity, role_type, rig,
+				mol_type, event_kind, actor, target, payload, due_at, defer_until, spec_id, spec_changed_at
+			)
+			SELECT
+				id, title, description, design, acceptance_criteria, notes, status, priority, issue_type,
+				assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '',
+				external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '',
+				NULL, '', '', '', '', 0, 0, 0, 0,
+				'', '', 0, '', '', '', '', NULL, '', '',
+				'', '', '', '', '', NULL, NULL, spec_id, spec_changed_at
+			FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {

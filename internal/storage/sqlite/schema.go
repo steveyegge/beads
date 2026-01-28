@@ -115,7 +115,12 @@ CREATE TABLE IF NOT EXISTS spec_registry (
     mtime DATETIME,                     -- last modified time
     discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    missing_at DATETIME                 -- soft delete for missing specs
+    missing_at DATETIME,                -- soft delete for missing specs
+    lifecycle TEXT DEFAULT 'active',    -- active | complete | archived | retired
+    completed_at DATETIME,
+    summary TEXT DEFAULT '',
+    summary_tokens INTEGER DEFAULT 0,
+    archived_at DATETIME
 );
 
 CREATE INDEX IF NOT EXISTS idx_spec_registry_path ON spec_registry(path);

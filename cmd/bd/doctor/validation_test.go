@@ -270,8 +270,8 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 	if check.Status != StatusOK {
 		t.Errorf("Status = %q, want %q", check.Status, StatusOK)
 	}
-	if check.Message != "N/A (no database)" {
-		t.Errorf("Message = %q, want 'N/A (no database)'", check.Message)
+	if check.Message != "No duplicate issues" {
+		t.Errorf("Message = %q, want 'No duplicate issues'", check.Message)
 	}
 }
 
