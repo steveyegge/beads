@@ -215,6 +215,46 @@ bd spec compact specs/auth.md --summary "OAuth flow implemented with PKCE; MFA a
 bd spec compact specs/auth.md --summary-file docs/summary/auth.txt
 ```
 
+Compaction keeps the full spec on disk, but surfaces the summary in the registry so agents carry less context.
+
+If you prefer automation, use:
+
+```bash
+bd close bd-xxx --compact-spec
+```
+
+When you close the last issue linked to a spec, Shadowbook will auto-generate a multi-sentence summary and archive the spec.
+
+### Auto-Matching (Safe Preview)
+
+```bash
+# Suggest specs for one issue
+bd spec suggest bd-xxxx
+
+# Preview bulk matches (no changes)
+bd spec link --auto --threshold 80
+
+# Apply matches (explicit)
+bd spec link --auto --threshold 80 --confirm
+
+# Show size impact for matched specs
+bd spec link --auto --threshold 80 --show-size
+```
+
+Notes:
+- Preview is the default. Nothing is written unless you pass `--confirm`.
+- `--threshold` controls strictness.
+- `--show-size` reports lines/tokens for matched specs (local files only).
+
+### Consolidation Report (Safe, Report-Only)
+
+```bash
+# Generate a report of older specs by directory
+bd spec consolidate --older-than 180 --report docs/SHADOWBOOK_CONSOLIDATION_REPORT.md
+```
+
+This does not modify any specs. It only lists candidates for a future consolidation pass.
+
 ### Linking Issues to Specs
 
 ```bash

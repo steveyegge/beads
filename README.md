@@ -78,6 +78,10 @@ bd create "Implement login" --spec-id specs/login.md
 | `bd spec list` | List all tracked specs with issue counts |
 | `bd spec show <path>` | Show spec details + linked issues |
 | `bd spec coverage` | Show specs without linked issues |
+| `bd spec compact <path>` | Archive a spec with a summary |
+| `bd spec suggest <id>` | Suggest specs for an issue by title match |
+| `bd spec link --auto` | Preview auto-links for unlinked issues |
+| `bd spec consolidate` | Generate a report of older specs for consolidation |
 
 ## Issue Commands (from beads)
 
@@ -120,6 +124,8 @@ Everything from beads, plus:
 - **Change Detection** — `bd spec scan` compares hashes, flags linked issues
 - **Coverage Metrics** — Find specs with no linked issues
 - **Drift Alerts** — `SPEC CHANGED` warning in issue output
+- **Spec Auto-Match** — Suggest links for unlinked issues (`bd spec suggest`, `bd spec link --auto`)
+- **Spec Compaction** — Archive old specs into summaries to save context
 
 ### From Beads
 
@@ -142,6 +148,30 @@ bd list --spec specs/auth/
 
 # Issues with spec drift
 bd list --spec-changed
+```
+
+---
+
+## Spec Compaction (Token Savings)
+
+When a spec is done, you can archive it with a short summary:
+
+```bash
+bd spec compact specs/auth.md --summary "OAuth2 login. 3 endpoints. JWT. Done Jan 2026."
+```
+
+This keeps the essential memory while cutting context size dramatically. You still have the full spec on disk, but the registry surfaces the summary first.
+
+You can also auto-compact when closing the last linked issue:
+
+```bash
+bd close bd-xyz --compact-spec
+```
+
+To see the size impact during auto-linking:
+
+```bash
+bd spec link --auto --threshold 80 --show-size
 ```
 
 ---

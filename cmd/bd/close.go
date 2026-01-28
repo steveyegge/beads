@@ -49,6 +49,7 @@ create, update, show, or close operation).`,
 		continueFlag, _ := cmd.Flags().GetBool("continue")
 		noAuto, _ := cmd.Flags().GetBool("no-auto")
 		suggestNext, _ := cmd.Flags().GetBool("suggest-next")
+		compactSpec, _ := cmd.Flags().GetBool("compact-spec")
 
 		// Get session ID from flag or environment variable
 		session, _ := cmd.Flags().GetString("session")
@@ -143,9 +144,7 @@ create, update, show, or close operation).`,
 							if hookRunner != nil {
 								hookRunner.Run(hooks.EventClose, result.Closed)
 							}
-							if jsonOutput {
-								closedIssues = append(closedIssues, result.Closed)
-							}
+							closedIssues = append(closedIssues, result.Closed)
 						}
 						if !jsonOutput {
 							fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
@@ -165,9 +164,7 @@ create, update, show, or close operation).`,
 						if hookRunner != nil {
 							hookRunner.Run(hooks.EventClose, &issue)
 						}
-						if jsonOutput {
-							closedIssues = append(closedIssues, &issue)
-						}
+						closedIssues = append(closedIssues, &issue)
 					}
 					if !jsonOutput {
 						fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
@@ -223,11 +220,10 @@ create, update, show, or close operation).`,
 					hookRunner.Run(hooks.EventClose, closedIssue)
 				}
 
-				if jsonOutput {
-					if closedIssue != nil {
-						closedIssues = append(closedIssues, closedIssue)
-					}
-				} else {
+				if closedIssue != nil {
+					closedIssues = append(closedIssues, closedIssue)
+				}
+				if !jsonOutput {
 					fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
 				}
 				result.Close()
@@ -238,6 +234,10 @@ create, update, show, or close operation).`,
 			if continueFlag && len(closedIssues) > 0 {
 				fmt.Fprintf(os.Stderr, "\nNote: --continue requires direct database access\n")
 				fmt.Fprintf(os.Stderr, "Hint: use --no-daemon flag: bd --no-daemon close %s --continue\n", resolvedIDs[0])
+			}
+
+			if len(closedIssues) > 0 {
+				maybeAutoCompactDaemon(ctx, closedIssues, compactSpec, daemonClient)
 			}
 
 			if jsonOutput && len(closedIssues) > 0 {
@@ -286,11 +286,10 @@ create, update, show, or close operation).`,
 				hookRunner.Run(hooks.EventClose, closedIssue)
 			}
 
-			if jsonOutput {
-				if closedIssue != nil {
-					closedIssues = append(closedIssues, closedIssue)
-				}
-			} else {
+			if closedIssue != nil {
+				closedIssues = append(closedIssues, closedIssue)
+			}
+			if !jsonOutput {
 				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
 			}
 		}
@@ -345,11 +344,10 @@ create, update, show, or close operation).`,
 				hookRunner.Run(hooks.EventClose, closedIssue)
 			}
 
-			if jsonOutput {
-				if closedIssue != nil {
-					closedIssues = append(closedIssues, closedIssue)
-				}
-			} else {
+			if closedIssue != nil {
+				closedIssues = append(closedIssues, closedIssue)
+			}
+			if !jsonOutput {
 				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
 			}
 			result.Close()
@@ -376,6 +374,13 @@ create, update, show, or close operation).`,
 		// Schedule auto-flush if any issues were closed
 		if len(args) > 0 {
 			markDirtyAndScheduleFlush()
+		}
+
+		if len(closedIssues) > 0 {
+			specStore, err := getSpecRegistryStore()
+			if err == nil {
+				maybeAutoCompactDirect(ctx, closedIssues, compactSpec, store, specStore)
+			}
 		}
 
 		// Handle --continue flag
@@ -413,6 +418,7 @@ func init() {
 	closeCmd.Flags().Bool("continue", false, "Auto-advance to next step in molecule")
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
+	closeCmd.Flags().Bool("compact-spec", false, "If last linked issue closes, archive spec with auto summary")
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)

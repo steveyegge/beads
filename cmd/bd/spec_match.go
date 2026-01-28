@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/types"
@@ -97,6 +99,7 @@ var specLinkAutoCmd = &cobra.Command{
 		confirm, _ := cmd.Flags().GetBool("confirm")
 		includeClosed, _ := cmd.Flags().GetBool("include-closed")
 		maxIssues, _ := cmd.Flags().GetInt("max-issues")
+		showSize, _ := cmd.Flags().GetBool("show-size")
 		validatePercent(threshold, "threshold")
 
 		if daemonClient != nil {
@@ -113,7 +116,7 @@ var specLinkAutoCmd = &cobra.Command{
 			if err := json.Unmarshal(resp.Data, &result); err != nil {
 				FatalErrorRespectJSON("invalid spec link auto response: %v", err)
 			}
-			renderSpecLinkAuto(result, threshold, confirm)
+			renderSpecLinkAuto(result, threshold, confirm, showSize)
 			return
 		}
 
@@ -187,7 +190,7 @@ var specLinkAutoCmd = &cobra.Command{
 			result.Suggestions = append(result.Suggestions, suggestion)
 		}
 
-		renderSpecLinkAuto(result, threshold, confirm)
+		renderSpecLinkAuto(result, threshold, confirm, showSize)
 	},
 }
 
@@ -200,6 +203,7 @@ func init() {
 	specLinkAutoCmd.Flags().Int("threshold", 80, "Minimum match score percent (0-100)")
 	specLinkAutoCmd.Flags().Bool("include-closed", false, "Include closed issues")
 	specLinkAutoCmd.Flags().Int("max-issues", 0, "Limit number of issues to process (0 = no limit)")
+	specLinkAutoCmd.Flags().Bool("show-size", false, "Show spec size (lines/tokens) for matches")
 
 	specCmd.AddCommand(specSuggestCmd)
 	specCmd.AddCommand(specLinkAutoCmd)
@@ -242,7 +246,12 @@ func renderSpecSuggest(result rpc.SpecSuggestResult, threshold int) {
 	}
 }
 
-func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bool) {
+type specSize struct {
+	Lines  int
+	Tokens int
+}
+
+func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bool, showSize bool) {
 	if jsonOutput {
 		outputJSON(result)
 		return
@@ -263,6 +272,14 @@ func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bo
 		return
 	}
 
+	repoRoot := ""
+	if showSize {
+		repoRoot = findSpecRepoRoot()
+	}
+	sizeCache := make(map[string]specSize)
+	totalLines := 0
+	totalTokens := 0
+
 	fmt.Println()
 	for _, suggestion := range result.Suggestions {
 		percent := int(suggestion.Score * 100)
@@ -277,10 +294,61 @@ func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bo
 		if suggestion.Error != "" {
 			line = fmt.Sprintf("%s [error: %s]", line, suggestion.Error)
 		}
+		if showSize {
+			if size, ok := getSpecSize(repoRoot, suggestion.SpecID, sizeCache); ok {
+				line = fmt.Sprintf("%s | %d lines | ~%dk tokens", line, size.Lines, size.Tokens/1000)
+				totalLines += size.Lines
+				totalTokens += size.Tokens
+			}
+		}
 		fmt.Fprintln(os.Stdout, line)
+	}
+
+	if showSize && totalLines > 0 {
+		linked := result.Matched
+		if confirm {
+			linked = result.Applied
+		}
+		fmt.Printf("\nSummary: %d specs linked, total %d lines (~%dk tokens)\n", linked, totalLines, totalTokens/1000)
 	}
 
 	if !confirm {
 		fmt.Println("\nRun with --confirm to apply these links.")
 	}
+}
+
+func findSpecRepoRoot() string {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return ""
+	}
+	return filepath.Dir(beadsDir)
+}
+
+func getSpecSize(repoRoot, specID string, cache map[string]specSize) (specSize, bool) {
+	if !spec.IsScannableSpecID(specID) {
+		return specSize{}, false
+	}
+	if size, ok := cache[specID]; ok {
+		return size, true
+	}
+	if repoRoot == "" {
+		return specSize{}, false
+	}
+	path := specID
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, specID)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return specSize{}, false
+	}
+	lines := 0
+	if len(content) > 0 {
+		lines = len(strings.Split(string(content), "\n"))
+	}
+	tokens := len(strings.Fields(string(content)))
+	size := specSize{Lines: lines, Tokens: tokens}
+	cache[specID] = size
+	return size, true
 }

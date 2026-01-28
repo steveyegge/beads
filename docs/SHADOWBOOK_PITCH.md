@@ -138,6 +138,28 @@ With Shadowbook:
 
 ---
 
+## Context Economics
+
+The hosts do not need to remember every line of a completed narrative. They only need the cornerstone.
+
+Shadowbook treats completed specs the same way:
+
+```bash
+bd spec compact specs/login.md --summary "OAuth2 login. 3 endpoints. JWT. Done Jan 2026."
+```
+
+Before: full spec in context.  
+After: short summary in the registry.
+
+This keeps your working set small while preserving meaning:
+- Active work stays detailed
+- Completed work collapses to a memory shard
+- Archived specs can be skipped entirely in context loading
+
+In Westworld terms: Ford archives the script, the host keeps the cornerstone.
+
+---
+
 ## Installation
 
 ```bash
