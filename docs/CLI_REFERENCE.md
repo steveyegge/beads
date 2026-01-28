@@ -637,18 +637,18 @@ Store user-defined key-value pairs that persist across sessions. Useful for feat
 
 ```bash
 # Set a value
-bd set <key> <value>
-bd set feature_flag true
-bd set api_endpoint https://api.example.com
+bd kv set <key> <value>
+bd kv set feature_flag true
+bd kv set api_endpoint https://api.example.com
 
 # Get a value
-bd get <key>
-bd get feature_flag                    # Prints: true
-bd get missing_key                     # Prints: missing_key (not set)
+bd kv get <key>
+bd kv get feature_flag                 # Prints: true
+bd kv get missing_key                  # Prints: missing_key (not set), exits 1
 
 # Delete a key
-bd clear <key>
-bd clear feature_flag
+bd kv clear <key>
+bd kv clear feature_flag
 
 # List all key-value pairs
 bd kv list

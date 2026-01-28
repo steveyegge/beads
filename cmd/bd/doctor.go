@@ -673,6 +673,11 @@ func runDiagnostics(path string) doctorResult {
 	result.Checks = append(result.Checks, migrationsCheck)
 	// Status is determined by the check itself based on migration priorities
 
+	// Check 31: KV store sync status
+	kvSyncCheck := convertDoctorCheck(doctor.CheckKVSyncStatus(path))
+	result.Checks = append(result.Checks, kvSyncCheck)
+	// Don't fail overall check for KV sync warning, just inform
+
 	return result
 }
 
