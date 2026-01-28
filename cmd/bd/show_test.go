@@ -115,6 +115,60 @@ func TestShow_NoExternalRef(t *testing.T) {
 	}
 }
 
+func TestShow_SpecID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping CLI test in short mode")
+	}
+
+	// Build bd binary
+	tmpBin := filepath.Join(t.TempDir(), "bd")
+	buildCmd := exec.Command("go", "build", "-o", tmpBin, "./")
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build bd: %v\n%s", err, out)
+	}
+
+	tmpDir := t.TempDir()
+
+	// Initialize beads
+	initCmd := exec.Command(tmpBin, "init", "--prefix", "test", "--quiet")
+	initCmd.Dir = tmpDir
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	// Create issue with spec link
+	createCmd := exec.Command(tmpBin, "--no-daemon", "create", "Spec link test", "-p", "1",
+		"--spec-id", "specs/auth/login.md", "--json", "--repo", ".")
+	createCmd.Dir = tmpDir
+	createOut, err := createCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("create failed: %v\n%s", err, createOut)
+	}
+
+	var issue map[string]interface{}
+	if err := json.Unmarshal(createOut, &issue); err != nil {
+		t.Fatalf("failed to parse create output: %v, output: %s", err, createOut)
+	}
+	id := issue["id"].(string)
+
+	// Show the issue and verify spec is displayed
+	showCmd := exec.Command(tmpBin, "--no-daemon", "show", id)
+	showCmd.Dir = tmpDir
+	showOut, err := showCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("show failed: %v\n%s", err, showOut)
+	}
+
+	out := string(showOut)
+	if !strings.Contains(out, "Spec:") {
+		t.Errorf("expected 'Spec:' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "specs/auth/login.md") {
+		t.Errorf("expected spec path in output, got: %s", out)
+	}
+}
+
 func TestShow_IDFlag(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping CLI test in short mode")

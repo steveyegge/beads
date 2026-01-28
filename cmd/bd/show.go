@@ -719,6 +719,9 @@ func formatIssueMetadata(issue *types.Issue) string {
 	if issue.ExternalRef != nil && *issue.ExternalRef != "" {
 		lines = append(lines, fmt.Sprintf("External: %s", *issue.ExternalRef))
 	}
+	if issue.SpecID != "" {
+		lines = append(lines, fmt.Sprintf("Spec: %s", issue.SpecID))
+	}
 
 	return strings.Join(lines, "\n")
 }
