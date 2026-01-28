@@ -1,63 +1,77 @@
 # Shadowbook - Next Session Tasks
 
-**Status:** PR #1372 submitted to beads (Phase 1). Phase 2 ready for shadowbook extraction.
+**Status:** PR #1372 submitted to beads (Phase 1). Phase 2 implemented on main, needs fixes.
 **Date:** 2026-01-28
 
-## Context
+## Current State (What's Already Implemented)
 
-### What's Done
-- [x] Phase 1 (spec_id field) PR submitted to steveyegge/beads (#1372)
-- [x] Comment posted on issue #976
-- [x] Fork created at github.com/anupamchugh/beads
-- [x] SHADOWBOOK_README.md written
-- [x] Phase 2 code exists on `main` branch (spec registry, scanning, change detection)
+Phase 2 code is **merged on main** and working:
 
-### What's Pending
-- [ ] Fix Phase 2 code issues (5 fixes from code review)
-- [ ] Create shadowbook repo
-- [ ] Extract Phase 2 code to shadowbook
+| Component | File | Status |
+|-----------|------|--------|
+| Scanner | `internal/spec/scanner.go` | ✓ Scan(), ExtractTitle(), hashFile() |
+| Registry types | `internal/spec/types.go` | ✓ SpecRegistryEntry, ScannedSpec |
+| Registry logic | `internal/spec/registry.go` | ✓ UpdateRegistry() |
+| SQLite storage | `internal/storage/sqlite/spec_registry.go` | ✓ All CRUD + MarkSpecChangedBySpecIDs |
+| CLI commands | `cmd/bd/spec.go` | ✓ scan, list, show, coverage |
+| RPC layer | `internal/rpc/server_spec.go` | ✓ Daemon support |
+
+**What works now:**
+```bash
+bd spec scan          # Scans specs/, updates registry
+bd spec list          # Shows specs with bead counts
+bd spec show <id>     # Shows spec + linked beads
+bd spec coverage      # Coverage metrics
+```
+
+## What's Pending
+
+- [x] Apply 5 code quality fixes (below) - **ALL DONE**
+- [ ] Create shadowbook repo (or decide to keep as beads fork)
 - [ ] Set up homebrew tap
 - [ ] Test end-to-end
 
 ---
 
-## Task 1: Fix Phase 2 Code Issues
+## Task 1: Code Quality Fixes
 
-The code review identified 5 issues that must be fixed before shadowbook release.
+Code review identified 5 issues. Current implementation in `internal/storage/sqlite/spec_registry.go:248-299`.
 
 ### 1.1 Fix updated_at + events (HIGH)
 
 **Problem:** `MarkSpecChangedBySpecIDs` only sets `spec_changed_at` without updating `updated_at` or creating audit events.
 
-**Files:**
-- `internal/storage/sqlite/spec_registry.go`
-- `internal/storage/dolt/spec_registry.go`
-- `internal/storage/memory/spec_registry.go`
+**File:** `internal/storage/sqlite/spec_registry.go` (line 269)
+
+**Current code:**
+```go
+query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ? WHERE spec_id IN (%s)`, placeholders)
+```
 
 **Fix:**
 ```go
-// In MarkSpecChangedBySpecIDs
-query := `UPDATE issues
-          SET spec_changed_at = ?, updated_at = ?
-          WHERE spec_id IN (%s)`
-
-// Also emit event for audit trail
-event := types.Event{
-    IssueID:   issueID,
-    Type:      "spec_changed",
-    Actor:     "system",
-    Timestamp: now,
-}
+query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ?, updated_at = ? WHERE spec_id IN (%s)`, placeholders)
+// args needs second timestamp
 ```
+
+**Event decision:** Either:
+- (a) Add `EventSpecChanged EventType = "spec_changed"` to `internal/types/types.go:844` and emit it, OR
+- (b) Just update timestamps (simpler, events visible via updated_at change)
+
+Recommend (b) for now - events can be added later if needed.
 
 ### 1.2 Implement IsScannableSpecID (HIGH)
 
-**Problem:** No filtering for URLs, SPEC-xxx IDs, absolute paths.
+**Problem:** No filtering for URLs, SPEC-xxx IDs, absolute paths. These shouldn't trigger spec scanning.
 
-**File:** `internal/spec/scanner.go`
+**Where to enforce:** Two places:
+1. **`internal/spec/registry.go`** - in `UpdateRegistry()` when building the list of changed specs to mark
+2. **`cmd/bd/spec.go`** or **issue validation** - when a spec_id is set on an issue (optional, defensive)
 
-**Add:**
+**Add to `internal/spec/scanner.go`:**
 ```go
+// IsScannableSpecID returns true if spec_id refers to a local file path
+// (vs URLs, external IDs like SPEC-001, or absolute paths).
 func IsScannableSpecID(specID string) bool {
     if specID == "" {
         return false
@@ -68,61 +82,55 @@ func IsScannableSpecID(specID string) bool {
     if strings.HasPrefix(specID, "/") {
         return false // absolute path
     }
-    idPrefixes := []string{"SPEC-", "REQ-", "FEAT-", "US-"}
+    idPrefixes := []string{"SPEC-", "REQ-", "FEAT-", "US-", "JIRA-"}
     upper := strings.ToUpper(specID)
     for _, prefix := range idPrefixes {
         if strings.HasPrefix(upper, prefix) {
-            return false
+            return false // external ID
         }
     }
     return true
 }
 ```
 
-**Usage:** Call before marking beads in `MarkSpecChangedBySpecIDs`.
+**Usage:** Call in `registry.go` UpdateRegistry() before adding to `changedSpecIDs`:
+```go
+if !IsScannableSpecID(specID) {
+    continue
+}
+```
 
 ### 1.3 Robust repo root resolution (MEDIUM)
 
-**Problem:** Assumes repo root = parent of `.beads/`.
+**Problem:** CLI direct mode uses `filepath.Dir(beadsDir)` which works, but caller sites should use a consistent helper.
 
-**File:** `internal/spec/scanner.go`
-
-**Add:**
+**Current code** (`cmd/bd/spec.go:70-74`):
 ```go
-func FindRepoRoot() (string, error) {
-    // Try .beads/ first
-    cwd, _ := os.Getwd()
-    dir := cwd
-    for {
-        if _, err := os.Stat(filepath.Join(dir, ".beads")); err == nil {
-            return dir, nil
-        }
-        parent := filepath.Dir(dir)
-        if parent == dir {
-            break
-        }
-        dir = parent
-    }
-    // Fallback to git
-    cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-    out, err := cmd.Output()
-    if err == nil {
-        return strings.TrimSpace(string(out)), nil
-    }
-    return "", fmt.Errorf("cannot find repo root")
+beadsDir := beads.FindBeadsDir()
+if beadsDir == "" {
+    FatalErrorRespectJSON("no .beads directory found")
 }
+repoRoot := filepath.Dir(beadsDir)
 ```
+
+**Fix:** This is actually fine. The `beads.FindBeadsDir()` already walks up looking for `.beads/`. The issue is consistency - consider extracting to a helper if used elsewhere.
+
+**No code change needed** unless we want a dedicated `FindRepoRoot()` for clarity.
 
 ### 1.4 Add local-only warning (MEDIUM)
 
 **Problem:** Users may expect spec_registry to sync via git.
 
-**Fix in `cmd/bd/spec.go` (scan command):**
+**Fix in `cmd/bd/spec.go` (scan command output, line 91-92):**
 ```go
-fmt.Println("ℹ Note: Spec registry is local (not synced via git)")
+fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
+    ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
+fmt.Println("● Note: Spec registry is local-only (not synced via git)")
 ```
 
-**Also add to docs/CLI_REFERENCE.md.**
+Use `●` (allowed symbol) not `ℹ` (emoji).
+
+**Also add to docs/CLI_REFERENCE.md** in the spec commands section.
 
 ### 1.5 Add missing tests (MEDIUM)
 
@@ -131,7 +139,6 @@ fmt.Println("ℹ Note: Spec registry is local (not synced via git)")
 | Test | File |
 |------|------|
 | `TestIsScannableSpecID` | `internal/spec/scanner_test.go` |
-| `TestFindRepoRoot` | `internal/spec/scanner_test.go` |
 | `TestScanExtractsTitle` | `internal/spec/scanner_test.go` |
 | `TestRegistryUpdate_Add` | `internal/spec/registry_test.go` |
 | `TestRegistryUpdate_Change` | `internal/spec/registry_test.go` |
@@ -304,20 +311,22 @@ bd spec coverage
 ## Quick Start for Next Session
 
 ```bash
-# 1. Switch to main branch (has Phase 2 code)
-git checkout main
+# 1. You're already on main with Phase 2 code working
+git status
 
-# 2. Apply the 5 fixes
-# - Fix 1.1: updated_at + events
-# - Fix 1.2: IsScannableSpecID
-# - Fix 1.3: FindRepoRoot
-# - Fix 1.4: local-only warning
-# - Fix 1.5: tests
+# 2. Apply the fixes (priority order)
+# HIGH:
+# - Fix 1.1: Add updated_at to MarkSpecChangedBySpecIDs query
+# - Fix 1.2: Add IsScannableSpecID() and use in registry.go
+# MEDIUM:
+# - Fix 1.4: Add local-only warning with ● symbol
+# - Fix 1.5: Add tests
 
 # 3. Test locally
 go build ./cmd/bd
 ./bd spec scan
 ./bd spec list
+go test ./internal/spec/... ./internal/storage/sqlite/...
 
 # 4. Create shadowbook repo (if going standalone)
 # OR keep as beads fork

@@ -278,7 +278,7 @@ func (s *SQLiteStorage) MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []
 	}
 
 	idQuery := fmt.Sprintf(`SELECT id FROM issues WHERE spec_id IN (%s)`, placeholders) // #nosec G201
-	rows, err := conn.QueryContext(ctx, idQuery, args[1:]...)
+	rows, err := conn.QueryContext(ctx, idQuery, args[2:]...)
 	if err != nil {
 		return int(affected), fmt.Errorf("list issues for spec change: %w", err)
 	}
