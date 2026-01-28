@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -60,6 +61,7 @@ func init() {
 	decisionCreateCmd.Flags().Int("max-iterations", 3, "Maximum refinement iterations")
 	decisionCreateCmd.Flags().Bool("no-notify", false, "Don't send notifications (for testing)")
 	decisionCreateCmd.Flags().String("requested-by", "", "Agent/session that requested this decision (for wake notifications)")
+	decisionCreateCmd.Flags().StringP("urgency", "u", "medium", "Urgency level: high, medium, low")
 
 	_ = decisionCreateCmd.MarkFlagRequired("prompt")
 
@@ -84,8 +86,19 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	noNotify, _ := cmd.Flags().GetBool("no-notify")
 	requestedBy, _ := cmd.Flags().GetString("requested-by")
+	urgency, _ := cmd.Flags().GetString("urgency")
 
 	ctx := rootCtx
+
+	// Validate urgency
+	urgency = strings.ToLower(urgency)
+	switch urgency {
+	case "high", "medium", "low":
+		// Valid
+	default:
+		fmt.Fprintf(os.Stderr, "Error: invalid urgency '%s': must be high, medium, or low\n", urgency)
+		os.Exit(1)
+	}
 
 	// Validate options JSON - at least one option is required
 	if optionsJSON == "" {
@@ -163,7 +176,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		Priority:  2,
 		AwaitType: "decision",
 		Timeout:   timeout,
-		Labels:    []string{"gt:decision", "decision:pending"},
+		Labels:    []string{"gt:decision", "decision:pending", "urgency:" + urgency},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -177,6 +190,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		MaxIterations: maxIterations,
 		CreatedAt:     now,
 		RequestedBy:   requestedBy,
+		Urgency:       urgency,
 	}
 
 	// Use transaction to create both atomically
