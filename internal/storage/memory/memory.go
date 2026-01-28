@@ -451,6 +451,12 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			} else if value == nil {
 				issue.Assignee = ""
 			}
+		case "spec_id":
+			if v, ok := value.(string); ok {
+				issue.SpecID = v
+			} else if value == nil {
+				issue.SpecID = ""
+			}
 		case "external_ref":
 			// Update external ref index
 			oldRef := issue.ExternalRef
@@ -599,6 +605,12 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			continue
 		}
 		if filter.Assignee != nil && issue.Assignee != *filter.Assignee {
+			continue
+		}
+		if filter.SpecID != nil && issue.SpecID != *filter.SpecID {
+			continue
+		}
+		if filter.SpecPrefix != nil && !strings.HasPrefix(issue.SpecID, *filter.SpecPrefix) {
 			continue
 		}
 

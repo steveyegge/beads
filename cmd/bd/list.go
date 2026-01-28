@@ -601,6 +601,8 @@ var listCmd = &cobra.Command{
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
 		titleSearch, _ := cmd.Flags().GetString("title")
 		idFilter, _ := cmd.Flags().GetString("id")
+		specFilter, _ := cmd.Flags().GetString("spec")
+		specIDFilter, _ := cmd.Flags().GetString("spec-id")
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")
 		reverse, _ := cmd.Flags().GetBool("reverse")
@@ -750,6 +752,19 @@ var listCmd = &cobra.Command{
 			ids := util.NormalizeLabels(strings.Split(idFilter, ","))
 			if len(ids) > 0 {
 				filter.IDs = ids
+			}
+		}
+		if specFilter == "" {
+			specFilter = specIDFilter
+		} else if specIDFilter != "" && specIDFilter != specFilter {
+			fmt.Fprintf(os.Stderr, "Error: --spec and --spec-id must match if both are provided\n")
+			os.Exit(1)
+		}
+		if specFilter != "" {
+			if strings.HasSuffix(specFilter, "/") {
+				filter.SpecPrefix = &specFilter
+			} else {
+				filter.SpecID = &specFilter
 			}
 		}
 
@@ -1007,6 +1022,14 @@ var listCmd = &cobra.Command{
 
 			// Parent filtering
 			listArgs.ParentID = parentID
+
+			// Spec filtering
+			if filter.SpecID != nil {
+				listArgs.SpecID = *filter.SpecID
+			}
+			if filter.SpecPrefix != nil {
+				listArgs.SpecPrefix = *filter.SpecPrefix
+			}
 
 			// Status exclusion (GH#788)
 			if len(filter.ExcludeStatus) > 0 {
@@ -1347,6 +1370,8 @@ func init() {
 	listCmd.Flags().StringSlice("label-any", []string{}, "Filter by labels (OR: must have AT LEAST ONE). Can combine with --label")
 	listCmd.Flags().String("title", "", "Filter by title text (case-insensitive substring match)")
 	listCmd.Flags().String("id", "", "Filter by specific issue IDs (comma-separated, e.g., bd-1,bd-5,bd-10)")
+	listCmd.Flags().String("spec", "", "Filter by spec ID (exact match; use trailing / for prefix)")
+	listCmd.Flags().String("spec-id", "", "Alias for --spec")
 	listCmd.Flags().IntP("limit", "n", 50, "Limit results (default 50, use 0 for unlimited)")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	listCmd.Flags().Bool("all", false, "Show all issues including closed (overrides default filter)")

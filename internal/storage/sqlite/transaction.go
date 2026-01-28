@@ -344,7 +344,7 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, spec_id
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -563,7 +563,7 @@ func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason stri
 	now := time.Now()
 
 	result, err := t.conn.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ? = NULL
 		WHERE id = ?
 	`, types.StatusClosed, now, now, reason, session, id)
 	if err != nil {
@@ -1333,6 +1333,16 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		args = append(args, filter.IDPrefix+"%")
 	}
 
+	// Spec filtering
+	if filter.SpecID != nil {
+		whereClauses = append(whereClauses, "spec_id = ?")
+		args = append(args, *filter.SpecID)
+	}
+	if filter.SpecPrefix != nil {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, *filter.SpecPrefix+"%")
+	}
+
 	// Wisp filtering
 	if filter.Ephemeral != nil {
 		if *filter.Ephemeral {
@@ -1378,7 +1388,7 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, spec_id
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1446,6 +1456,8 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Time-based scheduling fields
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Spec integration field
+	var specID sql.NullString
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -1457,7 +1469,6 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-		&dueAt, &deferUntil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1575,6 +1586,9 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	}
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 
 	return &issue, nil
