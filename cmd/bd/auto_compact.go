@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage"
@@ -48,7 +50,8 @@ func maybeAutoCompactDaemon(ctx context.Context, closedIssues []*types.Issue, co
 		if hasOpenBeads(result.Beads) {
 			continue
 		}
-		summary := buildAutoSpecSummary(result.Spec, result.Beads)
+		specText := readSpecContent(specID)
+		summary := buildAutoSpecSummary(result.Spec, specText, result.Beads)
 		if compactFlag {
 			now := time.Now().UTC().Truncate(time.Second)
 			summaryTokens := len(strings.Fields(summary))
@@ -106,7 +109,8 @@ func maybeAutoCompactDirect(ctx context.Context, closedIssues []*types.Issue, co
 		if err != nil {
 			continue
 		}
-		summary := buildAutoSpecSummary(entry, beads)
+		specText := readSpecContent(specID)
+		summary := buildAutoSpecSummary(entry, specText, beads)
 		if compactFlag {
 			now := time.Now().UTC().Truncate(time.Second)
 			summaryTokens := len(strings.Fields(summary))
@@ -160,7 +164,7 @@ func hasOpenBeads(beads []*types.Issue) bool {
 	return false
 }
 
-func buildAutoSpecSummary(entry *spec.SpecRegistryEntry, beads []*types.Issue) string {
+func buildAutoSpecSummary(entry *spec.SpecRegistryEntry, specText string, beads []*types.Issue) string {
 	specTitle := ""
 	specID := ""
 	if entry != nil {
@@ -176,19 +180,25 @@ func buildAutoSpecSummary(entry *spec.SpecRegistryEntry, beads []*types.Issue) s
 		}
 	}
 
+	overview, bullets := extractSpecHighlights(specText)
 	closedTitles := collectClosedTitles(beads, 6)
 	countClosed := countClosedBeads(beads)
 
 	var parts []string
 	parts = append(parts, fmt.Sprintf("%s.", title))
+	if overview != "" {
+		parts = append(parts, fmt.Sprintf("Summary: %s.", overview))
+	} else if len(bullets) > 0 {
+		parts = append(parts, fmt.Sprintf("Key points: %s.", strings.Join(bullets, "; ")))
+	}
 	if len(closedTitles) > 0 {
-		parts = append(parts, fmt.Sprintf("Implemented: %s.", strings.Join(closedTitles, "; ")))
+		parts = append(parts, fmt.Sprintf("Implemented work: %s.", strings.Join(closedTitles, "; ")))
 	} else {
 		parts = append(parts, "Implemented work is complete; no linked bead titles were available.")
 	}
 	parts = append(parts, fmt.Sprintf("Completed beads: %d.", countClosed))
 
-	return strings.Join(parts, " ")
+	return trimSummaryWords(strings.Join(parts, " "), 80)
 }
 
 func collectClosedTitles(beads []*types.Issue, limit int) []string {
@@ -259,4 +269,111 @@ func printCompactSuggestion(specID, summary string) {
 
 func ptrString(s string) *string {
 	return &s
+}
+
+func readSpecContent(specID string) string {
+	if !spec.IsScannableSpecID(specID) {
+		return ""
+	}
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return ""
+	}
+	repoRoot := filepath.Dir(beadsDir)
+	path := specID
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, specID)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func extractSpecHighlights(specText string) (string, []string) {
+	if strings.TrimSpace(specText) == "" {
+		return "", nil
+	}
+
+	importantSections := map[string]struct{}{
+		"overview": {}, "summary": {}, "requirements": {}, "api": {}, "behavior": {},
+		"decisions": {}, "constraints": {}, "non-goals": {}, "non goals": {},
+		"out of scope": {}, "risks": {},
+	}
+
+	section := ""
+	inCode := false
+	overview := ""
+	var bullets []string
+
+	lines := strings.Split(specText, "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "```") {
+			inCode = !inCode
+			continue
+		}
+		if inCode || line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			heading := strings.TrimSpace(strings.TrimLeft(line, "#"))
+			headingLower := strings.ToLower(heading)
+			section = ""
+			for key := range importantSections {
+				if strings.Contains(headingLower, key) {
+					section = key
+					break
+				}
+			}
+			continue
+		}
+		if section == "" {
+			continue
+		}
+		if isBullet(line) {
+			if len(bullets) < 6 {
+				bullets = append(bullets, trimBullet(line))
+			}
+			continue
+		}
+		if overview == "" && len(line) > 20 {
+			overview = line
+		}
+	}
+
+	return overview, bullets
+}
+
+func isBullet(line string) bool {
+	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+		return true
+	}
+	if len(line) > 2 && line[0] >= '0' && line[0] <= '9' && line[1] == '.' {
+		return true
+	}
+	return false
+}
+
+func trimBullet(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+		return strings.TrimSpace(line[2:])
+	}
+	if len(line) > 2 && line[0] >= '0' && line[0] <= '9' && line[1] == '.' {
+		return strings.TrimSpace(line[2:])
+	}
+	return line
+}
+
+func trimSummaryWords(text string, maxWords int) string {
+	if maxWords <= 0 {
+		return text
+	}
+	words := strings.Fields(text)
+	if len(words) <= maxWords {
+		return text
+	}
+	return strings.Join(words[:maxWords], " ") + "..."
 }
