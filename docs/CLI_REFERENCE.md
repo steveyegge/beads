@@ -631,6 +631,41 @@ bd sync
 # 5. Push to remote
 ```
 
+### Key-Value Store
+
+Store user-defined key-value pairs that persist across sessions. Useful for feature flags, environment config, or agent memory.
+
+```bash
+# Set a value
+bd set <key> <value>
+bd set feature_flag true
+bd set api_endpoint https://api.example.com
+
+# Get a value
+bd get <key>
+bd get feature_flag                    # Prints: true
+bd get missing_key                     # Prints: missing_key (not set)
+
+# Delete a key
+bd clear <key>
+bd clear feature_flag
+
+# List all key-value pairs
+bd kv list
+bd kv list --json                      # Machine-readable output
+```
+
+**Storage notes:**
+- KV data is stored in the local database with a `kv.` prefix
+- In `dolt-native` or `belt-and-suspenders` sync modes, KV data syncs via Dolt remotes
+- In `git-portable` mode, KV data stays local (not exported to JSONL)
+
+**Use cases:**
+- Feature flags: `bd set debug_mode true`
+- Environment config: `bd set staging_url https://staging.example.com`
+- Agent memory: `bd set last_migration 20240115_add_users.sql`
+- Session state: `bd set current_sprint 42`
+
 ## Issue Types
 
 - `bug` - Something broken that needs fixing
