@@ -244,7 +244,7 @@ func (s *SQLiteStorage) ClearSpecsMissing(ctx context.Context, specIDs []string)
 	return nil
 }
 
-// MarkSpecChangedBySpecIDs sets spec_changed_at for issues linked to changed specs.
+// MarkSpecChangedBySpecIDs sets spec_changed_at and updated_at for issues linked to changed specs.
 func (s *SQLiteStorage) MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []string, changedAt time.Time) (int, error) {
 	if len(specIDs) == 0 {
 		return 0, nil
@@ -260,13 +260,14 @@ func (s *SQLiteStorage) MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []
 
 	placeholders := strings.Repeat("?,", len(specIDs))
 	placeholders = strings.TrimSuffix(placeholders, ",")
-	args := make([]interface{}, 0, len(specIDs)+1)
-	args = append(args, changedAt)
+	args := make([]interface{}, 0, len(specIDs)+2)
+	args = append(args, changedAt) // spec_changed_at
+	args = append(args, changedAt) // updated_at
 	for _, id := range specIDs {
 		args = append(args, id)
 	}
 
-	query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ? WHERE spec_id IN (%s)`, placeholders) // #nosec G201
+	query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ?, updated_at = ? WHERE spec_id IN (%s)`, placeholders) // #nosec G201
 	res, err := conn.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("mark spec_changed_at: %w", err)

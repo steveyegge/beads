@@ -114,6 +114,8 @@ bd-profile-*.prof
 bd-trace-*.out
 # AI planning documents (ephemeral)
 history/
+*_SESSION.md
+*_NEXT_SESSION.md
 
 # Orchestrator agent state
 state.json

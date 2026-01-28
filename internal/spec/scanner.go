@@ -13,6 +13,33 @@ import (
 	"time"
 )
 
+// IsScannableSpecID returns true if spec_id refers to a local file path
+// that can be tracked for changes. Returns false for:
+// - Empty strings
+// - URLs (containing "://")
+// - Absolute paths (starting with "/")
+// - External IDs (SPEC-001, REQ-xxx, FEAT-xxx, US-xxx, JIRA-xxx)
+func IsScannableSpecID(specID string) bool {
+	if specID == "" {
+		return false
+	}
+	if strings.Contains(specID, "://") {
+		return false // URL
+	}
+	if strings.HasPrefix(specID, "/") {
+		return false // absolute path
+	}
+	// External ID prefixes that shouldn't be scanned
+	idPrefixes := []string{"SPEC-", "REQ-", "FEAT-", "US-", "JIRA-"}
+	upper := strings.ToUpper(specID)
+	for _, prefix := range idPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
 // Scan walks a spec directory and returns discovered specs.
 func Scan(rootDir, specPath string) ([]ScannedSpec, error) {
 	absRoot, err := filepath.Abs(rootDir)
