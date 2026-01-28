@@ -225,6 +225,14 @@ Shadowbook is the missing layer in spec-driven development:
 
 ---
 
+## Support
+
+If Shadowbook saves you time, consider buying me a coffee:
+
+[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://paypal.me/anupamchugh)
+
+---
+
 ## License
 
 MIT — Same as beads.
