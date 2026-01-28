@@ -197,6 +197,7 @@ git merge upstream/main
 - **[User Manual](docs/SHADOWBOOK_MANUAL.md)** — How to use Shadowbook
 - **[Architecture](docs/SHADOWBOOK_ARCHITECTURE.md)** — How it works
 - **[Roadmap](docs/SHADOWBOOK_ROADMAP.md)** — What’s next
+- **[Docs Migration](docs/SHADOWBOOK_DOCS_MIGRATION.md)** — Where the old docs went
 - [Beads Docs](https://github.com/steveyegge/beads#-documentation) — Full beads documentation
 - [AGENTS.md](AGENTS.md) — Agent workflow guide
 

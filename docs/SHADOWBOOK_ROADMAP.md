@@ -1,6 +1,6 @@
 # Shadowbook Roadmap
 
-A focused roadmap that builds on the current working feature set.
+A focused roadmap built on the current feature set.
 
 ---
 
@@ -51,4 +51,3 @@ A focused roadmap that builds on the current working feature set.
 1) **Semantic Diff Explanation**
 2) **Auto‑Task Generation**
 3) **Spec‑to‑Code Audit**
-

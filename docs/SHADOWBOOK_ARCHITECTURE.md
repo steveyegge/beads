@@ -40,7 +40,7 @@ Shadowbook extends Beads with spec tracking, drift detection, and compaction.
 ## Drift Detection Flow
 
 1) `bd spec scan` computes hashes and updates the registry.
-2) If a hash changes, linked issues get `spec_changed_at` set.
+2) If a hash changes, linked issues get `spec_changed_at`.
 3) `bd list --spec-changed` shows drifted issues.
 4) `bd update --ack-spec` clears the warning.
 
@@ -68,4 +68,3 @@ Shadowbook extends Beads with spec tracking, drift detection, and compaction.
 - Registry storage: `internal/storage/*/spec_registry.go`
 - CLI: `cmd/bd/spec.go`, `cmd/bd/spec_match.go`, `cmd/bd/auto_compact.go`
 - RPC handlers: `internal/rpc/server_spec.go`
-

@@ -1,6 +1,6 @@
 # Shadowbook Manual
 
-Shadowbook keeps specs and implementation in sync by linking issues to spec files and detecting drift when specs change.
+Shadowbook keeps specs and implementation aligned by linking issues to spec files and detecting drift when specs change.
 
 ---
 
@@ -42,7 +42,7 @@ bd spec coverage             # Coverage metrics
 
 ---
 
-## Auto‑Linking (Preview First)
+## Auto‑Linking (Preview‑First)
 
 ```bash
 # Suggest matches for one issue
@@ -64,7 +64,7 @@ bd spec link --auto --show-size
 Notes:
 - Preview is default; nothing is written without `--confirm`.
 - `--threshold` controls strictness.
-- `--format table` is easier to scan during review.
+- `--format table` is easier to review.
 
 ---
 
@@ -78,7 +78,7 @@ bd spec compact specs/auth.md --summary "OAuth2 login. 3 endpoints. Done Jan 202
 bd close bd-xxx --compact-spec
 ```
 
-Compaction keeps the full spec on disk but stores a short summary in the registry so agents carry less context.
+Compaction keeps the full spec on disk but stores a short summary in the registry to reduce context.
 
 ---
 
@@ -88,7 +88,7 @@ Compaction keeps the full spec on disk but stores a short summary in the registr
 bd spec consolidate --older-than 180 --report docs/SHADOWBOOK_CONSOLIDATION_REPORT.md
 ```
 
-This does not modify specs; it only lists candidates to consolidate later.
+This does not modify specs; it only lists candidates.
 
 ---
 
@@ -110,4 +110,3 @@ Only scannable IDs are eligible for drift detection and compaction.
 - The spec registry is **local‑only**.
 - Run `bd spec scan` on each machine to update it.
 - The registry lives in `.beads/beads.db` (SQLite).
-
