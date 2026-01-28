@@ -212,6 +212,19 @@ Your specs cast a shadow over your code. When the spec moves, the shadow should 
 
 ---
 
+## Positioning (Ecosystem Fit)
+
+Shadowbook is the missing layer in spec-driven development:
+
+- **Spec Kit** helps you write specs.
+- **Spec Workflow MCP** helps you visualize spec progress.
+- **Beads** tracks implementation work.
+- **Shadowbook** detects drift and compresses old narratives.
+
+**In Westworld terms:** the narrative changes, but the host keeps the cornerstone. Shadowbook tells you when the script moved and preserves what matters.
+
+---
+
 ## License
 
 MIT — Same as beads.
