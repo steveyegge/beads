@@ -1,348 +1,407 @@
-# Shadowbook - Next Session Tasks
+# Shadowbook Next Session Spec
 
-**Status:** PR #1372 submitted to beads (Phase 1). Phase 2 implemented on main, needs fixes.
-**Date:** 2026-01-28
-
-## Current State (What's Already Implemented)
-
-Phase 2 code is **merged on main** and working:
-
-| Component | File | Status |
-|-----------|------|--------|
-| Scanner | `internal/spec/scanner.go` | ✓ Scan(), ExtractTitle(), hashFile() |
-| Registry types | `internal/spec/types.go` | ✓ SpecRegistryEntry, ScannedSpec |
-| Registry logic | `internal/spec/registry.go` | ✓ UpdateRegistry() |
-| SQLite storage | `internal/storage/sqlite/spec_registry.go` | ✓ All CRUD + MarkSpecChangedBySpecIDs |
-| CLI commands | `cmd/bd/spec.go` | ✓ scan, list, show, coverage |
-| RPC layer | `internal/rpc/server_spec.go` | ✓ Daemon support |
-
-**What works now:**
-```bash
-bd spec scan          # Scans specs/, updates registry
-bd spec list          # Shows specs with bead counts
-bd spec show <id>     # Shows spec + linked beads
-bd spec coverage      # Coverage metrics
-```
-
-## What's Pending
-
-- [x] Apply 5 code quality fixes (below) - **ALL DONE**
-- [ ] Create shadowbook repo (or decide to keep as beads fork)
-- [ ] Set up homebrew tap
-- [ ] Test end-to-end
+## Date: 2026-01-29
+## Status: Ready for implementation
+## Previous: v1 complete, tested in kite-trading-platform (424 specs)
 
 ---
 
-## Task 1: Code Quality Fixes
+## What Works Now
 
-Code review identified 5 issues. Current implementation in `internal/storage/sqlite/spec_registry.go:248-299`.
+| Feature | Command | Status |
+|---------|---------|--------|
+| Spec scanning | `bd spec scan` | ✅ |
+| Spec listing | `bd spec list` | ✅ |
+| Spec detail | `bd spec show <path>` | ✅ |
+| Coverage report | `bd spec coverage` | ✅ |
+| Drift detection | `bd list --spec-changed` | ✅ |
+| Acknowledge | `bd update <id> --ack-spec` | ✅ |
+| Link issue | `bd update <id> --spec-id <path>` | ✅ |
+| Compaction | `bd spec compact <path> --summary "..."` | ✅ |
+| Find unlinked | `bd list --no-spec` | ✅ |
+| Idempotent init | `bd init --if-missing` | ✅ |
 
-### 1.1 Fix updated_at + events (HIGH)
+---
 
-**Problem:** `MarkSpecChangedBySpecIDs` only sets `spec_changed_at` without updating `updated_at` or creating audit events.
+## Priority 1: Improve `bd spec scan` Output
 
-**File:** `internal/storage/sqlite/spec_registry.go` (line 269)
-
-**Current code:**
-```go
-query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ? WHERE spec_id IN (%s)`, placeholders)
+### Problem
+User expected scan to show which specs are linked vs unlinked. Currently:
+```bash
+bd spec scan
+# ✓ Scanned 424 specs (added=4 updated=4 missing=0 marked=0)
 ```
 
-**Fix:**
-```go
-query := fmt.Sprintf(`UPDATE issues SET spec_changed_at = ?, updated_at = ? WHERE spec_id IN (%s)`, placeholders)
-// args needs second timestamp
+No coverage info. Have to run `bd spec coverage` separately.
+
+### Desired Output
+```bash
+bd spec scan
+
+# ✓ Scanned 424 specs
+#   Added: 4 | Updated: 4 | Missing: 0 | Marked: 0
+#
+# Coverage:
+#   ● 4 specs linked to beads
+#   ○ 420 specs have NO linked beads
+#
+# 💡 Run `bd spec suggest` to auto-match unlinked issues
 ```
 
-**Event decision:** Either:
-- (a) Add `EventSpecChanged EventType = "spec_changed"` to `internal/types/types.go:844` and emit it, OR
-- (b) Just update timestamps (simpler, events visible via updated_at change)
+### Implementation
+1. After scan, call `GetSpecCoverage()`
+2. Add coverage summary to output
+3. Add tip if unlinked > 10
 
-Recommend (b) for now - events can be added later if needed.
+**File:** `cmd/bd/spec.go` (specScanCmd, around line 85-92)
 
-### 1.2 Implement IsScannableSpecID (HIGH)
-
-**Problem:** No filtering for URLs, SPEC-xxx IDs, absolute paths. These shouldn't trigger spec scanning.
-
-**Where to enforce:** Two places:
-1. **`internal/spec/registry.go`** - in `UpdateRegistry()` when building the list of changed specs to mark
-2. **`cmd/bd/spec.go`** or **issue validation** - when a spec_id is set on an issue (optional, defensive)
-
-**Add to `internal/spec/scanner.go`:**
 ```go
-// IsScannableSpecID returns true if spec_id refers to a local file path
-// (vs URLs, external IDs like SPEC-001, or absolute paths).
-func IsScannableSpecID(specID string) bool {
-    if specID == "" {
-        return false
+// After successful scan, show coverage
+coverage, err := store.GetSpecCoverage(ctx)
+if err == nil && coverage.Total > 0 {
+    fmt.Printf("\nCoverage:\n")
+    fmt.Printf("  ● %d specs linked to beads\n", coverage.WithBeads)
+    fmt.Printf("  ○ %d specs have NO linked beads\n", coverage.WithoutBeads)
+    if coverage.WithoutBeads > 10 {
+        fmt.Println("\n💡 Run `bd spec suggest` to auto-match unlinked issues")
     }
-    if strings.Contains(specID, "://") {
-        return false // URL
-    }
-    if strings.HasPrefix(specID, "/") {
-        return false // absolute path
-    }
-    idPrefixes := []string{"SPEC-", "REQ-", "FEAT-", "US-", "JIRA-"}
-    upper := strings.ToUpper(specID)
-    for _, prefix := range idPrefixes {
-        if strings.HasPrefix(upper, prefix) {
-            return false // external ID
+}
+```
+
+---
+
+## Priority 2: `bd spec suggest <issue-id>`
+
+### Purpose
+Auto-suggest which spec an unlinked issue should link to.
+
+### Usage
+```bash
+bd spec suggest beads-wku1v
+
+# beads-wku1v: TraderDeck: Full implementation with scheduler controls
+#
+# Suggested specs (by title similarity):
+#   1. specs/active/TRADERDECK_FULL_IMPLEMENTATION_SPEC.md (92%)
+#   2. specs/active/TRADERDECK_REPLAY_NFO_UPDATES_SPEC.md (67%)
+#   3. specs/active/TRADERGLANCE_MACOS_MENUBAR_SPEC.md (45%)
+#
+# Link with:
+#   bd update beads-wku1v --spec-id "specs/active/TRADERDECK_FULL_IMPLEMENTATION_SPEC.md"
+```
+
+### Algorithm
+```go
+// internal/spec/matcher.go
+
+var stopwords = map[string]bool{
+    "the": true, "a": true, "an": true, "and": true, "or": true,
+    "for": true, "to": true, "in": true, "on": true, "with": true,
+    "spec": true, "feature": true, "task": true, "bug": true,
+    "implement": true, "add": true, "fix": true, "update": true,
+    "full": true, "complete": true, "new": true,
+}
+
+func Tokenize(s string) []string {
+    words := regexp.MustCompile(`\w+`).FindAllString(strings.ToLower(s), -1)
+    var tokens []string
+    for _, w := range words {
+        if !stopwords[w] && len(w) > 2 {
+            tokens = append(tokens, w)
         }
     }
-    return true
+    return tokens
+}
+
+func JaccardSimilarity(a, b []string) float64 {
+    setA := make(map[string]bool)
+    for _, t := range a { setA[t] = true }
+    setB := make(map[string]bool)
+    for _, t := range b { setB[t] = true }
+
+    intersection := 0
+    for t := range setA {
+        if setB[t] { intersection++ }
+    }
+    union := len(setA) + len(setB) - intersection
+    if union == 0 { return 0 }
+    return float64(intersection) / float64(union)
+}
+
+type ScoredMatch struct {
+    SpecID string
+    Title  string
+    Score  float64
+}
+
+func SuggestSpecs(issueTitle string, specs []SpecRegistryEntry, limit int) []ScoredMatch {
+    issueToks := Tokenize(issueTitle)
+    var matches []ScoredMatch
+
+    for _, spec := range specs {
+        // Score against title
+        specTitleToks := Tokenize(spec.Title)
+        titleScore := JaccardSimilarity(issueToks, specTitleToks)
+
+        // Score against filename
+        filename := filepath.Base(spec.SpecID)
+        filenameToks := Tokenize(strings.TrimSuffix(filename, ".md"))
+        filenameScore := JaccardSimilarity(issueToks, filenameToks)
+
+        // Combined score (title weighted higher)
+        score := 0.6*titleScore + 0.4*filenameScore
+
+        if score >= 0.4 { // 40% threshold
+            matches = append(matches, ScoredMatch{
+                SpecID: spec.SpecID,
+                Title:  spec.Title,
+                Score:  score,
+            })
+        }
+    }
+
+    // Sort by score descending
+    sort.Slice(matches, func(i, j int) bool {
+        return matches[i].Score > matches[j].Score
+    })
+
+    if len(matches) > limit {
+        matches = matches[:limit]
+    }
+    return matches
 }
 ```
 
-**Usage:** Call in `registry.go` UpdateRegistry() before adding to `changedSpecIDs`:
+### Files to Create
+- `internal/spec/matcher.go`
+- `internal/spec/matcher_test.go`
+- `cmd/bd/spec_suggest.go`
+
+### CLI Command
 ```go
-if !IsScannableSpecID(specID) {
-    continue
+// cmd/bd/spec_suggest.go
+var specSuggestCmd = &cobra.Command{
+    Use:   "suggest <issue-id>",
+    Short: "Suggest specs for an unlinked issue",
+    Args:  cobra.ExactArgs(1),
+    Run: func(cmd *cobra.Command, args []string) {
+        issueID := args[0]
+        limit, _ := cmd.Flags().GetInt("limit")
+
+        // Get issue
+        issue, err := store.GetIssue(ctx, issueID)
+        if err != nil { ... }
+
+        if issue.SpecID != "" {
+            fmt.Printf("Issue already linked to: %s\n", issue.SpecID)
+            return
+        }
+
+        // Get all specs
+        specs, err := specStore.ListSpecs(ctx)
+        if err != nil { ... }
+
+        // Suggest
+        matches := spec.SuggestSpecs(issue.Title, specs, limit)
+
+        fmt.Printf("%s: %s\n\n", issueID, issue.Title)
+
+        if len(matches) == 0 {
+            fmt.Println("No matching specs found.")
+            return
+        }
+
+        fmt.Println("Suggested specs (by title similarity):")
+        for i, m := range matches {
+            fmt.Printf("  %d. %s (%.0f%%)\n", i+1, m.SpecID, m.Score*100)
+        }
+
+        fmt.Printf("\nLink with:\n  bd update %s --spec-id \"%s\"\n",
+            issueID, matches[0].SpecID)
+    },
 }
 ```
 
-### 1.3 Robust repo root resolution (MEDIUM)
+---
 
-**Problem:** CLI direct mode uses `filepath.Dir(beadsDir)` which works, but caller sites should use a consistent helper.
+## Priority 3: `bd spec link --auto`
 
-**Current code** (`cmd/bd/spec.go:70-74`):
+### Purpose
+Bulk link unlinked issues to specs above similarity threshold.
+
+### Usage
+```bash
+# Preview mode (default)
+bd spec link --auto
+
+# Found 47 potential matches:
+#   beads-wku1v → specs/active/TRADERDECK_FULL_IMPLEMENTATION_SPEC.md (92%)
+#   beads-4ktsp → specs/TRADE_COMPANY_MVP_SPEC.md (89%)
+#   beads-dqvvp → specs/features/MY_TRADE_COMPANY_LAUNCH_SPEC.md (85%)
+#   ... (44 more)
+#
+# Run with --confirm to apply these links
+
+# Apply mode
+bd spec link --auto --confirm
+# ✓ Linked 47 issues to specs
+
+# Custom threshold
+bd spec link --auto --threshold 80 --confirm
+```
+
+### Flags
+- `--threshold <percent>` — Minimum similarity (default: 70)
+- `--confirm` — Actually apply links
+- `--limit <n>` — Max issues to process (default: 100)
+
+### Implementation
 ```go
-beadsDir := beads.FindBeadsDir()
-if beadsDir == "" {
-    FatalErrorRespectJSON("no .beads directory found")
+// cmd/bd/spec_link.go
+var specLinkCmd = &cobra.Command{
+    Use:   "link",
+    Short: "Link issues to specs",
 }
-repoRoot := filepath.Dir(beadsDir)
+
+var specLinkAutoCmd = &cobra.Command{
+    Use:   "auto",
+    Short: "Auto-link unlinked issues to matching specs",
+    Run: func(cmd *cobra.Command, args []string) {
+        threshold, _ := cmd.Flags().GetFloat64("threshold")
+        confirm, _ := cmd.Flags().GetBool("confirm")
+        limit, _ := cmd.Flags().GetInt("limit")
+
+        // Get unlinked issues
+        filter := types.IssueFilter{NoSpec: true, Limit: limit}
+        issues, _ := store.SearchIssues(ctx, filter)
+
+        // Get all specs
+        specs, _ := specStore.ListSpecs(ctx)
+
+        var matches []struct {
+            IssueID string
+            SpecID  string
+            Score   float64
+        }
+
+        for _, issue := range issues {
+            suggestions := spec.SuggestSpecs(issue.Title, specs, 1)
+            if len(suggestions) > 0 && suggestions[0].Score >= threshold/100 {
+                matches = append(matches, struct{...}{
+                    IssueID: issue.ID,
+                    SpecID:  suggestions[0].SpecID,
+                    Score:   suggestions[0].Score,
+                })
+            }
+        }
+
+        if len(matches) == 0 {
+            fmt.Println("No matches found above threshold.")
+            return
+        }
+
+        fmt.Printf("Found %d potential matches:\n", len(matches))
+        for _, m := range matches {
+            fmt.Printf("  %s → %s (%.0f%%)\n", m.IssueID, m.SpecID, m.Score*100)
+        }
+
+        if !confirm {
+            fmt.Println("\nRun with --confirm to apply these links")
+            return
+        }
+
+        // Apply links
+        for _, m := range matches {
+            store.UpdateIssue(ctx, m.IssueID, types.IssueUpdate{
+                SpecID: &m.SpecID,
+            }, "shadowbook-auto-link")
+        }
+        fmt.Printf("✓ Linked %d issues to specs\n", len(matches))
+    },
+}
 ```
-
-**Fix:** This is actually fine. The `beads.FindBeadsDir()` already walks up looking for `.beads/`. The issue is consistency - consider extracting to a helper if used elsewhere.
-
-**No code change needed** unless we want a dedicated `FindRepoRoot()` for clarity.
-
-### 1.4 Add local-only warning (MEDIUM)
-
-**Problem:** Users may expect spec_registry to sync via git.
-
-**Fix in `cmd/bd/spec.go` (scan command output, line 91-92):**
-```go
-fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
-    ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
-fmt.Println("● Note: Spec registry is local-only (not synced via git)")
-```
-
-Use `●` (allowed symbol) not `ℹ` (emoji).
-
-**Also add to docs/CLI_REFERENCE.md** in the spec commands section.
-
-### 1.5 Add missing tests (MEDIUM)
-
-**Required tests:**
-
-| Test | File |
-|------|------|
-| `TestIsScannableSpecID` | `internal/spec/scanner_test.go` |
-| `TestScanExtractsTitle` | `internal/spec/scanner_test.go` |
-| `TestRegistryUpdate_Add` | `internal/spec/registry_test.go` |
-| `TestRegistryUpdate_Change` | `internal/spec/registry_test.go` |
-| `TestMarkSpecChanged_UpdatesTimestamp` | `internal/storage/sqlite/spec_registry_test.go` |
 
 ---
 
-## Task 2: Create Shadowbook Repo
+## Priority 4: `bd spec orphans`
 
-### 2.1 Create repo
+### Purpose
+Find issues that SHOULD have specs but don't.
 
+### Usage
 ```bash
-gh repo create anupamchugh/shadowbook --public --description "Keep your specs and code in sync"
-```
+bd spec orphans
 
-### 2.2 Structure
-
-```
-shadowbook/
-├── cmd/
-│   └── shadowbook/
-│       └── main.go          # Or extend bd
-├── internal/
-│   ├── spec/
-│   │   ├── scanner.go       # From beads
-│   │   ├── registry.go      # From beads
-│   │   └── store.go         # From beads
-│   └── storage/
-│       └── ...              # Subset of beads storage
-├── docs/
-│   ├── SPEC_SYNC.md
-│   └── CLI_REFERENCE.md
-├── README.md                 # From SHADOWBOOK_README.md
-├── LICENSE
-└── go.mod
-```
-
-### 2.3 Decision: Standalone vs Extension
-
-**Option A: Standalone CLI**
-- Separate `shadowbook` binary
-- Uses beads as library dependency
-- Commands: `shadowbook scan`, `shadowbook list`, etc.
-
-**Option B: Beads Extension**
-- Fork beads entirely
-- Keep `bd` command with `bd spec` subcommands
-- Market as "beads + spec intelligence"
-
-**Recommendation:** Option B for now (simpler). Can extract to standalone later.
-
----
-
-## Task 3: Homebrew Tap
-
-### 3.1 Create tap repo
-
-```bash
-gh repo create anupamchugh/homebrew-shadowbook --public
-```
-
-### 3.2 Create formula
-
-**File:** `Formula/shadowbook.rb`
-
-```ruby
-class Shadowbook < Formula
-  desc "Keep your specs and code in sync - spec intelligence for beads"
-  homepage "https://github.com/anupamchugh/shadowbook"
-  url "https://github.com/anupamchugh/shadowbook/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "COMPUTE_AFTER_RELEASE"
-  license "MIT"
-
-  depends_on "go" => :build
-  depends_on "beads"  # or bundle beads
-
-  def install
-    system "go", "build", "-o", bin/"shadowbook", "./cmd/shadowbook"
-  end
-
-  test do
-    system "#{bin}/shadowbook", "version"
-  end
-end
-```
-
-### 3.3 Installation
-
-```bash
-brew tap anupamchugh/shadowbook
-brew install shadowbook
+# Issues without specs (potential matches exist):
+#   beads-wku1v: TraderDeck: Full implementation...
+#     → 3 specs match "traderdeck"
+#   beads-4ktsp: Trade Company MVP...
+#     → 5 specs match "trade company"
+#
+# Issues without specs (no matches found):
+#   beads-cebqh: Wave Rider: Fast Entry...
+#   beads-xyz: Random Task...
+#
+# Summary:
+#   47 issues could be auto-linked (run `bd spec link --auto`)
+#   23 issues have no matching specs
 ```
 
 ---
 
-## Task 4: End-to-End Testing
+## Implementation Order
 
-### 4.1 Test scenario
-
-```bash
-# Setup
-mkdir test-project && cd test-project
-git init
-bd init
-mkdir -p specs
-
-# Create spec
-echo "# Login Feature" > specs/login.md
-
-# Scan
-bd spec scan
-bd spec list  # should show specs/login.md
-
-# Link bead
-bd create "Implement login" --spec-id "specs/login.md"
-
-# Verify linkage
-bd spec show specs/login.md  # should show linked bead
-bd list --spec "specs/"      # should show the bead
-
-# Change spec
-echo "# Login Feature v2" > specs/login.md
-bd spec scan  # should detect change
-
-# Verify change detection
-bd list --spec-changed  # should show the bead
-bd show <id>            # should show SPEC CHANGED warning
-
-# Acknowledge
-bd update <id> --ack-spec
-bd list --spec-changed  # should be empty
-
-# Coverage
-bd spec coverage
-```
-
-### 4.2 Edge cases to test
-
-- [ ] URL spec_id (should not be scanned)
-- [ ] SPEC-001 identifier (should not be scanned)
-- [ ] Missing spec file (should soft-delete)
-- [ ] Spec reappears (should clear missing_at)
-- [ ] Multiple beads per spec
-- [ ] Nested spec directories
+| Order | Task | Effort | Files |
+|-------|------|--------|-------|
+| 1 | Improve scan output | 30 min | `cmd/bd/spec.go` |
+| 2 | Create matcher | 1 hr | `internal/spec/matcher.go` |
+| 3 | `bd spec suggest` | 1 hr | `cmd/bd/spec_suggest.go` |
+| 4 | `bd spec link --auto` | 1 hr | `cmd/bd/spec_link.go` |
+| 5 | `bd spec orphans` | 30 min | `cmd/bd/spec_orphans.go` |
 
 ---
 
-## Task 5: Release Checklist
+## Testing Checklist
 
-- [ ] All 5 fixes implemented
-- [ ] Tests passing
-- [ ] README updated with final install instructions
-- [ ] Version tagged (v0.1.0)
-- [ ] Homebrew formula created
-- [ ] Release notes written
-
----
-
-## Files Reference
-
-| File | Purpose | Location |
-|------|---------|----------|
-| Phase 2 code | Spec registry, scanning | `main` branch |
-| SHADOWBOOK_README.md | Marketing README | Repo root |
-| docs/SPEC_SYNC.md | Technical spec | docs/ |
-| docs/PR_BEADS_SPEC_ID.md | Beads PR reference | docs/ |
-
----
-
-## Quick Start for Next Session
-
-```bash
-# 1. You're already on main with Phase 2 code working
-git status
-
-# 2. Apply the fixes (priority order)
-# HIGH:
-# - Fix 1.1: Add updated_at to MarkSpecChangedBySpecIDs query
-# - Fix 1.2: Add IsScannableSpecID() and use in registry.go
-# MEDIUM:
-# - Fix 1.4: Add local-only warning with ● symbol
-# - Fix 1.5: Add tests
-
-# 3. Test locally
-go build ./cmd/bd
-./bd spec scan
-./bd spec list
-go test ./internal/spec/... ./internal/storage/sqlite/...
-
-# 4. Create shadowbook repo (if going standalone)
-# OR keep as beads fork
-
-# 5. Set up homebrew tap
-
-# 6. Release
-```
+- [ ] `bd spec scan` shows coverage summary after scan
+- [ ] `bd spec suggest beads-xxx` returns ranked matches
+- [ ] `bd spec suggest` with already-linked issue shows current link
+- [ ] `bd spec link --auto` previews correctly (no --confirm)
+- [ ] `bd spec link --auto --confirm` applies links
+- [ ] `bd spec link --auto --threshold 90` filters low matches
+- [ ] `bd spec orphans` categorizes correctly
+- [ ] All commands work with `--json` flag
+- [ ] Works in kite-trading-platform (424 specs, 100+ issues)
 
 ---
 
 ## Success Criteria
 
-- [ ] `bd spec scan` works with all fixes
-- [ ] Non-scannable spec_ids are skipped
-- [ ] Change detection updates `updated_at`
-- [ ] Tests pass
-- [ ] Installable via `brew install`
-- [ ] README accurate and complete
+After this session:
+```bash
+# 1. Scan shows coverage
+bd spec scan
+# → Shows "4 linked, 420 unlinked"
+
+# 2. Suggest works
+bd spec suggest beads-wku1v
+# → Shows matching specs with scores
+
+# 3. Auto-link works
+bd spec link --auto --confirm
+# → Links ~50 issues automatically
+
+# 4. Coverage improves
+bd spec coverage
+# → "54 specs with beads, 370 without"
+```
+
+---
+
+## Notes
+
+- Matching uses Jaccard similarity on tokenized titles
+- Default threshold: 70% for auto-link, 40% for suggestions
+- Stopwords filtered: the, a, an, spec, feature, implement, etc.
+- All commands support `--json` for programmatic use
+- Test in kite-trading-platform before committing
