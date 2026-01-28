@@ -218,6 +218,10 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleSpecCoverage(req)
 	case OpSpecCompact:
 		resp = s.handleSpecCompact(req)
+	case OpSpecSuggest:
+		resp = s.handleSpecSuggest(req)
+	case OpSpecLinkAuto:
+		resp = s.handleSpecLinkAuto(req)
 
 	case OpCompact:
 		resp = s.handleCompact(req)

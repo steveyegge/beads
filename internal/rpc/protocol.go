@@ -38,6 +38,8 @@ const (
 	OpSpecShow     = "spec_show"
 	OpSpecCoverage = "spec_coverage"
 	OpSpecCompact  = "spec_compact"
+	OpSpecSuggest  = "spec_suggest"
+	OpSpecLinkAuto = "spec_link_auto"
 
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
@@ -403,6 +405,50 @@ type SpecCompactArgs struct {
 	SummaryTokens int        `json:"summary_tokens,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 	ArchivedAt    *time.Time `json:"archived_at,omitempty"`
+}
+
+// SpecSuggestArgs represents arguments for spec suggest operation.
+type SpecSuggestArgs struct {
+	IssueID   string `json:"issue_id"`
+	Limit     int    `json:"limit,omitempty"`
+	Threshold int    `json:"threshold,omitempty"` // percent 0-100
+}
+
+// SpecSuggestResult represents suggested specs for an issue.
+type SpecSuggestResult struct {
+	IssueID     string             `json:"issue_id"`
+	IssueTitle  string             `json:"issue_title"`
+	CurrentSpec string             `json:"current_spec,omitempty"`
+	Suggestions []spec.ScoredMatch `json:"suggestions,omitempty"`
+}
+
+// SpecLinkAutoArgs represents arguments for auto-linking specs to issues.
+type SpecLinkAutoArgs struct {
+	Threshold     int  `json:"threshold,omitempty"` // percent 0-100
+	Confirm       bool `json:"confirm,omitempty"`
+	IncludeClosed bool `json:"include_closed,omitempty"`
+	MaxIssues     int  `json:"max_issues,omitempty"`
+}
+
+// SpecLinkAutoSuggestion is a suggested link from issue to spec.
+type SpecLinkAutoSuggestion struct {
+	IssueID    string  `json:"issue_id"`
+	IssueTitle string  `json:"issue_title"`
+	SpecID     string  `json:"spec_id"`
+	SpecTitle  string  `json:"spec_title"`
+	Score      float64 `json:"score"`
+	Applied    bool    `json:"applied"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// SpecLinkAutoResult summarizes auto-link suggestions.
+type SpecLinkAutoResult struct {
+	TotalIssues     int                      `json:"total_issues"`
+	Matched         int                      `json:"matched"`
+	Applied         int                      `json:"applied"`
+	SkippedNoTitle  int                      `json:"skipped_no_title"`
+	SkippedLowScore int                      `json:"skipped_low_score"`
+	Suggestions     []SpecLinkAutoSuggestion `json:"suggestions,omitempty"`
 }
 
 // DepAddArgs represents arguments for adding a dependency

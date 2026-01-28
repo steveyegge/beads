@@ -223,3 +223,149 @@ func (s *Server) handleSpecCompact(req *Request) Response {
 	data, _ := json.Marshal(entry)
 	return Response{Success: true, Data: data}
 }
+
+func (s *Server) handleSpecSuggest(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecSuggestArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid spec suggest args: %v", err)}
+	}
+	if strings.TrimSpace(args.IssueID) == "" {
+		return Response{Success: false, Error: "issue_id is required"}
+	}
+
+	issue, err := s.storage.GetIssue(ctx, args.IssueID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("get issue: %v", err)}
+	}
+	if issue == nil {
+		return Response{Success: false, Error: fmt.Sprintf("issue not found: %s", args.IssueID)}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	entries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+
+	specs := make([]spec.SpecRegistryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.MissingAt != nil {
+			continue
+		}
+		specs = append(specs, entry)
+	}
+
+	limit := args.Limit
+	if limit == 0 {
+		limit = 3
+	}
+	threshold := args.Threshold
+	if threshold == 0 {
+		threshold = 40
+	}
+	minScore := float64(threshold) / 100.0
+
+	result := SpecSuggestResult{
+		IssueID:     issue.ID,
+		IssueTitle:  issue.Title,
+		CurrentSpec: issue.SpecID,
+	}
+	if issue.SpecID == "" {
+		result.Suggestions = spec.SuggestSpecs(issue.Title, specs, limit, minScore)
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+func (s *Server) handleSpecLinkAuto(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecLinkAutoArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid spec link auto args: %v", err)}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	entries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+
+	specs := make([]spec.SpecRegistryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.MissingAt != nil {
+			continue
+		}
+		specs = append(specs, entry)
+	}
+
+	filter := types.IssueFilter{NoSpec: true}
+	if !args.IncludeClosed {
+		filter.ExcludeStatus = []types.Status{types.StatusClosed}
+	}
+	if args.MaxIssues > 0 {
+		filter.Limit = args.MaxIssues
+	}
+
+	issues, err := s.storage.SearchIssues(ctx, "", filter)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list issues: %v", err)}
+	}
+
+	threshold := args.Threshold
+	if threshold == 0 {
+		threshold = 80
+	}
+	minScore := float64(threshold) / 100.0
+
+	result := SpecLinkAutoResult{
+		TotalIssues: len(issues),
+	}
+	actor := s.reqActor(req)
+
+	for _, issue := range issues {
+		if strings.TrimSpace(issue.Title) == "" {
+			result.SkippedNoTitle++
+			continue
+		}
+		match, ok := spec.BestSpecMatch(issue.Title, specs, minScore)
+		if !ok {
+			result.SkippedLowScore++
+			continue
+		}
+		result.Matched++
+		suggestion := SpecLinkAutoSuggestion{
+			IssueID:    issue.ID,
+			IssueTitle: issue.Title,
+			SpecID:     match.SpecID,
+			SpecTitle:  match.Title,
+			Score:      match.Score,
+		}
+		if args.Confirm {
+			updates := map[string]interface{}{
+				"spec_id": match.SpecID,
+			}
+			if err := s.storage.UpdateIssue(ctx, issue.ID, updates, actor); err != nil {
+				suggestion.Error = err.Error()
+			} else {
+				suggestion.Applied = true
+				result.Applied++
+			}
+		}
+		result.Suggestions = append(result.Suggestions, suggestion)
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}

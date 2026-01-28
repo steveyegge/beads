@@ -420,6 +420,16 @@ func (c *Client) SpecCompact(args *SpecCompactArgs) (*Response, error) {
 	return c.Execute(OpSpecCompact, args)
 }
 
+// SpecSuggest suggests specs for an issue via the daemon.
+func (c *Client) SpecSuggest(args *SpecSuggestArgs) (*Response, error) {
+	return c.Execute(OpSpecSuggest, args)
+}
+
+// SpecLinkAuto suggests or applies auto-linking via the daemon.
+func (c *Client) SpecLinkAuto(args *SpecLinkAutoArgs) (*Response, error) {
+	return c.Execute(OpSpecLinkAuto, args)
+}
+
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)
