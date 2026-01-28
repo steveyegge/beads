@@ -12,6 +12,28 @@ import (
 // kvPrefix is prepended to all user keys to separate them from internal config
 const kvPrefix = "kv."
 
+// validateKVKey checks if a key is valid for the KV store.
+// Returns an error if the key is invalid.
+func validateKVKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("key cannot be only whitespace")
+	}
+	// Prevent keys that would create nested kv.kv.* prefixes
+	if strings.HasPrefix(key, "kv.") {
+		return fmt.Errorf("key cannot start with 'kv.' (would create nested prefix)")
+	}
+	// Prevent keys that look like internal config
+	if strings.HasPrefix(key, "sync.") || strings.HasPrefix(key, "conflict.") ||
+		strings.HasPrefix(key, "federation.") || strings.HasPrefix(key, "jira.") ||
+		strings.HasPrefix(key, "linear.") || strings.HasPrefix(key, "export.") {
+		return fmt.Errorf("key cannot start with reserved prefix %q", strings.Split(key, ".")[0]+".")
+	}
+	return nil
+}
+
 // setCmd sets a key-value pair (top-level: bd set key value)
 var setCmd = &cobra.Command{
 	Use:     "set <key> <value>",
@@ -36,6 +58,9 @@ Examples:
 		}
 
 		key := args[0]
+		if err := validateKVKey(key); err != nil {
+			FatalErrorRespectJSON("invalid key: %v", err)
+		}
 		value := args[1]
 		storageKey := kvPrefix + key
 
@@ -82,13 +107,19 @@ Examples:
 		}
 
 		if jsonOutput {
-			outputJSON(map[string]string{
+			result := map[string]interface{}{
 				"key":   key,
 				"value": value,
-			})
+				"found": value != "",
+			}
+			outputJSON(result)
+			if value == "" {
+				os.Exit(1)
+			}
 		} else {
 			if value == "" {
-				fmt.Printf("%s (not set)\n", key)
+				fmt.Fprintf(os.Stderr, "%s (not set)\n", key)
+				os.Exit(1)
 			} else {
 				fmt.Printf("%s\n", value)
 			}
@@ -116,6 +147,9 @@ Examples:
 		}
 
 		key := args[0]
+		if err := validateKVKey(key); err != nil {
+			FatalErrorRespectJSON("invalid key: %v", err)
+		}
 		storageKey := kvPrefix + key
 
 		ctx := rootCtx
