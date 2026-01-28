@@ -456,19 +456,45 @@ func startDaemon(interval time.Duration, autoCommit, autoPush, autoPull, localMo
 		fmt.Fprintf(os.Stderr, "Warning: failed to release process: %v\n", err)
 	}
 
+	// Phase 1: Wait for PID file (fast - happens during lock acquisition)
+	pidConfirmed := false
 	for i := 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)
 		// #nosec G304 - controlled path from config
 		if data, err := os.ReadFile(pidFile); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid == expectedPID {
-				fmt.Printf("Daemon started (PID %d)\n", expectedPID)
-				return
+				pidConfirmed = true
+				break
 			}
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Warning: daemon may have failed to start (PID file not confirmed)\n")
-	fmt.Fprintf(os.Stderr, "Check log file: %s\n", logPath)
+	if !pidConfirmed {
+		fmt.Fprintf(os.Stderr, "Warning: daemon may have failed to start (PID file not confirmed)\n")
+		fmt.Fprintf(os.Stderr, "Check log file: %s\n", logPath)
+		return
+	}
+
+	// Phase 2: Wait for RPC server to be ready (may take several seconds for DB init)
+	// This prevents "health_failed" errors when commands run immediately after daemon start
+	socketPath := getSocketPathForPID(pidFile)
+	serverReady := false
+	for i := 0; i < 50; i++ { // Up to 5 seconds (50 × 100ms)
+		time.Sleep(100 * time.Millisecond)
+		if client, err := rpc.TryConnectWithTimeout(socketPath, 200*time.Millisecond); err == nil && client != nil {
+			// Connection successful - server is ready
+			_ = client.Close()
+			serverReady = true
+			break
+		}
+	}
+
+	if serverReady {
+		fmt.Printf("Daemon started (PID %d)\n", expectedPID)
+	} else {
+		fmt.Printf("Daemon started (PID %d) - server may still be initializing\n", expectedPID)
+		fmt.Fprintf(os.Stderr, "Hint: if commands fail, wait a few seconds and retry\n")
+	}
 }
 
 // setupDaemonLock acquires the daemon lock and writes PID file
