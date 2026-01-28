@@ -1150,6 +1150,9 @@ func (s *Server) handleList(req *Request) Response {
 	if listArgs.SpecChanged {
 		filter.SpecChanged = true
 	}
+	if listArgs.NoSpec {
+		filter.NoSpec = true
+	}
 
 	// Pattern matching
 	filter.TitleContains = listArgs.TitleContains
@@ -1427,6 +1430,9 @@ func (s *Server) handleCount(req *Request) Response {
 	}
 	if countArgs.SpecChanged {
 		filter.SpecChanged = true
+	}
+	if countArgs.NoSpec {
+		filter.NoSpec = true
 	}
 
 	// Pattern matching

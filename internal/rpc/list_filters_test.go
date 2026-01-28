@@ -705,6 +705,9 @@ func listArgsToFilter(args *ListArgs, t *testing.T) *types.IssueFilter {
 	if args.SpecChanged {
 		filter.SpecChanged = true
 	}
+	if args.NoSpec {
+		filter.NoSpec = true
+	}
 
 	if args.Status != "" && args.Status != "all" {
 		status := types.Status(args.Status)

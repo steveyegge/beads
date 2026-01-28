@@ -1971,6 +1971,9 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	if filter.SpecChanged {
 		whereClauses = append(whereClauses, "spec_changed_at IS NOT NULL")
 	}
+	if filter.NoSpec {
+		whereClauses = append(whereClauses, "(spec_id IS NULL OR spec_id = '')")
+	}
 
 	// Wisp filtering
 	if filter.Ephemeral != nil {

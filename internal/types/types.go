@@ -916,9 +916,10 @@ type IssueFilter struct {
 	NotesContains       string
 
 	// Spec filtering
-	SpecID     *string // Exact spec_id match
-	SpecPrefix *string // Prefix match (e.g., "specs/auth/")
-	SpecChanged bool   // Filter issues with spec_changed_at set
+	SpecID      *string // Exact spec_id match
+	SpecPrefix  *string // Prefix match (e.g., "specs/auth/")
+	SpecChanged bool    // Filter issues with spec_changed_at set
+	NoSpec      bool    // Filter issues with no spec_id set
 
 	// Date ranges
 	CreatedAfter  *time.Time

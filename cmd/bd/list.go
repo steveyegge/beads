@@ -665,6 +665,7 @@ var listCmd = &cobra.Command{
 		dueBefore, _ := cmd.Flags().GetString("due-before")
 		overdueFlag, _ := cmd.Flags().GetBool("overdue")
 		specChangedFlag, _ := cmd.Flags().GetBool("spec-changed")
+		noSpecFlag, _ := cmd.Flags().GetBool("no-spec")
 
 		// Pretty and watch flags (GH#654)
 		prettyFormat, _ := cmd.Flags().GetBool("pretty")
@@ -937,6 +938,9 @@ var listCmd = &cobra.Command{
 		if specChangedFlag {
 			filter.SpecChanged = true
 		}
+		if noSpecFlag {
+			filter.NoSpec = true
+		}
 
 		// Check database freshness before reading
 		// Skip check when using daemon (daemon auto-imports on staleness)
@@ -1035,6 +1039,7 @@ var listCmd = &cobra.Command{
 				listArgs.SpecPrefix = *filter.SpecPrefix
 			}
 			listArgs.SpecChanged = filter.SpecChanged
+			listArgs.NoSpec = filter.NoSpec
 
 			// Status exclusion (GH#788)
 			if len(filter.ExcludeStatus) > 0 {
@@ -1378,6 +1383,7 @@ func init() {
 	listCmd.Flags().String("spec", "", "Filter by spec ID (exact match; use trailing / for prefix)")
 	listCmd.Flags().String("spec-id", "", "Alias for --spec")
 	listCmd.Flags().Bool("spec-changed", false, "Show only issues whose spec has changed")
+	listCmd.Flags().Bool("no-spec", false, "Show only issues with no spec linked")
 	listCmd.Flags().IntP("limit", "n", 50, "Limit results (default 50, use 0 for unlimited)")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	listCmd.Flags().Bool("all", false, "Show all issues including closed (overrides default filter)")

@@ -219,6 +219,7 @@ type ListArgs struct {
 	SpecID      string `json:"spec_id,omitempty"`      // Exact match
 	SpecPrefix  string `json:"spec_prefix,omitempty"`  // Prefix match
 	SpecChanged bool   `json:"spec_changed,omitempty"` // Filter issues with spec_changed_at set
+	NoSpec      bool   `json:"no_spec,omitempty"`      // Filter issues with no spec_id set
 
 	// Pattern matching
 	TitleContains       string `json:"title_contains,omitempty"`
@@ -291,6 +292,7 @@ type CountArgs struct {
 	SpecID      string `json:"spec_id,omitempty"`      // Exact match
 	SpecPrefix  string `json:"spec_prefix,omitempty"`  // Prefix match
 	SpecChanged bool   `json:"spec_changed,omitempty"` // Filter issues with spec_changed_at set
+	NoSpec      bool   `json:"no_spec,omitempty"`      // Filter issues with no spec_id set
 
 	// Pattern matching
 	TitleContains       string `json:"title_contains,omitempty"`

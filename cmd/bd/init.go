@@ -60,6 +60,7 @@ variable.`,
 		skipHooks, _ := cmd.Flags().GetBool("skip-hooks")
 		force, _ := cmd.Flags().GetBool("force")
 		fromJSONL, _ := cmd.Flags().GetBool("from-jsonl")
+		ifMissing, _ := cmd.Flags().GetBool("if-missing")
 
 		// Dolt server mode flags (bd-dolt.2.2)
 		serverMode, _ := cmd.Flags().GetBool("server")
@@ -103,6 +104,18 @@ variable.`,
 		if err := config.Initialize(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to initialize config: %v\n", err)
 			// Non-fatal - continue with defaults
+		}
+
+		// Handle --if-missing: exit early and successfully if already initialized
+		// This enables idempotent init in CI pipelines
+		if ifMissing {
+			beadsDir := beads.FindBeadsDir()
+			if beadsDir != "" {
+				if !quiet {
+					fmt.Printf("Already initialized (found %s), skipping.\n", beadsDir)
+				}
+				return
+			}
 		}
 
 		// Safety guard: check for existing JSONL with issues
@@ -741,6 +754,7 @@ func init() {
 	initCmd.Flags().Bool("skip-merge-driver", false, "Skip git merge driver setup")
 	initCmd.Flags().Bool("force", false, "Force re-initialization even if JSONL already has issues (may cause data loss)")
 	initCmd.Flags().Bool("from-jsonl", false, "Import from current .beads/issues.jsonl file instead of git history (preserves manual cleanups)")
+	initCmd.Flags().Bool("if-missing", false, "Only initialize if .beads doesn't exist (idempotent for CI)")
 
 	// Dolt server mode flags (bd-dolt.2.2)
 	initCmd.Flags().Bool("server", false, "Configure Dolt in server mode (connect to external dolt sql-server)")
