@@ -34,9 +34,9 @@ func validateKVKey(key string) error {
 	return nil
 }
 
-// setCmd sets a key-value pair (top-level: bd set key value)
-var setCmd = &cobra.Command{
-	Use:     "set <key> <value>",
+// kvCmd is the parent command for kv subcommands
+var kvCmd = &cobra.Command{
+	Use:     "kv",
 	GroupID: "setup",
 	Short:   "Key-value store commands",
 	Long: `Commands for working with the beads key-value store.
