@@ -8,7 +8,7 @@ Investigation of the beads routing functionality revealed:
 - **Test coverage has GAPS** - error paths untested
 - **Error handling is SILENT** - failures hard to debug
 
-**Last Updated**: 2026-01-27 (TASK-007 completed - ALL TASKS COMPLETE)
+**Last Updated**: 2026-01-27 (TASK-008 completed - ALL TASKS COMPLETE)
 **Validation Status**: All specs reviewed against implementation - CONFIRMED
 
 ### Independent Verification Summary
@@ -31,6 +31,7 @@ Investigation of the beads routing functionality revealed:
 | TASK-005 | Add unit tests for ResolveBeadsDirForID | completed | P1 |
 | TASK-006 | Add documentation comments for edge cases | completed | P2 |
 | TASK-007 | Add warning for malformed routes.jsonl | completed | P2 |
+| TASK-008 | Integrate auto-routing in create command | completed | P0 |
 | TASK-000 | Core routing implementation | completed | - |
 
 ---
@@ -91,6 +92,29 @@ Investigation of the beads routing functionality revealed:
 - [x] Shows file path being loaded
 - [x] Shows count of lines parsed/skipped
 - [x] Shows specific parse errors per line
+
+---
+
+#### TASK-008: Integrate auto-routing in create command
+**Status**: completed
+**File**: `cmd/bd/create.go:285-340`
+**Completed**: 2026-01-27
+
+**Problem**: The `bd create` command doesn't automatically route to the correct rig based on the configured prefix. Users must manually specify `--rig` even when the database has a configured issue-prefix that maps to a route.
+
+**Solution Implemented**:
+- Added auto-routing logic in create command before explicit --rig handling
+- Detects configured prefix from database config (issue-prefix or issue_prefix keys)
+- Falls back to config.yaml if not in database
+- Calls `routing.AutoDetectTargetRig()` to determine if routing is needed
+- If routing is needed, automatically calls `createInRig()` to create bead in target rig
+- Logs routing decision when BD_DEBUG_ROUTING is enabled
+
+**Acceptance Criteria**:
+- [x] Create command auto-routes based on configured prefix
+- [x] Works with both daemon and direct mode
+- [x] Logs routing decisions with BD_DEBUG_ROUTING
+- [x] Falls back gracefully if no prefix configured or no matching route
 
 ---
 

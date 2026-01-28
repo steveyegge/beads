@@ -282,6 +282,59 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Auto-detect target rig based on configured prefix (if no explicit routing provided)
+		// This enables transparent cross-database creation: if config says prefix is "gt-"
+		// but routes.jsonl says gt- beads live in a different rig, auto-route there.
+		if rigOverride == "" && prefixOverride == "" && dbPath != "" {
+			// Get the configured prefix (database config takes precedence over config.yaml)
+			// Check both "issue-prefix" (user-facing) and "issue_prefix" (internal) keys
+			var configuredPrefix string
+			if daemonClient != nil {
+				// Daemon mode - query via RPC (try both keys)
+				resp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue-prefix"})
+				if err == nil && resp.Value != "" {
+					configuredPrefix = resp.Value
+				}
+				if configuredPrefix == "" {
+					resp, err = daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "issue_prefix"})
+					if err == nil && resp.Value != "" {
+						configuredPrefix = resp.Value
+					}
+				}
+			}
+			if configuredPrefix == "" && store != nil {
+				// Direct mode - check database (try both keys) then config.yaml
+				dbPrefix, _ := store.GetConfig(rootCtx, "issue-prefix")
+				if dbPrefix != "" {
+					configuredPrefix = dbPrefix
+				} else {
+					dbPrefix, _ = store.GetConfig(rootCtx, "issue_prefix")
+					if dbPrefix != "" {
+						configuredPrefix = dbPrefix
+					} else {
+						configuredPrefix = config.GetString("issue-prefix")
+					}
+				}
+			}
+			if configuredPrefix == "" {
+				configuredPrefix = config.GetString("issue-prefix")
+			}
+
+			if configuredPrefix != "" {
+				currentBeadsDir := filepath.Dir(dbPath)
+				autoRig, shouldRoute, err := routing.AutoDetectTargetRig(currentBeadsDir, configuredPrefix)
+				if err != nil {
+					debug.Logf("Warning: auto-routing detection failed: %v\n", err)
+				} else if shouldRoute && autoRig != "" {
+					if os.Getenv("BD_DEBUG_ROUTING") != "" {
+						fmt.Fprintf(os.Stderr, "[routing] Auto-routing to rig %q based on prefix %q (from database config)\n", autoRig, configuredPrefix)
+					}
+					createInRig(cmd, autoRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+					return
+				}
+			}
+		}
+
 		// Handle --rig or --prefix flag: create issue in a different rig
 		// Both flags use the same forgiving lookup (accepts rig names or prefixes)
 		targetRig := rigOverride
