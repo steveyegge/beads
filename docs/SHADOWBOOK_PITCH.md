@@ -1,4 +1,6 @@
-# Shadowbook: Spec Intelligence for Beads
+# Shadowbook
+
+### `bd` — **b**idirectional **d**rift detection for specs and code
 
 > *"These violent delights have violent ends."*
 > — But your specs don't have to.
@@ -143,12 +145,13 @@ brew tap anupamchugh/shadowbook
 brew install shadowbook
 ```
 
-Or use directly via beads:
+The CLI is `bd` — short for **bidirectional drift**:
 
 ```bash
-bd spec scan
-bd spec list
-bd spec show specs/login.md
+bd spec scan              # Scan specs, detect drift
+bd spec list              # Show all tracked specs
+bd spec show specs/login.md   # Show spec + linked issues
+bd list --spec-changed    # Find issues with stale specs
 ```
 
 ---
