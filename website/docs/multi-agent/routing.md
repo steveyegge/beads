@@ -141,6 +141,22 @@ This outputs:
 [routing] Found 3 routes, townRoot=/home/user/gt
 ```
 
+### Configuration Warnings
+
+If your `routes.jsonl` file exists but contains only malformed lines (no valid routes), you'll see a warning:
+
+```
+warning: /path/to/.beads/routes.jsonl has 3 malformed line(s) and no valid routes
+  hint: set BD_DEBUG_ROUTING=1 for details, or BD_QUIET_ROUTING=1 to suppress this warning
+```
+
+This warning only appears when:
+- The file exists (not when it's missing)
+- There are malformed lines
+- No valid routes were loaded
+
+**To suppress the warning:** Set `BD_QUIET_ROUTING=1` in your environment.
+
 ### Common Issues
 
 **Routes not loading:**

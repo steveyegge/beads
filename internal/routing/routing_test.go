@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1219,5 +1220,186 @@ func TestResolveBeadsDirForID_NoRoutes(t *testing.T) {
 	}
 	if resolvedDir != beadsDir {
 		t.Errorf("Expected local beadsDir %q, got %q", beadsDir, resolvedDir)
+	}
+}
+
+// TestLoadRoutes_WarningOnCompletelyBrokenConfig verifies that a warning is printed
+// when routes.jsonl exists, has malformed lines, but produces 0 valid routes.
+func TestLoadRoutes_WarningOnCompletelyBrokenConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	// All lines are malformed - this should trigger the warning
+	routes := `{broken json
+not valid json either
+{"prefix":"","path":"empty-prefix"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Clear any quiet setting
+	t.Setenv("BD_QUIET_ROUTING", "")
+
+	loaded, err := LoadRoutes(beadsDir)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+	output := string(captured)
+
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Errorf("Expected 0 valid routes, got %d", len(loaded))
+	}
+	if !strings.Contains(output, "warning:") {
+		t.Errorf("Expected warning in stderr, got: %q", output)
+	}
+	if !strings.Contains(output, "malformed line(s) and no valid routes") {
+		t.Errorf("Expected specific warning text in stderr, got: %q", output)
+	}
+}
+
+// TestLoadRoutes_NoWarningWhenQuiet verifies that the warning is suppressed
+// when BD_QUIET_ROUTING=1 is set.
+func TestLoadRoutes_NoWarningWhenQuiet(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	// All lines are malformed
+	routes := `{broken json
+not valid json either
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Set quiet mode
+	t.Setenv("BD_QUIET_ROUTING", "1")
+
+	loaded, err := LoadRoutes(beadsDir)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+	output := string(captured)
+
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Errorf("Expected 0 valid routes, got %d", len(loaded))
+	}
+	if strings.Contains(output, "warning:") {
+		t.Errorf("Expected NO warning with BD_QUIET_ROUTING=1, got: %q", output)
+	}
+}
+
+// TestLoadRoutes_NoWarningWhenSomeValidRoutes verifies that no warning is printed
+// when there are some valid routes, even if some lines are malformed.
+func TestLoadRoutes_NoWarningWhenSomeValidRoutes(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	// Mix of valid and invalid - should NOT trigger warning since we have valid routes
+	routes := `{"prefix":"gt-","path":"gastown"}
+{broken json
+{"prefix":"bd-","path":"beads"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Clear any quiet setting
+	t.Setenv("BD_QUIET_ROUTING", "")
+
+	loaded, err := LoadRoutes(beadsDir)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+	output := string(captured)
+
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("Expected 2 valid routes, got %d", len(loaded))
+	}
+	if strings.Contains(output, "warning:") {
+		t.Errorf("Expected NO warning when valid routes exist, got: %q", output)
+	}
+}
+
+// TestLoadRoutes_NoWarningWhenNoMalformedLines verifies that no warning is printed
+// when all lines are valid (no malformed content).
+func TestLoadRoutes_NoWarningWhenNoMalformedLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(beadsDir, "routes.jsonl")
+	// Only valid lines
+	routes := `{"prefix":"gt-","path":"gastown"}
+{"prefix":"bd-","path":"beads"}
+`
+	if err := os.WriteFile(routesPath, []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Clear any quiet setting
+	t.Setenv("BD_QUIET_ROUTING", "")
+
+	loaded, err := LoadRoutes(beadsDir)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	captured, _ := io.ReadAll(r)
+	output := string(captured)
+
+	if err != nil {
+		t.Fatalf("LoadRoutes should not error: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("Expected 2 valid routes, got %d", len(loaded))
+	}
+	if strings.Contains(output, "warning:") {
+		t.Errorf("Expected NO warning when all lines valid, got: %q", output)
 	}
 }

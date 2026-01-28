@@ -109,6 +109,14 @@ func LoadRoutes(beadsDir string) ([]Route, error) {
 		fmt.Fprintf(os.Stderr, "[routing] LoadRoutes: parsed %d valid routes, skipped %d lines\n", len(routes), skippedLines)
 	}
 
+	// Warn if routes.jsonl exists but has no valid routes after parsing
+	// This catches completely broken configs without being noisy for minor issues.
+	// Can be disabled with BD_QUIET_ROUTING=1.
+	if skippedLines > 0 && len(routes) == 0 && os.Getenv("BD_QUIET_ROUTING") == "" {
+		fmt.Fprintf(os.Stderr, "warning: %s has %d malformed line(s) and no valid routes\n", routesPath, skippedLines)
+		fmt.Fprintf(os.Stderr, "  hint: set BD_DEBUG_ROUTING=1 for details, or BD_QUIET_ROUTING=1 to suppress this warning\n")
+	}
+
 	return routes, scanner.Err()
 }
 
