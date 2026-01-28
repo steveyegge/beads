@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score DOUBLE,
     -- Federation source system field
     source_system VARCHAR(255) DEFAULT '',
+    -- Spec integration field (SpecBeads)
+    spec_id VARCHAR(512) DEFAULT '',
+    -- Spec change tracking (Shadow Ledger)
+    spec_changed_at DATETIME,
     -- Source repo for multi-repo
     source_repo VARCHAR(512) DEFAULT '',
     -- Close reason
@@ -77,7 +81,22 @@ CREATE TABLE IF NOT EXISTS issues (
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
     INDEX idx_issues_created_at (created_at),
-    INDEX idx_issues_external_ref (external_ref)
+    INDEX idx_issues_external_ref (external_ref),
+    INDEX idx_issues_spec_id (spec_id),
+    INDEX idx_issues_spec_changed_at (spec_changed_at)
+);
+
+-- Spec registry table (Shadow Ledger)
+CREATE TABLE IF NOT EXISTS spec_registry (
+    spec_id VARCHAR(512) PRIMARY KEY,
+    path VARCHAR(512) NOT NULL,
+    title TEXT DEFAULT '',
+    sha256 VARCHAR(64) DEFAULT '',
+    mtime DATETIME,
+    discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    missing_at DATETIME,
+    INDEX idx_spec_registry_path (path)
 );
 
 -- Dependencies table (edge schema)

@@ -153,6 +153,19 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		args = append(args, filter.IDPrefix+"%")
 	}
 
+	// Spec filtering
+	if filter.SpecID != nil {
+		whereClauses = append(whereClauses, "spec_id = ?")
+		args = append(args, *filter.SpecID)
+	}
+	if filter.SpecPrefix != nil {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, *filter.SpecPrefix+"%")
+	}
+	if filter.SpecChanged {
+		whereClauses = append(whereClauses, "spec_changed_at IS NOT NULL")
+	}
+
 	// Wisp filtering
 	if filter.Ephemeral != nil {
 		if *filter.Ephemeral {

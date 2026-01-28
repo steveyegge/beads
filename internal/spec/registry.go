@@ -1,0 +1,98 @@
+package spec
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// UpdateRegistry syncs scanned specs into storage and marks changed beads.
+func UpdateRegistry(ctx context.Context, store SpecRegistryStore, scanned []ScannedSpec, now time.Time) (SpecScanResult, error) {
+	result := SpecScanResult{
+		Scanned: len(scanned),
+	}
+
+	existing, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list spec registry: %w", err)
+	}
+	existingByID := make(map[string]SpecRegistryEntry, len(existing))
+	for _, spec := range existing {
+		existingByID[spec.SpecID] = spec
+	}
+
+	scannedIDs := make([]string, 0, len(scanned))
+	scannedSet := make(map[string]struct{}, len(scanned))
+	upsert := make([]SpecRegistryEntry, 0, len(scanned))
+
+	for _, spec := range scanned {
+		scannedIDs = append(scannedIDs, spec.SpecID)
+		scannedSet[spec.SpecID] = struct{}{}
+
+		if current, ok := existingByID[spec.SpecID]; ok {
+			if current.SHA256 != spec.SHA256 {
+				result.Updated++
+				result.ChangedSpecIDs = append(result.ChangedSpecIDs, spec.SpecID)
+			} else {
+				result.Unchanged++
+			}
+			upsert = append(upsert, SpecRegistryEntry{
+				SpecID:        spec.SpecID,
+				Path:          spec.SpecID,
+				Title:         spec.Title,
+				SHA256:        spec.SHA256,
+				Mtime:         spec.Mtime,
+				DiscoveredAt:  current.DiscoveredAt,
+				LastScannedAt: now,
+				MissingAt:     nil,
+			})
+			continue
+		}
+
+		result.Added++
+		upsert = append(upsert, SpecRegistryEntry{
+			SpecID:        spec.SpecID,
+			Path:          spec.SpecID,
+			Title:         spec.Title,
+			SHA256:        spec.SHA256,
+			Mtime:         spec.Mtime,
+			DiscoveredAt:  now,
+			LastScannedAt: now,
+			MissingAt:     nil,
+		})
+	}
+
+	if err := store.UpsertSpecRegistry(ctx, upsert); err != nil {
+		return result, fmt.Errorf("upsert spec registry: %w", err)
+	}
+
+	// Mark missing specs
+	missingIDs := make([]string, 0)
+	for _, spec := range existing {
+		if _, ok := scannedSet[spec.SpecID]; ok {
+			continue
+		}
+		missingIDs = append(missingIDs, spec.SpecID)
+	}
+	if len(missingIDs) > 0 {
+		result.Missing = len(missingIDs)
+		if err := store.MarkSpecsMissing(ctx, missingIDs, now); err != nil {
+			return result, fmt.Errorf("mark missing specs: %w", err)
+		}
+	}
+	if len(scannedIDs) > 0 {
+		if err := store.ClearSpecsMissing(ctx, scannedIDs); err != nil {
+			return result, fmt.Errorf("clear missing specs: %w", err)
+		}
+	}
+
+	if len(result.ChangedSpecIDs) > 0 {
+		updated, err := store.MarkSpecChangedBySpecIDs(ctx, result.ChangedSpecIDs, now)
+		if err != nil {
+			return result, fmt.Errorf("mark changed beads: %w", err)
+		}
+		result.MarkedBeads = updated
+	}
+
+	return result, nil
+}

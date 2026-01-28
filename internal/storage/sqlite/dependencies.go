@@ -250,7 +250,7 @@ func (s *SQLiteStorage) GetDependenciesWithMetadata(ctx context.Context, issueID
 		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
-		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.spec_id, i.spec_changed_at,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
@@ -273,7 +273,7 @@ func (s *SQLiteStorage) GetDependentsWithMetadata(ctx context.Context, issueID s
 		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
-		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.spec_id, i.spec_changed_at,
 		       d.type
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
@@ -982,6 +982,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Time-based scheduling fields
 		var dueAt sql.NullTime
 		var deferUntil sql.NullTime
+		// Spec integration field
+		var specID sql.NullString
+		var specChangedAt sql.NullTime
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -992,7 +995,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
 			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
-			&dueAt, &deferUntil,
+			&dueAt, &deferUntil, &specID, &specChangedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1102,6 +1105,12 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		if deferUntil.Valid {
 			issue.DeferUntil = &deferUntil.Time
 		}
+		if specID.Valid {
+			issue.SpecID = specID.String
+		}
+		if specChangedAt.Valid {
+			issue.SpecChangedAt = &specChangedAt.Time
+		}
 
 		issues = append(issues, &issue)
 		issueIDs = append(issueIDs, issue.ID)
@@ -1161,6 +1170,8 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
 		var depType types.DependencyType
+		var specID sql.NullString
+		var specChangedAt sql.NullTime
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -1170,6 +1181,7 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters,
+			&specID, &specChangedAt,
 			&depType,
 		)
 		if err != nil {
@@ -1247,6 +1259,12 @@ func (s *SQLiteStorage) scanIssuesWithDependencyType(ctx context.Context, rows *
 		}
 		if waiters.Valid && waiters.String != "" {
 			issue.Waiters = parseJSONStringArray(waiters.String)
+		}
+		if specID.Valid {
+			issue.SpecID = specID.String
+		}
+		if specChangedAt.Valid {
+			issue.SpecChangedAt = &specChangedAt.Time
 		}
 
 		// Fetch labels for this issue

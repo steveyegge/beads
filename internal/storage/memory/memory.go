@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -30,6 +31,7 @@ type MemoryStorage struct {
 	config       map[string]string              // Config key-value pairs
 	metadata     map[string]string              // Metadata key-value pairs
 	counters     map[string]int                 // Prefix -> Last ID
+	specRegistry map[string]spec.SpecRegistryEntry
 
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
@@ -52,6 +54,7 @@ func New(jsonlPath string) *MemoryStorage {
 		config:          make(map[string]string),
 		metadata:        make(map[string]string),
 		counters:        make(map[string]int),
+		specRegistry:    make(map[string]spec.SpecRegistryEntry),
 		externalRefToID: make(map[string]string),
 		dirty:           make(map[string]bool),
 		jsonlPath:       jsonlPath,
@@ -451,6 +454,21 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 			} else if value == nil {
 				issue.Assignee = ""
 			}
+		case "spec_id":
+			if v, ok := value.(string); ok {
+				issue.SpecID = v
+			} else if value == nil {
+				issue.SpecID = ""
+			}
+		case "spec_changed_at":
+			switch v := value.(type) {
+			case time.Time:
+				issue.SpecChangedAt = &v
+			case *time.Time:
+				issue.SpecChangedAt = v
+			case nil:
+				issue.SpecChangedAt = nil
+			}
 		case "external_ref":
 			// Update external ref index
 			oldRef := issue.ExternalRef
@@ -507,8 +525,9 @@ func (m *MemoryStorage) UpdateIssue(ctx context.Context, id string, updates map[
 // The session parameter tracks which Claude Code session closed the issue (can be empty).
 func (m *MemoryStorage) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	updates := map[string]interface{}{
-		"status":       string(types.StatusClosed),
-		"close_reason": reason,
+		"status":          string(types.StatusClosed),
+		"close_reason":    reason,
+		"spec_changed_at": nil,
 	}
 	if session != "" {
 		updates["closed_by_session"] = session
@@ -599,6 +618,15 @@ func (m *MemoryStorage) SearchIssues(ctx context.Context, query string, filter t
 			continue
 		}
 		if filter.Assignee != nil && issue.Assignee != *filter.Assignee {
+			continue
+		}
+		if filter.SpecID != nil && issue.SpecID != *filter.SpecID {
+			continue
+		}
+		if filter.SpecPrefix != nil && !strings.HasPrefix(issue.SpecID, *filter.SpecPrefix) {
+			continue
+		}
+		if filter.SpecChanged && issue.SpecChangedAt == nil {
 			continue
 		}
 

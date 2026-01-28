@@ -57,6 +57,9 @@ var migrationsList = []Migration{
 	{"work_type_column", migrations.MigrateWorkTypeColumn},
 	{"source_system_column", migrations.MigrateSourceSystemColumn},
 	{"quality_score_column", migrations.MigrateQualityScoreColumn},
+	{"spec_id_column", migrations.MigrateSpecIDColumn},
+	{"spec_registry_table", migrations.MigrateSpecRegistryTable},
+	{"spec_changed_at_column", migrations.MigrateSpecChangedAtColumn},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -121,6 +124,9 @@ func getMigrationDescription(name string) string {
 		"work_type_column":             "Adds work_type column for work assignment model (mutex vs open_competition per Decision 006)",
 		"source_system_column":         "Adds source_system column for federation adapter tracking",
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
+		"spec_id_column":               "Adds spec_id column for linking issues to specification documents",
+		"spec_registry_table":          "Adds spec_registry table for Shadow Ledger spec tracking",
+		"spec_changed_at_column":       "Adds spec_changed_at column for Shadow Ledger change signals",
 	}
 
 	if desc, ok := descriptions[name]; ok {

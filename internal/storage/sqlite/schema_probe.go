@@ -21,6 +21,7 @@ var expectedSchema = map[string][]string{
 		"source_repo", "close_reason",
 		"deleted_at", "deleted_by", "delete_reason", "original_type",
 		"sender", "ephemeral", "pinned",
+		"spec_id", "spec_changed_at",
 	},
 	"dependencies":         {"issue_id", "depends_on_id", "type", "created_at", "created_by", "metadata", "thread_id"},
 	"labels":               {"issue_id", "label"},
@@ -34,6 +35,7 @@ var expectedSchema = map[string][]string{
 	"issue_snapshots":      {"id", "issue_id", "snapshot_time", "compaction_level", "original_size", "compressed_size", "original_content", "archived_events"},
 	"compaction_snapshots": {"id", "issue_id", "compaction_level", "snapshot_json", "created_at"},
 	"repo_mtimes":          {"repo_path", "jsonl_path", "mtime_ns", "last_checked"},
+	"spec_registry":        {"spec_id", "path", "title", "sha256", "mtime", "discovered_at", "last_scanned_at", "missing_at"},
 }
 
 // SchemaProbeResult contains the results of a schema compatibility check

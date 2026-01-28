@@ -115,6 +115,13 @@ var createCmd = &cobra.Command{
 		explicitID, _ := cmd.Flags().GetString("id")
 		parentID, _ := cmd.Flags().GetString("parent")
 		externalRef, _ := cmd.Flags().GetString("external-ref")
+		specID, _ := cmd.Flags().GetString("spec-id")
+		specAlias, _ := cmd.Flags().GetString("spec")
+		if specID == "" {
+			specID = specAlias
+		} else if specAlias != "" && specAlias != specID {
+			FatalError("--spec and --spec-id must match if both are provided")
+		}
 		deps, _ := cmd.Flags().GetStringSlice("deps")
 		waitsFor, _ := cmd.Flags().GetString("waits-for")
 		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
@@ -489,6 +496,7 @@ var createCmd = &cobra.Command{
 				Notes:              notes,
 				Assignee:           assignee,
 				ExternalRef:        externalRef,
+				SpecID:             specID,
 				EstimatedMinutes:   estimatedMinutes,
 				Labels:             labels,
 				Dependencies:       deps,
@@ -552,6 +560,7 @@ var createCmd = &cobra.Command{
 			IssueType:          types.IssueType(issueType).Normalize(),
 			Assignee:           assignee,
 			ExternalRef:        externalRefPtr,
+			SpecID:             specID,
 			EstimatedMinutes:   estimatedMinutes,
 			Ephemeral:          wisp,
 			CreatedBy:          getActorWithGit(),
@@ -891,6 +900,8 @@ func init() {
 	createCmd.Flags().String("id", "", "Explicit issue ID (e.g., 'bd-42' for partitioning)")
 	createCmd.Flags().String("parent", "", "Parent issue ID for hierarchical child (e.g., 'bd-a3f8e9')")
 	createCmd.Flags().StringSlice("deps", []string{}, "Dependencies in format 'type:id' or 'id' (e.g., 'discovered-from:bd-20,blocks:bd-15' or 'bd-20')")
+	createCmd.Flags().String("spec-id", "", "Spec identifier, path, or URL to link to this issue")
+	createCmd.Flags().String("spec", "", "Alias for --spec-id")
 	createCmd.Flags().String("waits-for", "", "Spawner issue ID to wait for (creates waits-for dependency for fanout gate)")
 	createCmd.Flags().String("waits-for-gate", "all-children", "Gate type: all-children (wait for all) or any-children (wait for first)")
 	createCmd.Flags().Bool("force", false, "Force creation even if prefix doesn't match database prefix")
@@ -961,6 +972,13 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	if externalRef != "" {
 		externalRefPtr = &externalRef
 	}
+	specID, _ := cmd.Flags().GetString("spec-id")
+	specAlias, _ := cmd.Flags().GetString("spec")
+	if specID == "" {
+		specID = specAlias
+	} else if specAlias != "" && specAlias != specID {
+		FatalError("--spec and --spec-id must match if both are provided")
+	}
 
 	// Extract event-specific flags (bd-xwvo fix)
 	eventCategory, _ := cmd.Flags().GetString("event-category")
@@ -1010,6 +1028,7 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		IssueType:          types.IssueType(issueType).Normalize(),
 		Assignee:           assignee,
 		ExternalRef:        externalRefPtr,
+		SpecID:             specID,
 		Ephemeral:          wisp,
 		CreatedBy:          getActorWithGit(),
 		Owner:              getOwner(),

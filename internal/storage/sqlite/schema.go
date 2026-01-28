@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS issues (
     quality_score REAL,
     -- Federation source system field
     source_system TEXT DEFAULT '',
+    -- Spec integration field (SpecBeads)
+    spec_id TEXT DEFAULT '',
+    -- Spec change tracking (Shadow Ledger)
+    spec_changed_at DATETIME,
     -- Event fields (bd-ecmd)
     event_kind TEXT DEFAULT '',
     actor TEXT DEFAULT '',
@@ -66,6 +70,8 @@ CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee);
 CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
+CREATE INDEX IF NOT EXISTS idx_issues_spec_id ON issues(spec_id);
+CREATE INDEX IF NOT EXISTS idx_issues_spec_changed_at ON issues(spec_changed_at);
 -- Note: idx_issues_external_ref is created in migrations/002_external_ref_column.go
 
 -- Dependencies table (edge schema - Decision 004)
@@ -99,6 +105,20 @@ CREATE TABLE IF NOT EXISTS labels (
 );
 
 CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label);
+
+-- Spec registry table (Shadow Ledger)
+CREATE TABLE IF NOT EXISTS spec_registry (
+    spec_id TEXT PRIMARY KEY,           -- normalized path (specs/auth/login.md)
+    path TEXT NOT NULL,                 -- repo-relative path (same as spec_id for now)
+    title TEXT DEFAULT '',              -- first H1 from file
+    sha256 TEXT DEFAULT '',             -- content hash
+    mtime DATETIME,                     -- last modified time
+    discovered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_scanned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    missing_at DATETIME                 -- soft delete for missing specs
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_registry_path ON spec_registry(path);
 
 -- Comments table
 CREATE TABLE IF NOT EXISTS comments (

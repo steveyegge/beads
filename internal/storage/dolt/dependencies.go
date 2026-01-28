@@ -536,7 +536,7 @@ func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system, spec_id, spec_changed_at
 		FROM issues
 		WHERE id IN (%s)
 	`, strings.Join(placeholders, ","))
@@ -567,7 +567,8 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var assignee, externalRef, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
-	var workType, sourceSystem sql.NullString
+	var workType, sourceSystem, specID sql.NullString
+	var specChangedAt sql.NullTime
 	var sender, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
@@ -586,7 +587,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem,
+		&qualityScore, &workType, &sourceSystem, &specID, &specChangedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to scan issue row: %w", err)
 	}
@@ -721,6 +722,12 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	}
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if specChangedAt.Valid {
+		issue.SpecChangedAt = &specChangedAt.Time
 	}
 
 	return &issue, nil

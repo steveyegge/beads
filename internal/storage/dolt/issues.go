@@ -384,7 +384,7 @@ func (s *DoltStore) CloseIssue(ctx context.Context, id string, reason string, ac
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?, spec_changed_at = NULL
 		WHERE id = ?
 	`, types.StatusClosed, now, now, reason, session, id)
 	if err != nil {
@@ -460,15 +460,15 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			compaction_level, compacted_at, compacted_at_commit, original_size,
 			deleted_at, deleted_by, delete_reason, original_type,
 			sender, ephemeral, pinned, is_template, crystallizes,
-			mol_type, work_type, quality_score, source_system, source_repo, close_reason,
+			mol_type, work_type, quality_score, source_system, spec_id, spec_changed_at, source_repo, close_reason,
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
 			due_at, defer_until
 		) VALUES (
-			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -485,7 +485,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
-		issue.MolType, issue.WorkType, issue.QualityScore, issue.SourceSystem, issue.SourceRepo, issue.CloseReason,
+		issue.MolType, issue.WorkType, issue.QualityScore, issue.SourceSystem, issue.SpecID, issue.SpecChangedAt, issue.SourceRepo, issue.CloseReason,
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
@@ -501,7 +501,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
 	var assignee, externalRef, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
-	var workType, sourceSystem sql.NullString
+	var workType, sourceSystem, specID sql.NullString
+	var specChangedAt sql.NullTime
 	var sender, molType, eventKind, actor, target, payload sql.NullString
 	var awaitType, awaitID, waiters sql.NullString
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
@@ -519,7 +520,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system, spec_id, spec_changed_at
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -534,7 +535,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
-		&qualityScore, &workType, &sourceSystem,
+		&qualityScore, &workType, &sourceSystem, &specID, &specChangedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -675,6 +676,12 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if specChangedAt.Valid {
+		issue.SpecChangedAt = &specChangedAt.Time
+	}
 
 	return &issue, nil
 }
@@ -750,6 +757,7 @@ func isAllowedUpdateField(key string) bool {
 		"role_type": true, "rig": true, "mol_type": true,
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
+		"spec_id": true, "spec_changed_at": true,
 	}
 	return allowed[key]
 }

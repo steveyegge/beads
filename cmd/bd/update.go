@@ -102,6 +102,24 @@ create, update, show, or close operation).`,
 			externalRef, _ := cmd.Flags().GetString("external-ref")
 			updates["external_ref"] = externalRef
 		}
+		specIDChanged := cmd.Flags().Changed("spec-id") || cmd.Flags().Changed("spec")
+		if specIDChanged {
+			specID, _ := cmd.Flags().GetString("spec-id")
+			specAlias, _ := cmd.Flags().GetString("spec")
+			if specID == "" {
+				specID = specAlias
+			} else if specAlias != "" && specAlias != specID {
+				FatalErrorRespectJSON("--spec and --spec-id must match if both are provided")
+			}
+			updates["spec_id"] = specID
+		}
+		ackSpec, _ := cmd.Flags().GetBool("ack-spec")
+		if ackSpec || specIDChanged {
+			updates["spec_changed_at"] = nil
+		}
+		if status, ok := updates["status"].(string); ok && status == "closed" {
+			updates["spec_changed_at"] = nil
+		}
 		if cmd.Flags().Changed("estimate") {
 			estimate, _ := cmd.Flags().GetInt("estimate")
 			if estimate < 0 {
@@ -281,6 +299,16 @@ create, update, show, or close operation).`,
 				}
 				if externalRef, ok := updates["external_ref"].(string); ok {
 					updateArgs.ExternalRef = &externalRef
+				}
+				if specID, ok := updates["spec_id"].(string); ok {
+					updateArgs.SpecID = &specID
+				}
+				if _, ok := updates["spec_changed_at"]; ok {
+					empty := ""
+					updateArgs.SpecChangedAt = &empty
+				}
+				if specID, ok := updates["spec_id"].(string); ok {
+					updateArgs.SpecID = &specID
 				}
 				if estimate, ok := updates["estimated_minutes"].(int); ok {
 					updateArgs.EstimatedMinutes = &estimate
@@ -665,6 +693,9 @@ func init() {
 	updateCmd.Flags().StringSlice("add-label", nil, "Add labels (repeatable)")
 	updateCmd.Flags().StringSlice("remove-label", nil, "Remove labels (repeatable)")
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
+	updateCmd.Flags().String("spec-id", "", "Set spec identifier/path (empty to clear)")
+	updateCmd.Flags().String("spec", "", "Alias for --spec-id")
+	updateCmd.Flags().Bool("ack-spec", false, "Acknowledge spec change (clears spec_changed_at)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
 	updateCmd.Flags().Bool("claim", false, "Atomically claim the issue (sets assignee to you, status to in_progress; fails if already claimed)")
 	updateCmd.Flags().String("session", "", "Claude Code session ID for status=closed (or set CLAUDE_SESSION_ID env var)")

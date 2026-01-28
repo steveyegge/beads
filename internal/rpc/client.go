@@ -83,12 +83,12 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	if dialTimeout <= 0 {
 		dialTimeout = 200 * time.Millisecond
 	}
-	
+
 	rpcDebugLog("dialing socket (timeout: %v)", dialTimeout)
 	dialStart := time.Now()
 	conn, err := dialRPC(socketPath, dialTimeout)
 	dialDuration := time.Since(dialStart)
-	
+
 	if err != nil {
 		debug.Logf("failed to connect to RPC endpoint: %v", err)
 		rpcDebugLog("dial failed after %v: %v", dialDuration, err)
@@ -104,7 +104,7 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 		}
 		return nil, nil
 	}
-	
+
 	rpcDebugLog("dial succeeded in %v", dialDuration)
 
 	client := &Client{
@@ -117,7 +117,7 @@ func TryConnectWithTimeout(socketPath string, dialTimeout time.Duration) (*Clien
 	healthStart := time.Now()
 	health, err := client.Health()
 	healthDuration := time.Since(healthStart)
-	
+
 	if err != nil {
 		debug.Logf("health check failed: %v", err)
 		rpcDebugLog("health check failed after %v: %v", healthDuration, err)
@@ -395,7 +395,25 @@ func (c *Client) Batch(args *BatchArgs) (*Response, error) {
 	return c.Execute(OpBatch, args)
 }
 
+// SpecScan scans specs and updates registry via the daemon
+func (c *Client) SpecScan(args *SpecScanArgs) (*Response, error) {
+	return c.Execute(OpSpecScan, args)
+}
 
+// SpecList lists spec registry entries via the daemon
+func (c *Client) SpecList(args *SpecListArgs) (*Response, error) {
+	return c.Execute(OpSpecList, args)
+}
+
+// SpecShow shows a spec and linked beads via the daemon
+func (c *Client) SpecShow(args *SpecShowArgs) (*Response, error) {
+	return c.Execute(OpSpecShow, args)
+}
+
+// SpecCoverage returns coverage stats via the daemon
+func (c *Client) SpecCoverage(args *SpecCoverageArgs) (*Response, error) {
+	return c.Execute(OpSpecCoverage, args)
+}
 
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
@@ -484,18 +502,18 @@ func (c *Client) MolStale(args *MolStaleArgs) (*MolStaleResponse, error) {
 // Only removes pid file - lock file is managed by OS (released on process exit).
 func cleanupStaleDaemonArtifacts(beadsDir string) {
 	pidFile := filepath.Join(beadsDir, "daemon.pid")
-	
+
 	// Check if pid file exists
 	if _, err := os.Stat(pidFile); err != nil {
 		// No pid file to clean up
 		return
 	}
-	
+
 	// Remove stale pid file
 	if err := os.Remove(pidFile); err != nil {
 		debug.Logf("failed to remove stale pid file: %v", err)
 		return
 	}
-	
+
 	debug.Logf("removed stale daemon.pid file (lock free, socket missing)")
 }

@@ -180,7 +180,7 @@ func (t *doltTransaction) UpdateIssue(ctx context.Context, id string, updates ma
 func (t *doltTransaction) CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error {
 	now := time.Now().UTC()
 	_, err := t.tx.ExecContext(ctx, `
-		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
+		UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?, spec_changed_at = NULL
 		WHERE id = ?
 	`, types.StatusClosed, now, now, reason, session, id)
 	return err
@@ -385,18 +385,18 @@ func insertIssueTx(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
 			created_at, created_by, owner, updated_at, closed_at,
-			sender, ephemeral, pinned, is_template, crystallizes
+			sender, ephemeral, pinned, is_template, crystallizes, spec_id, spec_changed_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
 		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt,
-		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
+		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes, issue.SpecID, issue.SpecChangedAt,
 	)
 	return err
 }
@@ -408,12 +408,14 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	var estimatedMinutes sql.NullInt64
 	var assignee, owner, contentHash sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
+	var specID sql.NullString
+	var specChangedAt sql.NullTime
 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at,
-		       ephemeral, pinned, is_template, crystallizes
+		       ephemeral, pinned, is_template, crystallizes, spec_id, spec_changed_at
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -421,7 +423,7 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt,
-		&ephemeral, &pinned, &isTemplate, &crystallizes,
+		&ephemeral, &pinned, &isTemplate, &crystallizes, &specID, &specChangedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -454,6 +456,12 @@ func scanIssueTx(ctx context.Context, tx *sql.Tx, id string) (*types.Issue, erro
 	}
 	if owner.Valid {
 		issue.Owner = owner.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if specChangedAt.Valid {
+		issue.SpecChangedAt = &specChangedAt.Time
 	}
 	if ephemeral.Valid && ephemeral.Int64 != 0 {
 		issue.Ephemeral = true

@@ -1728,6 +1728,51 @@ func TestTransactionSearchIssuesWithLabels(t *testing.T) {
 	}
 }
 
+// TestTransactionSearchIssuesWithSpecID tests spec_id filtering within transaction.
+func TestTransactionSearchIssuesWithSpecID(t *testing.T) {
+	ctx := context.Background()
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := store.RunInTransaction(ctx, func(tx storage.Transaction) error {
+		issues := []*types.Issue{
+			{Title: "Login flow", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, SpecID: "specs/auth/login.md"},
+			{Title: "Logout flow", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, SpecID: "specs/auth/logout.md"},
+			{Title: "Checkout", Status: types.StatusOpen, Priority: 1, IssueType: types.TypeTask, SpecID: "specs/payments/checkout.md"},
+		}
+		for _, issue := range issues {
+			if err := tx.CreateIssue(ctx, issue, "test-actor"); err != nil {
+				return err
+			}
+		}
+
+		// Exact match
+		specID := "specs/auth/login.md"
+		results, err := tx.SearchIssues(ctx, "", types.IssueFilter{SpecID: &specID})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 issue for exact spec match, got %d", len(results))
+		}
+
+		// Prefix match
+		specPrefix := "specs/auth/"
+		results, err = tx.SearchIssues(ctx, "", types.IssueFilter{SpecPrefix: &specPrefix})
+		if err != nil {
+			return err
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 issues for spec prefix match, got %d", len(results))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunInTransaction failed: %v", err)
+	}
+}
+
 // TestTransactionSearchIssuesRollback verifies uncommitted issues aren't visible outside transaction.
 func TestTransactionSearchIssuesRollback(t *testing.T) {
 	ctx := context.Background()

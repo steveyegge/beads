@@ -353,6 +353,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
+	// Spec integration field
+	var specID sql.NullString
+	var specChangedAt sql.NullTime
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -367,7 +370,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until
+		       due_at, defer_until, spec_id, spec_changed_at
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -381,7 +384,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
+		&dueAt, &deferUntil, &specID, &specChangedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -518,6 +521,12 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if specChangedAt.Valid {
+		issue.SpecChangedAt = &specChangedAt.Time
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -637,6 +646,8 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var awaitID sql.NullString
 	var timeoutNs sql.NullInt64
 	var waiters sql.NullString
+	var specID sql.NullString
+	var specChangedAt sql.NullTime
 
 	var owner sql.NullString
 	err := s.db.QueryRowContext(ctx, `
@@ -646,7 +657,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters
+		       await_type, await_id, timeout_ns, waiters, spec_id, spec_changed_at
 		FROM issues
 		WHERE external_ref = ?
 	`, externalRef).Scan(
@@ -657,7 +668,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-		&awaitType, &awaitID, &timeoutNs, &waiters,
+		&awaitType, &awaitID, &timeoutNs, &waiters, &specID, &specChangedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -751,6 +762,12 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
+	if specID.Valid {
+		issue.SpecID = specID.String
+	}
+	if specChangedAt.Valid {
+		issue.SpecChangedAt = &specChangedAt.Time
+	}
 
 	// Fetch labels for this issue
 	labels, err := s.GetLabels(ctx, issue.ID)
@@ -805,6 +822,10 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
+	// Spec integration field (SpecBeads)
+	"spec_id": true,
+	// Spec change tracking (Shadow Ledger)
+	"spec_changed_at": true,
 }
 
 // validatePriority validates a priority value
@@ -1215,7 +1236,7 @@ func (s *SQLiteStorage) CloseIssue(ctx context.Context, id string, reason string
 		// 2. events.comment - for audit history (when was it closed, by whom)
 		// Keep both in sync. If refactoring, consider deriving one from the other.
 		result, err := conn.ExecContext(ctx, `
-			UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?
+			UPDATE issues SET status = ?, closed_at = ?, updated_at = ?, close_reason = ?, closed_by_session = ?, spec_changed_at = NULL
 			WHERE id = ?
 		`, types.StatusClosed, now, now, reason, session, id)
 		if err != nil {
@@ -1938,6 +1959,19 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		args = append(args, filter.IDPrefix+"%")
 	}
 
+	// Spec filtering
+	if filter.SpecID != nil {
+		whereClauses = append(whereClauses, "spec_id = ?")
+		args = append(args, *filter.SpecID)
+	}
+	if filter.SpecPrefix != nil {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, *filter.SpecPrefix+"%")
+	}
+	if filter.SpecChanged {
+		whereClauses = append(whereClauses, "spec_changed_at IS NOT NULL")
+	}
+
 	// Wisp filtering
 	if filter.Ephemeral != nil {
 		if *filter.Ephemeral {
@@ -2022,7 +2056,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, spec_id, spec_changed_at
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

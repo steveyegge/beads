@@ -82,6 +82,10 @@ bd create "Tests" -p 1 --parent bd-a3f8e9 --json                # Auto-assigned:
 
 # Create and link discovered work (one command)
 bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
+
+# Create with spec link
+bd create "Implement login flow" --spec-id "specs/auth/login.md" --json
+bd create "Fix auth bug" --spec "specs/auth/login.md" --json
 ```
 
 ### Update Issues
@@ -90,6 +94,10 @@ bd create "Found bug" -t bug -p 1 --deps discovered-from:<parent-id> --json
 # Update one or more issues
 bd update <id> [<id>...] --status in_progress --json
 bd update <id> [<id>...] --priority 1 --json
+
+# Update spec link (empty string clears)
+bd update <id> --spec-id "specs/auth/login.md" --json
+bd update <id> --spec-id "" --json
 
 # Edit issue fields in $EDITOR (HUMANS ONLY - not for agents)
 # NOTE: This command is intentionally NOT exposed via the MCP server
@@ -185,6 +193,9 @@ bd list --status open --priority 1 --json               # Status and priority
 bd list --assignee alice --json                         # By assignee
 bd list --type bug --json                               # By issue type
 bd list --id bd-123,bd-456 --json                       # Specific IDs
+bd list --spec "specs/auth/login.md" --json            # Exact spec match
+bd list --spec "specs/auth/" --json                    # Prefix match
+bd list --spec-changed --json                          # Linked spec changed (needs review)
 ```
 
 ### Label Filters
@@ -243,6 +254,27 @@ bd list --priority-min 2 --json                         # P2 and below
 ```bash
 # Combine multiple filters
 bd list --status open --priority 1 --label-any urgent,critical --no-assignee --json
+```
+
+## Spec Sync (Shadow Ledger)
+
+```bash
+# Scan specs and update registry (default path: specs/)
+bd spec scan
+bd spec scan docs/specs --json
+
+# List specs in registry
+bd spec list
+bd spec list --prefix "specs/auth/" --include-missing --json
+
+# Show a spec and linked beads
+bd spec show specs/auth/login.md
+
+# Coverage summary
+bd spec coverage --json
+
+# Acknowledge a spec change on a bead
+bd update <id> --ack-spec --json
 ```
 
 ## Global Flags

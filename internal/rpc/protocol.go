@@ -4,40 +4,45 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 // Operation constants for all bd commands
 const (
-	OpPing            = "ping"
-	OpStatus          = "status"
-	OpHealth          = "health"
-	OpMetrics         = "metrics"
-	OpCreate          = "create"
-	OpUpdate          = "update"
-	OpClose           = "close"
-	OpList            = "list"
-	OpCount           = "count"
-	OpShow            = "show"
-	OpReady           = "ready"
-	OpBlocked         = "blocked"
-	OpStale           = "stale"
-	OpStats           = "stats"
-	OpDepAdd          = "dep_add"
-	OpDepRemove       = "dep_remove"
-	OpDepTree         = "dep_tree"
-	OpLabelAdd        = "label_add"
-	OpLabelRemove     = "label_remove"
-	OpCommentList     = "comment_list"
-	OpCommentAdd      = "comment_add"
-	OpBatch           = "batch"
-	OpResolveID       = "resolve_id"
+	OpPing         = "ping"
+	OpStatus       = "status"
+	OpHealth       = "health"
+	OpMetrics      = "metrics"
+	OpCreate       = "create"
+	OpUpdate       = "update"
+	OpClose        = "close"
+	OpList         = "list"
+	OpCount        = "count"
+	OpShow         = "show"
+	OpReady        = "ready"
+	OpBlocked      = "blocked"
+	OpStale        = "stale"
+	OpStats        = "stats"
+	OpDepAdd       = "dep_add"
+	OpDepRemove    = "dep_remove"
+	OpDepTree      = "dep_tree"
+	OpLabelAdd     = "label_add"
+	OpLabelRemove  = "label_remove"
+	OpCommentList  = "comment_list"
+	OpCommentAdd   = "comment_add"
+	OpBatch        = "batch"
+	OpResolveID    = "resolve_id"
+	OpSpecScan     = "spec_scan"
+	OpSpecList     = "spec_list"
+	OpSpecShow     = "spec_show"
+	OpSpecCoverage = "spec_coverage"
 
-	OpCompact         = "compact"
-	OpCompactStats    = "compact_stats"
-	OpExport          = "export"
-	OpImport          = "import"
-	OpEpicStatus      = "epic_status"
+	OpCompact             = "compact"
+	OpCompactStats        = "compact_stats"
+	OpExport              = "export"
+	OpImport              = "import"
+	OpEpicStatus          = "epic_status"
 	OpGetMutations        = "get_mutations"
 	OpGetMoleculeProgress = "get_molecule_progress"
 	OpShutdown            = "shutdown"
@@ -84,7 +89,8 @@ type CreateArgs struct {
 	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
 	Notes              string   `json:"notes,omitempty"`
 	Assignee           string   `json:"assignee,omitempty"`
-	ExternalRef        string   `json:"external_ref,omitempty"`  // Link to external issue trackers
+	ExternalRef        string   `json:"external_ref,omitempty"`      // Link to external issue trackers
+	SpecID             string   `json:"spec_id,omitempty"`           // Link to specification document
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	Labels             []string `json:"labels,omitempty"`
 	Dependencies       []string `json:"dependencies,omitempty"`
@@ -92,8 +98,8 @@ type CreateArgs struct {
 	WaitsFor     string `json:"waits_for,omitempty"`      // Spawner issue ID to wait for
 	WaitsForGate string `json:"waits_for_gate,omitempty"` // Gate type: all-children or any-children
 	// Messaging fields
-	Sender    string `json:"sender,omitempty"`    // Who sent this (for messages)
-	Ephemeral bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
+	Sender    string `json:"sender,omitempty"`     // Who sent this (for messages)
+	Ephemeral bool   `json:"ephemeral,omitempty"`  // If true, not exported to JSONL; bulk-deleted when closed
 	RepliesTo string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// ID generation
 	IDPrefix  string `json:"id_prefix,omitempty"`  // Override prefix for ID generation (mol, eph, etc.)
@@ -125,15 +131,17 @@ type UpdateArgs struct {
 	AcceptanceCriteria *string  `json:"acceptance_criteria,omitempty"`
 	Notes              *string  `json:"notes,omitempty"`
 	Assignee           *string  `json:"assignee,omitempty"`
-	ExternalRef        *string  `json:"external_ref,omitempty"` // Link to external issue trackers
+	ExternalRef        *string  `json:"external_ref,omitempty"`      // Link to external issue trackers
+	SpecID             *string  `json:"spec_id,omitempty"`           // Link to specification document
+	SpecChangedAt      *string  `json:"spec_changed_at,omitempty"`   // RFC3339 or empty to clear
 	EstimatedMinutes   *int     `json:"estimated_minutes,omitempty"` // Time estimate in minutes
 	IssueType          *string  `json:"issue_type,omitempty"`        // Issue type (bug|feature|task|epic|chore)
 	AddLabels          []string `json:"add_labels,omitempty"`
 	RemoveLabels       []string `json:"remove_labels,omitempty"`
 	SetLabels          []string `json:"set_labels,omitempty"`
 	// Messaging fields
-	Sender    *string `json:"sender,omitempty"`    // Who sent this (for messages)
-	Ephemeral *bool   `json:"ephemeral,omitempty"` // If true, not exported to JSONL; bulk-deleted when closed
+	Sender    *string `json:"sender,omitempty"`     // Who sent this (for messages)
+	Ephemeral *bool   `json:"ephemeral,omitempty"`  // If true, not exported to JSONL; bulk-deleted when closed
 	RepliesTo *string `json:"replies_to,omitempty"` // Issue ID for conversation threading
 	// Graph link fields
 	RelatesTo    *string `json:"relates_to,omitempty"`    // JSON array of related issue IDs
@@ -206,12 +214,17 @@ type ListArgs struct {
 	LabelsAny []string `json:"labels_any,omitempty"` // OR semantics
 	IDs       []string `json:"ids,omitempty"`        // Filter by specific issue IDs
 	Limit     int      `json:"limit,omitempty"`
-	
+
+	// Spec filtering
+	SpecID      string `json:"spec_id,omitempty"`      // Exact match
+	SpecPrefix  string `json:"spec_prefix,omitempty"`  // Prefix match
+	SpecChanged bool   `json:"spec_changed,omitempty"` // Filter issues with spec_changed_at set
+
 	// Pattern matching
 	TitleContains       string `json:"title_contains,omitempty"`
 	DescriptionContains string `json:"description_contains,omitempty"`
 	NotesContains       string `json:"notes_contains,omitempty"`
-	
+
 	// Date ranges (ISO 8601 format)
 	CreatedAfter  string `json:"created_after,omitempty"`
 	CreatedBefore string `json:"created_before,omitempty"`
@@ -219,12 +232,12 @@ type ListArgs struct {
 	UpdatedBefore string `json:"updated_before,omitempty"`
 	ClosedAfter   string `json:"closed_after,omitempty"`
 	ClosedBefore  string `json:"closed_before,omitempty"`
-	
+
 	// Empty/null checks
 	EmptyDescription bool `json:"empty_description,omitempty"`
 	NoAssignee       bool `json:"no_assignee,omitempty"`
 	NoLabels         bool `json:"no_labels,omitempty"`
-	
+
 	// Priority range
 	PriorityMin *int `json:"priority_min,omitempty"`
 	PriorityMax *int `json:"priority_max,omitempty"`
@@ -274,6 +287,11 @@ type CountArgs struct {
 	LabelsAny []string `json:"labels_any,omitempty"`
 	IDs       []string `json:"ids,omitempty"`
 
+	// Spec filtering
+	SpecID      string `json:"spec_id,omitempty"`      // Exact match
+	SpecPrefix  string `json:"spec_prefix,omitempty"`  // Prefix match
+	SpecChanged bool   `json:"spec_changed,omitempty"` // Filter issues with spec_changed_at set
+
 	// Pattern matching
 	TitleContains       string `json:"title_contains,omitempty"`
 	DescriptionContains string `json:"description_contains,omitempty"`
@@ -312,14 +330,14 @@ type ResolveIDArgs struct {
 
 // ReadyArgs represents arguments for the ready operation
 type ReadyArgs struct {
-	Assignee   string   `json:"assignee,omitempty"`
-	Unassigned bool     `json:"unassigned,omitempty"`
-	Priority   *int     `json:"priority,omitempty"`
-	Type       string   `json:"type,omitempty"`
-	Limit      int      `json:"limit,omitempty"`
-	SortPolicy string   `json:"sort_policy,omitempty"`
-	Labels     []string `json:"labels,omitempty"`
-	LabelsAny  []string `json:"labels_any,omitempty"`
+	Assignee        string   `json:"assignee,omitempty"`
+	Unassigned      bool     `json:"unassigned,omitempty"`
+	Priority        *int     `json:"priority,omitempty"`
+	Type            string   `json:"type,omitempty"`
+	Limit           int      `json:"limit,omitempty"`
+	SortPolicy      string   `json:"sort_policy,omitempty"`
+	Labels          []string `json:"labels,omitempty"`
+	LabelsAny       []string `json:"labels_any,omitempty"`
 	ParentID        string   `json:"parent_id,omitempty"`        // Filter to descendants of this bead/epic
 	MolType         string   `json:"mol_type,omitempty"`         // Filter by molecule type: swarm, patrol, or work
 	IncludeDeferred bool     `json:"include_deferred,omitempty"` // Include issues with future defer_until (GH#820)
@@ -335,6 +353,43 @@ type StaleArgs struct {
 	Days   int    `json:"days,omitempty"`
 	Status string `json:"status,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
+}
+
+// SpecScanArgs represents arguments for spec scan operation.
+type SpecScanArgs struct {
+	Path string `json:"path,omitempty"` // Relative to repo root, default "specs"
+}
+
+// SpecListArgs represents arguments for spec list operation.
+type SpecListArgs struct {
+	Prefix         string `json:"prefix,omitempty"`          // Filter by spec_id prefix
+	IncludeMissing bool   `json:"include_missing,omitempty"` // Include missing specs
+}
+
+// SpecShowArgs represents arguments for spec show operation.
+type SpecShowArgs struct {
+	SpecID string `json:"spec_id"` // Spec ID to show
+}
+
+// SpecShowResult represents a spec and its linked beads.
+type SpecShowResult struct {
+	Spec  *spec.SpecRegistryEntry `json:"spec"`
+	Beads []*types.Issue          `json:"beads"`
+}
+
+// SpecCoverageArgs represents arguments for spec coverage operation.
+type SpecCoverageArgs struct {
+	Prefix         string `json:"prefix,omitempty"`          // Filter by spec_id prefix
+	IncludeMissing bool   `json:"include_missing,omitempty"` // Include missing specs
+}
+
+// SpecCoverageResult summarizes coverage stats.
+type SpecCoverageResult struct {
+	Total            int `json:"total"`
+	WithBeads        int `json:"with_beads"`
+	WithoutBeads     int `json:"without_beads"`
+	Missing          int `json:"missing"`
+	WithChangedBeads int `json:"with_changed_beads"`
 }
 
 // DepAddArgs represents arguments for adding a dependency
@@ -394,22 +449,22 @@ type PingResponse struct {
 
 // StatusResponse represents the daemon status metadata
 type StatusResponse struct {
-	Version              string  `json:"version"`                  // Server/daemon version
-	WorkspacePath        string  `json:"workspace_path"`           // Absolute path to workspace root
-	DatabasePath         string  `json:"database_path"`            // Absolute path to database file
-	SocketPath           string  `json:"socket_path"`              // Path to Unix socket
-	PID                  int     `json:"pid"`                      // Process ID
-	UptimeSeconds        float64 `json:"uptime_seconds"`           // Time since daemon started
-	LastActivityTime     string  `json:"last_activity_time"`       // ISO 8601 timestamp of last request
-	ExclusiveLockActive  bool    `json:"exclusive_lock_active"`    // Whether an exclusive lock is held
-	ExclusiveLockHolder  string  `json:"exclusive_lock_holder,omitempty"` // Lock holder name if active
+	Version             string  `json:"version"`                         // Server/daemon version
+	WorkspacePath       string  `json:"workspace_path"`                  // Absolute path to workspace root
+	DatabasePath        string  `json:"database_path"`                   // Absolute path to database file
+	SocketPath          string  `json:"socket_path"`                     // Path to Unix socket
+	PID                 int     `json:"pid"`                             // Process ID
+	UptimeSeconds       float64 `json:"uptime_seconds"`                  // Time since daemon started
+	LastActivityTime    string  `json:"last_activity_time"`              // ISO 8601 timestamp of last request
+	ExclusiveLockActive bool    `json:"exclusive_lock_active"`           // Whether an exclusive lock is held
+	ExclusiveLockHolder string  `json:"exclusive_lock_holder,omitempty"` // Lock holder name if active
 	// Daemon configuration
-	AutoCommit   bool   `json:"auto_commit"`            // Whether auto-commit is enabled
-	AutoPush     bool   `json:"auto_push"`              // Whether auto-push is enabled
-	AutoPull     bool   `json:"auto_pull"`              // Whether auto-pull is enabled (periodic remote sync)
-	LocalMode    bool   `json:"local_mode"`             // Whether running in local-only mode (no git)
-	SyncInterval string `json:"sync_interval"`          // Sync interval (e.g., "5s")
-	DaemonMode   string `json:"daemon_mode"`            // Sync mode: "poll" or "events"
+	AutoCommit   bool   `json:"auto_commit"`   // Whether auto-commit is enabled
+	AutoPush     bool   `json:"auto_push"`     // Whether auto-push is enabled
+	AutoPull     bool   `json:"auto_pull"`     // Whether auto-pull is enabled (periodic remote sync)
+	LocalMode    bool   `json:"local_mode"`    // Whether running in local-only mode (no git)
+	SyncInterval string `json:"sync_interval"` // Sync interval (e.g., "5s")
+	DaemonMode   string `json:"daemon_mode"`   // Sync mode: "poll" or "events"
 }
 
 // HealthResponse is the response for a health check operation
@@ -451,8 +506,8 @@ type BatchResult struct {
 
 // CompactArgs represents arguments for the compact operation
 type CompactArgs struct {
-	IssueID   string `json:"issue_id,omitempty"`   // Empty for --all
-	Tier      int    `json:"tier"`                 // 1 or 2
+	IssueID   string `json:"issue_id,omitempty"` // Empty for --all
+	Tier      int    `json:"tier"`               // 1 or 2
 	DryRun    bool   `json:"dry_run"`
 	Force     bool   `json:"force"`
 	All       bool   `json:"all"`
@@ -468,15 +523,15 @@ type CompactStatsArgs struct {
 
 // CompactResponse represents the response from a compact operation
 type CompactResponse struct {
-	Success      bool              `json:"success"`
-	IssueID      string            `json:"issue_id,omitempty"`
-	Results      []CompactResult   `json:"results,omitempty"`     // For batch operations
-	Stats        *CompactStatsData `json:"stats,omitempty"`       // For stats operation
-	OriginalSize int               `json:"original_size,omitempty"`
-	CompactedSize int              `json:"compacted_size,omitempty"`
-	Reduction    string            `json:"reduction,omitempty"`
-	Duration     string            `json:"duration,omitempty"`
-	DryRun       bool              `json:"dry_run,omitempty"`
+	Success       bool              `json:"success"`
+	IssueID       string            `json:"issue_id,omitempty"`
+	Results       []CompactResult   `json:"results,omitempty"` // For batch operations
+	Stats         *CompactStatsData `json:"stats,omitempty"`   // For stats operation
+	OriginalSize  int               `json:"original_size,omitempty"`
+	CompactedSize int               `json:"compacted_size,omitempty"`
+	Reduction     string            `json:"reduction,omitempty"`
+	Duration      string            `json:"duration,omitempty"`
+	DryRun        bool              `json:"dry_run,omitempty"`
 }
 
 // CompactResult represents the result of compacting a single issue
@@ -491,11 +546,11 @@ type CompactResult struct {
 
 // CompactStatsData represents compaction statistics
 type CompactStatsData struct {
-	Tier1Candidates int     `json:"tier1_candidates"`
-	Tier2Candidates int     `json:"tier2_candidates"`
-	TotalClosed     int     `json:"total_closed"`
-	Tier1MinAge     string  `json:"tier1_min_age"`
-	Tier2MinAge     string  `json:"tier2_min_age"`
+	Tier1Candidates  int    `json:"tier1_candidates"`
+	Tier2Candidates  int    `json:"tier2_candidates"`
+	TotalClosed      int    `json:"total_closed"`
+	Tier1MinAge      string `json:"tier1_min_age"`
+	Tier2MinAge      string `json:"tier2_min_age"`
 	EstimatedSavings string `json:"estimated_savings,omitempty"`
 }
 
