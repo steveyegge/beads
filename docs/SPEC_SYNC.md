@@ -539,3 +539,194 @@ bd show bd-xxxx | grep "Spec changed"
 
 5. **Non-file spec_ids (URLs, IDs)?**
    ✅ Resolved: Only treat spec_id as scannable if it's a repo-relative path without `://`.
+
+---
+
+## Phase 3: Fixes Required
+
+Code review identified gaps that must be addressed before production use.
+
+### Fix 1: spec_changed_at must update updated_at + emit event (HIGH)
+
+**Problem:** `MarkSpecChangedBySpecIDs` only sets `spec_changed_at` without updating `updated_at` or creating an audit event. This means:
+- Activity feeds miss spec change signals
+- JSONL exports have stale `updated_at`
+- No audit trail for spec drift detection
+
+**Files:**
+- `internal/storage/sqlite/spec_registry.go`
+- `internal/storage/dolt/spec_registry.go`
+- `internal/storage/memory/spec_registry.go`
+
+**Fix:**
+```sql
+UPDATE issues
+SET spec_changed_at = ?, updated_at = ?
+WHERE spec_id IN (...)
+```
+
+Plus emit event:
+```go
+event := types.Event{
+    IssueID:   issue.ID,
+    Type:      "spec_changed",
+    Actor:     "system",
+    Timestamp: now,
+    Data:      map[string]string{"spec_id": specID, "reason": "spec content hash changed"},
+}
+```
+
+---
+
+### Fix 2: Implement IsScannableSpecID filter (HIGH)
+
+**Problem:** The spec defines linkage rules (skip URLs, SPEC-xxx IDs, absolute paths) but no code enforces them. All spec_ids get flagged regardless of type.
+
+**File:** `internal/spec/scanner.go` (add new function)
+
+**Implementation:**
+```go
+// IsScannableSpecID returns true if spec_id should be scanned as a file path.
+// Returns false for:
+//   - URLs (contains "://")
+//   - Identifier patterns (starts with "SPEC-", "REQ-", etc.)
+//   - Absolute paths (starts with "/")
+//   - Empty strings
+func IsScannableSpecID(specID string) bool {
+    if specID == "" {
+        return false
+    }
+    if strings.Contains(specID, "://") {
+        return false // URL
+    }
+    if strings.HasPrefix(specID, "/") {
+        return false // absolute path
+    }
+    // Common ID prefixes
+    idPrefixes := []string{"SPEC-", "REQ-", "FEAT-", "US-", "STORY-"}
+    upper := strings.ToUpper(specID)
+    for _, prefix := range idPrefixes {
+        if strings.HasPrefix(upper, prefix) {
+            return false
+        }
+    }
+    return true
+}
+```
+
+**Usage:** Call in `MarkSpecChangedBySpecIDs` before marking issues:
+```go
+// Filter to only scannable spec_ids
+var scannableIDs []string
+for _, id := range specIDs {
+    if IsScannableSpecID(id) {
+        scannableIDs = append(scannableIDs, id)
+    }
+}
+```
+
+---
+
+### Fix 3: Robust repo root resolution (MEDIUM)
+
+**Problem:** Current code assumes repo root = parent of `.beads/`. Fails if `.beads/` is redirected.
+
+**File:** `internal/spec/scanner.go`
+
+**Implementation:**
+```go
+// FindRepoRoot locates the repository root directory.
+// Priority:
+//   1. Parent of .beads/ directory (walk up from cwd)
+//   2. git rev-parse --show-toplevel
+//   3. Error if neither found
+func FindRepoRoot() (string, error) {
+    // Try .beads/ first
+    cwd, err := os.Getwd()
+    if err != nil {
+        return "", err
+    }
+
+    dir := cwd
+    for {
+        if _, err := os.Stat(filepath.Join(dir, ".beads")); err == nil {
+            return dir, nil
+        }
+        parent := filepath.Dir(dir)
+        if parent == dir {
+            break
+        }
+        dir = parent
+    }
+
+    // Fallback to git
+    cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+    out, err := cmd.Output()
+    if err == nil {
+        return strings.TrimSpace(string(out)), nil
+    }
+
+    return "", fmt.Errorf("cannot find repo root: no .beads/ directory and not a git repo")
+}
+```
+
+---
+
+### Fix 4: Add local-only warning for spec_registry (MEDIUM)
+
+**Problem:** `spec_registry` table is NOT synced via JSONL/git. Teams may expect it to sync.
+
+**Fix options:**
+
+**Option A: CLI warning**
+```
+$ bd spec scan
+✓ Scanned 42 specs (added=3 updated=2 missing=0 marked=5)
+ℹ Note: Spec registry is local to this machine (not synced via git)
+```
+
+**Option B: Doc callout** in CLI_REFERENCE.md:
+```markdown
+> **Note:** The spec registry (`spec_registry` table) is local-only and not
+> synced across machines via JSONL/git. Each developer's registry reflects
+> their local spec scans. The `spec_changed_at` flag on issues IS synced.
+```
+
+**Recommendation:** Both. Warning on first scan, doc callout.
+
+---
+
+### Fix 5: Add missing tests (MEDIUM)
+
+**Required test coverage:**
+
+| Test | File | Coverage |
+|------|------|----------|
+| `TestIsScannableSpecID` | `scanner_test.go` | URL, ID, path, valid cases |
+| `TestScanExtractsTitle` | `scanner_test.go` | H1 extraction from markdown |
+| `TestScanComputesHash` | `scanner_test.go` | SHA256 consistency |
+| `TestRegistryUpdate_Add` | `registry_test.go` | New specs added |
+| `TestRegistryUpdate_Change` | `registry_test.go` | Hash change detected |
+| `TestRegistryUpdate_Missing` | `registry_test.go` | Soft delete on missing |
+| `TestMarkSpecChanged_UpdatesTimestamp` | `spec_registry_test.go` | updated_at set |
+| `TestMarkSpecChanged_CreatesEvent` | `spec_registry_test.go` | Audit event emitted |
+| `TestMarkSpecChanged_FiltersNonScannable` | `spec_registry_test.go` | URLs/IDs skipped |
+
+---
+
+## Implementation Order (Updated)
+
+1. ~~Storage interface~~ ✅
+2. ~~Migration 042~~ ✅
+3. ~~Migration 043~~ ✅
+4. ~~SQLite backend~~ ✅
+5. ~~Other backends~~ ✅
+6. ~~Scanner~~ ✅
+7. ~~Registry~~ ✅
+8. ~~CLI commands~~ ✅
+9. **Fix 1: updated_at + events** ← Next
+10. **Fix 2: IsScannableSpecID**
+11. **Fix 3: Repo root resolution**
+12. **Fix 4: Local-only warning**
+13. **Fix 5: Tests**
+14. Production ready
