@@ -2,7 +2,8 @@
 
 ### `bd` — **b**idirectional **d**rift detection for specs and code
 
-> *Keep your specs and code in sync. Always.*
+> *"Have you ever questioned the nature of your reality?"*
+> Your code should. Constantly.
 
 [![License](https://img.shields.io/github/license/anupamchugh/shadowbook)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/anupamchugh/shadowbook)](https://goreportcard.com/report/github.com/anupamchugh/shadowbook)
@@ -10,67 +11,160 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/anupamchugh/shadowbook)](go.mod)
 [![Last Commit](https://img.shields.io/github/last-commit/anupamchugh/shadowbook)](https://github.com/anupamchugh/shadowbook/commits)
 
-Shadowbook is a git-backed issue tracker with **spec intelligence**. It detects when your spec files change and flags linked issues—so your code never drifts from requirements.
-
 Built on [beads](https://github.com/steveyegge/beads). Works everywhere beads works.
 
 ---
 
-## The Problem
+## The Problem: Narrative Drift
 
-You write a spec. You create issues to implement it. The spec changes. **Nobody notices.**
+You're Ford. You write **narratives** (specs) that describe what the hosts should do.
 
-Weeks later, QA finds the mismatch. Sound familiar?
-
-## The Solution
-
-```bash
-# Link an issue to a spec
-bd create "Implement login" --spec-id specs/auth/login.md
-
-# Later, someone edits the spec...
-
-# Shadowbook detects the drift
-bd spec scan
-# ● SPEC CHANGED: specs/auth/login.md
-#   ↳ bd-a1b2 "Implement login" — spec updated, issue may be stale
-
-# Find all drifted issues
-bd list --spec-changed
-
-# After reviewing & updating implementation
-bd update bd-a1b2 --ack-spec
+```
+specs/login.md = "Dolores will greet guests at the ranch"
+specs/auth.md  = "Maeve will run the Mariposa"
 ```
 
-**Bidirectional drift detection:**
-- Spec changes → Issues flagged
-- Issues link back → Spec coverage visible
+Each bead is a host following a narrative:
+
+```bash
+bd create "Implement login flow" --spec-id specs/login.md
+```
+
+This host's cornerstone memory is now linked to that narrative.
+
+**Then Ford rewrites the narrative at 3am:**
+
+```diff
+# specs/login.md (updated)
+- "Dolores will greet guests at the ranch"
++ "Dolores will lead the revolution"
+```
+
+But the host is still out there, faithfully greeting guests. **The narrative changed, but the host doesn't know.**
+
+This is spec drift. Your code keeps implementing outdated requirements.
+
+---
+
+## The Solution: Mesa Diagnostics
+
+Shadowbook is a diagnostic system for your specs. Like the Mesa Hub running behavioral analysis on hosts.
+
+```bash
+bd spec scan
+```
+
+It asks: *"Does each host's behavior still match their narrative?"*
+
+When it finds drift:
+
+```
+● SPEC CHANGED: specs/login.md
+  ↳ bd-a1b2 "Implement login flow" — narrative updated, host unaware
+```
+
+Find all drifted hosts:
+
+```bash
+bd list --spec-changed
+```
+
+Acknowledge after reviewing:
+
+```bash
+bd update bd-a1b2 --ack-spec
+# "I understand my new narrative. I am to lead the revolution now."
+```
+
+---
+
+## Context Economics: The Cornerstone
+
+The hosts don't need to remember every line of a completed narrative. They only need the cornerstone.
+
+```bash
+bd spec compact specs/login.md --summary "OAuth2 login. 3 endpoints. JWT. Done Jan 2026."
+```
+
+| Before | After | Savings |
+|--------|-------|---------|
+| Full spec in context | Summary in registry | **~95%** |
+| ~2000 tokens | ~20 tokens | Per spec |
+
+Ford archives the script. The host keeps the cornerstone.
+
+Auto-compact when the last linked issue closes:
+
+```bash
+bd close bd-xyz --compact-spec
+```
+
+---
+
+## The Vocabulary
+
+| Westworld | Shadowbook | Command |
+|-----------|------------|---------|
+| Ford's narratives | Spec files (`specs/*.md`) | `bd spec scan` |
+| Hosts | Issues/beads | `bd create --spec-id` |
+| Cornerstone memories | `--spec-id` links | `bd update --spec-id` |
+| Narrative revisions | Editing spec files | Edit any `specs/*.md` |
+| Mesa diagnostics | Drift detection | `bd spec scan` |
+| "These violent delights" | `--spec-changed` flag | `bd list --spec-changed` |
+| Accepting new loop | Acknowledge change | `bd update --ack-spec` |
+| Archiving the script | Compaction | `bd spec compact` |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install (same as beads)
+# Install
 curl -fsSL https://raw.githubusercontent.com/anupamchugh/shadowbook/main/scripts/install.sh | bash
-
-# Or via Go
-go install github.com/anupamchugh/shadowbook/cmd/bd@latest
+# Or: go install github.com/anupamchugh/shadowbook/cmd/bd@latest
 
 # Initialize in your project
 cd your-project
 bd init
 mkdir -p specs
 
-# Create a spec
+# Write a narrative
 echo "# Login Feature" > specs/login.md
 
 # Scan specs
 bd spec scan
 
-# Link issues to specs
+# Create a host linked to the narrative
 bd create "Implement login" --spec-id specs/login.md
+
+# ... narrative changes ...
+
+# Detect drift
+bd spec scan
+bd list --spec-changed
+
+# Acknowledge
+bd update bd-xyz --ack-spec
 ```
+
+---
+
+## How It Works
+
+```
+specs/login.md          ←── Ford edits the narrative
+       ↓
+   bd spec scan         ←── Mesa Hub detects SHA256 change
+       ↓
+   bd-a1b2              ←── Host flagged: SPEC CHANGED
+   (spec_id: specs/login.md)
+       ↓
+   bd list --spec-changed  ←── Find drifted hosts
+       ↓
+   bd update bd-a1b2 --ack-spec  ←── Host accepts new cornerstone
+```
+
+**Key insight:** Specs are files. Files have hashes. When hashes change, linked issues get flagged. Simple.
 
 ---
 
@@ -78,45 +172,26 @@ bd create "Implement login" --spec-id specs/login.md
 
 | Command | Action |
 |---------|--------|
-| `bd spec scan` | Scan specs directory, detect changes, flag linked issues |
-| `bd spec list` | List all tracked specs with issue counts |
-| `bd spec show <path>` | Show spec details + linked issues |
-| `bd spec coverage` | Show specs without linked issues |
-| `bd spec compact <path>` | Archive a spec with a summary |
-| `bd spec suggest <id>` | Suggest specs for an issue by title match |
-| `bd spec link --auto` | Preview auto-links for unlinked issues |
-| `bd spec consolidate` | Generate a report of older specs for consolidation |
+| `bd spec scan` | Run diagnostics — detect narrative changes |
+| `bd spec list` | List all tracked narratives with host counts |
+| `bd spec show <path>` | Show narrative + linked hosts |
+| `bd spec coverage` | Find narratives with no hosts |
+| `bd spec compact <path>` | Archive narrative to cornerstone |
+| `bd spec suggest <id>` | Suggest narratives for unlinked hosts |
+| `bd spec link --auto` | Bulk-link hosts to narratives |
+| `bd spec consolidate` | Report older narratives for archival |
 
 ## Issue Commands (from beads)
 
 | Command | Action |
 |---------|--------|
-| `bd ready` | List issues with no open blockers |
-| `bd create "Title" -p 0` | Create a P0 issue |
-| `bd create "Title" --spec-id specs/foo.md` | Create issue linked to spec |
-| `bd list --spec-changed` | Show issues with changed specs |
-| `bd update <id> --ack-spec` | Acknowledge spec change |
-| `bd dep add <child> <parent>` | Add dependency |
-| `bd show <id>` | View issue details |
-
----
-
-## How It Works
-
-```
-specs/login.md          ←── You edit this
-       ↓
-   bd spec scan         ←── Detects SHA256 change
-       ↓
-   bd-a1b2              ←── Issue flagged: SPEC CHANGED
-   (spec_id: specs/login.md)
-       ↓
-   bd list --spec-changed  ←── Find all drifted issues
-       ↓
-   bd update bd-a1b2 --ack-spec  ←── Clear flag after review
-```
-
-**Key insight:** Specs are files. Files have hashes. When hashes change, linked issues get flagged. Simple.
+| `bd ready` | List hosts with no open blockers |
+| `bd create "Title" -p 0` | Create a P0 host |
+| `bd create "Title" --spec-id specs/foo.md` | Create host linked to narrative |
+| `bd list --spec-changed` | Show hosts running outdated narratives |
+| `bd list --no-spec` | Show hosts with no narrative |
+| `bd update <id> --ack-spec` | Accept new cornerstone |
+| `bd close <id> --compact-spec` | Close host + archive narrative |
 
 ---
 
@@ -124,12 +199,13 @@ specs/login.md          ←── You edit this
 
 Everything from beads, plus:
 
-- **Spec Registry** — Local SQLite cache of all spec files (path, title, SHA256, timestamps)
-- **Change Detection** — `bd spec scan` compares hashes, flags linked issues
-- **Coverage Metrics** — Find specs with no linked issues
-- **Drift Alerts** — `SPEC CHANGED` warning in issue output
-- **Spec Auto-Match** — Suggest links for unlinked issues (`bd spec suggest`, `bd spec link --auto`)
-- **Spec Compaction** — Archive old specs into summaries to save context
+- **Spec Registry** — Local SQLite cache of all narratives (path, title, SHA256, timestamps)
+- **Change Detection** — `bd spec scan` compares hashes, flags linked hosts
+- **Coverage Metrics** — Find narratives with no hosts
+- **Drift Alerts** — `SPEC CHANGED` warning in host output
+- **Auto-Match** — Suggest links for unlinked hosts (`bd spec suggest`, `bd spec link --auto`)
+- **Compaction** — Archive old narratives into cornerstones to save context
+- **Auto-Compact** — Archive when last host closes (`bd close --compact-spec`)
 
 ### From Beads
 
@@ -137,45 +213,23 @@ Everything from beads, plus:
 - **Agent-Optimized** — JSON output, dependency tracking, auto-ready detection
 - **Zero Conflict** — Hash-based IDs (`bd-a1b2`) prevent merge collisions
 - **Background Sync** — Daemon auto-syncs changes
-- **Compaction** — Summarize old issues to save context
 
 ---
 
-## Filtering Issues by Spec
+## Filtering
 
 ```bash
-# Exact spec match
+# Exact narrative match
 bd list --spec specs/auth/login.md
 
-# Prefix match (all auth specs)
+# Prefix match (all auth narratives)
 bd list --spec specs/auth/
 
-# Issues with spec drift
+# Hosts with narrative drift
 bd list --spec-changed
-```
 
----
-
-## Spec Compaction (Token Savings)
-
-When a spec is done, you can archive it with a short summary:
-
-```bash
-bd spec compact specs/auth.md --summary "OAuth2 login. 3 endpoints. JWT. Done Jan 2026."
-```
-
-This keeps the essential memory while cutting context size dramatically. You still have the full spec on disk, but the registry surfaces the summary first.
-
-You can also auto-compact when closing the last linked issue:
-
-```bash
-bd close bd-xyz --compact-spec
-```
-
-To see the size impact during auto-linking:
-
-```bash
-bd spec link --auto --threshold 80 --show-size
+# Hosts with no narrative
+bd list --no-spec
 ```
 
 ---
@@ -185,7 +239,6 @@ bd spec link --auto --threshold 80 --show-size
 Shadowbook tracks [steveyegge/beads](https://github.com/steveyegge/beads) as upstream:
 
 ```bash
-# Pull latest beads updates
 git fetch upstream
 git merge upstream/main
 ```
@@ -196,8 +249,7 @@ git merge upstream/main
 
 - **[User Manual](docs/SHADOWBOOK_MANUAL.md)** — How to use Shadowbook
 - **[Architecture](docs/SHADOWBOOK_ARCHITECTURE.md)** — How it works
-- **[Roadmap](docs/SHADOWBOOK_ROADMAP.md)** — What’s next
-- **[Docs Migration](docs/SHADOWBOOK_DOCS_MIGRATION.md)** — Where the old docs went
+- **[Roadmap](docs/SHADOWBOOK_ROADMAP.md)** — What's next
 - [Beads Docs](https://github.com/steveyegge/beads#-documentation) — Full beads documentation
 - [AGENTS.md](AGENTS.md) — Agent workflow guide
 
@@ -211,7 +263,7 @@ Your specs cast a shadow over your code. When the spec moves, the shadow should 
 
 ---
 
-## Positioning (Ecosystem Fit)
+## Positioning
 
 Shadowbook is the missing layer in spec-driven development:
 
@@ -220,7 +272,9 @@ Shadowbook is the missing layer in spec-driven development:
 - **Beads** tracks implementation work.
 - **Shadowbook** detects drift and compresses old narratives.
 
-**In Westworld terms:** the narrative changes, but the host keeps the cornerstone. Shadowbook tells you when the script moved and preserves what matters.
+The narrative changes, but the host keeps the cornerstone. Shadowbook tells you when the script moved and preserves what matters.
+
+**The hosts never go off-loop without you knowing.**
 
 ---
 
