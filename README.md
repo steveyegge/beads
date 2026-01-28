@@ -286,6 +286,12 @@ If Shadowbook saves you time, consider buying me a coffee:
 
 ---
 
+## Read More
+
+📖 **[The Vibe-Clock Drift Problem](https://chughgpt.substack.com/p/the-vibe-clock-drift-problem)** — Why I built Shadowbook
+
+---
+
 ## License
 
 MIT — Same as beads.
