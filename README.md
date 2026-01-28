@@ -5,6 +5,10 @@
 > *Keep your specs and code in sync. Always.*
 
 [![License](https://img.shields.io/github/license/anupamchugh/shadowbook)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/anupamchugh/shadowbook)](https://goreportcard.com/report/github.com/anupamchugh/shadowbook)
+[![Release](https://img.shields.io/github/v/release/anupamchugh/shadowbook)](https://github.com/anupamchugh/shadowbook/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/anupamchugh/shadowbook)](go.mod)
+[![Last Commit](https://img.shields.io/github/last-commit/anupamchugh/shadowbook)](https://github.com/anupamchugh/shadowbook/commits)
 
 Shadowbook is a git-backed issue tracker with **spec intelligence**. It detects when your spec files change and flags linked issues—so your code never drifts from requirements.
 

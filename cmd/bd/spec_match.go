@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
@@ -100,6 +101,14 @@ var specLinkAutoCmd = &cobra.Command{
 		includeClosed, _ := cmd.Flags().GetBool("include-closed")
 		maxIssues, _ := cmd.Flags().GetInt("max-issues")
 		showSize, _ := cmd.Flags().GetBool("show-size")
+		format, _ := cmd.Flags().GetString("format")
+		if format == "" {
+			format = "list"
+		}
+		format = strings.ToLower(format)
+		if format != "list" && format != "table" {
+			FatalErrorRespectJSON("--format must be one of: list, table")
+		}
 		validatePercent(threshold, "threshold")
 
 		if daemonClient != nil {
@@ -116,7 +125,7 @@ var specLinkAutoCmd = &cobra.Command{
 			if err := json.Unmarshal(resp.Data, &result); err != nil {
 				FatalErrorRespectJSON("invalid spec link auto response: %v", err)
 			}
-			renderSpecLinkAuto(result, threshold, confirm, showSize)
+			renderSpecLinkAuto(result, threshold, confirm, showSize, format)
 			return
 		}
 
@@ -190,7 +199,7 @@ var specLinkAutoCmd = &cobra.Command{
 			result.Suggestions = append(result.Suggestions, suggestion)
 		}
 
-		renderSpecLinkAuto(result, threshold, confirm, showSize)
+		renderSpecLinkAuto(result, threshold, confirm, showSize, format)
 	},
 }
 
@@ -204,6 +213,7 @@ func init() {
 	specLinkAutoCmd.Flags().Bool("include-closed", false, "Include closed issues")
 	specLinkAutoCmd.Flags().Int("max-issues", 0, "Limit number of issues to process (0 = no limit)")
 	specLinkAutoCmd.Flags().Bool("show-size", false, "Show spec size (lines/tokens) for matches")
+	specLinkAutoCmd.Flags().String("format", "list", "Output format: list or table")
 
 	specCmd.AddCommand(specSuggestCmd)
 	specCmd.AddCommand(specLinkAutoCmd)
@@ -251,7 +261,7 @@ type specSize struct {
 	Tokens int
 }
 
-func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bool, showSize bool) {
+func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bool, showSize bool, format string) {
 	if jsonOutput {
 		outputJSON(result)
 		return
@@ -281,27 +291,32 @@ func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bo
 	totalTokens := 0
 
 	fmt.Println()
-	for _, suggestion := range result.Suggestions {
-		percent := int(suggestion.Score * 100)
-		status := "○"
-		if suggestion.Applied {
-			status = ui.RenderPass("✓")
-		}
-		line := fmt.Sprintf("%s %s -> %s (%d%%)", status, suggestion.IssueID, suggestion.SpecID, percent)
-		if suggestion.IssueTitle != "" {
-			line = fmt.Sprintf("%s \"%s\"", line, suggestion.IssueTitle)
-		}
-		if suggestion.Error != "" {
-			line = fmt.Sprintf("%s [error: %s]", line, suggestion.Error)
-		}
-		if showSize {
-			if size, ok := getSpecSize(repoRoot, suggestion.SpecID, sizeCache); ok {
-				line = fmt.Sprintf("%s | %d lines | ~%dk tokens", line, size.Lines, size.Tokens/1000)
-				totalLines += size.Lines
-				totalTokens += size.Tokens
+	switch format {
+	case "table":
+		renderSpecLinkAutoTable(result, showSize, repoRoot, sizeCache, &totalLines, &totalTokens)
+	default:
+		for _, suggestion := range result.Suggestions {
+			percent := int(suggestion.Score * 100)
+			status := "○"
+			if suggestion.Applied {
+				status = ui.RenderPass("✓")
 			}
+			line := fmt.Sprintf("%s %s -> %s (%d%%)", status, suggestion.IssueID, suggestion.SpecID, percent)
+			if suggestion.IssueTitle != "" {
+				line = fmt.Sprintf("%s \"%s\"", line, suggestion.IssueTitle)
+			}
+			if suggestion.Error != "" {
+				line = fmt.Sprintf("%s [error: %s]", line, suggestion.Error)
+			}
+			if showSize {
+				if size, ok := getSpecSize(repoRoot, suggestion.SpecID, sizeCache); ok {
+					line = fmt.Sprintf("%s | %d lines | ~%dk tokens", line, size.Lines, size.Tokens/1000)
+					totalLines += size.Lines
+					totalTokens += size.Tokens
+				}
+			}
+			fmt.Fprintln(os.Stdout, line)
 		}
-		fmt.Fprintln(os.Stdout, line)
 	}
 
 	if showSize && totalLines > 0 {
@@ -315,6 +330,40 @@ func renderSpecLinkAuto(result rpc.SpecLinkAutoResult, threshold int, confirm bo
 	if !confirm {
 		fmt.Println("\nRun with --confirm to apply these links.")
 	}
+}
+
+func renderSpecLinkAutoTable(result rpc.SpecLinkAutoResult, showSize bool, repoRoot string, cache map[string]specSize, totalLines *int, totalTokens *int) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if showSize {
+		fmt.Fprintln(w, "STATUS\tISSUE ID\tSPEC ID\tSCORE%\tLINES\tTOKENS\tTITLE")
+	} else {
+		fmt.Fprintln(w, "STATUS\tISSUE ID\tSPEC ID\tSCORE%\tTITLE")
+	}
+	for _, suggestion := range result.Suggestions {
+		status := "○"
+		if suggestion.Applied {
+			status = ui.RenderPass("✓")
+		}
+		score := int(suggestion.Score * 100)
+		title := suggestion.IssueTitle
+		if title == "" {
+			title = "(no title)"
+		}
+		if showSize {
+			lines := ""
+			tokens := ""
+			if size, ok := getSpecSize(repoRoot, suggestion.SpecID, cache); ok {
+				lines = fmt.Sprintf("%d", size.Lines)
+				tokens = fmt.Sprintf("~%dk", size.Tokens/1000)
+				*totalLines += size.Lines
+				*totalTokens += size.Tokens
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", status, suggestion.IssueID, suggestion.SpecID, score, lines, tokens, title)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", status, suggestion.IssueID, suggestion.SpecID, score, title)
+		}
+	}
+	_ = w.Flush()
 }
 
 func findSpecRepoRoot() string {
