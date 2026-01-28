@@ -12,6 +12,7 @@ type mockStore struct {
 	markedChanged []string
 	markedMissing []string
 	clearedIDs    []string
+	scanEvents    []SpecScanEvent
 }
 
 func (m *mockStore) ListSpecRegistry(ctx context.Context) ([]SpecRegistryEntry, error) {
@@ -70,6 +71,25 @@ func (m *mockStore) MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []stri
 	return len(specIDs), nil
 }
 
+func (m *mockStore) AddSpecScanEvents(ctx context.Context, events []SpecScanEvent) error {
+	m.scanEvents = append(m.scanEvents, events...)
+	return nil
+}
+
+func (m *mockStore) ListSpecScanEvents(ctx context.Context, specID string, since time.Time) ([]SpecScanEvent, error) {
+	var results []SpecScanEvent
+	for _, e := range m.scanEvents {
+		if e.SpecID != specID {
+			continue
+		}
+		if !since.IsZero() && e.ScannedAt.Before(since) {
+			continue
+		}
+		results = append(results, e)
+	}
+	return results, nil
+}
+
 func TestUpdateRegistry_Add(t *testing.T) {
 	store := &mockStore{}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -95,6 +115,14 @@ func TestUpdateRegistry_Add(t *testing.T) {
 	}
 	if len(result.ChangedSpecIDs) != 0 {
 		t.Errorf("ChangedSpecIDs = %v, want empty", result.ChangedSpecIDs)
+	}
+	if len(store.scanEvents) != 2 {
+		t.Errorf("scanEvents = %d, want 2", len(store.scanEvents))
+	}
+	for _, event := range store.scanEvents {
+		if event.Changed {
+			t.Errorf("scanEvents changed = true, want false for new specs")
+		}
 	}
 }
 
@@ -129,6 +157,12 @@ func TestUpdateRegistry_Change(t *testing.T) {
 	if len(store.markedChanged) != 1 {
 		t.Errorf("markedChanged = %v, want 1 item", store.markedChanged)
 	}
+	if len(store.scanEvents) != 1 {
+		t.Errorf("scanEvents = %d, want 1", len(store.scanEvents))
+	}
+	if !store.scanEvents[0].Changed {
+		t.Errorf("scanEvents[0].Changed = false, want true")
+	}
 }
 
 func TestUpdateRegistry_Missing(t *testing.T) {
@@ -157,6 +191,9 @@ func TestUpdateRegistry_Missing(t *testing.T) {
 	}
 	if len(store.markedMissing) != 1 || store.markedMissing[0] != "specs/deleted.md" {
 		t.Errorf("markedMissing = %v, want [specs/deleted.md]", store.markedMissing)
+	}
+	if len(store.scanEvents) != 1 {
+		t.Errorf("scanEvents = %d, want 1", len(store.scanEvents))
 	}
 }
 
@@ -187,5 +224,11 @@ func TestUpdateRegistry_Unchanged(t *testing.T) {
 	}
 	if len(result.ChangedSpecIDs) != 0 {
 		t.Errorf("ChangedSpecIDs = %v, want empty", result.ChangedSpecIDs)
+	}
+	if len(store.scanEvents) != 1 {
+		t.Errorf("scanEvents = %d, want 1", len(store.scanEvents))
+	}
+	if store.scanEvents[0].Changed {
+		t.Errorf("scanEvents[0].Changed = true, want false")
 	}
 }

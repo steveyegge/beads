@@ -15,6 +15,8 @@ type SpecRegistryStore interface {
 	ClearSpecsMissing(ctx context.Context, specIDs []string) error
 	MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []string, changedAt time.Time) (int, error)
 	UpdateSpecRegistry(ctx context.Context, specID string, updates SpecRegistryUpdate) error
+	AddSpecScanEvents(ctx context.Context, events []SpecScanEvent) error
+	ListSpecScanEvents(ctx context.Context, specID string, since time.Time) ([]SpecScanEvent, error)
 }
 
 // SpecRegistryUpdate defines optional fields to update on a spec registry entry.

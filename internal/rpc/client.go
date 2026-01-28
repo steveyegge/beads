@@ -430,6 +430,11 @@ func (c *Client) SpecLinkAuto(args *SpecLinkAutoArgs) (*Response, error) {
 	return c.Execute(OpSpecLinkAuto, args)
 }
 
+// SpecRisk returns volatility summaries for specs via the daemon.
+func (c *Client) SpecRisk(args *SpecRiskArgs) (*Response, error) {
+	return c.Execute(OpSpecRisk, args)
+}
+
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)

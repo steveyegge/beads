@@ -104,6 +104,16 @@ CREATE TABLE IF NOT EXISTS spec_registry (
     INDEX idx_spec_registry_path (path)
 );
 
+-- Spec scan history table (Shadow Ledger risk signals)
+CREATE TABLE IF NOT EXISTS spec_scan_events (
+    spec_id VARCHAR(512) NOT NULL,
+    scanned_at DATETIME NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    changed TINYINT(1) NOT NULL DEFAULT 0,
+    PRIMARY KEY (spec_id, scanned_at),
+    INDEX idx_spec_scan_events_spec_time (spec_id, scanned_at)
+);
+
 -- Dependencies table (edge schema)
 CREATE TABLE IF NOT EXISTS dependencies (
     issue_id VARCHAR(255) NOT NULL,

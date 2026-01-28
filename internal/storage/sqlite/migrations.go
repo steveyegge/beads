@@ -61,6 +61,7 @@ var migrationsList = []Migration{
 	{"spec_registry_table", migrations.MigrateSpecRegistryTable},
 	{"spec_changed_at_column", migrations.MigrateSpecChangedAtColumn},
 	{"spec_registry_lifecycle", migrations.MigrateSpecRegistryLifecycle},
+	{"spec_scan_events", migrations.MigrateSpecScanEvents},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -129,6 +130,7 @@ func getMigrationDescription(name string) string {
 		"spec_registry_table":          "Adds spec_registry table for Shadow Ledger spec tracking",
 		"spec_changed_at_column":       "Adds spec_changed_at column for Shadow Ledger change signals",
 		"spec_registry_lifecycle":      "Adds lifecycle metadata columns to spec_registry",
+		"spec_scan_events":             "Adds spec_scan_events table for scan history and risk analysis",
 	}
 
 	if desc, ok := descriptions[name]; ok {

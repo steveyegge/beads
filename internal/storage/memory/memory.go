@@ -23,15 +23,16 @@ type MemoryStorage struct {
 	mu sync.RWMutex // Protects all maps
 
 	// Core data
-	issues       map[string]*types.Issue        // ID -> Issue
-	dependencies map[string][]*types.Dependency // IssueID -> Dependencies
-	labels       map[string][]string            // IssueID -> Labels
-	events       map[string][]*types.Event      // IssueID -> Events
-	comments     map[string][]*types.Comment    // IssueID -> Comments
-	config       map[string]string              // Config key-value pairs
-	metadata     map[string]string              // Metadata key-value pairs
-	counters     map[string]int                 // Prefix -> Last ID
-	specRegistry map[string]spec.SpecRegistryEntry
+	issues         map[string]*types.Issue        // ID -> Issue
+	dependencies   map[string][]*types.Dependency // IssueID -> Dependencies
+	labels         map[string][]string            // IssueID -> Labels
+	events         map[string][]*types.Event      // IssueID -> Events
+	comments       map[string][]*types.Comment    // IssueID -> Comments
+	config         map[string]string              // Config key-value pairs
+	metadata       map[string]string              // Metadata key-value pairs
+	counters       map[string]int                 // Prefix -> Last ID
+	specRegistry   map[string]spec.SpecRegistryEntry
+	specScanEvents map[string]map[int64]spec.SpecScanEvent
 
 	// Indexes for O(1) lookups
 	externalRefToID map[string]string // ExternalRef -> IssueID
@@ -55,6 +56,7 @@ func New(jsonlPath string) *MemoryStorage {
 		metadata:        make(map[string]string),
 		counters:        make(map[string]int),
 		specRegistry:    make(map[string]spec.SpecRegistryEntry),
+		specScanEvents:  make(map[string]map[int64]spec.SpecScanEvent),
 		externalRefToID: make(map[string]string),
 		dirty:           make(map[string]bool),
 		jsonlPath:       jsonlPath,

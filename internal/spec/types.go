@@ -45,3 +45,20 @@ type SpecScanResult struct {
 	MarkedBeads    int      `json:"marked_beads"`
 	ChangedSpecIDs []string `json:"changed_spec_ids,omitempty"`
 }
+
+// SpecScanEvent records a scan of a spec file.
+type SpecScanEvent struct {
+	SpecID    string
+	ScannedAt time.Time
+	SHA256    string
+	Changed   bool
+}
+
+// SpecRiskEntry summarizes drift risk signals for a spec.
+type SpecRiskEntry struct {
+	SpecID        string
+	Title         string
+	ChangeCount   int
+	LastChangedAt *time.Time
+	OpenIssues    int
+}

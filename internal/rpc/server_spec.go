@@ -3,6 +3,7 @@ package rpc
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -221,6 +222,95 @@ func (s *Server) handleSpecCompact(req *Request) Response {
 		return Response{Success: false, Error: fmt.Sprintf("get spec: %v", err)}
 	}
 	data, _ := json.Marshal(entry)
+	return Response{Success: true, Data: data}
+}
+
+func (s *Server) handleSpecRisk(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecRiskArgs
+	if len(req.Args) > 0 {
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("invalid spec risk args: %v", err)}
+		}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	var since time.Time
+	if strings.TrimSpace(args.Since) != "" {
+		parsed, err := time.Parse(time.RFC3339, args.Since)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("invalid since timestamp: %v", err)}
+		}
+		since = parsed
+	}
+
+	minChanges := args.MinChanges
+	if minChanges <= 0 {
+		minChanges = 1
+	}
+
+	entries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+
+	openIssues := make(map[string]int)
+	openFilter := types.IssueFilter{
+		ExcludeStatus: []types.Status{types.StatusClosed, types.StatusTombstone},
+	}
+	issues, err := s.storage.SearchIssues(ctx, "", openFilter)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list open issues: %v", err)}
+	}
+	for _, issue := range issues {
+		if issue.SpecID == "" {
+			continue
+		}
+		openIssues[issue.SpecID]++
+	}
+
+	results := make([]spec.SpecRiskEntry, 0)
+	for _, entry := range entries {
+		if entry.MissingAt != nil {
+			continue
+		}
+		events, err := store.ListSpecScanEvents(ctx, entry.SpecID, since)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("list spec scan events: %v", err)}
+		}
+		changeCount, lastChangedAt := spec.SummarizeScanEvents(events, time.Time{})
+		if changeCount < minChanges {
+			continue
+		}
+		results = append(results, spec.SpecRiskEntry{
+			SpecID:        entry.SpecID,
+			Title:         entry.Title,
+			ChangeCount:   changeCount,
+			LastChangedAt: lastChangedAt,
+			OpenIssues:    openIssues[entry.SpecID],
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].ChangeCount != results[j].ChangeCount {
+			return results[i].ChangeCount > results[j].ChangeCount
+		}
+		if results[i].OpenIssues != results[j].OpenIssues {
+			return results[i].OpenIssues > results[j].OpenIssues
+		}
+		return results[i].SpecID < results[j].SpecID
+	})
+
+	if args.Limit > 0 && len(results) > args.Limit {
+		results = results[:args.Limit]
+	}
+
+	data, _ := json.Marshal(results)
 	return Response{Success: true, Data: data}
 }
 

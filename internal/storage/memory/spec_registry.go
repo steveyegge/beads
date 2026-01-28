@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/steveyegge/beads/internal/spec"
@@ -140,4 +141,44 @@ func (m *MemoryStorage) MarkSpecChangedBySpecIDs(_ context.Context, specIDs []st
 		updated++
 	}
 	return updated, nil
+}
+
+func (m *MemoryStorage) AddSpecScanEvents(_ context.Context, events []spec.SpecScanEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, event := range events {
+		byTime, ok := m.specScanEvents[event.SpecID]
+		if !ok {
+			byTime = make(map[int64]spec.SpecScanEvent)
+			m.specScanEvents[event.SpecID] = byTime
+		}
+		key := event.ScannedAt.UnixNano()
+		byTime[key] = event
+	}
+	return nil
+}
+
+func (m *MemoryStorage) ListSpecScanEvents(_ context.Context, specID string, since time.Time) ([]spec.SpecScanEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	byTime, ok := m.specScanEvents[specID]
+	if !ok {
+		return nil, nil
+	}
+	results := make([]spec.SpecScanEvent, 0, len(byTime))
+	for _, event := range byTime {
+		if !since.IsZero() && event.ScannedAt.Before(since) {
+			continue
+		}
+		results = append(results, event)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].ScannedAt.Before(results[j].ScannedAt)
+	})
+	return results, nil
 }

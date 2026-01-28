@@ -36,6 +36,7 @@ var expectedSchema = map[string][]string{
 	"compaction_snapshots": {"id", "issue_id", "compaction_level", "snapshot_json", "created_at"},
 	"repo_mtimes":          {"repo_path", "jsonl_path", "mtime_ns", "last_checked"},
 	"spec_registry":        {"spec_id", "path", "title", "sha256", "mtime", "discovered_at", "last_scanned_at", "missing_at", "lifecycle", "completed_at", "summary", "summary_tokens", "archived_at"},
+	"spec_scan_events":     {"spec_id", "scanned_at", "sha256", "changed"},
 }
 
 // SchemaProbeResult contains the results of a schema compatibility check

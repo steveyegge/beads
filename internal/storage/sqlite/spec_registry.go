@@ -405,3 +405,81 @@ func (s *SQLiteStorage) MarkSpecChangedBySpecIDs(ctx context.Context, specIDs []
 
 	return int(affected), nil
 }
+
+// AddSpecScanEvents stores scan history records.
+func (s *SQLiteStorage) AddSpecScanEvents(ctx context.Context, events []spec.SpecScanEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin spec_scan_events tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR IGNORE INTO spec_scan_events (spec_id, scanned_at, sha256, changed)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare spec_scan_events insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, e := range events {
+		changed := 0
+		if e.Changed {
+			changed = 1
+		}
+		if _, err := stmt.ExecContext(ctx, e.SpecID, e.ScannedAt, e.SHA256, changed); err != nil {
+			return fmt.Errorf("insert spec_scan_event: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit spec_scan_events: %w", err)
+	}
+	return nil
+}
+
+// ListSpecScanEvents returns scan events for a spec since the given time.
+func (s *SQLiteStorage) ListSpecScanEvents(ctx context.Context, specID string, since time.Time) ([]spec.SpecScanEvent, error) {
+	s.reconnectMu.RLock()
+	defer s.reconnectMu.RUnlock()
+
+	args := []interface{}{specID}
+	query := `
+		SELECT spec_id, scanned_at, sha256, changed
+		FROM spec_scan_events
+		WHERE spec_id = ?
+	`
+	if !since.IsZero() {
+		query += " AND scanned_at >= ?"
+		args = append(args, since)
+	}
+	query += " ORDER BY scanned_at ASC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list spec_scan_events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []spec.SpecScanEvent
+	for rows.Next() {
+		var e spec.SpecScanEvent
+		var changedInt int
+		if err := rows.Scan(&e.SpecID, &e.ScannedAt, &e.SHA256, &changedInt); err != nil {
+			return nil, fmt.Errorf("scan spec_scan_event: %w", err)
+		}
+		e.Changed = changedInt != 0
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate spec_scan_events: %w", err)
+	}
+	return events, nil
+}

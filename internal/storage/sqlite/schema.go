@@ -289,4 +289,13 @@ WHERE i.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
   AND d.type = 'blocks'
   AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 GROUP BY i.id;
+-- Spec scan history table (Shadow Ledger risk signals)
+CREATE TABLE IF NOT EXISTS spec_scan_events (
+    spec_id TEXT NOT NULL,
+    scanned_at DATETIME NOT NULL,
+    sha256 TEXT NOT NULL,
+    changed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (spec_id, scanned_at)
+);
+CREATE INDEX IF NOT EXISTS idx_spec_scan_events_spec_time ON spec_scan_events(spec_id, scanned_at);
 `

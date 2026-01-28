@@ -24,18 +24,26 @@ func UpdateRegistry(ctx context.Context, store SpecRegistryStore, scanned []Scan
 	scannedIDs := make([]string, 0, len(scanned))
 	scannedSet := make(map[string]struct{}, len(scanned))
 	upsert := make([]SpecRegistryEntry, 0, len(scanned))
+	scanEvents := make([]SpecScanEvent, 0, len(scanned))
 
 	for _, spec := range scanned {
 		scannedIDs = append(scannedIDs, spec.SpecID)
 		scannedSet[spec.SpecID] = struct{}{}
 
 		if current, ok := existingByID[spec.SpecID]; ok {
+			changed := current.SHA256 != spec.SHA256
 			if current.SHA256 != spec.SHA256 {
 				result.Updated++
 				result.ChangedSpecIDs = append(result.ChangedSpecIDs, spec.SpecID)
 			} else {
 				result.Unchanged++
 			}
+			scanEvents = append(scanEvents, SpecScanEvent{
+				SpecID:    spec.SpecID,
+				ScannedAt: now,
+				SHA256:    spec.SHA256,
+				Changed:   changed,
+			})
 			upsert = append(upsert, SpecRegistryEntry{
 				SpecID:        spec.SpecID,
 				Path:          spec.SpecID,
@@ -50,6 +58,12 @@ func UpdateRegistry(ctx context.Context, store SpecRegistryStore, scanned []Scan
 		}
 
 		result.Added++
+		scanEvents = append(scanEvents, SpecScanEvent{
+			SpecID:    spec.SpecID,
+			ScannedAt: now,
+			SHA256:    spec.SHA256,
+			Changed:   false,
+		})
 		upsert = append(upsert, SpecRegistryEntry{
 			SpecID:        spec.SpecID,
 			Path:          spec.SpecID,
@@ -64,6 +78,10 @@ func UpdateRegistry(ctx context.Context, store SpecRegistryStore, scanned []Scan
 
 	if err := store.UpsertSpecRegistry(ctx, upsert); err != nil {
 		return result, fmt.Errorf("upsert spec registry: %w", err)
+	}
+
+	if err := store.AddSpecScanEvents(ctx, scanEvents); err != nil {
+		return result, fmt.Errorf("record spec scan events: %w", err)
 	}
 
 	// Mark missing specs

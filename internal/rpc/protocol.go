@@ -40,6 +40,7 @@ const (
 	OpSpecCompact  = "spec_compact"
 	OpSpecSuggest  = "spec_suggest"
 	OpSpecLinkAuto = "spec_link_auto"
+	OpSpecRisk     = "spec_risk"
 
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
@@ -449,6 +450,13 @@ type SpecLinkAutoResult struct {
 	SkippedNoTitle  int                      `json:"skipped_no_title"`
 	SkippedLowScore int                      `json:"skipped_low_score"`
 	Suggestions     []SpecLinkAutoSuggestion `json:"suggestions,omitempty"`
+}
+
+// SpecRiskArgs represents arguments for spec risk operation.
+type SpecRiskArgs struct {
+	Since      string `json:"since,omitempty"`       // RFC3339 timestamp
+	MinChanges int    `json:"min_changes,omitempty"` // Minimum change count to include
+	Limit      int    `json:"limit,omitempty"`       // Max results (0 = no limit)
 }
 
 // DepAddArgs represents arguments for adding a dependency

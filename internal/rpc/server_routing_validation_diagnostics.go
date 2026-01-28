@@ -222,6 +222,8 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleSpecSuggest(req)
 	case OpSpecLinkAuto:
 		resp = s.handleSpecLinkAuto(req)
+	case OpSpecRisk:
+		resp = s.handleSpecRisk(req)
 
 	case OpCompact:
 		resp = s.handleCompact(req)
