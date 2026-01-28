@@ -34,25 +34,41 @@ func validateKVKey(key string) error {
 	return nil
 }
 
-// setCmd sets a key-value pair (top-level: bd set key value)
-var setCmd = &cobra.Command{
-	Use:     "set <key> <value>",
+// kvCmd is the parent command for kv subcommands
+var kvCmd = &cobra.Command{
+	Use:     "kv",
 	GroupID: "setup",
-	Short:   "Set a key-value pair",
+	Short:   "Key-value store commands",
+	Long: `Commands for working with the beads key-value store.
+
+The key-value store is useful for storing flags, environment variables,
+or other user-defined data that persists across sessions.
+
+Examples:
+  bd kv set mykey myvalue    # Set a value
+  bd kv get mykey            # Get a value
+  bd kv clear mykey          # Delete a key
+  bd kv list                 # List all key-value pairs`,
+}
+
+// kvSetCmd sets a key-value pair
+var kvSetCmd = &cobra.Command{
+	Use:   "set <key> <value>",
+	Short: "Set a key-value pair",
 	Long: `Set a key-value pair in the beads key-value store.
 
 This is useful for storing flags, environment variables, or other
 user-defined data that persists across sessions.
 
 Examples:
-  bd set feature_flag true
-  bd set api_endpoint https://api.example.com
-  bd set max_retries 3`,
+  bd kv set feature_flag true
+  bd kv set api_endpoint https://api.example.com
+  bd kv set max_retries 3`,
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		CheckReadonly("set")
+		CheckReadonly("kv set")
 
-		if err := ensureDirectMode("set requires direct database access"); err != nil {
+		if err := ensureDirectMode("kv set requires direct database access"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -80,19 +96,18 @@ Examples:
 	},
 }
 
-// getCmd gets a value by key (top-level: bd get key)
-var getCmd = &cobra.Command{
-	Use:     "get <key>",
-	GroupID: "setup",
-	Short:   "Get a value by key",
+// kvGetCmd gets a value by key
+var kvGetCmd = &cobra.Command{
+	Use:   "get <key>",
+	Short: "Get a value by key",
 	Long: `Get a value from the beads key-value store.
 
 Examples:
-  bd get feature_flag
-  bd get api_endpoint`,
+  bd kv get feature_flag
+  bd kv get api_endpoint`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := ensureDirectMode("get requires direct database access"); err != nil {
+		if err := ensureDirectMode("kv get requires direct database access"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -127,21 +142,20 @@ Examples:
 	},
 }
 
-// clearCmd deletes a key (top-level: bd clear key)
-var clearCmd = &cobra.Command{
-	Use:     "clear <key>",
-	GroupID: "setup",
-	Short:   "Delete a key-value pair",
+// kvClearCmd deletes a key
+var kvClearCmd = &cobra.Command{
+	Use:   "clear <key>",
+	Short: "Delete a key-value pair",
 	Long: `Delete a key from the beads key-value store.
 
 Examples:
-  bd clear feature_flag
-  bd clear api_endpoint`,
+  bd kv clear feature_flag
+  bd kv clear api_endpoint`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		CheckReadonly("clear")
+		CheckReadonly("kv clear")
 
-		if err := ensureDirectMode("clear requires direct database access"); err != nil {
+		if err := ensureDirectMode("kv clear requires direct database access"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -168,24 +182,7 @@ Examples:
 	},
 }
 
-// kvCmd is the parent command for kv subcommands
-var kvCmd = &cobra.Command{
-	Use:     "kv",
-	GroupID: "setup",
-	Short:   "Key-value store commands",
-	Long: `Commands for working with the beads key-value store.
-
-The key-value store is useful for storing flags, environment variables,
-or other user-defined data that persists across sessions.
-
-Examples:
-  bd kv list              # List all key-value pairs
-  bd set mykey myvalue    # Set a value (top-level alias)
-  bd get mykey            # Get a value (top-level alias)
-  bd clear mykey          # Delete a key (top-level alias)`,
-}
-
-// kvListCmd lists all key-value pairs (bd kv list)
+// kvListCmd lists all key-value pairs
 var kvListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all key-value pairs",
@@ -240,12 +237,12 @@ Examples:
 }
 
 func init() {
-	// Register top-level commands
-	rootCmd.AddCommand(setCmd)
-	rootCmd.AddCommand(getCmd)
-	rootCmd.AddCommand(clearCmd)
-
-	// Register kv subcommand with list
+	// Register all kv subcommands under kvCmd
+	kvCmd.AddCommand(kvSetCmd)
+	kvCmd.AddCommand(kvGetCmd)
+	kvCmd.AddCommand(kvClearCmd)
 	kvCmd.AddCommand(kvListCmd)
+
+	// Register kv command
 	rootCmd.AddCommand(kvCmd)
 }
