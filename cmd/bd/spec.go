@@ -90,6 +90,7 @@ var specScanCmd = &cobra.Command{
 		}
 		fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
 			ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
+		fmt.Println("● Note: Spec registry is local-only (not synced via git)")
 	},
 }
 
