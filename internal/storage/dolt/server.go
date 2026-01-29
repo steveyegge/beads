@@ -94,7 +94,9 @@ func (s *Server) Start(ctx context.Context) error {
 		"--host", s.cfg.Host,
 		"--port", strconv.Itoa(s.cfg.SQLPort),
 		"--remotesapi-port", strconv.Itoa(s.cfg.RemotesAPIPort),
-		"--no-auto-commit", // Let the application manage commits
+		// Note: --no-auto-commit was removed to prevent data loss on crashes/restarts.
+		// Dolt will now auto-commit each statement. For explicit commit control,
+		// use transactions with BEGIN/COMMIT.
 	}
 
 	if s.cfg.ReadOnly {
