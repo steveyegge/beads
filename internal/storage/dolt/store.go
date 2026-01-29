@@ -129,10 +129,19 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
+	// IMPORTANT: Use an absolute path for embedded DSNs.
+	//
+	// The embedded driver sets its internal filesystem working directory to Config.Directory
+	// and also passes the directory path through to lower layers. If we pass a relative path,
+	// the working-directory stacking can effectively double it (e.g. ".beads/dolt/.beads/dolt").
+	absPath, err := filepath.Abs(cfg.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
 	var db *sql.DB
 	var connStr string
 	var embeddedConnector *embedded.Connector
-	var err error
 
 	if cfg.ServerMode {
 		// Server mode: connect via MySQL protocol to dolt sql-server
@@ -143,11 +152,11 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		// - Then open a fresh connector/DB for the returned store instance.
 		initDSN := fmt.Sprintf(
 			"file://%s?commitname=%s&commitemail=%s",
-			cfg.Path, cfg.CommitterName, cfg.CommitterEmail,
+			absPath, cfg.CommitterName, cfg.CommitterEmail,
 		)
 		dbDSN := fmt.Sprintf(
 			"file://%s?commitname=%s&commitemail=%s&database=%s",
-			cfg.Path, cfg.CommitterName, cfg.CommitterEmail, cfg.Database,
+			absPath, cfg.CommitterName, cfg.CommitterEmail, cfg.Database,
 		)
 
 		configureRetries := func(c *embedded.Config) {
@@ -200,12 +209,6 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 			_ = embeddedConnector.Close()
 		}
 		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
-	}
-
-	// Convert to absolute path
-	absPath, err := filepath.Abs(cfg.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
 	store := &DoltStore{
