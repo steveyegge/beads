@@ -14,7 +14,7 @@
 Built on [beads](https://github.com/steveyegge/beads). Works everywhere beads works.
 
 Shadowbook now includes **auto‑compaction**: it scores stale specs and can archive them automatically to keep your context lean.  
-**Westworld pitch:** When a narrative goes quiet and all hosts are done, the Mesa Hub files it into the archive and leaves only the cornerstone.
+When a narrative goes quiet and the work is done, it’s distilled to a cornerstone so the system stays light.
 
 ---
 
