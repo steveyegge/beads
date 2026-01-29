@@ -62,6 +62,7 @@ func init() {
 	decisionCreateCmd.Flags().Bool("no-notify", false, "Don't send notifications (for testing)")
 	decisionCreateCmd.Flags().String("requested-by", "", "Agent/session that requested this decision (for wake notifications)")
 	decisionCreateCmd.Flags().StringP("urgency", "u", "medium", "Urgency level: high, medium, low")
+	decisionCreateCmd.Flags().String("predecessor", "", "Previous decision in chain (for decision chaining)")
 
 	_ = decisionCreateCmd.MarkFlagRequired("prompt")
 
@@ -87,6 +88,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	noNotify, _ := cmd.Flags().GetBool("no-notify")
 	requestedBy, _ := cmd.Flags().GetString("requested-by")
 	urgency, _ := cmd.Flags().GetString("urgency")
+	predecessor, _ := cmd.Flags().GetString("predecessor")
 
 	ctx := rootCtx
 
@@ -191,6 +193,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		CreatedAt:     now,
 		RequestedBy:   requestedBy,
 		Urgency:       urgency,
+		PriorID:       predecessor,
 	}
 
 	// Use transaction to create both atomically
@@ -269,6 +272,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 			"timeout":        timeout.String(),
 			"parent":         parent,
 			"blocks":         blocks,
+			"predecessor":    predecessor,
 		}
 		outputJSON(result)
 		return
@@ -298,6 +302,9 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	}
 	if parent != "" {
 		fmt.Printf("  Parent: %s\n", parent)
+	}
+	if predecessor != "" {
+		fmt.Printf("  Predecessor: %s\n", predecessor)
 	}
 
 	if noNotify {

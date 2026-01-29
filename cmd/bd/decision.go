@@ -19,6 +19,7 @@ Commands:
   respond   Record a human response to a decision point
   list      List pending decision points
   show      Show decision point details
+  chain     Show the chain of predecessor decisions
 
 Decision points are specialized gates with await_type="decision". They support:
   - Single-select from predefined options

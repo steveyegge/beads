@@ -157,12 +157,15 @@ func runDecisionShow(cmd *cobra.Command, args []string) {
 		fmt.Println()
 	}
 
-	// Iteration info
-	if dp.Iteration > 1 || dp.MaxIterations != 3 {
-		fmt.Printf("ITERATION\n")
-		fmt.Printf("  Current: %d of %d max\n", dp.Iteration, dp.MaxIterations)
+	// Iteration/chaining info
+	// Show if: iteration > 1 (refinement), custom max iterations, or chained from predecessor
+	if dp.Iteration > 1 || dp.MaxIterations != 3 || dp.PriorID != "" {
+		fmt.Printf("CHAIN\n")
 		if dp.PriorID != "" {
-			fmt.Printf("  Prior decision: %s\n", dp.PriorID)
+			fmt.Printf("  Predecessor: %s\n", dp.PriorID)
+		}
+		if dp.Iteration > 1 || dp.MaxIterations != 3 {
+			fmt.Printf("  Iteration: %d of %d max\n", dp.Iteration, dp.MaxIterations)
 		}
 		if dp.Guidance != "" {
 			fmt.Printf("  Guidance: %s\n", dp.Guidance)
