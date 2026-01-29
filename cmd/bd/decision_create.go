@@ -63,6 +63,7 @@ func init() {
 	decisionCreateCmd.Flags().String("requested-by", "", "Agent/session that requested this decision (for wake notifications)")
 	decisionCreateCmd.Flags().StringP("urgency", "u", "medium", "Urgency level: high, medium, low")
 	decisionCreateCmd.Flags().String("predecessor", "", "Previous decision in chain (for decision chaining)")
+	decisionCreateCmd.Flags().StringP("context", "c", "", "Background/analysis context for the decision (JSON or text)")
 
 	_ = decisionCreateCmd.MarkFlagRequired("prompt")
 
@@ -89,6 +90,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	requestedBy, _ := cmd.Flags().GetString("requested-by")
 	urgency, _ := cmd.Flags().GetString("urgency")
 	predecessor, _ := cmd.Flags().GetString("predecessor")
+	decisionContext, _ := cmd.Flags().GetString("context")
 
 	ctx := rootCtx
 
@@ -186,6 +188,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	// Create the decision point record (IssueID set after CreateIssue)
 	decisionPoint := &types.DecisionPoint{
 		Prompt:        prompt,
+		Context:       decisionContext,
 		Options:       optionsJSON,
 		DefaultOption: defaultOption,
 		Iteration:     1,
@@ -267,6 +270,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		result := map[string]interface{}{
 			"id":             decisionID,
 			"prompt":         prompt,
+			"context":        decisionContext,
 			"options":        options,
 			"default_option": defaultOption,
 			"timeout":        timeout.String(),
@@ -281,6 +285,10 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	// Human-readable output
 	fmt.Printf("%s Created decision point: %s\n\n", ui.RenderPass("✓"), ui.RenderID(decisionID))
 	fmt.Printf("  %s\n\n", prompt)
+
+	if decisionContext != "" {
+		fmt.Printf("  Context: %s\n\n", decisionContext)
+	}
 
 	if len(options) > 0 {
 		for _, opt := range options {

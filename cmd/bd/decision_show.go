@@ -120,6 +120,12 @@ func runDecisionShow(cmd *cobra.Command, args []string) {
 	fmt.Printf("PROMPT\n")
 	fmt.Printf("  %s\n\n", dp.Prompt)
 
+	// Context (if provided)
+	if dp.Context != "" {
+		fmt.Printf("CONTEXT\n")
+		fmt.Printf("  %s\n\n", dp.Context)
+	}
+
 	// Options
 	if len(options) > 0 {
 		fmt.Printf("OPTIONS\n")
