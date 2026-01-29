@@ -217,7 +217,7 @@ func TestValidateSlug(t *testing.T) {
 		{"valid", "fix_login_timeout", false},
 		{"valid with numbers", "fix_issue_123", false},
 		{"valid minimal", "abc", false},
-		{"valid long", "this_is_a_very_long_slug_that_is_valid_yes", false}, // 46 chars max
+		{"valid long", "this_is_a_very_long_slug_that_is_valid", false}, // 40 chars max (v0.5)
 		{"empty", "", true},
 		{"too short", "ab", true},
 		{"starts with number", "123_fix", true},
@@ -253,6 +253,127 @@ func TestIsReservedWord(t *testing.T) {
 		t.Run(tt.word, func(t *testing.T) {
 			if got := IsReservedWord(tt.word); got != tt.want {
 				t.Errorf("IsReservedWord(%q) = %v, want %v", tt.word, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateSemanticIDV05(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		// Valid v0.5 semantic IDs (with random component)
+		{"valid epic with random", "gt-epc-semantic_idszfyl8", false},
+		{"valid bug with random", "gt-bug-fix_login_timeout3q6a9", false},
+		{"valid task with random", "bd-tsk-add_validationx7m2", false},
+		{"valid with 4 char random", "gt-bug-fix_issuex7m2", false},
+		{"valid with 6 char random", "gt-bug-fix_issueabc123", false},
+		{"valid with child", "gt-epc-semantic_idszfyl8.format_spec", false},
+		{"valid with grandchild", "gt-epc-semantic_idszfyl8.format_spec.regex", false},
+
+		// Invalid v0.5 semantic IDs
+		{"child starts with number", "gt-epc-slugzfyl8.1child", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSemanticID(tt.id)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSemanticID(%q) error = %v, wantErr %v", tt.id, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseSemanticIDV05(t *testing.T) {
+	// Note: v0.5 parsing extracts random by trying 6, then 5, then 4 char suffixes.
+	// Without knowing the actual canonical random, this is best-effort.
+	// IDs with children (.child) are unambiguously v0.5 format.
+	tests := []struct {
+		name         string
+		id           string
+		wantPrefix   string
+		wantType     string
+		wantSlug     string
+		wantRandom   string
+		wantChildren []string
+		wantLegacy   bool
+	}{
+		{
+			// With child segment, parsed as v0.5
+			// Parser extracts longest valid random (6 chars)
+			name:         "v0.5 with child",
+			id:           "gt-epc-semantic_idszfyl8.format_spec",
+			wantPrefix:   "gt",
+			wantType:     "epic",
+			wantSlug:     "semantic_id", // Parser takes 6-char random "szfyl8"
+			wantRandom:   "szfyl8",
+			wantChildren: []string{"format_spec"},
+			wantLegacy:   false,
+		},
+		{
+			name:         "v0.5 with grandchild",
+			id:           "gt-epc-semantic_idszfyl8.format_spec.regex",
+			wantPrefix:   "gt",
+			wantType:     "epic",
+			wantSlug:     "semantic_id",
+			wantRandom:   "szfyl8",
+			wantChildren: []string{"format_spec", "regex"},
+			wantLegacy:   false,
+		},
+		{
+			// Without child, matches legacy regex too, so legacy parsing used
+			name:       "ambiguous defaults to legacy",
+			id:         "gt-epc-semantic_idszfyl8",
+			wantPrefix: "gt",
+			wantType:   "epic",
+			wantSlug:   "semantic_idszfyl8",
+			wantRandom: "",
+			wantLegacy: true,
+		},
+		{
+			name:       "legacy still works",
+			id:         "gt-bug-fix_login_timeout",
+			wantPrefix: "gt",
+			wantType:   "bug",
+			wantSlug:   "fix_login_timeout",
+			wantRandom: "",
+			wantLegacy: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseSemanticID(tt.id)
+			if err != nil {
+				t.Fatalf("ParseSemanticID(%q) unexpected error: %v", tt.id, err)
+			}
+
+			if result.Prefix != tt.wantPrefix {
+				t.Errorf("Prefix = %q, want %q", result.Prefix, tt.wantPrefix)
+			}
+			if result.FullType != tt.wantType {
+				t.Errorf("FullType = %q, want %q", result.FullType, tt.wantType)
+			}
+			if result.Slug != tt.wantSlug {
+				t.Errorf("Slug = %q, want %q", result.Slug, tt.wantSlug)
+			}
+			if result.Random != tt.wantRandom {
+				t.Errorf("Random = %q, want %q", result.Random, tt.wantRandom)
+			}
+			if result.IsLegacy != tt.wantLegacy {
+				t.Errorf("IsLegacy = %v, want %v", result.IsLegacy, tt.wantLegacy)
+			}
+			if len(result.Children) != len(tt.wantChildren) {
+				t.Errorf("Children = %v, want %v", result.Children, tt.wantChildren)
+			} else {
+				for i, child := range result.Children {
+					if child != tt.wantChildren[i] {
+						t.Errorf("Children[%d] = %q, want %q", i, child, tt.wantChildren[i])
+					}
+				}
 			}
 		})
 	}

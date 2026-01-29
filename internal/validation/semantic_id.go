@@ -33,13 +33,22 @@ func init() {
 	}
 }
 
-// semanticIDRegex validates the semantic ID format:
-// {rig}-{type}-{slug}[_{n}]
-// - rig: 2-4 lowercase letters (e.g., gt, bd, hq)
+// semanticIDRegex validates the semantic ID format (v0.5):
+// {rig}-{type}-{slug}{random}[.{child}]*
+// - rig: 2-3 lowercase letters (e.g., gt, bd, hq)
 // - type: 2-4 lowercase letters (e.g., bug, tsk, feat)
+// - slug: starts with letter, then 2-39 more alphanumeric/underscore chars (max 40)
+// - random: 4-6 alphanumeric chars from canonical ID
+// - optional child segments: dot-separated names derived from titles
+var semanticIDRegex = regexp.MustCompile(`^[a-z]{2,3}-[a-z]{2,4}-[a-z][a-z0-9_]{2,39}[a-z0-9]{4,6}(\.[a-z][a-z0-9_]{2,39})*$`)
+
+// legacySemanticIDRegex validates the old semantic ID format (v0.1-v0.4):
+// {rig}-{type}-{slug}[_{n}]
+// - rig: 2-4 lowercase letters
+// - type: 2-4 lowercase letters
 // - slug: starts with letter, then 2-45 more alphanumeric/underscore chars
 // - optional numeric suffix: _2, _3, etc.
-var semanticIDRegex = regexp.MustCompile(`^[a-z]{2,4}-[a-z]{2,4}-[a-z][a-z0-9_]{2,45}(_[0-9]+)?$`)
+var legacySemanticIDRegex = regexp.MustCompile(`^[a-z]{2,4}-[a-z]{2,4}-[a-z][a-z0-9_]{2,45}(_[0-9]+)?$`)
 
 // legacyIDRegex matches the old random hash-based IDs:
 // {prefix}-{hash}[.{child}]
@@ -48,28 +57,36 @@ var legacyIDRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*-[a-z0-9]+(\.[0-9]+)?$`)
 
 // SemanticIDParseResult contains the parsed components of a semantic ID.
 type SemanticIDParseResult struct {
-	Prefix      string // e.g., "gt"
-	TypeAbbrev  string // e.g., "bug"
-	Slug        string // e.g., "fix_login_timeout"
-	Suffix      int    // collision suffix, 0 if none (1 = no suffix, 2+ = _2, _3, etc.)
-	FullType    string // resolved full type, e.g., "bug" -> "bug", "tsk" -> "task"
-	IsLegacy    bool   // true if this is a legacy random ID
+	Prefix      string   // e.g., "gt"
+	TypeAbbrev  string   // e.g., "bug"
+	Slug        string   // e.g., "fix_login_timeout" (without random)
+	Random      string   // e.g., "zfyl8" (4-6 char random from canonical ID)
+	Children    []string // e.g., ["format_spec", "regex"] for child segments
+	Suffix      int      // collision suffix, 0 if none (1 = no suffix, 2+ = _2, _3, etc.) - legacy only
+	FullType    string   // resolved full type, e.g., "bug" -> "bug", "tsk" -> "task"
+	IsLegacy    bool     // true if this is a legacy random ID or old v0.1-v0.4 format
 }
 
 // ValidateSemanticID validates that an ID follows the semantic ID format.
 // It returns nil if valid, or an error describing the validation failure.
 // This validates ONLY semantic IDs, not legacy random IDs.
+// Accepts both v0.5 format (with random) and v0.1-v0.4 format (without random).
 func ValidateSemanticID(id string) error {
 	if id == "" {
 		return fmt.Errorf("ID cannot be empty")
 	}
 
-	if !semanticIDRegex.MatchString(id) {
+	// Accept either v0.5 format (with random) or legacy v0.1-v0.4 format
+	if !semanticIDRegex.MatchString(id) && !legacySemanticIDRegex.MatchString(id) {
 		return fmt.Errorf("invalid semantic ID format '%s' (expected: prefix-type-slug, e.g., 'gt-bug-fix_login_timeout')", id)
 	}
 
-	// Parse and validate the type abbreviation
-	parts := strings.SplitN(id, "-", 3)
+	// Parse and validate the type abbreviation (base ID without children)
+	baseID := id
+	if dotIdx := strings.Index(id, "."); dotIdx > 0 {
+		baseID = id[:dotIdx]
+	}
+	parts := strings.SplitN(baseID, "-", 3)
 	if len(parts) < 3 {
 		return fmt.Errorf("invalid semantic ID format '%s' (missing components)", id)
 	}
@@ -88,23 +105,59 @@ func ValidateSemanticID(id string) error {
 
 // ParseSemanticID parses a semantic ID into its components.
 // Returns an error if the ID is not a valid semantic ID.
+// Handles both v0.5 format (with random) and legacy v0.1-v0.4 format (with suffix).
 func ParseSemanticID(id string) (*SemanticIDParseResult, error) {
 	if err := ValidateSemanticID(id); err != nil {
 		return nil, err
 	}
 
-	parts := strings.SplitN(id, "-", 3)
+	// Split off child segments first (after the dot)
+	segments := strings.Split(id, ".")
+	basePart := segments[0]
+	var children []string
+	if len(segments) > 1 {
+		children = segments[1:]
+	}
+
+	parts := strings.SplitN(basePart, "-", 3)
 	result := &SemanticIDParseResult{
 		Prefix:     parts[0],
 		TypeAbbrev: parts[1],
+		Children:   children,
 		Suffix:     1, // Default: no suffix means "first" instance
 	}
 
-	// Extract slug and optional collision suffix.
-	// Collision suffixes are _2, _3, ..., _99 (limited range to distinguish from
-	// numbers that are part of the slug like fix_issue_123).
-	// First instance has no suffix, so suffix=1 means "no collision suffix".
 	slugPart := parts[2]
+
+	// Determine format by checking which regex matched
+	// IMPORTANT: When ambiguous (both regexes match), prefer legacy interpretation
+	// Only treat as v0.5 format if it matches v0.5 regex but NOT legacy regex
+	// This ensures backward compatibility for existing IDs
+	matchesV05 := semanticIDRegex.MatchString(id)
+	matchesLegacy := legacySemanticIDRegex.MatchString(id)
+
+	// Only use v0.5 parsing if it matches v0.5 AND doesn't match legacy
+	if matchesV05 && !matchesLegacy {
+		// Parse v0.5 format: slug + random (4-6 alphanumeric)
+		// Random is appended directly to slug with no separator
+		// Try to find where the random starts by looking for 4-6 trailing alphanumeric
+		for randLen := 6; randLen >= 4; randLen-- {
+			if len(slugPart) >= 3+randLen {
+				potentialRandom := slugPart[len(slugPart)-randLen:]
+				potentialSlug := slugPart[:len(slugPart)-randLen]
+				// Random must be alphanumeric, slug must have valid length
+				if isAlphanumeric(potentialRandom) && len(potentialSlug) >= 3 && len(potentialSlug) <= 40 {
+					result.Slug = potentialSlug
+					result.Random = potentialRandom
+					result.FullType = SemanticIDAbbreviationToType[result.TypeAbbrev]
+					return result, nil
+				}
+			}
+		}
+	}
+
+	// Parse as legacy v0.1-v0.4 format: slug with optional _N suffix
+	result.IsLegacy = true
 	if idx := strings.LastIndex(slugPart, "_"); idx > 0 {
 		potentialSuffix := slugPart[idx+1:]
 		// Only treat as collision suffix if:
@@ -132,15 +185,34 @@ func ParseSemanticID(id string) (*SemanticIDParseResult, error) {
 	return result, nil
 }
 
+// isAlphanumeric checks if a string contains only lowercase letters and digits.
+func isAlphanumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 // IsSemanticID checks if an ID follows the semantic ID format.
 // Returns true for semantic IDs, false for legacy random IDs.
 // An ID is only considered semantic if it matches the regex AND has a valid type abbreviation.
+// Accepts both v0.5 format (with random) and v0.1-v0.4 format (without random).
 func IsSemanticID(id string) bool {
-	if !semanticIDRegex.MatchString(id) {
+	// Check either v0.5 format or legacy v0.1-v0.4 format
+	if !semanticIDRegex.MatchString(id) && !legacySemanticIDRegex.MatchString(id) {
 		return false
 	}
-	// Must also have a valid type abbreviation
-	parts := strings.SplitN(id, "-", 3)
+	// Must also have a valid type abbreviation (base ID without children)
+	baseID := id
+	if dotIdx := strings.Index(id, "."); dotIdx > 0 {
+		baseID = id[:dotIdx]
+	}
+	parts := strings.SplitN(baseID, "-", 3)
 	if len(parts) < 3 {
 		return false
 	}
@@ -196,8 +268,8 @@ func ValidateSlug(slug string) error {
 		return fmt.Errorf("slug too short '%s' (minimum 3 characters)", slug)
 	}
 
-	if len(slug) > 46 {
-		return fmt.Errorf("slug too long '%s' (maximum 46 characters)", slug)
+	if len(slug) > 40 {
+		return fmt.Errorf("slug too long '%s' (maximum 40 characters)", slug)
 	}
 
 	if slug[0] < 'a' || slug[0] > 'z' {
