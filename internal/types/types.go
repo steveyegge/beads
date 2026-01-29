@@ -14,8 +14,9 @@ import (
 // Fields are organized into logical groups for maintainability.
 type Issue struct {
 	// ===== Core Identification =====
-	ID          string `json:"id"`
-	ContentHash string `json:"-"` // Internal: SHA256 of canonical content - NOT exported to JSONL
+	ID           string `json:"id"`
+	SemanticSlug string `json:"semantic_slug,omitempty"` // Human-readable slug: prefix-type-title+random
+	ContentHash  string `json:"-"`                       // Internal: SHA256 of canonical content - NOT exported to JSONL
 
 	// ===== Issue Content =====
 	Title              string `json:"title"`
