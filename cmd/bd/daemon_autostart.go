@@ -615,17 +615,27 @@ func recordDaemonStartFailure() {
 	// No cap needed - backoff is capped at 120s in canRetryDaemonStart
 }
 
-// getSocketPath returns the daemon socket path based on the database location.
+// getSocketPath returns the daemon socket path based on the .beads directory.
 // If BD_SOCKET env var is set, uses that value instead (enables test isolation).
 // On Unix systems, uses rpc.ShortSocketPath to avoid exceeding socket path limits
 // (macOS: 104 chars) by relocating long paths to /tmp/beads-{hash}/ (GH#1001).
+//
+// For Dolt server mode where the database is in a separate location (e.g., ~/.beads-dolt),
+// this uses FindBeadsDir() to locate the proper .beads directory with config files,
+// rather than deriving it from the database path.
 func getSocketPath() string {
 	// Check environment variable first (enables test isolation)
 	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
 		return socketPath
 	}
 	// Get workspace path (parent of .beads directory)
-	beadsDir := filepath.Dir(dbPath)
+	// Use FindBeadsDir() for proper .beads directory resolution,
+	// especially important for Dolt server mode with external database.
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// Fallback: derive from database path (works for SQLite in .beads/)
+		beadsDir = filepath.Dir(dbPath)
+	}
 	workspacePath := filepath.Dir(beadsDir)
 	return rpc.ShortSocketPath(workspacePath)
 }

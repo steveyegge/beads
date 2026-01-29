@@ -10,18 +10,20 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 )
 
-// ensureBeadsDir ensures the local beads directory exists (.beads in the current workspace)
+// ensureBeadsDir ensures the local beads directory exists (.beads in the current workspace).
+// Uses FindBeadsDir() to locate the proper .beads directory with config files.
+// This is important for Dolt server mode where the database may be in a separate location.
 func ensureBeadsDir() (string, error) {
-	var beadsDir string
-	if dbPath != "" {
-		beadsDir = filepath.Dir(dbPath)
-	} else {
-		// Use public API to find database (same logic as other commands)
-		if foundDB := beads.FindDatabasePath(); foundDB != "" {
+	// Use FindBeadsDir() for proper .beads directory resolution
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// Fallback: derive from database path (for explicit --db usage)
+		if dbPath != "" {
+			beadsDir = filepath.Dir(dbPath)
+		} else if foundDB := beads.FindDatabasePath(); foundDB != "" {
 			dbPath = foundDB // Store it for later use
 			beadsDir = filepath.Dir(foundDB)
 		} else {
-			// No database found - error out instead of falling back to ~/.beads
 			return "", fmt.Errorf("no database path configured (run 'bd init' or set BEADS_DB)")
 		}
 	}
