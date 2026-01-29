@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -454,6 +455,21 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	}
 
 	log.Info("using database", "path", daemonDBPath)
+
+	// Check for config mismatch between metadata.json and config.yaml
+	// This helps catch cases where these two config sources have diverged,
+	// which can cause confusing behavior (e.g., daemon opening wrong database).
+	if yamlDBPath := config.GetString("db"); yamlDBPath != "" {
+		if mismatches := configfile.CheckConfigMismatch(beadsDir, yamlDBPath); len(mismatches) > 0 {
+			for _, m := range mismatches {
+				log.Warn("config mismatch detected",
+					"field", m.Field,
+					"metadata.json", m.MetadataValue,
+					"config.yaml", m.YAMLValue)
+			}
+			log.Warn("metadata.json takes precedence; update it to match config.yaml if needed")
+		}
+	}
 
 	// Clear any previous daemon-error file on successful startup
 	errFile := filepath.Join(beadsDir, "daemon-error")

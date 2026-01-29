@@ -331,3 +331,61 @@ func CapabilitiesForConfig(cfg *Config) BackendCapabilities {
 	}
 	return CapabilitiesForBackend(cfg.GetBackend())
 }
+
+// ConfigMismatch represents a discrepancy between metadata.json and config.yaml
+type ConfigMismatch struct {
+	Field         string // The field name (e.g., "database")
+	MetadataValue string // Value from metadata.json
+	YAMLValue     string // Value from config.yaml
+}
+
+// CheckConfigMismatch compares metadata.json with config.yaml and returns any mismatches.
+// This helps detect when these two config sources have diverged, which can cause
+// confusing behavior (e.g., daemon opening wrong database).
+//
+// beadsDir is the path to the .beads directory.
+// yamlDBPath is the "db" value from config.yaml (obtained via config.GetString("db")).
+//
+// Returns nil if configs are consistent or if metadata.json doesn't exist.
+func CheckConfigMismatch(beadsDir string, yamlDBPath string) []ConfigMismatch {
+	var mismatches []ConfigMismatch
+
+	// Load metadata.json
+	cfg, err := Load(beadsDir)
+	if err != nil || cfg == nil {
+		return nil // No metadata.json, nothing to compare
+	}
+
+	// Get database path from metadata.json
+	metadataDBPath := cfg.DatabasePath(beadsDir)
+
+	// Compare with config.yaml's db setting
+	if yamlDBPath != "" && metadataDBPath != yamlDBPath {
+		// Normalize paths for comparison (resolve symlinks, clean)
+		normalizedMetadata := normalizePath(metadataDBPath)
+		normalizedYAML := normalizePath(yamlDBPath)
+
+		if normalizedMetadata != normalizedYAML {
+			mismatches = append(mismatches, ConfigMismatch{
+				Field:         "database",
+				MetadataValue: metadataDBPath,
+				YAMLValue:     yamlDBPath,
+			})
+		}
+	}
+
+	return mismatches
+}
+
+// normalizePath normalizes a path for comparison by cleaning and resolving symlinks.
+func normalizePath(p string) string {
+	// Clean the path first
+	p = filepath.Clean(p)
+
+	// Try to resolve symlinks (ignore errors, use original if can't resolve)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+
+	return p
+}
