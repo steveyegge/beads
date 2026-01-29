@@ -546,7 +546,7 @@ func (t IssueType) IsValid() bool {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
 	// Extended types (Gas Town, molecules, coordination)
-	case TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
+	case TypeMessage, TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
 		return true
 	}
 	return false
