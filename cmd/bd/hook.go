@@ -556,11 +556,37 @@ func stageJSONLFiles(ctx context.Context) {
 	}
 }
 
+func runSpecScanIfPresent(worktreeRoot string) {
+	if worktreeRoot == "" {
+		return
+	}
+	specDir := filepath.Join(worktreeRoot, "specs")
+	info, err := os.Stat(specDir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+
+	cmd := exec.Command("bd", "spec", "scan")
+	cmd.Dir = worktreeRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: Failed to scan specs after repository update")
+		if len(output) > 0 {
+			fmt.Fprintln(os.Stderr, string(output))
+		}
+	}
+}
+
 // hookPostMerge implements the post-merge hook: Import JSONL to database.
 func hookPostMerge(args []string) int {
 	beadsDir := beads.FindBeadsDir()
 	if beadsDir == "" {
 		return 0 // Not a beads workspace
+	}
+
+	worktreeRoot, err := getWorktreeRoot()
+	if err != nil || worktreeRoot == "" {
+		worktreeRoot = filepath.Dir(beadsDir)
 	}
 
 	cfg := loadHookConfig(beadsDir)
@@ -582,6 +608,7 @@ func hookPostMerge(args []string) int {
 
 	// Check if any JSONL file exists
 	if !hasBeadsJSONL() {
+		runSpecScanIfPresent(worktreeRoot)
 		if cfg.ChainStrategy == ChainAfter {
 			return runChainedHookWithConfig("post-merge", args, cfg)
 		}
@@ -592,6 +619,7 @@ func hookPostMerge(args []string) int {
 	backend := factory.GetBackendFromConfig(beadsDir)
 	if backend == configfile.BackendDolt {
 		exitCode := hookPostMergeDolt(beadsDir)
+		runSpecScanIfPresent(worktreeRoot)
 		if cfg.ChainStrategy == ChainAfter && exitCode == 0 {
 			return runChainedHookWithConfig("post-merge", args, cfg)
 		}
@@ -610,6 +638,8 @@ func hookPostMerge(args []string) int {
 	// Run quick health check
 	healthCmd := exec.Command("bd", "doctor", "--check-health")
 	_ = healthCmd.Run()
+
+	runSpecScanIfPresent(worktreeRoot)
 
 	if cfg.ChainStrategy == ChainAfter {
 		return runChainedHookWithConfig("post-merge", args, cfg)
@@ -733,6 +763,11 @@ func hookPostCheckout(args []string) int {
 		return 0 // Not a beads workspace
 	}
 
+	worktreeRoot, err := getWorktreeRoot()
+	if err != nil || worktreeRoot == "" {
+		worktreeRoot = filepath.Dir(beadsDir)
+	}
+
 	cfg := loadHookConfig(beadsDir)
 
 	// Run chained hook based on strategy
@@ -752,6 +787,7 @@ func hookPostCheckout(args []string) int {
 
 	// Check if any JSONL file exists
 	if !hasBeadsJSONL() {
+		runSpecScanIfPresent(worktreeRoot)
 		if cfg.ChainStrategy == ChainAfter {
 			return runChainedHookWithConfig("post-checkout", args, cfg)
 		}
@@ -759,17 +795,13 @@ func hookPostCheckout(args []string) int {
 	}
 
 	// Guard: Only import if JSONL actually changed
-	worktreeRoot, err := getWorktreeRoot()
-	if err != nil {
-		worktreeRoot = beadsDir // Fallback
-	}
-
 	prevState, _ := loadExportState(beadsDir, worktreeRoot)
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 	currentHash, _ := computeJSONLHashForHook(jsonlPath)
 
 	if prevState != nil && prevState.JSONLHash == currentHash {
 		// JSONL hasn't changed, skip redundant import
+		runSpecScanIfPresent(worktreeRoot)
 		if cfg.ChainStrategy == ChainAfter {
 			return runChainedHookWithConfig("post-checkout", args, cfg)
 		}
@@ -836,6 +868,8 @@ func hookPostCheckout(args []string) int {
 	// Run quick health check
 	healthCmd := exec.Command("bd", "doctor", "--check-health")
 	_ = healthCmd.Run()
+
+	runSpecScanIfPresent(worktreeRoot)
 
 	if cfg.ChainStrategy == ChainAfter {
 		return runChainedHookWithConfig("post-checkout", args, cfg)

@@ -14,7 +14,7 @@ read:
   - .aider/BEADS.md
 `
 
-const aiderBeadsInstructions = `# Beads Issue Tracking Instructions for AI
+const aiderBeadsInstructionsBase = `# Beads Issue Tracking Instructions for AI
 
 This project uses **Beads (bd)** for issue tracking. Aider requires explicit command execution - suggest commands to the user.
 
@@ -73,6 +73,10 @@ Suggest ` + "`/run bd prime`" + ` for complete workflow documentation (~1-2k tok
 
 For detailed docs: see AGENTS.md, QUICKSTART.md, or run ` + "`bd --help`" + `
 `
+
+func aiderBeadsInstructions() string {
+	return withWorkflowFirst(aiderBeadsInstructionsBase)
+}
 
 const aiderReadmeTemplate = `# Aider + Beads Integration
 
@@ -169,7 +173,7 @@ func InstallAider() {
 	}
 
 	// Write instructions file (loaded by AI)
-	if err := atomicWriteFile(instructionsPath, []byte(aiderBeadsInstructions)); err != nil {
+	if err := atomicWriteFile(instructionsPath, []byte(aiderBeadsInstructions())); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: write instructions: %v\n", err)
 		os.Exit(1)
 	}

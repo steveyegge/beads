@@ -31,7 +31,7 @@ func TestAiderBeadsInstructions(t *testing.T) {
 	}
 
 	for _, req := range requiredContent {
-		if !strings.Contains(aiderBeadsInstructions, req) {
+		if !strings.Contains(aiderBeadsInstructions(), req) {
 			t.Errorf("aiderBeadsInstructions missing required content: %q", req)
 		}
 	}
@@ -78,7 +78,7 @@ func TestInstallAider(t *testing.T) {
 		content string
 	}{
 		{".aider.conf.yml", aiderConfigTemplate},
-		{".aider/BEADS.md", aiderBeadsInstructions},
+		{".aider/BEADS.md", aiderBeadsInstructions()},
 		{".aider/README.md", aiderReadmeTemplate},
 	}
 
@@ -359,7 +359,7 @@ func TestCheckAider_Installed(t *testing.T) {
 
 func TestAiderInstructionsWorkflowPattern(t *testing.T) {
 	// Verify instructions contain the workflow pattern Aider users need
-	instructions := aiderBeadsInstructions
+	instructions := aiderBeadsInstructions()
 
 	// Should mention the /run command pattern
 	if !strings.Contains(instructions, "/run bd ready") {

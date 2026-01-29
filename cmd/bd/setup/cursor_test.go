@@ -20,7 +20,7 @@ func TestCursorRulesTemplate(t *testing.T) {
 	}
 
 	for _, req := range requiredContent {
-		if !strings.Contains(cursorRulesTemplate, req) {
+		if !strings.Contains(cursorRulesTemplate(), req) {
 			t.Errorf("cursorRulesTemplate missing required content: %q", req)
 		}
 	}
@@ -56,7 +56,7 @@ func TestInstallCursor(t *testing.T) {
 		t.Fatalf("failed to read rules file: %v", err)
 	}
 
-	if string(data) != cursorRulesTemplate {
+	if string(data) != cursorRulesTemplate() {
 		t.Error("Rules file content doesn't match template")
 	}
 }
@@ -127,7 +127,7 @@ func TestInstallCursor_OverwriteExisting(t *testing.T) {
 	if string(data) == "old content" {
 		t.Error("Old content was not overwritten")
 	}
-	if string(data) != cursorRulesTemplate {
+	if string(data) != cursorRulesTemplate() {
 		t.Error("Content doesn't match template")
 	}
 }
@@ -287,7 +287,7 @@ func TestCursorRulesPath(t *testing.T) {
 
 func TestCursorTemplateFormatting(t *testing.T) {
 	// Verify template is well-formed
-	template := cursorRulesTemplate
+	template := cursorRulesTemplate()
 
 	// Should have both markers
 	if !strings.Contains(template, "BEGIN BEADS INTEGRATION") {

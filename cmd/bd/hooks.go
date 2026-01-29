@@ -184,9 +184,9 @@ var hooksCmd = &cobra.Command{
 
 The hooks ensure that:
 - pre-commit: Flushes pending changes to JSONL before commit
-- post-merge: Imports updated JSONL after pull/merge
+- post-merge: Imports updated JSONL after pull/merge, then scans specs (if specs/ exists)
 - pre-push: Prevents pushing stale JSONL
-- post-checkout: Imports JSONL after branch checkout
+- post-checkout: Imports JSONL after branch checkout, then scans specs (if specs/ exists)
 - prepare-commit-msg: Adds agent identity trailers for forensics`,
 }
 
@@ -205,9 +205,9 @@ useful if you have pre-commit framework hooks or other custom hooks.
 
 Installed hooks:
   - pre-commit: Flush changes to JSONL before commit
-  - post-merge: Import JSONL after pull/merge
+  - post-merge: Import JSONL after pull/merge (then spec scan if specs/ exists)
   - pre-push: Prevent pushing stale JSONL
-  - post-checkout: Import JSONL after branch checkout
+  - post-checkout: Import JSONL after branch checkout (then spec scan if specs/ exists)
   - prepare-commit-msg: Add agent identity trailers (for orchestrator agents)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		force, _ := cmd.Flags().GetBool("force")

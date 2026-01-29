@@ -43,9 +43,11 @@ bd setup claude --check
 
 # Print template to stdout (for inspection)
 bd setup --print
+bd setup --print --workflow-first
 
 # Write template to custom path
 bd setup -o .my-editor/rules.md
+bd setup -o .my-editor/rules.md --workflow-first
 
 # Add a custom recipe
 bd setup --add myeditor .myeditor/rules.md

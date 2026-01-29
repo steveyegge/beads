@@ -110,3 +110,4 @@ Only scannable IDs are eligible for drift detection and compaction.
 - The spec registry is **local‑only**.
 - Run `bd spec scan` on each machine to update it.
 - The registry lives in `.beads/beads.db` (SQLite).
+- Install git hooks to auto-scan after merges/checkouts: `bd hooks install` (runs only if `specs/` exists).

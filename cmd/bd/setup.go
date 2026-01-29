@@ -21,6 +21,7 @@ var (
 	setupOutput  string
 	setupList    bool
 	setupAdd     string
+	setupWorkflowFirst bool
 )
 
 var setupCmd = &cobra.Command{
@@ -36,6 +37,7 @@ Examples:
   bd setup cursor          # Install Cursor IDE integration
   bd setup --list          # Show all available recipes
   bd setup --print         # Print the template to stdout
+  bd setup --print --workflow-first  # Print workflow-first template
   bd setup -o rules.md     # Write template to custom path
   bd setup --add myeditor .myeditor/rules.md  # Add custom recipe
 
@@ -46,6 +48,8 @@ Use 'bd setup <recipe> --remove' to uninstall.`,
 }
 
 func runSetup(cmd *cobra.Command, args []string) {
+	setup.UseWorkflowFirst = setupWorkflowFirst
+
 	// Handle --list flag
 	if setupList {
 		listRecipes()
@@ -54,7 +58,11 @@ func runSetup(cmd *cobra.Command, args []string) {
 
 	// Handle --print flag (no recipe needed)
 	if setupPrint {
-		fmt.Print(recipes.Template)
+		if setupWorkflowFirst {
+			fmt.Print(recipes.WorkflowFirstTemplate)
+		} else {
+			fmt.Print(recipes.Template)
+		}
 		return
 	}
 
@@ -131,7 +139,11 @@ func writeToPath(path string) error {
 		}
 	}
 
-	if err := os.WriteFile(path, []byte(recipes.Template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
+	template := recipes.Template
+	if setupWorkflowFirst {
+		template = recipes.WorkflowFirstTemplate
+	}
+	if err := os.WriteFile(path, []byte(template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
 		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
@@ -231,7 +243,11 @@ func runRecipe(name string) {
 		}
 	}
 
-	if err := os.WriteFile(recipe.Path, []byte(recipes.Template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
+	template := recipes.Template
+	if setupWorkflowFirst {
+		template = recipes.WorkflowFirstTemplate
+	}
+	if err := os.WriteFile(recipe.Path, []byte(template), 0o644); err != nil { // #nosec G306 -- config files need to be readable
 		fmt.Fprintf(os.Stderr, "Error: write file: %v\n", err)
 		os.Exit(1)
 	}
@@ -345,6 +361,7 @@ func init() {
 	setupCmd.Flags().BoolVar(&setupPrint, "print", false, "Print the template to stdout")
 	setupCmd.Flags().StringVarP(&setupOutput, "output", "o", "", "Write template to custom path")
 	setupCmd.Flags().StringVar(&setupAdd, "add", "", "Add a custom recipe with given name")
+	setupCmd.Flags().BoolVar(&setupWorkflowFirst, "workflow-first", false, "Use workflow-first template (validate → safety → execute → broadcast)")
 
 	// Per-recipe flags
 	setupCmd.Flags().BoolVar(&setupCheck, "check", false, "Check if integration is installed")

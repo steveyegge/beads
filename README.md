@@ -181,6 +181,9 @@ specs/login.md          ←── Ford edits the narrative
 | `bd spec link --auto` | Bulk-link hosts to narratives |
 | `bd spec consolidate` | Report older narratives for archival |
 
+Tip: Install git hooks to keep spec drift up to date after merges/checkouts:
+`bd hooks install`
+
 ## Issue Commands (from beads)
 
 | Command | Action |
@@ -250,6 +253,7 @@ git merge upstream/main
 - **[User Manual](docs/SHADOWBOOK_MANUAL.md)** — How to use Shadowbook
 - **[Architecture](docs/SHADOWBOOK_ARCHITECTURE.md)** — How it works
 - **[Roadmap](docs/SHADOWBOOK_ROADMAP.md)** — What's next
+- **[Setup](docs/SETUP.md)** — Editor integrations and optional workflow-first template
 - [Beads Docs](https://github.com/steveyegge/beads#-documentation) — Full beads documentation
 - [AGENTS.md](AGENTS.md) — Agent workflow guide
 

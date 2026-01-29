@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-const junieGuidelinesTemplate = `# Beads Issue Tracking Instructions
+const junieGuidelinesTemplateBase = `# Beads Issue Tracking Instructions
 
 This project uses **Beads (bd)** for issue tracking. Use the bd CLI or MCP tools for all task management.
 
@@ -95,6 +95,10 @@ If the MCP server is configured, you can use these tools directly:
 For more details, run ` + "`bd --help`" + ` or see the project's AGENTS.md file.
 `
 
+func junieGuidelinesTemplate() string {
+	return withWorkflowFirst(junieGuidelinesTemplateBase)
+}
+
 // junieMCPConfig generates the MCP configuration for Junie
 func junieMCPConfig() map[string]interface{} {
 	return map[string]interface{}{
@@ -127,7 +131,7 @@ func InstallJunie() {
 	}
 
 	// Write guidelines file
-	if err := atomicWriteFile(guidelinesPath, []byte(junieGuidelinesTemplate)); err != nil {
+	if err := atomicWriteFile(guidelinesPath, []byte(junieGuidelinesTemplate())); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: write guidelines: %v\n", err)
 		os.Exit(1)
 	}

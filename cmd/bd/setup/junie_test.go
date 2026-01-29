@@ -24,7 +24,7 @@ func TestJunieGuidelinesTemplate(t *testing.T) {
 	}
 
 	for _, req := range requiredContent {
-		if !strings.Contains(junieGuidelinesTemplate, req) {
+		if !strings.Contains(junieGuidelinesTemplate(), req) {
 			t.Errorf("junieGuidelinesTemplate missing required content: %q", req)
 		}
 	}
@@ -93,7 +93,7 @@ func TestInstallJunie(t *testing.T) {
 		data, err := os.ReadFile(guidelinesPath)
 		if err != nil {
 			t.Errorf("Failed to read %s: %v", guidelinesPath, err)
-		} else if string(data) != junieGuidelinesTemplate {
+		} else if string(data) != junieGuidelinesTemplate() {
 			t.Errorf("File %s content doesn't match expected template", guidelinesPath)
 		}
 	}
@@ -268,7 +268,7 @@ func TestRemoveJunie_PartialFiles(t *testing.T) {
 	if err := os.MkdirAll(".junie", 0755); err != nil {
 		t.Fatalf("failed to create directory: %v", err)
 	}
-	if err := os.WriteFile(".junie/guidelines.md", []byte(junieGuidelinesTemplate), 0644); err != nil {
+	if err := os.WriteFile(".junie/guidelines.md", []byte(junieGuidelinesTemplate()), 0644); err != nil {
 		t.Fatalf("failed to create guidelines file: %v", err)
 	}
 
@@ -413,7 +413,7 @@ func TestCheckJunie_PartialInstall_GuidelinesOnly(t *testing.T) {
 	if err := os.MkdirAll(".junie", 0755); err != nil {
 		t.Fatalf("failed to create directory: %v", err)
 	}
-	if err := os.WriteFile(".junie/guidelines.md", []byte(junieGuidelinesTemplate), 0644); err != nil {
+	if err := os.WriteFile(".junie/guidelines.md", []byte(junieGuidelinesTemplate()), 0644); err != nil {
 		t.Fatalf("failed to create guidelines file: %v", err)
 	}
 
@@ -484,7 +484,7 @@ func TestJunieFilePaths(t *testing.T) {
 
 func TestJunieGuidelinesWorkflowPattern(t *testing.T) {
 	// Verify guidelines contain the workflow patterns Junie users need
-	guidelines := junieGuidelinesTemplate
+	guidelines := junieGuidelinesTemplate()
 
 	// Should mention core workflow commands
 	if !strings.Contains(guidelines, "bd ready") {

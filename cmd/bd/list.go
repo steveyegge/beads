@@ -147,12 +147,20 @@ func renderStatusIcon(status types.Status) string {
 	return ui.RenderStatusIcon(string(status))
 }
 
+func specChangedBadge(issue *types.Issue) string {
+	if issue.SpecChangedAt == nil {
+		return ""
+	}
+	return " " + ui.RenderWarn("● [SPEC CHANGED]")
+}
+
 // formatPrettyIssue formats a single issue for pretty output
 // Uses semantic colors: status icon colored, priority P0/P1 colored, rest neutral
 func formatPrettyIssue(issue *types.Issue) string {
 	// Use shared helpers from ui package
 	statusIcon := ui.RenderStatusIcon(string(issue.Status))
 	priorityTag := renderPriorityTag(issue.Priority)
+	specBadge := specChangedBadge(issue)
 
 	// Type badge - only show for notable types
 	typeBadge := ""
@@ -172,10 +180,10 @@ func formatPrettyIssue(issue *types.Issue) string {
 			ui.RenderMuted(issue.ID),
 			ui.RenderMuted(fmt.Sprintf("● P%d", issue.Priority)),
 			ui.RenderMuted(string(issue.IssueType)),
-			ui.RenderMuted(" "+issue.Title))
+			ui.RenderMuted(" "+issue.Title+specBadge))
 	}
 
-	return fmt.Sprintf("%s %s %s %s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title)
+	return fmt.Sprintf("%s %s %s %s%s%s", statusIcon, issue.ID, priorityTag, typeBadge, issue.Title, specBadge)
 }
 
 // buildIssueTree builds parent-child tree structure from issues
@@ -490,6 +498,12 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) 
 	if len(labels) > 0 {
 		buf.WriteString(fmt.Sprintf("  Labels: %v\n", labels))
 	}
+	if issue.SpecID != "" {
+		buf.WriteString(fmt.Sprintf("  Spec: %s\n", issue.SpecID))
+	}
+	if issue.SpecChangedAt != nil {
+		buf.WriteString(fmt.Sprintf("  Spec changed: %s\n", issue.SpecChangedAt.Local().Format("2006-01-02 15:04")))
+	}
 	buf.WriteString("\n")
 }
 
@@ -562,26 +576,27 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 	if depInfo != "" {
 		depInfo = " " + depInfo
 	}
+	specBadge := specChangedBadge(issue)
 
 	// Get styled status icon
 	statusIcon := renderStatusIcon(issue.Status)
 
 	if issue.Status == types.StatusClosed {
 		// Closed issues: entire line muted (fades visually)
-		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s%s",
+		line := fmt.Sprintf("%s %s%s [P%d] [%s]%s%s - %s%s%s",
 			statusIcon, pinIndicator(issue), issue.ID, issue.Priority,
-			issue.IssueType, assigneeStr, labelsStr, issue.Title, depInfo)
+			issue.IssueType, assigneeStr, labelsStr, issue.Title, specBadge, depInfo)
 		buf.WriteString(ui.RenderClosedLine(line))
 		buf.WriteString("\n")
 	} else {
 		// Active issues: status icon + semantic colors for priority/type
-		buf.WriteString(fmt.Sprintf("%s %s%s [%s] [%s]%s%s - %s%s\n",
+		buf.WriteString(fmt.Sprintf("%s %s%s [%s] [%s]%s%s - %s%s%s\n",
 			statusIcon,
 			pinIndicator(issue),
 			ui.RenderID(issue.ID),
 			ui.RenderPriority(issue.Priority),
 			ui.RenderType(string(issue.IssueType)),
-			assigneeStr, labelsStr, issue.Title, depInfo))
+			assigneeStr, labelsStr, issue.Title, specBadge, depInfo))
 	}
 }
 
