@@ -610,4 +610,3 @@ type StatusEntry struct {
 	Table  string
 	Status string // "new", "modified", "deleted"
 }
-*** End of File
