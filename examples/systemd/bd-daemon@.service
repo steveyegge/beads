@@ -1,0 +1,73 @@
+# bd-daemon@.service - Template systemd user service for bd daemon
+#
+# This is a template unit for running bd daemon per-workspace.
+# Install to: ~/.config/systemd/user/bd-daemon@.service
+#
+# Usage:
+#   # Encode workspace path
+#   UNIT_NAME=$(systemd-escape --path /path/to/workspace)
+#
+#   # Enable and start for a workspace
+#   systemctl --user enable bd-daemon@${UNIT_NAME}.service
+#   systemctl --user start bd-daemon@${UNIT_NAME}.service
+#
+#   # Check status
+#   systemctl --user status bd-daemon@${UNIT_NAME}.service
+#
+#   # View logs
+#   journalctl --user -u bd-daemon@${UNIT_NAME}.service
+#
+# The %I specifier is the unescaped instance name (workspace path).
+# The %i specifier is the escaped instance name (for filenames).
+
+[Unit]
+Description=bd daemon for workspace %I
+Documentation=https://github.com/groblegark/beads
+
+# Start after user session is ready
+After=default.target
+
+# Don't automatically restart if user explicitly stops
+RefuseManualStart=no
+RefuseManualStop=no
+
+[Service]
+Type=simple
+
+# Set workspace via environment variable
+Environment=BEADS_WORKSPACE=%I
+
+# Run bd daemon in foreground mode
+# The workspace path is passed via %I (unescaped instance name)
+ExecStart=/usr/local/bin/bd daemon start --foreground
+WorkingDirectory=%I
+
+# Reload triggers daemon restart (for upgrades)
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Give up after 5 failures in 60 seconds
+StartLimitIntervalSec=60
+StartLimitBurst=5
+StartLimitAction=none
+
+# Graceful shutdown
+TimeoutStopSec=10
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+
+# Runtime directory for socket (under XDG_RUNTIME_DIR)
+RuntimeDirectory=bd
+RuntimeDirectoryMode=0700
+
+# Logging to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bd-daemon-%i
+
+[Install]
+WantedBy=default.target
