@@ -147,6 +147,10 @@ func showCurrentDaemonStatus() {
 	socketPath := filepath.Join(beadsDir, "bd.sock")
 	workspacePath := filepath.Dir(beadsDir)
 
+	// Check if daemon is systemd-managed (bd-0lh64.1.3)
+	systemdManaged := IsSystemdServiceEnabled(workspacePath)
+	systemdActive := IsSystemdServiceActive(workspacePath)
+
 	// Check if daemon is running
 	isRunning, pid := isDaemonRunning(pidFile)
 	if !isRunning {
@@ -158,7 +162,12 @@ func showCurrentDaemonStatus() {
 		} else {
 			fmt.Printf("%s\n\n", renderDaemonStatusIcon("not_running"))
 			fmt.Printf("  Workspace:  %s\n", shortenPath(workspacePath))
-			fmt.Printf("\n  To start:   bd daemon start\n")
+			if systemdManaged {
+				fmt.Printf("  Systemd:    %s (but not running)\n", ui.RenderWarn("enabled"))
+				fmt.Printf("\n  To start:   systemctl --user start bd-daemon@...\n")
+			} else {
+				fmt.Printf("\n  To start:   bd daemon start\n")
+			}
 		}
 		return
 	}
@@ -278,6 +287,15 @@ func showCurrentDaemonStatus() {
 		// Show relative path for log
 		relLog := ".beads/daemon.log"
 		fmt.Printf("  Log:        %s\n", relLog)
+	}
+
+	// Show systemd status if managed (bd-0lh64.1.3)
+	if systemdManaged {
+		if systemdActive {
+			fmt.Printf("  Systemd:    %s\n", ui.RenderPass("active (managed)"))
+		} else {
+			fmt.Printf("  Systemd:    %s\n", ui.RenderWarn("enabled (not via systemd)"))
+		}
 	}
 
 	// Show hint about other daemons

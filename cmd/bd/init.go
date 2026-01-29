@@ -663,6 +663,19 @@ and --server-user. Password should be set via BEADS_DOLT_PASSWORD environment va
 			addLandingThePlaneInstructions(!quiet)
 		}
 
+		// Set up systemd integration if --systemd flag is set (bd-0lh64.1.3)
+		useSystemd, _ := cmd.Flags().GetBool("systemd")
+		if useSystemd {
+			if !IsSystemdAvailable() {
+				fmt.Fprintf(os.Stderr, "\n%s --systemd flag requires Linux with systemd user services\n", ui.RenderWarn("⚠"))
+			} else {
+				if err := SetupSystemdDaemon(cwd, quiet); err != nil {
+					fmt.Fprintf(os.Stderr, "\n%s Failed to set up systemd: %v\n", ui.RenderWarn("⚠"), err)
+					fmt.Fprintf(os.Stderr, "You can try manually with the scripts in examples/systemd/\n")
+				}
+			}
+		}
+
 		// Skip output if quiet mode
 		if quiet {
 			return
@@ -733,6 +746,9 @@ func init() {
 	initCmd.Flags().String("server-host", "", "Dolt server host (default: 127.0.0.1)")
 	initCmd.Flags().Int("server-port", 0, "Dolt server port (default: 3306)")
 	initCmd.Flags().String("server-user", "", "Dolt server MySQL user (default: root)")
+
+	// Systemd integration (bd-0lh64.1.3)
+	initCmd.Flags().Bool("systemd", false, "Set up bd daemon as a systemd user service (Linux only)")
 
 	rootCmd.AddCommand(initCmd)
 }
