@@ -55,8 +55,53 @@ type SemanticIDGenerator struct {
 // NewSemanticIDGenerator creates a new generator with default settings.
 func NewSemanticIDGenerator() *SemanticIDGenerator {
 	return &SemanticIDGenerator{
-		maxSlugLength: 46, // Per spec: slug max 46 chars
+		maxSlugLength: 40, // Per spec v0.5: slug max 40 chars (random appended separately)
 	}
+}
+
+// GenerateSlugWithRandom generates a semantic slug with the canonical random ID appended.
+// Format: prefix-type-slugRANDOM (e.g., gt-epc-semantic_idszfyl8)
+// The canonicalRandom should be extracted from the bead's canonical ID (e.g., "zfyl8" from "gt-zfyl8").
+func (g *SemanticIDGenerator) GenerateSlugWithRandom(prefix, issueType, title, canonicalRandom string) string {
+	// Get type abbreviation
+	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]
+	if typeAbbrev == "" {
+		typeAbbrev = "tsk" // Default to task
+	}
+
+	// Generate base slug from title
+	slug := g.GenerateSlug(title)
+
+	// Build complete slug: prefix-type-slugRANDOM
+	return prefix + "-" + typeAbbrev + "-" + slug + canonicalRandom
+}
+
+// GenerateChildSlug generates a child slug by appending child title to parent slug.
+// Format: parentSlug.child_slug (e.g., gt-epc-semantic_idszfyl8.format_spec)
+// The parentSlug should be a complete slug including the random component.
+func (g *SemanticIDGenerator) GenerateChildSlug(parentSlug, childTitle string) string {
+	// Generate slug from child title
+	childSlug := g.GenerateSlug(childTitle)
+
+	// Append to parent with dot separator
+	return parentSlug + "." + childSlug
+}
+
+// ExtractRandomFromID extracts the random component from a canonical bead ID.
+// For "gt-zfyl8" returns "zfyl8", for "gt-zfyl8.1" returns "zfyl8".
+func ExtractRandomFromID(canonicalID string) string {
+	// Remove any child suffix (.1, .2, etc.)
+	id := canonicalID
+	if dotIdx := strings.Index(id, "."); dotIdx > 0 {
+		id = id[:dotIdx]
+	}
+
+	// Extract random after last hyphen
+	if lastHyphen := strings.LastIndex(id, "-"); lastHyphen >= 0 && lastHyphen < len(id)-1 {
+		return id[lastHyphen+1:]
+	}
+
+	return ""
 }
 
 // GenerateSlug converts a title to a slug suitable for a semantic ID.
@@ -123,6 +168,9 @@ func (g *SemanticIDGenerator) GenerateSlug(title string) string {
 
 // GenerateSemanticID generates a complete semantic ID with prefix and type.
 // It checks for collisions against existingIDs and adds a numeric suffix if needed.
+//
+// Deprecated: Use GenerateSlugWithRandom instead, which embeds the canonical
+// random ID for guaranteed uniqueness without collision checking.
 func (g *SemanticIDGenerator) GenerateSemanticID(prefix, issueType, title string, existingIDs []string) string {
 	// Get type abbreviation
 	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]
@@ -153,6 +201,9 @@ func (g *SemanticIDGenerator) GenerateSemanticID(prefix, issueType, title string
 
 // GenerateSemanticIDWithCallback generates a semantic ID using a callback
 // to check for collisions. This is useful when checking against a database.
+//
+// Deprecated: Use GenerateSlugWithRandom instead, which embeds the canonical
+// random ID for guaranteed uniqueness without collision checking.
 func (g *SemanticIDGenerator) GenerateSemanticIDWithCallback(prefix, issueType, title string, exists func(id string) bool) string {
 	// Get type abbreviation
 	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]

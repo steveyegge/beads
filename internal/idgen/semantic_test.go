@@ -24,7 +24,7 @@ func TestGenerateSlug(t *testing.T) {
 		{"empty", "", "untitled"},
 		{"only stop words", "the a an", "the"}, // Falls back to first word
 		{"numeric start", "123 fix", "n123_fix"},
-		{"very long", "This is a very long title that should be truncated to fit within the maximum slug length limit", "very_long_title_should_truncated_fit_within"},
+		{"very long", "This is a very long title that should be truncated to fit within the maximum slug length limit", "very_long_title_should_truncated_fit"},
 		{"hyphens to underscores", "fix-login-bug", "fix_login_bug"},
 	}
 
@@ -147,11 +147,11 @@ func TestSlugLength(t *testing.T) {
 	gen := NewSemanticIDGenerator()
 
 	// Very long title
-	longTitle := "This is an extremely long title that goes on and on and should definitely be truncated to fit within the maximum allowed slug length which is forty six characters"
+	longTitle := "This is an extremely long title that goes on and on and should definitely be truncated to fit within the maximum allowed slug length which is forty characters"
 	slug := gen.GenerateSlug(longTitle)
 
-	if len(slug) > 46 {
-		t.Errorf("Slug length %d exceeds max 46: %q", len(slug), slug)
+	if len(slug) > 40 {
+		t.Errorf("Slug length %d exceeds max 40: %q", len(slug), slug)
 	}
 
 	if len(slug) < 3 {
@@ -204,4 +204,113 @@ func TestTypeAbbreviations(t *testing.T) {
 
 func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func TestGenerateSlugWithRandom(t *testing.T) {
+	gen := NewSemanticIDGenerator()
+
+	tests := []struct {
+		name            string
+		prefix          string
+		issueType       string
+		title           string
+		canonicalRandom string
+		want            string
+	}{
+		{
+			name:            "epic with random",
+			prefix:          "gt",
+			issueType:       "epic",
+			title:           "Semantic Issue IDs",
+			canonicalRandom: "zfyl8",
+			want:            "gt-epc-semantic_issue_idszfyl8",
+		},
+		{
+			name:            "bug with random",
+			prefix:          "gt",
+			issueType:       "bug",
+			title:           "Fix login timeout",
+			canonicalRandom: "3q6a9",
+			want:            "gt-bug-fix_login_timeout3q6a9",
+		},
+		{
+			name:            "task with random",
+			prefix:          "bd",
+			issueType:       "task",
+			title:           "Add validation",
+			canonicalRandom: "x7m2",
+			want:            "bd-tsk-add_validationx7m2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gen.GenerateSlugWithRandom(tt.prefix, tt.issueType, tt.title, tt.canonicalRandom)
+			if got != tt.want {
+				t.Errorf("GenerateSlugWithRandom() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateChildSlug(t *testing.T) {
+	gen := NewSemanticIDGenerator()
+
+	tests := []struct {
+		name       string
+		parentSlug string
+		childTitle string
+		want       string
+	}{
+		{
+			name:       "format spec child",
+			parentSlug: "gt-epc-semantic_idszfyl8",
+			childTitle: "Format specification",
+			want:       "gt-epc-semantic_idszfyl8.format_specification",
+		},
+		{
+			name:       "validation child",
+			parentSlug: "gt-epc-semantic_idszfyl8",
+			childTitle: "Validation preview",
+			want:       "gt-epc-semantic_idszfyl8.validation_preview",
+		},
+		{
+			name:       "grandchild",
+			parentSlug: "gt-epc-semantic_idszfyl8.format_spec",
+			childTitle: "Regex pattern",
+			want:       "gt-epc-semantic_idszfyl8.format_spec.regex_pattern",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gen.GenerateChildSlug(tt.parentSlug, tt.childTitle)
+			if got != tt.want {
+				t.Errorf("GenerateChildSlug() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractRandomFromID(t *testing.T) {
+	tests := []struct {
+		name        string
+		canonicalID string
+		want        string
+	}{
+		{"simple", "gt-zfyl8", "zfyl8"},
+		{"with child", "gt-zfyl8.1", "zfyl8"},
+		{"with grandchild", "gt-zfyl8.1.2", "zfyl8"},
+		{"longer random", "bd-abc123", "abc123"},
+		{"hq prefix", "hq-xyz99", "xyz99"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractRandomFromID(tt.canonicalID)
+			if got != tt.want {
+				t.Errorf("ExtractRandomFromID(%q) = %q, want %q", tt.canonicalID, got, tt.want)
+			}
+		})
+	}
 }
