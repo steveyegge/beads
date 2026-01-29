@@ -638,6 +638,12 @@ var rootCmd = &cobra.Command{
 			noDaemon = true
 		}
 
+		// Restore should always run in direct mode. It performs git checkouts to read
+		// historical issue data, which could conflict with daemon operations.
+		if cmd.Name() == "restore" {
+			noDaemon = true
+		}
+
 		// Wisp operations auto-bypass daemon
 		// Wisps are ephemeral (Ephemeral=true) and never exported to JSONL,
 		// so daemon can't help anyway. This reduces friction in wisp workflows.
