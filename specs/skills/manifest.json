@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "generated_at": "2026-01-29T22:22:18Z",
+  "skills": [
+    {
+      "name": "SKILL_TEMPLATE",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/SKILL_TEMPLATE.md",
+      "sha256": "0e33e81e364cb2fcd316d36e4c09bfe7432bde26e5e7b7f43ae8069a7cc79ade",
+      "bytes": 1696
+    },
+    {
+      "name": "backend-trading-apis",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/backend-trading-apis/SKILL.md",
+      "sha256": "9f93d0e8648769bddd7c7e9f9ef2f460d0acc85679480ef1c49ba4d71be8aca8",
+      "bytes": 14386
+    },
+    {
+      "name": "order-validation",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/order-validation/SKILL.md",
+      "sha256": "bf85819ce6fc553f2e6ef801134ae1358260f611022e309a4e26c5d7370f0392",
+      "bytes": 9211
+    },
+    {
+      "name": "paper-engine-autonomy",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/paper-engine-autonomy/SKILL.md",
+      "sha256": "f6ef0e402c5501e002d73814b221b48e8e425a3a116c7d196d4ec8fc8ce69840",
+      "bytes": 2662
+    },
+    {
+      "name": "paper-engine-watchlist-freshness",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/paper-engine-watchlist-freshness/SKILL.md",
+      "sha256": "7f2fa995afbfaa90f3a60aa349f4d2876b4ebe1c5d728d98b954c9cd394ec5f3",
+      "bytes": 1627
+    },
+    {
+      "name": "position-sizing",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/position-sizing/SKILL.md",
+      "sha256": "bec58c9b0e5bca9ce7759f4f7448354369c881b7383e53c85a283342342d7047",
+      "bytes": 13403
+    },
+    {
+      "name": "skill-creator",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/.system/skill-creator/SKILL.md",
+      "sha256": "31b0010a4e1f30d8bfe06486996bbaf28973053cdc405a4ff29cebe5ddbaf77e",
+      "bytes": 18517
+    },
+    {
+      "name": "skill-installer",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/.system/skill-installer/SKILL.md",
+      "sha256": "ea0be3fdc00e7113071837d33fd0045d1074a2927cdb44569d372e91528e8d9d",
+      "bytes": 2815
+    },
+    {
+      "name": "superpowers:brainstorming",
+      "source": "codex",
+      "tier": "must-have",
+      "path": "~/.codex/superpowers/skills/brainstorming/SKILL.md",
+      "sha256": "206c63e80d38c57e6afc657296332b1d0ff75572435d75c079e7407b26762ecd",
+      "bytes": 2505
+    },
+    {
+      "name": "superpowers:dispatching-parallel-agents",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/dispatching-parallel-agents/SKILL.md",
+      "sha256": "c628917689ccc12ce9991615db6824d44c4fe71f8427cd959560aebe6a1a6476",
+      "bytes": 6104
+    },
+    {
+      "name": "superpowers:executing-plans",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/executing-plans/SKILL.md",
+      "sha256": "582937183ad9bec6fac0ce8c6ad85d2e6404e1e274a4564594577f1965d4d8ae",
+      "bytes": 2171
+    },
+    {
+      "name": "superpowers:finishing-a-development-branch",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/finishing-a-development-branch/SKILL.md",
+      "sha256": "dd2f82c6dc8582b621f9eb57fcb65f557f88eadf872727ac81d0840ae12c504e",
+      "bytes": 4250
+    },
+    {
+      "name": "superpowers:receiving-code-review",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/receiving-code-review/SKILL.md",
+      "sha256": "c9382e92b8f32363566068ecfed19d3b2651eaf40d3942b24840f839dedfc406",
+      "bytes": 6314
+    },
+    {
+      "name": "superpowers:requesting-code-review",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/requesting-code-review/SKILL.md",
+      "sha256": "2da31af22a58938ab78f3ee6d5b4687fcca062b923b646459eb52ba72117ef97",
+      "bytes": 2700
+    },
+    {
+      "name": "superpowers:subagent-driven-development",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/subagent-driven-development/SKILL.md",
+      "sha256": "724ff7f5edf539a7b5697daa120a5d0befa012660376724adaf9dd04ca6c305a",
+      "bytes": 9809
+    },
+    {
+      "name": "superpowers:systematic-debugging",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/systematic-debugging/SKILL.md",
+      "sha256": "4999cb851360485eca5074e727bbdd62ef20549c5d5b01216fcbf5831badb473",
+      "bytes": 9884
+    },
+    {
+      "name": "superpowers:test-driven-development",
+      "source": "codex",
+      "tier": "must-have",
+      "path": "~/.codex/superpowers/skills/test-driven-development/SKILL.md",
+      "sha256": "7dee67b4af6bdccc7a914ca34533184d64592d0f5b23aeae631538168db14994",
+      "bytes": 9867
+    },
+    {
+      "name": "superpowers:using-git-worktrees",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/using-git-worktrees/SKILL.md",
+      "sha256": "4e2aeeb740335d9160ee3a6da66ca6b2ceea8e1e03b9835b5ee357a17500f2bc",
+      "bytes": 5592
+    },
+    {
+      "name": "superpowers:using-superpowers",
+      "source": "codex",
+      "tier": "must-have",
+      "path": "~/.codex/superpowers/skills/using-superpowers/SKILL.md",
+      "sha256": "81d921b16502091f44e8669bbcfae74b87bbf4295d03fff70a98e81d73af60a6",
+      "bytes": 3798
+    },
+    {
+      "name": "superpowers:verification-before-completion",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/verification-before-completion/SKILL.md",
+      "sha256": "ea52d15aabaf72bc6b558efe2c126f161b53961090ddcd712000273bfe8c7b6c",
+      "bytes": 4201
+    },
+    {
+      "name": "superpowers:writing-plans",
+      "source": "codex",
+      "tier": "must-have",
+      "path": "~/.codex/superpowers/skills/writing-plans/SKILL.md",
+      "sha256": "2046e5b955aa16c288f9c7290c58f237628dfb6ba6d4817fad3da0fa830b46c2",
+      "bytes": 3264
+    },
+    {
+      "name": "superpowers:writing-skills",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/superpowers/skills/writing-skills/SKILL.md",
+      "sha256": "6ffe287552c1ca9c050e1226408282535611365264fa05a6da81ddc70729a37e",
+      "bytes": 22463
+    },
+    {
+      "name": "swiftui-design-system",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/swiftui-design-system/SKILL.md",
+      "sha256": "6ba568881338734d5166d3b764b4156eeec9219b38640087401ffc95b0fc0985",
+      "bytes": 3549
+    },
+    {
+      "name": "trading-indicators",
+      "source": "codex",
+      "tier": "optional",
+      "path": "~/.codex/skills/trading-indicators/SKILL.md",
+      "sha256": "9a131b27ab9dc49052ef23c44a58331275d9dc98013b9164ffc5fdb8ca26d03e",
+      "bytes": 8185
+    },
+    {
+      "name": "writing-clearly-and-concisely",
+      "source": "codex",
+      "tier": "must-have",
+      "path": "~/.codex/skills/writing-clearly-and-concisely/SKILL.md",
+      "sha256": "1448ea19147b339ce37ae70551b233bb329d6bdfa46f0bf627b43b6133372233",
+      "bytes": 2211
+    }
+  ]
+}

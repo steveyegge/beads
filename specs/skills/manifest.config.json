@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "codex_paths": [
+    "~/.codex/skills",
+    "~/.codex/superpowers/skills"
+  ],
+  "claude_paths": [
+    "~/.claude/skills"
+  ],
+  "tiers": {
+    "must-have": [
+      "superpowers:using-superpowers",
+      "superpowers:brainstorming",
+      "superpowers:writing-plans",
+      "superpowers:test-driven-development",
+      "writing-clearly-and-concisely"
+    ],
+    "optional": []
+  },
+  "personal": []
+}

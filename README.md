@@ -5,6 +5,8 @@
 > *"Have you ever questioned the nature of your reality?"*
 > Your code should. Constantly.
 
+Shadowbook tracks narrative drift for your specs and your tooling. Your agents are hosts. Their skills are cornerstones. When a skill changes, the host should feel it. The skills manifest makes that drift visible, so every host runs the same story.
+
 [![License](https://img.shields.io/github/license/anupamchugh/shadowbook)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/anupamchugh/shadowbook)](https://goreportcard.com/report/github.com/anupamchugh/shadowbook)
 [![Release](https://img.shields.io/github/v/release/anupamchugh/shadowbook)](https://github.com/anupamchugh/shadowbook/releases)

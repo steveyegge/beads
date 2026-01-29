@@ -1,6 +1,6 @@
 # Makefile for beads project
 
-.PHONY: all build test bench bench-quick clean install help
+.PHONY: all build test bench bench-quick clean install help skills-manifest-generate skills-manifest-check skills-manifest-sync
 
 # Default target
 all: build
@@ -64,4 +64,16 @@ help:
 	@echo "  make bench-quick  - Run quick benchmarks (shorter benchtime)"
 	@echo "  make install      - Install bd to ~/.local/bin (with codesign on macOS)"
 	@echo "  make clean        - Remove build artifacts and profile files"
+	@echo "  make skills-manifest-generate - Generate specs/skills/manifest.json"
+	@echo "  make skills-manifest-check    - Compare local skills to manifest.json"
+	@echo "  make skills-manifest-sync     - Generate manifest and run bd spec scan"
 	@echo "  make help         - Show this help message"
+
+skills-manifest-generate:
+	@python3 scripts/skills_manifest.py generate
+
+skills-manifest-check:
+	@python3 scripts/skills_manifest.py check
+
+skills-manifest-sync: skills-manifest-generate
+	@if [ -x ./bd ]; then ./bd spec scan; else bd spec scan; fi
