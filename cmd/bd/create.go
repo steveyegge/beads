@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/hooks"
+	"github.com/steveyegge/beads/internal/idgen"
 	"github.com/steveyegge/beads/internal/routing"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
@@ -496,8 +497,19 @@ var createCmd = &cobra.Command{
 
 		// If daemon is running, use RPC
 		if daemonClient != nil {
+			// Generate semantic ID if no explicit ID provided
+			rpcID := explicitID
+			if rpcID == "" && parentID == "" { // Don't generate semantic ID for child issues
+				ctx := rootCtx
+				prefix, _ := store.GetConfig(ctx, "prefix")
+				if prefix == "" {
+					prefix = "bd" // Default prefix
+				}
+				rpcID = generateSemanticID(ctx, store, prefix, issueType, title)
+			}
+
 			createArgs := &rpc.CreateArgs{
-				ID:                 explicitID,
+				ID:                 rpcID,
 				Parent:             parentID,
 				Title:              title,
 				Description:        description,
@@ -562,8 +574,20 @@ var createCmd = &cobra.Command{
 		}
 
 		// Direct mode
+		ctx := rootCtx
+
+		// Generate semantic ID if no explicit ID provided
+		issueID := explicitID
+		if issueID == "" {
+			prefix, _ := store.GetConfig(ctx, "prefix")
+			if prefix == "" {
+				prefix = "bd" // Default prefix
+			}
+			issueID = generateSemanticID(ctx, store, prefix, issueType, title)
+		}
+
 		issue := &types.Issue{
-			ID:                 explicitID, // Set explicit ID if provided (empty string if not)
+			ID:                 issueID,
 			Title:              title,
 			Description:        description,
 			Design:             design,
@@ -590,8 +614,6 @@ var createCmd = &cobra.Command{
 			DueAt:              dueAt,
 			DeferUntil:         deferUntil,
 		}
-
-		ctx := rootCtx
 
 		// Check if any dependencies are discovered-from type
 		// If so, inherit source_repo from the parent issue
@@ -780,6 +802,27 @@ var createCmd = &cobra.Command{
 		// Track as last touched issue
 		SetLastTouchedID(issue.ID)
 	},
+}
+
+// generateSemanticID creates a semantic ID for an issue based on its title and type.
+// It checks the storage layer for collisions and adds a numeric suffix if needed.
+// If config id.semantic is explicitly set to false, returns empty string to let storage generate hash ID.
+func generateSemanticID(ctx context.Context, store storage.Storage, prefix, issueType, title string) string {
+	// Check if semantic IDs are disabled (default: enabled)
+	// GetString returns "" if not set, so we only disable if explicitly "false"
+	if config.GetString("id.semantic") == "false" {
+		return "" // Let storage layer generate legacy hash ID
+	}
+
+	gen := idgen.NewSemanticIDGenerator()
+
+	// Use callback-based generation with collision checking against storage
+	exists := func(id string) bool {
+		issue, err := store.GetIssue(ctx, id)
+		return err == nil && issue != nil
+	}
+
+	return gen.GenerateSemanticIDWithCallback(prefix, issueType, title, exists)
 }
 
 // flushRoutedRepo ensures the target repo's JSONL is updated after routing an issue.
