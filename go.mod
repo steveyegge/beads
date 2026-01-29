@@ -1,6 +1,6 @@
 module github.com/steveyegge/beads
 
-go 1.25.3
+go 1.25.6
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/dolthub/driver v0.2.1-0.20260129001801-7e5f59a57cb5
+	github.com/dolthub/driver v0.2.1-0.20260129174617-8cef0c0300a0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gofrs/flock v0.13.0
@@ -46,7 +46,6 @@ require (
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/apache/thrift v0.19.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go v1.50.16 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.36.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.10 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.29.8 // indirect
@@ -86,18 +85,15 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
-	github.com/dolthub/dolt/go v0.40.5-0.20260128011125-760516d15c9d // indirect
-	github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20240212175631-02e9f99a3a9b // indirect
+	github.com/dolthub/dolt/go v0.40.5-0.20260129011525-f8583cb569e2 // indirect
 	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20250916051405-78a38d478790 // indirect
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260127233446-630c5c00410d // indirect
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260128201837-5b7ec92cc6e9 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20240227200619-19675ab05c71 // indirect
-	github.com/dolthub/maphash v0.1.0 // indirect
-	github.com/dolthub/swiss v0.2.1 // indirect
-	github.com/dolthub/vitess v0.0.0-20260126213359-8ef4cbd3309c // indirect
+	github.com/dolthub/vitess v0.0.0-20260128180459-bd171d35a7e2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
@@ -107,17 +103,13 @@ require (
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
-	github.com/go-kit/kit v0.13.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gocraft/dbr/v2 v2.7.6 // indirect
-	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.2 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
@@ -126,8 +118,6 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/juju/gnuflag v1.0.0 // indirect
 	github.com/kch42/buzhash v0.0.0-20160816060738-9bdec3dec7c6 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -177,7 +167,6 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.36.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
@@ -206,9 +195,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
 	google.golang.org/grpc v1.74.2 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
-	gopkg.in/errgo.v2 v2.1.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
-	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
