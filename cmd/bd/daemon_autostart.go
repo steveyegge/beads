@@ -74,14 +74,17 @@ func isDoltBackend() bool {
 //
 // Best-effort: if we can't determine the backend, we return false and defer to other logic.
 func singleProcessOnlyBackend() bool {
-	// Prefer dbPath if set; it points to either .beads/<db>.db (sqlite) or .beads/dolt (dolt dir).
-	beadsDir := ""
-	if dbPath != "" {
-		beadsDir = filepath.Dir(dbPath)
-	} else if found := beads.FindDatabasePath(); found != "" {
-		beadsDir = filepath.Dir(found)
-	} else {
-		beadsDir = beads.FindBeadsDir()
+	// Use FindBeadsDir() to get the proper config directory.
+	// For Dolt server mode, the database may be in a separate location (e.g., ~/.beads-dolt)
+	// while the config files are in the .beads directory.
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// Fallback: derive from database path
+		if dbPath != "" {
+			beadsDir = filepath.Dir(dbPath)
+		} else if found := beads.FindDatabasePath(); found != "" {
+			beadsDir = filepath.Dir(found)
+		}
 	}
 	if beadsDir == "" {
 		return false

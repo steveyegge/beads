@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
@@ -509,7 +510,7 @@ func formatDBList(dbs []*dbInfo) []map[string]string {
 }
 
 func handleUpdateRepoID(dryRun bool, autoYes bool) {
-	// Find database
+	// Find database and beads directory
 	foundDB := beads.FindDatabasePath()
 	if foundDB == "" {
 		if jsonOutput {
@@ -522,6 +523,12 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 			fmt.Fprintf(os.Stderr, "Hint: run 'bd init' to initialize bd\n")
 		}
 		os.Exit(1)
+	}
+
+	// Find beads directory for config loading
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		beadsDir = filepath.Dir(foundDB)
 	}
 
 	// Compute new repo ID
@@ -538,8 +545,8 @@ func handleUpdateRepoID(dryRun bool, autoYes bool) {
 		os.Exit(1)
 	}
 
-	// Open database
-	store, err := sqlite.New(rootCtx, foundDB)
+	// Open database using factory (supports both SQLite and Dolt backends)
+	store, err := factory.NewFromConfig(rootCtx, beadsDir)
 	if err != nil {
 		if jsonOutput {
 			outputJSON(map[string]interface{}{
