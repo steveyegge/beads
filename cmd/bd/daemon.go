@@ -359,8 +359,20 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 		log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
 	}
 
-	// Check for multiple .db files (ambiguity error)
-	beadsDir := filepath.Dir(daemonDBPath)
+	// Get the proper .beads directory with config files.
+	// For Dolt server mode, the database may be in a separate location (e.g., ~/.beads-dolt)
+	// while the config (metadata.json) is in the .beads directory. Using FindBeadsDir()
+	// ensures we load config from the right place.
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		// Fallback: derive from database path (works for SQLite in .beads/)
+		beadsDir = filepath.Dir(daemonDBPath)
+	}
+
+	// dbDir is the parent of the database file/directory - used for database-relative
+	// paths like Dolt server logs. Distinct from beadsDir which has config files.
+	dbDir := filepath.Dir(daemonDBPath)
+
 	backend := factory.GetBackendFromConfig(beadsDir)
 	if backend == "" {
 		backend = configfile.BackendSQLite
@@ -463,8 +475,8 @@ The daemon will now exit.`, strings.ToUpper(backend))
 		}
 		log.Info("starting dolt sql-server for federation mode")
 
-		doltPath := filepath.Join(beadsDir, "dolt")
-		serverLogFile := filepath.Join(beadsDir, "dolt-server.log")
+		doltPath := filepath.Join(dbDir, "dolt")
+		serverLogFile := filepath.Join(dbDir, "dolt-server.log")
 
 		// Use provided ports or defaults
 		sqlPort := federationPort
