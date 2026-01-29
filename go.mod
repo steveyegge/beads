@@ -5,10 +5,11 @@ go 1.25.6
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/anthropics/anthropic-sdk-go v1.19.0
+	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/dolthub/driver v0.2.1-0.20260129174617-8cef0c0300a0
+	github.com/dolthub/driver v0.2.1-0.20260129210815-dc59f6dbac23
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gofrs/flock v0.13.0
@@ -71,7 +72,6 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bcicen/jstream v1.0.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
-	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7 // indirect
 	github.com/charmbracelet/bubbletea v1.3.6 // indirect
@@ -85,7 +85,7 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
-	github.com/dolthub/dolt/go v0.40.5-0.20260129011525-f8583cb569e2 // indirect
+	github.com/dolthub/dolt/go v0.40.5-0.20260129204643-460dc5864c05 // indirect
 	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
