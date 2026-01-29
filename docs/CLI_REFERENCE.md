@@ -273,6 +273,13 @@ bd spec show specs/auth/login.md
 # Coverage summary
 bd spec coverage --json
 
+# Auto-compaction candidates (scores specs for compaction)
+bd spec candidates --json
+
+# Auto-compaction (dry run by default)
+bd spec auto-compact --dry-run
+bd spec auto-compact --execute
+
 # Acknowledge a spec change on a bead
 bd update <id> --ack-spec --json
 ```

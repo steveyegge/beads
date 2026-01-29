@@ -38,6 +38,8 @@ bd spec scan                 # Update registry and detect changes
 bd spec list                 # Show all specs and linked counts
 bd spec show <spec_id>       # Show spec + linked issues
 bd spec coverage             # Coverage metrics
+bd spec candidates           # Score specs for auto-compaction
+bd spec auto-compact         # Dry-run auto-compaction
 ```
 
 ---
@@ -79,6 +81,22 @@ bd close bd-xxx --compact-spec
 ```
 
 Compaction keeps the full spec on disk but stores a short summary in the registry to reduce context.
+
+## Auto-Compaction (Optional)
+
+```bash
+# Preview candidates (default threshold: 0.7)
+bd spec candidates
+
+# Dry run (default threshold: 0.8)
+bd spec auto-compact
+
+# Execute (writes summaries + archives)
+bd spec auto-compact --execute
+```
+
+Auto-compaction uses multiple signals (linked issues closed, spec staleness, git activity, superseded markers)
+to suggest or archive specs safely.
 
 ---
 

@@ -177,6 +177,8 @@ specs/login.md          ←── Ford edits the narrative
 | `bd spec show <path>` | Show narrative + linked hosts |
 | `bd spec coverage` | Find narratives with no hosts |
 | `bd spec compact <path>` | Archive narrative to cornerstone |
+| `bd spec candidates` | Score specs for auto-compaction |
+| `bd spec auto-compact` | Auto-compact specs above threshold |
 | `bd spec suggest <id>` | Suggest narratives for unlinked hosts |
 | `bd spec link --auto` | Bulk-link hosts to narratives |
 | `bd spec consolidate` | Report older narratives for archival |
@@ -206,6 +208,7 @@ Everything from beads, plus:
 - **Change Detection** — `bd spec scan` compares hashes, flags linked hosts
 - **Coverage Metrics** — Find narratives with no hosts
 - **Drift Alerts** — `SPEC CHANGED` warning in host output
+- **Auto-Compaction** — Multi-factor scoring to suggest/archive stale specs
 - **Auto-Match** — Suggest links for unlinked hosts (`bd spec suggest`, `bd spec link --auto`)
 - **Compaction** — Archive old narratives into cornerstones to save context
 - **Auto-Compact** — Archive when last host closes (`bd close --compact-spec`)
