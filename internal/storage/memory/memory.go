@@ -1799,6 +1799,11 @@ func (m *MemoryStorage) Path() string {
 	return m.jsonlPath
 }
 
+// BackendName returns "memory" to identify this storage backend
+func (m *MemoryStorage) BackendName() string {
+	return "memory"
+}
+
 // GetMoleculeProgress returns progress stats for a molecule.
 // For memory storage, this iterates through dependencies.
 func (m *MemoryStorage) GetMoleculeProgress(ctx context.Context, moleculeID string) (*types.MoleculeProgressStats, error) {

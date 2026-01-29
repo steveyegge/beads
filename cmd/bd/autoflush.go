@@ -20,7 +20,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/syncbranch"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -211,14 +210,11 @@ func autoImportIfNewer() {
 	}
 
 	// hq-c2495f: Skip auto-import for Dolt backend (Dolt is source of truth, not JSONL)
-	// This mirrors the check in internal/autoimport/autoimport.go
-	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
-	if dbPath != "" {
-		dbDir := filepath.Dir(dbPath)
-		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
-			debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
-			return
-		}
+	// bd-dfw: Use store.BackendName() directly to detect Dolt, as config files may be in
+	// a different directory than dbPath when using Dolt server mode
+	if store != nil && store.BackendName() == configfile.BackendDolt {
+		debug.Logf("auto-import skipped for Dolt backend (Dolt is source of truth)")
+		return
 	}
 
 	// Find JSONL path
@@ -509,13 +505,10 @@ func validateJSONLIntegrity(ctx context.Context, jsonlPath string) (bool, error)
 
 	// hq-c2495f: Skip integrity validation for Dolt backend
 	// In Dolt mode, JSONL is export-only, so mismatches don't matter
-	// hq-3446fc.17: Use factory.GetBackendFromConfig which checks both config.yaml and metadata.json
-	if dbPath != "" {
-		dbDir := filepath.Dir(dbPath)
-		if factory.GetBackendFromConfig(dbDir) == configfile.BackendDolt {
-			debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
-			return false, nil
-		}
+	// bd-dfw: Use store.BackendName() directly to detect Dolt
+	if store != nil && store.BackendName() == configfile.BackendDolt {
+		debug.Logf("validateJSONLIntegrity: skipped for Dolt backend")
+		return false, nil
 	}
 
 	// Get stored JSONL file hash

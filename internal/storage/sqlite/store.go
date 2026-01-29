@@ -356,6 +356,11 @@ func (s *SQLiteStorage) Path() string {
 	return s.dbPath
 }
 
+// BackendName returns "sqlite" to identify this storage backend
+func (s *SQLiteStorage) BackendName() string {
+	return "sqlite"
+}
+
 // IsClosed returns true if Close() has been called on this storage
 func (s *SQLiteStorage) IsClosed() bool {
 	return s.closed.Load()

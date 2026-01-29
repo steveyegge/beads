@@ -212,6 +212,10 @@ type Storage interface {
 	// Database path (for daemon validation)
 	Path() string
 
+	// BackendName returns the storage backend type ("sqlite", "dolt", "memory")
+	// Used by auto-import to skip JSONL import for Dolt backends where Dolt is source of truth
+	BackendName() string
+
 	// UnderlyingDB returns the underlying *sql.DB connection
 	// This is provided for extensions (like VC) that need to create their own tables
 	// in the same database. Extensions should use foreign keys to reference core tables.

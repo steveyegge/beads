@@ -222,6 +222,9 @@ func (m *mockStorage) Close() error {
 func (m *mockStorage) Path() string {
 	return ""
 }
+func (m *mockStorage) BackendName() string {
+	return "mock"
+}
 func (m *mockStorage) UnderlyingDB() *sql.DB {
 	return nil
 }

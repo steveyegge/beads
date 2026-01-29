@@ -587,6 +587,11 @@ func (s *DoltStore) Path() string {
 	return s.dbPath
 }
 
+// BackendName returns "dolt" to identify this storage backend
+func (s *DoltStore) BackendName() string {
+	return "dolt"
+}
+
 // IsClosed returns true if Close() has been called
 func (s *DoltStore) IsClosed() bool {
 	return s.closed.Load()
