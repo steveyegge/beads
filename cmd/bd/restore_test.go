@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -145,5 +146,26 @@ func TestGitCheckout_InvalidRef(t *testing.T) {
 	if err == nil {
 		// If we're not in a git repo or ref doesn't exist, should error
 		t.Log("gitCheckout returned nil - might not be in git repo or ref exists")
+	}
+}
+
+// TestRestoreWithInvalidIssueID verifies that restore handles non-existent issues
+// gracefully without panicking. This tests the fix for bd-02n where GetIssue
+// returns (nil, nil) for non-existent issues.
+func TestRestoreWithInvalidIssueID(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
+
+	testStore := newTestStore(t, dbPath)
+	defer testStore.Close()
+
+	ctx := context.Background()
+	issue, err := testStore.GetIssue(ctx, "nonexistent-issue-12345")
+
+	if err != nil {
+		t.Fatalf("GetIssue returned unexpected error: %v", err)
+	}
+	if issue != nil {
+		t.Fatalf("GetIssue returned issue for non-existent ID: %v", issue)
 	}
 }
