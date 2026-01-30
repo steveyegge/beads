@@ -153,7 +153,7 @@ func (s *SQLiteStorage) GetAllEventsSince(ctx context.Context, sinceID int64) ([
 		events = append(events, &event)
 	}
 
-	return events, nil
+	return events, rows.Err()
 }
 
 // GetStatistics returns aggregate statistics
