@@ -362,6 +362,10 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var skillExamples sql.NullString
 	var claudeSkillPath sql.NullString
 	var skillContent sql.NullString
+	// Advice fields (gt-epc-advice_schema_storage)
+	var adviceTargetRig sql.NullString
+	var adviceTargetRole sql.NullString
+	var adviceTargetAgent sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -377,7 +381,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content
+		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content,
+		       advice_target_rig, advice_target_role, advice_target_agent
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -393,6 +398,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath, &skillContent,
+		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 	)
 
 	if err == sql.ErrNoRows {
@@ -553,6 +559,16 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if skillContent.Valid {
 		issue.SkillContent = skillContent.String
+	}
+	// Advice fields
+	if adviceTargetRig.Valid {
+		issue.AdviceTargetRig = adviceTargetRig.String
+	}
+	if adviceTargetRole.Valid {
+		issue.AdviceTargetRole = adviceTargetRole.String
+	}
+	if adviceTargetAgent.Valid {
+		issue.AdviceTargetAgent = adviceTargetAgent.String
 	}
 
 	// Fetch labels for this issue
@@ -847,6 +863,10 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
+	// Advice targeting fields (gt-epc-advice_schema_storage)
+	"advice_target_rig":   true,
+	"advice_target_role":  true,
+	"advice_target_agent": true,
 }
 
 // validatePriority validates a priority value

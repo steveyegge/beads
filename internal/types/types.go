@@ -137,6 +137,11 @@ type Issue struct {
 	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Path to SKILL.md
 	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
 
+	// ===== Advice Fields (hierarchical agent advice - gt-epc-advice_schema_storage) =====
+	AdviceTargetRig   string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
+	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
+	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
+
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -232,6 +237,11 @@ func (i *Issue) ComputeContentHash() string {
 	}
 	w.str(i.ClaudeSkillPath)
 	w.str(i.SkillContent)
+
+	// Advice fields
+	w.str(i.AdviceTargetRig)
+	w.str(i.AdviceTargetRole)
+	w.str(i.AdviceTargetAgent)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -535,6 +545,7 @@ const (
 	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
 	TypeWarrant      IssueType = "warrant"       // Session termination warrant
 	TypeSkill        IssueType = "skill"         // Capability definition bead (hq-yhdzq)
+	TypeAdvice       IssueType = "advice"        // Agent advice bead with hierarchical targeting
 )
 
 // IsValid checks if the issue type is a defined type constant.
@@ -547,7 +558,7 @@ func (t IssueType) IsValid() bool {
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
 	// Extended types (Gas Town, molecules, coordination)
-	case TypeMessage, TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill:
+	case TypeMessage, TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill, TypeAdvice:
 		return true
 	}
 	return false

@@ -133,6 +133,10 @@ type CreateArgs struct {
 	SkillExamples   []string `json:"skill_examples,omitempty"`
 	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Use SkillContent
 	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
+	// Advice targeting fields (only valid when IssueType == "advice")
+	AdviceTargetRig   string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
+	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
+	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -188,6 +192,10 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
+	// Advice targeting fields (only valid when IssueType == "advice")
+	AdviceTargetRig   *string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
+	AdviceTargetRole  *string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
+	AdviceTargetAgent *string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
 }
 
 // CloseArgs represents arguments for the close operation

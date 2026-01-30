@@ -187,6 +187,16 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 			}
 		}
 	}
+	// Advice targeting fields
+	if a.AdviceTargetRig != nil {
+		u["advice_target_rig"] = *a.AdviceTargetRig
+	}
+	if a.AdviceTargetRole != nil {
+		u["advice_target_role"] = *a.AdviceTargetRole
+	}
+	if a.AdviceTargetAgent != nil {
+		u["advice_target_agent"] = *a.AdviceTargetAgent
+	}
 	return u, nil
 }
 
@@ -336,6 +346,10 @@ func (s *Server) handleCreate(req *Request) Response {
 		SkillExamples:   createArgs.SkillExamples,
 		ClaudeSkillPath: createArgs.ClaudeSkillPath,
 		SkillContent:    createArgs.SkillContent,
+		// Advice targeting fields (only valid when IssueType == "advice")
+		AdviceTargetRig:   createArgs.AdviceTargetRig,
+		AdviceTargetRole:  createArgs.AdviceTargetRole,
+		AdviceTargetAgent: createArgs.AdviceTargetAgent,
 	}
 	
 	// Check if any dependencies are discovered-from type
