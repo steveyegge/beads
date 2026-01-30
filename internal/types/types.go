@@ -486,14 +486,16 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// TypeEvent is an internal type used by set-state for audit trail beads.
-// It is not a core work type (not in IsValid) but is always accepted by
-// validation and treated as built-in for hydration trust (GH#1356).
+// TypeEvent is a system-internal type used by set-state for audit trail beads.
+// Originally a Gas Town type, promoted to built-in internal type. It is not a
+// core work type (not in IsValid) but is accepted by IsValidWithCustom /
+// ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
 const TypeEvent IssueType = "event"
 
 // Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -507,7 +509,7 @@ func (t IssueType) IsValid() bool {
 }
 
 // IsBuiltIn returns true for core work types and system-internal types
-// (like event). Used during multi-repo hydration to determine trust:
+// (i.e. TypeEvent). Used during multi-repo hydration to determine trust:
 // - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
