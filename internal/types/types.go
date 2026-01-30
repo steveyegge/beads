@@ -1166,6 +1166,7 @@ type DecisionPoint struct {
 	Urgency        string     `json:"urgency,omitempty"`          // Priority level: high, medium, low
 	CreatedAt      time.Time  `json:"created_at"`
 	RequestedBy    string     `json:"requested_by,omitempty"`     // Agent/session that requested this decision (for wake notifications)
+	ParentBeadID   string     `json:"parent_bead_id,omitempty"`   // Parent bead (epic/molecule) this decision belongs to
 }
 
 // DecisionAcceptOptionID is the ID for the special "accept-as-is" option (hq-946577.24).

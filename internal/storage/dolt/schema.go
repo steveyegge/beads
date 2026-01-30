@@ -279,8 +279,10 @@ CREATE TABLE IF NOT EXISTS decision_points (
     urgency VARCHAR(16),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     requested_by TEXT,
+    parent_bead_id VARCHAR(255),
     INDEX idx_decision_points_prior (prior_id),
     INDEX idx_decision_points_urgency (urgency),
+    INDEX idx_decision_points_parent (parent_bead_id),
     CONSTRAINT fk_decision_issue FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
     CONSTRAINT fk_decision_prior FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
 );

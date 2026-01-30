@@ -64,6 +64,7 @@ var migrationsList = []Migration{
 	{"skill_content_column", migrations.MigrateSkillContentColumn},
 	{"decision_requested_by_column", migrations.MigrateDecisionRequestedBy},
 	{"decision_workflow_columns", migrations.MigrateDecisionWorkflowColumns},
+	{"decision_parent_bead_column", migrations.MigrateDecisionParentBead},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -131,6 +132,7 @@ func getMigrationDescription(name string) string {
 		"decision_point_columns":       "Creates decision_points table for human-in-the-loop choices (prompt, options, response, iteration tracking)",
 		"reminder_count_column":        "Adds reminder_count column to decision_points for tracking notification reminders",
 		"skill_columns":                "Adds skill columns (skill_name, skill_version, skill_category, etc.) for capability tracking (hq-yhdzq)",
+		"decision_parent_bead_column":  "Adds parent_bead_id column to decision_points for epic-based routing (gt-7w4x2)",
 	}
 
 	if desc, ok := descriptions[name]; ok {

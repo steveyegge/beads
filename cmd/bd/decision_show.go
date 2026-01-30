@@ -188,6 +188,12 @@ func runDecisionShow(cmd *cobra.Command, args []string) {
 		fmt.Println()
 	}
 
+	// Parent info
+	if dp.ParentBeadID != "" {
+		fmt.Printf("PARENT\n")
+		fmt.Printf("  %s\n\n", dp.ParentBeadID)
+	}
+
 	// Metadata
 	fmt.Printf("METADATA\n")
 	fmt.Printf("  Created: %s\n", dp.CreatedAt.Format(time.RFC3339))

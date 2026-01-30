@@ -197,6 +197,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 		RequestedBy:   requestedBy,
 		Urgency:       urgency,
 		PriorID:       predecessor,
+		ParentBeadID:  parent,
 	}
 
 	// Use transaction to create both atomically

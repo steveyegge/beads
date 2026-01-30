@@ -31,17 +31,21 @@ func (s *DoltStore) CreateDecisionPoint(ctx context.Context, dp *types.DecisionP
 	if dp.PriorID != "" {
 		priorID = dp.PriorID
 	}
+	var parentBeadID interface{}
+	if dp.ParentBeadID != "" {
+		parentBeadID = dp.ParentBeadID
+	}
 
 	// Insert decision point
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO decision_points (
 			issue_id, prompt, context, options, default_option, selected_option,
 			response_text, rationale, responded_at, responded_by, iteration, max_iterations,
-			prior_id, guidance, urgency, requested_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+			prior_id, guidance, urgency, requested_by, parent_bead_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
 	`, dp.IssueID, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
-		priorID, dp.Guidance, dp.Urgency, dp.RequestedBy)
+		priorID, dp.Guidance, dp.Urgency, dp.RequestedBy, parentBeadID)
 	if err != nil {
 		return fmt.Errorf("failed to insert decision point: %w", err)
 	}
@@ -57,7 +61,8 @@ func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*type
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+			COALESCE(parent_bead_id, ''), created_at
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -65,7 +70,8 @@ func (s *DoltStore) GetDecisionPoint(ctx context.Context, issueID string) (*type
 		&dp.DefaultOption, &dp.SelectedOption,
 		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
-		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
+		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
+		&dp.ParentBeadID, &dp.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -90,6 +96,10 @@ func (s *DoltStore) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionP
 	if dp.PriorID != "" {
 		priorID = dp.PriorID
 	}
+	var parentBeadID interface{}
+	if dp.ParentBeadID != "" {
+		parentBeadID = dp.ParentBeadID
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE decision_points SET
@@ -106,11 +116,12 @@ func (s *DoltStore) UpdateDecisionPoint(ctx context.Context, dp *types.DecisionP
 			max_iterations = ?,
 			prior_id = ?,
 			guidance = ?,
-			urgency = ?
+			urgency = ?,
+			parent_bead_id = ?
 		WHERE issue_id = ?
 	`, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy,
-		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, dp.IssueID)
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, parentBeadID, dp.IssueID)
 	if err != nil {
 		return fmt.Errorf("failed to update decision point: %w", err)
 	}
@@ -133,7 +144,8 @@ func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.Decision
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+			COALESCE(parent_bead_id, ''), created_at
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -151,7 +163,8 @@ func (s *DoltStore) ListPendingDecisions(ctx context.Context) ([]*types.Decision
 			&dp.DefaultOption, &dp.SelectedOption,
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
-			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
+			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
+			&dp.ParentBeadID, &dp.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
@@ -185,17 +198,21 @@ func (t *doltTransaction) CreateDecisionPoint(ctx context.Context, dp *types.Dec
 	if dp.PriorID != "" {
 		priorID = dp.PriorID
 	}
+	var parentBeadID interface{}
+	if dp.ParentBeadID != "" {
+		parentBeadID = dp.ParentBeadID
+	}
 
 	// Insert decision point
 	_, err = t.tx.ExecContext(ctx, `
 		INSERT INTO decision_points (
 			issue_id, prompt, context, options, default_option, selected_option,
 			response_text, rationale, responded_at, responded_by, iteration, max_iterations,
-			prior_id, guidance, urgency, requested_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+			prior_id, guidance, urgency, requested_by, parent_bead_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
 	`, dp.IssueID, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy, dp.Iteration, dp.MaxIterations,
-		priorID, dp.Guidance, dp.Urgency, dp.RequestedBy)
+		priorID, dp.Guidance, dp.Urgency, dp.RequestedBy, parentBeadID)
 	if err != nil {
 		return fmt.Errorf("failed to insert decision point: %w", err)
 	}
@@ -211,7 +228,8 @@ func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) 
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+			COALESCE(parent_bead_id, ''), created_at
 		FROM decision_points
 		WHERE issue_id = ?
 	`, issueID).Scan(
@@ -219,7 +237,8 @@ func (t *doltTransaction) GetDecisionPoint(ctx context.Context, issueID string) 
 		&dp.DefaultOption, &dp.SelectedOption,
 		&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 		&dp.Iteration, &dp.MaxIterations,
-		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
+		&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
+		&dp.ParentBeadID, &dp.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -238,6 +257,10 @@ func (t *doltTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.Dec
 	if dp.PriorID != "" {
 		priorID = dp.PriorID
 	}
+	var parentBeadID interface{}
+	if dp.ParentBeadID != "" {
+		parentBeadID = dp.ParentBeadID
+	}
 
 	result, err := t.tx.ExecContext(ctx, `
 		UPDATE decision_points SET
@@ -254,11 +277,12 @@ func (t *doltTransaction) UpdateDecisionPoint(ctx context.Context, dp *types.Dec
 			max_iterations = ?,
 			prior_id = ?,
 			guidance = ?,
-			urgency = ?
+			urgency = ?,
+			parent_bead_id = ?
 		WHERE issue_id = ?
 	`, dp.Prompt, dp.Context, dp.Options, dp.DefaultOption, dp.SelectedOption,
 		dp.ResponseText, dp.Rationale, dp.RespondedAt, dp.RespondedBy,
-		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, dp.IssueID)
+		dp.Iteration, dp.MaxIterations, priorID, dp.Guidance, dp.Urgency, parentBeadID, dp.IssueID)
 	if err != nil {
 		return fmt.Errorf("failed to update decision point: %w", err)
 	}
@@ -281,7 +305,8 @@ func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.De
 			COALESCE(default_option, ''), COALESCE(selected_option, ''),
 			COALESCE(response_text, ''), COALESCE(rationale, ''), responded_at, COALESCE(responded_by, ''),
 			iteration, max_iterations,
-			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''), created_at
+			COALESCE(prior_id, ''), COALESCE(guidance, ''), COALESCE(urgency, ''), COALESCE(requested_by, ''),
+			COALESCE(parent_bead_id, ''), created_at
 		FROM decision_points
 		WHERE responded_at IS NULL
 		ORDER BY created_at ASC
@@ -299,7 +324,8 @@ func (t *doltTransaction) ListPendingDecisions(ctx context.Context) ([]*types.De
 			&dp.DefaultOption, &dp.SelectedOption,
 			&dp.ResponseText, &dp.Rationale, &dp.RespondedAt, &dp.RespondedBy,
 			&dp.Iteration, &dp.MaxIterations,
-			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy, &dp.CreatedAt,
+			&dp.PriorID, &dp.Guidance, &dp.Urgency, &dp.RequestedBy,
+			&dp.ParentBeadID, &dp.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan decision point: %w", err)
