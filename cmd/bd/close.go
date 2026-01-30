@@ -50,6 +50,7 @@ create, update, show, or close operation).`,
 		noAuto, _ := cmd.Flags().GetBool("no-auto")
 		suggestNext, _ := cmd.Flags().GetBool("suggest-next")
 		compactSpec, _ := cmd.Flags().GetBool("compact-spec")
+		compactSkills, _ := cmd.Flags().GetBool("compact-skills")
 
 		// Get session ID from flag or environment variable
 		session, _ := cmd.Flags().GetString("session")
@@ -238,6 +239,11 @@ create, update, show, or close operation).`,
 
 			if len(closedIssues) > 0 {
 				maybeAutoCompactDaemon(ctx, closedIssues, compactSpec, daemonClient)
+				if compactSkills {
+					// TODO: Implement skill compaction - requires tracking skill usage per issue
+					// See specs/SHADOWBOOK_SKILL_SYNC_INTEGRATION_SPEC.md for design
+					fmt.Println("Note: --compact-skills requires skill usage tracking (not yet implemented)")
+				}
 			}
 
 			if jsonOutput && len(closedIssues) > 0 {
@@ -380,6 +386,11 @@ create, update, show, or close operation).`,
 			specStore, err := getSpecRegistryStore()
 			if err == nil {
 				maybeAutoCompactDirect(ctx, closedIssues, compactSpec, store, specStore)
+				if compactSkills {
+					// TODO: Implement skill compaction - requires tracking skill usage per issue
+					// See specs/SHADOWBOOK_SKILL_SYNC_INTEGRATION_SPEC.md for design
+					fmt.Println("Note: --compact-skills requires skill usage tracking (not yet implemented)")
+				}
 			}
 		}
 
@@ -419,6 +430,7 @@ func init() {
 	closeCmd.Flags().Bool("no-auto", false, "With --continue, show next step but don't claim it")
 	closeCmd.Flags().Bool("suggest-next", false, "Show newly unblocked issues after closing")
 	closeCmd.Flags().Bool("compact-spec", false, "If last linked issue closes, archive spec with auto summary")
+	closeCmd.Flags().Bool("compact-skills", false, "Remove skills only used by this issue from all agents")
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)

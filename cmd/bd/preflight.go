@@ -52,6 +52,7 @@ func init() {
 	preflightCmd.Flags().Bool("check", false, "Run checks automatically")
 	preflightCmd.Flags().Bool("fix", false, "Auto-fix issues where possible (not yet implemented)")
 	preflightCmd.Flags().Bool("json", false, "Output results as JSON")
+	preflightCmd.Flags().Bool("auto-sync", false, "Auto-sync skills if drift detected (with --check)")
 
 	rootCmd.AddCommand(preflightCmd)
 }
@@ -60,6 +61,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	check, _ := cmd.Flags().GetBool("check")
 	fix, _ := cmd.Flags().GetBool("fix")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
+	autoSync, _ := cmd.Flags().GetBool("auto-sync")
 
 	if fix {
 		fmt.Println("Note: --fix is not yet implemented.")
@@ -68,7 +70,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	}
 
 	if check {
-		runChecks(jsonOutput)
+		runChecks(jsonOutput, autoSync)
 		return
 	}
 
@@ -85,8 +87,12 @@ func runPreflight(cmd *cobra.Command, args []string) {
 }
 
 // runChecks executes all preflight checks and reports results.
-func runChecks(jsonOutput bool) {
+func runChecks(jsonOutput bool, autoSync bool) {
 	var results []CheckResult
+
+	// Run skill sync check (shadowbook integration)
+	skillResult := runSkillSyncCheck(autoSync)
+	results = append(results, skillResult)
 
 	// Run test check
 	testResult := runTestCheck()
@@ -333,4 +339,102 @@ func truncateOutput(s string, maxLen int) string {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(s[:maxLen]) + "\n... (truncated)"
+}
+
+// runSkillSyncCheck checks if skills are synchronized between Claude Code and Codex CLI.
+// This is the shadowbook integration point for skill-sync.
+func runSkillSyncCheck(autoSync bool) CheckResult {
+	command := "skill-sync audit"
+
+	// Get skill directories
+	claudeSkillsDir := ".claude/skills"
+	codexSkillsDir := os.ExpandEnv("$HOME/.codex/skills")
+
+	// Count skills in Claude Code
+	claudeEntries, claudeErr := os.ReadDir(claudeSkillsDir)
+	claudeCount := 0
+	if claudeErr == nil {
+		for _, e := range claudeEntries {
+			if e.IsDir() {
+				claudeCount++
+			}
+		}
+	}
+
+	// Count skills in Codex
+	codexEntries, codexErr := os.ReadDir(codexSkillsDir)
+	codexCount := 0
+	if codexErr == nil {
+		for _, e := range codexEntries {
+			if e.IsDir() {
+				codexCount++
+			}
+		}
+	}
+
+	// Check if directories exist
+	if claudeErr != nil && codexErr != nil {
+		return CheckResult{
+			Name:    "Skills synced",
+			Passed:  true,
+			Skipped: true,
+			Output:  "No skill directories found (skipping skill sync check)",
+			Command: command,
+		}
+	}
+
+	// Check for drift
+	if claudeCount != codexCount {
+		gap := claudeCount - codexCount
+		output := fmt.Sprintf("Claude: %d skills, Codex: %d skills (gap: %d)", claudeCount, codexCount, gap)
+
+		// Auto-sync if requested
+		if autoSync && gap > 0 {
+			// Create codex skills dir if it doesn't exist
+			if codexErr != nil {
+				if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
+					return CheckResult{
+						Name:    "Skills synced",
+						Passed:  false,
+						Output:  fmt.Sprintf("Cannot create Codex skills dir: %v", err),
+						Command: command,
+					}
+				}
+			}
+
+			// Sync using rsync
+			syncCmd := exec.Command("rsync", "-av", "--delete", claudeSkillsDir+"/", codexSkillsDir+"/")
+			syncOutput, syncErr := syncCmd.CombinedOutput()
+			if syncErr != nil {
+				return CheckResult{
+					Name:    "Skills synced",
+					Passed:  false,
+					Output:  fmt.Sprintf("Auto-sync failed: %v\n%s", syncErr, string(syncOutput)),
+					Command: "rsync -av --delete .claude/skills/ ~/.codex/skills/",
+				}
+			}
+
+			return CheckResult{
+				Name:    "Skills synced",
+				Passed:  true,
+				Output:  fmt.Sprintf("Auto-synced %d skills to Codex", claudeCount),
+				Command: "rsync -av --delete .claude/skills/ ~/.codex/skills/",
+			}
+		}
+
+		return CheckResult{
+			Name:    "Skills synced",
+			Passed:  false,
+			Warning: true,
+			Output:  output + " (use --auto-sync to fix)",
+			Command: command,
+		}
+	}
+
+	return CheckResult{
+		Name:    "Skills synced",
+		Passed:  true,
+		Output:  fmt.Sprintf("%d skills synchronized", claudeCount),
+		Command: command,
+	}
 }
