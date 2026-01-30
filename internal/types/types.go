@@ -486,7 +486,12 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// TypeEvent is an internal type used by set-state for audit trail beads.
+// It is not a core work type (not in IsValid) but is always accepted by
+// validation and treated as built-in for hydration trust (GH#1356).
+const TypeEvent IssueType = "event"
+
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
 
@@ -501,12 +506,12 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
+// IsBuiltIn returns true if the type is a built-in or internal type.
 // Used during multi-repo hydration to determine trust:
 // - Built-in types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
-	return t.IsValid()
+	return t.IsValid() || t == TypeEvent
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
@@ -514,6 +519,10 @@ func (t IssueType) IsBuiltIn() bool {
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
 	// First check built-in types
 	if t.IsValid() {
+		return true
+	}
+	// event is used internally by set-state for audit trail beads (GH#1356)
+	if t == TypeEvent {
 		return true
 	}
 	// Then check custom types

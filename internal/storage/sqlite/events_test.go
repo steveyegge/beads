@@ -470,7 +470,7 @@ func TestCreateIssueEventType(t *testing.T) {
 		Title:     "state change audit trail",
 		Status:    types.StatusClosed,
 		Priority:  4,
-		IssueType: types.IssueType("event"),
+		IssueType: types.TypeEvent,
 	}
 	err = store.CreateIssue(ctx, event, "test-user")
 	if err != nil {
@@ -482,8 +482,8 @@ func TestCreateIssueEventType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetIssue failed: %v", err)
 	}
-	if got.IssueType != "event" {
-		t.Errorf("Expected IssueType 'event', got %q", got.IssueType)
+	if got.IssueType != types.TypeEvent {
+		t.Errorf("Expected IssueType %q, got %q", types.TypeEvent, got.IssueType)
 	}
 }
 
