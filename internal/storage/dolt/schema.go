@@ -82,6 +82,10 @@ CREATE TABLE IF NOT EXISTS issues (
     skill_examples TEXT DEFAULT '',
     claude_skill_path VARCHAR(512) DEFAULT '',
     skill_content TEXT DEFAULT '',
+    -- Advice fields (hierarchical agent targeting - gt-epc-advice_schema_storage)
+    advice_target_rig VARCHAR(255) DEFAULT '',
+    advice_target_role VARCHAR(32) DEFAULT '',
+    advice_target_agent VARCHAR(255) DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
