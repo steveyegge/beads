@@ -456,7 +456,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		INSERT INTO issues (
 			id, content_hash, title, description, design, acceptance_criteria, notes,
 			status, priority, issue_type, assignee, estimated_minutes,
-			created_at, created_by, owner, updated_at, closed_at, external_ref,
+			created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
 			compaction_level, compacted_at, compacted_at_commit, original_size,
 			deleted_at, deleted_by, delete_reason, original_type,
 			sender, ephemeral, pinned, is_template, crystallizes,
@@ -481,7 +481,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
 		issue.Status, issue.Priority, issue.IssueType, nullString(issue.Assignee), nullInt(issue.EstimatedMinutes),
-		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef),
+		issue.CreatedAt, issue.CreatedBy, issue.Owner, issue.UpdatedAt, issue.ClosedAt, nullStringPtr(issue.ExternalRef), issue.SpecID,
 		issue.CompactionLevel, issue.CompactedAt, nullStringPtr(issue.CompactedAtCommit), nullIntVal(issue.OriginalSize),
 		issue.DeletedAt, issue.DeletedBy, issue.DeleteReason, issue.OriginalType,
 		issue.Sender, issue.Ephemeral, issue.Pinned, issue.IsTemplate, issue.Crystallizes,
@@ -499,7 +499,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var createdAtStr, updatedAtStr sql.NullString // TEXT columns - must parse manually
 	var closedAt, compactedAt, deletedAt, lastActivity, dueAt, deferUntil sql.NullTime
 	var estimatedMinutes, originalSize, timeoutNs sql.NullInt64
-	var assignee, externalRef, compactedAtCommit, owner sql.NullString
+	var assignee, externalRef, specID, compactedAtCommit, owner sql.NullString
 	var contentHash, sourceRepo, closeReason, deletedBy, deleteReason, originalType sql.NullString
 	var workType, sourceSystem sql.NullString
 	var sender, molType, eventKind, actor, target, payload sql.NullString
@@ -511,7 +511,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref,
+		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id,
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
@@ -526,7 +526,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
-		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
+		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &specID,
 		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &ephemeral, &pinned, &isTemplate, &crystallizes,
@@ -571,6 +571,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
@@ -743,7 +746,7 @@ func isAllowedUpdateField(key string) bool {
 	allowed := map[string]bool{
 		"status": true, "priority": true, "title": true, "assignee": true,
 		"description": true, "design": true, "acceptance_criteria": true, "notes": true,
-		"issue_type": true, "estimated_minutes": true, "external_ref": true,
+		"issue_type": true, "estimated_minutes": true, "external_ref": true, "spec_id": true,
 		"closed_at": true, "close_reason": true, "closed_by_session": true,
 		"sender": true, "wisp": true, "pinned": true,
 		"hook_bead": true, "role_bead": true, "agent_state": true, "last_activity": true,
