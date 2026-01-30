@@ -574,7 +574,8 @@ func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system
+		       quality_score, work_type, source_system,
+		       advice_target_rig, advice_target_role, advice_target_agent
 		FROM issues
 		WHERE id IN (%s)
 	`, strings.Join(placeholders, ","))
@@ -611,6 +612,8 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	var hookBead, roleBead, agentState, roleType, rig sql.NullString
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
+	// Advice fields (gt-epc-advice_schema_storage)
+	var adviceTargetRig, adviceTargetRole, adviceTargetAgent sql.NullString
 
 	if err := rows.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -625,6 +628,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem,
+		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 	); err != nil {
 		return nil, fmt.Errorf("failed to scan issue row: %w", err)
 	}
@@ -762,6 +766,16 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	}
 	if sourceSystem.Valid {
 		issue.SourceSystem = sourceSystem.String
+	}
+	// Advice fields (gt-epc-advice_schema_storage)
+	if adviceTargetRig.Valid {
+		issue.AdviceTargetRig = adviceTargetRig.String
+	}
+	if adviceTargetRole.Valid {
+		issue.AdviceTargetRole = adviceTargetRole.String
+	}
+	if adviceTargetAgent.Valid {
+		issue.AdviceTargetAgent = adviceTargetAgent.String
 	}
 
 	return &issue, nil
