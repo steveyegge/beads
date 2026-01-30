@@ -443,7 +443,7 @@ func TestGetAllEventsSinceReturnsAllColumns(t *testing.T) {
 
 // TestCreateIssueEventType verifies that CreateIssue accepts event type
 // without requiring it in types.custom config (GH#1356).
-// Uses a fresh DB without the Gas Town custom types that setupTestDB adds.
+// Uses a fresh DB without the custom types that setupTestDB adds.
 func TestCreateIssueEventType(t *testing.T) {
 	// Set up DB without event in types.custom to reproduce the real bug
 	tmpDir, err := os.MkdirTemp("", "beads-event-test-*")

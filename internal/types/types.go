@@ -506,9 +506,9 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in or internal type.
-// Used during multi-repo hydration to determine trust:
-// - Built-in types: validate (catch typos)
+// IsBuiltIn returns true for core work types and system-internal types
+// (like event). Used during multi-repo hydration to determine trust:
+// - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
 	return t.IsValid() || t == TypeEvent
@@ -517,15 +517,10 @@ func (t IssueType) IsBuiltIn() bool {
 // IsValidWithCustom checks if the issue type is valid, including custom types.
 // Custom types are user-defined via bd config set types.custom "type1,type2,..."
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
-	// First check built-in types
-	if t.IsValid() {
+	if t.IsBuiltIn() {
 		return true
 	}
-	// event is used internally by set-state for audit trail beads (GH#1356)
-	if t == TypeEvent {
-		return true
-	}
-	// Then check custom types
+	// Check user-configured custom types
 	for _, custom := range customTypes {
 		if string(t) == custom {
 			return true
