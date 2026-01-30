@@ -271,7 +271,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -288,7 +288,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			{ID: "other-3", Title: "Issue 3"},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -319,7 +319,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -348,7 +348,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -382,7 +382,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
@@ -397,7 +397,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			{ID: "nohyphen", Title: "Invalid"},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err == nil {
 			t.Error("Expected error for malformed ID")
 		}
@@ -409,7 +409,7 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			{ID: "old-a3f8", Title: "Hash suffix issue"},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "new")
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
 		if err != nil {
 			t.Errorf("Unexpected error for hash-based suffix: %v", err)
 		}
@@ -423,13 +423,75 @@ func TestRenameImportedIssuePrefixes(t *testing.T) {
 			{ID: "same-1", Title: "Issue 1"},
 		}
 
-		err := RenameImportedIssuePrefixes(issues, "same")
+		err := RenameImportedIssuePrefixes(issues, "same", nil)
 		if err != nil {
 			t.Fatalf("Expected no error, got: %v", err)
 		}
 
 		if issues[0].ID != "same-1" {
 			t.Errorf("Expected ID unchanged 'same-1', got '%s'", issues[0].ID)
+		}
+	})
+
+	t.Run("multi-part prefix with all-letter suffix", func(t *testing.T) {
+		// This is the bug fix test: "dolt-test-zmermz" should correctly use "dolt-test" prefix
+		// when "dolt-test" is in the knownPrefixes, even though "zmermz" has no digits.
+		// Without knownPrefixes, ExtractIssuePrefix would return "dolt" because "zmermz"
+		// looks like an English word (6 chars, no digits).
+		issues := []*types.Issue{
+			{ID: "dolt-test-zmermz", Title: "Test decision"},
+			{ID: "dolt-test-0h7", Title: "Another issue"},      // Has digits in suffix
+			{ID: "dolt-test-5qs1c5", Title: "Yet another one"}, // Has digits in suffix
+		}
+
+		// Pass known prefixes - "dolt-test" should be tried before "dolt"
+		knownPrefixes := []string{"dolt-test", "dolt"}
+
+		err := RenameImportedIssuePrefixes(issues, "bd", knownPrefixes)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+
+		if issues[0].ID != "bd-zmermz" {
+			t.Errorf("Expected ID 'bd-zmermz', got '%s'", issues[0].ID)
+		}
+		if issues[1].ID != "bd-0h7" {
+			t.Errorf("Expected ID 'bd-0h7', got '%s'", issues[1].ID)
+		}
+		if issues[2].ID != "bd-5qs1c5" {
+			t.Errorf("Expected ID 'bd-5qs1c5', got '%s'", issues[2].ID)
+		}
+	})
+
+	t.Run("multi-part prefix without known prefixes uses fallback", func(t *testing.T) {
+		// Without knownPrefixes, "dolt-test-zmermz" will be interpreted with "dolt" prefix
+		// because ExtractIssuePrefix returns "dolt" and suffix "test-zmermz" now validates
+		// as a semantic suffix (type=test, slug=zmermz).
+		issues := []*types.Issue{
+			{ID: "dolt-test-zmermz", Title: "Test decision"},
+		}
+
+		// No known prefixes - uses fallback extraction (prefix="dolt", suffix="test-zmermz")
+		err := RenameImportedIssuePrefixes(issues, "bd", nil)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// The result is "bd-test-zmermz" (not "bd-zmermz") because prefix detection
+		// falls back to ExtractIssuePrefix which returns "dolt"
+		if issues[0].ID != "bd-test-zmermz" {
+			t.Errorf("Expected ID 'bd-test-zmermz', got '%s'", issues[0].ID)
+		}
+	})
+
+	t.Run("truly invalid suffix still fails", func(t *testing.T) {
+		// An ID with a suffix that doesn't match either hash or semantic format should fail
+		issues := []*types.Issue{
+			{ID: "old-UPPERCASE123", Title: "Invalid case"},
+		}
+
+		err := RenameImportedIssuePrefixes(issues, "new", nil)
+		if err == nil {
+			t.Error("Expected error for uppercase suffix")
 		}
 	})
 }

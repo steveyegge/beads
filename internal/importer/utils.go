@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/validation"
 )
 
 // IssueDataChanged checks if an issue's data has changed from the database version
@@ -163,26 +164,50 @@ func (fc *fieldComparator) checkFieldChanged(key string, existing *types.Issue, 
 //
 // All text references to old IDs in issue fields (title, description, notes, etc.) and
 // dependency relationships are updated to use the new IDs.
-func RenameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string) error {
+//
+// The knownPrefixes parameter provides prefixes that were detected during the mismatch analysis.
+// This is used to correctly identify the prefix for edge cases where ExtractIssuePrefix might
+// fail (e.g., "dolt-test-zmermz" where the suffix has no digits and looks like an English word).
+func RenameImportedIssuePrefixes(issues []*types.Issue, targetPrefix string, knownPrefixes []string) error {
+	// Sort known prefixes by length descending so longer ones are tried first
+	// e.g., "dolt-test" should be matched before "dolt"
+	sort.Slice(knownPrefixes, func(i, j int) bool {
+		return len(knownPrefixes[i]) > len(knownPrefixes[j])
+	})
+
 	// Build a mapping of old IDs to new IDs
 	idMapping := make(map[string]string)
 
 	for _, issue := range issues {
-		oldPrefix := utils.ExtractIssuePrefix(issue.ID)
+		oldPrefix := extractPrefixWithKnown(issue.ID, knownPrefixes)
 		if oldPrefix == "" {
 			return fmt.Errorf("cannot rename issue %s: malformed ID (no hyphen found)", issue.ID)
 		}
 
 		if oldPrefix != targetPrefix {
-			// Extract the suffix part (supports both numeric "123" and hash "abc1" and hierarchical "abc.1.2")
+			// Extract the suffix part (everything after prefix-)
 			suffix := strings.TrimPrefix(issue.ID, oldPrefix+"-")
-
-			// Validate that the suffix is valid (alphanumeric + dots for hierarchy)
-			if suffix == "" || !isValidIDSuffix(suffix) {
-				return fmt.Errorf("cannot rename issue %s: invalid suffix '%s'", issue.ID, suffix)
+			if suffix == "" {
+				return fmt.Errorf("cannot rename issue %s: empty suffix", issue.ID)
 			}
 
+			// Construct the new ID and validate it's a valid format
 			newID := fmt.Sprintf("%s-%s", targetPrefix, suffix)
+
+			// Be permissive during import: if the suffix looks reasonable, allow the rename.
+			// The data may contain IDs that don't strictly conform to current validation rules
+			// (e.g., agent IDs like gt-gastown-crew-name, or legacy formats).
+			// We validate using a hierarchy of checks, accepting if ANY passes:
+			// 1. New ID passes full validation (best case)
+			// 2. Suffix is valid hash-based format (alphanumeric + dots)
+			// 3. Suffix is valid semantic format (type-slug)
+			// 4. Suffix is permissively valid (alphanumeric + hyphens + underscores + dots)
+			if err := validation.ValidateIssueID(newID); err != nil {
+				if !isValidIDSuffix(suffix) && !isValidSemanticSuffix(suffix) && !isPermissiveSuffix(suffix) {
+					return fmt.Errorf("cannot rename issue %s: invalid suffix '%s'", issue.ID, suffix)
+				}
+			}
+
 			idMapping[issue.ID] = newID
 		}
 	}
@@ -315,4 +340,123 @@ func isValidIDSuffix(s string) bool {
 		}
 	}
 	return true
+}
+
+// isPermissiveSuffix validates a suffix permissively for import.
+// This is a fallback for IDs that don't conform to strict formats but exist in data.
+// Accepts: lowercase letters, digits, hyphens, underscores, and dots.
+// Rejects: empty strings, strings starting/ending with hyphens, double hyphens.
+//
+// This handles cases like agent IDs (gt-gastown-crew-name) and other legacy formats
+// that were created before strict validation was enforced.
+func isPermissiveSuffix(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	// Don't allow leading/trailing hyphens (would create double hyphens in ID)
+	if s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	// Check for double hyphens
+	if strings.Contains(s, "--") {
+		return false
+	}
+	// Allow alphanumeric, hyphens, underscores, and dots
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidSemanticSuffix validates a semantic ID suffix (type-slug format).
+// Semantic IDs have the format: prefix-type-slug[.child] where:
+//   - type: 2-4 lowercase letters (e.g., bug, tsk, feat)
+//   - slug: starts with letter, then alphanumeric/underscore chars (may have trailing random or _N suffix)
+//   - optional child segments: dot-separated (e.g., .1, .2, .child_name)
+//
+// Examples of valid semantic suffixes:
+//   - "bug-fix_login_timeout" → type=bug, slug=fix_login_timeout
+//   - "tsk-add_feature_xyz123" → type=tsk, slug=add_feature_xyz123
+//   - "mr-merge_main_to_dev.1" → type=mr, slug=merge_main_to_dev, child=1
+func isValidSemanticSuffix(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+
+	// Split on first hyphen to get type and the rest
+	idx := strings.Index(s, "-")
+	if idx < 2 || idx > 4 {
+		return false // type must be 2-4 chars
+	}
+
+	typePart := s[:idx]
+	rest := s[idx+1:]
+
+	// Validate type part (2-4 lowercase letters)
+	for _, c := range typePart {
+		if c < 'a' || c > 'z' {
+			return false
+		}
+	}
+
+	// Split off child segments (after dots)
+	slugPart := rest
+	if dotIdx := strings.Index(rest, "."); dotIdx > 0 {
+		slugPart = rest[:dotIdx]
+		// Validate child segments (everything after the first dot)
+		childPart := rest[dotIdx+1:]
+		for _, c := range childPart {
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.') {
+				return false
+			}
+		}
+	}
+
+	// Validate slug part (starts with letter, then alphanumeric/underscore)
+	if len(slugPart) < 3 {
+		return false
+	}
+	if slugPart[0] < 'a' || slugPart[0] > 'z' {
+		return false
+	}
+	for _, c := range slugPart {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// extractPrefixWithKnown extracts the prefix from an issue ID, using known prefixes if available.
+//
+// This function first tries to match the issue ID against the provided known prefixes
+// (sorted by length descending for correct matching). If a known prefix matches, it's used.
+// Otherwise, falls back to utils.ExtractIssuePrefix for standard detection.
+//
+// This fixes edge cases like "dolt-test-zmermz" where:
+//   - ExtractIssuePrefix would incorrectly return "dolt" (suffix "zmermz" has no digits)
+//   - But if "dolt-test" is in knownPrefixes, we correctly identify the prefix
+func extractPrefixWithKnown(issueID string, knownPrefixes []string) string {
+	// Try known prefixes first (already sorted by length descending by caller)
+	for _, prefix := range knownPrefixes {
+		prefixWithHyphen := prefix + "-"
+		if strings.HasPrefix(issueID, prefixWithHyphen) {
+			// Verify the suffix is valid before accepting this prefix
+			suffix := strings.TrimPrefix(issueID, prefixWithHyphen)
+			// Extract base part before any dots for validation
+			basePart := suffix
+			if dotIdx := strings.Index(suffix, "."); dotIdx > 0 {
+				basePart = suffix[:dotIdx]
+			}
+			// Accept both hash-based suffixes (abc123) and semantic suffixes (bug-slug_name)
+			if basePart != "" && (isValidIDSuffix(basePart) || isValidSemanticSuffix(suffix)) {
+				return prefix
+			}
+		}
+	}
+
+	// Fall back to standard extraction
+	return utils.ExtractIssuePrefix(issueID)
 }

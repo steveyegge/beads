@@ -315,7 +315,12 @@ func handlePrefixMismatch(ctx context.Context, store storage.Storage, issues []*
 
 	// Handle rename-on-import if requested
 	if result.PrefixMismatch && opts.RenameOnImport && !opts.DryRun {
-		if err := RenameImportedIssuePrefixes(issues, configuredPrefix); err != nil {
+		// Collect known prefixes for better matching
+		knownPrefixes := make([]string, 0, len(result.MismatchPrefixes))
+		for prefix := range result.MismatchPrefixes {
+			knownPrefixes = append(knownPrefixes, prefix)
+		}
+		if err := RenameImportedIssuePrefixes(issues, configuredPrefix, knownPrefixes); err != nil {
 			return nil, fmt.Errorf("failed to rename prefixes: %w", err)
 		}
 		// After renaming, clear the mismatch flags since we fixed them
