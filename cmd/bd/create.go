@@ -582,7 +582,7 @@ var createCmd = &cobra.Command{
 		// Generate semantic ID if no explicit ID provided
 		issueID := explicitID
 		if issueID == "" {
-			prefix, _ := store.GetConfig(ctx, "prefix")
+			prefix, _ := store.GetConfig(ctx, "issue_prefix")
 			if prefix == "" {
 				prefix = "bd" // Default prefix
 			}
