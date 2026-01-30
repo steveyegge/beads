@@ -608,6 +608,19 @@ func TestEventTypeValidation(t *testing.T) {
 	if !TypeEvent.IsValidWithCustom([]string{"molecule", "gate"}) {
 		t.Error("TypeEvent.IsValidWithCustom(custom list) = false, want true")
 	}
+
+	// custom types must NOT be treated as built-in
+	if IssueType("molecule").IsBuiltIn() {
+		t.Error("IssueType(molecule).IsBuiltIn() = true, want false")
+	}
+	if IssueType("gate").IsBuiltIn() {
+		t.Error("IssueType(gate).IsBuiltIn() = true, want false")
+	}
+
+	// Normalize must not map event to a core type
+	if TypeEvent.Normalize() != TypeEvent {
+		t.Errorf("TypeEvent.Normalize() = %q, want %q", TypeEvent.Normalize(), TypeEvent)
+	}
 }
 
 func TestIssueTypeRequiredSections(t *testing.T) {

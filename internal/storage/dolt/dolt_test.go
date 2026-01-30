@@ -105,6 +105,36 @@ func TestNewDoltStore(t *testing.T) {
 	}
 }
 
+// TestCreateIssueEventType verifies that CreateIssue accepts event type
+// without requiring it in types.custom config (GH#1356).
+func TestCreateIssueEventType(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// setupTestStore does not set types.custom, so this reproduces the bug
+	event := &types.Issue{
+		Title:     "state change audit trail",
+		Status:    types.StatusClosed,
+		Priority:  4,
+		IssueType: types.TypeEvent,
+	}
+	err := store.CreateIssue(ctx, event, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue with event type should succeed without types.custom, got: %v", err)
+	}
+
+	got, err := store.GetIssue(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if got.IssueType != types.TypeEvent {
+		t.Errorf("Expected IssueType %q, got %q", types.TypeEvent, got.IssueType)
+	}
+}
+
 func TestDoltStoreConfig(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
