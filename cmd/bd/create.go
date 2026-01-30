@@ -154,6 +154,16 @@ var createCmd = &cobra.Command{
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
 		}
 
+		// Advice-specific flags
+		adviceTargetRig, _ := cmd.Flags().GetString("advice-target-rig")
+		adviceTargetRole, _ := cmd.Flags().GetString("advice-target-role")
+		adviceTargetAgent, _ := cmd.Flags().GetString("advice-target-agent")
+
+		// Validate advice-specific flags require --type=advice
+		if (adviceTargetRig != "" || adviceTargetRole != "" || adviceTargetAgent != "") && issueType != "advice" {
+			FatalError("--advice-target-rig, --advice-target-role, and --advice-target-agent flags require --type=advice")
+		}
+
 		// Validate --auto-close requires --type=epic
 		if autoClose && issueType != "epic" {
 			FatalError("--auto-close flag requires --type=epic")
@@ -222,6 +232,10 @@ var createCmd = &cobra.Command{
 				Actor:     eventActor,
 				Target:    eventTarget,
 				Payload:   eventPayload,
+				// Advice fields
+				AdviceTargetRig:   adviceTargetRig,
+				AdviceTargetRole:  adviceTargetRole,
+				AdviceTargetAgent: adviceTargetAgent,
 			}
 			if explicitID != "" {
 				previewIssue.ID = explicitID
@@ -542,6 +556,9 @@ var createCmd = &cobra.Command{
 				EventPayload:       eventPayload,
 				DueAt:              formatTimeForRPC(dueAt),
 				DeferUntil:         formatTimeForRPC(deferUntil),
+				AdviceTargetRig:    adviceTargetRig,
+				AdviceTargetRole:   adviceTargetRole,
+				AdviceTargetAgent:  adviceTargetAgent,
 			}
 
 			resp, err := daemonClient.Create(createArgs)
@@ -616,6 +633,9 @@ var createCmd = &cobra.Command{
 			Payload:            eventPayload,
 			DueAt:              dueAt,
 			DeferUntil:         deferUntil,
+			AdviceTargetRig:    adviceTargetRig,
+			AdviceTargetRole:   adviceTargetRole,
+			AdviceTargetAgent:  adviceTargetAgent,
 		}
 
 		// Check if any dependencies are discovered-from type
@@ -975,6 +995,10 @@ func init() {
 	createCmd.Flags().String("event-actor", "", "Entity URI who caused this event (requires --type=event)")
 	createCmd.Flags().String("event-target", "", "Entity URI or bead ID affected (requires --type=event)")
 	createCmd.Flags().String("event-payload", "", "Event-specific JSON data (requires --type=event)")
+	// Advice-specific flags (only valid when --type=advice)
+	createCmd.Flags().String("advice-target-rig", "", "Target rig for advice (e.g., 'gastown') (requires --type=advice)")
+	createCmd.Flags().String("advice-target-role", "", "Target role for advice (e.g., 'polecat', 'crew') (requires --type=advice)")
+	createCmd.Flags().String("advice-target-agent", "", "Target agent ID for advice (e.g., 'gastown/polecats/alpha') (requires --type=advice)")
 	// Time-based scheduling flags (GH#820)
 	// Examples:
 	//   --due=+6h           Due in 6 hours
@@ -1055,6 +1079,11 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 	roleType, _ := cmd.Flags().GetString("role-type")
 	agentRig, _ := cmd.Flags().GetString("agent-rig")
 
+	// Extract advice flags (gt-epc-advice_management_cli)
+	adviceTargetRig, _ := cmd.Flags().GetString("advice-target-rig")
+	adviceTargetRole, _ := cmd.Flags().GetString("advice-target-role")
+	adviceTargetAgent, _ := cmd.Flags().GetString("advice-target-agent")
+
 	// Extract time-based scheduling flags (bd-xwvo fix)
 	var dueAt *time.Time
 	dueStr, _ := cmd.Flags().GetString("due")
@@ -1106,6 +1135,10 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		// Time scheduling fields (bd-xwvo fix)
 		DueAt:      dueAt,
 		DeferUntil: deferUntil,
+		// Advice fields (gt-epc-advice_management_cli)
+		AdviceTargetRig:   adviceTargetRig,
+		AdviceTargetRole:  adviceTargetRole,
+		AdviceTargetAgent: adviceTargetAgent,
 		// Cross-rig routing: use route prefix instead of database config
 		PrefixOverride: prefixOverride,
 	}
