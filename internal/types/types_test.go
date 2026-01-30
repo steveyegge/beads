@@ -570,6 +570,38 @@ func TestIssueTypeIsValid(t *testing.T) {
 	}
 }
 
+// TestEventTypeValidation verifies that event type is accepted by validation
+// even without being in types.custom, since set-state creates event beads
+// internally for audit trail (GH#1356).
+func TestEventTypeValidation(t *testing.T) {
+	event := Issue{
+		Title:     "state change event",
+		Status:    StatusClosed,
+		Priority:  4,
+		IssueType: IssueType("event"),
+	}
+
+	// event is not a built-in type
+	if IssueType("event").IsValid() {
+		t.Fatal("event should not be a built-in type")
+	}
+
+	// event should be accepted by IsValidWithCustom without explicit config
+	if !IssueType("event").IsValidWithCustom(nil) {
+		t.Error("IssueType(event).IsValidWithCustom(nil) = false, want true")
+	}
+
+	// ValidateWithCustom should accept event without custom types config
+	if err := event.ValidateWithCustom(nil, nil); err != nil {
+		t.Errorf("ValidateWithCustom() should accept event type, got: %v", err)
+	}
+
+	// event should also work alongside other custom types
+	if !IssueType("event").IsValidWithCustom([]string{"molecule", "gate"}) {
+		t.Error("IssueType(event).IsValidWithCustom(custom list) = false, want true")
+	}
+}
+
 func TestIssueTypeRequiredSections(t *testing.T) {
 	tests := []struct {
 		issueType     IssueType
