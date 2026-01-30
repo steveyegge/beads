@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/formula"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -825,6 +826,87 @@ func TestLoadTemplateSubgraphWithManyChildren(t *testing.T) {
 			if _, ok := subgraph.IssueMap[childID]; !ok {
 				t.Errorf("Child %s not found in subgraph", childID)
 			}
+		}
+	})
+}
+
+// TestExtractRequiredVariables_OutputPlaceholders verifies that {{variables}} not defined
+// in VarDefs are treated as output placeholders and NOT considered required inputs.
+// This is the fix for gt-ink2c: formula parser treating all {{variable}} as required.
+func TestExtractRequiredVariables_OutputPlaceholders(t *testing.T) {
+	t.Run("variables not in VarDefs are output placeholders", func(t *testing.T) {
+		// Create a subgraph with {{timestamp}} and {{total_count}} in descriptions
+		// but only "name" defined in VarDefs
+		subgraph := &TemplateSubgraph{
+			Root: &types.Issue{
+				ID:          "test-proto",
+				Title:       "Test {{name}}",
+				Description: "Report generated at {{timestamp}} with {{total_count}} items",
+			},
+			Issues: []*types.Issue{
+				{
+					ID:          "test-proto",
+					Title:       "Test {{name}}",
+					Description: "Report generated at {{timestamp}} with {{total_count}} items",
+				},
+			},
+			IssueMap: map[string]*types.Issue{},
+			// Only "name" is defined as an input variable
+			VarDefs: map[string]formula.VarDef{
+				"name": {Description: "The test name", Required: true},
+			},
+		}
+
+		required := extractRequiredVariables(subgraph)
+
+		// Only "name" should be required - timestamp and total_count are output placeholders
+		if len(required) != 1 {
+			t.Errorf("Expected 1 required variable, got %d: %v", len(required), required)
+		}
+		if len(required) == 1 && required[0] != "name" {
+			t.Errorf("Expected required variable 'name', got '%s'", required[0])
+		}
+	})
+
+	t.Run("variables with defaults are not required", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			Root: &types.Issue{
+				ID:    "test-proto",
+				Title: "{{name}} version {{version}}",
+			},
+			Issues: []*types.Issue{
+				{ID: "test-proto", Title: "{{name}} version {{version}}"},
+			},
+			VarDefs: map[string]formula.VarDef{
+				"name":    {Description: "The name", Required: true},                         // Required, no default
+				"version": {Description: "Version number", Default: "1.0", Required: false}, // Has default
+			},
+		}
+
+		required := extractRequiredVariables(subgraph)
+
+		// Only "name" should be required - version has a default
+		if len(required) != 1 {
+			t.Errorf("Expected 1 required variable, got %d: %v", len(required), required)
+		}
+	})
+
+	t.Run("no VarDefs means no required variables", func(t *testing.T) {
+		subgraph := &TemplateSubgraph{
+			Root: &types.Issue{
+				ID:          "test-proto",
+				Title:       "Report {{timestamp}}",
+				Description: "Generated {{count}} items",
+			},
+			Issues:  []*types.Issue{},
+			VarDefs: nil, // No VarDefs at all
+		}
+
+		required := extractRequiredVariables(subgraph)
+
+		// With no VarDefs, we can't distinguish inputs from outputs, so nothing is required
+		if len(required) != 0 {
+			t.Errorf("Expected 0 required variables when VarDefs is nil, got %d: %v", len(required), required)
 		}
 	})
 }

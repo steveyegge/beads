@@ -293,15 +293,21 @@ func outputCookEphemeral(resolved *formula.Formula, runtimeMode bool, inputVars 
 			}
 		}
 
-		// Check for missing required variables
+		// Check for missing required variables (gt-ink2c fix)
+		// Only require variables that are DEFINED in the formula's [vars] section.
+		// Variables used as {{placeholder}} in descriptions but not defined in [vars]
+		// are output placeholders (e.g., {{timestamp}}) and should be left unsubstituted.
 		var missingVars []string
-		for _, v := range vars {
-			if _, ok := inputVars[v]; !ok {
-				missingVars = append(missingVars, v)
+		for name, def := range resolved.Vars {
+			if _, ok := inputVars[name]; !ok {
+				// Variable is defined but has no value - it's missing if it has no default
+				if def.Default == "" {
+					missingVars = append(missingVars, name)
+				}
 			}
 		}
 		if len(missingVars) > 0 {
-			return fmt.Errorf("runtime mode requires all variables to have values\nMissing: %s\nProvide with: --var %s=<value>",
+			return fmt.Errorf("runtime mode requires all defined variables to have values\nMissing: %s\nProvide with: --var %s=<value>",
 				strings.Join(missingVars, ", "), missingVars[0])
 		}
 

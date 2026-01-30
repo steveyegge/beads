@@ -813,31 +813,24 @@ func extractAllVariables(subgraph *TemplateSubgraph) []string {
 	return extractVariables(allText)
 }
 
-// extractRequiredVariables returns only variables that don't have defaults.
-// If VarDefs is available (from a cooked formula), uses it to filter out defaulted vars.
-// Otherwise, falls back to returning all variables.
+// extractRequiredVariables returns only variables that are defined in VarDefs and don't have defaults.
+// If VarDefs is available (from a cooked formula), uses it to identify input variables.
+// Variables used as {{placeholder}} but NOT defined in VarDefs are output placeholders
+// (e.g., {{timestamp}}, {{total_count}}) and should not require input values.
+// (gt-ink2c fix)
 func extractRequiredVariables(subgraph *TemplateSubgraph) []string {
-	allVars := extractAllVariables(subgraph)
-
-	// If no VarDefs, assume all variables are required
+	// If no VarDefs, no variables are required (can't distinguish inputs from outputs)
 	if subgraph.VarDefs == nil || len(subgraph.VarDefs) == 0 {
-		return allVars
+		return nil
 	}
 
-	// Filter to only required variables (no default and marked as required, or not defined in VarDefs)
+	// Only variables DEFINED in VarDefs with no default are required.
+	// Variables not in VarDefs are treated as output placeholders.
 	var required []string
-	for _, v := range allVars {
-		def, exists := subgraph.VarDefs[v]
-		// A variable is required if:
-		// 1. It's not defined in VarDefs at all, OR
-		// 2. It's defined with Required=true and no Default, OR
-		// 3. It's defined with no Default (even if Required is false)
-		if !exists {
-			required = append(required, v)
-		} else if def.Default == "" {
-			required = append(required, v)
+	for name, def := range subgraph.VarDefs {
+		if def.Default == "" {
+			required = append(required, name)
 		}
-		// If exists and has default, it's not required
 	}
 	return required
 }
