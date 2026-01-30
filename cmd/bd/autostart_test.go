@@ -200,10 +200,28 @@ func TestGetSocketPath(t *testing.T) {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
 
+	// Create metadata.json so hasBeadsProjectFiles() recognizes this as a valid beads directory
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte("{}"), 0600); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+
 	// Set dbPath to temp location
 	originalDbPath := dbPath
 	dbPath = filepath.Join(beadsDir, "test.db")
 	defer func() { dbPath = originalDbPath }()
+
+	// Set BEADS_DIR to isolate FindBeadsDir() from walking up to real .beads directories
+	// This ensures getSocketPath() uses the temp beadsDir, not a parent directory's .beads
+	originalBeadsDir := os.Getenv("BEADS_DIR")
+	os.Setenv("BEADS_DIR", beadsDir)
+	defer func() {
+		if originalBeadsDir == "" {
+			os.Unsetenv("BEADS_DIR")
+		} else {
+			os.Setenv("BEADS_DIR", originalBeadsDir)
+		}
+	}()
 
 	t.Run("prefers local socket when it exists", func(t *testing.T) {
 		localSocket := filepath.Join(beadsDir, "bd.sock")
