@@ -449,6 +449,8 @@ func (s *DoltStore) migrateSchema(ctx context.Context) error {
 		{"context", "TEXT"},
 		{"rationale", "TEXT"},
 		{"urgency", "VARCHAR(16)"},
+		// Parent bead ID for epic-based routing (gt-bug-bd_decision_create_parent_doesn_t_store)
+		{"parent_bead_id", "VARCHAR(255)"},
 	}
 
 	for _, col := range decisionPointColumns {
