@@ -500,12 +500,15 @@ var createCmd = &cobra.Command{
 			// Generate semantic ID if no explicit ID provided
 			rpcID := explicitID
 			if rpcID == "" && parentID == "" { // Don't generate semantic ID for child issues
-				ctx := rootCtx
-				prefix, _ := store.GetConfig(ctx, "prefix")
-				if prefix == "" {
-					prefix = "bd" // Default prefix
+				// Get prefix via RPC since store may be nil in daemon mode
+				prefix := "bd" // Default prefix
+				if resp, err := daemonClient.GetConfig(&rpc.GetConfigArgs{Key: "prefix"}); err == nil && resp.Value != "" {
+					prefix = resp.Value
 				}
-				rpcID = generateSemanticID(ctx, store, prefix, issueType, title)
+				// Skip client-side semantic ID generation in daemon mode - let server handle it
+				// The server's storage layer will generate an ID if rpcID is empty
+				rpcID = "" // Let daemon generate ID
+				_ = prefix // Prefix fetched for future use when server supports semantic IDs
 			}
 
 			createArgs := &rpc.CreateArgs{

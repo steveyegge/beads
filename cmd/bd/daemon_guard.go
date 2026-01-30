@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -19,12 +20,16 @@ func singleProcessBackendHelp(backend string) string {
 	return fmt.Sprintf("daemon mode is not supported with the %q backend (single-process only). To use daemon mode, initialize with %q (e.g. `bd init --backend sqlite`). Otherwise run commands in direct mode (default for dolt)", b, configfile.BackendSQLite)
 }
 
-// guardDaemonStartForDolt blocks daemon start/restart commands when the current
-// workspace backend is Dolt, unless --federation is specified.
+// guardDaemonStartForDolt blocks daemon start/restart commands when:
+// 1. The workspace backend is embedded Dolt (unless --federation is specified)
+// 2. The workspace is configured as systemd-managed (unless run via systemd)
 //
-// Rationale: embedded Dolt is effectively single-writer at the OS-process level. The
-// daemon architecture relies on multiple processes (CLI + daemon + helper spawns),
+// Rationale for Dolt guard: embedded Dolt is effectively single-writer at the OS-process
+// level. The daemon architecture relies on multiple processes (CLI + daemon + helper spawns),
 // which can trigger lock contention and transient "read-only" failures.
+//
+// Rationale for systemd guard: prevents multiple daemon instances and ensures consistent
+// management via systemctl in production environments.
 //
 // Exception: --federation flag enables dolt sql-server mode which is multi-writer.
 //
@@ -48,6 +53,9 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Check if running via systemd (BD_DAEMON_SYSTEMD=1 set by systemd unit)
+	isSystemdInvocation := os.Getenv("BD_DAEMON_SYSTEMD") == "1"
+
 	// Best-effort determine the active workspace backend. If we can't determine it,
 	// don't block (the command will likely fail later anyway).
 	beadsDir := beads.FindBeadsDir()
@@ -67,6 +75,16 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 	cfg, err := configfile.Load(beadsDir)
 	if err != nil || cfg == nil {
 		return nil
+	}
+
+	// Check if systemd-managed mode is enabled (gt-rrs2p)
+	// When enabled, daemon can only be started via systemctl (with BD_DAEMON_SYSTEMD=1)
+	if cfg.IsSystemdManaged() && !isSystemdInvocation {
+		return fmt.Errorf("daemon is managed by systemctl in this workspace.\n\n" +
+			"To start:   sudo systemctl start bd-daemon\n" +
+			"To status:  sudo systemctl status bd-daemon\n" +
+			"To logs:    sudo journalctl -u bd-daemon -f\n\n" +
+			"To disable systemctl management: set \"systemd_managed\": false in .beads/metadata.json")
 	}
 
 	// Use GetCapabilities() to properly handle Dolt server mode
