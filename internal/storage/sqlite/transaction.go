@@ -584,6 +584,16 @@ func (t *sqliteTxStorage) CloseIssue(ctx context.Context, id string, reason stri
 		return fmt.Errorf("failed to record event: %w", err)
 	}
 
+	// If this issue has a decision_point, mark it as responded
+	// This ensures closing a decision bead clears it from pending decisions list
+	_, err = t.conn.ExecContext(ctx, `
+		UPDATE decision_points SET responded_at = ?, responded_by = ?
+		WHERE issue_id = ? AND responded_at IS NULL
+	`, now, actor, id)
+	if err != nil {
+		return fmt.Errorf("failed to update decision point: %w", err)
+	}
+
 	// Mark issue as dirty
 	if err := markDirty(ctx, t.conn, id); err != nil {
 		return fmt.Errorf("failed to mark issue dirty: %w", err)

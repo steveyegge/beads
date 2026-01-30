@@ -297,6 +297,72 @@ func TestListPendingDecisionsEmpty(t *testing.T) {
 	}
 }
 
+// TestCloseIssueRemovesPendingDecision tests that closing a decision bead removes it from pending list
+func TestCloseIssueRemovesPendingDecision(t *testing.T) {
+	store, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create an issue that will have a decision point attached
+	issue := &types.Issue{
+		Title:     "Should we use Redis?",
+		Status:    types.StatusOpen,
+		Priority:  1,
+		IssueType: types.TypeTask,
+	}
+	if err := store.CreateIssue(ctx, issue, "test-user"); err != nil {
+		t.Fatalf("CreateIssue failed: %v", err)
+	}
+
+	// Create decision point for this issue
+	dp := &types.DecisionPoint{
+		IssueID:       issue.ID,
+		Prompt:        "Which caching solution?",
+		Options:       "[]",
+		Iteration:     1,
+		MaxIterations: 3,
+	}
+	if err := store.CreateDecisionPoint(ctx, dp); err != nil {
+		t.Fatalf("CreateDecisionPoint failed: %v", err)
+	}
+
+	// Verify decision appears in pending list
+	pending, err := store.ListPendingDecisions(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingDecisions failed: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("Expected 1 pending decision before close, got %d", len(pending))
+	}
+
+	// Close the issue using bd close (which calls CloseIssue)
+	if err := store.CloseIssue(ctx, issue.ID, "Decided on Redis", "test-user", ""); err != nil {
+		t.Fatalf("CloseIssue failed: %v", err)
+	}
+
+	// Verify decision is removed from pending list
+	pending, err = store.ListPendingDecisions(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingDecisions after close failed: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("Expected 0 pending decisions after close, got %d", len(pending))
+	}
+
+	// Verify the decision point was updated with responded_at
+	retrieved, err := store.GetDecisionPoint(ctx, issue.ID)
+	if err != nil {
+		t.Fatalf("GetDecisionPoint failed: %v", err)
+	}
+	if retrieved.RespondedAt == nil {
+		t.Error("Expected RespondedAt to be set after closing issue")
+	}
+	if retrieved.RespondedBy != "test-user" {
+		t.Errorf("Expected RespondedBy 'test-user', got '%s'", retrieved.RespondedBy)
+	}
+}
+
 // TestDecisionPointIteration tests iteration fields
 func TestDecisionPointIteration(t *testing.T) {
 	store, cleanup := setupTestDB(t)
