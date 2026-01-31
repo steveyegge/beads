@@ -57,15 +57,7 @@ var migrationsList = []Migration{
 	{"work_type_column", migrations.MigrateWorkTypeColumn},
 	{"source_system_column", migrations.MigrateSourceSystemColumn},
 	{"quality_score_column", migrations.MigrateQualityScoreColumn},
-	{"decision_point_columns", migrations.MigrateDecisionPointColumns},
-	{"reminder_count_column", migrations.MigrateReminderCountColumn},
-	{"skill_columns", migrations.MigrateSkillColumns},
-	{"auto_close_column", migrations.MigrateAutoCloseColumn},
-	{"skill_content_column", migrations.MigrateSkillContentColumn},
-	{"decision_requested_by_column", migrations.MigrateDecisionRequestedBy},
-	{"decision_workflow_columns", migrations.MigrateDecisionWorkflowColumns},
-	{"decision_parent_bead_column", migrations.MigrateDecisionParentBead},
-	{"advice_fields", migrations.MigrateAdviceFields},
+	{"metadata_column", migrations.MigrateMetadataColumn},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -130,11 +122,7 @@ func getMigrationDescription(name string) string {
 		"work_type_column":             "Adds work_type column for work assignment model (mutex vs open_competition per Decision 006)",
 		"source_system_column":         "Adds source_system column for federation adapter tracking",
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
-		"decision_point_columns":       "Creates decision_points table for human-in-the-loop choices (prompt, options, response, iteration tracking)",
-		"reminder_count_column":        "Adds reminder_count column to decision_points for tracking notification reminders",
-		"skill_columns":                "Adds skill columns (skill_name, skill_version, skill_category, etc.) for capability tracking (hq-yhdzq)",
-		"decision_parent_bead_column":  "Adds parent_bead_id column to decision_points for epic-based routing (gt-7w4x2)",
-		"advice_fields":                "Adds advice targeting fields (advice_target_rig, advice_target_role, advice_target_agent) for hierarchical agent advice",
+		"metadata_column":              "Adds metadata column for arbitrary JSON data (tool annotations, file lists) per GH#1406",
 	}
 
 	if desc, ok := descriptions[name]; ok {

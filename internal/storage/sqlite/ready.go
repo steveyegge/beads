@@ -167,8 +167,9 @@ func (s *SQLiteStorage) GetReadyWork(ctx context.Context, filter types.WorkFilte
 		i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
 		i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
-		i.await_type, i.await_id, i.timeout_ns, i.waiters, i.auto_close,
-		i.advice_target_rig, i.advice_target_role, i.advice_target_agent
+		i.await_type, i.await_id, i.timeout_ns, i.waiters,
+		i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
+		i.due_at, i.defer_until, i.metadata
 		FROM issues i
 		WHERE %s
 		AND NOT EXISTS (
@@ -780,8 +781,9 @@ func (s *SQLiteStorage) GetNewlyUnblockedByClose(ctx context.Context, closedIssu
 		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
-		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.auto_close,
-		       i.advice_target_rig, i.advice_target_role, i.advice_target_agent
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters,
+		       i.hook_bead, i.role_bead, i.agent_state, i.last_activity, i.role_type, i.rig, i.mol_type,
+		       i.due_at, i.defer_until, i.metadata
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?

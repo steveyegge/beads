@@ -51,6 +51,11 @@ type Issue struct {
 	ExternalRef  *string `json:"external_ref,omitempty"`  // e.g., "gh-9", "jira-ABC"
 	SourceSystem string  `json:"source_system,omitempty"` // Adapter/system that created this issue (federation)
 
+	// ===== Custom Metadata =====
+	// Metadata holds arbitrary JSON data for extension points (tool annotations, file lists, etc.)
+	// Validated as well-formed JSON on create/update. See GH#1406.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+
 	// ===== Compaction Metadata =====
 	CompactionLevel   int        `json:"compaction_level,omitempty"`
 	CompactedAt       *time.Time `json:"compacted_at,omitempty"`
@@ -168,6 +173,7 @@ func (i *Issue) ComputeContentHash() string {
 	w.strPtr(i.ExternalRef)
 	w.str(i.SourceSystem)
 	w.flag(i.Pinned, "pinned")
+	w.str(string(i.Metadata)) // Include metadata in content hash
 	w.flag(i.IsTemplate, "template")
 
 	// Bonded molecules
@@ -402,6 +408,12 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
 	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
+	}
 	return nil
 }
 
@@ -450,6 +462,12 @@ func (i *Issue) ValidateForImport(customStatuses []string) error {
 	// Validate agent state if set
 	if !i.AgentState.IsValid() {
 		return fmt.Errorf("invalid agent state: %s", i.AgentState)
+	}
+	// Validate metadata is well-formed JSON if set (GH#1406)
+	if len(i.Metadata) > 0 {
+		if !json.Valid(i.Metadata) {
+			return fmt.Errorf("metadata must be valid JSON")
+		}
 	}
 	return nil
 }

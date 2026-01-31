@@ -353,19 +353,8 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	// Time-based scheduling fields (GH#820)
 	var dueAt sql.NullTime
 	var deferUntil sql.NullTime
-	// Skill fields (hq-yhdzq)
-	var skillName sql.NullString
-	var skillVersion sql.NullString
-	var skillCategory sql.NullString
-	var skillInputs sql.NullString
-	var skillOutputs sql.NullString
-	var skillExamples sql.NullString
-	var claudeSkillPath sql.NullString
-	var skillContent sql.NullString
-	// Advice fields (gt-epc-advice_schema_storage)
-	var adviceTargetRig sql.NullString
-	var adviceTargetRole sql.NullString
-	var adviceTargetAgent sql.NullString
+	// Custom metadata field (GH#1406)
+	var metadata sql.NullString
 
 	var contentHash sql.NullString
 	var compactedAtCommit sql.NullString
@@ -380,9 +369,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
-		       due_at, defer_until,
-		       skill_name, skill_version, skill_category, skill_inputs, skill_outputs, skill_examples, claude_skill_path, skill_content,
-		       advice_target_rig, advice_target_role, advice_target_agent
+		       due_at, defer_until, metadata
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -396,9 +383,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&awaitType, &awaitID, &timeoutNs, &waiters,
 		&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
 		&eventKind, &actor, &target, &payload,
-		&dueAt, &deferUntil,
-		&skillName, &skillVersion, &skillCategory, &skillInputs, &skillOutputs, &skillExamples, &claudeSkillPath, &skillContent,
-		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
+		&dueAt, &deferUntil, &metadata,
 	)
 
 	if err == sql.ErrNoRows {
@@ -535,40 +520,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	if deferUntil.Valid {
 		issue.DeferUntil = &deferUntil.Time
 	}
-	// Skill fields
-	if skillName.Valid {
-		issue.SkillName = skillName.String
-	}
-	if skillVersion.Valid {
-		issue.SkillVersion = skillVersion.String
-	}
-	if skillCategory.Valid {
-		issue.SkillCategory = skillCategory.String
-	}
-	if skillInputs.Valid && skillInputs.String != "" {
-		issue.SkillInputs = parseJSONStringArray(skillInputs.String)
-	}
-	if skillOutputs.Valid && skillOutputs.String != "" {
-		issue.SkillOutputs = parseJSONStringArray(skillOutputs.String)
-	}
-	if skillExamples.Valid && skillExamples.String != "" {
-		issue.SkillExamples = parseJSONStringArray(skillExamples.String)
-	}
-	if claudeSkillPath.Valid {
-		issue.ClaudeSkillPath = claudeSkillPath.String
-	}
-	if skillContent.Valid {
-		issue.SkillContent = skillContent.String
-	}
-	// Advice fields
-	if adviceTargetRig.Valid {
-		issue.AdviceTargetRig = adviceTargetRig.String
-	}
-	if adviceTargetRole.Valid {
-		issue.AdviceTargetRole = adviceTargetRole.String
-	}
-	if adviceTargetAgent.Valid {
-		issue.AdviceTargetAgent = adviceTargetAgent.String
+	// Custom metadata field (GH#1406)
+	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+		issue.Metadata = []byte(metadata.String)
 	}
 
 	// Fetch labels for this issue
@@ -863,10 +817,8 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
-	// Advice targeting fields (gt-epc-advice_schema_storage)
-	"advice_target_rig":   true,
-	"advice_target_role":  true,
-	"advice_target_agent": true,
+	// Custom metadata field (GH#1406)
+	"metadata": true,
 }
 
 // validatePriority validates a priority value
@@ -2101,8 +2053,9 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters, auto_close,
-		       advice_target_rig, advice_target_role, advice_target_agent
+		       await_type, await_id, timeout_ns, waiters,
+		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+		       due_at, defer_until, metadata
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC

@@ -982,12 +982,19 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var awaitID sql.NullString
 		var timeoutNs sql.NullInt64
 		var waiters sql.NullString
-		// Auto-close field
-		var autoClose sql.NullInt64
-		// Advice fields
-		var adviceTargetRig sql.NullString
-		var adviceTargetRole sql.NullString
-		var adviceTargetAgent sql.NullString
+		// Agent fields
+		var hookBead sql.NullString
+		var roleBead sql.NullString
+		var agentState sql.NullString
+		var lastActivity sql.NullTime
+		var roleType sql.NullString
+		var rig sql.NullString
+		var molType sql.NullString
+		// Time-based scheduling fields
+		var dueAt sql.NullTime
+		var deferUntil sql.NullTime
+		// Custom metadata field (GH#1406)
+		var metadata sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -996,8 +1003,9 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef, &sourceRepo, &closeReason,
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
-			&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
-			&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
+			&awaitType, &awaitID, &timeoutNs, &waiters,
+			&hookBead, &roleBead, &agentState, &lastActivity, &roleType, &rig, &molType,
+			&dueAt, &deferUntil, &metadata,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1091,6 +1099,10 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		}
 		if adviceTargetAgent.Valid {
 			issue.AdviceTargetAgent = adviceTargetAgent.String
+		}
+		// Custom metadata field (GH#1406)
+		if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
+			issue.Metadata = []byte(metadata.String)
 		}
 
 		issues = append(issues, &issue)

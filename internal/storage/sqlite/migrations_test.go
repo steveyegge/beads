@@ -510,20 +510,10 @@ func TestMigrateContentHashColumn(t *testing.T) {
 				payload TEXT DEFAULT '',
 				due_at DATETIME,
 				defer_until DATETIME,
-				skill_name TEXT DEFAULT '',
-				skill_version TEXT DEFAULT '',
-				skill_category TEXT DEFAULT '',
-				skill_inputs TEXT DEFAULT '',
-				skill_outputs TEXT DEFAULT '',
-				skill_examples TEXT DEFAULT '',
-				claude_skill_path TEXT DEFAULT '',
-				skill_content TEXT DEFAULT '',
-				advice_target_rig TEXT DEFAULT '',
-				advice_target_role TEXT DEFAULT '',
-				advice_target_agent TEXT DEFAULT '',
+				metadata TEXT NOT NULL DEFAULT '{}',
 				CHECK ((status = 'closed') = (closed_at IS NOT NULL))
 			);
-			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL, '', '', '', '', '', '', '', '', '', '', '' FROM issues_backup;
+			INSERT INTO issues SELECT id, title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, estimated_minutes, created_at, '', '', updated_at, closed_at, '', external_ref, compaction_level, compacted_at, original_size, compacted_at_commit, source_repo, '', NULL, '', '', '', '', 0, 0, 0, 0, '', '', 0, '', '', '', '', NULL, '', '', '', '', '', '', '', NULL, NULL, '{}' FROM issues_backup;
 			DROP TABLE issues_backup;
 		`)
 		if err != nil {
