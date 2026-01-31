@@ -63,6 +63,21 @@ func TestExtractVariables(t *testing.T) {
 			input:    "{{}}",
 			expected: nil,
 		},
+		{
+			name:     "handlebars else keyword ignored",
+			input:    "{{ready}} then {{else}} or {{other}}",
+			expected: []string{"ready", "other"},
+		},
+		{
+			name:     "handlebars this keyword ignored",
+			input:    "{{this}} and {{name}}",
+			expected: []string{"name"},
+		},
+		{
+			name:     "multiple handlebars keywords ignored",
+			input:    "{{else}} {{this}} {{root}} {{index}} {{key}} {{first}} {{last}} {{actual_var}}",
+			expected: []string{"actual_var"},
+		},
 	}
 
 	for _, tt := range tests {
