@@ -45,11 +45,6 @@ type Config struct {
 	// nil/missing = enabled (for backwards compatibility), explicit false = disabled
 	RoutingEnabled *bool `json:"routing_enabled,omitempty"`
 
-	// SystemdManaged indicates daemon should only be started via systemctl.
-	// When true, manual `bd daemon start` will fail with guidance to use systemctl.
-	// This prevents multiple daemon instances and ensures consistent management.
-	SystemdManaged bool `json:"systemd_managed,omitempty"`
-
 	// Deprecated: LastBdVersion is no longer used for version tracking.
 	// Version is now stored in .local_version (gitignored) to prevent
 	// upgrade notifications firing after git operations reset metadata.json.
@@ -191,12 +186,6 @@ func (c *Config) IsRoutingEnabled() bool {
 		return true // Default: enabled for backwards compatibility
 	}
 	return *c.RoutingEnabled
-}
-
-// IsSystemdManaged returns whether daemon should only be started via systemctl.
-// When true, manual `bd daemon start` will fail with guidance to use systemctl.
-func (c *Config) IsSystemdManaged() bool {
-	return c.SystemdManaged
 }
 
 // Backend constants
