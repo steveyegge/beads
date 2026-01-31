@@ -394,6 +394,13 @@ func runDiagnostics(path string) doctorResult {
 		result.OverallOK = false
 	}
 
+	// Check 7e: Stale lock files (bootstrap, sync, daemon, startup)
+	staleLockCheck := convertDoctorCheck(doctor.CheckStaleLockFiles(path))
+	result.Checks = append(result.Checks, staleLockCheck)
+	if staleLockCheck.Status == statusWarning || staleLockCheck.Status == statusError {
+		result.OverallOK = false
+	}
+
 	// Check 8a: Git sync setup (informational - explains why daemon might not start)
 	gitSyncCheck := convertWithCategory(doctor.CheckGitSyncSetup(path), doctor.CategoryRuntime)
 	result.Checks = append(result.Checks, gitSyncCheck)

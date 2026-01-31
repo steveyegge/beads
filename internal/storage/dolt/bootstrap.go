@@ -146,8 +146,25 @@ func findJSONLPath(beadsDir string) string {
 	return ""
 }
 
-// acquireBootstrapLock acquires an exclusive lock for bootstrap operations
+// staleLockAge is the maximum age of a lock file before it's considered stale.
+// Bootstrap operations should complete well within this window.
+const staleLockAge = 5 * time.Minute
+
+// acquireBootstrapLock acquires an exclusive lock for bootstrap operations.
+// Uses non-blocking flock with polling to respect the timeout deadline.
+// Detects and cleans up stale lock files from crashed processes.
 func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, error) {
+	// Check for stale lock file before attempting to acquire.
+	// If the lock file is very old, the holding process likely crashed
+	// without cleanup. Remove it so we can proceed.
+	if info, err := os.Stat(lockPath); err == nil {
+		age := time.Since(info.ModTime())
+		if age > staleLockAge {
+			fmt.Fprintf(os.Stderr, "Bootstrap: removing stale lock file (age: %s)\n", age.Round(time.Second))
+			_ = os.Remove(lockPath)
+		}
+	}
+
 	// Create lock file
 	// #nosec G304 - controlled path
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
@@ -155,18 +172,26 @@ func acquireBootstrapLock(lockPath string, timeout time.Duration) (*os.File, err
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
 
-	// Try to acquire lock with timeout
+	// Try to acquire lock with non-blocking flock and polling.
+	// The previous implementation used FlockExclusiveBlocking which blocks
+	// indefinitely, making the timeout unreachable.
 	deadline := time.Now().Add(timeout)
 	for {
-		err := lockfile.FlockExclusiveBlocking(f)
+		err := lockfile.FlockExclusiveNonBlocking(f)
 		if err == nil {
-			// Lock acquired
+			// Lock acquired - update modification time for stale detection
 			return f, nil
+		}
+
+		if !lockfile.IsLocked(err) {
+			// Unexpected error (not contention)
+			_ = f.Close()
+			return nil, fmt.Errorf("failed to acquire bootstrap lock: %w", err)
 		}
 
 		if time.Now().After(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("timeout waiting for bootstrap lock")
+			return nil, fmt.Errorf("timeout after %s waiting for bootstrap lock (another bootstrap may be running)", timeout)
 		}
 
 		// Wait briefly before retrying

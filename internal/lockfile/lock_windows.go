@@ -37,6 +37,12 @@ func flockExclusive(f *os.File) error {
 	return err
 }
 
+// FlockExclusiveNonBlocking attempts to acquire an exclusive lock without blocking.
+// Returns ErrLocked if the lock is held by another process.
+func FlockExclusiveNonBlocking(f *os.File) error {
+	return flockExclusive(f)
+}
+
 // FlockExclusiveBlocking acquires an exclusive blocking lock on the file.
 // This will wait until the lock is available.
 func FlockExclusiveBlocking(f *os.File) error {

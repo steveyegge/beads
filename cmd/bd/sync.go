@@ -468,7 +468,19 @@ func doPullFirstSync(ctx context.Context, jsonlPath string, renameOnImport, noGi
 		return fmt.Errorf("acquiring sync lock: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("another sync is in progress")
+		// Check if lock file is stale (from a crashed sync process).
+		// On Unix, flock is released when a process exits, so TryLock normally
+		// succeeds after a crash. This handles edge cases (NFS, hung processes).
+		if cleanedUp := cleanStaleSyncLock(lockPath); cleanedUp {
+			lock = flock.New(lockPath)
+			locked, err = lock.TryLock()
+			if err != nil {
+				return fmt.Errorf("acquiring sync lock after stale cleanup: %w", err)
+			}
+		}
+		if !locked {
+			return fmt.Errorf("another sync is in progress (lock: %s)", lockPath)
+		}
 	}
 	defer func() { _ = lock.Unlock() }()
 
@@ -634,7 +646,17 @@ func doExportOnlySync(ctx context.Context, jsonlPath string, noPush bool, messag
 		return fmt.Errorf("acquiring sync lock: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("another sync is in progress")
+		// Check if lock file is stale (from a crashed sync process).
+		if cleanedUp := cleanStaleSyncLock(lockPath); cleanedUp {
+			lock = flock.New(lockPath)
+			locked, err = lock.TryLock()
+			if err != nil {
+				return fmt.Errorf("acquiring sync lock after stale cleanup: %w", err)
+			}
+		}
+		if !locked {
+			return fmt.Errorf("another sync is in progress (lock: %s)", lockPath)
+		}
 	}
 	defer func() { _ = lock.Unlock() }()
 
@@ -1243,6 +1265,33 @@ func resolveSyncConflictsManually(ctx context.Context, jsonlPath, beadsDir strin
 	fmt.Printf("\n✓ Manual resolution complete (%d resolved, %d skipped)\n", resolvedCount, skipped)
 
 	return nil
+}
+
+// staleSyncLockAge is the maximum age of a sync lock file before it's considered stale.
+// Sync operations should complete well within this window, even for large repos.
+const staleSyncLockAge = 1 * time.Hour
+
+// cleanStaleSyncLock checks if the sync lock file is stale and removes it.
+// Returns true if a stale lock was cleaned up.
+// On Unix, flock is automatically released when a process exits, so this is a safety
+// net for edge cases (NFS mounts, hung processes, container restarts).
+func cleanStaleSyncLock(lockPath string) bool {
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		return false
+	}
+
+	age := time.Since(info.ModTime())
+	if age <= staleSyncLockAge {
+		return false
+	}
+
+	fmt.Fprintf(os.Stderr, "Warning: removing stale sync lock (age: %s)\n", age.Round(time.Second))
+	if err := os.Remove(lockPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove stale sync lock: %v\n", err)
+		return false
+	}
+	return true
 }
 
 func init() {
