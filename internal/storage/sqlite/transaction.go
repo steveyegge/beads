@@ -342,7 +342,8 @@ func (t *sqliteTxStorage) GetIssue(ctx context.Context, id string) (*types.Issue
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters, auto_close
+		       await_type, await_id, timeout_ns, waiters, auto_close,
+		       advice_target_rig, advice_target_role, advice_target_agent
 		FROM issues
 		WHERE id = ?
 	`, id)
@@ -1384,7 +1385,8 @@ func (t *sqliteTxStorage) SearchIssues(ctx context.Context, query string, filter
 		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters, auto_close
+		       await_type, await_id, timeout_ns, waiters, auto_close,
+		       advice_target_rig, advice_target_role, advice_target_agent
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
@@ -1443,6 +1445,10 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	var waiters sql.NullString
 	// Auto-close field
 	var autoClose sql.NullInt64
+	// Advice fields
+	var adviceTargetRig sql.NullString
+	var adviceTargetRole sql.NullString
+	var adviceTargetAgent sql.NullString
 
 	err := row.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -1453,6 +1459,7 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
+		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1545,6 +1552,16 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	// Auto-close field
 	if autoClose.Valid && autoClose.Int64 != 0 {
 		issue.AutoClose = true
+	}
+	// Advice fields
+	if adviceTargetRig.Valid {
+		issue.AdviceTargetRig = adviceTargetRig.String
+	}
+	if adviceTargetRole.Valid {
+		issue.AdviceTargetRole = adviceTargetRole.String
+	}
+	if adviceTargetAgent.Valid {
+		issue.AdviceTargetAgent = adviceTargetAgent.String
 	}
 
 	return &issue, nil

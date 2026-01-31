@@ -984,6 +984,10 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		var waiters sql.NullString
 		// Auto-close field
 		var autoClose sql.NullInt64
+		// Advice fields
+		var adviceTargetRig sql.NullString
+		var adviceTargetRole sql.NullString
+		var adviceTargetAgent sql.NullString
 
 		err := rows.Scan(
 			&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -993,6 +997,7 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 			&deletedAt, &deletedBy, &deleteReason, &originalType,
 			&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 			&awaitType, &awaitID, &timeoutNs, &waiters, &autoClose,
+			&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan issue: %w", err)
@@ -1076,6 +1081,16 @@ func (s *SQLiteStorage) scanIssues(ctx context.Context, rows *sql.Rows) ([]*type
 		// Auto-close field
 		if autoClose.Valid && autoClose.Int64 != 0 {
 			issue.AutoClose = true
+		}
+		// Advice fields
+		if adviceTargetRig.Valid {
+			issue.AdviceTargetRig = adviceTargetRig.String
+		}
+		if adviceTargetRole.Valid {
+			issue.AdviceTargetRole = adviceTargetRole.String
+		}
+		if adviceTargetAgent.Valid {
+			issue.AdviceTargetAgent = adviceTargetAgent.String
 		}
 
 		issues = append(issues, &issue)

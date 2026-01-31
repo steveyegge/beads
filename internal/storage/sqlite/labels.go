@@ -173,7 +173,8 @@ func (s *SQLiteStorage) GetIssuesByLabel(ctx context.Context, label string) ([]*
 		       i.created_at, i.created_by, i.owner, i.updated_at, i.closed_at, i.external_ref, i.source_repo, i.close_reason,
 		       i.deleted_at, i.deleted_by, i.delete_reason, i.original_type,
 		       i.sender, i.ephemeral, i.pinned, i.is_template, i.crystallizes,
-		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.auto_close
+		       i.await_type, i.await_id, i.timeout_ns, i.waiters, i.auto_close,
+		       i.advice_target_rig, i.advice_target_role, i.advice_target_agent
 		FROM issues i
 		JOIN labels l ON i.id = l.issue_id
 		WHERE l.label = ?
