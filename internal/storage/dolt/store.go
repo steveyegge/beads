@@ -359,11 +359,17 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		"CREATE INDEX idx_issues_issue_type ON issues(issue_type)",
 	}
 	for _, migration := range indexMigrations {
-		_, err := s.db.ExecContext(ctx, migration)
+		_, err := db.ExecContext(ctx, migration)
 		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate") &&
 			!strings.Contains(strings.ToLower(err.Error()), "already exists") {
 			return fmt.Errorf("failed to apply index migration: %w", err)
 		}
+	}
+
+	// Apply schema migrations for existing databases.
+	// This handles adding new columns to tables created by older schema versions.
+	if err := applyMigrations(ctx, db); err != nil {
+		return fmt.Errorf("failed to apply schema migrations: %w", err)
 	}
 
 	// Create views
