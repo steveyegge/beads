@@ -489,7 +489,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.EventKind, issue.Actor, issue.Target, issue.Payload,
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
-		issue.DueAt, issue.DeferUntil, string(issue.Metadata),
+		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 	)
 	return err
 }
@@ -836,6 +836,15 @@ func nullIntVal(i int) interface{} {
 		return nil
 	}
 	return i
+}
+
+// jsonMetadata returns the metadata as a string, or "{}" if empty.
+// Dolt's JSON column type requires valid JSON, so we can't insert empty strings.
+func jsonMetadata(m []byte) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	return string(m)
 }
 
 func parseJSONStringArray(s string) []string {
