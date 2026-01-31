@@ -766,18 +766,35 @@ func cloneSubgraphViaDaemon(client *rpc.Client, subgraph *TemplateSubgraph, opts
 	}, nil
 }
 
-// extractVariables finds all {{variable}} patterns in text
+// extractVariables finds all {{variable}} patterns in text.
+// Handlebars control keywords like "else", "this" are excluded.
 func extractVariables(text string) []string {
 	matches := variablePattern.FindAllStringSubmatch(text, -1)
 	seen := make(map[string]bool)
 	var vars []string
 	for _, match := range matches {
 		if len(match) >= 2 && !seen[match[1]] {
-			vars = append(vars, match[1])
-			seen[match[1]] = true
+			name := match[1]
+			// Skip Handlebars control keywords
+			if isHandlebarsKeyword(name) {
+				continue
+			}
+			vars = append(vars, name)
+			seen[name] = true
 		}
 	}
 	return vars
+}
+
+// isHandlebarsKeyword returns true for Handlebars control keywords
+// that look like variables but aren't (e.g., "else", "this").
+func isHandlebarsKeyword(name string) bool {
+	switch name {
+	case "else", "this", "root", "index", "key", "first", "last":
+		return true
+	default:
+		return false
+	}
 }
 
 // extractAllVariables finds all variables across the entire subgraph
