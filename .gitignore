@@ -136,3 +136,6 @@ bd_test
 .beads/issues.jsonl
 .beads/beads.db
 bd_shadow
+
+# Reference files (ephemeral, local-only)
+reference/
