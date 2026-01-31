@@ -93,9 +93,7 @@ builds:
     main: ./cmd/bd
     binary: bd
     env:
-      - CGO_ENABLED=1
-      - CC=x86_64-w64-mingw32-gcc
-      - CXX=x86_64-w64-mingw32-g++
+      - CGO_ENABLED=0
     goos:
       - windows
     goarch:
