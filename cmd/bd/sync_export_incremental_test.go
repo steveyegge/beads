@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -175,6 +176,9 @@ func TestShouldUseIncrementalExport(t *testing.T) {
 }
 
 func TestIncrementalExportIntegration(t *testing.T) {
+	// Reset config to avoid dolt-native mode affecting JSONL export
+	config.ResetForTesting()
+
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, "test.db")
 	s := newTestStore(t, testDB)
@@ -183,17 +187,20 @@ func TestIncrementalExportIntegration(t *testing.T) {
 	ctx := context.Background()
 	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
 
-	// Set up global state
+	// Set up global state for direct mode (bypassing daemon)
 	oldStore := store
 	oldDBPath := dbPath
 	oldRootCtx := rootCtx
+	oldStoreActive := storeActive
 	store = s
 	dbPath = testDB
 	rootCtx = ctx
+	storeActive = true // Mark store as active to prevent re-initialization in ensureStoreActive
 	defer func() {
 		store = oldStore
 		dbPath = oldDBPath
 		rootCtx = oldRootCtx
+		storeActive = oldStoreActive
 	}()
 
 	// Create initial issues

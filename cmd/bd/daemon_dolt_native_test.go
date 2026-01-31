@@ -123,6 +123,9 @@ func TestGetSyncModeDoltNative(t *testing.T) {
 
 // TestShouldExportJSONL_DoltNative verifies JSONL is skipped for dolt-native
 func TestShouldExportJSONL_DoltNative(t *testing.T) {
+	// Reset config to ensure default sync mode (not dolt-native from repo config)
+	config.ResetForTesting()
+
 	ctx := context.Background()
 	store := memory.New("test")
 

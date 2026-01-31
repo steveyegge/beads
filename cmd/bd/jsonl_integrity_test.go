@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -269,6 +270,10 @@ func TestImportClearsExportHashes(t *testing.T) {
 // TestExportPopulatesExportHashes tests that export populates export_hashes (GH#1278)
 // This ensures child issues created with --parent are properly registered after export.
 func TestExportPopulatesExportHashes(t *testing.T) {
+	// Reset config to avoid picking up dolt-native mode from repo config
+	// (which would cause exportToJSONLWithStore to skip JSONL export)
+	config.ResetForTesting()
+
 	// Create temp directory
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")

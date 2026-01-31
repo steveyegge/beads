@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
-
-
 func TestExportCommand(t *testing.T) {
+	// Reset config to avoid dolt-native mode affecting JSONL export
+	config.ResetForTesting()
+
 	tmpDir, err := os.MkdirTemp("", "bd-test-export-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
