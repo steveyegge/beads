@@ -81,6 +81,11 @@ func (s *Server) Start(_ context.Context) error {
 		listener := s.listener
 		s.mu.RUnlock()
 
+		// Check if listener was set to nil by Stop()
+		if listener == nil {
+			return nil
+		}
+
 		conn, err := listener.Accept()
 		if err != nil {
 			s.mu.Lock()
@@ -195,8 +200,14 @@ func (s *Server) removeOldSocket() error {
 func (s *Server) handleSignals() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, serverSignals...)
-	<-sigChan
-	_ = s.Stop()
+	defer signal.Stop(sigChan)
+
+	select {
+	case <-sigChan:
+		_ = s.Stop()
+	case <-s.shutdownChan:
+		// Server is stopping, exit cleanly
+	}
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
