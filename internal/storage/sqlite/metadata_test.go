@@ -3,10 +3,26 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// jsonEqual compares two JSON values structurally (order-independent for objects).
+func jsonEqual(t *testing.T, got, want json.RawMessage) bool {
+	t.Helper()
+	var gotObj, wantObj interface{}
+	if err := json.Unmarshal(got, &gotObj); err != nil {
+		t.Errorf("failed to unmarshal got: %v", err)
+		return false
+	}
+	if err := json.Unmarshal(want, &wantObj); err != nil {
+		t.Errorf("failed to unmarshal want: %v", err)
+		return false
+	}
+	return reflect.DeepEqual(gotObj, wantObj)
+}
 
 // TestIssueMetadataRoundTrip verifies that issue metadata can be created, retrieved,
 // searched, and updated correctly (GH#1406).
@@ -34,8 +50,8 @@ func TestIssueMetadataRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetIssue failed: %v", err)
 		}
-		if string(got.Metadata) != string(metadata) {
-			t.Errorf("GetIssue metadata = %q, want %q", got.Metadata, metadata)
+		if !jsonEqual(t, got.Metadata, metadata) {
+			t.Errorf("GetIssue metadata = %s, want %s", got.Metadata, metadata)
 		}
 	})
 
@@ -66,8 +82,8 @@ func TestIssueMetadataRoundTrip(t *testing.T) {
 		for _, r := range results {
 			if r.ID == issue.ID {
 				found = true
-				if string(r.Metadata) != string(metadata) {
-					t.Errorf("SearchIssues metadata = %q, want %q", r.Metadata, metadata)
+				if !jsonEqual(t, r.Metadata, metadata) {
+					t.Errorf("SearchIssues metadata = %s, want %s", r.Metadata, metadata)
 				}
 				break
 			}
@@ -91,9 +107,9 @@ func TestIssueMetadataRoundTrip(t *testing.T) {
 		}
 
 		// Update metadata
-		newMetadata := `{"version":2,"updated":true}`
+		newMetadata := json.RawMessage(`{"version":2,"updated":true}`)
 		if err := store.UpdateIssue(ctx, issue.ID, map[string]interface{}{
-			"metadata": newMetadata,
+			"metadata": string(newMetadata),
 		}, "test-user"); err != nil {
 			t.Fatalf("UpdateIssue failed: %v", err)
 		}
@@ -103,8 +119,8 @@ func TestIssueMetadataRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetIssue failed: %v", err)
 		}
-		if string(got.Metadata) != newMetadata {
-			t.Errorf("Updated metadata = %q, want %q", got.Metadata, newMetadata)
+		if !jsonEqual(t, got.Metadata, newMetadata) {
+			t.Errorf("Updated metadata = %s, want %s", got.Metadata, newMetadata)
 		}
 	})
 
@@ -125,7 +141,7 @@ func TestIssueMetadataRoundTrip(t *testing.T) {
 			t.Fatalf("GetIssue failed: %v", err)
 		}
 		if got.Metadata != nil {
-			t.Errorf("Expected nil Metadata for issue without metadata, got %q", got.Metadata)
+			t.Errorf("Expected nil Metadata for issue without metadata, got %s", got.Metadata)
 		}
 	})
 }
