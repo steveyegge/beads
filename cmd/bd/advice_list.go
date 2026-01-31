@@ -14,28 +14,34 @@ import (
 var adviceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List advice beads",
-	Long: `List advice beads filtered by scope.
+	Long: `List advice beads filtered by scope or labels.
 
-By default, shows all open advice. Use flags to filter by target scope:
+By default, shows all open advice. Use flags to filter:
+
+TARGET FILTERING (legacy):
   --rig      Filter to advice targeting a specific rig
   --role     Filter to advice targeting a specific role (requires --rig)
   --agent    Filter to advice targeting a specific agent
-  --all      Include closed advice
+  --for      Show all advice applicable to an agent (includes inherited)
+
+LABEL-BASED FILTERING (recommended):
+  -l, --label    Filter by label (can repeat, matches any)
+  --subscribe    Simulate agent subscriptions (show matching advice)
 
 Examples:
   # List all advice
   bd advice list
 
-  # List advice for a specific rig
+  # Filter by labels (matches advice with ANY of these labels)
+  bd advice list -l testing -l security
+
+  # Simulate what an agent with these subscriptions would see
+  bd advice list --subscribe testing --subscribe go --subscribe global
+
+  # Legacy: List advice for a specific rig
   bd advice list --rig=beads
 
-  # List advice for a role in a rig
-  bd advice list --rig=beads --role=polecat
-
-  # List advice for a specific agent
-  bd advice list --agent=beads/polecats/quartz
-
-  # List advice applicable to an agent (including inherited advice)
+  # Legacy: List advice applicable to an agent
   bd advice list --for=beads/polecats/quartz
 
   # Include closed advice
@@ -48,6 +54,8 @@ func init() {
 	adviceListCmd.Flags().String("role", "", "Filter by target role (requires --rig)")
 	adviceListCmd.Flags().String("agent", "", "Filter by target agent")
 	adviceListCmd.Flags().String("for", "", "Show all advice applicable to an agent (includes inherited)")
+	adviceListCmd.Flags().StringArrayP("label", "l", nil, "Filter by label (can be repeated, matches any)")
+	adviceListCmd.Flags().StringArray("subscribe", nil, "Simulate subscriptions - show advice matching these labels")
 	adviceListCmd.Flags().BoolP("all", "a", false, "Include closed advice")
 	adviceListCmd.Flags().BoolP("verbose", "v", false, "Show detailed output")
 
@@ -60,6 +68,8 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 	role, _ := cmd.Flags().GetString("role")
 	agent, _ := cmd.Flags().GetString("agent")
 	forAgent, _ := cmd.Flags().GetString("for")
+	labels, _ := cmd.Flags().GetStringArray("label")
+	subscriptions, _ := cmd.Flags().GetStringArray("subscribe")
 	showAll, _ := cmd.Flags().GetBool("all")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
@@ -94,10 +104,38 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 		FatalError("searching advice: %v", err)
 	}
 
+	// Get labels for all issues if we need them for filtering
+	var labelsMap map[string][]string
+	if len(labels) > 0 || len(subscriptions) > 0 {
+		issueIDs := make([]string, len(issues))
+		for i, issue := range issues {
+			issueIDs[i] = issue.ID
+		}
+		labelsMap, err = store.GetLabelsForIssues(ctx, issueIDs)
+		if err != nil {
+			FatalError("getting labels: %v", err)
+		}
+	}
+
 	// Apply additional filtering in-memory for advice targets
 	var filtered []*types.Issue
 
 	for _, issue := range issues {
+		// Label-based filtering (--label flag)
+		if len(labels) > 0 {
+			if matchesAnyLabel(labelsMap[issue.ID], labels) {
+				filtered = append(filtered, issue)
+			}
+			continue
+		}
+
+		// Subscription simulation (--subscribe flag)
+		if len(subscriptions) > 0 {
+			if matchesSubscriptions(issue, labelsMap[issue.ID], subscriptions) {
+				filtered = append(filtered, issue)
+			}
+			continue
+		}
 		// If --for flag is used, show all advice applicable to that agent
 		if forAgent != "" {
 			if matchesAgentScope(issue, forAgent) {
@@ -141,7 +179,11 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 	// Human-readable output
 	if len(filtered) == 0 {
 		scopeDesc := "advice"
-		if forAgent != "" {
+		if len(subscriptions) > 0 {
+			scopeDesc = fmt.Sprintf("advice matching subscriptions [%s]", strings.Join(subscriptions, ", "))
+		} else if len(labels) > 0 {
+			scopeDesc = fmt.Sprintf("advice with labels [%s]", strings.Join(labels, ", "))
+		} else if forAgent != "" {
 			scopeDesc = fmt.Sprintf("advice applicable to %s", forAgent)
 		} else if agent != "" {
 			scopeDesc = fmt.Sprintf("advice for agent %s", agent)
@@ -154,7 +196,17 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Group by scope for better display
+	// Subscription/label mode: show labels with each advice
+	if len(subscriptions) > 0 || len(labels) > 0 {
+		fmt.Printf("## Agent Advice\n\n")
+		if len(subscriptions) > 0 {
+			fmt.Printf("Subscriptions: [%s]\n\n", strings.Join(subscriptions, ", "))
+		}
+		printAdviceListWithLabels(filtered, labelsMap, verbose)
+		return
+	}
+
+	// Group by scope for better display (legacy mode)
 	var global, rigLevel, roleLevel, agentLevel []*types.Issue
 	for _, issue := range filtered {
 		if issue.AdviceTargetAgent != "" {
@@ -240,6 +292,103 @@ func singularize(plural string) string {
 		return strings.TrimSuffix(plural, "s")
 	}
 	return plural
+}
+
+// matchesAnyLabel checks if issue labels contain any of the filter labels
+func matchesAnyLabel(issueLabels []string, filterLabels []string) bool {
+	labelSet := make(map[string]bool)
+	for _, l := range issueLabels {
+		labelSet[l] = true
+	}
+	for _, l := range filterLabels {
+		if labelSet[l] {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesSubscriptions checks if advice should be shown based on subscriptions
+// An advice matches if:
+// 1. Its labels intersect with the subscriptions, OR
+// 2. It has auto-labels matching the subscription (rig:X, role:Y, agent:Z, global)
+func matchesSubscriptions(issue *types.Issue, issueLabels []string, subscriptions []string) bool {
+	// Build subscription set
+	subSet := make(map[string]bool)
+	for _, s := range subscriptions {
+		subSet[s] = true
+	}
+
+	// Check explicit labels
+	for _, l := range issueLabels {
+		if subSet[l] {
+			return true
+		}
+	}
+
+	// Check auto-labels from targeting (backward compatibility)
+	// Global advice has implicit "global" label
+	if issue.AdviceTargetRig == "" && issue.AdviceTargetRole == "" && issue.AdviceTargetAgent == "" {
+		if subSet["global"] {
+			return true
+		}
+	}
+
+	// Rig-targeted advice has implicit "rig:X" label
+	if issue.AdviceTargetRig != "" && issue.AdviceTargetRole == "" && issue.AdviceTargetAgent == "" {
+		if subSet["rig:"+issue.AdviceTargetRig] {
+			return true
+		}
+	}
+
+	// Role-targeted advice has implicit "role:X" label
+	if issue.AdviceTargetRole != "" {
+		if subSet["role:"+issue.AdviceTargetRole] {
+			return true
+		}
+	}
+
+	// Agent-targeted advice has implicit "agent:X" label
+	if issue.AdviceTargetAgent != "" {
+		if subSet["agent:"+issue.AdviceTargetAgent] {
+			return true
+		}
+	}
+
+	return false
+}
+
+// printAdviceListWithLabels prints advice with their labels (for subscription mode)
+func printAdviceListWithLabels(issues []*types.Issue, labelsMap map[string][]string, verbose bool) {
+	for _, issue := range issues {
+		issueLabels := labelsMap[issue.ID]
+
+		// Status indicator
+		status := ""
+		if issue.Status == types.StatusClosed {
+			status = " (closed)"
+		}
+
+		// Labels display
+		labelStr := ""
+		if len(issueLabels) > 0 {
+			labelStr = fmt.Sprintf(" [%s]", strings.Join(issueLabels, ", "))
+		}
+
+		if verbose {
+			fmt.Printf("  %s %s%s%s\n", ui.RenderID(issue.ID), issue.Title, labelStr, status)
+			if issue.Description != "" && issue.Description != issue.Title {
+				desc := issue.Description
+				if len(desc) > 200 {
+					desc = desc[:197] + "..."
+				}
+				fmt.Printf("    %s\n", desc)
+			}
+		} else {
+			fmt.Printf("  %s%s%s\n", issue.Title, labelStr, status)
+		}
+	}
+	fmt.Println()
 }
 
 // printAdviceList prints a list of advice issues

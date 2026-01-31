@@ -354,6 +354,177 @@ func TestAdviceListScopeGrouping(t *testing.T) {
 	}
 }
 
+// TestMatchesAnyLabel tests the label matching function for subscription filtering
+func TestMatchesAnyLabel(t *testing.T) {
+	tests := []struct {
+		name         string
+		issueLabels  []string
+		filterLabels []string
+		want         bool
+	}{
+		{
+			name:         "no labels match empty filter",
+			issueLabels:  []string{"testing", "ci"},
+			filterLabels: []string{},
+			want:         false,
+		},
+		{
+			name:         "empty labels match nothing",
+			issueLabels:  []string{},
+			filterLabels: []string{"testing"},
+			want:         false,
+		},
+		{
+			name:         "single match",
+			issueLabels:  []string{"testing", "ci"},
+			filterLabels: []string{"testing"},
+			want:         true,
+		},
+		{
+			name:         "no match",
+			issueLabels:  []string{"testing", "ci"},
+			filterLabels: []string{"security"},
+			want:         false,
+		},
+		{
+			name:         "any match succeeds",
+			issueLabels:  []string{"testing", "ci"},
+			filterLabels: []string{"security", "ci"},
+			want:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesAnyLabel(tt.issueLabels, tt.filterLabels)
+			if got != tt.want {
+				t.Errorf("matchesAnyLabel(%v, %v) = %v, want %v",
+					tt.issueLabels, tt.filterLabels, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchesSubscriptions tests the subscription simulation logic
+func TestMatchesSubscriptions(t *testing.T) {
+	tests := []struct {
+		name          string
+		issue         *types.Issue
+		issueLabels   []string
+		subscriptions []string
+		want          bool
+	}{
+		{
+			name: "global advice matches global subscription",
+			issue: &types.Issue{
+				AdviceTargetRig:   "",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"global"},
+			want:          true,
+		},
+		{
+			name: "global advice no match without global subscription",
+			issue: &types.Issue{
+				AdviceTargetRig:   "",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"testing"},
+			want:          false,
+		},
+		{
+			name: "rig-targeted matches rig: subscription",
+			issue: &types.Issue{
+				AdviceTargetRig:   "beads",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"rig:beads"},
+			want:          true,
+		},
+		{
+			name: "rig-targeted no match wrong rig",
+			issue: &types.Issue{
+				AdviceTargetRig:   "beads",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"rig:gastown"},
+			want:          false,
+		},
+		{
+			name: "role-targeted matches role: subscription",
+			issue: &types.Issue{
+				AdviceTargetRig:   "beads",
+				AdviceTargetRole:  "polecat",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"role:polecat"},
+			want:          true,
+		},
+		{
+			name: "agent-targeted matches agent: subscription",
+			issue: &types.Issue{
+				AdviceTargetRig:   "",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "beads/polecats/quartz",
+			},
+			issueLabels:   []string{},
+			subscriptions: []string{"agent:beads/polecats/quartz"},
+			want:          true,
+		},
+		{
+			name: "explicit label match",
+			issue: &types.Issue{
+				AdviceTargetRig:   "",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{"testing", "ci"},
+			subscriptions: []string{"testing"},
+			want:          true,
+		},
+		{
+			name: "explicit label takes priority",
+			issue: &types.Issue{
+				AdviceTargetRig:   "beads",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{"testing"},
+			subscriptions: []string{"testing"}, // matches via label, not via rig:beads
+			want:          true,
+		},
+		{
+			name: "multiple subscriptions any match",
+			issue: &types.Issue{
+				AdviceTargetRig:   "",
+				AdviceTargetRole:  "",
+				AdviceTargetAgent: "",
+			},
+			issueLabels:   []string{"security"},
+			subscriptions: []string{"testing", "security", "global"},
+			want:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesSubscriptions(tt.issue, tt.issueLabels, tt.subscriptions)
+			if got != tt.want {
+				t.Errorf("matchesSubscriptions() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSingularizeRole(t *testing.T) {
 	tests := []struct {
 		plural   string
