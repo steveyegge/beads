@@ -2028,7 +2028,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       due_at, defer_until
+		       due_at, defer_until, metadata
 		FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
