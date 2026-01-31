@@ -65,6 +65,13 @@ func setupTestStore(t *testing.T) (*DoltStore, func()) {
 		t.Fatalf("failed to set prefix: %v", err)
 	}
 
+	// Set up custom types for Gas Town issue types
+	if err := store.SetConfig(ctx, "types.custom", "gate,molecule,convoy,merge-request,slot,agent,role,rig,message"); err != nil {
+		store.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to set custom types: %v", err)
+	}
+
 	cleanup := func() {
 		store.Close()
 		os.RemoveAll(tmpDir)

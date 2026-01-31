@@ -13,6 +13,11 @@ func createTestDecisionPoint(t *testing.T, store *memory.MemoryStorage, id strin
 	t.Helper()
 	ctx := context.Background()
 
+	// Configure custom types for Gas Town issue types
+	if err := store.SetConfig(ctx, "types.custom", "gate,molecule,convoy,merge-request,slot,agent,role,rig,message"); err != nil {
+		t.Fatalf("failed to set custom types: %v", err)
+	}
+
 	issue := &types.Issue{
 		ID:        id,
 		Title:     "Test Decision",

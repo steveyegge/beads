@@ -105,7 +105,7 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 	}
 
 	// Configure Gas Town custom types for test compatibility (bd-find4)
-	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
@@ -138,7 +138,7 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 	}
 
 	// Configure Gas Town custom types for test compatibility (bd-find4)
-	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}

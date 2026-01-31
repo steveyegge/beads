@@ -36,7 +36,7 @@ func setupGatedTestDB(t *testing.T) (*sqlite.SQLiteStorage, func()) {
 	}
 
 	// Configure Gas Town custom types for test compatibility (bd-find4)
-	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message"); err != nil {
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice"); err != nil {
 		store.Close()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to set types.custom: %v", err)
