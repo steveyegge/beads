@@ -42,7 +42,15 @@ Examples:
   bd advice add --agent=beads/polecats/quartz "Focus on CLI implementation tasks"
 
   # With description for more context
-  bd advice add "Check hook status first" -d "When starting a session, always run gt hook to check if work is assigned before announcing yourself"`,
+  bd advice add "Check hook status first" -d "When starting a session, always run gt hook to check if work is assigned before announcing yourself"
+
+  # With stop hook (command runs at lifecycle points)
+  bd advice add "Run tests before commit" --rig=beads --role=polecat \
+    --hook-command="make test" --hook-trigger=before-commit --hook-on-failure=block
+
+  # With session-end hook
+  bd advice add "Check for uncommitted changes" \
+    --hook-command="git status --porcelain" --hook-trigger=session-end`,
 	Args: cobra.MaximumNArgs(1),
 	Run:  runAdviceAdd,
 }
@@ -55,6 +63,11 @@ func init() {
 	adviceAddCmd.Flags().String("agent", "", "Target agent ID for advice (e.g., 'beads/polecats/quartz')")
 	adviceAddCmd.Flags().IntP("priority", "p", 2, "Priority (1=highest, 5=lowest)")
 	adviceAddCmd.Flags().StringArrayP("label", "l", nil, "Labels to add (can be used multiple times)")
+	// Advice hook flags (hq--uaim)
+	adviceAddCmd.Flags().String("hook-command", "", "Command to execute at trigger point (e.g., 'make test')")
+	adviceAddCmd.Flags().String("hook-trigger", "", "When to run hook: session-end, before-commit, before-push, before-handoff")
+	adviceAddCmd.Flags().Int("hook-timeout", 0, "Hook timeout in seconds (default: 30, max: 300)")
+	adviceAddCmd.Flags().String("hook-on-failure", "", "What to do if hook fails: block, warn, ignore (default: warn)")
 
 	adviceCmd.AddCommand(adviceAddCmd)
 }
@@ -70,6 +83,11 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	agent, _ := cmd.Flags().GetString("agent")
 	priority, _ := cmd.Flags().GetInt("priority")
 	labels, _ := cmd.Flags().GetStringArray("label")
+	// Hook flags (hq--uaim)
+	hookCommand, _ := cmd.Flags().GetString("hook-command")
+	hookTrigger, _ := cmd.Flags().GetString("hook-trigger")
+	hookTimeout, _ := cmd.Flags().GetInt("hook-timeout")
+	hookOnFailure, _ := cmd.Flags().GetString("hook-on-failure")
 
 	// Get advice text from args or title
 	var adviceText string
@@ -102,6 +120,21 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		FatalError("--agent cannot be combined with --rig or --role (agent includes rig/role info)")
 	}
 
+	// Validate hook flags (hq--uaim)
+	if hookTrigger != "" && !types.IsValidAdviceHookTrigger(hookTrigger) {
+		FatalError("invalid --hook-trigger: %s (valid: %v)", hookTrigger, types.ValidAdviceHookTriggers)
+	}
+	if hookOnFailure != "" && !types.IsValidAdviceHookOnFailure(hookOnFailure) {
+		FatalError("invalid --hook-on-failure: %s (valid: %v)", hookOnFailure, types.ValidAdviceHookOnFailure)
+	}
+	if hookTimeout < 0 || hookTimeout > types.AdviceHookTimeoutMax {
+		FatalError("--hook-timeout must be between 0 and %d", types.AdviceHookTimeoutMax)
+	}
+	// Hook command requires trigger
+	if hookCommand != "" && hookTrigger == "" {
+		FatalError("--hook-command requires --hook-trigger")
+	}
+
 	// Ensure store is initialized
 	if err := ensureStoreActive(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -113,14 +146,18 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	// If daemon is running, use RPC
 	if daemonClient != nil {
 		createArgs := &rpc.CreateArgs{
-			Title:             title,
-			Description:       description,
-			IssueType:         "advice",
-			Priority:          priority,
-			Labels:            labels,
-			AdviceTargetRig:   rig,
-			AdviceTargetRole:  role,
-			AdviceTargetAgent: agent,
+			Title:               title,
+			Description:         description,
+			IssueType:           "advice",
+			Priority:            priority,
+			Labels:              labels,
+			AdviceTargetRig:     rig,
+			AdviceTargetRole:    role,
+			AdviceTargetAgent:   agent,
+			AdviceHookCommand:   hookCommand,
+			AdviceHookTrigger:   hookTrigger,
+			AdviceHookTimeout:   hookTimeout,
+			AdviceHookOnFailure: hookOnFailure,
 		}
 
 		resp, err := daemonClient.Create(createArgs)
@@ -171,17 +208,21 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	}
 
 	issue := &types.Issue{
-		ID:                issueID,
-		Title:             title,
-		Description:       description,
-		Status:            types.StatusOpen,
-		Priority:          priority,
-		IssueType:         types.IssueType("advice"),
-		AdviceTargetRig:   rig,
-		AdviceTargetRole:  role,
-		AdviceTargetAgent: agent,
-		CreatedBy:         getActorWithGit(),
-		Owner:             getOwner(),
+		ID:                  issueID,
+		Title:               title,
+		Description:         description,
+		Status:              types.StatusOpen,
+		Priority:            priority,
+		IssueType:           types.IssueType("advice"),
+		AdviceTargetRig:     rig,
+		AdviceTargetRole:    role,
+		AdviceTargetAgent:   agent,
+		AdviceHookCommand:   hookCommand,
+		AdviceHookTrigger:   hookTrigger,
+		AdviceHookTimeout:   hookTimeout,
+		AdviceHookOnFailure: hookOnFailure,
+		CreatedBy:           getActorWithGit(),
+		Owner:               getOwner(),
 	}
 
 	if err := store.CreateIssue(ctx, issue, actor); err != nil {
@@ -226,6 +267,15 @@ func printAdviceCreated(issue *types.Issue) {
 		scope = fmt.Sprintf("Rig: %s", issue.AdviceTargetRig)
 	}
 	fmt.Printf("  Scope: %s\n", scope)
+
+	// Show hook info if set (hq--uaim)
+	if issue.AdviceHookCommand != "" {
+		fmt.Printf("  Hook: %s @ %s", issue.AdviceHookCommand, issue.AdviceHookTrigger)
+		if issue.AdviceHookOnFailure != "" {
+			fmt.Printf(" (%s)", issue.AdviceHookOnFailure)
+		}
+		fmt.Println()
+	}
 
 	if issue.Description != "" && issue.Description != issue.Title {
 		// Truncate description for display

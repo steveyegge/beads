@@ -387,7 +387,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
 			due_at, defer_until, metadata,
-			advice_target_rig, advice_target_role, advice_target_agent
+			advice_target_rig, advice_target_role, advice_target_agent,
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -400,7 +401,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?, ?, ?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
@@ -415,6 +417,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 		issue.AdviceTargetRig, issue.AdviceTargetRole, issue.AdviceTargetAgent,
+		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
 	)
 	return err
 }
@@ -435,6 +438,9 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var metadata sql.NullString
 	// Advice fields (gt-epc-advice_schema_storage)
 	var adviceTargetRig, adviceTargetRole, adviceTargetAgent sql.NullString
+	// Advice hook fields (hq--uaim)
+	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
+	var adviceHookTimeout sql.NullInt64
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -448,7 +454,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
 		       quality_score, work_type, source_system, metadata,
-		       advice_target_rig, advice_target_role, advice_target_agent
+		       advice_target_rig, advice_target_role, advice_target_agent,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -465,6 +472,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
 		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
+		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
 	)
 
 	if err == sql.ErrNoRows {
@@ -621,6 +629,19 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if adviceTargetAgent.Valid {
 		issue.AdviceTargetAgent = adviceTargetAgent.String
+	}
+	// Advice hook fields (hq--uaim)
+	if adviceHookCommand.Valid {
+		issue.AdviceHookCommand = adviceHookCommand.String
+	}
+	if adviceHookTrigger.Valid {
+		issue.AdviceHookTrigger = adviceHookTrigger.String
+	}
+	if adviceHookTimeout.Valid {
+		issue.AdviceHookTimeout = int(adviceHookTimeout.Int64)
+	}
+	if adviceHookOnFailure.Valid {
+		issue.AdviceHookOnFailure = adviceHookOnFailure.String
 	}
 
 	return &issue, nil

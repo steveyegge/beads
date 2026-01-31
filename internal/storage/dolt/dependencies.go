@@ -575,7 +575,8 @@ func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
 		       quality_score, work_type, source_system,
-		       advice_target_rig, advice_target_role, advice_target_agent
+		       advice_target_rig, advice_target_role, advice_target_agent,
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
 		FROM issues
 		WHERE id IN (%s)
 	`, strings.Join(placeholders, ","))
@@ -614,6 +615,9 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	var qualityScore sql.NullFloat64
 	// Advice fields (gt-epc-advice_schema_storage)
 	var adviceTargetRig, adviceTargetRole, adviceTargetAgent sql.NullString
+	// Advice hook fields (hq--uaim)
+	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
+	var adviceHookTimeout sql.NullInt64
 
 	if err := rows.Scan(
 		&issue.ID, &contentHash, &issue.Title, &issue.Description, &issue.Design,
@@ -629,6 +633,7 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem,
 		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
+		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
 	); err != nil {
 		return nil, fmt.Errorf("failed to scan issue row: %w", err)
 	}
@@ -776,6 +781,19 @@ func scanIssueRow(rows *sql.Rows) (*types.Issue, error) {
 	}
 	if adviceTargetAgent.Valid {
 		issue.AdviceTargetAgent = adviceTargetAgent.String
+	}
+	// Advice hook fields (hq--uaim)
+	if adviceHookCommand.Valid {
+		issue.AdviceHookCommand = adviceHookCommand.String
+	}
+	if adviceHookTrigger.Valid {
+		issue.AdviceHookTrigger = adviceHookTrigger.String
+	}
+	if adviceHookTimeout.Valid {
+		issue.AdviceHookTimeout = int(adviceHookTimeout.Int64)
+	}
+	if adviceHookOnFailure.Valid {
+		issue.AdviceHookOnFailure = adviceHookOnFailure.String
 	}
 
 	return &issue, nil

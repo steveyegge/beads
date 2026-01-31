@@ -58,6 +58,8 @@ var migrationsList = []Migration{
 	{"source_system_column", migrations.MigrateSourceSystemColumn},
 	{"quality_score_column", migrations.MigrateQualityScoreColumn},
 	{"metadata_column", migrations.MigrateMetadataColumn},
+	{"advice_fields", migrations.MigrateAdviceFields},
+	{"advice_hook_fields", migrations.MigrateAdviceHookFields},
 }
 
 // MigrationInfo contains metadata about a migration for inspection
@@ -123,6 +125,8 @@ func getMigrationDescription(name string) string {
 		"source_system_column":         "Adds source_system column for federation adapter tracking",
 		"quality_score_column":         "Adds quality_score column for aggregate quality (0.0-1.0) set by Refineries",
 		"metadata_column":              "Adds metadata column for arbitrary JSON data (tool annotations, file lists) per GH#1406",
+		"advice_fields":                "Adds advice targeting columns (advice_target_rig, advice_target_role, advice_target_agent) for hierarchical agent advice",
+		"advice_hook_fields":           "Adds advice hook columns (advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure) for executable advice per hq--uaim",
 	}
 
 	if desc, ok := descriptions[name]; ok {

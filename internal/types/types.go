@@ -147,6 +147,11 @@ type Issue struct {
 	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
 	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
 
+	// ===== Advice Hook Fields (hq--uaim) =====
+	AdviceHookCommand   string `json:"advice_hook_command,omitempty"`    // Command to execute (e.g., "make test")
+	AdviceHookTrigger   string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
+	AdviceHookTimeout   int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds (default: 30, max: 300)
+	AdviceHookOnFailure string `json:"advice_hook_on_failure,omitempty"` // Failure behavior: block, warn, ignore (default: warn)
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -248,6 +253,12 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.AdviceTargetRig)
 	w.str(i.AdviceTargetRole)
 	w.str(i.AdviceTargetAgent)
+
+	// Advice hook fields (hq--uaim)
+	w.str(i.AdviceHookCommand)
+	w.str(i.AdviceHookTrigger)
+	w.int(i.AdviceHookTimeout)
+	w.str(i.AdviceHookOnFailure)
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
@@ -413,6 +424,23 @@ func (i *Issue) ValidateWithCustom(customStatuses, customTypes []string) error {
 		if !json.Valid(i.Metadata) {
 			return fmt.Errorf("metadata must be valid JSON")
 		}
+	}
+	// Validate advice hook fields (hq--uaim)
+	if i.AdviceHookTrigger != "" && !IsValidAdviceHookTrigger(i.AdviceHookTrigger) {
+		return fmt.Errorf("invalid advice hook trigger: %s (valid: %v)", i.AdviceHookTrigger, ValidAdviceHookTriggers)
+	}
+	if i.AdviceHookOnFailure != "" && !IsValidAdviceHookOnFailure(i.AdviceHookOnFailure) {
+		return fmt.Errorf("invalid advice hook on_failure: %s (valid: %v)", i.AdviceHookOnFailure, ValidAdviceHookOnFailure)
+	}
+	if i.AdviceHookTimeout < 0 || i.AdviceHookTimeout > AdviceHookTimeoutMax {
+		return fmt.Errorf("advice hook timeout must be between 0 and %d (got %d)", AdviceHookTimeoutMax, i.AdviceHookTimeout)
+	}
+	if len(i.AdviceHookCommand) > 1000 {
+		return fmt.Errorf("advice hook command must be 1000 characters or less (got %d)", len(i.AdviceHookCommand))
+	}
+	// Hook fields only valid when issue type is advice
+	if i.IssueType != TypeAdvice && (i.AdviceHookCommand != "" || i.AdviceHookTrigger != "" || i.AdviceHookTimeout != 0 || i.AdviceHookOnFailure != "") {
+		return fmt.Errorf("advice hook fields are only valid for advice type issues")
 	}
 	return nil
 }
@@ -1324,6 +1352,62 @@ func (v *Validation) IsValidOutcome() bool {
 	}
 	return false
 }
+
+// Advice hook trigger constants (hq--uaim)
+const (
+	AdviceHookTriggerSessionEnd    = "session-end"
+	AdviceHookTriggerBeforeCommit  = "before-commit"
+	AdviceHookTriggerBeforePush    = "before-push"
+	AdviceHookTriggerBeforeHandoff = "before-handoff"
+)
+
+// ValidAdviceHookTriggers lists all valid trigger values
+var ValidAdviceHookTriggers = []string{
+	AdviceHookTriggerSessionEnd,
+	AdviceHookTriggerBeforeCommit,
+	AdviceHookTriggerBeforePush,
+	AdviceHookTriggerBeforeHandoff,
+}
+
+// IsValidAdviceHookTrigger checks if a trigger value is valid
+func IsValidAdviceHookTrigger(trigger string) bool {
+	for _, t := range ValidAdviceHookTriggers {
+		if t == trigger {
+			return true
+		}
+	}
+	return false
+}
+
+// Advice hook failure behavior constants (hq--uaim)
+const (
+	AdviceHookOnFailureBlock  = "block"
+	AdviceHookOnFailureWarn   = "warn"
+	AdviceHookOnFailureIgnore = "ignore"
+)
+
+// ValidAdviceHookOnFailure lists all valid failure behaviors
+var ValidAdviceHookOnFailure = []string{
+	AdviceHookOnFailureBlock,
+	AdviceHookOnFailureWarn,
+	AdviceHookOnFailureIgnore,
+}
+
+// IsValidAdviceHookOnFailure checks if a failure behavior value is valid
+func IsValidAdviceHookOnFailure(onFailure string) bool {
+	for _, f := range ValidAdviceHookOnFailure {
+		if f == onFailure {
+			return true
+		}
+	}
+	return false
+}
+
+// Advice hook timeout constants (hq--uaim)
+const (
+	AdviceHookTimeoutDefault = 30  // Default timeout in seconds
+	AdviceHookTimeoutMax     = 300 // Maximum timeout in seconds (5 minutes)
+)
 
 // ParseEntityURI parses a HOP entity URI into an EntityRef.
 // Format: entity://hop/<platform>/<org>/<id>

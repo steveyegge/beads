@@ -137,6 +137,11 @@ type CreateArgs struct {
 	AdviceTargetRig   string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
 	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
 	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
+	// Advice hook fields (hq--uaim)
+	AdviceHookCommand   string `json:"advice_hook_command,omitempty"`    // Command to execute
+	AdviceHookTrigger   string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
+	AdviceHookTimeout   int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds
+	AdviceHookOnFailure string `json:"advice_hook_on_failure,omitempty"` // Failure behavior: block, warn, ignore
 }
 
 // UpdateArgs represents arguments for the update operation
@@ -196,6 +201,11 @@ type UpdateArgs struct {
 	AdviceTargetRig   *string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
 	AdviceTargetRole  *string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
 	AdviceTargetAgent *string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
+	// Advice hook fields (hq--uaim)
+	AdviceHookCommand   *string `json:"advice_hook_command,omitempty"`    // Command to execute
+	AdviceHookTrigger   *string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
+	AdviceHookTimeout   *int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds
+	AdviceHookOnFailure *string `json:"advice_hook_on_failure,omitempty"` // Failure behavior: block, warn, ignore
 }
 
 // CloseArgs represents arguments for the close operation

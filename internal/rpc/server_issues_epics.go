@@ -197,6 +197,19 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.AdviceTargetAgent != nil {
 		u["advice_target_agent"] = *a.AdviceTargetAgent
 	}
+	// Advice hook fields (hq--uaim)
+	if a.AdviceHookCommand != nil {
+		u["advice_hook_command"] = *a.AdviceHookCommand
+	}
+	if a.AdviceHookTrigger != nil {
+		u["advice_hook_trigger"] = *a.AdviceHookTrigger
+	}
+	if a.AdviceHookTimeout != nil {
+		u["advice_hook_timeout"] = *a.AdviceHookTimeout
+	}
+	if a.AdviceHookOnFailure != nil {
+		u["advice_hook_on_failure"] = *a.AdviceHookOnFailure
+	}
 	return u, nil
 }
 
@@ -350,8 +363,13 @@ func (s *Server) handleCreate(req *Request) Response {
 		AdviceTargetRig:   createArgs.AdviceTargetRig,
 		AdviceTargetRole:  createArgs.AdviceTargetRole,
 		AdviceTargetAgent: createArgs.AdviceTargetAgent,
+		// Advice hook fields (hq--uaim)
+		AdviceHookCommand:   createArgs.AdviceHookCommand,
+		AdviceHookTrigger:   createArgs.AdviceHookTrigger,
+		AdviceHookTimeout:   createArgs.AdviceHookTimeout,
+		AdviceHookOnFailure: createArgs.AdviceHookOnFailure,
 	}
-	
+
 	// Check if any dependencies are discovered-from type
 	// If so, inherit source_repo from the parent issue
 	var discoveredFromParentID string
