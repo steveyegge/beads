@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/hooks"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
@@ -240,9 +243,7 @@ create, update, show, or close operation).`,
 			if len(closedIssues) > 0 {
 				maybeAutoCompactDaemon(ctx, closedIssues, compactSpec, daemonClient)
 				if compactSkills {
-					// TODO: Implement skill compaction - requires tracking skill usage per issue
-					// See specs/SHADOWBOOK_SKILL_SYNC_INTEGRATION_SPEC.md for design
-					fmt.Println("Note: --compact-skills requires skill usage tracking (not yet implemented)")
+					compactSkillsForClosedIssues(ctx, closedIssues)
 				}
 			}
 
@@ -387,9 +388,7 @@ create, update, show, or close operation).`,
 			if err == nil {
 				maybeAutoCompactDirect(ctx, closedIssues, compactSpec, store, specStore)
 				if compactSkills {
-					// TODO: Implement skill compaction - requires tracking skill usage per issue
-					// See specs/SHADOWBOOK_SKILL_SYNC_INTEGRATION_SPEC.md for design
-					fmt.Println("Note: --compact-skills requires skill usage tracking (not yet implemented)")
+					compactSkillsForClosedIssues(ctx, closedIssues)
 				}
 			}
 		}
@@ -434,4 +433,83 @@ func init() {
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)
+}
+
+// compactSkillsForClosedIssues archives skills that are no longer used by any open issues.
+// When an issue is closed with --compact-skills, this function checks each skill linked to
+// those issues. If a skill is no longer linked to any open issue, it gets archived.
+func compactSkillsForClosedIssues(ctx context.Context, closedIssues []*types.Issue) {
+	if len(closedIssues) == 0 {
+		return
+	}
+
+	// Need direct database access for skill operations
+	if dbPath == "" {
+		return
+	}
+
+	skillStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: could not open store for skill compaction: %v\n", err)
+		}
+		return
+	}
+	defer func() { _ = skillStore.Close() }()
+
+	db := skillStore.UnderlyingDB()
+	if db == nil {
+		return
+	}
+
+	archivedCount := 0
+	for _, issue := range closedIssues {
+		// Get skills linked to this issue
+		rows, err := db.QueryContext(ctx, `
+			SELECT skill_id FROM skill_bead_links WHERE bead_id = ?
+		`, issue.ID)
+		if err != nil {
+			continue
+		}
+
+		var skillIDs []string
+		for rows.Next() {
+			var skillID string
+			if scanErr := rows.Scan(&skillID); scanErr == nil {
+				skillIDs = append(skillIDs, skillID)
+			}
+		}
+		_ = rows.Close()
+
+		// For each skill, check if it's still used by any open issues
+		for _, skillID := range skillIDs {
+			var openCount int
+			err := db.QueryRowContext(ctx, `
+				SELECT COUNT(*) FROM skill_bead_links sbl
+				JOIN issues i ON sbl.bead_id = i.id
+				WHERE sbl.skill_id = ?
+				  AND i.status NOT IN ('closed', 'tombstone')
+			`, skillID).Scan(&openCount)
+			if err != nil {
+				continue
+			}
+
+			// If no open issues use this skill, archive it
+			if openCount == 0 {
+				_, err := db.ExecContext(ctx, `
+					UPDATE skills_manifest SET status = 'archived', archived_at = ? WHERE id = ?
+				`, time.Now(), skillID)
+				if err == nil {
+					archivedCount++
+					if !jsonOutput {
+						fmt.Printf("%s Archived unused skill: %s\n", ui.RenderMuted("○"), skillID)
+					}
+				}
+			}
+		}
+	}
+
+	if archivedCount > 0 && !jsonOutput {
+		fmt.Printf("Compacted %d unused skills\n", archivedCount)
+	}
 }

@@ -531,6 +531,26 @@ var createCmd = &cobra.Command{
 				hookRunner.Run(hooks.EventCreate, &issue)
 			}
 
+			// Link skills if specified (daemon mode: handled client-side via direct DB access)
+			skills, _ := cmd.Flags().GetStringSlice("skills")
+			if len(skills) > 0 {
+				// In daemon mode, the store is managed by the daemon, but we need direct
+				// DB access for skill linking. Open a temporary read-write connection.
+				ctx := rootCtx
+				if store != nil {
+					linkSkillsToBead(ctx, store, skills, issue.ID)
+				} else if dbPath != "" {
+					// Daemon mode: store is nil, open a temporary connection for skill linking
+					tempStore, err := sqlite.New(ctx, dbPath)
+					if err == nil {
+						linkSkillsToBead(ctx, tempStore, skills, issue.ID)
+						_ = tempStore.Close()
+					} else {
+						WarnError("failed to open store for skill linking: %v", err)
+					}
+				}
+			}
+
 			if jsonOutput {
 				fmt.Println(string(resp.Data))
 			} else if silent {
@@ -733,6 +753,12 @@ var createCmd = &cobra.Command{
 			}
 		}
 
+		// Link skills if specified
+		skills, _ := cmd.Flags().GetStringSlice("skills")
+		if len(skills) > 0 {
+			linkSkillsToBead(ctx, store, skills, issue.ID)
+		}
+
 		// Schedule auto-flush
 		markDirtyAndScheduleFlush()
 
@@ -929,6 +955,8 @@ func init() {
 	//   --defer=tomorrow    Hidden until tomorrow
 	createCmd.Flags().String("due", "", "Due date/time. Formats: +6h, +1d, +2w, tomorrow, next monday, 2025-01-15")
 	createCmd.Flags().String("defer", "", "Defer until date (issue hidden from bd ready until then). Same formats as --due")
+	// Skills linking flag
+	createCmd.Flags().StringSlice("skills", []string{}, "Skills to link to this issue (comma-separated)")
 	// Note: --json flag is defined as a persistent flag in main.go, not here
 	rootCmd.AddCommand(createCmd)
 }
@@ -1163,4 +1191,89 @@ func ensureBeadsDirForPath(ctx context.Context, targetPath string, sourceStore s
 	}
 
 	return nil
+}
+
+// linkSkillsToBead links skills to a bead by name.
+// For each skill name:
+// 1. Check if the skill exists in skills_manifest by name
+// 2. If not found, scan skill directories to find it and add to manifest
+// 3. Create a link in skill_bead_links between the skill and bead
+func linkSkillsToBead(ctx context.Context, store storage.Storage, skillNames []string, beadID string) {
+	db := store.UnderlyingDB()
+	if db == nil {
+		WarnError("cannot link skills: no database connection")
+		return
+	}
+
+	// Scan skill directories to build a lookup map
+	claudeDir := ".claude/skills"
+	codexDir := os.ExpandEnv("$HOME/.codex/skills")
+	superpowersDir := os.ExpandEnv("$HOME/.codex/superpowers/skills")
+
+	// Build skill lookup: name -> SkillInfo
+	skillLookup := make(map[string]SkillInfo)
+	for _, skill := range scanSkillDir(claudeDir, "claude") {
+		skillLookup[skill.Name] = skill
+	}
+	for _, skill := range scanSkillDir(codexDir, "codex") {
+		// Only add if not already present (claude takes precedence)
+		if _, exists := skillLookup[skill.Name]; !exists {
+			skillLookup[skill.Name] = skill
+		}
+	}
+	for _, skill := range scanSkillDir(superpowersDir, "superpowers") {
+		if _, exists := skillLookup[skill.Name]; !exists {
+			skillLookup[skill.Name] = skill
+		}
+	}
+
+	for _, name := range skillNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+
+		// Check if skill exists in DB by name
+		var skillID string
+		err := db.QueryRowContext(ctx, `SELECT id FROM skills_manifest WHERE name = ?`, name).Scan(&skillID)
+		if err != nil {
+			// Skill not in DB, try to find it on disk
+			skill, found := skillLookup[name]
+			if !found {
+				WarnError("skill %q not found in any skill directory", name)
+				continue
+			}
+
+			// Generate skill ID from name (use name as ID for simplicity)
+			skillID = name
+
+			// Insert skill into skills_manifest
+			_, err := db.ExecContext(ctx, `
+				INSERT INTO skills_manifest (id, name, source, path, sha256, bytes, status)
+				VALUES (?, ?, ?, ?, ?, ?, 'active')
+			`, skillID, skill.Name, skill.Source, skill.Path, skill.SHA256, skill.Bytes)
+			if err != nil {
+				WarnError("failed to add skill %q to manifest: %v", name, err)
+				continue
+			}
+			debug.Logf("added skill %q to manifest from %s", name, skill.Source)
+		}
+
+		// Create link between skill and bead
+		_, err = db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO skill_bead_links (skill_id, bead_id)
+			VALUES (?, ?)
+		`, skillID, beadID)
+		if err != nil {
+			WarnError("failed to link skill %q to bead %s: %v", name, beadID, err)
+			continue
+		}
+
+		// Update last_used_at for the skill
+		_, _ = db.ExecContext(ctx, `
+			UPDATE skills_manifest SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?
+		`, skillID)
+
+		debug.Logf("linked skill %q to bead %s", name, beadID)
+	}
 }

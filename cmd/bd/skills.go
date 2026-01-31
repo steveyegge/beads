@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,8 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -65,9 +68,29 @@ Skills in .claude/skills/ are copied to ~/.codex/skills/.`,
 	Run: runSkillsSync,
 }
 
+// UnusedSkill represents a skill in the manifest with no linked beads
+type UnusedSkill struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Source     string     `json:"source"`
+	Tier       string     `json:"tier"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+var skillsCleanupCandidatesCmd = &cobra.Command{
+	Use:   "cleanup-candidates",
+	Short: "Find skills with no linked beads",
+	Long: `Find active skills that are not linked to any beads.
+
+These skills may be candidates for archiving or removal.`,
+	Run: runSkillsCleanupCandidates,
+}
+
 func init() {
 	skillsCmd.AddCommand(skillsAuditCmd)
 	skillsCmd.AddCommand(skillsSyncCmd)
+	skillsCmd.AddCommand(skillsCleanupCandidatesCmd)
 	rootCmd.AddCommand(skillsCmd)
 }
 
@@ -248,6 +271,121 @@ func runSkillsSync(cmd *cobra.Command, args []string) {
 
 	fmt.Println()
 	fmt.Printf("Synced %d skills to Codex\n", len(toSync))
+}
+
+func runSkillsCleanupCandidates(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	// Skills command requires direct DB access (not daemon) since it queries
+	// extension tables (skills_manifest, skill_bead_links) that aren't part
+	// of the core RPC interface.
+	if dbPath == "" {
+		fmt.Fprintf(os.Stderr, "Error: no database path available\n")
+		fmt.Fprintf(os.Stderr, "Hint: run from a directory with a beads database\n")
+		os.Exit(1)
+	}
+
+	// Open read-only connection to query skills tables
+	roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = roStore.Close() }()
+
+	// Query for unused skills: active skills with no entries in skill_bead_links
+	db := roStore.UnderlyingDB()
+	query := `
+		SELECT
+			sm.id,
+			sm.name,
+			sm.source,
+			sm.tier,
+			sm.last_used_at,
+			sm.created_at
+		FROM skills_manifest sm
+		LEFT JOIN skill_bead_links sbl ON sm.id = sbl.skill_id
+		WHERE sm.status = 'active'
+		  AND sbl.skill_id IS NULL
+		ORDER BY sm.name
+	`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error querying unused skills: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var unusedSkills []UnusedSkill
+	for rows.Next() {
+		var skill UnusedSkill
+		var lastUsedAt, createdAt *string
+
+		if err := rows.Scan(&skill.ID, &skill.Name, &skill.Source, &skill.Tier, &lastUsedAt, &createdAt); err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning row: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Parse timestamps
+		if lastUsedAt != nil && *lastUsedAt != "" {
+			if t, parseErr := time.Parse(time.RFC3339, *lastUsedAt); parseErr == nil {
+				skill.LastUsedAt = &t
+			} else if t, parseErr := time.Parse("2006-01-02 15:04:05", *lastUsedAt); parseErr == nil {
+				skill.LastUsedAt = &t
+			}
+		}
+		if createdAt != nil && *createdAt != "" {
+			if t, parseErr := time.Parse(time.RFC3339, *createdAt); parseErr == nil {
+				skill.CreatedAt = t
+			} else if t, parseErr := time.Parse("2006-01-02 15:04:05", *createdAt); parseErr == nil {
+				skill.CreatedAt = t
+			}
+		}
+
+		unusedSkills = append(unusedSkills, skill)
+	}
+
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error iterating rows: %v\n", err)
+		os.Exit(1)
+	}
+
+	// JSON output
+	if jsonOutput {
+		outputJSON(unusedSkills)
+		return
+	}
+
+	// Human-readable output
+	if len(unusedSkills) == 0 {
+		fmt.Println("No cleanup candidates found - all active skills are linked to beads")
+		return
+	}
+
+	fmt.Println("Skills Cleanup Candidates")
+	fmt.Println("Active skills with no linked beads:")
+	fmt.Println()
+	fmt.Printf("%-25s  %-12s  %-10s  %s\n", "Name", "Source", "Tier", "Last Used")
+	fmt.Println(strings.Repeat("-", 70))
+
+	for _, skill := range unusedSkills {
+		lastUsedStr := "never"
+		if skill.LastUsedAt != nil {
+			lastUsedStr = skill.LastUsedAt.Format("2006-01-02")
+		}
+
+		fmt.Printf("%-25s  %-12s  %-10s  %s\n",
+			skill.Name,
+			skill.Source,
+			skill.Tier,
+			ui.RenderMuted(lastUsedStr))
+	}
+
+	fmt.Println()
+	fmt.Printf("Found %d cleanup candidates\n", len(unusedSkills))
+	fmt.Println()
+	fmt.Println("To archive a skill, update its status to 'archived' in the database.")
 }
 
 func scanSkillDir(dir, source string) []SkillInfo {
