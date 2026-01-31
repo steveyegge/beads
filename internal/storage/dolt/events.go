@@ -209,6 +209,46 @@ func (s *DoltStore) GetCommentsForIssues(ctx context.Context, issueIDs []string)
 	return result, rows.Err()
 }
 
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+func (s *DoltStore) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]int), nil
+	}
+
+	placeholders := make([]string, len(issueIDs))
+	args := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
+	query := fmt.Sprintf(`
+		SELECT issue_id, COUNT(*) as comment_count
+		FROM comments
+		WHERE issue_id IN (%s)
+		GROUP BY issue_id
+	`, joinStrings(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment counts: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]int)
+	for rows.Next() {
+		var issueID string
+		var count int
+		if err := rows.Scan(&issueID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan comment count: %w", err)
+		}
+		result[issueID] = count
+	}
+
+	return result, rows.Err()
+}
+
 func joinStrings(strs []string, sep string) string {
 	if len(strs) == 0 {
 		return ""

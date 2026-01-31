@@ -686,6 +686,7 @@ type IssueWithCounts struct {
 	*Issue
 	DependencyCount int `json:"dependency_count"`
 	DependentCount  int `json:"dependent_count"`
+	CommentCount    int `json:"comment_count"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.

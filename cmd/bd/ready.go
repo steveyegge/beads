@@ -216,7 +216,19 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			if issues == nil {
 				issues = []*types.Issue{}
 			}
-			outputJSON(issues)
+			issueIDs := make([]string, len(issues))
+			for i, issue := range issues {
+				issueIDs[i] = issue.ID
+			}
+			commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+			for i, issue := range issues {
+				issuesWithCounts[i] = &types.IssueWithCounts{
+					Issue:        issue,
+					CommentCount: commentCounts[issue.ID],
+				}
+			}
+			outputJSON(issuesWithCounts)
 			return
 		}
 		// Show upgrade notification if needed

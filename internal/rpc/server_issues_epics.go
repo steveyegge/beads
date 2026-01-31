@@ -1312,6 +1312,7 @@ func (s *Server) handleList(req *Request) Response {
 		issueIDs[i] = issue.ID
 	}
 	depCounts, _ := store.GetDependencyCounts(ctx, issueIDs)
+	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
 
 	// Populate dependencies for JSON output
 	allDeps, _ := store.GetAllDependencyRecords(ctx)
@@ -1330,6 +1331,7 @@ func (s *Server) handleList(req *Request) Response {
 			Issue:           issue,
 			DependencyCount: counts.DependencyCount,
 			DependentCount:  counts.DependentCount,
+			CommentCount:    commentCounts[issue.ID],
 		}
 	}
 
@@ -1711,7 +1713,21 @@ func (s *Server) handleReady(req *Request) Response {
 		}
 	}
 
-	data, _ := json.Marshal(issues)
+	// Build response with comment counts
+	issueIDs := make([]string, len(issues))
+	for i, issue := range issues {
+		issueIDs[i] = issue.ID
+	}
+	commentCounts, _ := store.GetCommentCounts(ctx, issueIDs)
+	issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
+	for i, issue := range issues {
+		issuesWithCounts[i] = &types.IssueWithCounts{
+			Issue:        issue,
+			CommentCount: commentCounts[issue.ID],
+		}
+	}
+
+	data, _ := json.Marshal(issuesWithCounts)
 	return Response{
 		Success: true,
 		Data:    data,

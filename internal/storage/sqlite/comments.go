@@ -184,3 +184,45 @@ func (s *SQLiteStorage) GetCommentsForIssues(ctx context.Context, issueIDs []str
 
 	return result, nil
 }
+
+// GetCommentCounts returns the number of comments for each issue in a single batch query.
+// Returns a map of issue_id -> comment count. Issues with no comments have count 0.
+func (s *SQLiteStorage) GetCommentCounts(ctx context.Context, issueIDs []string) (map[string]int, error) {
+	if len(issueIDs) == 0 {
+		return make(map[string]int), nil
+	}
+
+	placeholders := make([]interface{}, len(issueIDs))
+	for i, id := range issueIDs {
+		placeholders[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT issue_id, COUNT(*) as comment_count
+		FROM comments
+		WHERE issue_id IN (%s)
+		GROUP BY issue_id
+	`, buildPlaceholders(len(issueIDs))) // #nosec G201 -- placeholders are generated internally
+
+	rows, err := s.db.QueryContext(ctx, query, placeholders...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get comment counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]int)
+	for rows.Next() {
+		var issueID string
+		var count int
+		if err := rows.Scan(&issueID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan comment count: %w", err)
+		}
+		result[issueID] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating comment counts: %w", err)
+	}
+
+	return result, nil
+}

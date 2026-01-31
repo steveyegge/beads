@@ -292,6 +292,11 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Warning: failed to get dependency counts: %v\n", err)
 				depCounts = make(map[string]*types.DependencyCounts)
 			}
+			commentCounts, err := store.GetCommentCounts(ctx, issueIDs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to get comment counts: %v\n", err)
+				commentCounts = make(map[string]int)
+			}
 
 			// Populate labels
 			for _, issue := range issues {
@@ -309,6 +314,7 @@ Examples:
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					CommentCount:    commentCounts[issue.ID],
 				}
 			}
 			outputJSON(issuesWithCounts)
