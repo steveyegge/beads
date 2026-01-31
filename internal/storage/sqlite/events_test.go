@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -436,6 +438,52 @@ func TestGetAllEventsSinceReturnsAllColumns(t *testing.T) {
 	// Compare time with second precision (SQLite may not store sub-second precision)
 	if found.CreatedAt.Unix() != createdAt.Unix() {
 		t.Errorf("Expected CreatedAt %v, got %v", createdAt, found.CreatedAt)
+	}
+}
+
+// TestCreateIssueEventType verifies that CreateIssue accepts event type
+// without requiring it in types.custom config (GH#1356).
+// Uses a fresh DB without the custom types that setupTestDB adds.
+func TestCreateIssueEventType(t *testing.T) {
+	// Set up DB without event in types.custom to reproduce the real bug
+	tmpDir, err := os.MkdirTemp("", "beads-event-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	ctx := context.Background()
+
+	store, err := New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SetConfig(ctx, "issue_prefix", "bd"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+	// Deliberately NOT setting types.custom — event should work without it
+
+	event := &types.Issue{
+		Title:     "state change audit trail",
+		Status:    types.StatusClosed,
+		Priority:  4,
+		IssueType: types.TypeEvent,
+	}
+	err = store.CreateIssue(ctx, event, "test-user")
+	if err != nil {
+		t.Fatalf("CreateIssue with event type should succeed without types.custom, got: %v", err)
+	}
+
+	// Verify the issue was persisted
+	got, err := store.GetIssue(ctx, event.ID)
+	if err != nil {
+		t.Fatalf("GetIssue failed: %v", err)
+	}
+	if got.IssueType != types.TypeEvent {
+		t.Errorf("Expected IssueType %q, got %q", types.TypeEvent, got.IssueType)
 	}
 }
 

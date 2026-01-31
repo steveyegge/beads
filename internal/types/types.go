@@ -528,25 +528,16 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Well-known custom types - constants for code convenience.
-// These are NOT built-in types and require types.custom configuration for validation.
-// Used by Gas Town and other infrastructure that extends beads.
-const (
-	TypeMessage      IssueType = "message"       // Ephemeral communication between workers
-	TypeMergeRequest IssueType = "merge-request" // Merge queue entry for refinery processing
-	TypeMolecule     IssueType = "molecule"      // Template molecule for issue hierarchies
-	TypeWisp         IssueType = "wisp"          // Ephemeral molecule instance (not synced via git)
-	TypeGate         IssueType = "gate"          // Async coordination gate
-	TypeAgent        IssueType = "agent"         // Agent identity bead
-	TypeRole         IssueType = "role"          // Agent role definition
-	TypeRig          IssueType = "rig"           // Rig identity bead (multi-repo workspace)
-	TypeConvoy       IssueType = "convoy"        // Cross-project tracking with reactive completion
-	TypeEvent        IssueType = "event"         // Operational state change record
-	TypeSlot         IssueType = "slot"          // Exclusive access slot (merge-slot gate)
-	TypeWarrant      IssueType = "warrant"       // Session termination warrant
-	TypeSkill        IssueType = "skill"         // Capability definition bead (hq-yhdzq)
-	TypeAdvice       IssueType = "advice"        // Agent advice bead with hierarchical targeting
-)
+// TypeEvent is a system-internal type used by set-state for audit trail beads.
+// Originally a Gas Town type, promoted to built-in internal type. It is not a
+// core work type (not in IsValid) but is accepted by IsValidWithCustom /
+// ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
+const TypeEvent IssueType = "event"
+
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
+// were removed from beads core. They are now purely custom types with no built-in constants.
+// Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a defined type constant.
 // This includes core work types (bug, feature, task, epic, chore) and
@@ -564,22 +555,21 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
-// Used during multi-repo hydration to determine trust:
-// - Built-in types: validate (catch typos)
+// IsBuiltIn returns true for core work types and system-internal types
+// (i.e. TypeEvent). Used during multi-repo hydration to determine trust:
+// - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
-	return t.IsValid()
+	return t.IsValid() || t == TypeEvent
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
 // Custom types are user-defined via bd config set types.custom "type1,type2,..."
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
-	// First check built-in types
-	if t.IsValid() {
+	if t.IsBuiltIn() {
 		return true
 	}
-	// Then check custom types
+	// Check user-configured custom types
 	for _, custom := range customTypes {
 		if string(t) == custom {
 			return true
