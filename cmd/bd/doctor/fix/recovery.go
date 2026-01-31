@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/steveyegge/beads/internal/configfile"
 )
 
 // DatabaseCorruptionRecovery recovers a corrupted database from JSONL backup.
@@ -15,7 +17,14 @@ func DatabaseCorruptionRecovery(path string) error {
 		return err
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Dolt backend: SQLite-specific corruption recovery doesn't apply
+	if cfg, _ := configfile.Load(beadsDir); cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		fmt.Println("  Database corruption recovery skipped (dolt backend — SQLite-specific)")
+		return nil
+	}
+
 	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Check if database exists
@@ -95,7 +104,14 @@ func DatabaseCorruptionRecoveryWithOptions(path string, force bool, source strin
 		return err
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Dolt backend: SQLite-specific corruption recovery doesn't apply
+	if cfg, _ := configfile.Load(beadsDir); cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		fmt.Println("  Database corruption recovery skipped (dolt backend — SQLite-specific)")
+		return nil
+	}
+
 	dbPath := filepath.Join(beadsDir, "beads.db")
 
 	// Check if database exists

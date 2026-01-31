@@ -27,7 +27,13 @@ func DBJSONLSync(path string) error {
 		return err
 	}
 
-	beadsDir := filepath.Join(path, ".beads")
+	beadsDir := resolveBeadsDir(filepath.Join(path, ".beads"))
+
+	// Dolt backend: DB-JSONL sync uses SQLite-specific issue counting, skip
+	if cfg, err := configfile.Load(beadsDir); err == nil && cfg != nil && cfg.GetBackend() == configfile.BackendDolt {
+		fmt.Println("  DB-JSONL sync skipped (dolt backend — sync is database-native)")
+		return nil
+	}
 
 	// Get database path (same logic as doctor package)
 	var dbPath string
