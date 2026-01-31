@@ -387,7 +387,6 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
 			due_at, defer_until, metadata,
-			advice_target_rig, advice_target_role, advice_target_agent,
 			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
@@ -400,7 +399,6 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?,
 			?, ?, ?,
 			?, ?, ?, ?
 		)
@@ -416,7 +414,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
-		issue.AdviceTargetRig, issue.AdviceTargetRole, issue.AdviceTargetAgent,
+		// NOTE: advice_target_* columns removed - advice uses labels now
 		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
 	)
 	return err
@@ -436,9 +434,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
 	var metadata sql.NullString
-	// Advice fields (gt-epc-advice_schema_storage)
-	var adviceTargetRig, adviceTargetRole, adviceTargetAgent sql.NullString
 	// Advice hook fields (hq--uaim)
+	// NOTE: advice_target_* columns removed - advice uses labels now
 	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
 	var adviceHookTimeout sql.NullInt64
 
@@ -454,7 +451,6 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
 		       quality_score, work_type, source_system, metadata,
-		       advice_target_rig, advice_target_role, advice_target_agent,
 		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
 		FROM issues
 		WHERE id = ?
@@ -471,7 +467,6 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
-		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
 	)
 
@@ -620,16 +615,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
 	}
-	// Advice fields (gt-epc-advice_schema_storage)
-	if adviceTargetRig.Valid {
-		issue.AdviceTargetRig = adviceTargetRig.String
-	}
-	if adviceTargetRole.Valid {
-		issue.AdviceTargetRole = adviceTargetRole.String
-	}
-	if adviceTargetAgent.Valid {
-		issue.AdviceTargetAgent = adviceTargetAgent.String
-	}
+	// NOTE: advice_target_* fields removed - advice uses labels now
 	// Advice hook fields (hq--uaim)
 	if adviceHookCommand.Valid {
 		issue.AdviceHookCommand = adviceHookCommand.String

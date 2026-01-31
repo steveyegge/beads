@@ -22,20 +22,24 @@ func newAdviceListTestHelper(t *testing.T, store *sqlite.SQLiteStorage) *adviceL
 	return &adviceListTestHelper{t: t, ctx: context.Background(), store: store}
 }
 
-func (h *adviceListTestHelper) createAdvice(title, description, rig, role, agent string, status types.Status) *types.Issue {
+// createAdvice creates advice with labels for targeting
+func (h *adviceListTestHelper) createAdvice(title, description string, labels []string, status types.Status) *types.Issue {
 	advice := &types.Issue{
-		Title:             title,
-		Description:       description,
-		Priority:          2,
-		IssueType:         types.IssueType("advice"),
-		Status:            status,
-		AdviceTargetRig:   rig,
-		AdviceTargetRole:  role,
-		AdviceTargetAgent: agent,
-		CreatedAt:         time.Now(),
+		Title:       title,
+		Description: description,
+		Priority:    2,
+		IssueType:   types.IssueType("advice"),
+		Status:      status,
+		CreatedAt:   time.Now(),
 	}
 	if err := h.store.CreateIssue(h.ctx, advice, "test-user"); err != nil {
 		h.t.Fatalf("Failed to create advice: %v", err)
+	}
+	// Add labels for targeting
+	for _, label := range labels {
+		if err := h.store.AddLabel(h.ctx, advice.ID, label, "test-user"); err != nil {
+			h.t.Fatalf("Failed to add label %s: %v", label, err)
+		}
 	}
 	h.advice = append(h.advice, advice)
 	return advice
@@ -65,39 +69,39 @@ func TestAdviceListSuite(t *testing.T) {
 	t.Run("AdviceListCommand", func(t *testing.T) {
 		h := newAdviceListTestHelper(t, s)
 
-		// Create test advice with various scopes
+		// Create test advice with various scopes using labels
 		globalAdvice := h.createAdvice(
 			"Always check hook first",
 			"When starting a session, always run gt hook",
-			"", "", "", // no targeting = global
+			[]string{"global"}, // global label
 			types.StatusOpen,
 		)
 
 		rigAdvice := h.createAdvice(
 			"Use go test for testing",
 			"In beads repo, run go test ./...",
-			"beads", "", "", // rig-level
+			[]string{"rig:beads"}, // rig-level
 			types.StatusOpen,
 		)
 
 		roleAdvice := h.createAdvice(
 			"Complete work before gt done",
 			"Polecats must finish work before calling gt done",
-			"beads", "polecat", "", // role-level
+			[]string{"rig:beads", "role:polecat"}, // role-level
 			types.StatusOpen,
 		)
 
 		agentAdvice := h.createAdvice(
 			"Focus on CLI tasks",
 			"quartz specializes in CLI implementation",
-			"", "", "beads/polecats/quartz", // agent-level
+			[]string{"agent:beads/polecats/quartz"}, // agent-level
 			types.StatusOpen,
 		)
 
 		closedAdvice := h.createAdvice(
 			"Deprecated advice",
 			"This advice is no longer relevant",
-			"", "", "", // global, but closed
+			[]string{"global"}, // global, but closed
 			types.StatusClosed,
 		)
 
@@ -108,14 +112,37 @@ func TestAdviceListSuite(t *testing.T) {
 			h.assertCount(len(results), 4, "open advice")
 		})
 
-		t.Run("filter by rig", func(t *testing.T) {
+		t.Run("filter by rig label", func(t *testing.T) {
 			status := types.StatusOpen
 			results := h.searchAdvice(types.IssueFilter{Status: &status})
 
-			// Filter in-memory for rig-level advice (matches advice_list.go logic)
+			// Get labels for all issues
+			issueIDs := make([]string, len(results))
+			for i, issue := range results {
+				issueIDs[i] = issue.ID
+			}
+			labelsMap, _ := s.GetLabelsForIssues(h.ctx, issueIDs)
+
+			// Filter for rig:beads label (but not role or agent labels)
 			var rigFiltered []*types.Issue
 			for _, issue := range results {
-				if issue.AdviceTargetRig == "beads" && issue.AdviceTargetRole == "" && issue.AdviceTargetAgent == "" {
+				labels := labelsMap[issue.ID]
+				hasRigBeads := false
+				hasRole := false
+				hasAgent := false
+				for _, l := range labels {
+					if l == "rig:beads" {
+						hasRigBeads = true
+					}
+					if len(l) > 5 && l[:5] == "role:" {
+						hasRole = true
+					}
+					if len(l) > 6 && l[:6] == "agent:" {
+						hasAgent = true
+					}
+				}
+				// Rig-only advice has rig: but not role: or agent:
+				if hasRigBeads && !hasRole && !hasAgent {
 					rigFiltered = append(rigFiltered, issue)
 				}
 			}
@@ -125,32 +152,52 @@ func TestAdviceListSuite(t *testing.T) {
 			}
 		})
 
-		t.Run("filter by role", func(t *testing.T) {
+		t.Run("filter by role label", func(t *testing.T) {
 			status := types.StatusOpen
 			results := h.searchAdvice(types.IssueFilter{Status: &status})
 
-			// Filter in-memory for role-level advice
+			// Get labels for all issues
+			issueIDs := make([]string, len(results))
+			for i, issue := range results {
+				issueIDs[i] = issue.ID
+			}
+			labelsMap, _ := s.GetLabelsForIssues(h.ctx, issueIDs)
+
+			// Filter for role:polecat label
 			var roleFiltered []*types.Issue
 			for _, issue := range results {
-				if issue.AdviceTargetRig == "beads" && issue.AdviceTargetRole == "polecat" {
-					roleFiltered = append(roleFiltered, issue)
+				for _, l := range labelsMap[issue.ID] {
+					if l == "role:polecat" {
+						roleFiltered = append(roleFiltered, issue)
+						break
+					}
 				}
 			}
-			h.assertCount(len(roleFiltered), 1, "role-level advice for beads/polecat")
+			h.assertCount(len(roleFiltered), 1, "role-level advice for polecat")
 			if len(roleFiltered) > 0 && roleFiltered[0].ID != roleAdvice.ID {
 				t.Errorf("Expected role advice ID %s, got %s", roleAdvice.ID, roleFiltered[0].ID)
 			}
 		})
 
-		t.Run("filter by agent", func(t *testing.T) {
+		t.Run("filter by agent label", func(t *testing.T) {
 			status := types.StatusOpen
 			results := h.searchAdvice(types.IssueFilter{Status: &status})
 
-			// Filter in-memory for agent-level advice
+			// Get labels for all issues
+			issueIDs := make([]string, len(results))
+			for i, issue := range results {
+				issueIDs[i] = issue.ID
+			}
+			labelsMap, _ := s.GetLabelsForIssues(h.ctx, issueIDs)
+
+			// Filter for agent-level advice
 			var agentFiltered []*types.Issue
 			for _, issue := range results {
-				if issue.AdviceTargetAgent == "beads/polecats/quartz" {
-					agentFiltered = append(agentFiltered, issue)
+				for _, l := range labelsMap[issue.ID] {
+					if l == "agent:beads/polecats/quartz" {
+						agentFiltered = append(agentFiltered, issue)
+						break
+					}
 				}
 			}
 			h.assertCount(len(agentFiltered), 1, "agent-level advice")
@@ -159,21 +206,30 @@ func TestAdviceListSuite(t *testing.T) {
 			}
 		})
 
-		t.Run("for flag - inheritance chain", func(t *testing.T) {
-			// Test the matchesAgentScope function logic
+		t.Run("for flag - subscription matching", func(t *testing.T) {
+			// Test that buildAgentSubscriptions + matchesSubscriptions works
 			// Agent "beads/polecats/quartz" should match:
-			// - Global advice (no targeting)
-			// - Rig "beads" advice
-			// - Role "polecat" advice (with rig "beads")
-			// - Agent "beads/polecats/quartz" advice
+			// - Global advice (global label)
+			// - Rig "beads" advice (rig:beads label)
+			// - Role "polecat" advice (role:polecat label)
+			// - Agent "beads/polecats/quartz" advice (agent: label)
 
 			agentID := "beads/polecats/quartz"
+			subscriptions := buildAgentSubscriptions(agentID, nil)
+
 			status := types.StatusOpen
 			results := h.searchAdvice(types.IssueFilter{Status: &status})
 
+			// Get labels for all issues
+			issueIDs := make([]string, len(results))
+			for i, issue := range results {
+				issueIDs[i] = issue.ID
+			}
+			labelsMap, _ := s.GetLabelsForIssues(h.ctx, issueIDs)
+
 			var applicable []*types.Issue
 			for _, issue := range results {
-				if matchesAdviceForTest(issue, agentID, "polecat", "beads") {
+				if matchesSubscriptions(issue, labelsMap[issue.ID], subscriptions) {
 					applicable = append(applicable, issue)
 				}
 			}
@@ -184,18 +240,27 @@ func TestAdviceListSuite(t *testing.T) {
 
 		t.Run("for flag - different agent", func(t *testing.T) {
 			// Agent "gastown/crew/wolf" should match:
-			// - Global advice (no targeting)
+			// - Global advice (global label)
 			// - NOT rig "beads" advice
 			// - NOT role "polecat" advice
 			// - NOT agent "beads/polecats/quartz" advice
 
 			agentID := "gastown/crew/wolf"
+			subscriptions := buildAgentSubscriptions(agentID, nil)
+
 			status := types.StatusOpen
 			results := h.searchAdvice(types.IssueFilter{Status: &status})
 
+			// Get labels for all issues
+			issueIDs := make([]string, len(results))
+			for i, issue := range results {
+				issueIDs[i] = issue.ID
+			}
+			labelsMap, _ := s.GetLabelsForIssues(h.ctx, issueIDs)
+
 			var applicable []*types.Issue
 			for _, issue := range results {
-				if matchesAdviceForTest(issue, agentID, "crew", "gastown") {
+				if matchesSubscriptions(issue, labelsMap[issue.ID], subscriptions) {
 					applicable = append(applicable, issue)
 				}
 			}
@@ -225,15 +290,17 @@ func TestAdviceListSuite(t *testing.T) {
 			}
 		})
 
-		t.Run("global advice has no targeting fields", func(t *testing.T) {
-			if globalAdvice.AdviceTargetRig != "" {
-				t.Errorf("Global advice should have empty rig, got %q", globalAdvice.AdviceTargetRig)
+		t.Run("global advice has global label", func(t *testing.T) {
+			labels, _ := s.GetLabels(h.ctx, globalAdvice.ID)
+			hasGlobal := false
+			for _, l := range labels {
+				if l == "global" {
+					hasGlobal = true
+					break
+				}
 			}
-			if globalAdvice.AdviceTargetRole != "" {
-				t.Errorf("Global advice should have empty role, got %q", globalAdvice.AdviceTargetRole)
-			}
-			if globalAdvice.AdviceTargetAgent != "" {
-				t.Errorf("Global advice should have empty agent, got %q", globalAdvice.AdviceTargetAgent)
+			if !hasGlobal {
+				t.Error("Global advice should have 'global' label")
 			}
 		})
 
@@ -247,76 +314,67 @@ func TestAdviceListSuite(t *testing.T) {
 	})
 }
 
-// matchesAdviceForTest replicates the matching logic from advice_list.go for testing
-func matchesAdviceForTest(issue *types.Issue, agentID, roleType, rigName string) bool {
-	// Global advice applies to everyone
-	if issue.AdviceTargetRig == "" && issue.AdviceTargetRole == "" && issue.AdviceTargetAgent == "" {
-		return true
-	}
-
-	// Agent-specific advice
-	if issue.AdviceTargetAgent != "" {
-		return issue.AdviceTargetAgent == agentID
-	}
-
-	// Role-level targeting
-	if issue.AdviceTargetRole != "" {
-		return issue.AdviceTargetRole == roleType && issue.AdviceTargetRig == rigName
-	}
-
-	// Rig-level targeting
-	if issue.AdviceTargetRig != "" {
-		return issue.AdviceTargetRig == rigName
-	}
-
-	return false
-}
-
 func TestAdviceListScopeGrouping(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
 	ctx := context.Background()
 
-	// Create advice at different scopes
-	adviceItems := []*types.Issue{
+	// Create advice at different scopes using labels
+	adviceItems := []struct {
+		issue  *types.Issue
+		labels []string
+	}{
 		{
-			Title:     "Global 1",
-			IssueType: types.IssueType("advice"),
-			Status:    types.StatusOpen,
-			CreatedAt: time.Now(),
+			issue: &types.Issue{
+				Title:     "Global 1",
+				IssueType: types.IssueType("advice"),
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			},
+			labels: []string{"global"},
 		},
 		{
-			Title:           "Rig level",
-			IssueType:       types.IssueType("advice"),
-			Status:          types.StatusOpen,
-			AdviceTargetRig: "testrig",
-			CreatedAt:       time.Now(),
+			issue: &types.Issue{
+				Title:     "Rig level",
+				IssueType: types.IssueType("advice"),
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			},
+			labels: []string{"rig:testrig"},
 		},
 		{
-			Title:            "Role level",
-			IssueType:        types.IssueType("advice"),
-			Status:           types.StatusOpen,
-			AdviceTargetRig:  "testrig",
-			AdviceTargetRole: "polecat",
-			CreatedAt:        time.Now(),
+			issue: &types.Issue{
+				Title:     "Role level",
+				IssueType: types.IssueType("advice"),
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			},
+			labels: []string{"rig:testrig", "role:polecat"},
 		},
 		{
-			Title:             "Agent level",
-			IssueType:         types.IssueType("advice"),
-			Status:            types.StatusOpen,
-			AdviceTargetAgent: "testrig/polecats/alpha",
-			CreatedAt:         time.Now(),
+			issue: &types.Issue{
+				Title:     "Agent level",
+				IssueType: types.IssueType("advice"),
+				Status:    types.StatusOpen,
+				CreatedAt: time.Now(),
+			},
+			labels: []string{"agent:testrig/polecats/alpha"},
 		},
 	}
 
-	for _, advice := range adviceItems {
-		if err := s.CreateIssue(ctx, advice, "test"); err != nil {
+	for _, item := range adviceItems {
+		if err := s.CreateIssue(ctx, item.issue, "test"); err != nil {
 			t.Fatalf("Failed to create advice: %v", err)
+		}
+		for _, label := range item.labels {
+			if err := s.AddLabel(ctx, item.issue.ID, label, "test"); err != nil {
+				t.Fatalf("Failed to add label: %v", err)
+			}
 		}
 	}
 
-	// Verify we can categorize by scope
+	// Verify we can categorize by scope via labels
 	adviceType := types.IssueType("advice")
 	status := types.StatusOpen
 	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
@@ -327,15 +385,42 @@ func TestAdviceListScopeGrouping(t *testing.T) {
 		t.Fatalf("Failed to search: %v", err)
 	}
 
+	// Get labels for all issues
+	issueIDs := make([]string, len(results))
+	for i, issue := range results {
+		issueIDs[i] = issue.ID
+	}
+	labelsMap, _ := s.GetLabelsForIssues(ctx, issueIDs)
+
 	var global, rig, role, agent int
 	for _, issue := range results {
-		if issue.AdviceTargetAgent != "" {
+		labels := labelsMap[issue.ID]
+		hasGlobal := false
+		hasRig := false
+		hasRole := false
+		hasAgent := false
+		for _, l := range labels {
+			if l == "global" {
+				hasGlobal = true
+			}
+			if len(l) > 4 && l[:4] == "rig:" {
+				hasRig = true
+			}
+			if len(l) > 5 && l[:5] == "role:" {
+				hasRole = true
+			}
+			if len(l) > 6 && l[:6] == "agent:" {
+				hasAgent = true
+			}
+		}
+		// Categorize by most specific label
+		if hasAgent {
 			agent++
-		} else if issue.AdviceTargetRole != "" {
+		} else if hasRole {
 			role++
-		} else if issue.AdviceTargetRig != "" {
+		} else if hasRig {
 			rig++
-		} else {
+		} else if hasGlobal {
 			global++
 		}
 	}
@@ -415,102 +500,66 @@ func TestMatchesSubscriptions(t *testing.T) {
 		want          bool
 	}{
 		{
-			name: "global advice matches global subscription",
-			issue: &types.Issue{
-				AdviceTargetRig:   "",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{},
+			name:          "global label matches global subscription",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"global"},
 			subscriptions: []string{"global"},
 			want:          true,
 		},
 		{
-			name: "global advice no match without global subscription",
-			issue: &types.Issue{
-				AdviceTargetRig:   "",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
+			name:          "no labels no match",
+			issue:         &types.Issue{},
 			issueLabels:   []string{},
 			subscriptions: []string{"testing"},
 			want:          false,
 		},
 		{
-			name: "rig-targeted matches rig: subscription",
-			issue: &types.Issue{
-				AdviceTargetRig:   "beads",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{},
+			name:          "rig label matches rig subscription",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"rig:beads"},
 			subscriptions: []string{"rig:beads"},
 			want:          true,
 		},
 		{
-			name: "rig-targeted no match wrong rig",
-			issue: &types.Issue{
-				AdviceTargetRig:   "beads",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{},
+			name:          "rig label no match different rig",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"rig:beads"},
 			subscriptions: []string{"rig:gastown"},
 			want:          false,
 		},
 		{
-			name: "role-targeted matches role: subscription",
-			issue: &types.Issue{
-				AdviceTargetRig:   "beads",
-				AdviceTargetRole:  "polecat",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{},
+			name:          "role label matches role subscription",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"role:polecat"},
 			subscriptions: []string{"role:polecat"},
 			want:          true,
 		},
 		{
-			name: "agent-targeted matches agent: subscription",
-			issue: &types.Issue{
-				AdviceTargetRig:   "",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "beads/polecats/quartz",
-			},
-			issueLabels:   []string{},
+			name:          "agent label matches agent subscription",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"agent:beads/polecats/quartz"},
 			subscriptions: []string{"agent:beads/polecats/quartz"},
 			want:          true,
 		},
 		{
-			name: "explicit label match",
-			issue: &types.Issue{
-				AdviceTargetRig:   "",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
+			name:          "explicit label match",
+			issue:         &types.Issue{},
 			issueLabels:   []string{"testing", "ci"},
 			subscriptions: []string{"testing"},
 			want:          true,
 		},
 		{
-			name: "explicit label takes priority",
-			issue: &types.Issue{
-				AdviceTargetRig:   "beads",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{"testing"},
-			subscriptions: []string{"testing"}, // matches via label, not via rig:beads
+			name:          "multiple subscriptions any match",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"security"},
+			subscriptions: []string{"testing", "security", "global"},
 			want:          true,
 		},
 		{
-			name: "multiple subscriptions any match",
-			issue: &types.Issue{
-				AdviceTargetRig:   "",
-				AdviceTargetRole:  "",
-				AdviceTargetAgent: "",
-			},
-			issueLabels:   []string{"security"},
-			subscriptions: []string{"testing", "security", "global"},
+			name:          "multiple labels one matches",
+			issue:         &types.Issue{},
+			issueLabels:   []string{"global", "testing"},
+			subscriptions: []string{"testing"},
 			want:          true,
 		},
 	}
@@ -546,102 +595,54 @@ func TestSingularizeRole(t *testing.T) {
 	}
 }
 
-func TestMatchesAgentScope(t *testing.T) {
+// TestBuildAgentSubscriptions tests the auto-subscription generation for agents
+func TestBuildAgentSubscriptions(t *testing.T) {
 	tests := []struct {
-		name      string
-		issue     *types.Issue
-		agentID   string
-		wantMatch bool
+		name     string
+		agentID  string
+		existing []string
+		want     []string
 	}{
 		{
-			name: "global matches any agent",
-			issue: &types.Issue{
-				Title:     "Global advice",
-				IssueType: types.IssueType("advice"),
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: true,
+			name:     "full agent path generates all subscriptions",
+			agentID:  "beads/polecats/quartz",
+			existing: nil,
+			want:     []string{"global", "agent:beads/polecats/quartz", "rig:beads", "role:polecats", "role:polecat"},
 		},
 		{
-			name: "rig matches agent in same rig",
-			issue: &types.Issue{
-				Title:           "Rig advice",
-				IssueType:       types.IssueType("advice"),
-				AdviceTargetRig: "beads",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: true,
+			name:     "crew agent gets crew subscriptions",
+			agentID:  "beads/crew/wolf",
+			existing: nil,
+			want:     []string{"global", "agent:beads/crew/wolf", "rig:beads", "role:crew"},
 		},
 		{
-			name: "rig does not match agent in different rig",
-			issue: &types.Issue{
-				Title:           "Rig advice",
-				IssueType:       types.IssueType("advice"),
-				AdviceTargetRig: "gastown",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: false,
+			name:     "existing subscriptions preserved",
+			agentID:  "beads/polecats/quartz",
+			existing: []string{"testing"},
+			want:     []string{"testing", "global", "agent:beads/polecats/quartz", "rig:beads", "role:polecats", "role:polecat"},
 		},
 		{
-			name: "role matches agent with same role",
-			issue: &types.Issue{
-				Title:            "Role advice",
-				IssueType:        types.IssueType("advice"),
-				AdviceTargetRig:  "beads",
-				AdviceTargetRole: "polecat",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: true,
-		},
-		{
-			name: "role does not match agent with different role",
-			issue: &types.Issue{
-				Title:            "Role advice",
-				IssueType:        types.IssueType("advice"),
-				AdviceTargetRig:  "beads",
-				AdviceTargetRole: "crew",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: false,
-		},
-		{
-			name: "agent matches exact agent ID",
-			issue: &types.Issue{
-				Title:             "Agent advice",
-				IssueType:         types.IssueType("advice"),
-				AdviceTargetAgent: "beads/polecats/alpha",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: true,
-		},
-		{
-			name: "agent does not match different agent",
-			issue: &types.Issue{
-				Title:             "Agent advice",
-				IssueType:         types.IssueType("advice"),
-				AdviceTargetAgent: "beads/polecats/beta",
-			},
-			agentID:   "beads/polecats/alpha",
-			wantMatch: false,
-		},
-		{
-			name: "crew role matches crew agent",
-			issue: &types.Issue{
-				Title:            "Crew advice",
-				IssueType:        types.IssueType("advice"),
-				AdviceTargetRig:  "beads",
-				AdviceTargetRole: "crew",
-			},
-			agentID:   "beads/crew/advice_architect",
-			wantMatch: true,
+			name:     "single-part agent ID",
+			agentID:  "standalone",
+			existing: nil,
+			want:     []string{"global", "agent:standalone", "rig:standalone"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesAgentScope(tt.issue, tt.agentID)
-			if got != tt.wantMatch {
-				t.Errorf("matchesAgentScope() = %v, want %v", got, tt.wantMatch)
+			got := buildAgentSubscriptions(tt.agentID, tt.existing)
+
+			// Check all expected subscriptions are present
+			gotSet := make(map[string]bool)
+			for _, s := range got {
+				gotSet[s] = true
+			}
+
+			for _, want := range tt.want {
+				if !gotSet[want] {
+					t.Errorf("buildAgentSubscriptions(%q) missing subscription %q, got %v", tt.agentID, want, got)
+				}
 			}
 		})
 	}

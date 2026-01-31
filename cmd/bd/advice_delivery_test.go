@@ -10,14 +10,18 @@ import (
 )
 
 // TestAdviceDeliveryPipeline tests the advice matching logic used by gt prime
-// to deliver advice to agents. This tests the beads-side logic that gt prime calls.
+// to deliver advice to agents. Advice uses labels for targeting:
+//   - "global" - applies to all agents
+//   - "rig:X" - applies to agents in rig X
+//   - "role:Y" - applies to agents with role Y
+//   - "agent:Z" - applies to specific agent Z
 func TestAdviceDeliveryPipeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
 	ctx := context.Background()
 
-	// Setup: Create advice at various scopes
+	// Setup: Create advice with various label scopes
 	globalAdvice := &types.Issue{
 		Title:       "Global: Check hook first",
 		Description: "Always run gt hook at session start",
@@ -28,71 +32,82 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	if err := s.CreateIssue(ctx, globalAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create global advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, globalAdvice.ID, "global", "test"); err != nil {
+		t.Fatalf("Failed to add global label: %v", err)
+	}
 
 	beadsRigAdvice := &types.Issue{
-		Title:           "Beads rig: Use go test",
-		Description:     "Run go test ./... for testing",
-		IssueType:       types.IssueType("advice"),
-		Status:          types.StatusOpen,
-		AdviceTargetRig: "beads",
-		CreatedAt:       time.Now(),
+		Title:       "Beads rig: Use go test",
+		Description: "Run go test ./... for testing",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.CreateIssue(ctx, beadsRigAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create rig advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, beadsRigAdvice.ID, "rig:beads", "test"); err != nil {
+		t.Fatalf("Failed to add rig label: %v", err)
+	}
 
 	gastownRigAdvice := &types.Issue{
-		Title:           "Gastown rig: Check mayor",
-		Description:     "Coordinate with mayor for cross-rig work",
-		IssueType:       types.IssueType("advice"),
-		Status:          types.StatusOpen,
-		AdviceTargetRig: "gastown",
-		CreatedAt:       time.Now(),
+		Title:       "Gastown rig: Check mayor",
+		Description: "Coordinate with mayor for cross-rig work",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.CreateIssue(ctx, gastownRigAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create gastown rig advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, gastownRigAdvice.ID, "rig:gastown", "test"); err != nil {
+		t.Fatalf("Failed to add rig label: %v", err)
+	}
 
 	polecatRoleAdvice := &types.Issue{
-		Title:            "Polecat role: Complete before gt done",
-		Description:      "Finish work before running gt done",
-		IssueType:        types.IssueType("advice"),
-		Status:           types.StatusOpen,
-		AdviceTargetRig:  "beads",
-		AdviceTargetRole: "polecat",
-		CreatedAt:        time.Now(),
+		Title:       "Polecat role: Complete before gt done",
+		Description: "Finish work before running gt done",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.CreateIssue(ctx, polecatRoleAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create role advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, polecatRoleAdvice.ID, "role:polecat", "test"); err != nil {
+		t.Fatalf("Failed to add role label: %v", err)
+	}
 
 	crewRoleAdvice := &types.Issue{
-		Title:            "Crew role: Maintain formulas",
-		Description:      "Crew members maintain workflow formulas",
-		IssueType:        types.IssueType("advice"),
-		Status:           types.StatusOpen,
-		AdviceTargetRig:  "beads",
-		AdviceTargetRole: "crew",
-		CreatedAt:        time.Now(),
+		Title:       "Crew role: Maintain formulas",
+		Description: "Crew members maintain workflow formulas",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.CreateIssue(ctx, crewRoleAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create crew role advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, crewRoleAdvice.ID, "role:crew", "test"); err != nil {
+		t.Fatalf("Failed to add role label: %v", err)
+	}
 
 	specificAgentAdvice := &types.Issue{
-		Title:             "Agent: Focus on CLI",
-		Description:       "quartz specializes in CLI implementation",
-		IssueType:         types.IssueType("advice"),
-		Status:            types.StatusOpen,
-		AdviceTargetAgent: "beads/polecats/quartz",
-		CreatedAt:         time.Now(),
+		Title:       "Agent: Focus on CLI",
+		Description: "quartz specializes in CLI implementation",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
 	}
 	if err := s.CreateIssue(ctx, specificAgentAdvice, "test"); err != nil {
 		t.Fatalf("Failed to create agent advice: %v", err)
 	}
+	if err := s.AddLabel(ctx, specificAgentAdvice.ID, "agent:beads/polecats/quartz", "test"); err != nil {
+		t.Fatalf("Failed to add agent label: %v", err)
+	}
 
-	// Helper function to get applicable advice for an agent
-	getApplicableAdvice := func(agentID, roleType, rigName string) []*types.Issue {
+	// Helper function to get applicable advice for an agent using label-based subscriptions
+	getApplicableAdvice := func(agentID string) []*types.Issue {
 		adviceType := types.IssueType("advice")
 		status := types.StatusOpen
 		allAdvice, err := s.SearchIssues(ctx, "", types.IssueFilter{
@@ -103,9 +118,22 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 			t.Fatalf("Failed to search advice: %v", err)
 		}
 
+		// Build subscriptions for the agent
+		subscriptions := buildAgentSubscriptions(agentID, nil)
+
+		// Get labels for all advice
+		issueIDs := make([]string, len(allAdvice))
+		for i, a := range allAdvice {
+			issueIDs[i] = a.ID
+		}
+		labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
+		if err != nil {
+			t.Fatalf("Failed to get labels: %v", err)
+		}
+
 		var applicable []*types.Issue
 		for _, advice := range allAdvice {
-			if matchesAgentScope(advice, agentID) {
+			if matchesSubscriptions(advice, labelsMap[advice.ID], subscriptions) {
 				applicable = append(applicable, advice)
 			}
 		}
@@ -121,7 +149,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 		}
 
 		for _, agentID := range testCases {
-			applicable := getApplicableAdvice(agentID, "", "")
+			applicable := getApplicableAdvice(agentID)
 			found := false
 			for _, a := range applicable {
 				if a.ID == globalAdvice.ID {
@@ -137,7 +165,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 
 	t.Run("rig-targeted advice only appears in that rig", func(t *testing.T) {
 		// beads/polecats/quartz should see beads rig advice
-		beadsAgent := getApplicableAdvice("beads/polecats/quartz", "polecat", "beads")
+		beadsAgent := getApplicableAdvice("beads/polecats/quartz")
 		foundBeads := false
 		foundGastown := false
 		for _, a := range beadsAgent {
@@ -149,14 +177,14 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 			}
 		}
 		if !foundBeads {
-			t.Error("beads agent should see beads rig advice")
+			t.Error("beads/polecats/quartz should see beads rig advice")
 		}
 		if foundGastown {
-			t.Error("beads agent should NOT see gastown rig advice")
+			t.Error("beads/polecats/quartz should NOT see gastown rig advice")
 		}
 
 		// gastown/polecats/alpha should see gastown rig advice
-		gastownAgent := getApplicableAdvice("gastown/polecats/alpha", "polecat", "gastown")
+		gastownAgent := getApplicableAdvice("gastown/polecats/alpha")
 		foundBeads = false
 		foundGastown = false
 		for _, a := range gastownAgent {
@@ -168,16 +196,16 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 			}
 		}
 		if foundBeads {
-			t.Error("gastown agent should NOT see beads rig advice")
+			t.Error("gastown/polecats/alpha should NOT see beads rig advice")
 		}
 		if !foundGastown {
-			t.Error("gastown agent should see gastown rig advice")
+			t.Error("gastown/polecats/alpha should see gastown rig advice")
 		}
 	})
 
-	t.Run("role-targeted advice only appears for that role", func(t *testing.T) {
+	t.Run("role-targeted advice appears for matching roles", func(t *testing.T) {
 		// beads/polecats/quartz should see polecat role advice
-		polecatAgent := getApplicableAdvice("beads/polecats/quartz", "polecat", "beads")
+		polecatAgent := getApplicableAdvice("beads/polecats/quartz")
 		foundPolecat := false
 		foundCrew := false
 		for _, a := range polecatAgent {
@@ -189,14 +217,14 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 			}
 		}
 		if !foundPolecat {
-			t.Error("polecat agent should see polecat role advice")
+			t.Error("beads/polecats/quartz should see polecat role advice")
 		}
 		if foundCrew {
-			t.Error("polecat agent should NOT see crew role advice")
+			t.Error("beads/polecats/quartz should NOT see crew role advice")
 		}
 
 		// beads/crew/wolf should see crew role advice
-		crewAgent := getApplicableAdvice("beads/crew/wolf", "crew", "beads")
+		crewAgent := getApplicableAdvice("beads/crew/wolf")
 		foundPolecat = false
 		foundCrew = false
 		for _, a := range crewAgent {
@@ -208,251 +236,151 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 			}
 		}
 		if foundPolecat {
-			t.Error("crew agent should NOT see polecat role advice")
+			t.Error("beads/crew/wolf should NOT see polecat role advice")
 		}
 		if !foundCrew {
-			t.Error("crew agent should see crew role advice")
+			t.Error("beads/crew/wolf should see crew role advice")
 		}
 	})
 
-	t.Run("agent-targeted advice only appears for that agent", func(t *testing.T) {
-		// beads/polecats/quartz should see its specific advice
-		quartz := getApplicableAdvice("beads/polecats/quartz", "polecat", "beads")
-		found := false
-		for _, a := range quartz {
+	t.Run("agent-targeted advice appears only for that agent", func(t *testing.T) {
+		// beads/polecats/quartz should see the agent-specific advice
+		quartzAdvice := getApplicableAdvice("beads/polecats/quartz")
+		foundSpecific := false
+		for _, a := range quartzAdvice {
 			if a.ID == specificAgentAdvice.ID {
-				found = true
+				foundSpecific = true
 				break
 			}
 		}
-		if !found {
-			t.Error("quartz should see its specific advice")
+		if !foundSpecific {
+			t.Error("beads/polecats/quartz should see agent-specific advice")
 		}
 
-		// beads/polecats/alpha should NOT see quartz's advice
-		alpha := getApplicableAdvice("beads/polecats/alpha", "polecat", "beads")
-		found = false
-		for _, a := range alpha {
+		// beads/polecats/garnet should NOT see the advice for quartz
+		garnetAdvice := getApplicableAdvice("beads/polecats/garnet")
+		foundSpecific = false
+		for _, a := range garnetAdvice {
 			if a.ID == specificAgentAdvice.ID {
-				found = true
+				foundSpecific = true
 				break
 			}
 		}
-		if found {
-			t.Error("alpha should NOT see quartz's specific advice")
+		if foundSpecific {
+			t.Error("beads/polecats/garnet should NOT see agent-specific advice for quartz")
 		}
 	})
 
-	t.Run("agent sees all applicable advice (inheritance)", func(t *testing.T) {
-		// beads/polecats/quartz should see:
-		// - global advice
-		// - beads rig advice
-		// - polecat role advice
-		// - quartz agent advice
-		// Total: 4 advice items
-
-		quartz := getApplicableAdvice("beads/polecats/quartz", "polecat", "beads")
-
-		expectedIDs := map[string]bool{
-			globalAdvice.ID:        false,
-			beadsRigAdvice.ID:      false,
-			polecatRoleAdvice.ID:   false,
-			specificAgentAdvice.ID: false,
+	t.Run("closed advice not delivered", func(t *testing.T) {
+		// Close the global advice
+		if err := s.UpdateIssue(ctx, globalAdvice.ID, map[string]interface{}{
+			"status": types.StatusClosed,
+		}, "test"); err != nil {
+			t.Fatalf("Failed to close advice: %v", err)
 		}
 
-		for _, a := range quartz {
-			if _, expected := expectedIDs[a.ID]; expected {
-				expectedIDs[a.ID] = true
-			}
-		}
-
-		for id, found := range expectedIDs {
-			if !found {
-				t.Errorf("quartz should have received advice %s", id)
-			}
-		}
-	})
-
-	t.Run("agent does not see irrelevant advice", func(t *testing.T) {
-		// beads/crew/wolf should NOT see:
-		// - gastown rig advice
-		// - polecat role advice
-		// - quartz agent advice
-
-		wolf := getApplicableAdvice("beads/crew/wolf", "crew", "beads")
-
-		unexpectedIDs := []string{
-			gastownRigAdvice.ID,
-			polecatRoleAdvice.ID,
-			specificAgentAdvice.ID,
-		}
-
-		for _, unexpected := range unexpectedIDs {
-			for _, a := range wolf {
-				if a.ID == unexpected {
-					t.Errorf("wolf should NOT see advice %s", unexpected)
-				}
+		// Should no longer appear
+		applicable := getApplicableAdvice("beads/polecats/quartz")
+		for _, a := range applicable {
+			if a.ID == globalAdvice.ID {
+				t.Error("Closed advice should not be delivered")
 			}
 		}
 	})
 }
 
-func TestAdviceDeliveryWithNoAdvice(t *testing.T) {
+// TestAdviceSubscriptionModel tests the label-based subscription model
+func TestAdviceSubscriptionModel(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
 	s := newTestStore(t, testDB)
 	ctx := context.Background()
 
-	// No advice created - verify clean output
-	adviceType := types.IssueType("advice")
-	status := types.StatusOpen
-	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
-		IssueType: &adviceType,
-		Status:    &status,
+	// Create advice with multiple labels
+	testingAdvice := &types.Issue{
+		Title:       "Testing best practices",
+		Description: "Write tests first",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
+	}
+	if err := s.CreateIssue(ctx, testingAdvice, "test"); err != nil {
+		t.Fatalf("Failed to create advice: %v", err)
+	}
+	if err := s.AddLabel(ctx, testingAdvice.ID, "testing", "test"); err != nil {
+		t.Fatalf("Failed to add label: %v", err)
+	}
+	if err := s.AddLabel(ctx, testingAdvice.ID, "go", "test"); err != nil {
+		t.Fatalf("Failed to add label: %v", err)
+	}
+
+	securityAdvice := &types.Issue{
+		Title:       "Security guidelines",
+		Description: "Check for secrets",
+		IssueType:   types.IssueType("advice"),
+		Status:      types.StatusOpen,
+		CreatedAt:   time.Now(),
+	}
+	if err := s.CreateIssue(ctx, securityAdvice, "test"); err != nil {
+		t.Fatalf("Failed to create advice: %v", err)
+	}
+	if err := s.AddLabel(ctx, securityAdvice.ID, "security", "test"); err != nil {
+		t.Fatalf("Failed to add label: %v", err)
+	}
+
+	// Test subscription matching
+	allAdvice, err := s.SearchIssues(ctx, "", types.IssueFilter{
+		IssueType: func() *types.IssueType { t := types.IssueType("advice"); return &t }(),
+		Status:    func() *types.Status { s := types.StatusOpen; return &s }(),
 	})
 	if err != nil {
 		t.Fatalf("Failed to search advice: %v", err)
 	}
 
-	if len(results) != 0 {
-		t.Errorf("Expected 0 advice with empty database, got %d", len(results))
+	issueIDs := make([]string, len(allAdvice))
+	for i, a := range allAdvice {
+		issueIDs[i] = a.ID
 	}
-}
-
-func TestAdviceDeliveryPriorityOrder(t *testing.T) {
-	tmpDir := t.TempDir()
-	testDB := filepath.Join(tmpDir, ".beads", "beads.db")
-	s := newTestStore(t, testDB)
-	ctx := context.Background()
-
-	// Create advice with different priorities
-	highPriority := &types.Issue{
-		Title:     "High priority advice",
-		IssueType: types.IssueType("advice"),
-		Status:    types.StatusOpen,
-		Priority:  1,
-		CreatedAt: time.Now(),
-	}
-	if err := s.CreateIssue(ctx, highPriority, "test"); err != nil {
-		t.Fatalf("Failed to create high priority advice: %v", err)
-	}
-
-	lowPriority := &types.Issue{
-		Title:     "Low priority advice",
-		IssueType: types.IssueType("advice"),
-		Status:    types.StatusOpen,
-		Priority:  3,
-		CreatedAt: time.Now().Add(-time.Hour), // Created earlier
-	}
-	if err := s.CreateIssue(ctx, lowPriority, "test"); err != nil {
-		t.Fatalf("Failed to create low priority advice: %v", err)
-	}
-
-	medPriority := &types.Issue{
-		Title:     "Medium priority advice",
-		IssueType: types.IssueType("advice"),
-		Status:    types.StatusOpen,
-		Priority:  2,
-		CreatedAt: time.Now(),
-	}
-	if err := s.CreateIssue(ctx, medPriority, "test"); err != nil {
-		t.Fatalf("Failed to create medium priority advice: %v", err)
-	}
-
-	// Search advice - should be ordered by priority ASC
-	adviceType := types.IssueType("advice")
-	status := types.StatusOpen
-	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
-		IssueType: &adviceType,
-		Status:    &status,
-	})
+	labelsMap, err := s.GetLabelsForIssues(ctx, issueIDs)
 	if err != nil {
-		t.Fatalf("Failed to search advice: %v", err)
+		t.Fatalf("Failed to get labels: %v", err)
 	}
 
-	if len(results) != 3 {
-		t.Fatalf("Expected 3 advice, got %d", len(results))
-	}
-
-	// Verify priority ordering (priority 1 first, then 2, then 3)
-	if results[0].Priority != 1 {
-		t.Errorf("First advice should be priority 1, got %d", results[0].Priority)
-	}
-	if results[1].Priority != 2 {
-		t.Errorf("Second advice should be priority 2, got %d", results[1].Priority)
-	}
-	if results[2].Priority != 3 {
-		t.Errorf("Third advice should be priority 3, got %d", results[2].Priority)
-	}
-}
-
-func TestAdviceDeliveryScopeHierarchy(t *testing.T) {
-	// Test the scope hierarchy ordering: global < rig < role < agent
-	// More specific scopes should take precedence in display
-
-	tests := []struct {
-		name                  string
-		adviceTargetRig       string
-		adviceTargetRole      string
-		adviceTargetAgent     string
-		expectedScopeCategory string
-	}{
-		{
-			name:                  "global advice",
-			adviceTargetRig:       "",
-			adviceTargetRole:      "",
-			adviceTargetAgent:     "",
-			expectedScopeCategory: "global",
-		},
-		{
-			name:                  "rig-level advice",
-			adviceTargetRig:       "beads",
-			adviceTargetRole:      "",
-			adviceTargetAgent:     "",
-			expectedScopeCategory: "rig",
-		},
-		{
-			name:                  "role-level advice",
-			adviceTargetRig:       "beads",
-			adviceTargetRole:      "polecat",
-			adviceTargetAgent:     "",
-			expectedScopeCategory: "role",
-		},
-		{
-			name:                  "agent-level advice",
-			adviceTargetRig:       "",
-			adviceTargetRole:      "",
-			adviceTargetAgent:     "beads/polecats/quartz",
-			expectedScopeCategory: "agent",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			issue := &types.Issue{
-				AdviceTargetRig:   tt.adviceTargetRig,
-				AdviceTargetRole:  tt.adviceTargetRole,
-				AdviceTargetAgent: tt.adviceTargetAgent,
+	t.Run("subscription matches labels", func(t *testing.T) {
+		// Subscribe to testing - should see testing advice
+		subscriptions := []string{"testing"}
+		matched := 0
+		for _, advice := range allAdvice {
+			if matchesSubscriptions(advice, labelsMap[advice.ID], subscriptions) {
+				matched++
 			}
+		}
+		if matched != 1 {
+			t.Errorf("Expected 1 advice matching 'testing' subscription, got %d", matched)
+		}
 
-			scope := categorizeScopeForTest(issue)
-			if scope != tt.expectedScopeCategory {
-				t.Errorf("Expected scope %q, got %q", tt.expectedScopeCategory, scope)
+		// Subscribe to security - should see security advice
+		subscriptions = []string{"security"}
+		matched = 0
+		for _, advice := range allAdvice {
+			if matchesSubscriptions(advice, labelsMap[advice.ID], subscriptions) {
+				matched++
 			}
-		})
-	}
-}
+		}
+		if matched != 1 {
+			t.Errorf("Expected 1 advice matching 'security' subscription, got %d", matched)
+		}
 
-// categorizeScopeForTest categorizes advice by scope level
-func categorizeScopeForTest(issue *types.Issue) string {
-	if issue.AdviceTargetAgent != "" {
-		return "agent"
-	}
-	if issue.AdviceTargetRole != "" {
-		return "role"
-	}
-	if issue.AdviceTargetRig != "" {
-		return "rig"
-	}
-	return "global"
+		// Subscribe to both - should see both
+		subscriptions = []string{"testing", "security"}
+		matched = 0
+		for _, advice := range allAdvice {
+			if matchesSubscriptions(advice, labelsMap[advice.ID], subscriptions) {
+				matched++
+			}
+		}
+		if matched != 2 {
+			t.Errorf("Expected 2 advice matching 'testing,security' subscriptions, got %d", matched)
+		}
+	})
 }

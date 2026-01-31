@@ -142,12 +142,10 @@ type Issue struct {
 	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Path to SKILL.md
 	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
 
-	// ===== Advice Fields (hierarchical agent advice - gt-epc-advice_schema_storage) =====
-	AdviceTargetRig   string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
-	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
-	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
-
 	// ===== Advice Hook Fields (hq--uaim) =====
+	// NOTE: Legacy targeting fields (AdviceTargetRig, AdviceTargetRole, AdviceTargetAgent)
+	// have been removed. Use labels instead: rig:X, role:Y, agent:Z, global.
+	// Agents auto-subscribe to their context labels. See docs/design/advice-subscription-model-v2.md
 	AdviceHookCommand   string `json:"advice_hook_command,omitempty"`    // Command to execute (e.g., "make test")
 	AdviceHookTrigger   string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
 	AdviceHookTimeout   int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds (default: 30, max: 300)
@@ -249,12 +247,8 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.ClaudeSkillPath)
 	w.str(i.SkillContent)
 
-	// Advice fields
-	w.str(i.AdviceTargetRig)
-	w.str(i.AdviceTargetRole)
-	w.str(i.AdviceTargetAgent)
-
 	// Advice hook fields (hq--uaim)
+	// NOTE: Legacy targeting fields removed - advice uses labels now
 	w.str(i.AdviceHookCommand)
 	w.str(i.AdviceHookTrigger)
 	w.int(i.AdviceHookTimeout)

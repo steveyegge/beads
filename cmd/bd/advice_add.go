@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,34 +19,37 @@ import (
 var adviceAddCmd = &cobra.Command{
 	Use:   "add [advice text]",
 	Short: "Create a new advice bead",
-	Long: `Create a new advice bead targeting agents, roles, or rigs.
+	Long: `Create a new advice bead with labels for agent subscriptions.
 
-Advice is hierarchical guidance that agents receive during priming:
-  - Global advice applies to all agents (no target flags)
-  - Rig advice applies to all agents in a rig (--rig)
-  - Role advice applies to a role type in a rig (--role, requires --rig)
-  - Agent advice applies to a specific agent (--agent)
+Advice is delivered to agents based on label subscriptions:
+  - Global advice: use -l global (default if no targeting)
+  - Rig advice: use -l rig:beads (or --rig=beads shorthand)
+  - Role advice: use -l role:polecat (or --role=polecat shorthand)
+  - Agent advice: use -l agent:beads/polecats/quartz (or --agent shorthand)
 
-More specific advice takes precedence over less specific advice.
+Agents auto-subscribe to their context labels (global, rig:X, role:Y, agent:Z).
 
 Examples:
   # Global advice (applies to all agents)
-  bd advice add "Always check for errors before proceeding"
+  bd advice add "Always check for errors before proceeding" -l global
 
-  # Rig-level advice
+  # Rig-level advice (shorthand)
   bd advice add --rig=beads "Use go test ./... for testing"
 
-  # Role-level advice (role within a rig)
-  bd advice add --rig=beads --role=polecat "Complete work before running gt done"
+  # Role-level advice (shorthand)
+  bd advice add --role=polecat "Complete work before running gt done"
 
-  # Agent-specific advice
+  # Agent-specific advice (shorthand)
   bd advice add --agent=beads/polecats/quartz "Focus on CLI implementation tasks"
 
+  # Using explicit labels
+  bd advice add "Security best practices" -l security -l testing
+
   # With description for more context
-  bd advice add "Check hook status first" -d "When starting a session, always run gt hook to check if work is assigned before announcing yourself"
+  bd advice add "Check hook status first" -d "Always run gt hook before announcing"
 
   # With stop hook (command runs at lifecycle points)
-  bd advice add "Run tests before commit" --rig=beads --role=polecat \
+  bd advice add "Run tests before commit" --role=polecat \
     --hook-command="make test" --hook-trigger=before-commit --hook-on-failure=block
 
   # With session-end hook
@@ -58,9 +62,9 @@ Examples:
 func init() {
 	adviceAddCmd.Flags().StringP("title", "t", "", "Title for the advice (defaults to first line of advice text)")
 	adviceAddCmd.Flags().StringP("description", "d", "", "Detailed description of the advice")
-	adviceAddCmd.Flags().String("rig", "", "Target rig for advice (e.g., 'beads', 'gastown')")
-	adviceAddCmd.Flags().String("role", "", "Target role for advice (e.g., 'polecat', 'crew'). Requires --rig")
-	adviceAddCmd.Flags().String("agent", "", "Target agent ID for advice (e.g., 'beads/polecats/quartz')")
+	adviceAddCmd.Flags().String("rig", "", "Shorthand for -l rig:X (e.g., --rig=beads adds 'rig:beads' label)")
+	adviceAddCmd.Flags().String("role", "", "Shorthand for -l role:X (e.g., --role=polecat adds 'role:polecat' label)")
+	adviceAddCmd.Flags().String("agent", "", "Shorthand for -l agent:X (e.g., --agent=beads/polecats/quartz)")
 	adviceAddCmd.Flags().IntP("priority", "p", 2, "Priority (1=highest, 5=lowest)")
 	adviceAddCmd.Flags().StringArrayP("label", "l", nil, "Labels to add (can be used multiple times)")
 	// Advice hook flags (hq--uaim)
@@ -110,14 +114,29 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		description = adviceText
 	}
 
-	// Validate role requires rig
-	if role != "" && rig == "" {
-		FatalError("--role requires --rig to specify which rig the role belongs to")
+	// Convert targeting flags to labels
+	// --rig=X becomes "rig:X", --role=Y becomes "role:Y", --agent=Z becomes "agent:Z"
+	if agent != "" {
+		labels = append(labels, "agent:"+agent)
+	}
+	if role != "" {
+		labels = append(labels, "role:"+role)
+	}
+	if rig != "" {
+		labels = append(labels, "rig:"+rig)
 	}
 
-	// Validate agent cannot be combined with rig/role
-	if agent != "" && (rig != "" || role != "") {
-		FatalError("--agent cannot be combined with --rig or --role (agent includes rig/role info)")
+	// If no targeting specified, default to global
+	hasTargeting := agent != "" || role != "" || rig != ""
+	hasTargetingLabels := false
+	for _, l := range labels {
+		if l == "global" || strings.HasPrefix(l, "rig:") || strings.HasPrefix(l, "role:") || strings.HasPrefix(l, "agent:") {
+			hasTargetingLabels = true
+			break
+		}
+	}
+	if !hasTargeting && !hasTargetingLabels {
+		labels = append(labels, "global")
 	}
 
 	// Validate hook flags (hq--uaim)
@@ -151,9 +170,7 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 			IssueType:           "advice",
 			Priority:            priority,
 			Labels:              labels,
-			AdviceTargetRig:     rig,
-			AdviceTargetRole:    role,
-			AdviceTargetAgent:   agent,
+			// NOTE: Targeting now via labels (rig:X, role:Y, agent:Z, global)
 			AdviceHookCommand:   hookCommand,
 			AdviceHookTrigger:   hookTrigger,
 			AdviceHookTimeout:   hookTimeout,
@@ -178,7 +195,7 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		if jsonOutput {
 			fmt.Println(string(resp.Data))
 		} else {
-			printAdviceCreated(&issue)
+			printAdviceCreatedWithLabels(&issue, labels)
 		}
 
 		SetLastTouchedID(issue.ID)
@@ -214,9 +231,7 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		Status:              types.StatusOpen,
 		Priority:            priority,
 		IssueType:           types.IssueType("advice"),
-		AdviceTargetRig:     rig,
-		AdviceTargetRole:    role,
-		AdviceTargetAgent:   agent,
+		// NOTE: Targeting now via labels (rig:X, role:Y, agent:Z, global)
 		AdviceHookCommand:   hookCommand,
 		AdviceHookTrigger:   hookTrigger,
 		AdviceHookTimeout:   hookTimeout,
@@ -246,27 +261,21 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 	if jsonOutput {
 		outputJSON(issue)
 	} else {
-		printAdviceCreated(issue)
+		printAdviceCreatedWithLabels(issue, labels)
 	}
 
 	SetLastTouchedID(issue.ID)
 }
 
-// printAdviceCreated prints a human-readable summary of created advice
-func printAdviceCreated(issue *types.Issue) {
+// printAdviceCreatedWithLabels prints a human-readable summary of created advice
+func printAdviceCreatedWithLabels(issue *types.Issue, labels []string) {
 	fmt.Printf("%s Created advice: %s\n", ui.RenderPass("✓"), ui.RenderID(issue.ID))
 	fmt.Printf("  Title: %s\n", issue.Title)
 
-	// Show target scope
-	scope := "Global"
-	if issue.AdviceTargetAgent != "" {
-		scope = fmt.Sprintf("Agent: %s", issue.AdviceTargetAgent)
-	} else if issue.AdviceTargetRole != "" {
-		scope = fmt.Sprintf("Role: %s/%s", issue.AdviceTargetRig, issue.AdviceTargetRole)
-	} else if issue.AdviceTargetRig != "" {
-		scope = fmt.Sprintf("Rig: %s", issue.AdviceTargetRig)
+	// Show labels (which now include targeting)
+	if len(labels) > 0 {
+		fmt.Printf("  Labels: %s\n", strings.Join(labels, ", "))
 	}
-	fmt.Printf("  Scope: %s\n", scope)
 
 	// Show hook info if set (hq--uaim)
 	if issue.AdviceHookCommand != "" {

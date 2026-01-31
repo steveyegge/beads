@@ -133,10 +133,8 @@ type CreateArgs struct {
 	SkillExamples   []string `json:"skill_examples,omitempty"`
 	ClaudeSkillPath string   `json:"claude_skill_path,omitempty"` // DEPRECATED: Use SkillContent
 	SkillContent    string   `json:"skill_content,omitempty"`     // Full SKILL.md content
-	// Advice targeting fields (only valid when IssueType == "advice")
-	AdviceTargetRig   string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
-	AdviceTargetRole  string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
-	AdviceTargetAgent string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
+	// NOTE: Legacy advice targeting fields (AdviceTargetRig, AdviceTargetRole, AdviceTargetAgent)
+	// have been removed. Use labels instead: rig:X, role:Y, agent:Z, global.
 	// Advice hook fields (hq--uaim)
 	AdviceHookCommand   string `json:"advice_hook_command,omitempty"`    // Command to execute
 	AdviceHookTrigger   string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
@@ -197,10 +195,7 @@ type UpdateArgs struct {
 	Waiters []string `json:"waiters,omitempty"`  // Mail addresses to notify when gate clears
 	// Slot fields
 	Holder *string `json:"holder,omitempty"` // Who currently holds the slot (for type=slot beads)
-	// Advice targeting fields (only valid when IssueType == "advice")
-	AdviceTargetRig   *string `json:"advice_target_rig,omitempty"`   // Target rig (e.g., "beads")
-	AdviceTargetRole  *string `json:"advice_target_role,omitempty"`  // Target role type (e.g., "polecat")
-	AdviceTargetAgent *string `json:"advice_target_agent,omitempty"` // Target agent ID (e.g., "beads/polecats/garnet")
+	// NOTE: Legacy advice targeting fields removed - use labels instead
 	// Advice hook fields (hq--uaim)
 	AdviceHookCommand   *string `json:"advice_hook_command,omitempty"`    // Command to execute
 	AdviceHookTrigger   *string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
