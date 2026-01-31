@@ -1,0 +1,44 @@
+# Test bd advice list command
+bd init --prefix test
+
+# Setup: Create advice at different scopes
+bd advice add 'Global advice' -d 'For everyone'
+bd advice add 'Rig advice' --rig beads -d 'For beads rig'
+bd advice add 'Role advice' --rig beads --role polecat -d 'For polecats'
+bd advice add 'Agent advice' --agent beads/polecats/quartz -d 'For quartz only'
+
+# Test 1: List all advice (no filter)
+bd advice list
+stdout 'Global advice'
+stdout 'Rig advice'
+stdout 'Role advice'
+stdout 'Agent advice'
+
+# Test 2: Filter by rig
+bd advice list --rig beads
+stdout 'Rig advice'
+! stdout 'Global advice'
+
+# Test 3: Filter by role
+bd advice list --rig beads --role polecat
+stdout 'Role advice'
+! stdout 'Rig advice'
+
+# Test 4: Filter by agent
+bd advice list --agent beads/polecats/quartz
+stdout 'Agent advice'
+! stdout 'Role advice'
+
+# Test 5: Use --for flag (inheritance chain)
+bd advice list --for beads/polecats/quartz
+stdout 'Global advice'
+stdout 'Rig advice'
+stdout 'Role advice'
+stdout 'Agent advice'
+
+# Test 6: Different agent sees different advice
+bd advice list --for gastown/polecats/alpha
+stdout 'Global advice'
+! stdout 'Rig advice'
+! stdout 'Role advice'
+! stdout 'Agent advice'

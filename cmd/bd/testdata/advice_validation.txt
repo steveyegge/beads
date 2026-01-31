@@ -1,0 +1,34 @@
+# Test bd advice validation and error cases
+bd init --prefix test
+
+# Test 1: Role requires rig
+! bd advice add 'Invalid advice' --role polecat
+stderr 'requires --rig'
+
+# Test 2: Agent cannot combine with rig
+! bd advice add 'Invalid advice' --agent foo/bar/baz --rig foo
+stderr 'cannot'
+
+# Test 3: Agent cannot combine with role (needs rig for role check to trigger)
+! bd advice add 'Invalid advice' --agent foo/bar/baz --rig foo --role polecat
+stderr 'cannot'
+
+# Test 4: Title is required
+! bd advice add
+stderr 'title'
+
+# Test 5: Valid global advice works
+bd advice add 'Valid global' -d 'Description'
+stdout 'Created advice:'
+
+# Test 6: Valid rig advice works
+bd advice add 'Valid rig' --rig testrig -d 'Description'
+stdout 'Created advice:'
+
+# Test 7: Valid role advice works (with rig)
+bd advice add 'Valid role' --rig testrig --role polecat -d 'Description'
+stdout 'Created advice:'
+
+# Test 8: Valid agent advice works
+bd advice add 'Valid agent' --agent testrig/polecats/alpha -d 'Description'
+stdout 'Created advice:'

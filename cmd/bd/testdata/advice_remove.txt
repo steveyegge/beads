@@ -1,0 +1,41 @@
+# Test bd advice remove command
+bd init --prefix test
+
+# Setup: Create test advice and capture IDs
+bd advice add 'Advice to close' -d 'Will be closed'
+cp stdout close_out.txt
+exec sh -c 'grep -oE "test-[a-z0-9]+" close_out.txt > close_id.txt'
+
+bd advice add 'Advice to delete' -d 'Will be deleted'
+cp stdout delete_out.txt
+exec sh -c 'grep -oE "test-[a-z0-9]+" delete_out.txt > delete_id.txt'
+
+bd advice add 'Advice to keep' -d 'Will remain open'
+
+# Test 1: Close advice (default behavior)
+bd advice list
+stdout 'Advice to close'
+exec sh -c 'bd advice remove $(cat close_id.txt) -r "No longer needed"'
+stdout 'Removed advice:'
+
+# Test 2: Closed advice not in default list
+bd advice list
+! stdout 'Advice to close'
+stdout 'Advice to delete'
+stdout 'Advice to keep'
+
+# Test 3: Closed advice appears with --all flag
+bd advice list --all
+stdout 'Advice to close'
+stdout 'Advice to delete'
+stdout 'Advice to keep'
+
+# Test 4: Delete advice permanently
+exec sh -c 'bd advice remove $(cat delete_id.txt) --delete'
+stdout 'Deleted advice:'
+
+# Test 5: Deleted advice not in --all list
+bd advice list --all
+! stdout 'Advice to delete'
+stdout 'Advice to close'
+stdout 'Advice to keep'
