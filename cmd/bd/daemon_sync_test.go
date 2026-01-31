@@ -14,11 +14,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestExportToJSONLWithStore(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -83,6 +90,12 @@ func TestExportToJSONLWithStore(t *testing.T) {
 }
 
 func TestExportToJSONLWithStore_EmptyDatabase(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -179,6 +192,12 @@ func TestImportToJSONLWithStore(t *testing.T) {
 }
 
 func TestExportImportRoundTrip(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -300,6 +319,12 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 // TestExportUpdatesMetadata verifies that export updates last_import_hash metadata (bd-ymj fix)
 func TestExportUpdatesMetadata(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
@@ -373,6 +398,12 @@ func TestExportUpdatesMetadata(t *testing.T) {
 }
 
 func TestUpdateExportMetadataMultiRepo(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath1 := filepath.Join(tmpDir, "repo1", ".beads", "issues.jsonl")
@@ -481,6 +512,12 @@ func TestUpdateExportMetadataMultiRepo(t *testing.T) {
 // TestExportWithMultiRepoConfigUpdatesAllMetadata verifies that export with multi-repo
 // config correctly updates metadata for ALL JSONL files with proper keySuffix (bd-ar2.8)
 func TestExportWithMultiRepoConfigUpdatesAllMetadata(t *testing.T) {
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
+
 	tmpDir := t.TempDir()
 	primaryDir := filepath.Join(tmpDir, "primary")
 	additionalDir := filepath.Join(tmpDir, "additional")
@@ -712,10 +749,16 @@ func TestUpdateExportMetadataInvalidKeySuffix(t *testing.T) {
 // 4. But sync branch worktree JSONL showed status:"open" (bug)
 // 5. Other clones would not see the deletion
 func TestExportToJSONLWithStore_IncludesTombstones(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates global config state for isolation.
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, ".beads", "beads.db")
 	jsonlPath := filepath.Join(tmpDir, ".beads", "issues.jsonl")
+
+	// Isolate global config (other tests may set sync.mode=dolt-native, which disables JSONL export).
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("config.Initialize() returned error: %v", err)
+	}
 
 	// Create storage
 	store, err := sqlite.New(context.Background(), dbPath)
