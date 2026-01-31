@@ -459,3 +459,324 @@ func (s *Server) handleSpecLinkAuto(req *Request) Response {
 	data, _ := json.Marshal(result)
 	return Response{Success: true, Data: data}
 }
+
+func (s *Server) handleSpecCandidates(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecCandidatesArgs
+	if len(req.Args) > 0 {
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("invalid spec candidates args: %v", err)}
+		}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	entries, err := store.ListSpecRegistryWithCounts(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+
+	now := time.Now()
+	candidates := make([]SpecCandidateEntry, 0)
+
+	for _, entry := range entries {
+		// Skip missing, complete, or archived specs
+		if entry.Spec.MissingAt != nil {
+			continue
+		}
+		if entry.Spec.Lifecycle == "complete" || entry.Spec.Lifecycle == "archived" {
+			continue
+		}
+
+		// Get issues linked to this spec
+		specID := entry.Spec.SpecID
+		filter := types.IssueFilter{SpecID: &specID}
+		issues, err := s.storage.SearchIssues(ctx, "", filter)
+		if err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("search issues for spec %s: %v", specID, err)}
+		}
+
+		// Count open vs closed
+		openCount := 0
+		closedCount := 0
+		for _, issue := range issues {
+			if issue.Status == types.StatusClosed || issue.Status == types.StatusTombstone {
+				closedCount++
+			} else {
+				openCount++
+			}
+		}
+
+		// Calculate score
+		score := 0.0
+		reasons := make([]string, 0)
+
+		// +0.4 - All linked issues are closed
+		if len(issues) > 0 && openCount == 0 {
+			score += 0.4
+			reasons = append(reasons, fmt.Sprintf("All %d issues closed", closedCount))
+		}
+
+		// +0.3 - Spec unchanged for 30+ days
+		daysOld := 0
+		if !entry.Spec.Mtime.IsZero() {
+			daysOld = int(now.Sub(entry.Spec.Mtime).Hours() / 24)
+			if daysOld >= 30 {
+				score += 0.3
+				reasons = append(reasons, fmt.Sprintf("%d days old", daysOld))
+			}
+		}
+
+		// +0.2 - Has at least one linked issue
+		if len(issues) > 0 {
+			score += 0.2
+		}
+
+		// +0.1 - Title suggests completion
+		titleLower := strings.ToLower(entry.Spec.Title)
+		if strings.Contains(titleLower, "complete") ||
+			strings.Contains(titleLower, "done") ||
+			strings.Contains(titleLower, "finished") {
+			score += 0.1
+			reasons = append(reasons, "Title suggests completion")
+		}
+
+		// Only include if score >= 0.6
+		if score >= 0.6 {
+			action := "SUGGEST"
+			if score >= 0.8 {
+				action = "MARK"
+			}
+
+			reason := strings.Join(reasons, ", ")
+			if reason == "" {
+				reason = "No issues linked"
+				if daysOld > 0 {
+					reason = fmt.Sprintf("No issues linked, %d days old", daysOld)
+				}
+			}
+
+			candidates = append(candidates, SpecCandidateEntry{
+				SpecID:      entry.Spec.SpecID,
+				Title:       entry.Spec.Title,
+				Score:       score,
+				Action:      action,
+				Reason:      reason,
+				OpenIssues:  openCount,
+				ClosedCount: closedCount,
+				DaysOld:     daysOld,
+			})
+		}
+	}
+
+	// Sort by score descending
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Score > candidates[j].Score
+	})
+
+	result := SpecCandidatesResult{
+		Candidates: candidates,
+	}
+
+	// Auto-mark if requested
+	if args.Auto {
+		for i := range result.Candidates {
+			c := &result.Candidates[i]
+			if c.Score >= 0.8 {
+				lifecycle := "complete"
+				completedAt := time.Now().UTC().Truncate(time.Second)
+				update := spec.SpecRegistryUpdate{
+					Lifecycle:   &lifecycle,
+					CompletedAt: &completedAt,
+				}
+				if err := store.UpdateSpecRegistry(ctx, c.SpecID, update); err != nil {
+					c.Error = fmt.Sprintf("failed to mark: %v", err)
+				} else {
+					c.Marked = true
+					result.Marked++
+				}
+			}
+		}
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+func (s *Server) handleSpecAudit(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecAuditArgs
+	if len(req.Args) > 0 {
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return Response{Success: false, Error: fmt.Sprintf("invalid spec audit args: %v", err)}
+		}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	entries, err := store.ListSpecRegistry(ctx)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list spec registry: %v", err)}
+	}
+
+	// Get all issues to count open/closed per spec
+	allIssues, err := s.storage.SearchIssues(ctx, "", types.IssueFilter{
+		IncludeTombstones: false,
+	})
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("list issues: %v", err)}
+	}
+
+	// Build issue counts per spec
+	openCounts := make(map[string]int)
+	closedCounts := make(map[string]int)
+	for _, issue := range allIssues {
+		if issue.SpecID == "" {
+			continue
+		}
+		if issue.Status == types.StatusClosed {
+			closedCounts[issue.SpecID]++
+		} else {
+			openCounts[issue.SpecID]++
+		}
+	}
+
+	now := time.Now()
+	staleDays := 30
+
+	result := SpecAuditResult{}
+
+	for _, entry := range entries {
+		if !args.IncludeMissing && entry.MissingAt != nil {
+			continue
+		}
+		if args.Prefix != "" && !strings.HasPrefix(entry.SpecID, args.Prefix) {
+			continue
+		}
+
+		openCount := openCounts[entry.SpecID]
+		closedCount := closedCounts[entry.SpecID]
+		totalCount := openCount + closedCount
+
+		// Calculate completion percentage
+		var completion float64
+		if totalCount > 0 {
+			completion = float64(closedCount) / float64(totalCount) * 100
+		}
+
+		// Determine status
+		var status string
+		isStale := false
+
+		// Check for stale: not modified in 30+ days
+		lastMod := entry.Mtime
+		if !entry.LastScannedAt.IsZero() && entry.LastScannedAt.After(lastMod) {
+			lastMod = entry.LastScannedAt
+		}
+		if now.Sub(lastMod) > time.Duration(staleDays)*24*time.Hour {
+			isStale = true
+		}
+
+		// Determine status based on lifecycle or issue counts
+		if entry.Lifecycle == "complete" || entry.Lifecycle == "archived" {
+			status = "complete"
+		} else if isStale && totalCount > 0 && openCount > 0 {
+			status = "stale"
+		} else if totalCount == 0 {
+			status = "pending"
+		} else if openCount > 0 {
+			status = "in-progress"
+		} else {
+			status = "complete"
+		}
+
+		auditEntry := SpecAuditEntry{
+			SpecID:       entry.SpecID,
+			Title:        entry.Title,
+			Path:         entry.Path,
+			Lifecycle:    entry.Lifecycle,
+			OpenIssues:   openCount,
+			ClosedIssues: closedCount,
+			TotalIssues:  totalCount,
+			Completion:   completion,
+			Status:       status,
+			Stale:        isStale,
+		}
+		if !lastMod.IsZero() {
+			auditEntry.LastModified = lastMod.Format(time.RFC3339)
+		}
+
+		result.Entries = append(result.Entries, auditEntry)
+
+		// Update summary
+		result.Summary.TotalSpecs++
+		switch status {
+		case "pending":
+			result.Summary.PendingSpecs++
+		case "in-progress":
+			result.Summary.InProgressSpecs++
+		case "complete":
+			result.Summary.CompleteSpecs++
+		case "stale":
+			result.Summary.StaleSpecs++
+		}
+	}
+
+	data, _ := json.Marshal(result)
+	return Response{Success: true, Data: data}
+}
+
+func (s *Server) handleSpecMarkDone(req *Request) Response {
+	ctx := s.reqCtx(req)
+
+	var args SpecMarkDoneArgs
+	if err := json.Unmarshal(req.Args, &args); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("invalid spec mark-done args: %v", err)}
+	}
+	if strings.TrimSpace(args.SpecID) == "" {
+		return Response{Success: false, Error: "spec_id is required"}
+	}
+
+	store, err := s.specStore()
+	if err != nil {
+		return Response{Success: false, Error: err.Error()}
+	}
+
+	// Verify spec exists
+	entry, err := store.GetSpecRegistry(ctx, args.SpecID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("get spec: %v", err)}
+	}
+	if entry == nil {
+		return Response{Success: false, Error: fmt.Sprintf("spec not found: %s", args.SpecID)}
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	lifecycle := "complete"
+
+	update := spec.SpecRegistryUpdate{
+		Lifecycle:   &lifecycle,
+		CompletedAt: &now,
+	}
+
+	if err := store.UpdateSpecRegistry(ctx, args.SpecID, update); err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("update spec registry: %v", err)}
+	}
+
+	// Return updated entry
+	entry, err = store.GetSpecRegistry(ctx, args.SpecID)
+	if err != nil {
+		return Response{Success: false, Error: fmt.Sprintf("get spec: %v", err)}
+	}
+
+	data, _ := json.Marshal(entry)
+	return Response{Success: true, Data: data}
+}

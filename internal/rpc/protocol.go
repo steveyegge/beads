@@ -40,7 +40,10 @@ const (
 	OpSpecCompact  = "spec_compact"
 	OpSpecSuggest  = "spec_suggest"
 	OpSpecLinkAuto = "spec_link_auto"
-	OpSpecRisk     = "spec_risk"
+	OpSpecRisk       = "spec_risk"
+	OpSpecAudit      = "spec_audit"
+	OpSpecMarkDone   = "spec_mark_done"
+	OpSpecCandidates = "spec_candidates"
 
 	OpCompact             = "compact"
 	OpCompactStats        = "compact_stats"
@@ -457,6 +460,72 @@ type SpecRiskArgs struct {
 	Since      string `json:"since,omitempty"`       // RFC3339 timestamp
 	MinChanges int    `json:"min_changes,omitempty"` // Minimum change count to include
 	Limit      int    `json:"limit,omitempty"`       // Max results (0 = no limit)
+}
+
+// SpecAuditArgs represents arguments for spec audit operation.
+type SpecAuditArgs struct {
+	Prefix         string `json:"prefix,omitempty"`          // Filter by spec_id prefix
+	IncludeMissing bool   `json:"include_missing,omitempty"` // Include missing specs
+}
+
+// SpecAuditEntry represents a spec with completion status.
+type SpecAuditEntry struct {
+	SpecID       string  `json:"spec_id"`
+	Title        string  `json:"title"`
+	Path         string  `json:"path"`
+	Lifecycle    string  `json:"lifecycle"`
+	OpenIssues   int     `json:"open_issues"`
+	ClosedIssues int     `json:"closed_issues"`
+	TotalIssues  int     `json:"total_issues"`
+	Completion   float64 `json:"completion"`  // 0-100 percentage
+	Status       string  `json:"status"`      // pending, in-progress, complete, stale
+	LastModified string  `json:"last_modified,omitempty"`
+	Stale        bool    `json:"stale"`
+}
+
+// SpecAuditResult contains the audit results.
+type SpecAuditResult struct {
+	Entries []SpecAuditEntry `json:"entries"`
+	Summary SpecAuditSummary `json:"summary"`
+}
+
+// SpecAuditSummary summarizes the audit.
+type SpecAuditSummary struct {
+	TotalSpecs     int `json:"total_specs"`
+	PendingSpecs   int `json:"pending_specs"`
+	InProgressSpecs int `json:"in_progress_specs"`
+	CompleteSpecs  int `json:"complete_specs"`
+	StaleSpecs     int `json:"stale_specs"`
+}
+
+// SpecMarkDoneArgs represents arguments for marking a spec as done.
+type SpecMarkDoneArgs struct {
+	SpecID string `json:"spec_id"` // Spec ID to mark as done
+}
+
+// SpecCandidatesArgs represents arguments for spec candidates operation.
+type SpecCandidatesArgs struct {
+	Auto bool `json:"auto,omitempty"` // Auto-mark specs with score >= 0.8
+}
+
+// SpecCandidateEntry represents a single candidate spec.
+type SpecCandidateEntry struct {
+	SpecID      string  `json:"spec_id"`
+	Title       string  `json:"title"`
+	Score       float64 `json:"score"`
+	Action      string  `json:"action"`      // MARK if >= 0.8, SUGGEST if >= 0.6
+	Reason      string  `json:"reason"`      // Human-readable explanation
+	OpenIssues  int     `json:"open_issues"` // Count of open issues
+	ClosedCount int     `json:"closed_count"`
+	DaysOld     int     `json:"days_old"`
+	Marked      bool    `json:"marked,omitempty"` // True if auto-marked
+	Error       string  `json:"error,omitempty"`  // Error if marking failed
+}
+
+// SpecCandidatesResult represents the result of spec candidates operation.
+type SpecCandidatesResult struct {
+	Candidates []SpecCandidateEntry `json:"candidates"`
+	Marked     int                  `json:"marked,omitempty"` // Count of auto-marked specs
 }
 
 // DepAddArgs represents arguments for adding a dependency

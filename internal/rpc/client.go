@@ -435,6 +435,21 @@ func (c *Client) SpecRisk(args *SpecRiskArgs) (*Response, error) {
 	return c.Execute(OpSpecRisk, args)
 }
 
+// SpecAudit returns audit results for all specs via the daemon.
+func (c *Client) SpecAudit(args *SpecAuditArgs) (*Response, error) {
+	return c.Execute(OpSpecAudit, args)
+}
+
+// SpecMarkDone marks a spec as complete via the daemon.
+func (c *Client) SpecMarkDone(args *SpecMarkDoneArgs) (*Response, error) {
+	return c.Execute(OpSpecMarkDone, args)
+}
+
+// SpecCandidates finds specs that may be ready for completion via the daemon.
+func (c *Client) SpecCandidates(args *SpecCandidatesArgs) (*Response, error) {
+	return c.Execute(OpSpecCandidates, args)
+}
+
 // Export exports the database to JSONL format
 func (c *Client) Export(args *ExportArgs) (*Response, error) {
 	return c.Execute(OpExport, args)

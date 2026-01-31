@@ -224,6 +224,12 @@ func (s *Server) handleRequest(req *Request) Response {
 		resp = s.handleSpecLinkAuto(req)
 	case OpSpecRisk:
 		resp = s.handleSpecRisk(req)
+	case OpSpecAudit:
+		resp = s.handleSpecAudit(req)
+	case OpSpecMarkDone:
+		resp = s.handleSpecMarkDone(req)
+	case OpSpecCandidates:
+		resp = s.handleSpecCandidates(req)
 
 	case OpCompact:
 		resp = s.handleCompact(req)

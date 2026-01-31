@@ -245,6 +245,14 @@ create, update, show, or close operation).`,
 				if compactSkills {
 					compactSkillsForClosedIssues(ctx, closedIssues)
 				}
+
+				// Check for spec completion suggestions
+				for _, issue := range closedIssues {
+					if issue.SpecID == "" {
+						continue
+					}
+					suggestSpecCompletion(ctx, issue.SpecID)
+				}
 			}
 
 			if jsonOutput && len(closedIssues) > 0 {
@@ -391,6 +399,14 @@ create, update, show, or close operation).`,
 					compactSkillsForClosedIssues(ctx, closedIssues)
 				}
 			}
+
+			// Check for spec completion suggestions
+			for _, issue := range closedIssues {
+				if issue.SpecID == "" {
+					continue
+				}
+				suggestSpecCompletion(ctx, issue.SpecID)
+			}
 		}
 
 		// Handle --continue flag
@@ -433,6 +449,31 @@ func init() {
 	closeCmd.Flags().String("session", "", "Claude Code session ID (or set CLAUDE_SESSION_ID env var)")
 	closeCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(closeCmd)
+}
+
+// suggestSpecCompletion checks if all issues linked to a spec are now closed.
+// If so, prints a suggestion to run `bd spec mark-done <spec_id>`.
+// Only prints suggestion if not in --json mode.
+func suggestSpecCompletion(ctx context.Context, specID string) {
+	if specID == "" || jsonOutput {
+		return
+	}
+
+	// Query for any remaining open issues with this spec_id
+	openIssues, err := store.SearchIssues(ctx, "", types.IssueFilter{
+		SpecID:        &specID,
+		ExcludeStatus: []types.Status{types.StatusClosed, types.StatusTombstone},
+	})
+	if err != nil {
+		// Silently ignore errors - this is just a suggestion
+		return
+	}
+
+	// If no open issues remain, suggest marking the spec as done
+	if len(openIssues) == 0 {
+		fmt.Printf("\n%s All issues for spec %s are now closed.\n", ui.RenderPass("●"), specID)
+		fmt.Printf("  Run: bd spec mark-done %s\n", specID)
+	}
 }
 
 // compactSkillsForClosedIssues archives skills that are no longer used by any open issues.

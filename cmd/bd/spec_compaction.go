@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
@@ -36,6 +39,7 @@ type specCompactionFactors struct {
 
 var (
 	specCandidatesThreshold  float64
+	specCandidatesAutoMark   bool
 	specAutoCompactThreshold float64
 	specAutoCompactExecute   bool
 	specAutoCompactDryRun    bool
@@ -43,33 +47,17 @@ var (
 
 var specCandidatesCmd = &cobra.Command{
 	Use:   "candidates",
-	Short: "List specs eligible for auto-compaction",
-	Run: func(cmd *cobra.Command, _ []string) {
-		if err := ensureDatabaseFresh(rootCtx); err != nil {
-			FatalErrorRespectJSON("%v", err)
-		}
-		specStore, err := getSpecRegistryStore()
-		if err != nil {
-			FatalErrorRespectJSON("%v", err)
-		}
-		candidates, err := buildSpecCompactionCandidates(rootCtx, store, specStore)
-		if err != nil {
-			FatalErrorRespectJSON("spec candidates failed: %v", err)
-		}
+	Short: "Find specs that may be ready to mark as complete",
+	Long: `Analyze specs and suggest which ones are ready to be marked complete.
 
-		threshold := specCandidatesThreshold
-		if threshold < 0 {
-			threshold = 0.7
-		}
-		filtered := filterSpecCompactionCandidates(candidates, threshold)
+Scoring algorithm:
+  +0.4 - All linked issues are closed
+  +0.3 - Spec unchanged for 30+ days
+  +0.2 - Has at least one linked issue
+  +0.1 - Title suggests completion (contains "complete", "done", "finished")
 
-		if jsonOutput {
-			outputJSON(filtered)
-			return
-		}
-
-		renderSpecCompactionCandidates(filtered, threshold)
-	},
+Specs with score >= 0.6 are shown as candidates.`,
+	Run: runSpecCompletionCandidates,
 }
 
 var specAutoCompactCmd = &cobra.Command{
@@ -139,13 +127,209 @@ var specAutoCompactCmd = &cobra.Command{
 }
 
 func init() {
-	specCandidatesCmd.Flags().Float64Var(&specCandidatesThreshold, "threshold", 0.7, "Minimum score to include in results")
+	specCandidatesCmd.Flags().BoolVar(&specCandidatesAutoMark, "auto", false, "Auto-mark specs with score >= 0.8")
 	specAutoCompactCmd.Flags().Float64Var(&specAutoCompactThreshold, "threshold", 0.8, "Minimum score required for auto-compaction")
 	specAutoCompactCmd.Flags().BoolVar(&specAutoCompactExecute, "execute", false, "Apply compaction (default: dry-run)")
 	specAutoCompactCmd.Flags().BoolVar(&specAutoCompactDryRun, "dry-run", false, "Preview compactions without modifying specs")
 
 	specCmd.AddCommand(specCandidatesCmd)
 	specCmd.AddCommand(specAutoCompactCmd)
+}
+
+func runSpecCompletionCandidates(cmd *cobra.Command, _ []string) {
+	autoMark := specCandidatesAutoMark
+
+	if daemonClient != nil {
+		resp, err := daemonClient.SpecCandidates(&rpc.SpecCandidatesArgs{
+			Auto: autoMark,
+		})
+		if err != nil {
+			FatalErrorRespectJSON("spec candidates failed: %v", err)
+		}
+		var result rpc.SpecCandidatesResult
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			FatalErrorRespectJSON("invalid spec candidates response: %v", err)
+		}
+		renderSpecCompletionCandidates(result)
+		return
+	}
+
+	if err := ensureDatabaseFresh(rootCtx); err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	specStore, err := getSpecRegistryStore()
+	if err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	entries, err := specStore.ListSpecRegistryWithCounts(rootCtx)
+	if err != nil {
+		FatalErrorRespectJSON("list spec registry: %v", err)
+	}
+
+	now := time.Now()
+	candidates := make([]rpc.SpecCandidateEntry, 0)
+
+	for _, entry := range entries {
+		// Skip missing, complete, or archived specs
+		if entry.Spec.MissingAt != nil {
+			continue
+		}
+		if entry.Spec.Lifecycle == "complete" || entry.Spec.Lifecycle == "archived" {
+			continue
+		}
+
+		// Get issues linked to this spec
+		specID := entry.Spec.SpecID
+		filter := types.IssueFilter{SpecID: &specID}
+		issues, err := store.SearchIssues(rootCtx, "", filter)
+		if err != nil {
+			FatalErrorRespectJSON("search issues for spec %s: %v", specID, err)
+		}
+
+		// Count open vs closed
+		openCount := 0
+		closedCount := 0
+		for _, issue := range issues {
+			if issue.Status == types.StatusClosed || issue.Status == types.StatusTombstone {
+				closedCount++
+			} else {
+				openCount++
+			}
+		}
+
+		// Calculate score
+		score := 0.0
+		reasons := make([]string, 0)
+
+		// +0.4 - All linked issues are closed
+		if len(issues) > 0 && openCount == 0 {
+			score += 0.4
+			reasons = append(reasons, fmt.Sprintf("All %d issues closed", closedCount))
+		}
+
+		// +0.3 - Spec unchanged for 30+ days
+		daysOld := 0
+		if !entry.Spec.Mtime.IsZero() {
+			daysOld = int(now.Sub(entry.Spec.Mtime).Hours() / 24)
+			if daysOld >= 30 {
+				score += 0.3
+				reasons = append(reasons, fmt.Sprintf("%d days old", daysOld))
+			}
+		}
+
+		// +0.2 - Has at least one linked issue
+		if len(issues) > 0 {
+			score += 0.2
+		}
+
+		// +0.1 - Title suggests completion
+		titleLower := strings.ToLower(entry.Spec.Title)
+		if strings.Contains(titleLower, "complete") ||
+			strings.Contains(titleLower, "done") ||
+			strings.Contains(titleLower, "finished") {
+			score += 0.1
+			reasons = append(reasons, "Title suggests completion")
+		}
+
+		// Only include if score >= 0.6
+		if score >= 0.6 {
+			action := "SUGGEST"
+			if score >= 0.8 {
+				action = "MARK"
+			}
+
+			reason := strings.Join(reasons, ", ")
+			if reason == "" {
+				reason = "No issues linked"
+				if daysOld > 0 {
+					reason = fmt.Sprintf("No issues linked, %d days old", daysOld)
+				}
+			}
+
+			candidates = append(candidates, rpc.SpecCandidateEntry{
+				SpecID:      entry.Spec.SpecID,
+				Title:       entry.Spec.Title,
+				Score:       score,
+				Action:      action,
+				Reason:      reason,
+				OpenIssues:  openCount,
+				ClosedCount: closedCount,
+				DaysOld:     daysOld,
+			})
+		}
+	}
+
+	// Sort by score descending
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Score > candidates[j].Score
+	})
+
+	result := rpc.SpecCandidatesResult{
+		Candidates: candidates,
+	}
+
+	// Auto-mark if requested
+	if autoMark {
+		for i := range result.Candidates {
+			c := &result.Candidates[i]
+			if c.Score >= 0.8 {
+				lifecycle := "complete"
+				completedAt := time.Now().UTC().Truncate(time.Second)
+				update := spec.SpecRegistryUpdate{
+					Lifecycle:   &lifecycle,
+					CompletedAt: &completedAt,
+				}
+				if err := specStore.UpdateSpecRegistry(rootCtx, c.SpecID, update); err != nil {
+					c.Error = fmt.Sprintf("failed to mark: %v", err)
+				} else {
+					c.Marked = true
+					result.Marked++
+				}
+			}
+		}
+		markDirtyAndScheduleFlush()
+	}
+
+	renderSpecCompletionCandidates(result)
+}
+
+func renderSpecCompletionCandidates(result rpc.SpecCandidatesResult) {
+	if jsonOutput {
+		outputJSON(result)
+		return
+	}
+
+	if len(result.Candidates) == 0 {
+		fmt.Println("No spec completion candidates found.")
+		return
+	}
+
+	fmt.Println("Spec Completion Candidates")
+	fmt.Println()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SPEC PATH\tSCORE\tACTION\tREASON")
+
+	for _, c := range result.Candidates {
+		scoreStr := fmt.Sprintf("%.2f", c.Score)
+		action := c.Action
+		if c.Marked {
+			action = ui.RenderPass("MARKED")
+		} else if c.Error != "" {
+			action = ui.RenderFail("ERROR")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.SpecID, scoreStr, action, c.Reason)
+	}
+	_ = w.Flush()
+
+	fmt.Println()
+	if result.Marked > 0 {
+		fmt.Printf("%s Marked %d specs as complete\n", ui.RenderPass("*"), result.Marked)
+	} else {
+		fmt.Println("Run 'bd spec mark-done <path>' to mark as complete")
+	}
 }
 
 func filterSpecCompactionCandidates(candidates []specCompactionCandidate, threshold float64) []specCompactionCandidate {

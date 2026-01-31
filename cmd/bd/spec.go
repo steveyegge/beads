@@ -341,6 +341,229 @@ var specCoverageCmd = &cobra.Command{
 	},
 }
 
+var specAuditCmd = &cobra.Command{
+	Use:   "audit",
+	Short: "Audit all specs with completion status",
+	Long: `Show all specs with linked issues and completion percentage.
+
+Output columns:
+  - Status icon: ○ pending, ◐ in-progress, ✓ complete, ❄ stale
+  - Spec path
+  - Issues: closed/total
+  - Completion percentage`,
+	Run: runSpecAudit,
+}
+
+func runSpecAudit(cmd *cobra.Command, args []string) {
+	prefix, _ := cmd.Flags().GetString("prefix")
+	includeMissing, _ := cmd.Flags().GetBool("include-missing")
+
+	if daemonClient != nil {
+		resp, err := daemonClient.SpecAudit(&rpc.SpecAuditArgs{
+			Prefix:         prefix,
+			IncludeMissing: includeMissing,
+		})
+		if err != nil {
+			FatalErrorRespectJSON("spec audit failed: %v", err)
+		}
+		var result rpc.SpecAuditResult
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			FatalErrorRespectJSON("invalid spec audit response: %v", err)
+		}
+		renderSpecAudit(result)
+		return
+	}
+
+	if err := ensureDatabaseFresh(rootCtx); err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	specStore, err := getSpecRegistryStore()
+	if err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	entries, err := specStore.ListSpecRegistry(rootCtx)
+	if err != nil {
+		FatalErrorRespectJSON("list spec registry: %v", err)
+	}
+
+	// Get all issues to count open/closed per spec
+	allIssues, err := store.SearchIssues(rootCtx, "", types.IssueFilter{
+		IncludeTombstones: false,
+	})
+	if err != nil {
+		FatalErrorRespectJSON("list issues: %v", err)
+	}
+
+	// Build issue counts per spec
+	openCounts := make(map[string]int)
+	closedCounts := make(map[string]int)
+	for _, issue := range allIssues {
+		if issue.SpecID == "" {
+			continue
+		}
+		if issue.Status == types.StatusClosed {
+			closedCounts[issue.SpecID]++
+		} else {
+			openCounts[issue.SpecID]++
+		}
+	}
+
+	now := time.Now()
+	staleDays := 30
+
+	result := rpc.SpecAuditResult{}
+
+	for _, entry := range entries {
+		if !includeMissing && entry.MissingAt != nil {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(entry.SpecID, prefix) {
+			continue
+		}
+
+		openCount := openCounts[entry.SpecID]
+		closedCount := closedCounts[entry.SpecID]
+		totalCount := openCount + closedCount
+
+		// Calculate completion percentage
+		var completion float64
+		if totalCount > 0 {
+			completion = float64(closedCount) / float64(totalCount) * 100
+		}
+
+		// Determine status
+		var status string
+		isStale := false
+
+		// Check for stale: not modified in 30+ days
+		lastMod := entry.Mtime
+		if !entry.LastScannedAt.IsZero() && entry.LastScannedAt.After(lastMod) {
+			lastMod = entry.LastScannedAt
+		}
+		if now.Sub(lastMod) > time.Duration(staleDays)*24*time.Hour {
+			isStale = true
+		}
+
+		// Determine status based on lifecycle or issue counts
+		if entry.Lifecycle == "complete" || entry.Lifecycle == "archived" {
+			status = "complete"
+		} else if isStale && totalCount > 0 && openCount > 0 {
+			status = "stale"
+		} else if totalCount == 0 {
+			status = "pending"
+		} else if openCount > 0 {
+			status = "in-progress"
+		} else {
+			status = "complete"
+		}
+
+		auditEntry := rpc.SpecAuditEntry{
+			SpecID:       entry.SpecID,
+			Title:        entry.Title,
+			Path:         entry.Path,
+			Lifecycle:    entry.Lifecycle,
+			OpenIssues:   openCount,
+			ClosedIssues: closedCount,
+			TotalIssues:  totalCount,
+			Completion:   completion,
+			Status:       status,
+			Stale:        isStale,
+		}
+		if !lastMod.IsZero() {
+			auditEntry.LastModified = lastMod.Format(time.RFC3339)
+		}
+
+		result.Entries = append(result.Entries, auditEntry)
+
+		// Update summary
+		result.Summary.TotalSpecs++
+		switch status {
+		case "pending":
+			result.Summary.PendingSpecs++
+		case "in-progress":
+			result.Summary.InProgressSpecs++
+		case "complete":
+			result.Summary.CompleteSpecs++
+		case "stale":
+			result.Summary.StaleSpecs++
+		}
+	}
+
+	renderSpecAudit(result)
+}
+
+var specMarkDoneCmd = &cobra.Command{
+	Use:   "mark-done <spec_id>",
+	Short: "Mark a spec as complete",
+	Args:  cobra.ExactArgs(1),
+	Run:   runSpecMarkDone,
+}
+
+func runSpecMarkDone(cmd *cobra.Command, args []string) {
+	specID := args[0]
+
+	if daemonClient != nil {
+		resp, err := daemonClient.SpecMarkDone(&rpc.SpecMarkDoneArgs{
+			SpecID: specID,
+		})
+		if err != nil {
+			FatalErrorRespectJSON("spec mark-done failed: %v", err)
+		}
+		var entry spec.SpecRegistryEntry
+		if err := json.Unmarshal(resp.Data, &entry); err != nil {
+			FatalErrorRespectJSON("invalid spec mark-done response: %v", err)
+		}
+		if jsonOutput {
+			outputJSON(entry)
+			return
+		}
+		fmt.Printf("%s Marked spec as complete: %s\n", ui.RenderPass("✓"), entry.SpecID)
+		return
+	}
+
+	if err := ensureDatabaseFresh(rootCtx); err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	specStore, err := getSpecRegistryStore()
+	if err != nil {
+		FatalErrorRespectJSON("%v", err)
+	}
+
+	// Verify spec exists
+	entry, err := specStore.GetSpecRegistry(rootCtx, specID)
+	if err != nil {
+		FatalErrorRespectJSON("get spec: %v", err)
+	}
+	if entry == nil {
+		FatalErrorRespectJSON("spec not found: %s", specID)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	lifecycle := "complete"
+
+	update := spec.SpecRegistryUpdate{
+		Lifecycle:   &lifecycle,
+		CompletedAt: &now,
+	}
+
+	if err := specStore.UpdateSpecRegistry(rootCtx, specID, update); err != nil {
+		FatalErrorRespectJSON("update spec registry: %v", err)
+	}
+
+	markDirtyAndScheduleFlush()
+
+	if jsonOutput {
+		entry, _ = specStore.GetSpecRegistry(rootCtx, specID)
+		outputJSON(entry)
+		return
+	}
+
+	fmt.Printf("%s Marked spec as complete: %s\n", ui.RenderPass("✓"), specID)
+}
+
 func init() {
 	specScanCmd.Flags().String("path", "", "Directory to scan (default: specs/)")
 	specListCmd.Flags().String("prefix", "", "Filter by spec ID prefix")
@@ -350,12 +573,16 @@ func init() {
 	specCompactCmd.Flags().String("summary", "", "Summary text for the spec")
 	specCompactCmd.Flags().String("summary-file", "", "Read summary text from a file")
 	specCompactCmd.Flags().String("lifecycle", "archived", "Lifecycle state to set (default: archived)")
+	specAuditCmd.Flags().String("prefix", "", "Filter by spec ID prefix")
+	specAuditCmd.Flags().Bool("include-missing", false, "Include missing specs")
 
 	specCmd.AddCommand(specScanCmd)
 	specCmd.AddCommand(specListCmd)
 	specCmd.AddCommand(specShowCmd)
 	specCmd.AddCommand(specCoverageCmd)
 	specCmd.AddCommand(specCompactCmd)
+	specCmd.AddCommand(specAuditCmd)
+	specCmd.AddCommand(specMarkDoneCmd)
 	rootCmd.AddCommand(specCmd)
 }
 
@@ -460,4 +687,52 @@ func renderSpecCoverage(result rpc.SpecCoverageResult) {
 	fmt.Printf("Without beads: %d\n", result.WithoutBeads)
 	fmt.Printf("Missing specs: %d\n", result.Missing)
 	fmt.Printf("With spec changes: %d\n", result.WithChangedBeads)
+}
+
+func renderSpecAudit(result rpc.SpecAuditResult) {
+	if jsonOutput {
+		outputJSON(result)
+		return
+	}
+
+	if len(result.Entries) == 0 {
+		fmt.Println("No specs found.")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "STATUS\tSPEC PATH\tISSUES\tCOMPLETION")
+
+	for _, e := range result.Entries {
+		// Status icon based on status
+		var statusIcon string
+		switch e.Status {
+		case "pending":
+			statusIcon = ui.RenderMuted("○") // pending
+		case "in-progress":
+			statusIcon = ui.RenderWarn("◐") // in-progress
+		case "complete":
+			statusIcon = ui.RenderPass("✓") // complete
+		case "stale":
+			statusIcon = ui.RenderMuted("❄") // stale
+		default:
+			statusIcon = "?"
+		}
+
+		issues := fmt.Sprintf("%d/%d", e.ClosedIssues, e.TotalIssues)
+		completion := fmt.Sprintf("%.0f%%", e.Completion)
+
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", statusIcon, e.SpecID, issues, completion)
+	}
+	_ = w.Flush()
+
+	// Summary
+	fmt.Println()
+	fmt.Printf("Total: %d  Pending: %d  In-Progress: %d  Complete: %d  Stale: %d\n",
+		result.Summary.TotalSpecs,
+		result.Summary.PendingSpecs,
+		result.Summary.InProgressSpecs,
+		result.Summary.CompleteSpecs,
+		result.Summary.StaleSpecs,
+	)
 }
