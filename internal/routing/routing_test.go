@@ -84,12 +84,13 @@ func TestDetermineTargetRepo(t *testing.T) {
 
 func TestDetectUserRole_Fallback(t *testing.T) {
 	// Test fallback behavior when git is not available
+	// When git remote fails (nonexistent path), defaults to Maintainer (local project assumption)
 	role, err := DetectUserRole("/nonexistent/path/that/does/not/exist")
 	if err != nil {
 		t.Fatalf("DetectUserRole() error = %v, want nil", err)
 	}
-	if role != Contributor {
-		t.Errorf("DetectUserRole() = %v, want %v (fallback)", role, Contributor)
+	if role != Maintainer {
+		t.Errorf("DetectUserRole() = %v, want %v (fallback for local project)", role, Maintainer)
 	}
 }
 

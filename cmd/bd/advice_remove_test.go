@@ -26,7 +26,7 @@ func (h *adviceRemoveTestHelper) createAdvice(title, description string) *types.
 		Title:       title,
 		Description: description,
 		Priority:    2,
-		IssueType:   types.TypeAdvice,
+		IssueType:   types.IssueType("advice"),
 		Status:      types.StatusOpen,
 		CreatedAt:   time.Now(),
 	}
@@ -67,7 +67,7 @@ func (h *adviceRemoveTestHelper) getAdvice(id string) *types.Issue {
 }
 
 func (h *adviceRemoveTestHelper) searchOpenAdvice() []*types.Issue {
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	status := types.StatusOpen
 	results, err := h.store.SearchIssues(h.ctx, "", types.IssueFilter{
 		IssueType: &adviceType,
@@ -80,7 +80,7 @@ func (h *adviceRemoveTestHelper) searchOpenAdvice() []*types.Issue {
 }
 
 func (h *adviceRemoveTestHelper) searchAllAdvice() []*types.Issue {
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	results, err := h.store.SearchIssues(h.ctx, "", types.IssueFilter{
 		IssueType: &adviceType,
 	})
@@ -243,14 +243,14 @@ func TestAdviceTypeValidation(t *testing.T) {
 
 	t.Run("advice has correct type", func(t *testing.T) {
 		advice := h.createAdvice("Type check", "Verify type")
-		if advice.IssueType != types.TypeAdvice {
+		if advice.IssueType != types.IssueType("advice") {
 			t.Errorf("Expected type 'advice', got %s", advice.IssueType)
 		}
 	})
 
 	t.Run("non-advice has different type", func(t *testing.T) {
 		issue := h.createNonAdvice("Task issue")
-		if issue.IssueType == types.TypeAdvice {
+		if issue.IssueType == types.IssueType("advice") {
 			t.Error("Non-advice issue should not have advice type")
 		}
 	})

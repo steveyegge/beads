@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS issues (
     is_template INTEGER DEFAULT 0,
     -- Work economics field (bd-fqze8) - HOP Decision 006
     crystallizes INTEGER DEFAULT 0,
+    -- Auto-close field for epics (auto-close when all children complete)
+    auto_close INTEGER DEFAULT 0,
     -- Molecule type field (bd-oxgi)
     mol_type TEXT DEFAULT '',
     -- Work type field (Decision 006: mutex vs open_competition)
@@ -103,6 +105,34 @@ CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on_type_issue ON dependencie
 -- NOTE: idx_dependencies_thread and idx_dependencies_thread_type are created by
 -- migration 020_edge_consolidation.go after adding the thread_id column.
 -- They cannot be in the schema because existing databases may not have thread_id yet.
+
+-- Decision points table (human-in-the-loop choices)
+CREATE TABLE IF NOT EXISTS decision_points (
+    issue_id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    options TEXT NOT NULL,
+    default_option TEXT,
+    selected_option TEXT,
+    response_text TEXT,
+    responded_at DATETIME,
+    responded_by TEXT,
+    iteration INTEGER DEFAULT 1,
+    max_iterations INTEGER DEFAULT 3,
+    prior_id TEXT,
+    guidance TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    reminder_count INTEGER DEFAULT 0,
+    requested_by TEXT,
+    context TEXT,
+    rationale TEXT,
+    urgency TEXT,
+    parent_bead_id TEXT,
+    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
+    FOREIGN KEY (prior_id) REFERENCES issues(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_points_prior ON decision_points(prior_id);
+CREATE INDEX IF NOT EXISTS idx_decision_points_parent ON decision_points(parent_bead_id);
 
 -- Labels table
 CREATE TABLE IF NOT EXISTS labels (

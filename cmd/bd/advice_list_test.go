@@ -27,7 +27,7 @@ func (h *adviceListTestHelper) createAdvice(title, description, rig, role, agent
 		Title:             title,
 		Description:       description,
 		Priority:          2,
-		IssueType:         types.TypeAdvice,
+		IssueType:         types.IssueType("advice"),
 		Status:            status,
 		AdviceTargetRig:   rig,
 		AdviceTargetRole:  role,
@@ -42,7 +42,7 @@ func (h *adviceListTestHelper) createAdvice(title, description, rig, role, agent
 }
 
 func (h *adviceListTestHelper) searchAdvice(filter types.IssueFilter) []*types.Issue {
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	filter.IssueType = &adviceType
 	results, err := h.store.SearchIssues(h.ctx, "", filter)
 	if err != nil {
@@ -239,7 +239,7 @@ func TestAdviceListSuite(t *testing.T) {
 
 		t.Run("advice type is set correctly", func(t *testing.T) {
 			for _, advice := range h.advice {
-				if advice.IssueType != types.TypeAdvice {
+				if advice.IssueType != types.IssueType("advice") {
 					t.Errorf("Expected advice type, got %s for %s", advice.IssueType, advice.ID)
 				}
 			}
@@ -282,20 +282,20 @@ func TestAdviceListScopeGrouping(t *testing.T) {
 	adviceItems := []*types.Issue{
 		{
 			Title:     "Global 1",
-			IssueType: types.TypeAdvice,
+			IssueType: types.IssueType("advice"),
 			Status:    types.StatusOpen,
 			CreatedAt: time.Now(),
 		},
 		{
 			Title:           "Rig level",
-			IssueType:       types.TypeAdvice,
+			IssueType:       types.IssueType("advice"),
 			Status:          types.StatusOpen,
 			AdviceTargetRig: "testrig",
 			CreatedAt:       time.Now(),
 		},
 		{
 			Title:            "Role level",
-			IssueType:        types.TypeAdvice,
+			IssueType:        types.IssueType("advice"),
 			Status:           types.StatusOpen,
 			AdviceTargetRig:  "testrig",
 			AdviceTargetRole: "polecat",
@@ -303,7 +303,7 @@ func TestAdviceListScopeGrouping(t *testing.T) {
 		},
 		{
 			Title:             "Agent level",
-			IssueType:         types.TypeAdvice,
+			IssueType:         types.IssueType("advice"),
 			Status:            types.StatusOpen,
 			AdviceTargetAgent: "testrig/polecats/alpha",
 			CreatedAt:         time.Now(),
@@ -317,7 +317,7 @@ func TestAdviceListScopeGrouping(t *testing.T) {
 	}
 
 	// Verify we can categorize by scope
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	status := types.StatusOpen
 	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
 		IssueType: &adviceType,
@@ -386,7 +386,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "global matches any agent",
 			issue: &types.Issue{
 				Title:     "Global advice",
-				IssueType: types.TypeAdvice,
+				IssueType: types.IssueType("advice"),
 			},
 			agentID:   "beads/polecats/alpha",
 			wantMatch: true,
@@ -395,7 +395,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "rig matches agent in same rig",
 			issue: &types.Issue{
 				Title:           "Rig advice",
-				IssueType:       types.TypeAdvice,
+				IssueType:       types.IssueType("advice"),
 				AdviceTargetRig: "beads",
 			},
 			agentID:   "beads/polecats/alpha",
@@ -405,7 +405,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "rig does not match agent in different rig",
 			issue: &types.Issue{
 				Title:           "Rig advice",
-				IssueType:       types.TypeAdvice,
+				IssueType:       types.IssueType("advice"),
 				AdviceTargetRig: "gastown",
 			},
 			agentID:   "beads/polecats/alpha",
@@ -415,7 +415,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "role matches agent with same role",
 			issue: &types.Issue{
 				Title:            "Role advice",
-				IssueType:        types.TypeAdvice,
+				IssueType:        types.IssueType("advice"),
 				AdviceTargetRig:  "beads",
 				AdviceTargetRole: "polecat",
 			},
@@ -426,7 +426,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "role does not match agent with different role",
 			issue: &types.Issue{
 				Title:            "Role advice",
-				IssueType:        types.TypeAdvice,
+				IssueType:        types.IssueType("advice"),
 				AdviceTargetRig:  "beads",
 				AdviceTargetRole: "crew",
 			},
@@ -437,7 +437,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "agent matches exact agent ID",
 			issue: &types.Issue{
 				Title:             "Agent advice",
-				IssueType:         types.TypeAdvice,
+				IssueType:         types.IssueType("advice"),
 				AdviceTargetAgent: "beads/polecats/alpha",
 			},
 			agentID:   "beads/polecats/alpha",
@@ -447,7 +447,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "agent does not match different agent",
 			issue: &types.Issue{
 				Title:             "Agent advice",
-				IssueType:         types.TypeAdvice,
+				IssueType:         types.IssueType("advice"),
 				AdviceTargetAgent: "beads/polecats/beta",
 			},
 			agentID:   "beads/polecats/alpha",
@@ -457,7 +457,7 @@ func TestMatchesAgentScope(t *testing.T) {
 			name: "crew role matches crew agent",
 			issue: &types.Issue{
 				Title:            "Crew advice",
-				IssueType:        types.TypeAdvice,
+				IssueType:        types.IssueType("advice"),
 				AdviceTargetRig:  "beads",
 				AdviceTargetRole: "crew",
 			},

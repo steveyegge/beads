@@ -304,7 +304,7 @@ func TestGetMoleculeProgress(t *testing.T) {
 		Title:     "Molecule for Progress",
 		Status:    types.StatusOpen,
 		Priority:  1,
-		IssueType: types.TypeMolecule,
+		IssueType: types.IssueType("molecule"),
 		MolType:   types.MolTypeWork,
 	}
 	child1 := &types.Issue{

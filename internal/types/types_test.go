@@ -447,7 +447,7 @@ func TestValidateForImport(t *testing.T) {
 				Title:     "Test Issue",
 				Status:    StatusOpen,
 				Priority:  1,
-				IssueType: TypeAgent, // Gas Town built-in type
+				IssueType: IssueType("agent"), // Gas Town built-in type
 			},
 			wantErr: false,
 		},

@@ -557,19 +557,16 @@ const TypeEvent IssueType = "event"
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
 // (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
-// IsValid checks if the issue type is a defined type constant.
-// This includes core work types (bug, feature, task, epic, chore) and
-// the internal event type.
-// All defined type constants are valid without requiring custom configuration.
-// Note: Gas Town types (molecule, gate, convoy, merge-request, etc.) require
+// IsValid checks if the issue type is a core work type constant.
+// This includes: bug, feature, task, epic, chore.
+// Note: TypeEvent is an internal type (not a core work type) and is handled
+// separately by IsBuiltIn().
+// Gas Town types (molecule, gate, convoy, merge-request, etc.) require
 // types.custom configuration and are validated via IsValidWithCustom.
 func (t IssueType) IsValid() bool {
 	switch t {
 	// Core work types
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
-		return true
-	// Internal type for audit trail
-	case TypeEvent:
 		return true
 	}
 	return false

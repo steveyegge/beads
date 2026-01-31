@@ -74,6 +74,11 @@ type Config struct {
 	ServerPort     int    // Server port (default: 3306)
 	ServerUser     string // MySQL user (default: root)
 	ServerPassword string // MySQL password (default: empty, can be set via BEADS_DOLT_PASSWORD)
+
+	// Retry configuration for transient errors
+	LockRetries    int           // Number of retries for lock/serialization errors (default: 5)
+	LockRetryDelay time.Duration // Delay between retries (default: 100ms)
+	IdleTimeout    time.Duration // Connection idle timeout (default: 0 = no timeout)
 }
 
 const embeddedOpenMaxElapsed = 30 * time.Second
@@ -473,6 +478,48 @@ func isSerializationError(err error) bool {
 	if strings.Contains(errMsg, "serialization failure") {
 		return true
 	}
+	return false
+}
+
+// isTransientDoltError checks if an error is transient and can be retried.
+// This includes serialization errors plus lock/timeout errors and format version issues.
+func isTransientDoltError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// First check if it's a serialization error
+	if isSerializationError(err) {
+		return true
+	}
+
+	errMsg := strings.ToLower(err.Error())
+
+	// Lock-related transient errors
+	if strings.Contains(errMsg, "database is locked") {
+		return true
+	}
+	if strings.Contains(errMsg, "lock timeout") {
+		return true
+	}
+	if strings.Contains(errMsg, "lock contention") {
+		return true
+	}
+	if strings.Contains(errMsg, "database is read only") {
+		return true
+	}
+
+	// Format version and database load errors (can be transient during upgrades)
+	if strings.Contains(errMsg, "format version") {
+		return true
+	}
+	if strings.Contains(errMsg, "failed to load database") {
+		return true
+	}
+	if strings.Contains(errMsg, "manifest is invalid") || strings.Contains(errMsg, "manifest is corrupted") {
+		return true
+	}
+
 	return false
 }
 

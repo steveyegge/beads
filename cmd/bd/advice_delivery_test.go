@@ -21,7 +21,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	globalAdvice := &types.Issue{
 		Title:       "Global: Check hook first",
 		Description: "Always run gt hook at session start",
-		IssueType:   types.TypeAdvice,
+		IssueType:   types.IssueType("advice"),
 		Status:      types.StatusOpen,
 		CreatedAt:   time.Now(),
 	}
@@ -32,7 +32,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	beadsRigAdvice := &types.Issue{
 		Title:           "Beads rig: Use go test",
 		Description:     "Run go test ./... for testing",
-		IssueType:       types.TypeAdvice,
+		IssueType:       types.IssueType("advice"),
 		Status:          types.StatusOpen,
 		AdviceTargetRig: "beads",
 		CreatedAt:       time.Now(),
@@ -44,7 +44,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	gastownRigAdvice := &types.Issue{
 		Title:           "Gastown rig: Check mayor",
 		Description:     "Coordinate with mayor for cross-rig work",
-		IssueType:       types.TypeAdvice,
+		IssueType:       types.IssueType("advice"),
 		Status:          types.StatusOpen,
 		AdviceTargetRig: "gastown",
 		CreatedAt:       time.Now(),
@@ -56,7 +56,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	polecatRoleAdvice := &types.Issue{
 		Title:            "Polecat role: Complete before gt done",
 		Description:      "Finish work before running gt done",
-		IssueType:        types.TypeAdvice,
+		IssueType:        types.IssueType("advice"),
 		Status:           types.StatusOpen,
 		AdviceTargetRig:  "beads",
 		AdviceTargetRole: "polecat",
@@ -69,7 +69,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	crewRoleAdvice := &types.Issue{
 		Title:            "Crew role: Maintain formulas",
 		Description:      "Crew members maintain workflow formulas",
-		IssueType:        types.TypeAdvice,
+		IssueType:        types.IssueType("advice"),
 		Status:           types.StatusOpen,
 		AdviceTargetRig:  "beads",
 		AdviceTargetRole: "crew",
@@ -82,7 +82,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 	specificAgentAdvice := &types.Issue{
 		Title:             "Agent: Focus on CLI",
 		Description:       "quartz specializes in CLI implementation",
-		IssueType:         types.TypeAdvice,
+		IssueType:         types.IssueType("advice"),
 		Status:            types.StatusOpen,
 		AdviceTargetAgent: "beads/polecats/quartz",
 		CreatedAt:         time.Now(),
@@ -93,7 +93,7 @@ func TestAdviceDeliveryPipeline(t *testing.T) {
 
 	// Helper function to get applicable advice for an agent
 	getApplicableAdvice := func(agentID, roleType, rigName string) []*types.Issue {
-		adviceType := types.TypeAdvice
+		adviceType := types.IssueType("advice")
 		status := types.StatusOpen
 		allAdvice, err := s.SearchIssues(ctx, "", types.IssueFilter{
 			IssueType: &adviceType,
@@ -304,7 +304,7 @@ func TestAdviceDeliveryWithNoAdvice(t *testing.T) {
 	ctx := context.Background()
 
 	// No advice created - verify clean output
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	status := types.StatusOpen
 	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
 		IssueType: &adviceType,
@@ -328,7 +328,7 @@ func TestAdviceDeliveryPriorityOrder(t *testing.T) {
 	// Create advice with different priorities
 	highPriority := &types.Issue{
 		Title:     "High priority advice",
-		IssueType: types.TypeAdvice,
+		IssueType: types.IssueType("advice"),
 		Status:    types.StatusOpen,
 		Priority:  1,
 		CreatedAt: time.Now(),
@@ -339,7 +339,7 @@ func TestAdviceDeliveryPriorityOrder(t *testing.T) {
 
 	lowPriority := &types.Issue{
 		Title:     "Low priority advice",
-		IssueType: types.TypeAdvice,
+		IssueType: types.IssueType("advice"),
 		Status:    types.StatusOpen,
 		Priority:  3,
 		CreatedAt: time.Now().Add(-time.Hour), // Created earlier
@@ -350,7 +350,7 @@ func TestAdviceDeliveryPriorityOrder(t *testing.T) {
 
 	medPriority := &types.Issue{
 		Title:     "Medium priority advice",
-		IssueType: types.TypeAdvice,
+		IssueType: types.IssueType("advice"),
 		Status:    types.StatusOpen,
 		Priority:  2,
 		CreatedAt: time.Now(),
@@ -360,7 +360,7 @@ func TestAdviceDeliveryPriorityOrder(t *testing.T) {
 	}
 
 	// Search advice - should be ordered by priority ASC
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	status := types.StatusOpen
 	results, err := s.SearchIssues(ctx, "", types.IssueFilter{
 		IssueType: &adviceType,

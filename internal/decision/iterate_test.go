@@ -16,7 +16,7 @@ func createTestDecisionPoint(t *testing.T, store *memory.MemoryStorage, id strin
 	issue := &types.Issue{
 		ID:        id,
 		Title:     "Test Decision",
-		IssueType: types.TypeGate,
+		IssueType: types.IssueType("gate"),
 		AwaitType: "decision",
 		Status:    types.StatusOpen,
 		Priority:  2,
@@ -80,8 +80,8 @@ func TestCreateNextIteration(t *testing.T) {
 	if newIssue == nil {
 		t.Fatal("new issue not found in store")
 	}
-	if newIssue.IssueType != types.TypeGate {
-		t.Errorf("IssueType = %q, want %q", newIssue.IssueType, types.TypeGate)
+	if newIssue.IssueType != types.IssueType("gate") {
+		t.Errorf("IssueType = %q, want %q", newIssue.IssueType, types.IssueType("gate"))
 	}
 
 	// Verify new decision point exists

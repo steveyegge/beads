@@ -220,7 +220,7 @@ func TestParseIssueType(t *testing.T) {
 		// Extended types (now built-in valid)
 		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
 		{"molecule type", "molecule", types.TypeMolecule, false, ""},
-		{"gate type", "gate", types.TypeGate, false, ""},
+		{"gate type", "gate", types.IssueType("gate"), false, ""},
 		{"event type", "event", types.TypeEvent, false, ""},
 		{"message type", "message", types.TypeMessage, false, ""},
 

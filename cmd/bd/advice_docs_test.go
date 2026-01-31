@@ -25,7 +25,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 			advice := &types.Issue{
 				Title:       "Always verify git status before pushing",
 				Description: "Run 'git status' to check for uncommitted changes before 'git push'",
-				IssueType:   types.TypeAdvice,
+				IssueType:   types.IssueType("advice"),
 				Status:      types.StatusOpen,
 				CreatedAt:   time.Now(),
 			}
@@ -48,7 +48,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 			advice := &types.Issue{
 				Title:            "Check hook before checking mail",
 				Description:      "The hook is authoritative. Always run 'gt hook' first on startup.",
-				IssueType:        types.TypeAdvice,
+				IssueType:        types.IssueType("advice"),
 				Status:           types.StatusOpen,
 				AdviceTargetRig:  "gastown", // Required with role
 				AdviceTargetRole: "polecat",
@@ -72,7 +72,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 			advice := &types.Issue{
 				Title:           "Use fimbaz account for spawning",
 				Description:     "The matthewbaker account has credential issues. Use --account fimbaz.",
-				IssueType:       types.TypeAdvice,
+				IssueType:       types.IssueType("advice"),
 				Status:          types.StatusOpen,
 				AdviceTargetRig: "gastown",
 				CreatedAt:       time.Now(),
@@ -95,7 +95,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 			advice := &types.Issue{
 				Title:             "You own the shiny formula",
 				Description:       "Monitor polecats using shiny and iterate on the formula based on results.",
-				IssueType:         types.TypeAdvice,
+				IssueType:         types.IssueType("advice"),
 				Status:            types.StatusOpen,
 				AdviceTargetAgent: "gastown/crew/prime_analyst",
 				CreatedAt:         time.Now(),
@@ -119,7 +119,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 		// Setup test data
 		globalAdvice := &types.Issue{
 			Title:     "Global advice",
-			IssueType: types.TypeAdvice,
+			IssueType: types.IssueType("advice"),
 			Status:    types.StatusOpen,
 			CreatedAt: time.Now(),
 		}
@@ -127,7 +127,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		roleAdvice := &types.Issue{
 			Title:            "Role advice",
-			IssueType:        types.TypeAdvice,
+			IssueType:        types.IssueType("advice"),
 			Status:           types.StatusOpen,
 			AdviceTargetRig:  "gastown",
 			AdviceTargetRole: "polecat",
@@ -137,7 +137,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		rigAdvice := &types.Issue{
 			Title:           "Rig advice",
-			IssueType:       types.TypeAdvice,
+			IssueType:       types.IssueType("advice"),
 			Status:          types.StatusOpen,
 			AdviceTargetRig: "gastown",
 			CreatedAt:       time.Now(),
@@ -146,7 +146,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		agentAdvice := &types.Issue{
 			Title:             "Agent advice",
-			IssueType:         types.TypeAdvice,
+			IssueType:         types.IssueType("advice"),
 			Status:            types.StatusOpen,
 			AdviceTargetAgent: "gastown/crew/joe",
 			CreatedAt:         time.Now(),
@@ -155,7 +155,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		// bd advice list - should return all open advice
 		t.Run("list all", func(t *testing.T) {
-			adviceType := types.TypeAdvice
+			adviceType := types.IssueType("advice")
 			status := types.StatusOpen
 			results, err := s2.SearchIssues(ctx, "", types.IssueFilter{
 				IssueType: &adviceType,
@@ -171,7 +171,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		// bd advice list --role polecat (actually --rig gastown --role polecat)
 		t.Run("filter by role", func(t *testing.T) {
-			adviceType := types.TypeAdvice
+			adviceType := types.IssueType("advice")
 			status := types.StatusOpen
 			results, err := s2.SearchIssues(ctx, "", types.IssueFilter{
 				IssueType: &adviceType,
@@ -195,7 +195,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		// bd advice list --rig gastown
 		t.Run("filter by rig", func(t *testing.T) {
-			adviceType := types.TypeAdvice
+			adviceType := types.IssueType("advice")
 			status := types.StatusOpen
 			results, err := s2.SearchIssues(ctx, "", types.IssueFilter{
 				IssueType: &adviceType,
@@ -219,7 +219,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 
 		// bd advice list --agent gastown/crew/joe
 		t.Run("filter by agent", func(t *testing.T) {
-			adviceType := types.TypeAdvice
+			adviceType := types.IssueType("advice")
 			status := types.StatusOpen
 			results, err := s2.SearchIssues(ctx, "", types.IssueFilter{
 				IssueType: &adviceType,
@@ -252,7 +252,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 		t.Run("remove by closing", func(t *testing.T) {
 			advice := &types.Issue{
 				Title:     "Advice to remove",
-				IssueType: types.TypeAdvice,
+				IssueType: types.IssueType("advice"),
 				Status:    types.StatusOpen,
 				CreatedAt: time.Now(),
 			}
@@ -276,7 +276,7 @@ func TestAdviceDocsExamples(t *testing.T) {
 		t.Run("remove with delete flag", func(t *testing.T) {
 			advice := &types.Issue{
 				Title:     "Advice to delete",
-				IssueType: types.TypeAdvice,
+				IssueType: types.IssueType("advice"),
 				Status:    types.StatusOpen,
 				CreatedAt: time.Now(),
 			}
