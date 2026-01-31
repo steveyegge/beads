@@ -95,6 +95,7 @@ var createCmd = &cobra.Command{
 		design, _ := cmd.Flags().GetString("design")
 		acceptance, _ := cmd.Flags().GetString("acceptance")
 		notes, _ := cmd.Flags().GetString("notes")
+		specID, _ := cmd.Flags().GetString("spec-id")
 
 		// Parse priority (supports both "1" and "P1" formats)
 		priorityStr, _ := cmd.Flags().GetString("priority")
@@ -194,6 +195,7 @@ var createCmd = &cobra.Command{
 				Design:             design,
 				AcceptanceCriteria: acceptance,
 				Notes:              notes,
+				SpecID:             specID,
 				Status:             types.StatusOpen,
 				Priority:           priority,
 				IssueType:          types.IssueType(issueType).Normalize(),
@@ -272,7 +274,7 @@ var createCmd = &cobra.Command{
 								// Found a matching route - auto-route to that rig
 								rigName := routing.ExtractProjectFromPath(route.Path)
 								if rigName != "" {
-									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+									createInRig(cmd, rigName, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
 									return
 								}
 							}
@@ -292,7 +294,7 @@ var createCmd = &cobra.Command{
 			targetRig = prefixOverride
 		}
 		if targetRig != "" {
-			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, wisp)
+			createInRig(cmd, targetRig, explicitID, title, description, issueType, priority, design, acceptance, notes, assignee, labels, externalRef, specID, wisp)
 			return
 		}
 
@@ -487,6 +489,7 @@ var createCmd = &cobra.Command{
 				Design:             design,
 				AcceptanceCriteria: acceptance,
 				Notes:              notes,
+				SpecID:             specID,
 				Assignee:           assignee,
 				ExternalRef:        externalRef,
 				EstimatedMinutes:   estimatedMinutes,
@@ -547,6 +550,7 @@ var createCmd = &cobra.Command{
 			Design:             design,
 			AcceptanceCriteria: acceptance,
 			Notes:              notes,
+			SpecID:             specID,
 			Status:             types.StatusOpen,
 			Priority:           priority,
 			IssueType:          types.IssueType(issueType).Normalize(),
@@ -885,6 +889,7 @@ func init() {
 	registerPriorityFlag(createCmd, "2")
 	createCmd.Flags().StringP("type", "t", "task", "Issue type (bug|feature|task|epic|chore|merge-request|molecule|gate|agent|role|rig|convoy|event); enhancement is alias for feature")
 	registerCommonIssueFlags(createCmd)
+	createCmd.Flags().String("spec-id", "", "Link to specification document")
 	createCmd.Flags().StringSliceP("labels", "l", []string{}, "Labels (comma-separated)")
 	createCmd.Flags().StringSlice("label", []string{}, "Alias for --labels")
 	_ = createCmd.Flags().MarkHidden("label") // Only fails if flag missing (caught in tests)
@@ -924,7 +929,7 @@ func init() {
 
 // createInRig creates an issue in a different rig using --rig flag or auto-routing.
 // This bypasses the normal daemon/direct flow and directly creates in the target rig.
-func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef string, wisp bool) {
+func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, issueType string, priority int, design, acceptance, notes, assignee string, labels []string, externalRef, specID string, wisp bool) {
 	ctx := rootCtx
 
 	// Find the town-level beads directory (where routes.jsonl lives)
@@ -1005,6 +1010,7 @@ func createInRig(cmd *cobra.Command, rigName, explicitID, title, description, is
 		Design:             design,
 		AcceptanceCriteria: acceptance,
 		Notes:              notes,
+		SpecID:             specID,
 		Status:             types.StatusOpen,
 		Priority:           priority,
 		IssueType:          types.IssueType(issueType).Normalize(),

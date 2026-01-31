@@ -314,6 +314,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
 	var externalRef sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var sourceRepo sql.NullString
@@ -361,7 +362,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
@@ -375,7 +376,7 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRef,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -417,6 +418,9 @@ func (s *SQLiteStorage) GetIssue(ctx context.Context, id string) (*types.Issue, 
 	}
 	if externalRef.Valid {
 		issue.ExternalRef = &externalRef.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
@@ -613,6 +617,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	var estimatedMinutes sql.NullInt64
 	var assignee sql.NullString
 	var externalRefCol sql.NullString
+	var specID sql.NullString
 	var compactedAt sql.NullTime
 	var originalSize sql.NullInt64
 	var contentHash sql.NullString
@@ -643,7 +648,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
 		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+		       spec_id, compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters
@@ -654,7 +659,7 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 		&issue.AcceptanceCriteria, &issue.Notes, &issue.Status,
 		&issue.Priority, &issue.IssueType, &assignee, &estimatedMinutes,
 		&createdAtStr, &issue.CreatedBy, &owner, &updatedAtStr, &closedAt, &externalRefCol,
-		&issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
+		&specID, &issue.CompactionLevel, &compactedAt, &compactedAtCommit, &originalSize, &sourceRepo, &closeReason,
 		&deletedAt, &deletedBy, &deleteReason, &originalType,
 		&sender, &wisp, &pinned, &isTemplate, &crystallizes,
 		&awaitType, &awaitID, &timeoutNs, &waiters,
@@ -693,6 +698,9 @@ func (s *SQLiteStorage) GetIssueByExternalRef(ctx context.Context, externalRef s
 	}
 	if externalRefCol.Valid {
 		issue.ExternalRef = &externalRefCol.String
+	}
+	if specID.Valid {
+		issue.SpecID = specID.String
 	}
 	if compactedAt.Valid {
 		issue.CompactedAt = &compactedAt.Time
@@ -775,6 +783,7 @@ var allowedUpdateFields = map[string]bool{
 	"issue_type":          true,
 	"estimated_minutes":   true,
 	"external_ref":        true,
+	"spec_id":             true,
 	"closed_at":           true,
 	"close_reason":        true,
 	"closed_by_session":   true,
@@ -934,7 +943,7 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 
 	// Recompute content_hash if any content fields changed
 	contentChanged := false
-	contentFields := []string{"title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "external_ref"}
+	contentFields := []string{"title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "external_ref", "spec_id"}
 	for _, field := range contentFields {
 		if _, exists := updates[field]; exists {
 			contentChanged = true
@@ -991,6 +1000,12 @@ func (s *SQLiteStorage) UpdateIssue(ctx context.Context, id string, updates map[
 					default:
 						return fmt.Errorf("external_ref must be string or *string, got %T", value)
 					}
+				}
+			case "spec_id":
+				if value == nil {
+					updatedIssue.SpecID = ""
+				} else {
+					updatedIssue.SpecID = value.(string)
 				}
 			}
 		}
@@ -1937,6 +1952,10 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 		whereClauses = append(whereClauses, "id LIKE ?")
 		args = append(args, filter.IDPrefix+"%")
 	}
+	if filter.SpecIDPrefix != "" {
+		whereClauses = append(whereClauses, "spec_id LIKE ?")
+		args = append(args, filter.SpecIDPrefix+"%")
+	}
 
 	// Wisp filtering
 	if filter.Ephemeral != nil {
@@ -2017,7 +2036,7 @@ func (s *SQLiteStorage) SearchIssues(ctx context.Context, query string, filter t
 	querySQL := fmt.Sprintf(`
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
 		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref, source_repo, close_reason,
+		       created_at, created_by, owner, updated_at, closed_at, external_ref, spec_id, source_repo, close_reason,
 		       deleted_at, deleted_by, delete_reason, original_type,
 		       sender, ephemeral, pinned, is_template, crystallizes,
 		       await_type, await_id, timeout_ns, waiters,
