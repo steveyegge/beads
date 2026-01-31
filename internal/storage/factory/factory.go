@@ -48,7 +48,7 @@ func New(ctx context.Context, backend, path string) (storage.Storage, error) {
 // NewWithOptions creates a storage backend with the specified options.
 func NewWithOptions(ctx context.Context, backend, path string, opts Options) (storage.Storage, error) {
 	switch backend {
-	case configfile.BackendSQLite, "":
+	case configfile.BackendSQLite:
 		if opts.ReadOnly {
 			if opts.LockTimeout > 0 {
 				return sqlite.NewReadOnlyWithTimeout(ctx, path, opts.LockTimeout)
@@ -59,16 +59,23 @@ func NewWithOptions(ctx context.Context, backend, path string, opts Options) (st
 			return sqlite.NewWithTimeout(ctx, path, opts.LockTimeout)
 		}
 		return sqlite.New(ctx, path)
+	case configfile.BackendDolt, "":
+		// Dolt is the default backend - check if it's registered (requires CGO)
+		lookupKey := backend
+		if lookupKey == "" {
+			lookupKey = configfile.BackendDolt
+		}
+		if factory, ok := backendRegistry[lookupKey]; ok {
+			return factory(ctx, path, opts)
+		}
+		// Dolt not available (no CGO) - provide helpful error
+		return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); use sqlite backend or install from pre-built binaries")
 	default:
-		// Check if backend is registered (e.g., dolt with CGO)
+		// Check if backend is registered
 		if factory, ok := backendRegistry[backend]; ok {
 			return factory(ctx, path, opts)
 		}
-		// Provide helpful error for dolt on systems without CGO
-		if backend == configfile.BackendDolt {
-			return nil, fmt.Errorf("dolt backend requires CGO (not available on this build); use sqlite backend or install from pre-built binaries")
-		}
-		return nil, fmt.Errorf("unknown storage backend: %s (supported: sqlite, dolt)", backend)
+		return nil, fmt.Errorf("unknown storage backend: %s (supported: dolt, sqlite)", backend)
 	}
 }
 

@@ -220,9 +220,9 @@ type BackendCapabilities struct {
 // handle server mode (which supports multi-process access).
 func CapabilitiesForBackend(backend string) BackendCapabilities {
 	switch strings.TrimSpace(strings.ToLower(backend)) {
-	case "", BackendSQLite:
+	case BackendSQLite:
 		return BackendCapabilities{SingleProcessOnly: false}
-	case BackendDolt:
+	case "", BackendDolt:
 		// Embedded Dolt is single-process-only.
 		// Server mode is handled by Config.GetCapabilities().
 		return BackendCapabilities{SingleProcessOnly: true}
@@ -243,10 +243,10 @@ func (c *Config) GetCapabilities() BackendCapabilities {
 	return CapabilitiesForBackend(backend)
 }
 
-// GetBackend returns the configured backend type, defaulting to SQLite.
+// GetBackend returns the configured backend type, defaulting to Dolt.
 func (c *Config) GetBackend() string {
 	if c.Backend == "" {
-		return BackendSQLite
+		return BackendDolt
 	}
 	return c.Backend
 }
