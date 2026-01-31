@@ -42,11 +42,36 @@ func Initialize() error {
 	//    This allows commands to work from subdirectories
 	cwd, err := os.Getwd()
 	if err == nil && !configFileSet {
+		// In the beads repo, `.beads/config.yaml` is tracked and may set sync.mode=dolt-native.
+		// In `go test` (especially for `cmd/bd`), we want to avoid unintentionally picking up
+		// the repo-local config, while still allowing tests to load config.yaml from temp repos.
+		//
+		// If BEADS_TEST_IGNORE_REPO_CONFIG is set, we will ignore the config at
+		// <module-root>/.beads/config.yaml (where module-root is the nearest parent containing go.mod).
+		ignoreRepoConfig := os.Getenv("BEADS_TEST_IGNORE_REPO_CONFIG") != ""
+		var moduleRoot string
+		if ignoreRepoConfig {
+			// Find module root by walking up to go.mod.
+			for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+				if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+					moduleRoot = dir
+					break
+				}
+			}
+		}
+
 		// Walk up parent directories to find .beads/config.yaml
 		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			beadsDir := filepath.Join(dir, ".beads")
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			if _, err := os.Stat(configPath); err == nil {
+				if ignoreRepoConfig && moduleRoot != "" {
+					// Only ignore the repo-local config (moduleRoot/.beads/config.yaml).
+					wantIgnore := filepath.Clean(configPath) == filepath.Clean(filepath.Join(moduleRoot, ".beads", "config.yaml"))
+					if wantIgnore {
+						continue
+					}
+				}
 				// Found .beads/config.yaml - set it explicitly
 				v.SetConfigFile(configPath)
 				configFileSet = true

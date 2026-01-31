@@ -234,18 +234,6 @@ bd list  # Triggers auto-start
    cd .beads/dolt && dolt gc
    ```
 
-### Lock Contention
-
-Dolt handles concurrent access better in server mode. If you see lock errors:
-
-```bash
-# Check for stale locks
-ls -la .beads/dolt/.dolt/noms/*.lock
-
-# Server mode eliminates most lock issues
-export BEADS_DOLT_SERVER_MODE=1
-```
-
 ## Advanced Usage
 
 ### Branching
