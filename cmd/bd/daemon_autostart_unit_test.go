@@ -329,6 +329,11 @@ func TestDaemonAutostart_EmitVerboseWarning(t *testing.T) {
 }
 
 func TestDaemonAutostart_StartDaemonProcess_Stubbed(t *testing.T) {
+	// Isolate dbPath so isDoltBackend() doesn't find the repo's .beads/metadata.json
+	origDbPath := dbPath
+	dbPath = filepath.Join(t.TempDir(), "beads.db")
+	defer func() { dbPath = origDbPath }()
+
 	oldExec := execCommandFn
 	oldWait := waitForSocketReadinessFn
 	oldCfg := configureDaemonProcessFn

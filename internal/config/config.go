@@ -62,16 +62,20 @@ func Initialize() error {
 
 		// Walk up parent directories to find .beads/config.yaml
 		for dir := cwd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if ignoreRepoConfig && moduleRoot != "" {
+				// In test mode, stop walking at the module root. Any .beads/config.yaml
+				// at or above the module root belongs to the development environment
+				// (e.g., parent rig configs in a Gas Town worktree that set
+				// sync.mode=dolt-native), not to the project under test.
+				cleanDir := filepath.Clean(dir)
+				cleanRoot := filepath.Clean(moduleRoot)
+				if cleanDir == cleanRoot || !strings.HasPrefix(cleanDir, cleanRoot+string(filepath.Separator)) {
+					break
+				}
+			}
 			beadsDir := filepath.Join(dir, ".beads")
 			configPath := filepath.Join(beadsDir, "config.yaml")
 			if _, err := os.Stat(configPath); err == nil {
-				if ignoreRepoConfig && moduleRoot != "" {
-					// Only ignore the repo-local config (moduleRoot/.beads/config.yaml).
-					wantIgnore := filepath.Clean(configPath) == filepath.Clean(filepath.Join(moduleRoot, ".beads", "config.yaml"))
-					if wantIgnore {
-						continue
-					}
-				}
 				// Found .beads/config.yaml - set it explicitly
 				v.SetConfigFile(configPath)
 				configFileSet = true

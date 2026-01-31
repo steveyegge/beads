@@ -11,10 +11,17 @@ import (
 
 func TestDaemonAutoStart(t *testing.T) {
 	// Initialize config for tests
+	config.ResetForTesting()
 	if err := config.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize config: %v", err)
 	}
-	
+
+	// Isolate dbPath so isDoltBackend() doesn't find the repo's .beads/metadata.json
+	origDbPath := dbPath
+	tmpDir := t.TempDir()
+	dbPath = filepath.Join(tmpDir, "beads.db")
+	defer func() { dbPath = origDbPath }()
+
 	// Save original env
 	origAutoStart := os.Getenv("BEADS_AUTO_START_DAEMON")
 	origNoDaemon := os.Getenv("BEADS_NO_DAEMON")

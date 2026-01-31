@@ -2126,6 +2126,11 @@ func TestInit_WithBEADS_DIR_DoltBackend(t *testing.T) {
 		t.Skip("Skipping BEADS_DIR Dolt test on Windows")
 	}
 
+	// Skip when CGO is not available (Dolt embedded requires CGO)
+	if !DoltServerAvailable() {
+		t.Skip("Dolt backend requires CGO, skipping")
+	}
+
 	// Check if dolt is available
 	if _, err := exec.LookPath("dolt"); err != nil {
 		t.Skip("Dolt not installed, skipping Dolt backend test")
