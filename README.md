@@ -178,8 +178,11 @@ specs/login.md             ←── You edit the spec
 | `bd spec list` | List all tracked specs with issue counts |
 | `bd spec show <path>` | Show spec details + linked issues |
 | `bd spec coverage` | Find specs with no linked issues |
+| `bd spec audit` | **NEW:** Audit all specs with completion status |
+| `bd spec mark-done <path>` | **NEW:** Mark spec as complete |
+| `bd spec candidates` | Score specs for completion (auto-detect done specs) |
+| `bd spec candidates --auto` | **NEW:** Auto-mark specs with score >= 0.8 |
 | `bd spec compact <path>` | Archive spec to summary |
-| `bd spec candidates` | Score specs for auto-compaction |
 | `bd spec auto-compact` | Compact specs above threshold |
 | `bd spec suggest <id>` | Suggest specs for unlinked issues |
 | `bd spec link --auto` | Bulk-link issues to specs |
@@ -199,9 +202,59 @@ Tip: Install git hooks to detect drift after merges/checkouts:
 | `bd list --no-spec` | Show issues with no spec |
 | `bd update <id> --ack-spec` | Acknowledge spec change |
 | `bd close <id> --compact-spec` | Close issue + archive spec |
-| `bd close <id> --compact-skills` | Close issue + remove unused skills |
+| `bd close <id> --compact-skills` | Close issue + archive unused skills |
 | `bd preflight --check` | Run all pre-commit checks (tests, lint, skills) |
 | `bd preflight --check --auto-sync` | Run checks and auto-fix skill drift |
+
+## Activity Dashboard
+
+See recent activity across beads, specs, and skills in one view:
+
+```bash
+bd recent                 # Show recent beads and specs
+bd recent --all           # Nested view: beads → specs → skills
+bd recent --skills        # Include skills in output
+bd recent --today         # Items modified today
+bd recent --stale         # Show stale items (30+ days old)
+```
+
+Example nested output with `bd recent --all`:
+
+```
+bd-456 [P1] Implement auth endpoints          ◐ in-progress  Today
+  └─ specs/auth/LOGIN_SPEC.md                 ◐ in-progress  2h ago
+     └─ tdd (skill)                           active         3h ago
+
+bd-445 [P2] Fix scanner logic                 ○ pending      3d ago
+  └─ (no linked spec)
+
+──────────────────────────────────────────
+Summary: 5 beads, 3 specs, 2 skills
+├─ Active: 4 in-progress, 2 pending
+├─ Stale (30+ days): 2
+└─ Momentum: 3 items updated today
+```
+
+## Skills Tracking
+
+Track which skills are used by which issues:
+
+```bash
+bd create "Fix bug" --skills=debugging,tdd    # Link skills when creating
+bd skills audit                                # See skill drift across agents
+bd skills sync                                 # Sync Claude → Codex skills
+bd skills cleanup-candidates                   # Find unused skills
+bd close <id> --compact-skills                 # Archive skills no longer used
+```
+
+When all issues for a spec are closed, Shadowbook suggests:
+
+```bash
+✓ Closed bd-123: Fixed auth bug
+
+● All issues for spec specs/auth.md are now closed.
+  Run: bd spec mark-done specs/auth.md
+```
 
 ---
 
@@ -280,6 +333,34 @@ Shadowbook tracks [steveyegge/beads](https://github.com/steveyegge/beads) as ups
 ```bash
 git fetch upstream
 git merge upstream/main
+```
+
+---
+
+## Testing in Any Codebase (packnplay)
+
+Use [packnplay](https://github.com/obra/packnplay) to test Shadowbook in isolated Docker containers:
+
+```bash
+# Install packnplay
+brew install obra/tap/packnplay
+
+# Run Claude Code in container with bd mounted
+cd /path/to/any/project
+packnplay run claude
+
+# Inside container:
+bd init
+bd spec scan specs/
+bd recent --all
+```
+
+Or add to your project's `.devcontainer/devcontainer.json`:
+
+```json
+{
+  "postCreateCommand": "curl -L https://github.com/anupamchugh/shadowbook/releases/latest/download/bd-linux-amd64 -o /usr/local/bin/bd && chmod +x /usr/local/bin/bd"
+}
 ```
 
 ---
