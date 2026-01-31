@@ -100,7 +100,7 @@ func runAdviceRemove(cmd *cobra.Command, args []string) {
 		FatalError("issue %s not found", resolvedID)
 	}
 
-	if issue.IssueType != types.TypeAdvice {
+	if issue.IssueType != types.IssueType("advice") {
 		FatalError("issue %s is not an advice bead (type: %s)", resolvedID, issue.IssueType)
 	}
 

@@ -71,7 +71,7 @@ func runDecisionRemind(cmd *cobra.Command, args []string) {
 	}
 
 	// Verify it's a decision gate
-	if issue.IssueType != types.TypeGate || issue.AwaitType != "decision" {
+	if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
 		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point (type=%s, await_type=%s)\n",
 			resolvedID, issue.IssueType, issue.AwaitType)
 		os.Exit(1)

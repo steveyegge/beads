@@ -77,7 +77,7 @@ func runAdviceList(cmd *cobra.Command, args []string) {
 	ctx := rootCtx
 
 	// Build filter for advice type
-	adviceType := types.TypeAdvice
+	adviceType := types.IssueType("advice")
 	filter := types.IssueFilter{
 		IssueType: &adviceType,
 	}

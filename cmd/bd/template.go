@@ -977,7 +977,7 @@ func cloneSubgraph(ctx context.Context, s storage.Storage, subgraph *TemplateSub
 			// Determine issue type: wisps (ephemeral) get their own type to avoid cluttering epic listings
 			issueType := oldIssue.IssueType
 			if opts.Ephemeral && oldIssue.IssueType == types.TypeEpic {
-				issueType = types.TypeWisp
+				issueType = types.IssueType("wisp")
 			}
 
 			newIssue := &types.Issue{

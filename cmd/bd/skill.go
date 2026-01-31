@@ -295,7 +295,7 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 			ID:              skillID,
 			Title:           title,
 			Description:     skillDescription,
-			IssueType:       string(types.TypeSkill),
+			IssueType:       string(types.IssueType("skill")),
 			Priority:        2,
 			Pinned:          true, // Skills are pinned by default
 			SkillName:       skillName,
@@ -346,7 +346,7 @@ func runSkillCreate(cmd *cobra.Command, args []string) error {
 		ID:          skillID,
 		Title:       title,
 		Description: skillDescription,
-		IssueType:   types.TypeSkill,
+		IssueType:   types.IssueType("skill"),
 		Status:      types.StatusPinned,
 		Priority:    2,
 		SkillName:       skillName,
@@ -416,7 +416,7 @@ func runSkillShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Verify it's a skill
-	if issue.IssueType != types.TypeSkill {
+	if issue.IssueType != types.IssueType("skill") {
 		return fmt.Errorf("%s is not a skill (type: %s)", skillID, issue.IssueType)
 	}
 
@@ -460,7 +460,7 @@ func runSkillList(cmd *cobra.Command, args []string) error {
 	var issues []*types.Issue
 	if daemonClient != nil {
 		listArgs := &rpc.ListArgs{
-			IssueType: string(types.TypeSkill),
+			IssueType: string(types.IssueType("skill")),
 		}
 		resp, err := daemonClient.List(listArgs)
 		if err != nil {
@@ -470,7 +470,7 @@ func runSkillList(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to decode skills: %w", err)
 		}
 	} else {
-		skillType := types.TypeSkill
+		skillType := types.IssueType("skill")
 		filter := types.IssueFilter{
 			IssueType: &skillType,
 		}
@@ -620,7 +620,7 @@ func runSkillAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
 		}
-		if skill.IssueType != types.TypeSkill {
+		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
 	}
@@ -722,7 +722,7 @@ func runSkillRequire(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
 		}
-		if skill.IssueType != types.TypeSkill {
+		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
 	}
@@ -792,7 +792,7 @@ func runSkillProviders(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
 		}
-		if skill.IssueType != types.TypeSkill {
+		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
 
@@ -918,7 +918,7 @@ func runSkillLoad(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("skill not found: %s", resolvedSkillID)
 		}
-		if skill.IssueType != types.TypeSkill {
+		if skill.IssueType != types.IssueType("skill") {
 			return fmt.Errorf("%s is not a skill (type: %s)", resolvedSkillID, skill.IssueType)
 		}
 		return nil
@@ -1175,7 +1175,7 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 				continue
 			}
 			skill := &details.Issue
-			if skill.IssueType != types.TypeSkill {
+			if skill.IssueType != types.IssueType("skill") {
 				continue
 			}
 			// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
@@ -1200,7 +1200,7 @@ func runSkillPrime(cmd *cobra.Command, args []string) error {
 		err := withStorage(ctx, store, dbPath, lockTimeout, func(s storage.Storage) error {
 			for _, skillID := range agentSkillIDs {
 				skill, err := s.GetIssue(ctx, skillID)
-				if err != nil || skill.IssueType != types.TypeSkill {
+				if err != nil || skill.IssueType != types.IssueType("skill") {
 					continue
 				}
 				// Prefer SkillContent (new), fall back to ClaudeSkillPath (deprecated)
@@ -1368,7 +1368,7 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 	var skills []*types.Issue
 	if daemonClient != nil {
 		listArgs := &rpc.ListArgs{
-			IssueType: string(types.TypeSkill),
+			IssueType: string(types.IssueType("skill")),
 		}
 		resp, err := daemonClient.List(listArgs)
 		if err != nil {
@@ -1378,7 +1378,7 @@ func runSkillSync(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to decode skills: %w", err)
 		}
 	} else {
-		skillType := types.TypeSkill
+		skillType := types.IssueType("skill")
 		filter := types.IssueFilter{
 			IssueType: &skillType,
 		}
@@ -1541,7 +1541,7 @@ func ensureAgentBeadExists(ctx context.Context, agentPath string) error {
 		ID:          agentPath,
 		Title:       fmt.Sprintf("Agent: %s", agentName),
 		Description: fmt.Sprintf("Auto-created agent bead for Gas Town path: %s", agentPath),
-		IssueType:   types.TypeAgent,
+		IssueType:   types.IssueType("agent"),
 		Status:      types.StatusPinned, // Agents are pinned by default
 		Priority:    2,
 	}
@@ -1717,7 +1717,7 @@ func runSkillTest(cmd *cobra.Command, args []string) error {
 			ID:              skillID,
 			Title:           "E2e Test",
 			Description:     "Test skill for validating skill integration end-to-end",
-			IssueType:       types.TypeSkill,
+			IssueType:       types.IssueType("skill"),
 			Status:          types.StatusPinned,
 			Priority:        2,
 			SkillName:       "e2e-test",

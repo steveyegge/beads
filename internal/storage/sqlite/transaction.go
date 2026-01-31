@@ -1559,20 +1559,6 @@ func scanIssueRow(row scanner) (*types.Issue, error) {
 	if waiters.Valid && waiters.String != "" {
 		issue.Waiters = parseJSONStringArray(waiters.String)
 	}
-	// Auto-close field
-	if autoClose.Valid && autoClose.Int64 != 0 {
-		issue.AutoClose = true
-	}
-	// Advice fields
-	if adviceTargetRig.Valid {
-		issue.AdviceTargetRig = adviceTargetRig.String
-	}
-	if adviceTargetRole.Valid {
-		issue.AdviceTargetRole = adviceTargetRole.String
-	}
-	if adviceTargetAgent.Valid {
-		issue.AdviceTargetAgent = adviceTargetAgent.String
-	}
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)

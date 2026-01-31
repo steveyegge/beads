@@ -175,7 +175,7 @@ func runDecisionCreate(cmd *cobra.Command, args []string) {
 	gateIssue := &types.Issue{
 		ID:        decisionID, // May be empty - CreateIssue will generate
 		Title:     truncateTitle(prompt, 100),
-		IssueType: types.TypeGate,
+		IssueType: types.IssueType("gate"),
 		Status:    types.StatusOpen,
 		Priority:  2,
 		AwaitType: "decision",

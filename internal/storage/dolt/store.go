@@ -341,11 +341,6 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
-	// Run schema migrations for columns added after initial table creation
-	if err := s.migrateSchema(ctx); err != nil {
-		return fmt.Errorf("failed to migrate schema: %w", err)
-	}
-
 	// Insert default config values
 	for _, stmt := range splitStatements(defaultConfig) {
 		stmt = strings.TrimSpace(stmt)
@@ -441,6 +436,44 @@ func isOnlyComments(stmt string) bool {
 		return false
 	}
 	return true
+}
+
+// isSerializationError checks if an error is a retryable serialization/optimistic lock failure.
+// Returns true for errors that indicate the transaction can be safely retried:
+//   - Error 1105: HY000 optimistic lock failed on database Root update
+//   - Error 1213: 40001 Serialization failure
+//   - "optimistic lock failed" messages
+//   - "serialization failure" messages
+//
+// Returns false for errors that should not be retried:
+//   - nil errors
+//   - "nothing to commit" or "no changes to commit" (empty commit, not a conflict)
+//   - Regular database errors (table not found, etc.)
+func isSerializationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+
+	// Exclude "nothing to commit" variants - these are not serialization errors
+	if strings.Contains(errMsg, "nothing to commit") || strings.Contains(errMsg, "no changes to commit") {
+		return false
+	}
+
+	// Check for serialization/lock errors
+	if strings.Contains(errMsg, "error 1105") {
+		return true
+	}
+	if strings.Contains(errMsg, "error 1213") {
+		return true
+	}
+	if strings.Contains(errMsg, "optimistic lock failed") {
+		return true
+	}
+	if strings.Contains(errMsg, "serialization failure") {
+		return true
+	}
+	return false
 }
 
 // Close closes the database connection

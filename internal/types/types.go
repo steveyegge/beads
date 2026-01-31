@@ -559,15 +559,17 @@ const TypeEvent IssueType = "event"
 
 // IsValid checks if the issue type is a defined type constant.
 // This includes core work types (bug, feature, task, epic, chore) and
-// extended types (merge-request, molecule, gate, agent, role, rig, convoy, event, slot, warrant).
+// the internal event type.
 // All defined type constants are valid without requiring custom configuration.
+// Note: Gas Town types (molecule, gate, convoy, merge-request, etc.) require
+// types.custom configuration and are validated via IsValidWithCustom.
 func (t IssueType) IsValid() bool {
 	switch t {
 	// Core work types
 	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
 		return true
-	// Extended types (Gas Town, molecules, coordination)
-	case TypeMessage, TypeMergeRequest, TypeMolecule, TypeWisp, TypeGate, TypeAgent, TypeRole, TypeRig, TypeConvoy, TypeEvent, TypeSlot, TypeWarrant, TypeSkill, TypeAdvice:
+	// Internal type for audit trail
+	case TypeEvent:
 		return true
 	}
 	return false
@@ -604,9 +606,9 @@ func (t IssueType) Normalize() IssueType {
 	case "enhancement", "feat":
 		return TypeFeature
 	case "mr":
-		return TypeMergeRequest
+		return IssueType("merge-request")
 	case "mol":
-		return TypeMolecule
+		return IssueType("molecule")
 	default:
 		return t
 	}

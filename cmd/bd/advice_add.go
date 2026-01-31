@@ -176,7 +176,7 @@ func runAdviceAdd(cmd *cobra.Command, args []string) {
 		Description:       description,
 		Status:            types.StatusOpen,
 		Priority:          priority,
-		IssueType:         types.TypeAdvice,
+		IssueType:         types.IssueType("advice"),
 		AdviceTargetRig:   rig,
 		AdviceTargetRole:  role,
 		AdviceTargetAgent: agent,

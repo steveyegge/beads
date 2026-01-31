@@ -66,7 +66,7 @@ func CreateNextIteration(
 	newIssue := &types.Issue{
 		ID:        newID,
 		Title:     currentIssue.Title, // Keep same title
-		IssueType: types.TypeGate,
+		IssueType: types.IssueType("gate"),
 		Status:    types.StatusOpen,
 		Priority:  currentIssue.Priority,
 		AwaitType: "decision",

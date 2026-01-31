@@ -93,7 +93,7 @@ func runDecisionAwait(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: issue %s not found\n", resolvedID)
 		os.Exit(3)
 	}
-	if issue.IssueType != types.TypeGate || issue.AwaitType != "decision" {
+	if issue.IssueType != types.IssueType("gate") || issue.AwaitType != "decision" {
 		fmt.Fprintf(os.Stderr, "Error: %s is not a decision point\n", resolvedID)
 		os.Exit(3)
 	}
