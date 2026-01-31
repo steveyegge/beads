@@ -811,6 +811,8 @@ var allowedUpdateFields = map[string]bool{
 	// Gate fields (bd-z6kw: support await_id updates for gate discovery)
 	"await_id": true,
 	"waiters":  true,
+	// Custom metadata field (GH#1406)
+	"metadata": true,
 }
 
 // validatePriority validates a priority value
