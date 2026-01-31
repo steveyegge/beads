@@ -75,7 +75,7 @@ func runSkillsAudit(cmd *cobra.Command, args []string) {
 	// Discover skill directories
 	claudeDir := ".claude/skills"
 	codexDir := os.ExpandEnv("$HOME/.codex/skills")
-	superpowersDir := os.ExpandEnv("$HOME/workspace/my-superpowers")
+	superpowersDir := os.ExpandEnv("$HOME/.codex/superpowers/skills")
 
 	claudeSkills := scanSkillDir(claudeDir, "claude")
 	codexSkills := scanSkillDir(codexDir, "codex")
@@ -134,10 +134,11 @@ func runSkillsAudit(cmd *cobra.Command, args []string) {
 
 		hasAll := true
 
+		// Using approved symbols: ○ ◐ ● ✓ ❄
 		if _, ok := sources["claude"]; ok {
 			claudeStatus = ui.RenderPass(" ✓ ")
 		} else {
-			claudeStatus = ui.RenderFail(" ✗ ")
+			claudeStatus = ui.RenderFail(" ○ ")
 			hasAll = false
 		}
 
@@ -166,17 +167,17 @@ func runSkillsAudit(cmd *cobra.Command, args []string) {
 			}
 		}
 
-		// Format name with drift indicator
+		// Format name with drift indicator (using approved symbols)
 		nameDisplay := name
 		if !hasAll {
-			nameDisplay = ui.RenderWarn(name + " ⚠")
+			nameDisplay = ui.RenderWarn(name + " ◐")
 			driftCount++
 		} else {
 			syncedCount++
 		}
 
 		if !hashMatch {
-			nameDisplay = ui.RenderFail(name + " ≠")
+			nameDisplay = ui.RenderFail(name + " ●")
 		}
 
 		fmt.Printf("%-30s  %-8s  %-8s  %-12s\n", nameDisplay, claudeStatus, codexStatus, superpowersStatus)
@@ -268,16 +269,24 @@ func scanSkillDir(dir, source string) []SkillInfo {
 		}
 
 		skillDir := filepath.Join(dir, name)
-		mainFile := filepath.Join(skillDir, "skill.md")
 
-		// Try skill.md first, then README.md
-		if _, err := os.Stat(mainFile); os.IsNotExist(err) {
-			mainFile = filepath.Join(skillDir, "README.md")
+		// Try multiple filename conventions: skill.md, SKILL.md, README.md
+		mainFile := ""
+		candidates := []string{"skill.md", "SKILL.md", "README.md", "index.md"}
+		for _, candidate := range candidates {
+			path := filepath.Join(skillDir, candidate)
+			if _, err := os.Stat(path); err == nil {
+				mainFile = path
+				break
+			}
+		}
+		if mainFile == "" {
+			continue // No recognized skill file
 		}
 
 		info, err := os.Stat(mainFile)
 		if err != nil {
-			continue // No main file, skip
+			continue
 		}
 
 		// Calculate SHA256

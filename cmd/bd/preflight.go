@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -405,6 +409,7 @@ func runSpecDriftCheck() CheckResult {
 
 // runSkillSyncCheck checks if skills are synchronized between Claude Code and Codex CLI.
 // This is the shadowbook integration point for skill-sync.
+// Compares by skill name AND content hash, not just counts.
 func runSkillSyncCheck(autoSync bool) CheckResult {
 	command := "skill-sync audit"
 
@@ -412,30 +417,12 @@ func runSkillSyncCheck(autoSync bool) CheckResult {
 	claudeSkillsDir := ".claude/skills"
 	codexSkillsDir := os.ExpandEnv("$HOME/.codex/skills")
 
-	// Count skills in Claude Code
-	claudeEntries, claudeErr := os.ReadDir(claudeSkillsDir)
-	claudeCount := 0
-	if claudeErr == nil {
-		for _, e := range claudeEntries {
-			if e.IsDir() {
-				claudeCount++
-			}
-		}
-	}
-
-	// Count skills in Codex
-	codexEntries, codexErr := os.ReadDir(codexSkillsDir)
-	codexCount := 0
-	if codexErr == nil {
-		for _, e := range codexEntries {
-			if e.IsDir() {
-				codexCount++
-			}
-		}
-	}
+	// Scan skills with hashes
+	claudeSkills := scanSkillsForPreflight(claudeSkillsDir)
+	codexSkills := scanSkillsForPreflight(codexSkillsDir)
 
 	// Check if directories exist
-	if claudeErr != nil && codexErr != nil {
+	if len(claudeSkills) == 0 && len(codexSkills) == 0 {
 		return CheckResult{
 			Name:    "Skills synced",
 			Passed:  true,
@@ -445,58 +432,144 @@ func runSkillSyncCheck(autoSync bool) CheckResult {
 		}
 	}
 
-	// Check for drift
-	if claudeCount != codexCount {
-		gap := claudeCount - codexCount
-		output := fmt.Sprintf("Claude: %d skills, Codex: %d skills (gap: %d)", claudeCount, codexCount, gap)
+	// Build codex index by name
+	codexIndex := make(map[string]string) // name -> hash
+	for name, hash := range codexSkills {
+		codexIndex[name] = hash
+	}
 
-		// Auto-sync if requested
-		if autoSync && gap > 0 {
-			// Create codex skills dir if it doesn't exist
-			if codexErr != nil {
-				if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
-					return CheckResult{
-						Name:    "Skills synced",
-						Passed:  false,
-						Output:  fmt.Sprintf("Cannot create Codex skills dir: %v", err),
-						Command: command,
-					}
-				}
-			}
+	// Find missing or mismatched skills
+	missing := []string{}
+	mismatched := []string{}
+	for name, claudeHash := range claudeSkills {
+		codexHash, exists := codexIndex[name]
+		if !exists {
+			missing = append(missing, name)
+		} else if claudeHash != codexHash {
+			mismatched = append(mismatched, name)
+		}
+	}
 
-			// Sync using rsync
-			syncCmd := exec.Command("rsync", "-av", "--delete", claudeSkillsDir+"/", codexSkillsDir+"/")
-			syncOutput, syncErr := syncCmd.CombinedOutput()
-			if syncErr != nil {
-				return CheckResult{
-					Name:    "Skills synced",
-					Passed:  false,
-					Output:  fmt.Sprintf("Auto-sync failed: %v\n%s", syncErr, string(syncOutput)),
-					Command: "rsync -av --delete .claude/skills/ ~/.codex/skills/",
-				}
-			}
+	// Check for skills only in codex (not in claude)
+	onlyInCodex := []string{}
+	for name := range codexSkills {
+		if _, exists := claudeSkills[name]; !exists {
+			onlyInCodex = append(onlyInCodex, name)
+		}
+	}
 
+	// All synced?
+	if len(missing) == 0 && len(mismatched) == 0 {
+		return CheckResult{
+			Name:    "Skills synced",
+			Passed:  true,
+			Output:  fmt.Sprintf("%d skills synchronized", len(claudeSkills)),
+			Command: command,
+		}
+	}
+
+	// Build drift message
+	var issues []string
+	if len(missing) > 0 {
+		issues = append(issues, fmt.Sprintf("%d missing in Codex", len(missing)))
+	}
+	if len(mismatched) > 0 {
+		issues = append(issues, fmt.Sprintf("%d content mismatches", len(mismatched)))
+	}
+	output := fmt.Sprintf("Claude: %d, Codex: %d (%s)", len(claudeSkills), len(codexSkills), strings.Join(issues, ", "))
+
+	// Auto-sync if requested
+	if autoSync && (len(missing) > 0 || len(mismatched) > 0) {
+		// Create codex skills dir if it doesn't exist
+		if err := os.MkdirAll(codexSkillsDir, 0755); err != nil {
 			return CheckResult{
 				Name:    "Skills synced",
-				Passed:  true,
-				Output:  fmt.Sprintf("Auto-synced %d skills to Codex", claudeCount),
+				Passed:  false,
+				Output:  fmt.Sprintf("Cannot create Codex skills dir: %v", err),
+				Command: command,
+			}
+		}
+
+		// Sync using rsync
+		syncCmd := exec.Command("rsync", "-av", "--delete", claudeSkillsDir+"/", codexSkillsDir+"/")
+		syncOutput, syncErr := syncCmd.CombinedOutput()
+		if syncErr != nil {
+			return CheckResult{
+				Name:    "Skills synced",
+				Passed:  false,
+				Output:  fmt.Sprintf("Auto-sync failed: %v\n%s", syncErr, string(syncOutput)),
 				Command: "rsync -av --delete .claude/skills/ ~/.codex/skills/",
 			}
 		}
 
 		return CheckResult{
 			Name:    "Skills synced",
-			Passed:  false,
-			Warning: true,
-			Output:  output + " (use --auto-sync to fix)",
-			Command: command,
+			Passed:  true,
+			Output:  fmt.Sprintf("Auto-synced %d skills to Codex", len(claudeSkills)),
+			Command: "rsync -av --delete .claude/skills/ ~/.codex/skills/",
 		}
 	}
 
 	return CheckResult{
 		Name:    "Skills synced",
-		Passed:  true,
-		Output:  fmt.Sprintf("%d skills synchronized", claudeCount),
+		Passed:  false,
+		Warning: true,
+		Output:  output + " (use --auto-sync to fix)",
 		Command: command,
 	}
+}
+
+// scanSkillsForPreflight scans a skill directory and returns map of name -> hash
+func scanSkillsForPreflight(dir string) map[string]string {
+	skills := make(map[string]string)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return skills
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		name := entry.Name()
+		skillDir := filepath.Join(dir, name)
+
+		// Try multiple filename conventions
+		var mainFile string
+		for _, candidate := range []string{"skill.md", "SKILL.md", "README.md", "index.md"} {
+			path := filepath.Join(skillDir, candidate)
+			if _, err := os.Stat(path); err == nil {
+				mainFile = path
+				break
+			}
+		}
+		if mainFile == "" {
+			continue
+		}
+
+		// Calculate hash
+		hash := hashFileForPreflight(mainFile)
+		if hash != "" {
+			skills[name] = hash
+		}
+	}
+
+	return skills
+}
+
+// hashFileForPreflight calculates SHA256 of a file for preflight comparison
+func hashFileForPreflight(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

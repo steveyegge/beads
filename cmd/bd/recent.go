@@ -258,7 +258,7 @@ func printRecentItems(items []RecentItem, now time.Time) {
 		// Format time relative to now
 		timeStr := formatRecentRelativeTime(item.ModifiedAt, now)
 
-		// Status/type indicator
+		// Status/type indicator (using approved symbols: ○ ◐ ● ✓ ❄)
 		var indicator string
 		var typeLabel string
 		if item.Type == "bead" {
@@ -266,9 +266,9 @@ func printRecentItems(items []RecentItem, now time.Time) {
 			case "in_progress":
 				indicator = ui.RenderWarn("◐")
 			case "blocked":
-				indicator = ui.RenderFail("◉")
+				indicator = ui.RenderFail("●")
 			case "deferred":
-				indicator = ui.RenderMuted("◌")
+				indicator = ui.RenderMuted("○")
 			default:
 				indicator = "○"
 			}
@@ -279,9 +279,9 @@ func printRecentItems(items []RecentItem, now time.Time) {
 			case "complete":
 				indicator = ui.RenderPass("✓")
 			case "archived":
-				indicator = ui.RenderMuted("⊘")
+				indicator = ui.RenderMuted("○")
 			default:
-				indicator = ui.RenderAccent("📄")
+				indicator = ui.RenderAccent("●")
 			}
 			typeLabel = "[spec]"
 		}
