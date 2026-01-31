@@ -55,25 +55,8 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Check if running via systemd (BD_DAEMON_SYSTEMD=1 set by systemd unit)
-	isSystemdInvocation := os.Getenv("BD_DAEMON_SYSTEMD") == "1"
-
-	// If we're already running under systemd, allow the command
-	if isSystemdInvocation {
-		return nil
-	}
-
-	// Check if systemd service is actively managing a daemon for this workspace.
-	// This prevents agents from accidentally starting a second daemon instance
-	// when systemd is already managing one.
-	if isSystemdServiceActive() {
-		return fmt.Errorf("daemon is managed by systemctl (bd-daemon service is active).\n\n" +
-			"To restart: systemctl --user restart bd-daemon@...\n" +
-			"To stop:    systemctl --user stop bd-daemon@...\n" +
-			"To status:  systemctl --user status bd-daemon@...\n\n" +
-			"Use 'systemctl --user list-units bd-daemon@*' to list all instances.")
-	}
-
+	// Check Dolt backend FIRST - this blocks unconditionally (even from systemd).
+	// If the backend is single-process only, daemon mode is fundamentally unsupported.
 	// Best-effort determine the active workspace backend. If we can't determine it,
 	// don't block (the command will likely fail later anyway).
 	beadsDir := beads.FindBeadsDir()
@@ -86,31 +69,76 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 			beadsDir = filepath.Dir(found)
 		}
 	}
-	if beadsDir == "" {
+	if beadsDir != "" {
+		cfg, err := configfile.Load(beadsDir)
+		if err == nil && cfg != nil {
+			// Use GetCapabilities() to properly handle Dolt server mode
+			if cfg.GetCapabilities().SingleProcessOnly {
+				return fmt.Errorf("%s", singleProcessBackendHelp(cfg.GetBackend()))
+			}
+		}
+	}
+
+	// Check if running via systemd (BD_DAEMON_SYSTEMD=1 set by systemd unit)
+	isSystemdInvocation := os.Getenv("BD_DAEMON_SYSTEMD") == "1"
+
+	// If we're already running under systemd, allow the command
+	// (systemd is managing the daemon, no need for duplicate detection)
+	if isSystemdInvocation {
 		return nil
 	}
 
-	cfg, err := configfile.Load(beadsDir)
-	if err != nil || cfg == nil {
-		return nil
-	}
-
-	// Use GetCapabilities() to properly handle Dolt server mode
-	if cfg.GetCapabilities().SingleProcessOnly {
-		return fmt.Errorf("%s", singleProcessBackendHelp(cfg.GetBackend()))
+	// Check if systemd service is actively managing a daemon for this workspace.
+	// This prevents agents from accidentally starting a second daemon instance
+	// when systemd is already managing one.
+	if isSystemdServiceActive() {
+		return fmt.Errorf("daemon is managed by systemctl (bd-daemon service is active).\n\n" +
+			"For user services:\n" +
+			"  systemctl --user restart bd-daemon@...\n" +
+			"  systemctl --user stop bd-daemon@...\n" +
+			"  systemctl --user status bd-daemon@...\n" +
+			"  systemctl --user list-units bd-daemon@*\n\n" +
+			"For system services:\n" +
+			"  sudo systemctl restart bd-daemon.service\n" +
+			"  sudo systemctl stop bd-daemon.service\n" +
+			"  sudo systemctl status bd-daemon.service")
 	}
 
 	return nil
 }
 
-// isSystemdServiceActive checks if any bd-daemon systemd user service is active.
+// isSystemdServiceActive checks if any bd-daemon systemd service is active.
 // This is used to prevent manual daemon starts when systemd is managing the daemon.
 // We check for both the template instances (bd-daemon@*.service) and the simple
 // service (bd-daemon.service) to cover both service styles.
+// We check BOTH user-level (--user) and system-level services since the daemon
+// may be installed in either location.
 func isSystemdServiceActive() bool {
-	// First check for template-style service instances using list-units
+	// Check user-level services first
+	if isSystemdServiceActiveForScope("--user") {
+		return true
+	}
+
+	// Check system-level services (no --user flag)
+	if isSystemdServiceActiveForScope("") {
+		return true
+	}
+
+	return false
+}
+
+// isSystemdServiceActiveForScope checks if any bd-daemon service is active
+// at the given systemctl scope. Pass "--user" for user services or "" for system services.
+func isSystemdServiceActiveForScope(scope string) bool {
+	// Build args for template-style service instances using list-units
 	// The --state=active filter ensures we only see running instances
-	cmd := exec.Command("systemctl", "--user", "--state=active", "--no-legend", "--no-pager", "list-units", "bd-daemon@*.service")
+	args := []string{}
+	if scope != "" {
+		args = append(args, scope)
+	}
+	args = append(args, "--state=active", "--no-legend", "--no-pager", "list-units", "bd-daemon@*.service")
+
+	cmd := exec.Command("systemctl", args...)
 	output, err := cmd.Output()
 	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
 		return true
@@ -118,7 +146,13 @@ func isSystemdServiceActive() bool {
 
 	// Check for simple service (bd-daemon.service)
 	// Using is-active which returns 0 if the unit is active
-	cmd = exec.Command("systemctl", "--user", "is-active", "--quiet", "bd-daemon.service")
+	args = []string{}
+	if scope != "" {
+		args = append(args, scope)
+	}
+	args = append(args, "is-active", "--quiet", "bd-daemon.service")
+
+	cmd = exec.Command("systemctl", args...)
 	if err := cmd.Run(); err == nil {
 		return true
 	}
