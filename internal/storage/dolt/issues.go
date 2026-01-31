@@ -386,7 +386,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			event_kind, actor, target, payload,
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
-			due_at, defer_until, metadata
+			due_at, defer_until, metadata,
+			advice_target_rig, advice_target_role, advice_target_agent
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -398,6 +399,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
+			?, ?, ?,
 			?, ?, ?
 		)
 	`,
@@ -412,6 +414,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.AwaitType, issue.AwaitID, issue.Timeout.Nanoseconds(), formatJSONStringArray(issue.Waiters),
 		issue.HookBead, issue.RoleBead, issue.AgentState, issue.LastActivity, issue.RoleType, issue.Rig,
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
+		issue.AdviceTargetRig, issue.AdviceTargetRole, issue.AdviceTargetAgent,
 	)
 	return err
 }
@@ -430,6 +433,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	var ephemeral, pinned, isTemplate, crystallizes sql.NullInt64
 	var qualityScore sql.NullFloat64
 	var metadata sql.NullString
+	// Advice fields (gt-epc-advice_schema_storage)
+	var adviceTargetRig, adviceTargetRole, adviceTargetAgent sql.NullString
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -442,7 +447,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
-		       quality_score, work_type, source_system, metadata
+		       quality_score, work_type, source_system, metadata,
+		       advice_target_rig, advice_target_role, advice_target_agent
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -458,6 +464,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&eventKind, &actor, &target, &payload,
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
+		&adviceTargetRig, &adviceTargetRole, &adviceTargetAgent,
 	)
 
 	if err == sql.ErrNoRows {
@@ -604,6 +611,16 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	// Custom metadata field (GH#1406)
 	if metadata.Valid && metadata.String != "" && metadata.String != "{}" {
 		issue.Metadata = []byte(metadata.String)
+	}
+	// Advice fields (gt-epc-advice_schema_storage)
+	if adviceTargetRig.Valid {
+		issue.AdviceTargetRig = adviceTargetRig.String
+	}
+	if adviceTargetRole.Valid {
+		issue.AdviceTargetRole = adviceTargetRole.String
+	}
+	if adviceTargetAgent.Valid {
+		issue.AdviceTargetAgent = adviceTargetAgent.String
 	}
 
 	return &issue, nil
