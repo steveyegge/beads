@@ -665,8 +665,16 @@ type IssueWithDependencyMetadata struct {
 // IssueWithCounts extends Issue with dependency relationship counts
 type IssueWithCounts struct {
 	*Issue
-	DependencyCount int `json:"dependency_count"`
-	DependentCount  int `json:"dependent_count"`
+	DependencyCount int             `json:"dependency_count"`
+	DependentCount  int             `json:"dependent_count"`
+	Volatility      *SpecVolatility `json:"volatility,omitempty"`
+}
+
+// SpecVolatility summarizes spec churn for JSON consumers.
+type SpecVolatility struct {
+	Level      string `json:"level"`
+	Changes    int    `json:"changes"`
+	OpenIssues int    `json:"open_issues"`
 }
 
 // IssueDetails extends Issue with labels, dependencies, dependents, and comments.

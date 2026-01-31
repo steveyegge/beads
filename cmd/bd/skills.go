@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
+	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
 
@@ -214,6 +216,8 @@ func runSkillsAudit(cmd *cobra.Command, args []string) {
 		fmt.Println()
 		fmt.Println("Run 'bd skills sync' to sync Claude skills to Codex")
 	}
+
+	appendSkillsVolatilityRisk(rootCtx)
 }
 
 func runSkillsSync(cmd *cobra.Command, args []string) {
@@ -443,6 +447,103 @@ func scanSkillDir(dir, source string) []SkillInfo {
 	}
 
 	return skills
+}
+
+func appendSkillsVolatilityRisk(ctx context.Context) {
+	if dbPath == "" {
+		return
+	}
+
+	roStore, err := sqlite.NewReadOnlyWithTimeout(ctx, dbPath, lockTimeout)
+	if err != nil {
+		return
+	}
+	defer func() { _ = roStore.Close() }()
+
+	db := roStore.UnderlyingDB()
+	rows, err := db.QueryContext(ctx, `
+		SELECT skill_id, bead_id FROM skill_bead_links ORDER BY linked_at DESC
+	`)
+	if err != nil {
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	skillToBead := make(map[string]string)
+	for rows.Next() {
+		var skillID, beadID string
+		if scanErr := rows.Scan(&skillID, &beadID); scanErr == nil {
+			if _, exists := skillToBead[skillID]; !exists {
+				skillToBead[skillID] = beadID
+			}
+		}
+	}
+
+	specIDs := make([]string, 0)
+	skillToSpec := make(map[string]string)
+	for skillID, beadID := range skillToBead {
+		issue, err := roStore.GetIssue(ctx, beadID)
+		if err != nil || issue == nil || issue.SpecID == "" {
+			continue
+		}
+		skillToSpec[skillID] = issue.SpecID
+		specIDs = append(specIDs, issue.SpecID)
+	}
+	if len(specIDs) == 0 {
+		return
+	}
+
+	window, err := parseDurationString("30d")
+	if err != nil {
+		return
+	}
+	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+
+	summaries := make(map[string]specVolatilitySummary)
+	for _, specID := range specIDs {
+		if _, ok := summaries[specID]; ok {
+			continue
+		}
+		events, err := roStore.ListSpecScanEvents(ctx, specID, since)
+		if err != nil {
+			continue
+		}
+		changeCount, _ := spec.SummarizeScanEvents(events, time.Time{})
+		filter := types.IssueFilter{
+			SpecID:        &specID,
+			ExcludeStatus: []types.Status{types.StatusClosed, types.StatusTombstone},
+		}
+		issues, err := roStore.SearchIssues(ctx, "", filter)
+		if err != nil {
+			continue
+		}
+		summaries[specID] = specVolatilitySummary{
+			ChangeCount: changeCount,
+			OpenIssues:  len(issues),
+		}
+	}
+
+	risky := make([]string, 0)
+	for skillID, specID := range skillToSpec {
+		summary, ok := summaries[specID]
+		if !ok {
+			continue
+		}
+		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		if level == specVolatilityHigh || level == specVolatilityMedium {
+			risky = append(risky, fmt.Sprintf("%s → %s (%s)", skillID, specID, formatVolatilityLevel(level)))
+		}
+	}
+	if len(risky) == 0 {
+		return
+	}
+
+	sort.Strings(risky)
+	fmt.Println()
+	fmt.Println("Skills at risk (linked to volatile specs):")
+	for _, line := range risky {
+		fmt.Printf("  %s\n", line)
+	}
 }
 
 func hashFile(path string) (string, error) {

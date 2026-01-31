@@ -156,11 +156,14 @@ func specChangedBadge(issue *types.Issue) string {
 
 // formatPrettyIssue formats a single issue for pretty output
 // Uses semantic colors: status icon colored, priority P0/P1 colored, rest neutral
-func formatPrettyIssue(issue *types.Issue) string {
+func formatPrettyIssue(issue *types.Issue, volatilityBadge string) string {
 	// Use shared helpers from ui package
 	statusIcon := ui.RenderStatusIcon(string(issue.Status))
 	priorityTag := renderPriorityTag(issue.Priority)
 	specBadge := specChangedBadge(issue)
+	if volatilityBadge != "" {
+		specBadge += " " + volatilityBadge
+	}
 
 	// Type badge - only show for notable types
 	typeBadge := ""
@@ -281,7 +284,7 @@ func compareIssuesByPriority(a, b *types.Issue) int {
 
 // printPrettyTree recursively prints the issue tree
 // Children are sorted by priority (P0 first) for intuitive reading
-func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string) {
+func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, prefix string, volatilityBadges map[string]string) {
 	children := childrenMap[parentID]
 
 	// Sort children by priority using same comparison as roots for consistency
@@ -293,24 +296,24 @@ func printPrettyTree(childrenMap map[string][]*types.Issue, parentID string, pre
 		if isLast {
 			connector = "└── "
 		}
-		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child))
+		fmt.Printf("%s%s%s\n", prefix, connector, formatPrettyIssue(child, issueVolatilityBadge(child, volatilityBadges)))
 
 		extension := "│   "
 		if isLast {
 			extension = "    "
 		}
-		printPrettyTree(childrenMap, child.ID, prefix+extension)
+		printPrettyTree(childrenMap, child.ID, prefix+extension, volatilityBadges)
 	}
 }
 
 // displayPrettyList displays issues in pretty tree format (GH#654)
 // Uses buildIssueTree which only supports dotted ID hierarchy
-func displayPrettyList(issues []*types.Issue, showHeader bool) {
-	displayPrettyListWithDeps(issues, showHeader, nil)
+func displayPrettyList(issues []*types.Issue, showHeader bool, volatilityBadges map[string]string) {
+	displayPrettyListWithDeps(issues, showHeader, nil, volatilityBadges)
 }
 
 // displayPrettyListWithDeps displays issues in tree format using dependency data
-func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency) {
+func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps map[string][]*types.Dependency, volatilityBadges map[string]string) {
 	if showHeader {
 		// Clear screen and show header
 		fmt.Print("\033[2J\033[H")
@@ -328,8 +331,8 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 	roots, childrenMap := buildIssueTreeWithDeps(issues, allDeps)
 
 	for _, issue := range roots {
-		fmt.Println(formatPrettyIssue(issue))
-		printPrettyTree(childrenMap, issue.ID, "")
+		fmt.Println(formatPrettyIssue(issue, issueVolatilityBadge(issue, volatilityBadges)))
+		printPrettyTree(childrenMap, issue.ID, "", volatilityBadges)
 	}
 
 	// Summary
@@ -351,7 +354,7 @@ func displayPrettyListWithDeps(issues []*types.Issue, showHeader bool, allDeps m
 }
 
 // watchIssues starts watching for changes and re-displays (GH#654)
-func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueFilter, sortBy string, reverse bool) {
+func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueFilter, sortBy string, reverse bool, showVolatility bool) {
 	// Find .beads directory
 	beadsDir := ".beads"
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -375,7 +378,8 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 	// Initial display
 	issues, _ := store.SearchIssues(ctx, "", filter)
 	sortIssues(issues, sortBy, reverse)
-	displayPrettyList(issues, true)
+	volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
+	displayPrettyList(issues, true, volatilityBadges)
 
 	fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 
@@ -407,7 +411,8 @@ func watchIssues(ctx context.Context, store storage.Storage, filter types.IssueF
 					debounceTimer = time.AfterFunc(debounceDelay, func() {
 						issues, _ := store.SearchIssues(ctx, "", filter)
 						sortIssues(issues, sortBy, reverse)
-						displayPrettyList(issues, true)
+						volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
+						displayPrettyList(issues, true, volatilityBadges)
 						fmt.Fprintf(os.Stderr, "\nWatching for changes... (Press Ctrl+C to exit)\n")
 					})
 				}
@@ -475,7 +480,7 @@ func sortIssues(issues []*types.Issue, sortBy string, reverse bool) {
 }
 
 // formatIssueLong formats a single issue in long format to a buffer
-func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) {
+func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string, volatilitySummary *specVolatilitySummary) {
 	status := string(issue.Status)
 	if status == "closed" {
 		line := fmt.Sprintf("%s%s [P%d] [%s] %s\n  %s",
@@ -503,6 +508,11 @@ func formatIssueLong(buf *strings.Builder, issue *types.Issue, labels []string) 
 	}
 	if issue.SpecChangedAt != nil {
 		buf.WriteString(fmt.Sprintf("  Spec changed: %s\n", issue.SpecChangedAt.Local().Format("2006-01-02 15:04")))
+	}
+	if volatilitySummary != nil {
+		level := classifySpecVolatility(volatilitySummary.ChangeCount, volatilitySummary.OpenIssues)
+		buf.WriteString(fmt.Sprintf("  Spec volatility: %s (changes: %d, open issues: %d)\n",
+			level, volatilitySummary.ChangeCount, volatilitySummary.OpenIssues))
 	}
 	buf.WriteString("\n")
 }
@@ -535,6 +545,61 @@ func formatDependencyInfo(blockedBy, blocks []string) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
+func issueVolatilityBadge(issue *types.Issue, volatilityBadges map[string]string) string {
+	if issue == nil || issue.SpecID == "" {
+		return ""
+	}
+	if volatilityBadges == nil {
+		return ""
+	}
+	return volatilityBadges[issue.SpecID]
+}
+
+func buildVolatilityBadges(ctx context.Context, issues []*types.Issue, showVolatility bool) (map[string]string, map[string]specVolatilitySummary, error) {
+	if !showVolatility || len(issues) == 0 {
+		return nil, nil, nil
+	}
+	specIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, issue := range issues {
+		if issue.SpecID == "" {
+			continue
+		}
+		if _, ok := seen[issue.SpecID]; ok {
+			continue
+		}
+		seen[issue.SpecID] = struct{}{}
+		specIDs = append(specIDs, issue.SpecID)
+	}
+	if len(specIDs) == 0 {
+		return nil, nil, nil
+	}
+
+	window, err := parseDurationString("30d")
+	if err != nil {
+		return nil, nil, err
+	}
+	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	badges := make(map[string]string)
+	for specID, summary := range summaries {
+		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		switch level {
+		case specVolatilityHigh, specVolatilityMedium:
+			badges[specID] = ui.RenderWarn("◐ VOLATILE")
+		case specVolatilityLow:
+			badges[specID] = ui.RenderMuted("○ LOW")
+		case specVolatilityStable:
+			badges[specID] = ui.RenderPass("✓ STABLE")
+		}
+	}
+	return badges, summaries, nil
+}
+
 // buildBlockingMaps builds maps of blocking dependencies from dependency records.
 // Returns two maps: blockedByMap[issueID] = []IDs that block this issue,
 // and blocksMap[issueID] = []IDs that this issue blocks.
@@ -561,7 +626,7 @@ func buildBlockingMaps(allDeps map[string][]*types.Dependency) (blockedByMap, bl
 // formatIssueCompact formats a single issue in compact format to a buffer
 // Uses status icons for better scanability - consistent with bd graph
 // Format: [icon] [pin] ID [Priority] [Type] @assignee [labels] - Title (blocked by: X, blocks: Y)
-func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, blockedBy, blocks []string) {
+func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []string, blockedBy, blocks []string, volatilityBadge string) {
 	labelsStr := ""
 	if len(labels) > 0 {
 		labelsStr = fmt.Sprintf(" %v", labels)
@@ -577,6 +642,9 @@ func formatIssueCompact(buf *strings.Builder, issue *types.Issue, labels []strin
 		depInfo = " " + depInfo
 	}
 	specBadge := specChangedBadge(issue)
+	if volatilityBadge != "" {
+		specBadge += " " + volatilityBadge
+	}
 
 	// Get styled status icon
 	statusIcon := renderStatusIcon(issue.Status)
@@ -618,6 +686,8 @@ var listCmd = &cobra.Command{
 		idFilter, _ := cmd.Flags().GetString("id")
 		specFilter, _ := cmd.Flags().GetString("spec")
 		specIDFilter, _ := cmd.Flags().GetString("spec-id")
+		showVolatilityFlag, _ := cmd.Flags().GetBool("show-volatility")
+		hideVolatilityFlag, _ := cmd.Flags().GetBool("hide-volatility")
 		longFormat, _ := cmd.Flags().GetBool("long")
 		sortBy, _ := cmd.Flags().GetString("sort")
 		reverse, _ := cmd.Flags().GetBool("reverse")
@@ -783,6 +853,15 @@ var listCmd = &cobra.Command{
 			} else {
 				filter.SpecID = &specFilter
 			}
+		}
+
+		if showVolatilityFlag && hideVolatilityFlag {
+			fmt.Fprintf(os.Stderr, "Error: --show-volatility and --hide-volatility cannot both be set\n")
+			os.Exit(1)
+		}
+		showVolatility := showVolatilityFlag || specFilter != ""
+		if hideVolatilityFlag {
+			showVolatility = false
 		}
 
 		// Pattern matching
@@ -1102,6 +1181,41 @@ var listCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 					os.Exit(1)
 				}
+				specIDs := make([]string, 0)
+				seen := make(map[string]struct{})
+				for _, item := range issuesWithCounts {
+					if item == nil || item.Issue == nil || item.Issue.SpecID == "" {
+						continue
+					}
+					if _, ok := seen[item.Issue.SpecID]; ok {
+						continue
+					}
+					seen[item.Issue.SpecID] = struct{}{}
+					specIDs = append(specIDs, item.Issue.SpecID)
+				}
+				if len(specIDs) > 0 {
+					window, err := parseDurationString("30d")
+					if err == nil {
+						since := time.Now().UTC().Add(-window).Truncate(time.Second)
+						if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
+							for _, item := range issuesWithCounts {
+								if item == nil || item.Issue == nil {
+									continue
+								}
+								summary, ok := summaries[item.Issue.SpecID]
+								if !ok {
+									continue
+								}
+								level := string(classifySpecVolatility(summary.ChangeCount, summary.OpenIssues))
+								item.Volatility = &types.SpecVolatility{
+									Level:      level,
+									Changes:    summary.ChangeCount,
+									OpenIssues: summary.OpenIssues,
+								}
+							}
+						}
+					}
+				}
 				outputJSON(issuesWithCounts)
 				return
 			}
@@ -1125,7 +1239,7 @@ var listCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
 				}
-				watchIssues(ctx, store, filter, sortBy, reverse)
+				watchIssues(ctx, store, filter, sortBy, reverse, showVolatility)
 				return
 			}
 
@@ -1155,7 +1269,8 @@ var listCmd = &cobra.Command{
 						os.Exit(1)
 					}
 
-					displayPrettyListWithDeps(treeIssues, false, allDeps)
+					volatilityBadges, _, _ := buildVolatilityBadges(ctx, treeIssues, showVolatility)
+					displayPrettyListWithDeps(treeIssues, false, allDeps, volatilityBadges)
 					return
 				}
 
@@ -1172,7 +1287,8 @@ var listCmd = &cobra.Command{
 						_ = roStore.Close()
 					}
 				}
-				displayPrettyListWithDeps(issues, false, allDeps)
+				volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
+				displayPrettyListWithDeps(issues, false, allDeps, volatilityBadges)
 				if effectiveLimit > 0 && len(issues) == effectiveLimit {
 					fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
 				}
@@ -1204,13 +1320,21 @@ var listCmd = &cobra.Command{
 			} else if longFormat {
 				// Long format: multi-line with details
 				buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
+				volatilityBadges, volatilitySummaries, _ := buildVolatilityBadges(ctx, issues, showVolatility)
 				for _, issue := range issues {
-					formatIssueLong(&buf, issue, issue.Labels)
+					_ = volatilityBadges
+					summary, ok := volatilitySummaries[issue.SpecID]
+					if ok {
+						formatIssueLong(&buf, issue, issue.Labels, &summary)
+					} else {
+						formatIssueLong(&buf, issue, issue.Labels, nil)
+					}
 				}
 			} else {
 				// Compact format: one line per issue
+				volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
 				for _, issue := range issues {
-					formatIssueCompact(&buf, issue, issue.Labels, blockedByMap[issue.ID], blocksMap[issue.ID])
+					formatIssueCompact(&buf, issue, issue.Labels, blockedByMap[issue.ID], blocksMap[issue.ID], issueVolatilityBadge(issue, volatilityBadges))
 				}
 			}
 
@@ -1253,7 +1377,7 @@ var listCmd = &cobra.Command{
 
 		// Handle watch mode (GH#654) - must be before other output modes
 		if watchMode {
-			watchIssues(ctx, store, filter, sortBy, reverse)
+			watchIssues(ctx, store, filter, sortBy, reverse, showVolatility)
 			return
 		}
 
@@ -1274,14 +1398,16 @@ var listCmd = &cobra.Command{
 
 				// Load dependencies for tree structure
 				allDeps, _ := store.GetAllDependencyRecords(ctx)
-				displayPrettyListWithDeps(treeIssues, false, allDeps)
+				volatilityBadges, _, _ := buildVolatilityBadges(ctx, treeIssues, showVolatility)
+				displayPrettyListWithDeps(treeIssues, false, allDeps, volatilityBadges)
 				return
 			}
 
 			// Regular tree display (no parent filter)
 			// Load dependencies for tree structure
 			allDeps, _ := store.GetAllDependencyRecords(ctx)
-			displayPrettyListWithDeps(issues, false, allDeps)
+			volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
+			displayPrettyListWithDeps(issues, false, allDeps, volatilityBadges)
 			// Show truncation hint if we hit the limit (GH#788)
 			if effectiveLimit > 0 && len(issues) == effectiveLimit {
 				fmt.Fprintf(os.Stderr, "\nShowing %d issues (use --limit 0 for all)\n", effectiveLimit)
@@ -1314,6 +1440,31 @@ var listCmd = &cobra.Command{
 				issue.Dependencies = allDeps[issue.ID]
 			}
 
+			volatilitySummaries := make(map[string]specVolatilitySummary)
+			if len(issues) > 0 {
+				specIDs := make([]string, 0)
+				seen := make(map[string]struct{})
+				for _, issue := range issues {
+					if issue.SpecID == "" {
+						continue
+					}
+					if _, ok := seen[issue.SpecID]; ok {
+						continue
+					}
+					seen[issue.SpecID] = struct{}{}
+					specIDs = append(specIDs, issue.SpecID)
+				}
+				if len(specIDs) > 0 {
+					window, err := parseDurationString("30d")
+					if err == nil {
+						since := time.Now().UTC().Add(-window).Truncate(time.Second)
+						if summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since); err == nil {
+							volatilitySummaries = summaries
+						}
+					}
+				}
+			}
+
 			// Build response with counts
 			issuesWithCounts := make([]*types.IssueWithCounts, len(issues))
 			for i, issue := range issues {
@@ -1321,10 +1472,20 @@ var listCmd = &cobra.Command{
 				if counts == nil {
 					counts = &types.DependencyCounts{DependencyCount: 0, DependentCount: 0}
 				}
+				var volatility *types.SpecVolatility
+				if summary, ok := volatilitySummaries[issue.SpecID]; ok {
+					level := string(classifySpecVolatility(summary.ChangeCount, summary.OpenIssues))
+					volatility = &types.SpecVolatility{
+						Level:      level,
+						Changes:    summary.ChangeCount,
+						OpenIssues: summary.OpenIssues,
+					}
+				}
 				issuesWithCounts[i] = &types.IssueWithCounts{
 					Issue:           issue,
 					DependencyCount: counts.DependencyCount,
 					DependentCount:  counts.DependentCount,
+					Volatility:      volatility,
 				}
 			}
 			outputJSON(issuesWithCounts)
@@ -1357,15 +1518,23 @@ var listCmd = &cobra.Command{
 		} else if longFormat {
 			// Long format: multi-line with details
 			buf.WriteString(fmt.Sprintf("\nFound %d issues:\n\n", len(issues)))
+			volatilityBadges, volatilitySummaries, _ := buildVolatilityBadges(ctx, issues, showVolatility)
 			for _, issue := range issues {
+				_ = volatilityBadges
 				labels := labelsMap[issue.ID]
-				formatIssueLong(&buf, issue, labels)
+				summary, ok := volatilitySummaries[issue.SpecID]
+				if ok {
+					formatIssueLong(&buf, issue, labels, &summary)
+				} else {
+					formatIssueLong(&buf, issue, labels, nil)
+				}
 			}
 		} else {
 			// Compact format: one line per issue
+			volatilityBadges, _, _ := buildVolatilityBadges(ctx, issues, showVolatility)
 			for _, issue := range issues {
 				labels := labelsMap[issue.ID]
-				formatIssueCompact(&buf, issue, labels, blockedByMap[issue.ID], blocksMap[issue.ID])
+				formatIssueCompact(&buf, issue, labels, blockedByMap[issue.ID], blocksMap[issue.ID], issueVolatilityBadge(issue, volatilityBadges))
 			}
 		}
 
@@ -1399,6 +1568,8 @@ func init() {
 	listCmd.Flags().String("spec-id", "", "Alias for --spec")
 	listCmd.Flags().Bool("spec-changed", false, "Show only issues whose spec has changed")
 	listCmd.Flags().Bool("no-spec", false, "Show only issues with no spec linked")
+	listCmd.Flags().Bool("show-volatility", false, "Show spec volatility badges")
+	listCmd.Flags().Bool("hide-volatility", false, "Hide spec volatility badges (overrides default when --spec is used)")
 	listCmd.Flags().IntP("limit", "n", 50, "Limit results (default 50, use 0 for unlimited)")
 	listCmd.Flags().String("format", "", "Output format: 'digraph' (for golang.org/x/tools/cmd/digraph), 'dot' (Graphviz), or Go template")
 	listCmd.Flags().Bool("all", false, "Show all issues including closed (overrides default filter)")

@@ -139,3 +139,6 @@ bd_shadow
 
 # Reference files (ephemeral, local-only)
 reference/
+
+# Private specs and design docs (thinking space, not committed)
+specs/private/

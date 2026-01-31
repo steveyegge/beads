@@ -126,6 +126,7 @@ var createCmd = &cobra.Command{
 		waitsFor, _ := cmd.Flags().GetString("waits-for")
 		waitsForGate, _ := cmd.Flags().GetString("waits-for-gate")
 		forceCreate, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		repoOverride, _ := cmd.Flags().GetString("repo")
 		rigOverride, _ := cmd.Flags().GetString("rig")
 		prefixOverride, _ := cmd.Flags().GetString("prefix")
@@ -158,6 +159,34 @@ var createCmd = &cobra.Command{
 			FatalError("--event-category, --event-actor, --event-target, and --event-payload flags require --type=event")
 		}
 
+		if specID != "" && rigOverride == "" && prefixOverride == "" && !dryRun && !forceCreate && !silent && !debug.IsQuiet() && !jsonOutput {
+			volatilityWindow, err := parseDurationString("30d")
+			if err != nil {
+				FatalError("invalid volatility window: %v", err)
+			}
+			since := time.Now().UTC().Add(-volatilityWindow).Truncate(time.Second)
+			summary, err := getSpecVolatilitySummary(rootCtx, specID, since)
+			if err != nil {
+				FatalError("spec volatility check failed: %v", err)
+			}
+			if summary != nil && summary.ChangeCount >= 2 && summary.OpenIssues > 0 {
+				lastChanged := "unknown"
+				if summary.LastChangedAt != nil {
+					lastChanged = summary.LastChangedAt.Local().Format("2006-01-02")
+				}
+				fmt.Fprintf(os.Stderr, "%s Spec %s is volatile (%d changes since %s, %d open issues; last change %s).\n",
+					ui.RenderWarn("◐"), specID, summary.ChangeCount, "30d", summary.OpenIssues, lastChanged)
+				fmt.Fprintf(os.Stderr, "  Recommendation: stabilize spec before starting new work.\n")
+				fmt.Fprintf(os.Stderr, "Create anyway? [y/N] ")
+				var response string
+				_, _ = fmt.Scanln(&response)
+				if strings.ToLower(strings.TrimSpace(response)) != "y" {
+					fmt.Println("Canceled.")
+					return
+				}
+			}
+		}
+
 		// Parse --due flag (GH#820)
 		// Uses layered parsing: compact duration → NLP → date-only → RFC3339
 		var dueAt *time.Time
@@ -188,7 +217,6 @@ var createCmd = &cobra.Command{
 		}
 
 		// Handle --dry-run flag (before --rig to ensure it works with cross-rig creation)
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		if dryRun {
 			// Build preview issue
 			var externalRefPtr *string

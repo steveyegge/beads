@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/types"
@@ -55,6 +56,11 @@ var specScanCmd = &cobra.Command{
 			}
 			fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
 				ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
+			if config.GetBool("volatility.auto_pause") && len(result.ChangedSpecIDs) > 0 {
+				if _, err := maybeAutoPauseVolatileSpecs(rootCtx, result.ChangedSpecIDs); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: auto-pause failed: %v\n", err)
+				}
+			}
 			return
 		}
 
@@ -91,6 +97,11 @@ var specScanCmd = &cobra.Command{
 		fmt.Printf("%s Scanned %d specs (added=%d updated=%d missing=%d marked=%d)\n",
 			ui.RenderPass("✓"), result.Scanned, result.Added, result.Updated, result.Missing, result.MarkedBeads)
 		fmt.Println("● Note: Spec registry is local-only (not synced via git)")
+		if config.GetBool("volatility.auto_pause") && len(result.ChangedSpecIDs) > 0 {
+			if _, err := maybeAutoPauseVolatileSpecs(rootCtx, result.ChangedSpecIDs); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: auto-pause failed: %v\n", err)
+			}
+		}
 	},
 }
 

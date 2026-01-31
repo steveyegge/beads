@@ -122,7 +122,7 @@ func TestWatchModeWithDaemonDoesNotPanic(t *testing.T) {
 		}()
 		// Call watchIssues - should not panic now that store is initialized
 		// It will block watching for file changes, so we let it run briefly
-		watchIssues(ctx, currentStore, filter, "", false)
+		watchIssues(ctx, currentStore, filter, "", false, false)
 	}()
 
 	// Wait briefly for watchIssues to start and potentially panic
@@ -169,7 +169,7 @@ func TestWatchIssuesDirectlyWithNilStorePanics(t *testing.T) {
 			}
 			done <- true
 		}()
-		watchIssues(ctx, nilStore, filter, "", false)
+		watchIssues(ctx, nilStore, filter, "", false, false)
 	}()
 
 	select {

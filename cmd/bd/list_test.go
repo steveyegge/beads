@@ -685,7 +685,7 @@ func TestFormatIssueLong(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			formatIssueLong(&buf, tt.issue, tt.labels)
+			formatIssueLong(&buf, tt.issue, tt.labels, nil)
 			result := buf.String()
 			if !strings.Contains(result, tt.want) {
 				t.Errorf("formatIssueLong() = %q, want to contain %q", result, tt.want)
@@ -755,7 +755,7 @@ func TestFormatIssueCompact(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			formatIssueCompact(&buf, tt.issue, tt.labels, nil, nil)
+			formatIssueCompact(&buf, tt.issue, tt.labels, nil, nil, "")
 			result := buf.String()
 			if !strings.Contains(result, tt.want) {
 				t.Errorf("formatIssueCompact() = %q, want to contain %q", result, tt.want)
@@ -864,7 +864,7 @@ func TestFormatIssueCompactWithDependencies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
-			formatIssueCompact(&buf, tt.issue, nil, tt.blockedBy, tt.blocks)
+			formatIssueCompact(&buf, tt.issue, nil, tt.blockedBy, tt.blocks, "")
 			result := buf.String()
 			if !strings.Contains(result, tt.want) {
 				t.Errorf("formatIssueCompact() = %q, want to contain %q", result, tt.want)

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/spec"
 )
 
 // CheckResult represents the result of a single preflight check.
@@ -87,6 +88,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	fmt.Println("[ ] Nix hash current: go.sum unchanged or vendorHash updated")
 	fmt.Println("[ ] Version sync: version.go matches default.nix")
 	fmt.Println("[ ] No spec drift: bd list --spec-changed returns empty")
+	fmt.Println("[ ] Spec volatility: bd spec volatility --min-changes 2 returns empty")
 	fmt.Println()
 	fmt.Println("Run 'bd preflight --check' to validate automatically.")
 }
@@ -118,6 +120,10 @@ func runChecks(jsonOutput bool, autoSync bool) {
 	// Run spec drift check
 	specResult := runSpecDriftCheck()
 	results = append(results, specResult)
+
+	// Run spec volatility check
+	volatilityResult := runSpecVolatilityCheck()
+	results = append(results, volatilityResult)
 
 	// Calculate overall result
 	allPassed := true
@@ -403,6 +409,67 @@ func runSpecDriftCheck() CheckResult {
 		Passed:  false,
 		Warning: true,
 		Output:  fmt.Sprintf("%d issue(s) have unacknowledged spec changes. Run 'bd list --spec-changed' to see them, then 'bd update <id> --ack-spec' to acknowledge.", issueCount),
+		Command: command,
+	}
+}
+
+func runSpecVolatilityCheck() CheckResult {
+	command := "bd spec volatility --min-changes 2 --limit 5"
+
+	bdPath := os.Args[0]
+	cmd := exec.Command(bdPath, "--json", "spec", "volatility", "--min-changes", "2", "--limit", "5")
+	output, err := cmd.CombinedOutput()
+	outputStr := strings.TrimSpace(string(output))
+
+	if err != nil {
+		return CheckResult{
+			Name:    "Spec volatility",
+			Passed:  false,
+			Skipped: true,
+			Output:  fmt.Sprintf("Failed to check spec volatility: %v", err),
+			Command: command,
+		}
+	}
+
+	if outputStr == "" {
+		return CheckResult{
+			Name:    "Spec volatility",
+			Passed:  true,
+			Output:  "",
+			Command: command,
+		}
+	}
+
+	var entries []spec.SpecRiskEntry
+	if err := json.Unmarshal(output, &entries); err != nil {
+		return CheckResult{
+			Name:    "Spec volatility",
+			Passed:  false,
+			Skipped: true,
+			Output:  fmt.Sprintf("Failed to parse spec volatility output: %v", err),
+			Command: command,
+		}
+	}
+
+	if len(entries) == 0 {
+		return CheckResult{
+			Name:    "Spec volatility",
+			Passed:  true,
+			Output:  "",
+			Command: command,
+		}
+	}
+
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, fmt.Sprintf("%s (%d changes, %d open issues)", entry.SpecID, entry.ChangeCount, entry.OpenIssues))
+	}
+
+	return CheckResult{
+		Name:    "Spec volatility",
+		Passed:  false,
+		Warning: true,
+		Output:  fmt.Sprintf("%d volatile spec(s): %s. Run 'bd spec volatility' for details.", len(entries), strings.Join(lines, ", ")),
 		Command: command,
 	}
 }

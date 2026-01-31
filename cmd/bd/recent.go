@@ -29,18 +29,21 @@ var (
 
 // RecentItem represents an item (bead, spec, or skill) with modification time
 type RecentItem struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	Type       string    `json:"type"` // "bead", "spec", or "skill"
-	Status     string    `json:"status,omitempty"`
-	Priority   int       `json:"priority,omitempty"`
-	ModifiedAt time.Time `json:"modified_at"`
-	IsStale    bool      `json:"is_stale"`
-	SpecID     string    `json:"spec_id,omitempty"`   // For beads linked to specs
-	BeadID     string    `json:"bead_id,omitempty"`   // For skills/specs linked to beads
-	Source     string    `json:"source,omitempty"`    // For skills: claude, codex, etc.
-	Tier       string    `json:"tier,omitempty"`      // For skills: must-have, optional
-	SkillIDs   []string  `json:"skill_ids,omitempty"` // Skills linked to this bead
+	ID                   string    `json:"id"`
+	Title                string    `json:"title"`
+	Type                 string    `json:"type"` // "bead", "spec", or "skill"
+	Status               string    `json:"status,omitempty"`
+	Priority             int       `json:"priority,omitempty"`
+	ModifiedAt           time.Time `json:"modified_at"`
+	IsStale              bool      `json:"is_stale"`
+	SpecID               string    `json:"spec_id,omitempty"`   // For beads linked to specs
+	BeadID               string    `json:"bead_id,omitempty"`   // For skills/specs linked to beads
+	Source               string    `json:"source,omitempty"`    // For skills: claude, codex, etc.
+	Tier                 string    `json:"tier,omitempty"`      // For skills: must-have, optional
+	SkillIDs             []string  `json:"skill_ids,omitempty"` // Skills linked to this bead
+	VolatilityLevel      string    `json:"volatility_level,omitempty"`
+	VolatilityChanges    int       `json:"volatility_changes,omitempty"`
+	VolatilityOpenIssues int       `json:"volatility_open_issues,omitempty"`
 }
 
 var recentCmd = &cobra.Command{
@@ -83,8 +86,8 @@ func runRecent(cmd *cobra.Command, args []string) {
 	items := []RecentItem{}
 
 	// Build maps for nested view (--all mode)
-	var specToBeadMap map[string]string   // spec_id -> bead_id
-	var skillToBeadMap map[string]string  // skill_id -> bead_id
+	var specToBeadMap map[string]string     // spec_id -> bead_id
+	var skillToBeadMap map[string]string    // skill_id -> bead_id
 	var beadToSkillsMap map[string][]string // bead_id -> []skill_id
 
 	if recentShowAll {
@@ -148,6 +151,8 @@ func runRecent(cmd *cobra.Command, args []string) {
 	// Apply time filters
 	now := time.Now()
 	items = filterRecentByTime(items, now)
+
+	annotateRecentVolatility(rootCtx, items)
 
 	// Sort by modification time (most recent first)
 	sort.Slice(items, func(i, j int) bool {
@@ -415,8 +420,13 @@ func printRecentItems(items []RecentItem, now time.Time) {
 			specLink = fmt.Sprintf(" → %s", item.SpecID)
 		}
 
+		volatilityMarker := ""
+		if item.VolatilityLevel != "" && (item.Type == "spec" || item.SpecID != "") {
+			volatilityMarker = formatRecentVolatilityMarker(item.VolatilityLevel)
+		}
+
 		fmt.Printf("%s %s %s - %s%s%s  %s\n",
-			indicator, item.ID, typeLabel, title, specLink, staleMarker, ui.RenderMuted(timeStr))
+			indicator, item.ID, typeLabel, title, specLink+volatilityMarker, staleMarker, ui.RenderMuted(timeStr))
 	}
 
 	// Enhanced summary
@@ -530,7 +540,7 @@ func printRecentItemsNested(items []RecentItem, now time.Time, specToBeadMap, sk
 		}
 
 		fmt.Printf("%s [%s] %s%s  %s  %s\n",
-			bead.ID, priorityLabel, title, staleMarker, statusText, ui.RenderMuted(timeStr))
+			bead.ID, priorityLabel, title+formatRecentVolatilityMarker(bead.VolatilityLevel), staleMarker, statusText, ui.RenderMuted(timeStr))
 
 		// Find linked spec
 		hasChildren := false
@@ -550,7 +560,7 @@ func printRecentItemsNested(items []RecentItem, now time.Time, specToBeadMap, sk
 				}
 
 				fmt.Printf("%s%s %s  %s  %s\n",
-					treeChar, specIndicator, specItem.ID, specStatus, ui.RenderMuted(specTimeStr))
+					treeChar, specIndicator, specItem.ID, specStatus+formatRecentVolatilityMarker(specItem.VolatilityLevel), ui.RenderMuted(specTimeStr))
 				shownSpecs[bead.SpecID] = true
 
 				// Print skills nested under spec if they exist
@@ -664,6 +674,77 @@ func printRecentItemsNested(items []RecentItem, now time.Time, specToBeadMap, sk
 
 	// Enhanced summary
 	printRecentSummary(items, now)
+}
+
+func annotateRecentVolatility(ctx context.Context, items []RecentItem) {
+	if len(items) == 0 {
+		return
+	}
+	specIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, item := range items {
+		var specID string
+		if item.Type == "spec" {
+			specID = item.ID
+		} else if item.SpecID != "" {
+			specID = item.SpecID
+		}
+		if specID == "" {
+			continue
+		}
+		if _, ok := seen[specID]; ok {
+			continue
+		}
+		seen[specID] = struct{}{}
+		specIDs = append(specIDs, specID)
+	}
+	if len(specIDs) == 0 {
+		return
+	}
+	window, err := parseDurationString("30d")
+	if err != nil {
+		return
+	}
+	since := time.Now().UTC().Add(-window).Truncate(time.Second)
+	summaries, err := getSpecVolatilitySummaries(ctx, specIDs, since)
+	if err != nil {
+		return
+	}
+	for i := range items {
+		var specID string
+		if items[i].Type == "spec" {
+			specID = items[i].ID
+		} else if items[i].SpecID != "" {
+			specID = items[i].SpecID
+		}
+		if specID == "" {
+			continue
+		}
+		if summary, ok := summaries[specID]; ok {
+			level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+			items[i].VolatilityLevel = string(level)
+			items[i].VolatilityChanges = summary.ChangeCount
+			items[i].VolatilityOpenIssues = summary.OpenIssues
+		}
+	}
+}
+
+func formatRecentVolatilityMarker(level string) string {
+	if level == "" {
+		return ""
+	}
+	switch specVolatilityLevel(level) {
+	case specVolatilityHigh:
+		return " " + ui.RenderWarn("◐ volatile")
+	case specVolatilityMedium:
+		return " " + ui.RenderWarn("◐ volatile")
+	case specVolatilityLow:
+		return " " + ui.RenderMuted("○ low")
+	case specVolatilityStable:
+		return " " + ui.RenderPass("✓ stable")
+	default:
+		return ""
+	}
 }
 
 // formatStatusText returns a styled status string

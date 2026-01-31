@@ -40,7 +40,35 @@ bd spec show <spec_id>       # Show spec + linked issues
 bd spec coverage             # Coverage metrics
 bd spec candidates           # Score specs for auto-compaction
 bd spec auto-compact         # Dry-run auto-compaction
+bd spec volatility           # Summarize spec volatility
 ```
+
+---
+
+## Spec Volatility
+
+Use volatility to spot specs that are changing frequently while work is in flight.
+
+```bash
+bd spec volatility --since 14d --min-changes 2
+```
+
+When you link a new issue to a volatile spec, `bd create --spec-id` prompts before creating work.
+`bd ready` groups ready work into stable and volatile sections.
+Use `bd list --show-volatility` to add volatility badges in list output.
+`bd list --json` includes a `volatility` object per issue when spec data is available.
+If `volatility.auto_pause` is enabled, HIGH volatility specs will auto-pause linked issues. Resume with `bd resume --spec <path>`.
+
+Flags:
+- `--since` controls the lookback window (default: 30d)
+- `--min-changes` filters low-activity specs
+- `--limit` caps the number of rows returned
+- `--format list` switches to a compact list view
+- `--fail-on-high` exits 1 if any HIGH volatility specs are detected
+- `--fail-on-medium` exits 1 if any MEDIUM or HIGH volatility specs are detected
+- `--with-dependents <spec>` shows dependent issue cascade for a spec
+- `--recommendations` prints stabilization recommendations per spec
+- `--trend <spec>` shows volatility trend history for a spec
 
 ---
 

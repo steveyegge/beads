@@ -53,7 +53,7 @@ func TestListPinIndicator(t *testing.T) {
 
 func TestListFormatPrettyIssue_BadgesAndDefaults(t *testing.T) {
 	iss := &types.Issue{ID: "bd-1", Title: "Hello", Status: "wat", Priority: 99, IssueType: "bug"}
-	out := formatPrettyIssue(iss)
+	out := formatPrettyIssue(iss, "")
 	if !strings.Contains(out, "bd-1") || !strings.Contains(out, "Hello") {
 		t.Fatalf("unexpected output: %q", out)
 	}
@@ -93,7 +93,7 @@ func TestListSortIssues_ClosedNilLast(t *testing.T) {
 
 func TestListDisplayPrettyList(t *testing.T) {
 	out := captureStdout(t, func() error {
-		displayPrettyList(nil, false)
+		displayPrettyList(nil, false, nil)
 		return nil
 	})
 	if !strings.Contains(out, "No issues found") {
@@ -107,7 +107,7 @@ func TestListDisplayPrettyList(t *testing.T) {
 	}
 
 	out = captureStdout(t, func() error {
-		displayPrettyList(issues, false)
+		displayPrettyList(issues, false, nil)
 		return nil
 	})
 	if !strings.Contains(out, "bd-1") || !strings.Contains(out, "bd-1.1") || !strings.Contains(out, "Total:") {

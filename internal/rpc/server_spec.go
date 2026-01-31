@@ -231,7 +231,7 @@ func (s *Server) handleSpecRisk(req *Request) Response {
 	var args SpecRiskArgs
 	if len(req.Args) > 0 {
 		if err := json.Unmarshal(req.Args, &args); err != nil {
-			return Response{Success: false, Error: fmt.Sprintf("invalid spec risk args: %v", err)}
+			return Response{Success: false, Error: fmt.Sprintf("invalid spec volatility args: %v", err)}
 		}
 	}
 

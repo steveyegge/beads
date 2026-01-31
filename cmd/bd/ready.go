@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
+	"github.com/steveyegge/beads/internal/spec"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -164,22 +167,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 				return
 			}
 			if prettyFormat {
-				displayPrettyList(issues, false)
+				displayPrettyList(issues, false, nil)
 			} else {
-				fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-				for i, issue := range issues {
-					fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-						ui.RenderPriority(issue.Priority),
-						ui.RenderType(string(issue.IssueType)),
-						ui.RenderID(issue.ID), issue.Title)
-					if issue.EstimatedMinutes != nil {
-						fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
-					}
-					if issue.Assignee != "" {
-						fmt.Printf("   Assignee: %s\n", issue.Assignee)
-					}
-				}
-				fmt.Println()
+				renderReadyByVolatility(rootCtx, issues)
 			}
 			return
 		}
@@ -197,20 +187,20 @@ This is useful for agents executing molecules to see which steps can run next.`,
 
 		issues, err := store.GetReadyWork(ctx, filter)
 		if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
-	// If no ready work found, check if git has issues and auto-import
-	if len(issues) == 0 {
-		if checkAndAutoImport(ctx, store) {
-			// Re-run the query after import
-			issues, err = store.GetReadyWork(ctx, filter)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		// If no ready work found, check if git has issues and auto-import
+		if len(issues) == 0 {
+			if checkAndAutoImport(ctx, store) {
+				// Re-run the query after import
+				issues, err = store.GetReadyWork(ctx, filter)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
-	}
 		if jsonOutput {
 			// Always output array, even if empty
 			if issues == nil {
@@ -239,22 +229,9 @@ This is useful for agents executing molecules to see which steps can run next.`,
 			return
 		}
 		if prettyFormat {
-			displayPrettyList(issues, false)
+			displayPrettyList(issues, false, nil)
 		} else {
-			fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
-			for i, issue := range issues {
-				fmt.Printf("%d. [%s] [%s] %s: %s\n", i+1,
-					ui.RenderPriority(issue.Priority),
-					ui.RenderType(string(issue.IssueType)),
-					ui.RenderID(issue.ID), issue.Title)
-				if issue.EstimatedMinutes != nil {
-					fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
-				}
-				if issue.Assignee != "" {
-					fmt.Printf("   Assignee: %s\n", issue.Assignee)
-				}
-			}
-			fmt.Println()
+			renderReadyByVolatility(rootCtx, issues)
 		}
 
 		// Show tip after successful ready (direct mode only)
@@ -432,6 +409,99 @@ func runMoleculeReady(_ *cobra.Command, molIDArg string) {
 	fmt.Println()
 }
 
+func renderReadyByVolatility(ctx context.Context, issues []*types.Issue) {
+	stable, volatile, summaries, err := partitionReadyByVolatility(ctx, issues)
+	if err != nil {
+		fmt.Printf("\n%s Ready work (%d issues with no blockers):\n\n", ui.RenderAccent("📋"), len(issues))
+		for i, issue := range issues {
+			renderReadyIssueLine(i+1, issue, "")
+		}
+		fmt.Println()
+		return
+	}
+
+	if len(stable) > 0 {
+		fmt.Printf("\n%s Ready work (stable specs):\n\n", ui.RenderAccent("○"))
+		for i, issue := range stable {
+			renderReadyIssueLine(i+1, issue, "")
+		}
+		fmt.Println()
+	}
+
+	if len(volatile) > 0 {
+		fmt.Printf("%s Caution (volatile specs):\n\n", ui.RenderWarn("◐"))
+		for i, issue := range volatile {
+			summary := summaries[issue.SpecID]
+			suffix := fmt.Sprintf(" (volatile: %d changes/30d, %d open issues)", summary.ChangeCount, summary.OpenIssues)
+			renderReadyIssueLine(i+1, issue, suffix)
+		}
+		fmt.Printf("\n%s Recommendation: stabilize volatile specs before starting new work.\n\n", ui.RenderWarn("◐"))
+	}
+}
+
+func renderReadyIssueLine(index int, issue *types.Issue, suffix string) {
+	fmt.Printf("%d. [%s] [%s] %s: %s%s\n", index,
+		ui.RenderPriority(issue.Priority),
+		ui.RenderType(string(issue.IssueType)),
+		ui.RenderID(issue.ID), issue.Title, suffix)
+	if issue.EstimatedMinutes != nil {
+		fmt.Printf("   Estimate: %d min\n", *issue.EstimatedMinutes)
+	}
+	if issue.Assignee != "" {
+		fmt.Printf("   Assignee: %s\n", issue.Assignee)
+	}
+}
+
+func partitionReadyByVolatility(ctx context.Context, issues []*types.Issue) ([]*types.Issue, []*types.Issue, map[string]specVolatilitySummary, error) {
+	specIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, issue := range issues {
+		if issue.SpecID == "" || !spec.IsScannableSpecID(issue.SpecID) {
+			continue
+		}
+		if _, ok := seen[issue.SpecID]; ok {
+			continue
+		}
+		seen[issue.SpecID] = struct{}{}
+		specIDs = append(specIDs, issue.SpecID)
+	}
+
+	summaries := make(map[string]specVolatilitySummary)
+	if len(specIDs) > 0 {
+		window, err := parseDurationString("30d")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		since := time.Now().UTC().Add(-window).Truncate(time.Second)
+		summaries, err = getSpecVolatilitySummaries(ctx, specIDs, since)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	stable := make([]*types.Issue, 0, len(issues))
+	volatile := make([]*types.Issue, 0)
+	for _, issue := range issues {
+		if issue.SpecID == "" {
+			stable = append(stable, issue)
+			continue
+		}
+		summary, ok := summaries[issue.SpecID]
+		if !ok {
+			stable = append(stable, issue)
+			continue
+		}
+		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
+		if level == specVolatilityHigh || level == specVolatilityMedium {
+			volatile = append(volatile, issue)
+		} else {
+			stable = append(stable, issue)
+		}
+	}
+
+	return stable, volatile, summaries, nil
+}
+
 // MoleculeReadyStep holds a ready step with its parallel info
 type MoleculeReadyStep struct {
 	Issue         *types.Issue  `json:"issue"`
@@ -441,12 +511,12 @@ type MoleculeReadyStep struct {
 
 // MoleculeReadyOutput is the JSON output for bd ready --mol
 type MoleculeReadyOutput struct {
-	MoleculeID     string                  `json:"molecule_id"`
-	MoleculeTitle  string                  `json:"molecule_title"`
-	TotalSteps     int                     `json:"total_steps"`
-	ReadySteps     int                     `json:"ready_steps"`
-	Steps          []*MoleculeReadyStep    `json:"steps"`
-	ParallelGroups map[string][]string     `json:"parallel_groups"`
+	MoleculeID     string               `json:"molecule_id"`
+	MoleculeTitle  string               `json:"molecule_title"`
+	TotalSteps     int                  `json:"total_steps"`
+	ReadySteps     int                  `json:"ready_steps"`
+	Steps          []*MoleculeReadyStep `json:"steps"`
+	ParallelGroups map[string][]string  `json:"parallel_groups"`
 }
 
 func init() {
