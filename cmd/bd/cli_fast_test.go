@@ -66,6 +66,18 @@ func createTempDirWithCleanup(t *testing.T) string {
 	return tmpDir
 }
 
+// isEmptyOrNil checks if a JSON value is nil or an empty string
+// Useful for checking optional fields in JSON output
+func isEmptyOrNil(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	if s, ok := v.(string); ok {
+		return s == ""
+	}
+	return false
+}
+
 // runBDInProcess runs bd commands in-process by calling rootCmd.Execute
 // This is ~10-20x faster than exec.Command because it avoids process spawn overhead
 func runBDInProcess(t *testing.T, dir string, args ...string) string {
@@ -1239,6 +1251,123 @@ func TestCLI_CommentsAddShortID(t *testing.T) {
 
 		if !strings.Contains(stdout, "Comment added") {
 			t.Errorf("Expected 'Comment added' in output, got: %s", stdout)
+		}
+	})
+}
+
+// TestCLI_AdviceAdd tests the 'bd advice add' command (issue hq--80lv.1)
+// Tests creating advice with various targeting options and verifying persistence.
+// NOTE: Due to in-process test limitations with global state cleanup,
+// tests are kept to 3 subtests per function.
+func TestCLI_AdviceAdd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow CLI test in short mode")
+	}
+
+	t.Run("GlobalAdvice", func(t *testing.T) {
+		tmpDir := setupCLITestDB(t)
+
+		// Create global advice (no targeting flags)
+		out := runBDInProcess(t, tmpDir, "advice", "add", "Always check for errors before proceeding", "--json")
+
+		jsonStart := strings.Index(out, "{")
+		if jsonStart < 0 {
+			t.Fatalf("No JSON found in output: %s", out)
+		}
+		jsonOut := out[jsonStart:]
+
+		var issue map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonOut), &issue); err != nil {
+			t.Fatalf("Failed to parse JSON: %v\nOutput: %s", err, jsonOut)
+		}
+
+		// Verify issue type is advice
+		if issue["issue_type"] != "advice" {
+			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
+		}
+
+		// Verify global scope (no targeting fields set - nil or empty string)
+		if !isEmptyOrNil(issue["advice_target_rig"]) {
+			t.Errorf("Expected empty advice_target_rig for global advice, got: %v", issue["advice_target_rig"])
+		}
+		if !isEmptyOrNil(issue["advice_target_role"]) {
+			t.Errorf("Expected empty advice_target_role for global advice, got: %v", issue["advice_target_role"])
+		}
+		if !isEmptyOrNil(issue["advice_target_agent"]) {
+			t.Errorf("Expected empty advice_target_agent for global advice, got: %v", issue["advice_target_agent"])
+		}
+
+		// Verify title defaults to advice text
+		if issue["title"] != "Always check for errors before proceeding" {
+			t.Errorf("Expected title to match advice text, got: %v", issue["title"])
+		}
+	})
+
+	t.Run("RigTargetedAdvice", func(t *testing.T) {
+		tmpDir := setupCLITestDB(t)
+
+		// Create rig-targeted advice
+		out := runBDInProcess(t, tmpDir, "advice", "add", "--rig=beads", "Use go test ./... for testing", "--json")
+
+		jsonStart := strings.Index(out, "{")
+		if jsonStart < 0 {
+			t.Fatalf("No JSON found in output: %s", out)
+		}
+		jsonOut := out[jsonStart:]
+
+		var issue map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonOut), &issue); err != nil {
+			t.Fatalf("Failed to parse JSON: %v\nOutput: %s", err, jsonOut)
+		}
+
+		// Verify issue type is advice
+		if issue["issue_type"] != "advice" {
+			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
+		}
+
+		// Verify rig targeting
+		if issue["advice_target_rig"] != "beads" {
+			t.Errorf("Expected advice_target_rig 'beads', got: %v", issue["advice_target_rig"])
+		}
+		if !isEmptyOrNil(issue["advice_target_role"]) {
+			t.Errorf("Expected empty advice_target_role, got: %v", issue["advice_target_role"])
+		}
+		if !isEmptyOrNil(issue["advice_target_agent"]) {
+			t.Errorf("Expected empty advice_target_agent, got: %v", issue["advice_target_agent"])
+		}
+	})
+
+	t.Run("RoleTargetedAdvice", func(t *testing.T) {
+		tmpDir := setupCLITestDB(t)
+
+		// Create role-targeted advice (requires both --rig and --role)
+		out := runBDInProcess(t, tmpDir, "advice", "add", "--rig=beads", "--role=polecat", "Complete work before running gt done", "--json")
+
+		jsonStart := strings.Index(out, "{")
+		if jsonStart < 0 {
+			t.Fatalf("No JSON found in output: %s", out)
+		}
+		jsonOut := out[jsonStart:]
+
+		var issue map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonOut), &issue); err != nil {
+			t.Fatalf("Failed to parse JSON: %v\nOutput: %s", err, jsonOut)
+		}
+
+		// Verify issue type is advice
+		if issue["issue_type"] != "advice" {
+			t.Errorf("Expected issue_type 'advice', got: %v", issue["issue_type"])
+		}
+
+		// Verify role targeting (includes rig)
+		if issue["advice_target_rig"] != "beads" {
+			t.Errorf("Expected advice_target_rig 'beads', got: %v", issue["advice_target_rig"])
+		}
+		if issue["advice_target_role"] != "polecat" {
+			t.Errorf("Expected advice_target_role 'polecat', got: %v", issue["advice_target_role"])
+		}
+		if !isEmptyOrNil(issue["advice_target_agent"]) {
+			t.Errorf("Expected empty advice_target_agent, got: %v", issue["advice_target_agent"])
 		}
 	})
 }
