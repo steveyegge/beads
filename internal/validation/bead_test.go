@@ -217,12 +217,14 @@ func TestParseIssueType(t *testing.T) {
 		{"task type", "task", types.TypeTask, false, ""},
 		{"epic type", "epic", types.TypeEpic, false, ""},
 		{"chore type", "chore", types.TypeChore, false, ""},
-		// Extended types (now built-in valid)
-		{"merge-request type", "merge-request", types.TypeMergeRequest, false, ""},
-		{"molecule type", "molecule", types.TypeMolecule, false, ""},
-		{"gate type", "gate", types.IssueType("gate"), false, ""},
-		{"event type", "event", types.TypeEvent, false, ""},
-		{"message type", "message", types.TypeMessage, false, ""},
+		// Extended types (Gas Town types - no longer built-in, require types.custom config)
+		// These are now custom types and will fail validation without configuration
+		{"merge-request type", "merge-request", types.TypeTask, true, "invalid issue type"},
+		{"molecule type", "molecule", types.TypeTask, true, "invalid issue type"},
+		{"gate type", "gate", types.TypeTask, true, "invalid issue type"},
+		// event is an internal built-in type but not a core work type
+		{"event type", "event", types.TypeTask, true, "invalid issue type"},
+		{"message type", "message", types.TypeTask, true, "invalid issue type"},
 
 		// Case sensitivity (function is case-sensitive)
 		{"uppercase bug", "BUG", types.TypeTask, true, "invalid issue type"},
