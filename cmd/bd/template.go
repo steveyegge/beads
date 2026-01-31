@@ -819,17 +819,26 @@ func extractAllVariables(subgraph *TemplateSubgraph) []string {
 // (e.g., {{timestamp}}, {{total_count}}) and should not require input values.
 // (gt-ink2c fix)
 func extractRequiredVariables(subgraph *TemplateSubgraph) []string {
-	// If no VarDefs, no variables are required (can't distinguish inputs from outputs)
-	if subgraph.VarDefs == nil || len(subgraph.VarDefs) == 0 {
-		return nil
+	allVars := extractAllVariables(subgraph)
+
+	// If no VarDefs, assume all variables are required (legacy template behavior)
+	if subgraph.VarDefs == nil {
+		return allVars
 	}
 
-	// Only variables DEFINED in VarDefs with no default are required.
-	// Variables not in VarDefs are treated as output placeholders.
+	// VarDefs exists (from a cooked formula) - only declared variables matter.
+	// Variables in text but NOT in VarDefs are ignored - they're documentation
+	// handlebars meant for LLM agents, not formula input variables (gt-ky9loa).
 	var required []string
-	for name, def := range subgraph.VarDefs {
+	for _, v := range allVars {
+		def, exists := subgraph.VarDefs[v]
+		if !exists {
+			// Not a declared formula variable - skip (documentation handlebars)
+			continue
+		}
+		// A declared variable is required if it has no default
 		if def.Default == "" {
-			required = append(required, name)
+			required = append(required, v)
 		}
 	}
 	return required
