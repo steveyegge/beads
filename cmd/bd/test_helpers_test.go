@@ -117,7 +117,7 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 // newTestStoreWithPrefix creates a SQLite store with custom issue_prefix configured
 func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.SQLiteStorage {
 	t.Helper()
-	
+
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
 	failIfProductionDatabase(t, dbPath)
 	

@@ -14,6 +14,10 @@ import (
 // TestFlushRoutedRepo_DirectExport tests that routed issues are exported to JSONL
 // in the target repo when no daemon is running (direct export fallback).
 func TestFlushRoutedRepo_DirectExport(t *testing.T) {
+	// Force git-portable sync mode for JSONL export tests (bd-a9ka merge fix)
+	// This overrides any dolt-native config from the repo's config.yaml
+	t.Setenv("BD_SYNC_MODE", SyncModeGitPortable)
+
 	// Create a test source repo (current repo)
 	sourceDir := t.TempDir()
 	sourceBeadsDir := filepath.Join(sourceDir, ".beads")
@@ -197,6 +201,10 @@ func TestFlushRoutedRepo_PathExpansion(t *testing.T) {
 // TestRoutingWithHydrationIntegration is a higher-level integration test
 // that verifies the full routing + hydration workflow.
 func TestRoutingWithHydrationIntegration(t *testing.T) {
+	// Force git-portable sync mode for JSONL export tests (bd-a9ka merge fix)
+	// This overrides any dolt-native config from the repo's config.yaml
+	t.Setenv("BD_SYNC_MODE", SyncModeGitPortable)
+
 	// Setup: Create main repo and planning repo
 	mainDir := t.TempDir()
 	mainBeadsDir := filepath.Join(mainDir, ".beads")
