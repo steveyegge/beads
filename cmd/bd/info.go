@@ -297,6 +297,26 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "0.49.2",
+		Date:    "2026-01-31",
+		Changes: []string{
+			"NEW: GitLab backend - Bidirectional issue sync with GitLab (bd gitlab sync/status/projects)",
+			"NEW: Key-value store - bd kv get/set/delete/list for persistent key-value storage",
+			"NEW: Per-issue JSON metadata field for custom structured data (SQLite + Dolt)",
+			"NEW: Events JSONL export - Opt-in audit trail via events-export config",
+			"NEW: Role configuration - Explicit roles via git, interactive contributor prompt",
+			"NEW: bd backend and bd sync mode subcommands for storage inspection",
+			"NEW: Dolt auto-detect server mode during bd init",
+			"NEW: comment_count in JSON views, comment timestamps with --local-time",
+			"CHANGE: Removed Gas Town-specific code from beads core (hooks, validation, role types)",
+			"CHANGE: Storage layer refactored for backend-agnostic access",
+			"FIX: Worktree support - GIT_DIR/GIT_WORK_TREE in sync operations",
+			"FIX: Graceful Dolt server-to-embedded fallback",
+			"FIX: Multiple sync fixes for dolt-native mode and sync-branch",
+			"FIX: Formula handlebars, ephemeral sync exclusion, daemon idempotency",
+		},
+	},
+	{
 		Version: "0.49.1",
 		Date:    "2026-01-25",
 		Changes: []string{
