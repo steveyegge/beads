@@ -203,6 +203,7 @@ create, update, show, or close operation).`,
 			if strings.HasPrefix(metadataValue, "@") {
 				// Read JSON from file
 				filePath := metadataValue[1:]
+				// #nosec G304 -- user explicitly provides file path via @file.json syntax
 				data, err := os.ReadFile(filePath)
 				if err != nil {
 					FatalErrorRespectJSON("failed to read metadata file %s: %v", filePath, err)
