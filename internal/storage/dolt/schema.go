@@ -88,6 +88,11 @@ CREATE TABLE IF NOT EXISTS issues (
     advice_target_rig VARCHAR(255) DEFAULT '',
     advice_target_role VARCHAR(32) DEFAULT '',
     advice_target_agent VARCHAR(255) DEFAULT '',
+    -- Advice hook fields (hq--uaim)
+    advice_hook_command TEXT DEFAULT '',
+    advice_hook_trigger VARCHAR(32) DEFAULT '',
+    advice_hook_timeout INT DEFAULT 0,
+    advice_hook_on_failure VARCHAR(16) DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),
