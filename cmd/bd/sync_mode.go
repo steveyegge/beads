@@ -113,6 +113,19 @@ func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 	return mode != SyncModeDoltNative
 }
 
+// ShouldImportJSONL returns true if the current sync mode uses JSONL import.
+// In dolt-native mode, there is no JSONL to import — all sync is via Dolt remotes.
+// Unlike ShouldExportJSONL, this checks the database config directly rather than
+// going through GetSyncMode (which reads config.yaml via viper). This avoids false
+// negatives when config.yaml is loaded from the wrong directory context.
+func ShouldImportJSONL(ctx context.Context, s storage.Storage) bool {
+	mode, err := s.GetConfig(ctx, SyncModeConfigKey)
+	if err != nil || mode == "" {
+		return true // default (git-portable) uses JSONL
+	}
+	return mode != SyncModeDoltNative
+}
+
 // ShouldUseDoltRemote returns true if the current sync mode uses Dolt remotes.
 func ShouldUseDoltRemote(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)

@@ -210,6 +210,14 @@ func autoImportIfNewer() {
 		return
 	}
 
+	// Skip JSONL import in dolt-native mode — there is no JSONL to import.
+	// Without this guard, the store.GetMetadata call below can panic with a nil
+	// pointer when the Dolt backend connection is in a degraded state.
+	if store != nil && !ShouldImportJSONL(rootCtx, store) {
+		debug.Logf("auto-import skipped (dolt-native mode, no JSONL)")
+		return
+	}
+
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
 
