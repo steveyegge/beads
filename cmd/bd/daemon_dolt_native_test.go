@@ -93,15 +93,11 @@ func TestDoltNativeFunctions_NoPull(t *testing.T) {
 
 // TestGetSyncModeDoltNative verifies sync mode detection
 func TestGetSyncModeDoltNative(t *testing.T) {
+	// Reset config to avoid dolt-native mode from repo config
+	config.ResetForTesting()
+
 	ctx := context.Background()
 	store := memory.New("test")
-
-	// Initialize config and clear sync.mode to test default behavior
-	// This ensures the test is isolated from environment config
-	if err := config.Initialize(); err != nil {
-		t.Fatalf("failed to initialize config: %v", err)
-	}
-	config.Set("sync.mode", "")
 
 	// Default should be git-portable when neither database nor config.yaml has a value
 	mode := GetSyncMode(ctx, store)
