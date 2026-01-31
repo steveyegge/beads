@@ -32,6 +32,7 @@ type Config struct {
 	DoltServerPort     int    `json:"dolt_server_port,omitempty"`    // Default: 3307
 	DoltServerUser     string `json:"dolt_server_user,omitempty"`    // Default: root
 	DoltServerPassword string `json:"dolt_server_password,omitempty"` // Or use BEADS_DOLT_PASSWORD env
+	DoltDatabase       string `json:"dolt_database,omitempty"`        // SQL database name (default: beads)
 
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)

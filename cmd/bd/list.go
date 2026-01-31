@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/factory"
+	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/timeparsing"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
@@ -1603,12 +1604,16 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 	// Fetch epic progress for display
 	progressMap := getEpicProgressForIssues(ctx, targetStore, "", 0, issues)
 
+	// Load dependencies for blocking info display
+	allDepsForList, _ := targetStore.GetAllDependencyRecords(ctx)
+	blockedByMap, blocksMap := buildBlockingMaps(allDepsForList)
+
 	// Build output in buffer for pager support
 	var buf strings.Builder
 	if ui.IsAgentMode() {
 		// Agent mode: ultra-compact, no colors, no pager
 		for _, issue := range issues {
-			formatAgentIssue(&buf, issue)
+			formatAgentIssue(&buf, issue, blockedByMap[issue.ID], blocksMap[issue.ID])
 		}
 		fmt.Print(buf.String())
 		return
@@ -1623,7 +1628,7 @@ func listInRig(cmd *cobra.Command, rigName string, filter types.IssueFilter, sor
 		// Compact format: one line per issue
 		for _, issue := range issues {
 			labels := labelsMap[issue.ID]
-			formatIssueCompact(&buf, issue, labels, progressMap)
+			formatIssueCompact(&buf, issue, labels, progressMap, blockedByMap[issue.ID], blocksMap[issue.ID])
 		}
 	}
 
