@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package dolt implements the storage interface using Dolt (versioned MySQL-compatible database).
 //
 // Dolt provides native version control for SQL data with cell-level merge, history queries,

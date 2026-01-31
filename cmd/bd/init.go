@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage"
-	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -87,7 +86,7 @@ variable.`,
 		// Auto-detect dolt server if backend is dolt and --server wasn't explicitly specified
 		// This enables server mode by default when a dolt sql-server is already running
 		if backend == configfile.BackendDolt && !serverMode {
-			if host, port, detected := dolt.DetectRunningServer(); detected {
+			if host, port, detected := detectDoltServer(); detected {
 				serverMode = true
 				if serverHost == "" {
 					serverHost = host
