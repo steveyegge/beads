@@ -544,6 +544,7 @@ const (
 	TypeTask    IssueType = "task"
 	TypeEpic    IssueType = "epic"
 	TypeChore   IssueType = "chore"
+	TypeAdvice  IssueType = "advice"
 )
 
 // TypeEvent is a system-internal type used by set-state for audit trail beads.
@@ -558,7 +559,7 @@ const TypeEvent IssueType = "event"
 // (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a core work type constant.
-// This includes: bug, feature, task, epic, chore.
+// This includes: bug, feature, task, epic, chore, advice.
 // Note: TypeEvent is an internal type (not a core work type) and is handled
 // separately by IsBuiltIn().
 // Gas Town types (molecule, gate, convoy, merge-request, etc.) require
@@ -566,7 +567,7 @@ const TypeEvent IssueType = "event"
 func (t IssueType) IsValid() bool {
 	switch t {
 	// Core work types
-	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore:
+	case TypeBug, TypeFeature, TypeTask, TypeEpic, TypeChore, TypeAdvice:
 		return true
 	}
 	return false

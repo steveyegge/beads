@@ -545,6 +545,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{TypeTask, true},
 		{TypeEpic, true},
 		{TypeChore, true},
+		{TypeAdvice, true},
 		// Gas Town types are now custom types (not built-in)
 		{IssueType("message"), false},
 		{IssueType("merge-request"), false},
