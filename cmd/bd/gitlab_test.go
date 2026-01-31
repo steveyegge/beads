@@ -59,6 +59,16 @@ func TestGitLabConfigValidation(t *testing.T) {
 			config:    GitLabConfig{URL: "https://gitlab.com", Token: "tok", ProjectID: "1"},
 			wantError: "",
 		},
+		{
+			name:      "plain HTTP rejected",
+			config:    GitLabConfig{URL: "http://gitlab.example.com", Token: "tok", ProjectID: "1"},
+			wantError: "HTTPS",
+		},
+		{
+			name:      "localhost HTTP allowed",
+			config:    GitLabConfig{URL: "http://localhost:8080", Token: "tok", ProjectID: "1"},
+			wantError: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -89,12 +99,12 @@ func TestMaskGitLabToken(t *testing.T) {
 		{
 			name:  "normal token",
 			token: "glpat-xxxxxxxxxxxxxxxxxxxx",
-			want:  "glpa****xxxx",
+			want:  "glpa****",
 		},
 		{
 			name:  "short token",
 			token: "abc",
-			want:  "***",
+			want:  "****",
 		},
 		{
 			name:  "empty token",

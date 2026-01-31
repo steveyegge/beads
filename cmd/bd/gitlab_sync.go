@@ -172,6 +172,37 @@ func (sc *SyncContext) GenerateIssueID(prefix string) string {
 }
 
 // =============================================================================
+// Convenience wrappers using global variables (for integration tests)
+// =============================================================================
+
+// doPullFromGitLab wraps doPullFromGitLabWithContext using global state.
+func doPullFromGitLab(ctx context.Context, client *gitlab.Client, config *gitlab.MappingConfig, dryRun bool, state string, skipGitLabIIDs map[int]bool) (*gitlab.PullStats, error) {
+	syncCtx := NewSyncContext()
+	syncCtx.SetStore(store)
+	syncCtx.SetActor(actor)
+	syncCtx.SetDBPath(dbPath)
+	return doPullFromGitLabWithContext(ctx, syncCtx, client, config, dryRun, state, skipGitLabIIDs)
+}
+
+// doPushToGitLab wraps doPushToGitLabWithContext using global state.
+func doPushToGitLab(ctx context.Context, client *gitlab.Client, config *gitlab.MappingConfig, localIssues []*types.Issue, dryRun, createOnly bool, forceUpdateIDs, skipUpdateIDs map[string]bool) (*gitlab.PushStats, error) {
+	syncCtx := NewSyncContext()
+	syncCtx.SetStore(store)
+	syncCtx.SetActor(actor)
+	syncCtx.SetDBPath(dbPath)
+	return doPushToGitLabWithContext(ctx, syncCtx, client, config, localIssues, dryRun, createOnly, forceUpdateIDs, skipUpdateIDs)
+}
+
+// detectGitLabConflicts wraps detectGitLabConflictsWithContext using global state.
+func detectGitLabConflicts(ctx context.Context, client *gitlab.Client, localIssues []*types.Issue) ([]gitlab.Conflict, error) {
+	syncCtx := NewSyncContext()
+	syncCtx.SetStore(store)
+	syncCtx.SetActor(actor)
+	syncCtx.SetDBPath(dbPath)
+	return detectGitLabConflictsWithContext(ctx, syncCtx, client, localIssues)
+}
+
+// =============================================================================
 // WithContext variants of sync functions (P0 Fix)
 // These functions use SyncContext instead of global variables.
 // =============================================================================
@@ -226,7 +257,7 @@ func doPullFromGitLabWithContext(ctx context.Context, syncCtx *SyncContext, clie
 		}
 
 		conversion := gitlab.GitLabIssueToBeads(&gitlabIssues[i], config)
-		issue := conversion.Issue.(*types.Issue)
+		issue := conversion.Issue
 		beadsIssues = append(beadsIssues, issue)
 		allDeps = append(allDeps, conversion.Dependencies...)
 	}
@@ -506,7 +537,7 @@ func resolveGitLabConflictsWithContext(ctx context.Context, syncCtx *SyncContext
 			}
 
 			conversion := gitlab.GitLabIssueToBeads(issue, config)
-			beadsIssue := conversion.Issue.(*types.Issue)
+			beadsIssue := conversion.Issue
 
 			if syncCtx.store != nil {
 				updates := map[string]interface{}{

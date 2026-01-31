@@ -256,9 +256,9 @@ func TestGitLabIssueToBeads(t *testing.T) {
 		t.Fatal("GitLabIssueToBeads returned nil")
 	}
 
-	issue, ok := conversion.Issue.(*types.Issue)
-	if !ok || issue == nil {
-		t.Fatal("conversion.Issue is not *types.Issue")
+	issue := conversion.Issue
+	if issue == nil {
+		t.Fatal("conversion.Issue is nil")
 	}
 
 	// Verify basic fields
@@ -315,9 +315,9 @@ func TestGitLabIssueToBeads_ClosedIssue(t *testing.T) {
 	}
 
 	conversion := GitLabIssueToBeads(glIssue, config)
-	issue, ok := conversion.Issue.(*types.Issue)
-	if !ok || issue == nil {
-		t.Fatal("conversion.Issue is not *types.Issue")
+	issue := conversion.Issue
+	if issue == nil {
+		t.Fatal("conversion.Issue is nil")
 	}
 
 	if issue.Status != types.StatusClosed {

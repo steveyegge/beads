@@ -3,11 +3,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -162,18 +160,27 @@ func validateGitLabConfig(config GitLabConfig) error {
 	if config.ProjectID == "" {
 		return fmt.Errorf("gitlab.project_id is not configured. Set via 'bd config gitlab.project_id <id>' or GITLAB_PROJECT_ID environment variable")
 	}
+	// Reject non-HTTPS URLs to prevent sending tokens in cleartext.
+	// Allow http://localhost and http://127.0.0.1 for local development/testing.
+	if strings.HasPrefix(config.URL, "http://") &&
+		!strings.HasPrefix(config.URL, "http://localhost") &&
+		!strings.HasPrefix(config.URL, "http://127.0.0.1") {
+		return fmt.Errorf("gitlab.url must use HTTPS (got %q). Use HTTPS to protect your access token", config.URL)
+	}
 	return nil
 }
 
 // maskGitLabToken masks a token for safe display.
+// Shows only the first 4 characters to aid identification without
+// revealing enough to reduce brute-force entropy.
 func maskGitLabToken(token string) string {
 	if token == "" {
 		return "(not set)"
 	}
-	if len(token) <= 8 {
-		return "***"
+	if len(token) <= 4 {
+		return "****"
 	}
-	return token[:4] + "****" + token[len(token)-4:]
+	return token[:4] + "****"
 }
 
 // getGitLabClient creates a GitLab client from the current configuration.
@@ -211,34 +218,12 @@ func runGitLabProjects(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
+	client := getGitLabClient(config)
+	ctx := context.Background()
 
-	// Fetch projects from GitLab API
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", config.URL+"/api/v4/projects?membership=true&per_page=100", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("PRIVATE-TOKEN", config.Token)
-
-	resp, err := client.Do(req)
+	projects, err := client.ListProjects(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch projects: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GitLab API error: %s (status %d)", string(body), resp.StatusCode)
-	}
-
-	var projects []struct {
-		ID                int    `json:"id"`
-		Name              string `json:"name"`
-		PathWithNamespace string `json:"path_with_namespace"`
-		WebURL            string `json:"web_url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	fmt.Fprintln(out, "Accessible GitLab Projects")

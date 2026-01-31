@@ -198,23 +198,9 @@ type Conflict struct {
 
 // IssueConversion holds the result of converting a GitLab issue to Beads.
 // It includes the issue and any dependencies that should be created.
-// Note: Issue is interface{} for backwards compatibility, but GetIssue()
-// provides type-safe access to the underlying *types.Issue.
 type IssueConversion struct {
-	Issue        interface{} // *types.Issue when populated by mapping.go
+	Issue        *types.Issue
 	Dependencies []DependencyInfo
-}
-
-// GetIssue returns the Issue field as *types.Issue for type-safe access.
-// Returns nil if Issue is nil or not a *types.Issue.
-func (c *IssueConversion) GetIssue() *types.Issue {
-	if c == nil || c.Issue == nil {
-		return nil
-	}
-	if issue, ok := c.Issue.(*types.Issue); ok {
-		return issue
-	}
-	return nil
 }
 
 // DependencyInfo represents a dependency to be created after issue import.

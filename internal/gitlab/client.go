@@ -95,7 +95,9 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			continue
 		}
 
-		respBody, err := io.ReadAll(resp.Body)
+		// Limit response body to 50MB to prevent OOM from malformed responses.
+		const maxResponseSize = 50 * 1024 * 1024
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response (attempt %d/%d): %w", attempt+1, MaxRetries+1, err)
@@ -309,6 +311,26 @@ func (c *Client) FetchIssueByIID(ctx context.Context, iid int) (*Issue, error) {
 	}
 
 	return &issue, nil
+}
+
+// ListProjects retrieves projects accessible to the authenticated user.
+func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
+	params := map[string]string{
+		"membership": "true",
+		"per_page":   "100",
+	}
+	urlStr := c.buildURL("/projects", params)
+	respBody, _, err := c.doRequest(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+
+	var projects []Project
+	if err := json.Unmarshal(respBody, &projects); err != nil {
+		return nil, fmt.Errorf("failed to parse projects response: %w", err)
+	}
+
+	return projects, nil
 }
 
 // CreateIssueLink creates a link between two issues in the SAME project.

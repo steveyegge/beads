@@ -347,11 +347,8 @@ func TestGetTypeFromLabel(t *testing.T) {
 	}
 }
 
-// TestIssueConversionGetIssue verifies the GetIssue helper method on IssueConversion.
-// This tests the type safety improvement where IssueConversion.Issue is interface{}
-// but GetIssue() provides type-safe access to the *types.Issue.
-func TestIssueConversionGetIssue(t *testing.T) {
-	// Test with valid *types.Issue
+// TestIssueConversion verifies IssueConversion struct field access.
+func TestIssueConversion(t *testing.T) {
 	conversion := &IssueConversion{
 		Issue: &types.Issue{
 			Title:       "Test issue",
@@ -360,31 +357,10 @@ func TestIssueConversionGetIssue(t *testing.T) {
 		Dependencies: []DependencyInfo{},
 	}
 
-	issue := conversion.GetIssue()
-	if issue == nil {
-		t.Fatal("GetIssue() returned nil, want *types.Issue")
+	if conversion.Issue == nil {
+		t.Fatal("Issue field is nil, want *types.Issue")
 	}
-	if issue.Title != "Test issue" {
-		t.Errorf("GetIssue().Title = %q, want %q", issue.Title, "Test issue")
-	}
-
-	// Test with nil Issue
-	conversionNil := &IssueConversion{
-		Issue:        nil,
-		Dependencies: []DependencyInfo{},
-	}
-	issueNil := conversionNil.GetIssue()
-	if issueNil != nil {
-		t.Errorf("GetIssue() with nil Issue = %v, want nil", issueNil)
-	}
-
-	// Test with wrong type (should return nil safely)
-	conversionWrongType := &IssueConversion{
-		Issue:        "not a types.Issue",
-		Dependencies: []DependencyInfo{},
-	}
-	issueWrongType := conversionWrongType.GetIssue()
-	if issueWrongType != nil {
-		t.Errorf("GetIssue() with wrong type = %v, want nil", issueWrongType)
+	if conversion.Issue.Title != "Test issue" {
+		t.Errorf("Issue.Title = %q, want %q", conversion.Issue.Title, "Test issue")
 	}
 }
