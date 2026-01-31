@@ -82,6 +82,7 @@ func runPreflight(cmd *cobra.Command, args []string) {
 	fmt.Println("[ ] No beads pollution: check .beads/issues.jsonl diff")
 	fmt.Println("[ ] Nix hash current: go.sum unchanged or vendorHash updated")
 	fmt.Println("[ ] Version sync: version.go matches default.nix")
+	fmt.Println("[ ] No spec drift: bd list --spec-changed returns empty")
 	fmt.Println()
 	fmt.Println("Run 'bd preflight --check' to validate automatically.")
 }
@@ -109,6 +110,10 @@ func runChecks(jsonOutput bool, autoSync bool) {
 	// Run version sync check
 	versionResult := runVersionSyncCheck()
 	results = append(results, versionResult)
+
+	// Run spec drift check
+	specResult := runSpecDriftCheck()
+	results = append(results, specResult)
 
 	// Calculate overall result
 	allPassed := true
@@ -339,6 +344,63 @@ func truncateOutput(s string, maxLen int) string {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(s[:maxLen]) + "\n... (truncated)"
+}
+
+// runSpecDriftCheck checks for issues with unacknowledged spec changes.
+func runSpecDriftCheck() CheckResult {
+	command := "bd list --spec-changed"
+
+	// Use os.Args[0] to call the same binary (important for Shadowbook extensions)
+	bdPath := os.Args[0]
+	cmd := exec.Command(bdPath, "list", "--spec-changed")
+	output, err := cmd.CombinedOutput()
+	outputStr := strings.TrimSpace(string(output))
+
+	// bd list exits 0 even with results, check output
+	if err != nil {
+		// Command failed - skip the check
+		return CheckResult{
+			Name:    "No spec drift",
+			Passed:  false,
+			Skipped: true,
+			Output:  fmt.Sprintf("Failed to check spec drift: %v", err),
+			Command: command,
+		}
+	}
+
+	// Check if there are any issues with spec changes
+	// Empty output or "No issues found" means no drift
+	if outputStr == "" || strings.Contains(outputStr, "No issues") || strings.Contains(outputStr, "✨") {
+		return CheckResult{
+			Name:    "No spec drift",
+			Passed:  true,
+			Output:  "",
+			Command: command,
+		}
+	}
+
+	// Count the number of issues (heuristic: count non-empty lines that look like issue output)
+	lines := strings.Split(outputStr, "\n")
+	issueCount := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Issue lines start with status symbols or contain priority markers
+		if len(line) > 0 && (strings.ContainsAny(line, "◐○●◉✓✗") || strings.Contains(line, "[P")) {
+			issueCount++
+		}
+	}
+
+	// Return warning for unacknowledged spec changes
+	return CheckResult{
+		Name:    "No spec drift",
+		Passed:  false,
+		Warning: true,
+		Output:  fmt.Sprintf("%d issue(s) have unacknowledged spec changes. Run 'bd list --spec-changed' to see them, then 'bd update <id> --ack-spec' to acknowledge.", issueCount),
+		Command: command,
+	}
 }
 
 // runSkillSyncCheck checks if skills are synchronized between Claude Code and Codex CLI.

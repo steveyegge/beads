@@ -125,6 +125,38 @@ CREATE TABLE IF NOT EXISTS spec_registry (
 
 CREATE INDEX IF NOT EXISTS idx_spec_registry_path ON spec_registry(path);
 
+-- Skills manifest table (Shadowbook - skill drift detection)
+CREATE TABLE IF NOT EXISTS skills_manifest (
+    id TEXT PRIMARY KEY,                    -- skill name (e.g., "tdd", "debugging")
+    name TEXT NOT NULL,                     -- display name
+    source TEXT NOT NULL,                   -- claude | codex | opencode
+    path TEXT,                              -- file path in source
+    tier TEXT NOT NULL DEFAULT 'optional',  -- must-have | optional
+    sha256 TEXT NOT NULL,                   -- content hash for drift detection
+    bytes INTEGER,                          -- file size
+    status TEXT DEFAULT 'active',           -- active | deprecated | archived
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME,
+    archived_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_status ON skills_manifest(status);
+CREATE INDEX IF NOT EXISTS idx_skills_tier ON skills_manifest(tier);
+CREATE INDEX IF NOT EXISTS idx_skills_source ON skills_manifest(source);
+
+-- Skill-bead links table (tracks which skills were used for beads)
+CREATE TABLE IF NOT EXISTS skill_bead_links (
+    skill_id TEXT NOT NULL,
+    bead_id TEXT NOT NULL,
+    linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (skill_id, bead_id),
+    FOREIGN KEY (skill_id) REFERENCES skills_manifest(id),
+    FOREIGN KEY (bead_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_bead_links_bead ON skill_bead_links(bead_id);
+CREATE INDEX IF NOT EXISTS idx_skill_bead_links_skill ON skill_bead_links(skill_id);
+
 -- Comments table
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
