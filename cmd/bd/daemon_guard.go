@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -56,6 +57,22 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 	// Check if running via systemd (BD_DAEMON_SYSTEMD=1 set by systemd unit)
 	isSystemdInvocation := os.Getenv("BD_DAEMON_SYSTEMD") == "1"
 
+	// If we're already running under systemd, allow the command
+	if isSystemdInvocation {
+		return nil
+	}
+
+	// Check if systemd service is actively managing a daemon for this workspace.
+	// This prevents agents from accidentally starting a second daemon instance
+	// when systemd is already managing one.
+	if isSystemdServiceActive() {
+		return fmt.Errorf("daemon is managed by systemctl (bd-daemon service is active).\n\n" +
+			"To restart: systemctl --user restart bd-daemon@...\n" +
+			"To stop:    systemctl --user stop bd-daemon@...\n" +
+			"To status:  systemctl --user status bd-daemon@...\n\n" +
+			"Use 'systemctl --user list-units bd-daemon@*' to list all instances.")
+	}
+
 	// Best-effort determine the active workspace backend. If we can't determine it,
 	// don't block (the command will likely fail later anyway).
 	beadsDir := beads.FindBeadsDir()
@@ -79,11 +96,11 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 
 	// Check if systemd-managed mode is enabled (gt-rrs2p)
 	// When enabled, daemon can only be started via systemctl (with BD_DAEMON_SYSTEMD=1)
-	if cfg.IsSystemdManaged() && !isSystemdInvocation {
+	if cfg.IsSystemdManaged() {
 		return fmt.Errorf("daemon is managed by systemctl in this workspace.\n\n" +
-			"To start:   sudo systemctl start bd-daemon\n" +
-			"To status:  sudo systemctl status bd-daemon\n" +
-			"To logs:    sudo journalctl -u bd-daemon -f\n\n" +
+			"To start:   systemctl --user start bd-daemon@...\n" +
+			"To status:  systemctl --user status bd-daemon@...\n" +
+			"To logs:    journalctl --user -u bd-daemon@... -f\n\n" +
 			"To disable systemctl management: set \"systemd_managed\": false in .beads/metadata.json")
 	}
 
@@ -93,5 +110,28 @@ func guardDaemonStartForDolt(cmd *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+// isSystemdServiceActive checks if any bd-daemon systemd user service is active.
+// This is used to prevent manual daemon starts when systemd is managing the daemon.
+// We check for both the template instances (bd-daemon@*.service) and the simple
+// service (bd-daemon.service) to cover both service styles.
+func isSystemdServiceActive() bool {
+	// First check for template-style service instances using list-units
+	// The --state=active filter ensures we only see running instances
+	cmd := exec.Command("systemctl", "--user", "--state=active", "--no-legend", "--no-pager", "list-units", "bd-daemon@*.service")
+	output, err := cmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		return true
+	}
+
+	// Check for simple service (bd-daemon.service)
+	// Using is-active which returns 0 if the unit is active
+	cmd = exec.Command("systemctl", "--user", "is-active", "--quiet", "bd-daemon.service")
+	if err := cmd.Run(); err == nil {
+		return true
+	}
+
+	return false
 }
 

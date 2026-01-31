@@ -37,6 +37,9 @@ Type=simple
 # Set workspace via environment variable
 Environment=BEADS_WORKSPACE=%I
 
+# Indicate this is a systemd-managed daemon (prevents manual starts)
+Environment=BD_DAEMON_SYSTEMD=1
+
 # Run bd daemon in foreground mode
 # The workspace path is passed via %I (unescaped instance name)
 ExecStart=/usr/local/bin/bd daemon start --foreground
