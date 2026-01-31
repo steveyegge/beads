@@ -486,9 +486,16 @@ const (
 	TypeChore   IssueType = "chore"
 )
 
-// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, event, message)
+// TypeEvent is a system-internal type used by set-state for audit trail beads.
+// Originally a Gas Town type, promoted to built-in internal type. It is not a
+// core work type (not in IsValid) but is accepted by IsValidWithCustom /
+// ValidateWithCustom and treated as built-in for hydration trust (GH#1356).
+const TypeEvent IssueType = "event"
+
+// Note: Gas Town types (molecule, gate, convoy, merge-request, slot, agent, role, rig, message)
 // were removed from beads core. They are now purely custom types with no built-in constants.
 // Use string literals like types.IssueType("molecule") if needed, and configure types.custom.
+// (event was also a Gas Town type but was promoted to a built-in internal type above.)
 
 // IsValid checks if the issue type is a core work type.
 // Only core work types (bug, feature, task, epic, chore) are built-in.
@@ -501,22 +508,21 @@ func (t IssueType) IsValid() bool {
 	return false
 }
 
-// IsBuiltIn returns true if the type is a built-in type (same as IsValid).
-// Used during multi-repo hydration to determine trust:
-// - Built-in types: validate (catch typos)
+// IsBuiltIn returns true for core work types and system-internal types
+// (i.e. TypeEvent). Used during multi-repo hydration to determine trust:
+// - Built-in/internal types: validate (catch typos)
 // - Custom types (!IsBuiltIn): trust from source repo
 func (t IssueType) IsBuiltIn() bool {
-	return t.IsValid()
+	return t.IsValid() || t == TypeEvent
 }
 
 // IsValidWithCustom checks if the issue type is valid, including custom types.
 // Custom types are user-defined via bd config set types.custom "type1,type2,..."
 func (t IssueType) IsValidWithCustom(customTypes []string) bool {
-	// First check built-in types
-	if t.IsValid() {
+	if t.IsBuiltIn() {
 		return true
 	}
-	// Then check custom types
+	// Check user-configured custom types
 	for _, custom := range customTypes {
 		if string(t) == custom {
 			return true

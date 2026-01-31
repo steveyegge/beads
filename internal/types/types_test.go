@@ -553,7 +553,7 @@ func TestIssueTypeIsValid(t *testing.T) {
 		{IssueType("agent"), false},
 		{IssueType("role"), false},
 		{IssueType("convoy"), false},
-		{IssueType("event"), false},
+		{TypeEvent, false},
 		{IssueType("slot"), false},
 		{IssueType("rig"), false},
 		// Invalid types
@@ -567,6 +567,59 @@ func TestIssueTypeIsValid(t *testing.T) {
 				t.Errorf("IssueType(%q).IsValid() = %v, want %v", tt.issueType, got, tt.valid)
 			}
 		})
+	}
+}
+
+// TestEventTypeValidation verifies that event type is accepted by validation
+// even without being in types.custom, since set-state creates event beads
+// internally for audit trail (GH#1356).
+func TestEventTypeValidation(t *testing.T) {
+	now := time.Now()
+	event := Issue{
+		Title:     "state change event",
+		Status:    StatusOpen,
+		Priority:  4,
+		IssueType: TypeEvent,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	// event is not a core work type
+	if TypeEvent.IsValid() {
+		t.Fatal("event should not be a core work type")
+	}
+
+	// event is an internal built-in type
+	if !TypeEvent.IsBuiltIn() {
+		t.Error("TypeEvent.IsBuiltIn() = false, want true")
+	}
+
+	// event should be accepted by IsValidWithCustom without explicit config
+	if !TypeEvent.IsValidWithCustom(nil) {
+		t.Error("TypeEvent.IsValidWithCustom(nil) = false, want true")
+	}
+
+	// ValidateWithCustom should accept event without custom types config
+	if err := event.ValidateWithCustom(nil, nil); err != nil {
+		t.Errorf("ValidateWithCustom() should accept event type, got: %v", err)
+	}
+
+	// event should also work alongside other custom types
+	if !TypeEvent.IsValidWithCustom([]string{"molecule", "gate"}) {
+		t.Error("TypeEvent.IsValidWithCustom(custom list) = false, want true")
+	}
+
+	// custom types must NOT be treated as built-in
+	if IssueType("molecule").IsBuiltIn() {
+		t.Error("IssueType(molecule).IsBuiltIn() = true, want false")
+	}
+	if IssueType("gate").IsBuiltIn() {
+		t.Error("IssueType(gate).IsBuiltIn() = true, want false")
+	}
+
+	// Normalize must not map event to a core type
+	if TypeEvent.Normalize() != TypeEvent {
+		t.Errorf("TypeEvent.Normalize() = %q, want %q", TypeEvent.Normalize(), TypeEvent)
 	}
 }
 
@@ -585,7 +638,7 @@ func TestIssueTypeRequiredSections(t *testing.T) {
 		{IssueType("message"), 0, ""},
 		{IssueType("molecule"), 0, ""},
 		{IssueType("gate"), 0, ""},
-		{IssueType("event"), 0, ""},
+		{TypeEvent, 0, ""},
 		{IssueType("merge-request"), 0, ""},
 	}
 
