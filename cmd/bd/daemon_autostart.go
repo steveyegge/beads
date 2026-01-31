@@ -12,10 +12,12 @@ import (
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/daemon"
 	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/lockfile"
 	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/utils"
 )
 
 // daemonShutdownTimeout is how long to wait for graceful shutdown before force killing.
@@ -626,6 +628,10 @@ func recordDaemonStartFailure() {
 // For Dolt server mode where the database is in a separate location (e.g., ~/.beads-dolt),
 // this uses FindBeadsDir() to locate the proper .beads directory with config files,
 // rather than deriving it from the database path.
+//
+// For nested workspaces (e.g., rig subdirectories with their own .beads/), if no local
+// socket exists, consults the global registry (~/.beads/registry.json) for a daemon
+// serving a parent workspace (hq--bug-daemon_socket_discovery_fails_nested).
 func getSocketPath() string {
 	// Check environment variable first (enables test isolation)
 	if socketPath := os.Getenv("BD_SOCKET"); socketPath != "" {
@@ -640,7 +646,72 @@ func getSocketPath() string {
 		beadsDir = filepath.Dir(dbPath)
 	}
 	workspacePath := filepath.Dir(beadsDir)
-	return rpc.ShortSocketPath(workspacePath)
+	localSocketPath := rpc.ShortSocketPath(workspacePath)
+
+	// Check if local socket exists
+	if _, err := os.Stat(localSocketPath); err == nil {
+		return localSocketPath
+	}
+
+	// Local socket doesn't exist - check registry for parent workspace daemon
+	// This handles nested .beads directories (e.g., rig/.beads inside town/.beads)
+	if parentSocket := findParentWorkspaceDaemon(workspacePath); parentSocket != "" {
+		return parentSocket
+	}
+
+	// No parent daemon found, return local path (will trigger auto-start or fallback)
+	return localSocketPath
+}
+
+// findParentWorkspaceDaemon checks the global registry for a daemon serving a parent workspace.
+// Returns the socket path if found, empty string otherwise.
+func findParentWorkspaceDaemon(workspacePath string) string {
+	registry, err := daemon.NewRegistry()
+	if err != nil {
+		return ""
+	}
+
+	entries, err := registry.List()
+	if err != nil {
+		return ""
+	}
+
+	// Check if any registered daemon serves a parent of our workspace
+	for _, entry := range entries {
+		if !entry.Alive {
+			continue
+		}
+		// Check if registered workspace is a parent of current workspace
+		if isParentPath(entry.WorkspacePath, workspacePath) {
+			debug.Printf("found parent daemon at %s for workspace %s", entry.SocketPath, workspacePath)
+			return entry.SocketPath
+		}
+	}
+
+	return ""
+}
+
+// isParentPath returns true if parent is an ancestor directory of child.
+func isParentPath(parent, child string) bool {
+	// Normalize paths for comparison
+	parentNorm := utils.NormalizePathForComparison(parent)
+	childNorm := utils.NormalizePathForComparison(child)
+
+	if parentNorm == "" || childNorm == "" {
+		return false
+	}
+
+	// Parent must be a proper prefix of child (not equal)
+	if parentNorm == childNorm {
+		return false
+	}
+
+	// Ensure parent ends with separator for proper prefix matching
+	if !strings.HasSuffix(parentNorm, string(filepath.Separator)) {
+		parentNorm += string(filepath.Separator)
+	}
+
+	return strings.HasPrefix(childNorm, parentNorm)
 }
 
 // emitVerboseWarning prints a one-line warning when falling back to direct mode
