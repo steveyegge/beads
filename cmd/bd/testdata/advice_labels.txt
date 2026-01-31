@@ -1,0 +1,40 @@
+# Test bd advice labels functionality
+bd init --prefix test
+
+# Test 1: Create advice with single label
+bd advice add 'Testing advice' -l testing -d 'Advice about testing'
+stdout 'Created advice:'
+stdout 'testing'
+
+# Test 2: Create advice with multiple labels
+bd advice add 'Security and compliance' -l security -l compliance -d 'Important checks'
+stdout 'Created advice:'
+stdout 'security'
+stdout 'compliance'
+
+# Test 3: Create advice with long-form label flag
+bd advice add 'Performance advice' --label performance --label optimization
+stdout 'Created advice:'
+stdout 'performance'
+
+# Test 4: Verify labels appear in list
+bd advice list
+stdout 'Testing advice'
+stdout 'Security and compliance'
+stdout 'Performance advice'
+
+# Test 5: Advice without labels (should work)
+bd advice add 'No labels advice' -d 'Just plain advice'
+stdout 'Created advice:'
+
+# Test 6: Labels combined with scope targeting
+bd advice add 'Rig labeled advice' --rig testrig -l rig-specific -d 'For testrig only'
+stdout 'Created advice:'
+stdout 'Scope: Rig: testrig'
+stdout 'rig-specific'
+
+# Test 7: Labels combined with role targeting
+bd advice add 'Role labeled advice' --rig testrig --role polecat -l worker -l transient
+stdout 'Created advice:'
+stdout 'Scope: Role: testrig/polecat'
+stdout 'worker'

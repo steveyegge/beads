@@ -1,0 +1,55 @@
+# Test bd advice stop hook functionality
+bd init --prefix test
+
+# Test 1: Create advice with stop hook
+bd advice add 'Run tests before push' --stop-hook 'go test ./...' --hook-trigger before-push -d 'Ensures tests pass'
+stdout 'Created advice:'
+stdout 'Stop hook:'
+stdout 'go test ./...'
+
+# Test 2: Create advice with hook-trigger session-end (default)
+bd advice add 'Cleanup session' --stop-hook 'rm -f /tmp/session-*'
+stdout 'Created advice:'
+stdout 'session-end'
+
+# Test 3: Create advice with hook-trigger before-commit
+bd advice add 'Lint before commit' --stop-hook 'golint ./...' --hook-trigger before-commit
+stdout 'Created advice:'
+stdout 'before-commit'
+
+# Test 4: Create advice with hook-trigger before-handoff
+bd advice add 'Check status before handoff' --stop-hook 'git status' --hook-trigger before-handoff
+stdout 'Created advice:'
+stdout 'before-handoff'
+
+# Test 5: Create advice with custom timeout
+bd advice add 'Long running check' --stop-hook 'make full-test' --hook-timeout 120
+stdout 'Created advice:'
+stdout '120'
+
+# Test 6: Create advice with hook-on-failure block
+bd advice add 'Critical check' --stop-hook 'security-scan' --hook-on-failure block
+stdout 'Created advice:'
+stdout 'block'
+
+# Test 7: Create advice with hook-on-failure ignore
+bd advice add 'Optional check' --stop-hook 'optional-lint' --hook-on-failure ignore
+stdout 'Created advice:'
+stdout 'ignore'
+
+# Test 8: Verify hooks appear in list
+bd advice list
+stdout 'Run tests before push'
+stdout 'Cleanup session'
+stdout 'Lint before commit'
+
+# Test 9: Hook flags require --stop-hook
+bd advice add 'No hook advice' --hook-trigger before-push
+stdout 'Created advice:'
+# Should succeed but hook-trigger is meaningless without --stop-hook
+
+# Test 10: Combined advice with scope and hook
+bd advice add 'Rig-specific hook' --rig testrig --stop-hook 'rig-specific-check' --hook-trigger before-commit
+stdout 'Created advice:'
+stdout 'Scope: Rig: testrig'
+stdout 'before-commit'
