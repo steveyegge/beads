@@ -102,6 +102,11 @@ func runEventLoop(ctx context.Context, cancel context.CancelFunc, ticker *time.T
 				log.Error("stopping RPC server", "error", err)
 			}
 			return
+		case <-server.WaitShutdown():
+			// RPC shutdown command received - exit gracefully
+			log.Info("RPC shutdown received, exiting")
+			cancel()
+			return
 		case err := <-serverErrChan:
 			log.Error("RPC server failed", "error", err)
 			cancel()

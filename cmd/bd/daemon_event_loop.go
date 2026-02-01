@@ -194,6 +194,15 @@ func runEventDrivenLoop(
 			}
 			return
 
+		case <-server.WaitShutdown():
+			// RPC shutdown command received - exit gracefully
+			log.log("RPC shutdown received, exiting")
+			cancel()
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+			return
+
 		case err := <-serverErrChan:
 		log.log("RPC server failed: %v", err)
 		cancel()

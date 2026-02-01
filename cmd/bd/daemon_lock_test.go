@@ -50,6 +50,113 @@ func TestDaemonLockPreventsMultipleInstances(t *testing.T) {
 	lock3.Close()
 }
 
+func TestDaemonLockFileDeletedOnClose(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	lockPath := filepath.Join(beadsDir, "daemon.lock")
+
+	// Acquire lock
+	lock, err := acquireDaemonLock(beadsDir, dbPath)
+	if err != nil {
+		t.Fatalf("Failed to acquire lock: %v", err)
+	}
+
+	// Verify lock file exists
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+		t.Fatal("Lock file should exist after acquiring lock")
+	}
+
+	// Close/release the lock
+	if err := lock.Close(); err != nil {
+		t.Fatalf("Failed to close lock: %v", err)
+	}
+
+	// Verify lock file is deleted after close
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Errorf("Lock file should be deleted after Close(), but it still exists")
+	}
+}
+
+// TestDaemonStopDeletesLockFile verifies that "bd daemon stop" removes the lock file.
+// This is an end-to-end test that starts a real daemon process and stops it.
+func TestDaemonStopDeletesLockFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping slow integration test in short mode")
+	}
+
+	// Find bd binary: prefer repo root build, then PATH
+	bdBinary := "bd"
+	if runtime.GOOS == "windows" {
+		bdBinary = "bd.exe"
+	}
+	repoRoot := filepath.Join("..", "..")
+	existingBD := filepath.Join(repoRoot, bdBinary)
+	if absPath, err := filepath.Abs(existingBD); err == nil {
+		if _, err := os.Stat(absPath); err == nil {
+			bdBinary = absPath
+		} else if path, err := exec.LookPath("bd"); err == nil {
+			bdBinary = path
+		} else {
+			t.Skip("bd binary not found, skipping end-to-end test")
+		}
+	}
+
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	lockPath := filepath.Join(beadsDir, "daemon.lock")
+
+	// Create git repo (required for daemon)
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to init git repo: %v", err)
+	}
+	_ = exec.Command("git", "-C", tmpDir, "config", "user.email", "test@example.com").Run()
+	_ = exec.Command("git", "-C", tmpDir, "config", "user.name", "Test User").Run()
+
+	// Initialize bd
+	cmd = exec.Command(bdBinary, "init", "--prefix", "test", "--quiet")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to init bd: %v\nOutput: %s", err, out)
+	}
+
+	// Start daemon
+	cmd = exec.Command(bdBinary, "daemon", "start", "--interval", "10m")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to start daemon: %v\nOutput: %s", err, out)
+	}
+
+	// Wait for daemon to be fully running
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify lock file exists while daemon is running
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+		t.Fatal("Lock file should exist while daemon is running")
+	}
+
+	// Stop daemon (pass workspace path as required by "bd daemon stop")
+	cmd = exec.Command(bdBinary, "daemon", "stop", tmpDir)
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to stop daemon: %v\nOutput: %s", err, out)
+	}
+
+	// Give daemon time to clean up
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify lock file is deleted after daemon stop
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Errorf("Lock file should be deleted after 'bd daemon stop', but it still exists")
+	}
+}
+
 func TestTryDaemonLockDetectsRunning(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")

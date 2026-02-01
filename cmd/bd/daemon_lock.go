@@ -28,7 +28,7 @@ type DaemonLock struct {
 	path string
 }
 
-// Close releases the daemon lock
+// Close releases the daemon lock and removes the lock file
 func (l *DaemonLock) Close() error {
 	if l.file == nil {
 		return nil
@@ -36,6 +36,10 @@ func (l *DaemonLock) Close() error {
 	// Closing the file descriptor automatically releases the flock
 	err := l.file.Close()
 	l.file = nil
+	// Remove the lock file so it doesn't linger after daemon stop
+	if l.path != "" {
+		_ = os.Remove(l.path) // Best-effort cleanup
+	}
 	return err
 }
 

@@ -116,6 +116,12 @@ func (s *Server) WaitReady() <-chan struct{} {
 	return s.readyChan
 }
 
+// WaitShutdown returns a channel that is closed when the server is shutting down.
+// This can be used by the event loop to detect RPC-initiated shutdown.
+func (s *Server) WaitShutdown() <-chan struct{} {
+	return s.shutdownChan
+}
+
 // Stop stops the RPC server and cleans up resources
 func (s *Server) Stop() error {
 	var err error
