@@ -1,7 +1,6 @@
 package dolt
 
 import (
-	"context"
 	"os"
 	"testing"
 
