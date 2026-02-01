@@ -58,8 +58,11 @@ func migrateMetadataColumn(ctx context.Context, db *sql.DB) error {
 // columnExists checks if a column exists in a table using SHOW COLUMNS.
 // This works in both embedded and server modes for Dolt/MySQL.
 func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	// #nosec G202 -- table name is from internal code, not user input
-	rows, err := db.QueryContext(ctx, "SHOW COLUMNS FROM "+table+" LIKE ?", column)
+	// #nosec G202 -- table and column names are from internal code, not user input
+	// Note: SHOW COLUMNS ... LIKE doesn't support parameterized queries in Dolt,
+	// so we use string formatting. The values are internal constants, not user input.
+	query := "SHOW COLUMNS FROM " + table + " LIKE '" + column + "'"
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return false, err
 	}
