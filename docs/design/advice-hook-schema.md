@@ -14,7 +14,11 @@ advice actionable, not just guidance.
 
 ### Storage Approach: Dedicated Fields on Issue Struct
 
-**Chosen**: Add dedicated fields to the Issue struct (similar to existing AdviceTarget* fields).
+**Chosen**: Add dedicated fields to the Issue struct for hook configuration.
+
+**Note (2026-02-01)**: The `AdviceTargetRig`, `AdviceTargetRole`, `AdviceTargetAgent` fields
+have been removed. Advice targeting now uses labels exclusively. Hook fields remain as
+dedicated struct fields.
 
 **Alternatives considered**:
 1. **Metadata field**: The Issue.Metadata field (json.RawMessage) could store hook config.
@@ -25,13 +29,12 @@ advice actionable, not just guidance.
    - Pro: Clean separation, can have multiple hooks per advice
    - Con: Over-engineered for 1:1 relationship, adds query complexity
 
-3. **Dedicated fields**: Add new fields alongside AdviceTarget* fields.
+3. **Dedicated fields**: Add new fields to Issue struct.
    - Pro: Type-safe, queryable, follows existing pattern
    - Con: Adds fields to Issue struct (acceptable given existing precedent)
 
-**Rationale**: The existing advice fields (AdviceTargetRig, AdviceTargetRole, AdviceTargetAgent)
-set the pattern. Adding hook fields follows the same approach. The Issue struct already has
-many domain-specific field groups (Skill, Gate, Agent, Event). This is the established pattern.
+**Rationale**: The Issue struct already has domain-specific field groups (Skill, Gate, Agent,
+Event). Hook fields follow this established pattern.
 
 ## Schema Definition
 
@@ -108,73 +111,67 @@ What happens when the hook command fails (non-zero exit).
 ### Finding Applicable Hooks for an Agent
 
 Query all advice beads that:
-1. Match the agent's context (rig, role, or specific agent)
+1. Have labels matching the agent's subscriptions
 2. Have a hook command defined
 3. Match the current trigger point
 4. Are not closed/tombstoned
 
-```sql
-SELECT * FROM issues
-WHERE issue_type = 'advice'
-  AND status NOT IN ('closed', 'tombstone')
-  AND advice_hook_command IS NOT NULL
-  AND advice_hook_command != ''
-  AND advice_hook_trigger = :trigger
-  AND (
-    -- Global advice (no targeting)
-    (advice_target_rig IS NULL OR advice_target_rig = '')
-    -- OR matches agent's rig
-    OR advice_target_rig = :agent_rig
-  )
-  AND (
-    -- No role targeting
-    (advice_target_role IS NULL OR advice_target_role = '')
-    -- OR matches agent's role
-    OR advice_target_role = :agent_role
-  )
-  AND (
-    -- No agent targeting
-    (advice_target_agent IS NULL OR advice_target_agent = '')
-    -- OR matches specific agent
-    OR advice_target_agent = :agent_id
-  )
-ORDER BY
-  -- More specific targeting wins
-  CASE WHEN advice_target_agent != '' THEN 0
-       WHEN advice_target_role != '' THEN 1
-       WHEN advice_target_rig != '' THEN 2
-       ELSE 3
-  END,
-  -- Then by priority
-  priority ASC,
-  -- Then by creation date
-  created_at ASC;
-```
+**Note:** As of 2026-02-01, advice targeting uses labels exclusively. The old
+`advice_target_rig/role/agent` fields have been removed.
 
-### Storage Layer Changes
-
-Add to `internal/storage/storage.go` interface:
 ```go
-// GetApplicableAdviceHooks returns advice beads with hooks for the given trigger and agent context
-GetApplicableAdviceHooks(ctx context.Context, trigger string, agentRig, agentRole, agentID string) ([]*types.Issue, error)
+// 1. Build agent subscriptions
+subscriptions := buildAgentSubscriptions(agentID, nil)
+// Result: ["global", "agent:beads/polecats/quartz", "rig:beads", "role:polecats", "role:polecat"]
+
+// 2. Query all advice with hooks for this trigger
+adviceType := types.IssueType("advice")
+openStatus := types.StatusOpen
+allAdvice, _ := store.SearchIssues(ctx, "", types.IssueFilter{
+    IssueType: &adviceType,
+    Status:    &openStatus,
+})
+
+// 3. Get labels for all advice
+issueIDs := make([]string, len(allAdvice))
+for i, a := range allAdvice {
+    issueIDs[i] = a.ID
+}
+labelsMap, _ := store.GetLabelsForIssues(ctx, issueIDs)
+
+// 4. Filter by subscriptions and trigger
+var applicable []*types.Issue
+for _, advice := range allAdvice {
+    if advice.AdviceHookCommand == "" {
+        continue
+    }
+    if advice.AdviceHookTrigger != trigger {
+        continue
+    }
+    if matchesSubscriptions(advice, labelsMap[advice.ID], subscriptions) {
+        applicable = append(applicable, advice)
+    }
+}
 ```
+
+### Storage Layer
+
+Uses existing `SearchIssues` and `GetLabelsForIssues` methods. No new storage
+interface methods needed.
 
 ## Hook Ordering
 
 When multiple hooks apply for the same trigger:
 
-1. **Specificity** (most specific first):
-   - Agent-targeted (`advice_target_agent` set)
-   - Role-targeted (`advice_target_role` set)
-   - Rig-targeted (`advice_target_rig` set)
-   - Global (no targeting)
+1. **By priority** (P0 > P1 > P2 > P3 > P4) - high-priority hooks run first
 
-2. **Within same specificity** - by priority (P0 > P1 > P2 > P3 > P4)
+2. **Same priority** - by creation date (oldest first, FIFO)
 
-3. **Same priority** - by creation date (oldest first, FIFO)
+**Note:** With label-based targeting, there's no inherent specificity hierarchy. An advice
+with `agent:X` label is not automatically "more specific" than one with `rig:Y` label -
+both are just label matches. If ordering by specificity is needed, use different priorities.
 
 This ensures:
-- Specific overrides can take precedence
 - High-priority advice runs first
 - Predictable ordering for equal-priority advice
 
@@ -290,15 +287,17 @@ w.str(i.AdviceHookOnFailure)
   "title": "Run tests before committing",
   "description": "All code changes must pass tests before commit.",
   "issue_type": "advice",
-  "status": "pinned",
-  "advice_target_rig": "beads",
-  "advice_target_role": "polecat",
+  "status": "open",
+  "labels": ["rig:beads", "role:polecat"],
   "advice_hook_command": "make test",
   "advice_hook_trigger": "before-commit",
   "advice_hook_timeout": 120,
   "advice_hook_on_failure": "block"
 }
 ```
+
+**Note:** Targeting is now via labels, not dedicated fields. The `--rig beads --role polecat`
+CLI flags automatically add the corresponding labels.
 
 ## Security Considerations
 

@@ -1,9 +1,12 @@
 # Hook-Based Advice Delivery Research
 
-## Status: Research Complete
+## Status: Research Complete (Recommendations Implemented)
 
 **Task:** hq--80lv.9
 **Date:** 2026-01-31
+
+**Update (2026-02-01):** Advice now uses label-based subscriptions instead of targeting
+fields. The delivery mechanism via `gt prime` remains unchanged.
 
 ## Executive Summary
 
@@ -232,17 +235,21 @@ Claude Code changes and is outside our control.
 
 ---
 
-## Implementation Notes (if any changes were made)
+## Implementation Notes
 
-### Current code path (no changes needed)
+### Current code path (updated for label-based subscriptions)
 
 ```
 gt prime
   → outputAdviceContext(ctx RoleInfo)
-    → exec bd list -t advice --json
-    → filterApplicableAdvice(advice, agentID)
+    → exec bd advice list --for $AGENT_ID --json
+    → buildAgentSubscriptions(agentID) generates: [global, rig:X, role:Y, agent:Z]
+    → matchesSubscriptions() filters by label intersection
     → output markdown section
 ```
+
+**Note:** The `--for` flag auto-subscribes to the agent's context labels (global, rig, role,
+agent). This replaced the old `matchesAgentScope()` targeting field approach.
 
 ### Hypothetical compaction hook (future, Claude Code dependent)
 

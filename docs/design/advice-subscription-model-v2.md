@@ -1,9 +1,9 @@
 # Advice Subscription Model v2
 
-## Status: Design Revision
+## Status: IMPLEMENTED
 
-**Task:** hq--80lv.8 (reopened)
-**Date:** 2026-01-31
+**Task:** hq--80lv.8, gu-epc-advice_subscriptions_implement
+**Date:** 2026-01-31 (design), 2026-02-01 (implemented)
 
 ## Overview
 
@@ -116,24 +116,27 @@ advice_subscriptions_exclude: [go]    # Removes from rig default
 4. Query advice matching final subscription set
 ```
 
-### Backward Compatibility
+### Backward Compatibility (CLI Flags Preserved)
 
-Keep existing targeting for migration:
+The `--rig`, `--role`, `--agent` CLI flags remain for convenience but now add labels:
 
-| Old (Targeting) | New (Subscriptions) |
-|-----------------|---------------------|
-| `--rig beads` | `-l rig:beads` (auto-subscribed) |
-| `--role polecat` | `-l role:polecat` (auto-subscribed) |
-| `--agent X` | `-l agent:X` (auto-subscribed) |
-| (global) | `-l global` (everyone subscribes) |
+| CLI Flag | Label Added |
+|----------|-------------|
+| `--rig beads` | `rig:beads` |
+| `--role polecat` | `role:polecat` |
+| `--agent X` | `agent:X` |
+| (no targeting) | `global` |
 
-**Auto-subscriptions**: Every agent automatically subscribes to:
+**Note:** The underlying `AdviceTargetRig`, `AdviceTargetRole`, `AdviceTargetAgent` fields
+have been **removed** from the Issue struct. All targeting now uses labels.
+
+**Auto-subscriptions**: When using `--for`, agents automatically subscribe to:
 - `global`
 - `rig:{their-rig}`
-- `role:{their-role}`
+- `role:{their-role}` (both plural and singular forms)
 - `agent:{their-id}`
 
-This preserves current behavior while enabling new subscription patterns.
+This enables both explicit targeting via flags and flexible label-based subscriptions.
 
 ### Query Changes
 
@@ -280,25 +283,45 @@ CREATE TABLE advice_subscriptions (
 1. [x] Prototype label-based matching in `bd advice list`
    - Added `--label` flag for filtering by explicit labels
    - Added `--subscribe` flag for simulating agent subscriptions
+   - Added `--for` flag for auto-subscribing to agent context labels
    - Implemented `matchesAnyLabel()` for label filtering
-   - Implemented `matchesSubscriptions()` with auto-label support
+   - Implemented `matchesSubscriptions()` - labels only (no targeting fields)
+   - Implemented `buildAgentSubscriptions()` for auto-generating agent context labels
    - Unit tests added and passing
+
+### Legacy Targeting Removal (COMPLETED - 2026-02-01)
+
+1. [x] Removed `AdviceTargetRig`, `AdviceTargetRole`, `AdviceTargetAgent` fields from types.Issue
+2. [x] Removed targeting fields from storage layer (Dolt INSERT/SELECT)
+3. [x] Removed targeting fields from RPC protocol
+4. [x] Converted `--rig`, `--role`, `--agent` CLI flags to add labels instead
+5. [x] Added default `global` label when no targeting specified
+6. [x] Updated all tests to use label-based approach
+7. [x] Added comprehensive E2E integration tests
 
 **Usage examples:**
 ```bash
-# Filter by labels (matches advice with ANY of these labels)
+# Create advice with labels
+bd advice add "Always run tests" -l testing -l ci
+
+# Create advice targeting a rig (adds rig:beads label)
+bd advice add "Use go test" --rig beads
+
+# Create advice targeting a role (adds role:polecat label)
+bd advice add "Complete work before gt done" --role polecat
+
+# Create advice for specific agent (adds agent:X label)
+bd advice add "Focus on CLI" --agent beads/polecats/quartz
+
+# List advice for an agent (auto-subscribes to context labels)
+bd advice list --for beads/polecats/quartz
+
+# Filter by explicit labels
 bd advice list -l testing -l security
-
-# Simulate what an agent with these subscriptions would see
-bd advice list --subscribe testing --subscribe go --subscribe global
-
-# Auto-labels work for backward compatibility
-bd advice list --subscribe "rig:beads"  # Matches advice targeting beads rig
 ```
 
-### Next Steps
+### Future Work (Optional)
 
-2. [ ] Add rig.yaml subscription config parsing
-3. [ ] Update `gt prime` advice delivery
-4. [ ] Write tests for subscription resolution
-5. [ ] Document standard label taxonomy
+- [ ] Add rig.yaml subscription config parsing for per-rig defaults
+- [ ] Add agent-level subscription overrides (add/exclude)
+- [ ] Document standard label taxonomy
