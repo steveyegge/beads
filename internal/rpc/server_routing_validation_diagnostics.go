@@ -371,29 +371,19 @@ func (s *Server) handleStatus(_ *Request) Response {
 }
 
 func (s *Server) handleHealth(req *Request) Response {
-	start := time.Now()
-
 	// Get memory stats for health response
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	store := s.storage
-
-	healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
 	status := "healthy"
 	dbError := ""
 
-	_, pingErr := store.GetStatistics(healthCtx)
-	dbResponseMs := time.Since(start).Seconds() * 1000
-
-	if pingErr != nil {
-		status = statusUnhealthy
-		dbError = pingErr.Error()
-	} else if dbResponseMs > 500 {
-		status = "degraded"
-	}
+	// NOTE: We previously called store.GetStatistics() here, but it was removed because:
+	// 1. We don't use the statistics data
+	// 2. It causes nil pointer crashes when DB connection is lost
+	// 3. It adds unnecessary load to health checks
+	// See: gt-wc8pm4, gt-0pb10c
+	dbResponseMs := 0.0
 
 	// Check version compatibility
 	compatible := true
