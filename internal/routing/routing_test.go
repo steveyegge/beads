@@ -392,3 +392,151 @@ func TestFindTownRoutes_SymlinkedBeadsDir(t *testing.T) {
 		}
 	}
 }
+
+// TestLookupRigForgiving_DirectoryBased verifies that LookupRigForgiving falls back
+// to directory-based resolution when a rig exists but isn't registered in routes.jsonl.
+//
+// Scenario: --rig gastown is used, but gastown has no entry in routes.jsonl
+// Before fix: LookupRigForgiving returns false (not found)
+// After fix: LookupRigForgiving checks if gastown/.beads exists and returns a synthetic route
+func TestLookupRigForgiving_DirectoryBased(t *testing.T) {
+	// Create temporary directory structure:
+	// tmpDir/
+	//   mayor/
+	//     town.json    <- town root marker
+	//   .beads/
+	//     routes.jsonl <- with ONLY hq- prefix, NOT gastown
+	//   gastown/       <- rig directory with no route entry
+	//     .beads/
+	//       metadata.json  <- with prefix "gs-"
+	tmpDir, err := os.MkdirTemp("", "routing-directory-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Resolve symlinks in tmpDir (macOS /var -> /private/var)
+	tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create mayor/town.json to mark town root
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	townJSON := filepath.Join(mayorDir, "town.json")
+	if err := os.WriteFile(townJSON, []byte(`{"name": "test-town"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create .beads/routes.jsonl with only hq- prefix (NOT gastown)
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "hq-", "path": "."}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create gastown/.beads with metadata.json containing prefix
+	gastownBeadsDir := filepath.Join(tmpDir, "gastown", ".beads")
+	if err := os.MkdirAll(gastownBeadsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	metadataContent := `{"prefix": "gs-", "backend": "dolt"}`
+	if err := os.WriteFile(filepath.Join(gastownBeadsDir, "metadata.json"), []byte(metadataContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to the town root directory
+	t.Chdir(tmpDir)
+
+	// Test 1: hq- should be found via routes.jsonl
+	route, found := LookupRigForgiving("hq-", beadsDir)
+	if !found {
+		t.Fatal("LookupRigForgiving should find hq- in routes.jsonl")
+	}
+	if route.Prefix != "hq-" {
+		t.Errorf("Expected prefix hq-, got %s", route.Prefix)
+	}
+
+	// Test 2: gastown should be found via directory-based resolution
+	route, found = LookupRigForgiving("gastown", beadsDir)
+	if !found {
+		t.Fatal("LookupRigForgiving should find gastown via directory-based resolution")
+	}
+	if route.Prefix != "gs-" {
+		t.Errorf("Expected prefix gs- (from metadata.json), got %s", route.Prefix)
+	}
+	if route.Path != "gastown" {
+		t.Errorf("Expected path gastown, got %s", route.Path)
+	}
+
+	// Test 3: nonexistent rig should not be found
+	_, found = LookupRigForgiving("nonexistent", beadsDir)
+	if found {
+		t.Error("LookupRigForgiving should not find nonexistent rig")
+	}
+}
+
+// TestReadPrefixFromBeadsDir tests reading prefix from metadata.json and config.yaml
+func TestReadPrefixFromBeadsDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "read-prefix-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test 1: Read prefix from metadata.json
+	t.Run("metadata.json", func(t *testing.T) {
+		beadsDir := filepath.Join(tmpDir, "test1")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		metadataContent := `{"prefix": "gs-", "backend": "dolt"}`
+		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		got := readPrefixFromBeadsDir(beadsDir)
+		if got != "gs-" {
+			t.Errorf("Expected gs-, got %s", got)
+		}
+	})
+
+	// Test 2: Read prefix from config.yaml
+	t.Run("config.yaml", func(t *testing.T) {
+		beadsDir := filepath.Join(tmpDir, "test2")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		configContent := `# Beads config
+issue-prefix: "gt"
+storage-backend: sqlite`
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		got := readPrefixFromBeadsDir(beadsDir)
+		if got != "gt" {
+			t.Errorf("Expected gt, got %s", got)
+		}
+	})
+
+	// Test 3: No prefix found
+	t.Run("no_prefix", func(t *testing.T) {
+		beadsDir := filepath.Join(tmpDir, "test3")
+		if err := os.MkdirAll(beadsDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+
+		got := readPrefixFromBeadsDir(beadsDir)
+		if got != "" {
+			t.Errorf("Expected empty string, got %s", got)
+		}
+	})
+}

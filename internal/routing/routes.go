@@ -128,13 +128,11 @@ func LookupRigForgiving(input, beadsDir string) (Route, bool) {
 // Returns (route, townRoot, found).
 func lookupRigForgivingWithTown(input, beadsDir string) (Route, string, bool) {
 	routes, townRoot := findTownRoutes(beadsDir)
-	if len(routes) == 0 {
-		return Route{}, "", false
-	}
 
 	// Normalize: remove trailing hyphen for comparison
 	normalized := strings.TrimSuffix(input, "-")
 
+	// First, try route-based resolution from routes.jsonl
 	for _, route := range routes {
 		// Try exact prefix match (with or without hyphen)
 		prefixBase := strings.TrimSuffix(route.Prefix, "-")
@@ -149,7 +147,70 @@ func lookupRigForgivingWithTown(input, beadsDir string) (Route, string, bool) {
 		}
 	}
 
+	// If no route found and we have a town root, try directory-based resolution.
+	// This handles the case where a rig exists but isn't registered in routes.jsonl.
+	// For example, "gastown" may exist as ~/gt/gastown/.beads but have no route entry.
+	if townRoot != "" {
+		rigDir := filepath.Join(townRoot, input)
+		rigBeadsDir := filepath.Join(rigDir, ".beads")
+
+		// Check if the rig directory has a .beads subdirectory
+		if info, err := os.Stat(rigBeadsDir); err == nil && info.IsDir() {
+			// Follow redirect if present to find the actual beads directory
+			resolvedBeadsDir := resolveRedirect(rigBeadsDir)
+
+			// Try to determine the prefix from the resolved beads directory
+			prefix := readPrefixFromBeadsDir(resolvedBeadsDir)
+			if prefix == "" {
+				// Default to rig name as prefix if not found
+				prefix = input + "-"
+			} else if !strings.HasSuffix(prefix, "-") {
+				prefix = prefix + "-"
+			}
+
+			if os.Getenv("BD_DEBUG_ROUTING") != "" {
+				fmt.Fprintf(os.Stderr, "[routing] Directory-based resolution: %s -> %s (prefix: %s)\n", input, rigBeadsDir, prefix)
+			}
+
+			return Route{Prefix: prefix, Path: input}, townRoot, true
+		}
+	}
+
 	return Route{}, "", false
+}
+
+// readPrefixFromBeadsDir attempts to read the issue prefix from a .beads directory.
+// It checks metadata.json first, then config.yaml.
+func readPrefixFromBeadsDir(beadsDir string) string {
+	// Try metadata.json first (for Dolt backends)
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if data, err := os.ReadFile(metadataPath); err == nil { //nolint:gosec
+		var meta struct {
+			Prefix string `json:"prefix"`
+		}
+		if json.Unmarshal(data, &meta) == nil && meta.Prefix != "" {
+			return meta.Prefix
+		}
+	}
+
+	// Try config.yaml
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if data, err := os.ReadFile(configPath); err == nil { //nolint:gosec
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "issue-prefix:") {
+				value := strings.TrimPrefix(line, "issue-prefix:")
+				value = strings.TrimSpace(value)
+				value = strings.Trim(value, `"'`)
+				if value != "" {
+					return value
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 // ResolveBeadsDirForRig returns the beads directory for a given rig identifier.
@@ -407,9 +468,11 @@ func resolveRedirect(beadsDir string) string {
 		return beadsDir
 	}
 
-	// Handle relative paths
+	// Handle relative paths - resolve relative to the PARENT of .beads directory.
+	// For example, if beadsDir is /home/user/gt/gastown/.beads and redirect contains
+	// "mayor/rig/.beads", the result should be /home/user/gt/gastown/mayor/rig/.beads.
 	if !filepath.IsAbs(redirectPath) {
-		redirectPath = filepath.Join(beadsDir, redirectPath)
+		redirectPath = filepath.Join(filepath.Dir(beadsDir), redirectPath)
 	}
 
 	// Clean and resolve the path
