@@ -15,7 +15,6 @@ import (
 
 	"github.com/steveyegge/beads/internal/beads"
 	"github.com/steveyegge/beads/internal/config"
-	"github.com/steveyegge/beads/internal/debug"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/syncbranch"
@@ -63,14 +62,8 @@ func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, opera
 // exportToJSONLWithStore exports issues to JSONL using the provided store.
 // If multi-repo mode is configured, routes issues to their respective JSONL files.
 // Otherwise, exports to a single JSONL file.
-// Respects sync mode: skips JSONL export in dolt-native mode (bd-u9yv).
+// Always writes local JSONL as a safety net (even in dolt-native mode).
 func exportToJSONLWithStore(ctx context.Context, store storage.Storage, jsonlPath string) error {
-	// Check sync mode before JSONL export (bd-u9yv: dolt-native mode should skip JSONL)
-	if !ShouldExportJSONL(ctx, store) {
-		debug.Logf("skipping JSONL export (dolt-native mode)")
-		return nil
-	}
-
 	// Try multi-repo export first
 	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 	if ok {

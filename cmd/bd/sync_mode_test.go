@@ -124,6 +124,47 @@ func TestShouldExportJSONL(t *testing.T) {
 	}
 }
 
+// TestShouldImportJSONL verifies JSONL import behavior per mode.
+func TestShouldImportJSONL(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	dbPath := filepath.Join(beadsDir, "beads.db")
+	testStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer testStore.Close()
+
+	tests := []struct {
+		mode       string
+		wantImport bool
+	}{
+		{SyncModeGitPortable, true},
+		{SyncModeRealtime, true},
+		{SyncModeDoltNative, false},
+		{SyncModeBeltAndSuspenders, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			if err := SetSyncMode(ctx, testStore, tt.mode); err != nil {
+				t.Fatalf("failed to set mode: %v", err)
+			}
+
+			got := ShouldImportJSONL(ctx, testStore)
+			if got != tt.wantImport {
+				t.Errorf("ShouldImportJSONL() = %v, want %v", got, tt.wantImport)
+			}
+		})
+	}
+}
+
 // TestShouldUseDoltRemote verifies Dolt remote usage per mode.
 func TestShouldUseDoltRemote(t *testing.T) {
 	ctx := context.Background()
