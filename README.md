@@ -155,6 +155,9 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd preflight --check` | Skills + specs + volatility |
 | `bd resume --spec <path>` | Unblock paused issues |
 | `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
+| `bd pacman --pause "reason"` | Pause signal for other agents (file-based) |
+| `bd pacman --resume` | Clear pause signal |
+| `bd pacman --join` | Register agent in .beads/agents.json |
 
 ---
 

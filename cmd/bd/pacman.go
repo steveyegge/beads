@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/rpc"
@@ -21,11 +22,28 @@ type pacmanScore struct {
 	Dots int `json:"dots"`
 }
 
+type pacmanAgents struct {
+	Agents []pacmanAgent `json:"agents"`
+}
+
+type pacmanAgent struct {
+	Name   string `json:"name"`
+	Joined string `json:"joined"`
+	Score  int    `json:"score,omitempty"`
+}
+
+type pacmanPause struct {
+	Reason string `json:"reason"`
+	From   string `json:"from"`
+	TS     string `json:"ts"`
+}
+
 type pacmanState struct {
 	Agent       string             `json:"agent"`
 	Score       int                `json:"score"`
 	Dots        []reflectIssueInfo `json:"dots,omitempty"`
 	Blockers    []pacmanBlocker    `json:"blockers,omitempty"`
+	Paused      *pacmanPause       `json:"paused,omitempty"`
 	Leaderboard []pacmanLeader     `json:"leaderboard,omitempty"`
 }
 
@@ -51,12 +69,51 @@ Use --eat to close a bead and increment your score.`,
 func init() {
 	pacmanCmd.Flags().String("eat", "", "Close a bead and increment your score")
 	_ = pacmanCmd.Flags().MarkHidden("eat")
+	pacmanCmd.Flags().String("pause", "", "Pause agents with an optional reason")
+	pacmanCmd.Flags().Bool("resume", false, "Clear pause signal")
+	pacmanCmd.Flags().Bool("join", false, "Register yourself in agents.json")
 	rootCmd.AddCommand(pacmanCmd)
 }
 
 func runPacman(cmd *cobra.Command, args []string) {
 	eatID, _ := cmd.Flags().GetString("eat")
+	pauseReason, _ := cmd.Flags().GetString("pause")
+	resumePause, _ := cmd.Flags().GetBool("resume")
+	joinAgent, _ := cmd.Flags().GetBool("join")
 	agent := getPacmanAgentName()
+
+	if pauseReason != "" {
+		CheckReadonly("pacman")
+		if err := writePacmanPause(pauseReason, agent); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+		if !jsonOutput {
+			fmt.Printf("%s Paused: %s\n", ui.RenderWarnIcon(), pauseReason)
+		}
+		return
+	}
+
+	if resumePause {
+		CheckReadonly("pacman")
+		if err := clearPacmanPause(); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+		if !jsonOutput {
+			fmt.Printf("%s Resumed\n", ui.RenderPassIcon())
+		}
+		return
+	}
+
+	if joinAgent {
+		CheckReadonly("pacman")
+		if err := registerPacmanAgent(agent); err != nil {
+			FatalErrorRespectJSON("%v", err)
+		}
+		if !jsonOutput {
+			fmt.Printf("%s Registered %s\n", ui.RenderPassIcon(), agent)
+		}
+		return
+	}
 
 	if eatID != "" {
 		CheckReadonly("pacman")
@@ -145,6 +202,10 @@ func buildPacmanState(agent string) (pacmanState, error) {
 		})
 	}
 
+	if pause, err := readPacmanPause(); err == nil {
+		state.Paused = pause
+	}
+
 	state.Leaderboard = buildLeaderboard(scoreboard)
 	return state, nil
 }
@@ -152,6 +213,10 @@ func buildPacmanState(agent string) (pacmanState, error) {
 func renderPacmanState(state pacmanState) {
 	fmt.Println(ui.RenderCategory("Pacman Mode"))
 	fmt.Println(ui.RenderSeparator())
+	if state.Paused != nil {
+		fmt.Printf("%s PAUSED by %s: %s\n", ui.RenderWarnIcon(), state.Paused.From, state.Paused.Reason)
+		fmt.Printf("%s Run: bd pacman --resume\n\n", ui.RenderInfoIcon())
+	}
 	fmt.Printf("YOU: %s\n", state.Agent)
 	fmt.Printf("SCORE: %d dots\n\n", state.Score)
 
@@ -212,6 +277,22 @@ func pacmanScoreboardPath() string {
 	return filepath.Join(".beads", "scoreboard.json")
 }
 
+func pacmanAgentsPath() string {
+	if dbPath != "" {
+		beadsDir := filepath.Dir(dbPath)
+		return filepath.Join(beadsDir, "agents.json")
+	}
+	return filepath.Join(".beads", "agents.json")
+}
+
+func pacmanPausePath() string {
+	if dbPath != "" {
+		beadsDir := filepath.Dir(dbPath)
+		return filepath.Join(beadsDir, "pause.json")
+	}
+	return filepath.Join(".beads", "pause.json")
+}
+
 func loadPacmanScoreboard() (pacmanScoreboard, error) {
 	path := pacmanScoreboardPath()
 	data, err := os.ReadFile(path)
@@ -270,4 +351,89 @@ func buildLeaderboard(scoreboard pacmanScoreboard) []pacmanLeader {
 		return leaders[i].Name < leaders[j].Name
 	})
 	return leaders
+}
+
+func loadPacmanAgents() (pacmanAgents, error) {
+	path := pacmanAgentsPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return pacmanAgents{Agents: []pacmanAgent{}}, nil
+		}
+		return pacmanAgents{}, err
+	}
+	var agents pacmanAgents
+	if err := json.Unmarshal(data, &agents); err != nil {
+		return pacmanAgents{}, err
+	}
+	return agents, nil
+}
+
+func registerPacmanAgent(name string) error {
+	agents, err := loadPacmanAgents()
+	if err != nil {
+		return err
+	}
+	for _, agent := range agents.Agents {
+		if agent.Name == name {
+			return nil
+		}
+	}
+	agents.Agents = append(agents.Agents, pacmanAgent{
+		Name:   name,
+		Joined: time.Now().Format("2006-01-02"),
+	})
+	return writePacmanAgents(agents)
+}
+
+func writePacmanAgents(agents pacmanAgents) error {
+	path := pacmanAgentsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(agents, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func readPacmanPause() (*pacmanPause, error) {
+	data, err := os.ReadFile(pacmanPausePath())
+	if err != nil {
+		return nil, err
+	}
+	var pause pacmanPause
+	if err := json.Unmarshal(data, &pause); err != nil {
+		return nil, err
+	}
+	return &pause, nil
+}
+
+func writePacmanPause(reason, from string) error {
+	pause := pacmanPause{
+		Reason: reason,
+		From:   from,
+		TS:     time.Now().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(pause, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := pacmanPausePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func clearPacmanPause() error {
+	path := pacmanPausePath()
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
