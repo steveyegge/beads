@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -141,6 +142,50 @@ func runPacman(cmd *cobra.Command, args []string) {
 	renderPacmanState(state)
 }
 
+func renderPacmanArt(state pacmanState) {
+	// Build the maze line with pacman, dots, and ghosts
+	var maze strings.Builder
+
+	// Pacman character
+	maze.WriteString("  ᗧ")
+
+	// Add dots (tasks)
+	for i, dot := range state.Dots {
+		if i >= 4 { // Limit to 4 dots for visual clarity
+			maze.WriteString("···")
+			break
+		}
+		maze.WriteString("····○ ")
+		// Truncate ID for display
+		id := dot.ID
+		if len(id) > 6 {
+			id = id[:6]
+		}
+		maze.WriteString(id)
+	}
+
+	// Add ghost (blocker) if any
+	if len(state.Blockers) > 0 {
+		maze.WriteString(" ····👻")
+	}
+
+	// If no dots, show clear path
+	if len(state.Dots) == 0 && len(state.Blockers) == 0 {
+		maze.WriteString("····················✓ CLEAR!")
+	}
+
+	// Print the maze
+	fmt.Println("╭──────────────────────────────────────────────────────────╮")
+	// Center the maze content
+	content := maze.String()
+	padding := 60 - len([]rune(content))
+	if padding < 0 {
+		padding = 0
+	}
+	fmt.Printf("│%-60s│\n", content)
+	fmt.Println("╰──────────────────────────────────────────────────────────╯")
+}
+
 func buildPacmanState(agent string) (pacmanState, error) {
 	scoreboard, err := loadPacmanScoreboard()
 	if err != nil {
@@ -211,8 +256,10 @@ func buildPacmanState(agent string) (pacmanState, error) {
 }
 
 func renderPacmanState(state pacmanState) {
-	fmt.Println(ui.RenderCategory("Pacman Mode"))
-	fmt.Println(ui.RenderSeparator())
+	// ASCII art header
+	renderPacmanArt(state)
+	fmt.Println()
+
 	if state.Paused != nil {
 		fmt.Printf("%s PAUSED by %s: %s\n", ui.RenderWarnIcon(), state.Paused.From, state.Paused.Reason)
 		fmt.Printf("%s Run: bd pacman --resume\n\n", ui.RenderInfoIcon())
