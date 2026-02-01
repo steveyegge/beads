@@ -270,9 +270,11 @@ func (s *Server) checkAndAutoImportIfStale(req *Request) error {
 	ctx := s.reqCtx(req)
 
 	// Get database path from storage
+	// Staleness check only applies to SQLite storage; Dolt handles sync differently
 	sqliteStore, ok := store.(*sqlite.SQLiteStorage)
 	if !ok {
-		return fmt.Errorf("storage is not SQLiteStorage")
+		// Not SQLite (e.g., Dolt) - staleness check doesn't apply, skip silently
+		return nil
 	}
 	dbPath := sqliteStore.Path()
 

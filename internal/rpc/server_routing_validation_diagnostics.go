@@ -83,10 +83,9 @@ func (s *Server) checkVersionCompatibility(clientVersion string) error {
 // validateDatabaseBinding validates that the client is connecting to the correct daemon
 // Returns error if ExpectedDB is set and doesn't match the daemon's database path
 func (s *Server) validateDatabaseBinding(req *Request) error {
-	// If client doesn't specify ExpectedDB, allow but log warning (old clients)
+	// If client doesn't specify ExpectedDB, allow (old clients)
+	// Note: This is expected for older clients; no warning needed as it's noisy
 	if req.ExpectedDB == "" {
-		// Log warning for audit trail
-		fmt.Fprintf(os.Stderr, "Warning: Client request without database binding validation (old client or missing ExpectedDB)\n")
 		return nil
 	}
 
