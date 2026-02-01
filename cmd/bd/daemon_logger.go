@@ -17,49 +17,22 @@ type daemonLogger struct {
 
 // Info logs at INFO level.
 func (d *daemonLogger) Info(msg string, args ...interface{}) {
-	d.logger.Info(msg, toSlogArgs(args)...)
+	d.logger.Info(msg, args...)
 }
 
 // Warn logs at WARN level.
 func (d *daemonLogger) Warn(msg string, args ...interface{}) {
-	d.logger.Warn(msg, toSlogArgs(args)...)
+	d.logger.Warn(msg, args...)
 }
 
 // Error logs at ERROR level.
 func (d *daemonLogger) Error(msg string, args ...interface{}) {
-	d.logger.Error(msg, toSlogArgs(args)...)
+	d.logger.Error(msg, args...)
 }
 
 // Debug logs at DEBUG level.
 func (d *daemonLogger) Debug(msg string, args ...interface{}) {
-	d.logger.Debug(msg, toSlogArgs(args)...)
-}
-
-// toSlogArgs converts variadic args to slog-compatible key-value pairs.
-// If args are already in key-value format (string, value, string, value...),
-// they're passed through. Otherwise, they're wrapped as "args" for sprintf-style logs.
-func toSlogArgs(args []interface{}) []any {
-	if len(args) == 0 {
-		return nil
-	}
-	// Check if args look like slog key-value pairs (string key followed by value)
-	// If first arg is a string and we have pairs, treat as slog format
-	if len(args) >= 2 {
-		if _, ok := args[0].(string); ok {
-			// Likely slog-style: "key", value, "key2", value2
-			result := make([]any, len(args))
-			for i, a := range args {
-				result[i] = a
-			}
-			return result
-		}
-	}
-	// For sprintf-style args, wrap them (caller should use fmt.Sprintf)
-	result := make([]any, len(args))
-	for i, a := range args {
-		result[i] = a
-	}
-	return result
+	d.logger.Debug(msg, args...)
 }
 
 // parseLogLevel converts a log level string to slog.Level.
