@@ -316,6 +316,14 @@ var rootCmd = &cobra.Command{
 				WasSet bool
 			}{noDaemon, true}
 		}
+
+		// DEPRECATED: --no-daemon is no longer allowed (causes Dolt CPU issues)
+		// See bead gu-fnx for context
+		if noDaemon {
+			fmt.Fprintf(os.Stderr, "Error: The --no-daemon flag is deprecated. Consult the mayor about enabling the systemctl-level Dolt daemon.\n")
+			os.Exit(1)
+		}
+
 		if !cmd.Flags().Changed("no-auto-flush") {
 			noAutoFlush = config.GetBool("no-auto-flush")
 		} else {
