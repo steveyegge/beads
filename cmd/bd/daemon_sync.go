@@ -1160,13 +1160,13 @@ func createDoltNativePullFunc(ctx context.Context, store storage.Storage, log da
 }
 
 // createDoltNativeSyncFunc creates a sync function for dolt-native mode.
-// This is a no-op sync cycle since dolt-native uses event-driven commit/push.
+// This function performs periodic sync with a cheap status check to avoid
+// expensive commit/push operations when there are no uncommitted changes.
+// gt-p1mpqx: Reduced overhead by checking dolt_status before attempting commit.
 func createDoltNativeSyncFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush, autoPull bool, log daemonLogger) func() {
 	return func() {
 		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer syncCancel()
-
-		log.log("Starting dolt-native sync cycle...")
 
 		rs, ok := storage.AsRemote(store)
 		if !ok {
@@ -1180,11 +1180,29 @@ func createDoltNativeSyncFunc(ctx context.Context, store storage.Storage, autoCo
 				if !strings.Contains(err.Error(), "remote") &&
 					!strings.Contains(err.Error(), "up to date") {
 					log.log("Dolt pull failed: %v", err)
-					// Continue anyway - push might still work
+					// Continue anyway - commit/push might still work
 				}
 			} else {
 				log.log("Pulled from Dolt remote")
 			}
+		}
+
+		// Cheap status check before commit (gt-p1mpqx: reduce sync overhead)
+		// This avoids expensive DOLT_COMMIT calls when there's nothing to commit
+		hasChanges := true // Default to true if status check not supported
+		if sc, ok := storage.AsStatusChecker(store); ok {
+			var err error
+			hasChanges, err = sc.HasUncommittedChanges(syncCtx)
+			if err != nil {
+				log.log("Warning: status check failed: %v (proceeding with commit)", err)
+				hasChanges = true // Fall back to attempting commit
+			}
+		}
+
+		// Skip commit and push if no changes
+		if !hasChanges {
+			debug.Logf("dolt-native sync: no uncommitted changes, skipping commit/push")
+			return
 		}
 
 		// Commit if autoCommit enabled

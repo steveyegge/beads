@@ -809,3 +809,16 @@ type StatusEntry struct {
 	Table  string
 	Status string // "new", "modified", "deleted"
 }
+
+// HasUncommittedChanges returns true if there are any staged or unstaged changes.
+// This is a cheap check that queries dolt_status to avoid expensive commit operations
+// when there's nothing to commit.
+func (s *DoltStore) HasUncommittedChanges(ctx context.Context) (bool, error) {
+	// Single query to check if any changes exist
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM dolt_status").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check uncommitted changes: %w", err)
+	}
+	return count > 0, nil
+}

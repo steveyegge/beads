@@ -233,3 +233,20 @@ func AsFederated(s Storage) (FederatedStorage, bool) {
 	fs, ok := s.(FederatedStorage)
 	return fs, ok
 }
+
+// StatusChecker is an optional interface for storage backends that support
+// checking for uncommitted changes. This enables cheap pre-commit checks
+// to avoid expensive commit operations when there's nothing to commit.
+type StatusChecker interface {
+	// HasUncommittedChanges returns true if there are any staged or unstaged changes.
+	// This should be a cheap operation (e.g., querying dolt_status) compared to
+	// attempting a full commit.
+	HasUncommittedChanges(ctx context.Context) (bool, error)
+}
+
+// AsStatusChecker attempts to cast a Storage to StatusChecker.
+// Returns the StatusChecker and true if successful, nil and false otherwise.
+func AsStatusChecker(s Storage) (StatusChecker, bool) {
+	sc, ok := s.(StatusChecker)
+	return sc, ok
+}
