@@ -211,13 +211,15 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
+	// Direct SELECT * query - avoids the two-query anti-pattern (SELECT id then SELECT WHERE id IN)
+	// which creates massive IN clauses that are expensive for Dolt to parse with large databases.
 	// nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
 	querySQL := fmt.Sprintf(`
-		SELECT id FROM issues
+		SELECT %s FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
 		%s
-	`, whereSQL, limitSQL)
+	`, issueColumns, whereSQL, limitSQL)
 
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
@@ -225,7 +227,16 @@ func (s *DoltStore) SearchIssues(ctx context.Context, query string, filter types
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	var issues []*types.Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+
+	return issues, rows.Err()
 }
 
 // GetReadyWork returns issues that are ready to work on (not blocked)
@@ -273,13 +284,14 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
+	// Direct SELECT * query - avoids the two-query anti-pattern
 	// nolint:gosec // G201: whereSQL contains column comparisons with ?, limitSQL is a safe integer
 	query := fmt.Sprintf(`
-		SELECT id FROM issues
+		SELECT %s FROM issues
 		%s
 		ORDER BY priority ASC, created_at DESC
 		%s
-	`, whereSQL, limitSQL)
+	`, issueColumns, whereSQL, limitSQL)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -287,7 +299,16 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	var issues []*types.Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+
+	return issues, rows.Err()
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues
@@ -465,21 +486,24 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 		statusClause = "status = ?"
 	}
 
+	limitSQL := ""
+	if filter.Limit > 0 {
+		limitSQL = fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+
+	// Direct SELECT * query - avoids the two-query anti-pattern
 	// nolint:gosec // G201: statusClause contains only literal SQL or a single ? placeholder
 	query := fmt.Sprintf(`
-		SELECT id FROM issues
+		SELECT %s FROM issues
 		WHERE updated_at < ?
 		  AND %s
 		  AND (ephemeral = 0 OR ephemeral IS NULL)
 		ORDER BY updated_at ASC
-	`, statusClause)
+		%s
+	`, issueColumns, statusClause, limitSQL)
 	args := []interface{}{cutoff}
 	if filter.Status != "" {
 		args = append(args, filter.Status)
-	}
-
-	if filter.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -488,7 +512,16 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	var issues []*types.Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+
+	return issues, rows.Err()
 }
 
 // GetStatistics returns summary statistics

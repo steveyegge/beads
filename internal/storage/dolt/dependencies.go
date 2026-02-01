@@ -10,6 +10,22 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+// issueColumns is the full column list for SELECT queries on the issues table.
+// Used by SearchIssues and other queries that need to return full issue records.
+// IMPORTANT: This must match the order expected by scanIssueRow.
+const issueColumns = `id, content_hash, title, description, design, acceptance_criteria, notes,
+       status, priority, issue_type, assignee, estimated_minutes,
+       created_at, created_by, owner, updated_at, closed_at, external_ref,
+       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
+       deleted_at, deleted_by, delete_reason, original_type,
+       sender, ephemeral, pinned, is_template, crystallizes,
+       await_type, await_id, timeout_ns, waiters,
+       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
+       event_kind, actor, target, payload,
+       due_at, defer_until,
+       quality_score, work_type, source_system,
+       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure`
+
 // AddDependency adds a dependency between two issues
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -548,45 +564,10 @@ func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.
 	return s.GetIssuesByIDs(ctx, ids)
 }
 
-// batchSize is the maximum number of IDs to include in a single IN clause query.
-// Larger values reduce round-trips but create bigger queries that are expensive to parse.
-// 500 is a reasonable balance for Dolt's query parser.
-const batchSize = 500
-
-// GetIssuesByIDs retrieves multiple issues by ID, batching queries to avoid massive IN clauses.
-// With large databases (10K+ issues), unbatched queries create IN clauses with thousands of
-// placeholders which are very expensive for Dolt to parse and execute.
+// GetIssuesByIDs retrieves multiple issues by ID in a single query.
+// NOTE: This should only be used for small sets of IDs. For queries that could return
+// large result sets, use SearchIssues with appropriate filters instead (it does direct SELECT).
 func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	// For small batches, use single query (no batching overhead)
-	if len(ids) <= batchSize {
-		return s.getIssuesByIDsBatch(ctx, ids)
-	}
-
-	// Process in batches to avoid massive IN clauses
-	var allIssues []*types.Issue
-	for i := 0; i < len(ids); i += batchSize {
-		end := i + batchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
-		batch := ids[i:end]
-
-		issues, err := s.getIssuesByIDsBatch(ctx, batch)
-		if err != nil {
-			return nil, err
-		}
-		allIssues = append(allIssues, issues...)
-	}
-
-	return allIssues, nil
-}
-
-// getIssuesByIDsBatch retrieves a single batch of issues by ID.
-func (s *DoltStore) getIssuesByIDsBatch(ctx context.Context, ids []string) ([]*types.Issue, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -601,21 +582,10 @@ func (s *DoltStore) getIssuesByIDsBatch(ctx context.Context, ids []string) ([]*t
 
 	// nolint:gosec // G201: placeholders contains only ? markers, actual values passed via args
 	query := fmt.Sprintf(`
-		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
-		       status, priority, issue_type, assignee, estimated_minutes,
-		       created_at, created_by, owner, updated_at, closed_at, external_ref,
-		       compaction_level, compacted_at, compacted_at_commit, original_size, source_repo, close_reason,
-		       deleted_at, deleted_by, delete_reason, original_type,
-		       sender, ephemeral, pinned, is_template, crystallizes,
-		       await_type, await_id, timeout_ns, waiters,
-		       hook_bead, role_bead, agent_state, last_activity, role_type, rig, mol_type,
-		       event_kind, actor, target, payload,
-		       due_at, defer_until,
-		       quality_score, work_type, source_system,
-		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
+		SELECT %s
 		FROM issues
 		WHERE id IN (%s)
-	`, strings.Join(placeholders, ","))
+	`, issueColumns, strings.Join(placeholders, ","))
 
 	queryRows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
