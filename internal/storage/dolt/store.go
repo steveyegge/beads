@@ -366,6 +366,12 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	// Apply schema migrations for existing databases.
+	// This handles adding new columns to tables created by older schema versions.
+	if err := applyMigrations(ctx, db); err != nil {
+		return fmt.Errorf("failed to apply schema migrations: %w", err)
+	}
+
 	// Create views
 	if _, err := db.ExecContext(ctx, readyIssuesView); err != nil {
 		return fmt.Errorf("failed to create ready_issues view: %w", err)
