@@ -90,7 +90,7 @@ func newTestLogger() *slog.Logger {
 // newSilentLogger creates a logger that discards all output.
 // Use this for operations that need a logger but shouldn't produce output.
 func newSilentLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 // newTestLoggerWithWriter creates a logger that writes to the given writer.
