@@ -171,3 +171,242 @@ func TestParseAgentIDFields(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatAgentDescription(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields AgentFields
+		want   string
+	}{
+		{
+			name:   "empty fields",
+			fields: AgentFields{},
+			want:   "",
+		},
+		{
+			name: "role_type only",
+			fields: AgentFields{
+				RoleType: "polecat",
+			},
+			want: "role_type: polecat",
+		},
+		{
+			name: "all basic fields",
+			fields: AgentFields{
+				RoleType: "polecat",
+				Rig:      "beads",
+			},
+			want: "role_type: polecat\nrig: beads",
+		},
+		{
+			name: "with advice subscriptions",
+			fields: AgentFields{
+				RoleType:            "polecat",
+				Rig:                 "beads",
+				AdviceSubscriptions: []string{"security", "testing"},
+			},
+			want: "role_type: polecat\nrig: beads\nadvice_subscriptions: security,testing",
+		},
+		{
+			name: "with advice subscriptions exclude",
+			fields: AgentFields{
+				RoleType:                   "polecat",
+				Rig:                        "beads",
+				AdviceSubscriptionsExclude: []string{"deprecated", "wip"},
+			},
+			want: "role_type: polecat\nrig: beads\nadvice_subscriptions_exclude: deprecated,wip",
+		},
+		{
+			name: "all fields",
+			fields: AgentFields{
+				RoleType:                   "crew",
+				Rig:                        "gastown",
+				AdviceSubscriptions:        []string{"security", "performance"},
+				AdviceSubscriptionsExclude: []string{"deprecated"},
+			},
+			want: "role_type: crew\nrig: gastown\nadvice_subscriptions: security,performance\nadvice_subscriptions_exclude: deprecated",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatAgentDescription(tt.fields)
+			if got != tt.want {
+				t.Errorf("FormatAgentDescription() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAgentFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+		want        AgentFields
+	}{
+		{
+			name:        "empty description",
+			description: "",
+			want:        AgentFields{},
+		},
+		{
+			name:        "role_type only",
+			description: "role_type: polecat",
+			want: AgentFields{
+				RoleType: "polecat",
+			},
+		},
+		{
+			name:        "all basic fields",
+			description: "role_type: polecat\nrig: beads",
+			want: AgentFields{
+				RoleType: "polecat",
+				Rig:      "beads",
+			},
+		},
+		{
+			name:        "with advice subscriptions",
+			description: "role_type: polecat\nrig: beads\nadvice_subscriptions: security,testing",
+			want: AgentFields{
+				RoleType:            "polecat",
+				Rig:                 "beads",
+				AdviceSubscriptions: []string{"security", "testing"},
+			},
+		},
+		{
+			name:        "with advice subscriptions exclude",
+			description: "role_type: polecat\nadvice_subscriptions_exclude: deprecated,wip",
+			want: AgentFields{
+				RoleType:                   "polecat",
+				AdviceSubscriptionsExclude: []string{"deprecated", "wip"},
+			},
+		},
+		{
+			name:        "whitespace tolerance",
+			description: "  role_type:   crew  \n  rig:  gastown  \nadvice_subscriptions:  sec , test  ",
+			want: AgentFields{
+				RoleType:            "crew",
+				Rig:                 "gastown",
+				AdviceSubscriptions: []string{"sec", "test"},
+			},
+		},
+		{
+			name:        "ignores unknown fields",
+			description: "role_type: polecat\nunknown_field: value\nrig: beads",
+			want: AgentFields{
+				RoleType: "polecat",
+				Rig:      "beads",
+			},
+		},
+		{
+			name:        "handles lines without colon",
+			description: "role_type: polecat\nsome text without colon\nrig: beads",
+			want: AgentFields{
+				RoleType: "polecat",
+				Rig:      "beads",
+			},
+		},
+		{
+			name:        "empty advice subscriptions value",
+			description: "role_type: polecat\nadvice_subscriptions:",
+			want: AgentFields{
+				RoleType: "polecat",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseAgentFields(tt.description)
+			if got.RoleType != tt.want.RoleType {
+				t.Errorf("ParseAgentFields().RoleType = %q, want %q", got.RoleType, tt.want.RoleType)
+			}
+			if got.Rig != tt.want.Rig {
+				t.Errorf("ParseAgentFields().Rig = %q, want %q", got.Rig, tt.want.Rig)
+			}
+			if !strSlicesEqual(got.AdviceSubscriptions, tt.want.AdviceSubscriptions) {
+				t.Errorf("ParseAgentFields().AdviceSubscriptions = %v, want %v", got.AdviceSubscriptions, tt.want.AdviceSubscriptions)
+			}
+			if !strSlicesEqual(got.AdviceSubscriptionsExclude, tt.want.AdviceSubscriptionsExclude) {
+				t.Errorf("ParseAgentFields().AdviceSubscriptionsExclude = %v, want %v", got.AdviceSubscriptionsExclude, tt.want.AdviceSubscriptionsExclude)
+			}
+		})
+	}
+}
+
+func TestAgentFieldsRoundTrip(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields AgentFields
+	}{
+		{
+			name:   "empty",
+			fields: AgentFields{},
+		},
+		{
+			name: "basic fields",
+			fields: AgentFields{
+				RoleType: "witness",
+				Rig:      "beads",
+			},
+		},
+		{
+			name: "with subscriptions",
+			fields: AgentFields{
+				RoleType:            "polecat",
+				Rig:                 "gastown",
+				AdviceSubscriptions: []string{"security", "testing", "performance"},
+			},
+		},
+		{
+			name: "with exclusions",
+			fields: AgentFields{
+				RoleType:                   "crew",
+				Rig:                        "beads",
+				AdviceSubscriptionsExclude: []string{"deprecated", "wip"},
+			},
+		},
+		{
+			name: "all fields",
+			fields: AgentFields{
+				RoleType:                   "polecat",
+				Rig:                        "my-project",
+				AdviceSubscriptions:        []string{"security", "go"},
+				AdviceSubscriptionsExclude: []string{"deprecated"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			formatted := FormatAgentDescription(tt.fields)
+			parsed := ParseAgentFields(formatted)
+
+			if parsed.RoleType != tt.fields.RoleType {
+				t.Errorf("Round trip RoleType: got %q, want %q", parsed.RoleType, tt.fields.RoleType)
+			}
+			if parsed.Rig != tt.fields.Rig {
+				t.Errorf("Round trip Rig: got %q, want %q", parsed.Rig, tt.fields.Rig)
+			}
+			if !strSlicesEqual(parsed.AdviceSubscriptions, tt.fields.AdviceSubscriptions) {
+				t.Errorf("Round trip AdviceSubscriptions: got %v, want %v", parsed.AdviceSubscriptions, tt.fields.AdviceSubscriptions)
+			}
+			if !strSlicesEqual(parsed.AdviceSubscriptionsExclude, tt.fields.AdviceSubscriptionsExclude) {
+				t.Errorf("Round trip AdviceSubscriptionsExclude: got %v, want %v", parsed.AdviceSubscriptionsExclude, tt.fields.AdviceSubscriptionsExclude)
+			}
+		})
+	}
+}
+
+// strSlicesEqual compares two string slices for equality
+func strSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}

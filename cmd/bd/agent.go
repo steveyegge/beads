@@ -840,3 +840,103 @@ func parseAgentIDFields(agentID string) (roleType, rig string) {
 
 	return "", "" // Unknown format
 }
+
+// AgentFields holds agent-specific configuration that can be stored in a bead's description.
+// These fields extend the core agent identity stored in Issue fields (RoleType, Rig, etc.).
+type AgentFields struct {
+	// RoleType is the agent role: polecat, crew, witness, refinery, mayor, deacon
+	RoleType string
+
+	// Rig is the rig name (empty for town-level agents)
+	Rig string
+
+	// AdviceSubscriptions are additional labels the agent subscribes to for advice delivery.
+	// These are in addition to the auto-subscribed context labels (global, rig:X, role:Y, agent:Z).
+	// Example: ["security", "testing", "performance"]
+	AdviceSubscriptions []string
+
+	// AdviceSubscriptionsExclude are labels the agent opts out of receiving advice for.
+	// Use to suppress advice that would otherwise match via auto-subscriptions.
+	// Example: ["deprecated", "wip"]
+	AdviceSubscriptionsExclude []string
+}
+
+// FormatAgentDescription formats AgentFields into a description string.
+// The format uses key: value lines for simple fields and key: value1,value2 for lists.
+// This allows agent configuration to be stored in a bead's description field.
+func FormatAgentDescription(fields AgentFields) string {
+	var lines []string
+
+	if fields.RoleType != "" {
+		lines = append(lines, "role_type: "+fields.RoleType)
+	}
+
+	if fields.Rig != "" {
+		lines = append(lines, "rig: "+fields.Rig)
+	}
+
+	if len(fields.AdviceSubscriptions) > 0 {
+		lines = append(lines, "advice_subscriptions: "+strings.Join(fields.AdviceSubscriptions, ","))
+	}
+
+	if len(fields.AdviceSubscriptionsExclude) > 0 {
+		lines = append(lines, "advice_subscriptions_exclude: "+strings.Join(fields.AdviceSubscriptionsExclude, ","))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// ParseAgentFields parses a description string into AgentFields.
+// The description is expected to have key: value lines.
+// Unrecognized lines are ignored to allow for additional content in descriptions.
+func ParseAgentFields(description string) AgentFields {
+	var fields AgentFields
+
+	lines := strings.Split(description, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Split on first colon
+		colonIdx := strings.Index(line, ":")
+		if colonIdx < 0 {
+			continue
+		}
+
+		key := strings.TrimSpace(line[:colonIdx])
+		value := strings.TrimSpace(line[colonIdx+1:])
+
+		switch key {
+		case "role_type":
+			fields.RoleType = value
+		case "rig":
+			fields.Rig = value
+		case "advice_subscriptions":
+			if value != "" {
+				fields.AdviceSubscriptions = parseCommaSeparatedList(value)
+			}
+		case "advice_subscriptions_exclude":
+			if value != "" {
+				fields.AdviceSubscriptionsExclude = parseCommaSeparatedList(value)
+			}
+		}
+	}
+
+	return fields
+}
+
+// parseCommaSeparatedList splits a comma-separated string into a slice,
+// trimming whitespace from each element.
+func parseCommaSeparatedList(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
