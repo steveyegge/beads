@@ -314,3 +314,48 @@ func TestExtractRandomFromID(t *testing.T) {
 		})
 	}
 }
+
+// TestSemanticID_NormalizesPrefix verifies that trailing dashes are stripped
+// from prefixes to prevent double-dash IDs (gt-bl4vnm)
+func TestSemanticID_NormalizesPrefix(t *testing.T) {
+	gen := NewSemanticIDGenerator()
+
+	tests := []struct {
+		name   string
+		prefix string
+	}{
+		{"hq no dash", "hq"},
+		{"hq with dash", "hq-"},
+		{"gt no dash", "gt"},
+		{"gt with dash", "gt-"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" GenerateSemanticID", func(t *testing.T) {
+			id := gen.GenerateSemanticID(tt.prefix, "bug", "Test issue", nil)
+			// Should never have double dash
+			if contains([]string{id}, "--") || (len(id) > 2 && id[2:4] == "--") {
+				t.Errorf("GenerateSemanticID produced double-dash ID: %q", id)
+			}
+			// Should start with normalized prefix (no trailing dash) + single dash
+			expectedStart := tt.prefix
+			if expectedStart[len(expectedStart)-1] == '-' {
+				expectedStart = expectedStart[:len(expectedStart)-1]
+			}
+			if !startsWith(id, expectedStart+"-") {
+				t.Errorf("ID %q should start with %q-", id, expectedStart)
+			}
+		})
+
+		t.Run(tt.name+" GenerateSlugWithRandom", func(t *testing.T) {
+			id := gen.GenerateSlugWithRandom(tt.prefix, "bug", "Test issue", "abc123")
+			// Should never have double dash
+			for i := 0; i < len(id)-1; i++ {
+				if id[i] == '-' && id[i+1] == '-' {
+					t.Errorf("GenerateSlugWithRandom produced double-dash ID: %q", id)
+					break
+				}
+			}
+		})
+	}
+}

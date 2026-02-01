@@ -361,7 +361,7 @@ func generateDecisionID(ctx context.Context, parent, prompt string) (string, err
 	// No parent - generate a root-level decision ID with collision avoidance
 	prefix, err := store.GetConfig(ctx, "issue_prefix")
 	if err != nil || prefix == "" {
-		prefix = "hq-" // fallback default
+		prefix = "hq" // fallback default (without trailing dash - GenerateHashID adds it)
 	}
 	now := time.Now()
 	for nonce := 0; nonce < 100; nonce++ {

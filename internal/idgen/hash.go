@@ -53,6 +53,9 @@ func EncodeBase36(data []byte, length int) string {
 // Uses base36 encoding (0-9, a-z) for better information density than hex.
 // The length parameter is expected to be 3-8; other values fall back to a 3-char byte width.
 func GenerateHashID(prefix, title, description, creator string, timestamp time.Time, length, nonce int) string {
+	// Normalize prefix: remove trailing dash if present (we add our own)
+	prefix = strings.TrimSuffix(prefix, "-")
+
 	// Combine inputs into a stable content string
 	// Include nonce to handle hash collisions
 	content := fmt.Sprintf("%s|%s|%s|%d|%d", title, description, creator, timestamp.UnixNano(), nonce)

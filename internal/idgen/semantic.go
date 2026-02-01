@@ -63,6 +63,9 @@ func NewSemanticIDGenerator() *SemanticIDGenerator {
 // Format: prefix-type-slugRANDOM (e.g., gt-epc-semantic_idszfyl8)
 // The canonicalRandom should be extracted from the bead's canonical ID (e.g., "zfyl8" from "gt-zfyl8").
 func (g *SemanticIDGenerator) GenerateSlugWithRandom(prefix, issueType, title, canonicalRandom string) string {
+	// Normalize prefix: remove trailing dash if present (we add our own)
+	prefix = strings.TrimSuffix(prefix, "-")
+
 	// Get type abbreviation
 	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]
 	if typeAbbrev == "" {
@@ -172,6 +175,9 @@ func (g *SemanticIDGenerator) GenerateSlug(title string) string {
 // Deprecated: Use GenerateSlugWithRandom instead, which embeds the canonical
 // random ID for guaranteed uniqueness without collision checking.
 func (g *SemanticIDGenerator) GenerateSemanticID(prefix, issueType, title string, existingIDs []string) string {
+	// Normalize prefix: remove trailing dash if present (we add our own)
+	prefix = strings.TrimSuffix(prefix, "-")
+
 	// Get type abbreviation
 	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]
 	if typeAbbrev == "" {
@@ -205,6 +211,9 @@ func (g *SemanticIDGenerator) GenerateSemanticID(prefix, issueType, title string
 // Deprecated: Use GenerateSlugWithRandom instead, which embeds the canonical
 // random ID for guaranteed uniqueness without collision checking.
 func (g *SemanticIDGenerator) GenerateSemanticIDWithCallback(prefix, issueType, title string, exists func(id string) bool) string {
+	// Normalize prefix: remove trailing dash if present (we add our own)
+	prefix = strings.TrimSuffix(prefix, "-")
+
 	// Get type abbreviation
 	typeAbbrev := validation.SemanticIDTypeAbbreviations[issueType]
 	if typeAbbrev == "" {
