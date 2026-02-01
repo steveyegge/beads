@@ -1,6 +1,18 @@
 # Shadowbook
 
+![Pacman Score](https://img.shields.io/badge/pacman%20score-3%20dots-yellow)
+
 ### `bd` — see your chaos, catch the drift
+
+```
+$ bd pacman
+
+╭──────────────────────────────────────────────────────────╮
+│  ᗧ····○ bd-abc····○ bd-xyz····○ bd-123 ····👻            │
+╰──────────────────────────────────────────────────────────╯
+
+YOU: claude | SCORE: 3 dots | #1 codex (5 pts)
+```
 
 ```
 $ bd recent --all
@@ -161,6 +173,8 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd pacman --resume` | Clear pause signal |
 | `bd pacman --join` | Register agent in .beads/agents.json |
 | `bd pacman --eat <id>` | Close task + increment score (hidden flag) |
+| `bd pacman --global` | Workspace-wide view across all projects |
+| `bd pacman --badge` | Generate GitHub profile badge |
 
 ---
 
@@ -230,6 +244,24 @@ bd pacman --pause "PRODUCTION DOWN"
 # Every agent's next bd command shows warning
 
 bd pacman --resume                  # After incident
+```
+
+### Workspace-Wide View
+
+```bash
+$ bd pacman --global
+
+╭──────────────────────────────────────────────────────────╮
+│  🌍 GLOBAL PACMAN · 7 projects · 486 dots · 80 ghosts    │
+╰──────────────────────────────────────────────────────────╯
+
+YOU: claude
+TOTAL SCORE: 15 dots across all projects
+
+PROJECTS:
+  208○ gastown                   (0 pts) 👻12
+  204○ kite-trading-platform     (5 pts) 👻68
+  ✓    specbeads                 (10 pts)
 ```
 
 ### Files (All Git-Tracked)

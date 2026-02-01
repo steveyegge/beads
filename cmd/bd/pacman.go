@@ -73,6 +73,9 @@ func init() {
 	pacmanCmd.Flags().String("pause", "", "Pause agents with an optional reason")
 	pacmanCmd.Flags().Bool("resume", false, "Clear pause signal")
 	pacmanCmd.Flags().Bool("join", false, "Register yourself in agents.json")
+	pacmanCmd.Flags().Bool("global", false, "Show aggregate stats across all projects in workspace")
+	pacmanCmd.Flags().Bool("badge", false, "Generate GitHub badge markdown for your score")
+	pacmanCmd.Flags().String("workspace", "", "Workspace root for --global (default: ~/Desktop/workspace)")
 	rootCmd.AddCommand(pacmanCmd)
 }
 
@@ -81,7 +84,22 @@ func runPacman(cmd *cobra.Command, args []string) {
 	pauseReason, _ := cmd.Flags().GetString("pause")
 	resumePause, _ := cmd.Flags().GetBool("resume")
 	joinAgent, _ := cmd.Flags().GetBool("join")
+	globalMode, _ := cmd.Flags().GetBool("global")
+	badgeMode, _ := cmd.Flags().GetBool("badge")
+	workspaceRoot, _ := cmd.Flags().GetString("workspace")
 	agent := getPacmanAgentName()
+
+	// Global mode: scan workspace for all projects
+	if globalMode {
+		runGlobalPacman(agent, workspaceRoot)
+		return
+	}
+
+	// Badge mode: generate GitHub badge
+	if badgeMode {
+		generatePacmanBadge(agent)
+		return
+	}
 
 	if pauseReason != "" {
 		CheckReadonly("pacman")
@@ -483,4 +501,172 @@ func clearPacmanPause() error {
 		return err
 	}
 	return nil
+}
+
+// Global mode: workspace-wide view across all projects
+func runGlobalPacman(agent, workspaceRoot string) {
+	if workspaceRoot == "" {
+		home, _ := os.UserHomeDir()
+		workspaceRoot = filepath.Join(home, "Desktop", "workspace")
+	}
+
+	type projectStats struct {
+		Name   string
+		Path   string
+		Dots   int
+		Ghosts int
+		Score  int
+	}
+
+	var projects []projectStats
+	totalDots := 0
+	totalGhosts := 0
+	totalScore := 0
+
+	// Walk workspace looking for .beads directories
+	_ = filepath.Walk(workspaceRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return nil
+		}
+		if info.Name() == ".beads" {
+			projectPath := filepath.Dir(path)
+			projectName := filepath.Base(projectPath)
+
+			// Count dots (open issues via JSONL)
+			dots := countDotsInProject(path)
+			ghosts := countGhostsInProject(path)
+			score := getScoreForAgent(path, agent)
+
+			if dots > 0 || ghosts > 0 || score > 0 {
+				projects = append(projects, projectStats{
+					Name:   projectName,
+					Path:   projectPath,
+					Dots:   dots,
+					Ghosts: ghosts,
+					Score:  score,
+				})
+				totalDots += dots
+				totalGhosts += ghosts
+				totalScore += score
+			}
+			return filepath.SkipDir
+		}
+		// Skip nested deep directories
+		if strings.Count(path, string(os.PathSeparator))-strings.Count(workspaceRoot, string(os.PathSeparator)) > 3 {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	// Render global view
+	fmt.Println("╭──────────────────────────────────────────────────────────╮")
+	fmt.Printf("│  🌍 GLOBAL PACMAN · %d projects · %d dots · %d ghosts       │\n", len(projects), totalDots, totalGhosts)
+	fmt.Println("╰──────────────────────────────────────────────────────────╯")
+	fmt.Println()
+
+	fmt.Printf("YOU: %s\n", agent)
+	fmt.Printf("TOTAL SCORE: %d dots across all projects\n\n", totalScore)
+
+	fmt.Println("PROJECTS:")
+	if len(projects) == 0 {
+		fmt.Println("  No projects with beads found")
+	} else {
+		// Sort by dots descending
+		sort.SliceStable(projects, func(i, j int) bool {
+			return projects[i].Dots > projects[j].Dots
+		})
+		for _, p := range projects {
+			status := "✓"
+			if p.Dots > 0 {
+				status = fmt.Sprintf("%d○", p.Dots)
+			}
+			ghost := ""
+			if p.Ghosts > 0 {
+				ghost = fmt.Sprintf(" 👻%d", p.Ghosts)
+			}
+			fmt.Printf("  %s %-25s %s%s\n", status, p.Name, fmt.Sprintf("(%d pts)", p.Score), ghost)
+		}
+	}
+}
+
+func countDotsInProject(beadsDir string) int {
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+	data, err := os.ReadFile(issuesPath)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, `"status":"open"`) || strings.Contains(line, `"status":"in_progress"`) {
+			count++
+		}
+	}
+	return count
+}
+
+func countGhostsInProject(beadsDir string) int {
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
+	data, err := os.ReadFile(issuesPath)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, `"status":"blocked"`) {
+			count++
+		}
+	}
+	return count
+}
+
+func getScoreForAgent(beadsDir, agent string) int {
+	scoreboardPath := filepath.Join(beadsDir, "scoreboard.json")
+	data, err := os.ReadFile(scoreboardPath)
+	if err != nil {
+		return 0
+	}
+	var scoreboard pacmanScoreboard
+	if err := json.Unmarshal(data, &scoreboard); err != nil {
+		return 0
+	}
+	if entry, ok := scoreboard.Scores[agent]; ok {
+		return entry.Dots
+	}
+	return 0
+}
+
+// Badge mode: generate GitHub profile badge
+func generatePacmanBadge(agent string) {
+	scoreboard, err := loadPacmanScoreboard()
+	if err != nil {
+		fmt.Println("No scoreboard found")
+		return
+	}
+
+	score := 0
+	if entry, ok := scoreboard.Scores[agent]; ok {
+		score = entry.Dots
+	}
+
+	// Generate shields.io badge
+	color := "brightgreen"
+	if score == 0 {
+		color = "lightgrey"
+	} else if score < 5 {
+		color = "yellow"
+	} else if score < 20 {
+		color = "green"
+	}
+
+	badgeURL := fmt.Sprintf("https://img.shields.io/badge/pacman%%20score-%d%%20dots-%s", score, color)
+	markdown := fmt.Sprintf("![Pacman Score](%s)", badgeURL)
+
+	fmt.Println("## GitHub Badge")
+	fmt.Println()
+	fmt.Println("Add to your README:")
+	fmt.Println()
+	fmt.Printf("  %s\n", markdown)
+	fmt.Println()
+	fmt.Println("Preview:")
+	fmt.Printf("  🏆 %s: %d dots\n", agent, score)
 }
