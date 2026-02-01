@@ -14,6 +14,32 @@ import (
 	"time"
 )
 
+// findBdBinary attempts to locate the bd binary for integration tests.
+// It checks:
+// 1. Repository root ("../../bd")
+// 2. System PATH
+func findBdBinary() (string, error) {
+	// Find bd binary: prefer repo root build, then PATH
+	bdBinary := "bd"
+	if runtime.GOOS == "windows" {
+		bdBinary = "bd.exe"
+	}
+
+	repoRoot := filepath.Join("..", "..")
+	existingBD := filepath.Join(repoRoot, bdBinary)
+	if absPath, err := filepath.Abs(existingBD); err == nil {
+		if _, err := os.Stat(absPath); err == nil {
+			return absPath, nil
+		}
+	}
+
+	if path, err := exec.LookPath("bd"); err == nil {
+		return path, nil
+	}
+
+	return "", fmt.Errorf("bd binary not found in repo root or PATH")
+}
+
 func TestDaemonLockPreventsMultipleInstances(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -89,21 +115,10 @@ func TestDaemonStopDeletesLockFile(t *testing.T) {
 		t.Skip("Skipping slow integration test in short mode")
 	}
 
-	// Find bd binary: prefer repo root build, then PATH
-	bdBinary := "bd"
-	if runtime.GOOS == "windows" {
-		bdBinary = "bd.exe"
-	}
-	repoRoot := filepath.Join("..", "..")
-	existingBD := filepath.Join(repoRoot, bdBinary)
-	if absPath, err := filepath.Abs(existingBD); err == nil {
-		if _, err := os.Stat(absPath); err == nil {
-			bdBinary = absPath
-		} else if path, err := exec.LookPath("bd"); err == nil {
-			bdBinary = path
-		} else {
-			t.Skip("bd binary not found, skipping end-to-end test")
-		}
+	// Find bd binary
+	bdBinary, err := findBdBinary()
+	if err != nil {
+		t.Skip("bd binary not found, skipping integration test")
 	}
 
 	tmpDir := t.TempDir()
@@ -310,18 +325,9 @@ func TestMultipleDaemonProcessesRace(t *testing.T) {
 	}
 
 	// Find the bd binary
-	bdBinary, err := exec.LookPath("bd")
+	bdBinary, err := findBdBinary()
 	if err != nil {
-		// Try local build (platform-specific)
-		localBinary := "./bd"
-		if runtime.GOOS == "windows" {
-			localBinary = "./bd.exe"
-		}
-		if _, err := os.Stat(localBinary); err == nil {
-			bdBinary = localBinary
-		} else {
-			t.Skip("bd binary not found, skipping race test")
-		}
+		t.Skip("bd binary not found, skipping race test")
 	}
 
 	tmpDir := t.TempDir()
@@ -403,7 +409,7 @@ func TestMultipleDaemonProcessesRace(t *testing.T) {
 	// At most one should have succeeded in holding the lock
 	// (though timing means even the first might have exited by the time we checked)
 	if alreadyRunning < numAttempts-1 {
-		t.Logf("Warning: Expected at least %d processes to fail with 'already running', got %d", 
+		t.Logf("Warning: Expected at least %d processes to fail with 'already running', got %d",
 			numAttempts-1, alreadyRunning)
 		t.Log("This could indicate a race condition, but may also be timing-related in tests")
 	}
