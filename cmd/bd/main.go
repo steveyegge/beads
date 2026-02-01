@@ -489,6 +489,7 @@ var rootCmd = &cobra.Command{
 
 			// Set actor for audit trail
 			actor = getActorWithGit()
+			checkPauseSignal()
 
 			// Skip daemon and SQLite initialization - we're in memory mode
 			return
@@ -526,6 +527,8 @@ var rootCmd = &cobra.Command{
 						return
 					}
 				}
+
+				checkPauseSignal()
 
 				// Allow some commands to run without a database
 				// - import: auto-initializes database if missing
@@ -593,6 +596,8 @@ var rootCmd = &cobra.Command{
 
 		// Set actor for audit trail
 		actor = getActorWithGit()
+
+		checkPauseSignal()
 
 		// Track bd version changes
 		// Best-effort tracking - failures are silent

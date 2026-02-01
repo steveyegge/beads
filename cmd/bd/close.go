@@ -149,6 +149,7 @@ create, update, show, or close operation).`,
 								hookRunner.Run(hooks.EventClose, result.Closed)
 							}
 							closedIssues = append(closedIssues, result.Closed)
+							maybeIncrementPacmanScore()
 						}
 						if !jsonOutput {
 							fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
@@ -169,6 +170,7 @@ create, update, show, or close operation).`,
 							hookRunner.Run(hooks.EventClose, &issue)
 						}
 						closedIssues = append(closedIssues, &issue)
+						maybeIncrementPacmanScore()
 					}
 					if !jsonOutput {
 						fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
@@ -226,6 +228,7 @@ create, update, show, or close operation).`,
 
 				if closedIssue != nil {
 					closedIssues = append(closedIssues, closedIssue)
+					maybeIncrementPacmanScore()
 				}
 				if !jsonOutput {
 					fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
@@ -303,6 +306,7 @@ create, update, show, or close operation).`,
 
 			if closedIssue != nil {
 				closedIssues = append(closedIssues, closedIssue)
+				maybeIncrementPacmanScore()
 			}
 			if !jsonOutput {
 				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), id, reason)
@@ -361,6 +365,7 @@ create, update, show, or close operation).`,
 
 			if closedIssue != nil {
 				closedIssues = append(closedIssues, closedIssue)
+				maybeIncrementPacmanScore()
 			}
 			if !jsonOutput {
 				fmt.Printf("%s Closed %s: %s\n", ui.RenderPass("✓"), result.ResolvedID, reason)
@@ -473,6 +478,12 @@ func suggestSpecCompletion(ctx context.Context, specID string) {
 	if len(openIssues) == 0 {
 		fmt.Printf("\n%s All issues for spec %s are now closed.\n", ui.RenderPass("●"), specID)
 		fmt.Printf("  Run: bd spec mark-done %s\n", specID)
+	}
+}
+
+func maybeIncrementPacmanScore() {
+	if err := incrementPacmanScore(getPacmanAgentName(), 1); err != nil {
+		WarnError("pacman score update failed: %v", err)
 	}
 }
 

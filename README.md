@@ -145,6 +145,7 @@ bd close bd-xyz --compact-spec --compact-skills
 |---------|--------|
 | `bd recent --all` | Activity dashboard with volatility |
 | `bd ready` | Work queue, partitioned by volatility |
+| `bd ready --mine` | Work queue filtered to your assignments |
 | `bd list --show-volatility` | Badges: 🔥 volatile / ⚡ stable |
 | `bd spec scan` | Detect spec changes |
 | `bd spec volatility` | List specs by stability |
@@ -154,10 +155,89 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd spec volatility --fail-on-high` | CI gate |
 | `bd preflight --check` | Skills + specs + volatility |
 | `bd resume --spec <path>` | Unblock paused issues |
+| `bd assign <id> --to <agent>` | Assign a bead to someone |
 | `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
 | `bd pacman --pause "reason"` | Pause signal for other agents (file-based) |
 | `bd pacman --resume` | Clear pause signal |
 | `bd pacman --join` | Register agent in .beads/agents.json |
+| `bd pacman --eat <id>` | Close task + increment score (hidden flag) |
+
+---
+
+## Pacman Mode (Multi-Agent)
+
+Gamified task management for coordinating multiple agents. No server required.
+
+```bash
+$ bd pacman
+
+PACMAN MODE
+──────────────────────────────────────────
+YOU: claude
+SCORE: 5 dots
+
+DOTS NEARBY:
+  ○ bd-bw3 ● P2 "Add TUI dashboard"
+  ○ bd-235 ● P2 "Session handoff"
+
+BLOCKERS:
+  ● None
+
+LEADERBOARD:
+  #1 codex   8 pts
+  #2 claude  5 pts
+```
+
+### Multi-Agent Scenarios
+
+**Two agents, same project:**
+```bash
+# Codex joins and works
+AGENT_NAME=codex bd pacman --join
+bd pacman --eat bd-123              # Close + score
+
+# You check progress
+bd pacman                           # See leaderboard
+```
+
+**Session handoff (day → night):**
+```bash
+# End of day
+git push
+
+# Codex overnight
+git pull && AGENT_NAME=codex bd pacman --join
+bd pacman --eat bd-456
+git push
+
+# Next morning
+git pull && bd pacman               # See overnight work
+```
+
+**Emergency stop all agents:**
+```bash
+bd pacman --pause "PRODUCTION DOWN"
+# Every agent's next bd command shows warning
+
+bd pacman --resume                  # After incident
+```
+
+### Files (All Git-Tracked)
+
+```
+.beads/
+├── agents.json       # Who's playing
+├── scoreboard.json   # Points per agent
+└── pause.json        # Pause signal (when active)
+```
+
+### Why Files, Not Server?
+
+| Aspect | Server | Files |
+|--------|--------|-------|
+| Agent dies | Inbox stuck | Files persist |
+| 10 projects | 10 registrations | 0 registrations |
+| Sync | MCP calls | Git pull/push |
 
 ---
 

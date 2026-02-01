@@ -49,6 +49,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		limit, _ := cmd.Flags().GetInt("limit")
 		assignee, _ := cmd.Flags().GetString("assignee")
 		unassigned, _ := cmd.Flags().GetBool("unassigned")
+		mine, _ := cmd.Flags().GetBool("mine")
 		sortPolicy, _ := cmd.Flags().GetString("sort")
 		labels, _ := cmd.Flags().GetStringSlice("label")
 		labelsAny, _ := cmd.Flags().GetStringSlice("label-any")
@@ -94,6 +95,15 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		if cmd.Flags().Changed("priority") {
 			priority, _ := cmd.Flags().GetInt("priority")
 			filter.Priority = &priority
+		}
+		if mine {
+			if assignee != "" {
+				FatalErrorRespectJSON("--mine cannot be used with --assignee")
+			}
+			if unassigned {
+				FatalErrorRespectJSON("--mine cannot be used with --unassigned")
+			}
+			assignee = getActorWithGit()
 		}
 		if assignee != "" && !unassigned {
 			filter.Assignee = &assignee
@@ -429,13 +439,13 @@ func renderReadyByVolatility(ctx context.Context, issues []*types.Issue) {
 	}
 
 	if len(volatile) > 0 {
-		fmt.Printf("%s Caution (volatile specs):\n\n", ui.RenderWarn("◐"))
+		fmt.Printf("%s Caution (volatile specs):\n\n", ui.RenderWarn("🔥"))
 		for i, issue := range volatile {
 			summary := summaries[issue.SpecID]
-			suffix := fmt.Sprintf(" (volatile: %d changes/30d, %d open issues)", summary.ChangeCount, summary.OpenIssues)
+			suffix := fmt.Sprintf(" (🔥 volatile: %d changes/30d, %d open issues)", summary.ChangeCount, summary.OpenIssues)
 			renderReadyIssueLine(i+1, issue, suffix)
 		}
-		fmt.Printf("\n%s Recommendation: stabilize volatile specs before starting new work.\n\n", ui.RenderWarn("◐"))
+		fmt.Printf("\n%s Recommendation: stabilize volatile specs before starting new work.\n\n", ui.RenderWarn("🔥"))
 	}
 }
 
@@ -523,6 +533,7 @@ func init() {
 	readyCmd.Flags().IntP("limit", "n", 10, "Maximum issues to show")
 	readyCmd.Flags().IntP("priority", "p", 0, "Filter by priority")
 	readyCmd.Flags().StringP("assignee", "a", "", "Filter by assignee")
+	readyCmd.Flags().Bool("mine", false, "Show issues assigned to you")
 	readyCmd.Flags().BoolP("unassigned", "u", false, "Show only unassigned issues")
 	readyCmd.Flags().StringP("sort", "s", "hybrid", "Sort policy: hybrid (default), priority, oldest")
 	readyCmd.Flags().StringSliceP("label", "l", []string{}, "Filter by labels (AND: must have ALL). Can combine with --label-any")
