@@ -155,6 +155,11 @@ func getActorWithGit() string {
 		return beadsActor
 	}
 
+	// Check AGENT_NAME env var (for pacman multi-agent compatibility)
+	if agentName := os.Getenv("AGENT_NAME"); agentName != "" {
+		return agentName
+	}
+
 	// Try git config user.name - the natural default for a git-native tool
 	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
 		if gitUser := strings.TrimSpace(string(out)); gitUser != "" {
