@@ -545,7 +545,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 	// Validate database fingerprint (skip in local mode - no git available)
 	if localMode {
 		log.Info("skipping fingerprint validation (local mode)")
-	} else if err := validateDatabaseFingerprint(ctx, store, &log); err != nil {
+	} else if err := validateDatabaseFingerprint(ctx, store, log); err != nil {
 		if os.Getenv("BEADS_IGNORE_REPO_MISMATCH") != "1" {
 			log.Error("repository fingerprint validation failed", "error", err)
 			// Write error to daemon-error file so user sees it instead of just "daemon took too long"

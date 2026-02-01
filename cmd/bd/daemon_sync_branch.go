@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 // syncBranchCommitAndPush commits JSONL to the sync branch using a worktree.
 // Returns true if changes were committed, false if no changes or sync.branch not configured.
 // This is a convenience wrapper that calls syncBranchCommitAndPushWithOptions with default options.
-func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPush bool, log daemonLogger) (bool, error) {
+func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPush bool, log *slog.Logger) (bool, error) {
 	return syncBranchCommitAndPushWithOptions(ctx, store, autoPush, false, log)
 }
 
@@ -26,7 +27,7 @@ func syncBranchCommitAndPush(ctx context.Context, store storage.Storage, autoPus
 // Returns true if changes were committed, false if no changes or sync.branch not configured.
 // If forceOverwrite is true, the local JSONL is copied to the worktree without merging,
 // which is necessary for delete mutations to be properly reflected in the sync branch.
-func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Storage, autoPush, forceOverwrite bool, log daemonLogger) (bool, error) {
+func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Storage, autoPush, forceOverwrite bool, log *slog.Logger) (bool, error) {
 	// Check if any remote exists (bd-biwp: support local-only repos)
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch commit/push in local-only mode
@@ -266,7 +267,7 @@ func gitPushFromWorktree(ctx context.Context, worktreePath, branch, configuredRe
 
 // syncBranchPull pulls changes from the sync branch into the worktree
 // Returns true if pull was performed, false if sync.branch not configured
-func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger) (bool, error) {
+func syncBranchPull(ctx context.Context, store storage.Storage, log *slog.Logger) (bool, error) {
 	// Check if any remote exists (bd-biwp: support local-only repos)
 	if !hasGitRemote(ctx) {
 		return true, nil // Skip sync branch pull in local-only mode

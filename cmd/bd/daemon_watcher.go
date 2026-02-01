@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +154,7 @@ func (fw *FileWatcher) shouldLogGitRefChange() bool {
 // Start begins monitoring filesystem events or polling.
 // Runs in background goroutine until context is canceled.
 // Should only be called once per FileWatcher instance.
-func (fw *FileWatcher) Start(ctx context.Context, log daemonLogger) {
+func (fw *FileWatcher) Start(ctx context.Context, log *slog.Logger) {
 	// Create internal cancel so Close can stop goroutines
 	ctx, cancel := context.WithCancel(ctx)
 	fw.cancel = cancel
@@ -233,7 +234,7 @@ func (fw *FileWatcher) Start(ctx context.Context, log daemonLogger) {
 }
 
 // reEstablishWatch attempts to re-add the JSONL watch with exponential backoff.
-func (fw *FileWatcher) reEstablishWatch(ctx context.Context, log daemonLogger) {
+func (fw *FileWatcher) reEstablishWatch(ctx context.Context, log *slog.Logger) {
 	delays := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
 
 	for _, delay := range delays {
@@ -259,7 +260,7 @@ func (fw *FileWatcher) reEstablishWatch(ctx context.Context, log daemonLogger) {
 }
 
 // startPolling begins polling for file changes using a ticker.
-func (fw *FileWatcher) startPolling(ctx context.Context, log daemonLogger) {
+func (fw *FileWatcher) startPolling(ctx context.Context, log *slog.Logger) {
 	log.Info("Starting polling mode with %v interval", fw.pollInterval)
 	ticker := time.NewTicker(fw.pollInterval)
 	fw.wg.Add(1)

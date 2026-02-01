@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -38,7 +39,7 @@ func runEventDrivenLoop(
 	doAutoImport func(),
 	autoPull bool,
 	parentPID int,
-	log daemonLogger,
+	log *slog.Logger,
 ) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, daemonSignals...)
@@ -210,7 +211,7 @@ func runEventDrivenLoop(
 
 // checkDaemonHealth performs periodic health validation.
 // Separate from sync operations - just validates state.
-func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLogger) {
+func checkDaemonHealth(ctx context.Context, store storage.Storage, log *slog.Logger) {
 	// Health check 1: Verify metadata is accessible
 	// This helps detect if external operations (like bd import --force) have modified metadata
 	// Without this, daemon may continue operating with stale metadata cache
@@ -272,7 +273,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 // - "0" or "0s" (disables periodic sync - use with caution)
 //
 // Minimum allowed value is 5 seconds to prevent excessive load.
-func getRemoteSyncInterval(log daemonLogger) time.Duration {
+func getRemoteSyncInterval(log *slog.Logger) time.Duration {
 	// config.GetDuration handles both config.yaml and env var (env takes precedence)
 	duration := config.GetDuration("remote-sync-interval")
 

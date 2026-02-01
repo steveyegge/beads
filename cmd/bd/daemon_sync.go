@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,7 +27,7 @@ import (
 // the misconfiguration. The daemon continues to start (warn only, don't block).
 // Returns true if misconfigured (warning was logged), false otherwise.
 // GH#1258: Prevents silent failure when sync-branch == current-branch.
-func warnIfSyncBranchMisconfigured(ctx context.Context, store storage.Storage, log daemonLogger) bool {
+func warnIfSyncBranchMisconfigured(ctx context.Context, store storage.Storage, log *slog.Logger) bool {
 	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil || syncBranch == "" {
 		return false // No sync branch configured, not misconfigured
@@ -45,7 +46,7 @@ func warnIfSyncBranchMisconfigured(ctx context.Context, store storage.Storage, l
 // shouldSkipDueToSameBranch checks if operation should be skipped because
 // sync-branch == current-branch. Returns true if should skip, logs reason.
 // Uses fail-open pattern: if branch detection fails, allows operation to proceed.
-func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, operation string, log daemonLogger) bool {
+func shouldSkipDueToSameBranch(ctx context.Context, store storage.Storage, operation string, log *slog.Logger) bool {
 	syncBranch, err := syncbranch.Get(ctx, store)
 	if err != nil || syncBranch == "" {
 		return false // No sync branch configured, allow
@@ -354,7 +355,7 @@ func sanitizeMetadataKey(key string) string {
 //  3. Current approach is simple and doesn't require complex WAL or format changes
 //
 // Future: Consider defensive checks on startup if this becomes a common issue.
-func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath string, log daemonLogger, keySuffix string) {
+func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath string, log *slog.Logger, keySuffix string) {
 	// Sanitize keySuffix to handle Windows paths with colons
 	if keySuffix != "" {
 		keySuffix = sanitizeMetadataKey(keySuffix)
@@ -394,7 +395,7 @@ func updateExportMetadata(ctx context.Context, store storage.Storage, jsonlPath 
 }
 
 // validateDatabaseFingerprint checks that the database belongs to this repository
-func validateDatabaseFingerprint(ctx context.Context, store storage.Storage, log *daemonLogger) error {
+func validateDatabaseFingerprint(ctx context.Context, store storage.Storage, log *slog.Logger) error {
 
 	// Get stored repo ID
 	storedRepoID, err := store.GetMetadata(ctx, "repo_id")
@@ -463,19 +464,19 @@ Solutions:
 
 // createExportFunc creates a function that only exports database to JSONL
 // and optionally commits/pushes (no git pull or import). Used for mutation events.
-func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log daemonLogger) func() {
+func createExportFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log *slog.Logger) func() {
 	return performExport(ctx, store, autoCommit, autoPush, false, log)
 }
 
 // createLocalExportFunc creates a function that only exports database to JSONL
 // without any git operations. Used for local-only mode with mutation events.
-func createLocalExportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+func createLocalExportFunc(ctx context.Context, store storage.Storage, log *slog.Logger) func() {
 	return performExport(ctx, store, false, false, true, log)
 }
 
 // performExport is the shared implementation for export-only functions.
 // skipGit: if true, skips all git operations (commits, pushes).
-func performExport(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log daemonLogger) func() {
+func performExport(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log *slog.Logger) func() {
 	return func() {
 		exportCtx, exportCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer exportCancel()
@@ -629,19 +630,19 @@ func performExport(ctx context.Context, store storage.Storage, autoCommit, autoP
 
 // createAutoImportFunc creates a function that pulls from git and imports JSONL
 // to database (no export). Used for file system change events.
-func createAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+func createAutoImportFunc(ctx context.Context, store storage.Storage, log *slog.Logger) func() {
 	return performAutoImport(ctx, store, false, log)
 }
 
 // createLocalAutoImportFunc creates a function that imports from JSONL to database
 // without any git operations. Used for local-only mode with file system change events.
-func createLocalAutoImportFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+func createLocalAutoImportFunc(ctx context.Context, store storage.Storage, log *slog.Logger) func() {
 	return performAutoImport(ctx, store, true, log)
 }
 
 // performAutoImport is the shared implementation for import-only functions.
 // skipGit: if true, skips git pull operations.
-func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool, log daemonLogger) func() {
+func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool, log *slog.Logger) func() {
 	return func() {
 		importCtx, importCancel := context.WithTimeout(ctx, 1*time.Minute)
 		defer importCancel()
@@ -779,20 +780,20 @@ func performAutoImport(ctx context.Context, store storage.Storage, skipGit bool,
 }
 
 // createSyncFunc creates a function that performs full sync cycle (export, commit, pull, import, push)
-func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log daemonLogger) func() {
+func createSyncFunc(ctx context.Context, store storage.Storage, autoCommit, autoPush bool, log *slog.Logger) func() {
 	return performSync(ctx, store, autoCommit, autoPush, false, log)
 }
 
 // createLocalSyncFunc creates a function that performs local-only sync (export only, no git).
 // Used when daemon is started with --local flag.
-func createLocalSyncFunc(ctx context.Context, store storage.Storage, log daemonLogger) func() {
+func createLocalSyncFunc(ctx context.Context, store storage.Storage, log *slog.Logger) func() {
 	return performSync(ctx, store, false, false, true, log)
 }
 
 // performSync is the shared implementation for sync functions.
 // skipGit: if true, skips all git operations (commits, pulls, pushes, snapshot capture, 3-way merge, import).
 // Local-only mode only performs validation and export since there's no remote to sync with.
-func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log daemonLogger) func() {
+func performSync(ctx context.Context, store storage.Storage, autoCommit, autoPush, skipGit bool, log *slog.Logger) func() {
 	return func() {
 		syncCtx, syncCancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer syncCancel()
