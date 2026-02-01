@@ -11,6 +11,9 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/cmd/bd/doctor"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/config"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 )
 
@@ -283,8 +286,17 @@ func TestCheckIDFormat(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Create metadata.json with SQLite backend (hq--5vj3: factory defaults to dolt otherwise)
+			cfg := &configfile.Config{
+				Database: beads.CanonicalDatabaseName,
+				Backend:  configfile.BackendSQLite,
+			}
+			if err := cfg.Save(beadsDir); err != nil {
+				t.Fatalf("Failed to create metadata.json: %v", err)
+			}
+
 			// Create database
-			dbPath := filepath.Join(beadsDir, "beads.db")
+			dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 			db, err := sql.Open("sqlite3", dbPath)
 			if err != nil {
 				t.Fatalf("Failed to open database: %v", err)
@@ -373,6 +385,14 @@ func TestCheckInstallation(t *testing.T) {
 }
 
 func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
+	// Reset global config to prevent pollution from other tests (hq--5vj3)
+	// Without this, storage-backend may be set to "dolt" from earlier tests
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+	config.Set("storage-backend", "sqlite")
+
 	// Create temporary directory with .beads but no database
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")
@@ -407,6 +427,14 @@ func TestCheckDatabaseVersionJSONLMode(t *testing.T) {
 }
 
 func TestCheckDatabaseVersionFreshClone(t *testing.T) {
+	// Reset global config to prevent pollution from other tests (hq--5vj3)
+	// Without this, storage-backend may be set to "dolt" from earlier tests
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+	config.Set("storage-backend", "sqlite")
+
 	// Create temporary directory with .beads and JSONL but no database
 	// This simulates a fresh clone that needs 'bd init'
 	tmpDir := t.TempDir()

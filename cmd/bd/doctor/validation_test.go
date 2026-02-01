@@ -7,9 +7,29 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
+
+// createTestBeadsDir creates a .beads directory with proper metadata.json for SQLite backend.
+// This is needed because factory.NewFromConfigWithOptions defaults to Dolt when no metadata.json exists.
+func createTestBeadsDir(t *testing.T, parentDir string) string {
+	t.Helper()
+	beadsDir := filepath.Join(parentDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create metadata.json with explicit SQLite backend
+	cfg := &configfile.Config{
+		Database: beads.CanonicalDatabaseName,
+		Backend:  configfile.BackendSQLite,
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+	return beadsDir
+}
 
 // TestCheckDuplicateIssues_ClosedIssuesExcluded verifies that closed issues
 // are not flagged as duplicates (bug fix: bd-sali).
@@ -17,11 +37,7 @@ import (
 // while bd duplicates excluded closed issues and used full content hash.
 func TestCheckDuplicateIssues_ClosedIssuesExcluded(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -66,11 +82,7 @@ func TestCheckDuplicateIssues_ClosedIssuesExcluded(t *testing.T) {
 // with identical content ARE flagged as duplicates.
 func TestCheckDuplicateIssues_OpenDuplicatesDetected(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -114,11 +126,7 @@ func TestCheckDuplicateIssues_OpenDuplicatesDetected(t *testing.T) {
 // This tests the full content hash (title+description+design+acceptanceCriteria+status).
 func TestCheckDuplicateIssues_DifferentDesignNotDuplicate(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -161,11 +169,7 @@ func TestCheckDuplicateIssues_DifferentDesignNotDuplicate(t *testing.T) {
 // Only open duplicates should be flagged.
 func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -215,11 +219,7 @@ func TestCheckDuplicateIssues_MixedOpenClosed(t *testing.T) {
 // are excluded from duplicate detection.
 func TestCheckDuplicateIssues_TombstonesExcluded(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -280,11 +280,7 @@ func TestCheckDuplicateIssues_NoDatabase(t *testing.T) {
 // duplicates under the threshold are OK.
 func TestCheckDuplicateIssues_GastownUnderThreshold(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -331,11 +327,7 @@ func TestCheckDuplicateIssues_GastownUnderThreshold(t *testing.T) {
 // duplicates over the threshold still warn.
 func TestCheckDuplicateIssues_GastownOverThreshold(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -380,11 +372,7 @@ func TestCheckDuplicateIssues_GastownOverThreshold(t *testing.T) {
 // TestCheckDuplicateIssues_GastownCustomThreshold verifies custom threshold works.
 func TestCheckDuplicateIssues_GastownCustomThreshold(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 
@@ -430,11 +418,7 @@ func TestCheckDuplicateIssues_GastownCustomThreshold(t *testing.T) {
 // any duplicates are warnings (backward compatibility).
 func TestCheckDuplicateIssues_NonGastownMode(t *testing.T) {
 	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.Mkdir(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	beadsDir := createTestBeadsDir(t, tmpDir)
 	dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 	ctx := context.Background()
 

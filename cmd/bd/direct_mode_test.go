@@ -19,13 +19,15 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Initialize config and reset sync.mode to ensure JSONL export is enabled
-	// This is needed because config.yaml may have sync.mode: dolt-native which
-	// would skip JSONL export
+	// Reset global config to prevent pollution from other tests (hq--5vj3)
+	// This is needed because config.yaml may have sync.mode: dolt-native or
+	// storage-backend: dolt which would skip JSONL export
+	config.ResetForTesting()
 	if err := config.Initialize(); err != nil {
 		t.Fatalf("failed to initialize config: %v", err)
 	}
-	config.Set("sync.mode", "")
+	config.Set("sync.mode", SyncModeGitPortable)
+	config.Set("storage-backend", "sqlite")
 
 	oldRootCtx := rootCtx
 	rootCtx = ctx
@@ -81,7 +83,8 @@ func TestFallbackToDirectModeEnablesFlush(t *testing.T) {
 	testDBPath := filepath.Join(beadsDir, "beads.db")
 
 	// Create metadata.json so factory.NewFromConfig knows which DB to open (GH#e82f5136)
-	metadataJSON := `{"database":"beads.db","jsonl_export":"issues.jsonl"}`
+	// Include backend: sqlite to prevent Dolt fallback (hq--5vj3)
+	metadataJSON := `{"database":"beads.db","jsonl_export":"issues.jsonl","backend":"sqlite"}`
 	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataJSON), 0644); err != nil {
 		t.Fatalf("failed to create metadata.json: %v", err)
 	}
@@ -225,7 +228,8 @@ func TestImportFromJSONLInlineAfterDaemonDisconnect(t *testing.T) {
 	jsonlPath := filepath.Join(beadsDir, "issues.jsonl")
 
 	// Create metadata.json so factory.NewFromConfig knows which DB to open (GH#e82f5136)
-	metadataJSON := `{"database":"beads.db","jsonl_export":"issues.jsonl"}`
+	// Include backend: sqlite to prevent Dolt fallback (hq--5vj3)
+	metadataJSON := `{"database":"beads.db","jsonl_export":"issues.jsonl","backend":"sqlite"}`
 	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataJSON), 0644); err != nil {
 		t.Fatalf("failed to create metadata.json: %v", err)
 	}

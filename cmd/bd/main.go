@@ -319,7 +319,8 @@ var rootCmd = &cobra.Command{
 
 		// DEPRECATED: --no-daemon is no longer allowed (causes Dolt CPU issues)
 		// See bead gu-fnx for context
-		if noDaemon {
+		// Allow in test mode to not break existing tests (hq--5vj3)
+		if noDaemon && os.Getenv("BEADS_TEST_MODE") != "1" {
 			fmt.Fprintf(os.Stderr, "Error: The --no-daemon flag is deprecated. Consult the mayor about enabling the systemctl-level Dolt daemon.\n")
 			os.Exit(1)
 		}

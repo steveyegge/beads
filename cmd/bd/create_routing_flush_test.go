@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -17,6 +18,16 @@ func TestFlushRoutedRepo_DirectExport(t *testing.T) {
 	// Force git-portable sync mode for JSONL export tests (bd-a9ka merge fix)
 	// This overrides any dolt-native config from the repo's config.yaml
 	t.Setenv("BD_SYNC_MODE", SyncModeGitPortable)
+
+	// Ensure config is initialized with clean state (hq--5vj3)
+	// We need to reset and initialize to avoid picking up repo's dolt-native config,
+	// and explicitly set storage-backend to sqlite to prevent dolt-native fallback
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+	config.Set("sync.mode", SyncModeGitPortable)
+	config.Set("storage-backend", "sqlite")
 
 	// Create a test source repo (current repo)
 	sourceDir := t.TempDir()
@@ -204,6 +215,16 @@ func TestRoutingWithHydrationIntegration(t *testing.T) {
 	// Force git-portable sync mode for JSONL export tests (bd-a9ka merge fix)
 	// This overrides any dolt-native config from the repo's config.yaml
 	t.Setenv("BD_SYNC_MODE", SyncModeGitPortable)
+
+	// Ensure config is initialized with clean state (hq--5vj3)
+	// We need to reset and initialize to avoid picking up repo's dolt-native config,
+	// and explicitly set storage-backend to sqlite to prevent dolt-native fallback
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+	config.Set("sync.mode", SyncModeGitPortable)
+	config.Set("storage-backend", "sqlite")
 
 	// Setup: Create main repo and planning repo
 	mainDir := t.TempDir()

@@ -489,6 +489,8 @@ func TestInitNoDbMode(t *testing.T) {
 	// Set BEADS_DIR to prevent git repo detection from finding project's .beads
 	origBeadsDir := os.Getenv("BEADS_DIR")
 	os.Setenv("BEADS_DIR", filepath.Join(tmpDir, ".beads"))
+	// Set test mode to allow --no-daemon flag (hq--5vj3)
+	os.Setenv("BEADS_TEST_MODE", "1")
 	// Reset caches so RepoContext picks up new BEADS_DIR and CWD
 	beads.ResetCaches()
 	git.ResetCaches()

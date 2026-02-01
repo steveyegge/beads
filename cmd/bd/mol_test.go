@@ -222,6 +222,10 @@ func TestBondProtoProto(t *testing.T) {
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create two protos
 	protoA := &types.Issue{
@@ -298,6 +302,10 @@ func TestBondProtoMol(t *testing.T) {
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create a proto with a child issue
 	proto := &types.Issue{
@@ -370,6 +378,10 @@ func TestBondMolMol(t *testing.T) {
 	defer store.Close()
 	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create two molecules
@@ -470,6 +482,10 @@ func TestSquashMolecule(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create a molecule (root issue)
@@ -578,6 +594,10 @@ func TestSquashMoleculeWithDelete(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create a molecule with ephemeral children
@@ -688,6 +708,10 @@ func TestSquashMoleculeWithAgentSummary(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create a molecule with ephemeral child
 	root := &types.Issue{
@@ -758,6 +782,10 @@ func TestSpawnWithBasicAttach(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create primary proto with a child
@@ -892,6 +920,10 @@ func TestSpawnWithMultipleAttachments(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create primary proto
 	primaryProto := &types.Issue{
@@ -1009,6 +1041,10 @@ func TestSpawnAttachTypes(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create primary proto
@@ -1129,6 +1165,10 @@ func TestSpawnVariableAggregation(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create primary proto with one variable
@@ -1298,6 +1338,10 @@ func TestWispFilteringFromExport(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create a mix of wisp and non-wisp issues
 	normalIssue := &types.Issue{
@@ -1363,6 +1407,10 @@ func TestGetMoleculeProgress(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create a molecule (epic with template label)
@@ -1465,6 +1513,10 @@ func TestFindParentMolecule(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create molecule root (epic with template label)
 	root := &types.Issue{
@@ -1562,6 +1614,10 @@ func TestFindHookedMolecules(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create molecule root (epic)
 	molecule := &types.Issue{
@@ -1644,6 +1700,10 @@ func TestAdvanceToNextStep(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create molecule with sequential steps
@@ -1747,6 +1807,10 @@ func TestAdvanceToNextStepMoleculeComplete(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create molecule with single step
 	root := &types.Issue{
@@ -1804,6 +1868,10 @@ func TestAdvanceToNextStepOrphanIssue(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create standalone issue (not part of molecule)
@@ -1995,6 +2063,10 @@ func TestBondProtoMolWithRef(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create a proto with child steps (mol-polecat-arm template)
 	protoRoot := &types.Issue{
@@ -2084,6 +2156,10 @@ func TestBondProtoMolMultipleArms(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "patrol"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create simple proto
@@ -2535,6 +2611,10 @@ func TestSpawnMoleculeEphemeralFlag(t *testing.T) {
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
 	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
+	}
 
 	// Create a template with a child (IDs will be auto-generated)
 	root := &types.Issue{
@@ -2610,6 +2690,10 @@ func TestSpawnMoleculeFromFormulaEphemeral(t *testing.T) {
 	defer s.Close()
 	if err := s.SetConfig(ctx, "issue_prefix", "test"); err != nil {
 		t.Fatalf("Failed to set config: %v", err)
+	}
+	// Configure custom types for test (hq--5vj3)
+	if err := s.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
+		t.Fatalf("Failed to set types.custom: %v", err)
 	}
 
 	// Create a minimal in-memory subgraph (simulating cookFormulaToSubgraph output)

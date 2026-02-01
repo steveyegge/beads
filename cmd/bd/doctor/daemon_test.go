@@ -7,9 +7,30 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
+
+// createTestBeadsDirForDaemon creates a .beads directory with proper metadata.json for SQLite backend.
+// This is needed because factory.NewFromConfigWithOptions defaults to Dolt when no metadata.json exists.
+func createTestBeadsDirForDaemon(t *testing.T, parentDir string) string {
+	t.Helper()
+	beadsDir := filepath.Join(parentDir, ".beads")
+	if err := os.Mkdir(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create metadata.json with explicit SQLite backend
+	cfg := &configfile.Config{
+		Database: beads.CanonicalDatabaseName,
+		Backend:  configfile.BackendSQLite,
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+	return beadsDir
+}
 
 func TestCheckDaemonStatus(t *testing.T) {
 	t.Run("no beads directory", func(t *testing.T) {
@@ -160,13 +181,10 @@ func TestCheckDaemonAutoSync(t *testing.T) {
 
 	t.Run("sync-branch configured but cannot connect", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		beadsDir := filepath.Join(tmpDir, ".beads")
-		if err := os.Mkdir(beadsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		beadsDir := createTestBeadsDirForDaemon(t, tmpDir)
 
 		// Create database with sync-branch config
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 		ctx := context.Background()
 		store, err := sqlite.New(ctx, dbPath)
 		if err != nil {
@@ -225,10 +243,7 @@ func TestCheckHydratedRepoDaemons(t *testing.T) {
 
 	t.Run("additional repos configured but no daemons running", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		beadsDir := filepath.Join(tmpDir, ".beads")
-		if err := os.Mkdir(beadsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		beadsDir := createTestBeadsDirForDaemon(t, tmpDir)
 
 		// Create a fake additional repo directory
 		additionalRepo := t.TempDir()
@@ -238,7 +253,7 @@ func TestCheckHydratedRepoDaemons(t *testing.T) {
 		}
 
 		// Create database with repos.additional config
-		dbPath := filepath.Join(beadsDir, "beads.db")
+		dbPath := filepath.Join(beadsDir, beads.CanonicalDatabaseName)
 		ctx := context.Background()
 		store, err := sqlite.New(ctx, dbPath)
 		if err != nil {

@@ -170,7 +170,8 @@ func TestCheckMetadataConfigValues(t *testing.T) {
 	t.Run("valid metadata", func(t *testing.T) {
 		metadataContent := `{
   "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "jsonl_export": "issues.jsonl",
+  "backend": "sqlite"
 }`
 		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(metadataContent), 0644); err != nil {
 			t.Fatalf("failed to write metadata.json: %v", err)

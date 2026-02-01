@@ -398,6 +398,12 @@ func TestSnapshotManagement(t *testing.T) {
 // TestMultiRepoDeletionTracking tests deletion tracking with multi-repo mode
 // This is the test for bd-4oob: snapshot files need to be created per-JSONL file
 func TestMultiRepoDeletionTracking(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Setup workspace directories
 	primaryDir := t.TempDir()
 	additionalDir := t.TempDir()
@@ -582,9 +588,15 @@ func TestGetMultiRepoJSONLPaths_EmptyPaths(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_Duplicates tests deduplication of paths
 func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Setup temp dirs
 	primaryDir := t.TempDir()
-	
+
 	// Create .beads directories
 	if err := os.MkdirAll(filepath.Join(primaryDir, ".beads"), 0755); err != nil {
 		t.Fatalf("Failed to create .beads dir: %v", err)
@@ -618,11 +630,17 @@ func TestGetMultiRepoJSONLPaths_Duplicates(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_PathsWithSpaces tests handling of paths containing spaces
 func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Create temp dir with space in name
 	baseDir := t.TempDir()
 	primaryDir := filepath.Join(baseDir, "my project")
 	additionalDir := filepath.Join(baseDir, "other repo")
-	
+
 	// Create .beads directories
 	if err := os.MkdirAll(filepath.Join(primaryDir, ".beads"), 0755); err != nil {
 		t.Fatalf("Failed to create primary .beads: %v", err)
@@ -658,6 +676,12 @@ func TestGetMultiRepoJSONLPaths_PathsWithSpaces(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_RelativePaths tests handling of relative paths
 func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Note: Current implementation takes paths as-is without normalization
 	// This test documents current behavior
 	config.Set("repos.primary", ".")
@@ -692,6 +716,12 @@ func TestGetMultiRepoJSONLPaths_RelativePaths(t *testing.T) {
 
 // TestGetMultiRepoJSONLPaths_TildeExpansion tests that tilde is NOT expanded
 func TestGetMultiRepoJSONLPaths_TildeExpansion(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Current implementation does NOT expand tilde - it's used literally
 	config.Set("repos.primary", "~/repos/main")
 	config.Set("repos.additional", []string{"~/repos/other"})
@@ -846,6 +876,12 @@ func TestMultiRepoSnapshotIsolation(t *testing.T) {
 // - Primary repo: writes all issues (from all repos)
 // - Non-primary repos: only writes issues matching their prefix
 func TestMultiRepoFlushPrefixFiltering(t *testing.T) {
+	// Ensure config is initialized (hq--5vj3: config.Set requires initialized viper)
+	config.ResetForTesting()
+	if err := config.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize config: %v", err)
+	}
+
 	// Setup workspace directories
 	primaryDir := t.TempDir()
 	additionalDir := t.TempDir()

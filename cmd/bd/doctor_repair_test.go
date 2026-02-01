@@ -53,6 +53,7 @@ func runBDSideDB(t *testing.T, exe, dir, dbPath string, args ...string) (string,
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"BEADS_NO_DAEMON=1",
+		"BEADS_TEST_MODE=1",
 		"BEADS_DIR="+filepath.Join(dir, ".beads"),
 	)
 	out, err := cmd.CombinedOutput()

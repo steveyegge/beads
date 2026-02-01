@@ -471,10 +471,9 @@ variable.`,
 				}
 			}
 
-			// Save backend choice (only store if non-default to keep metadata.json clean)
-			if backend != configfile.BackendSQLite {
-				cfg.Backend = backend
-			}
+			// Save backend choice (always store to prevent fallback to repo config - hq--5vj3)
+			// This ensures test databases don't pick up dolt-native from project config.yaml
+			cfg.Backend = backend
 			// In Dolt mode, metadata.json.database should point to the Dolt directory (not beads.db).
 			// Backward-compat: older dolt setups left this as "beads.db", which is misleading and
 			// can trigger SQLite-only code paths.

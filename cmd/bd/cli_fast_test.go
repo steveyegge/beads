@@ -116,7 +116,9 @@ func runBDInProcess(t *testing.T, dir string, args ...string) string {
 	
 	// Set environment
 	os.Setenv("BEADS_NO_DAEMON", "1")
+	os.Setenv("BEADS_TEST_MODE", "1")
 	defer os.Unsetenv("BEADS_NO_DAEMON")
+	defer os.Unsetenv("BEADS_TEST_MODE")
 	
 	// Execute command
 	err := rootCmd.Execute()
@@ -705,7 +707,7 @@ func runBDExec(t *testing.T, dir string, args ...string) string {
 	
 	cmd := exec.Command(testBD, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1")
+	cmd.Env = append(os.Environ(), "BEADS_NO_DAEMON=1", "BEADS_TEST_MODE=1")
 	
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -881,7 +883,9 @@ func runBDInProcessAllowError(t *testing.T, dir string, args ...string) (string,
 	os.Args = append([]string{"bd"}, args...)
 
 	os.Setenv("BEADS_NO_DAEMON", "1")
+	os.Setenv("BEADS_TEST_MODE", "1")
 	defer os.Unsetenv("BEADS_NO_DAEMON")
+	defer os.Unsetenv("BEADS_TEST_MODE")
 
 	cmdErr := rootCmd.Execute()
 

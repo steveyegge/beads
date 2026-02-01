@@ -8,9 +8,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 )
+
+// createTestMetadataJSON creates a metadata.json file with SQLite backend in the given beads directory.
+// This is needed because factory.NewFromConfig defaults to Dolt when no metadata.json exists (hq--5vj3).
+func createTestMetadataJSON(t *testing.T, beadsDir string) {
+	t.Helper()
+	cfg := &configfile.Config{
+		Database: beads.CanonicalDatabaseName,
+		Backend:  configfile.BackendSQLite,
+	}
+	if err := cfg.Save(beadsDir); err != nil {
+		t.Fatalf("Failed to create metadata.json: %v", err)
+	}
+}
 
 const windowsOS = "windows"
 
@@ -88,9 +103,13 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
 	failIfProductionDatabase(t, dbPath)
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	beadsDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
+
+	// Create metadata.json so factory.NewFromConfig uses SQLite backend (hq--5vj3)
+	createTestMetadataJSON(t, beadsDir)
 
 	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
@@ -104,8 +123,8 @@ func newTestStore(t *testing.T, dbPath string) *sqlite.SQLiteStorage {
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
-	// Configure Gas Town custom types for test compatibility (bd-find4)
-	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice"); err != nil {
+	// Configure Gas Town custom types for test compatibility (bd-find4, hq--5vj3)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
@@ -120,11 +139,15 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 
 	// CRITICAL (bd-2c5a): Ensure we're not polluting production database
 	failIfProductionDatabase(t, dbPath)
-	
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+
+	beadsDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("Failed to create database directory: %v", err)
 	}
-	
+
+	// Create metadata.json so factory.NewFromConfig uses SQLite backend (hq--5vj3)
+	createTestMetadataJSON(t, beadsDir)
+
 	store, err := sqlite.New(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
@@ -137,8 +160,8 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *sqlite.
 		t.Fatalf("Failed to set issue_prefix: %v", err)
 	}
 
-	// Configure Gas Town custom types for test compatibility (bd-find4)
-	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice"); err != nil {
+	// Configure Gas Town custom types for test compatibility (bd-find4, hq--5vj3)
+	if err := store.SetConfig(ctx, "types.custom", "molecule,gate,convoy,merge-request,slot,agent,role,rig,event,message,advice,wisp"); err != nil {
 		store.Close()
 		t.Fatalf("Failed to set types.custom: %v", err)
 	}
