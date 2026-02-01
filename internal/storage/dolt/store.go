@@ -366,6 +366,20 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	// Remove FK constraint on depends_on_id to allow external references.
+	// See SQLite migration 025_remove_depends_on_fk.go for design context.
+	// This is idempotent - DROP FOREIGN KEY fails silently if constraint doesn't exist.
+	_, err := db.ExecContext(ctx, "ALTER TABLE dependencies DROP FOREIGN KEY fk_dep_depends_on")
+	if err == nil {
+		// DDL change succeeded - commit it so it persists (required for Dolt server mode)
+		_, _ = db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'migration: remove fk_dep_depends_on for external references')")
+	} else if !strings.Contains(strings.ToLower(err.Error()), "can't drop") &&
+		!strings.Contains(strings.ToLower(err.Error()), "doesn't exist") &&
+		!strings.Contains(strings.ToLower(err.Error()), "check that it exists") &&
+		!strings.Contains(strings.ToLower(err.Error()), "was not found") {
+		return fmt.Errorf("failed to drop fk_dep_depends_on: %w", err)
+	}
+
 	// Create views
 	if _, err := db.ExecContext(ctx, readyIssuesView); err != nil {
 		return fmt.Errorf("failed to create ready_issues view: %w", err)
