@@ -735,13 +735,13 @@ func formatRecentVolatilityMarker(level string) string {
 	}
 	switch specVolatilityLevel(level) {
 	case specVolatilityHigh:
-		return " " + ui.RenderWarn("◐ volatile")
+		return " " + ui.RenderWarn("🔥 volatile")
 	case specVolatilityMedium:
-		return " " + ui.RenderWarn("◐ volatile")
+		return " " + ui.RenderWarn("🔥 volatile")
 	case specVolatilityLow:
-		return " " + ui.RenderMuted("○ low")
+		return " " + ui.RenderMuted("⚡ low")
 	case specVolatilityStable:
-		return " " + ui.RenderPass("✓ stable")
+		return " " + ui.RenderPass("⚡ stable")
 	default:
 		return ""
 	}

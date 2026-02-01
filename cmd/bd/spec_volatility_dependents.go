@@ -228,13 +228,13 @@ func printDependentTree(node *dependentNode, prefix string, isLast bool) {
 func formatVolatilityLevel(level specVolatilityLevel) string {
 	switch level {
 	case specVolatilityHigh:
-		return ui.RenderWarn("● HIGH")
+		return ui.RenderWarn("🔥 HIGH")
 	case specVolatilityMedium:
-		return ui.RenderWarn("◐ MEDIUM")
+		return ui.RenderWarn("🔥 MEDIUM")
 	case specVolatilityLow:
-		return ui.RenderMuted("○ LOW")
+		return ui.RenderMuted("⚡ LOW")
 	case specVolatilityStable:
-		return ui.RenderPass("✓ STABLE")
+		return ui.RenderPass("⚡ STABLE")
 	default:
 		return string(level)
 	}

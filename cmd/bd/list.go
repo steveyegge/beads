@@ -589,12 +589,14 @@ func buildVolatilityBadges(ctx context.Context, issues []*types.Issue, showVolat
 	for specID, summary := range summaries {
 		level := classifySpecVolatility(summary.ChangeCount, summary.OpenIssues)
 		switch level {
-		case specVolatilityHigh, specVolatilityMedium:
-			badges[specID] = ui.RenderWarn("◐ VOLATILE")
+		case specVolatilityHigh:
+			badges[specID] = ui.RenderWarn("🔥 volatile")
+		case specVolatilityMedium:
+			badges[specID] = ui.RenderWarn("🔥 volatile")
 		case specVolatilityLow:
-			badges[specID] = ui.RenderMuted("○ LOW")
+			badges[specID] = ui.RenderMuted("⚡ low")
 		case specVolatilityStable:
-			badges[specID] = ui.RenderPass("✓ STABLE")
+			badges[specID] = ui.RenderPass("⚡ stable")
 		}
 	}
 	return badges, summaries, nil
