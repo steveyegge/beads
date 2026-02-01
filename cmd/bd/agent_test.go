@@ -410,3 +410,41 @@ func strSlicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+func TestFormatSubscriptionList(t *testing.T) {
+	tests := []struct {
+		name string
+		subs []string
+		want string
+	}{
+		{
+			name: "empty list",
+			subs: []string{},
+			want: "(none)",
+		},
+		{
+			name: "nil list",
+			subs: nil,
+			want: "(none)",
+		},
+		{
+			name: "single item",
+			subs: []string{"global"},
+			want: "global",
+		},
+		{
+			name: "multiple items",
+			subs: []string{"global", "agent:gt-emma", "rig:beads"},
+			want: "global, agent:gt-emma, rig:beads",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatSubscriptionList(tt.subs)
+			if got != tt.want {
+				t.Errorf("formatSubscriptionList(%v) = %q, want %q", tt.subs, got, tt.want)
+			}
+		})
+	}
+}

@@ -119,12 +119,31 @@ Examples:
 
 var backfillDryRun bool
 
+var agentSubscriptionsCmd = &cobra.Command{
+	Use:   "subscriptions <agent>",
+	Short: "Show agent's effective advice subscriptions",
+	Long: `Show the effective advice subscriptions for an agent bead.
+
+This displays how advice is delivered to the agent by showing:
+- Auto-subscriptions: Labels derived from agent identity (global, agent:X, rig:X, role:X)
+- Custom: Additional labels from Issue.AdviceSubscriptions field
+- Excluded: Labels opted out via Issue.AdviceSubscriptionsExclude field
+- Final: The merged list of effective subscriptions (auto + custom - excluded)
+
+Examples:
+  bd agent subscriptions gt-emma          # Show emma's subscriptions
+  bd agent subscriptions gt-gastown-witness  # Show witness subscriptions`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentSubscriptions,
+}
+
 func init() {
 	agentBackfillLabelsCmd.Flags().BoolVar(&backfillDryRun, "dry-run", false, "Preview changes without applying them")
 	agentCmd.AddCommand(agentStateCmd)
 	agentCmd.AddCommand(agentHeartbeatCmd)
 	agentCmd.AddCommand(agentShowCmd)
 	agentCmd.AddCommand(agentBackfillLabelsCmd)
+	agentCmd.AddCommand(agentSubscriptionsCmd)
 	rootCmd.AddCommand(agentCmd)
 }
 
@@ -565,6 +584,145 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runAgentSubscriptions(cmd *cobra.Command, args []string) error {
+	agentArg := args[0]
+
+	ctx := rootCtx
+
+	// Resolve agent ID with routing support
+	var agentID string
+	var routedResult *RoutedResult
+
+	// Check if routing is needed (bypass daemon for cross-repo lookups)
+	if needsRouting(agentArg) || daemonClient == nil {
+		// Use routed resolution for cross-repo lookups
+		var err error
+		routedResult, err = resolveAndGetIssueWithRouting(ctx, store, agentArg)
+		if err != nil {
+			if routedResult != nil {
+				routedResult.Close()
+			}
+			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
+		}
+		if routedResult == nil || routedResult.Issue == nil {
+			if routedResult != nil {
+				routedResult.Close()
+			}
+			return fmt.Errorf("agent bead not found: %s", agentArg)
+		}
+		agentID = routedResult.ResolvedID
+		defer routedResult.Close()
+	} else if daemonClient != nil {
+		resp, err := daemonClient.ResolveID(&rpc.ResolveIDArgs{ID: agentArg})
+		if err != nil {
+			return fmt.Errorf("failed to resolve agent %s: %w", agentArg, err)
+		}
+		if err := json.Unmarshal(resp.Data, &agentID); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
+	}
+
+	// Get agent bead
+	var agent *types.Issue
+	var labels []string
+	if routedResult != nil && routedResult.Issue != nil {
+		// Already have the issue from routed resolution
+		agent = routedResult.Issue
+		labels, _ = routedResult.Store.GetLabels(ctx, agentID)
+	} else if daemonClient != nil && !needsRouting(agentArg) {
+		resp, err := daemonClient.Show(&rpc.ShowArgs{ID: agentID})
+		if err != nil {
+			return fmt.Errorf("agent bead not found: %s", agentID)
+		}
+		if err := json.Unmarshal(resp.Data, &agent); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
+		labels = agent.Labels
+	} else {
+		var err error
+		agent, err = store.GetIssue(ctx, agentID)
+		if err != nil || agent == nil {
+			return fmt.Errorf("agent bead not found: %s", agentID)
+		}
+		labels, _ = store.GetLabels(ctx, agentID)
+	}
+
+	// Verify agent bead is actually an agent (check for gt:agent label)
+	if !isAgentBead(labels) {
+		return fmt.Errorf("%s is not an agent bead (missing gt:agent label)", agentID)
+	}
+
+	// Compute auto-subscriptions based on agent identity
+	autoSubs := []string{"global"}
+	autoSubs = append(autoSubs, "agent:"+agentID)
+	if agent.Rig != "" {
+		autoSubs = append(autoSubs, "rig:"+agent.Rig)
+	}
+	if agent.RoleType != "" {
+		autoSubs = append(autoSubs, "role:"+agent.RoleType)
+	}
+
+	// Get custom subscriptions from native fields
+	customSubs := agent.AdviceSubscriptions
+	excludedSubs := agent.AdviceSubscriptionsExclude
+
+	// Compute final merged list: (auto + custom) - excluded
+	excludeSet := make(map[string]bool)
+	for _, exc := range excludedSubs {
+		excludeSet[exc] = true
+	}
+
+	finalSubs := []string{}
+	seen := make(map[string]bool)
+
+	// Add auto-subscriptions (if not excluded)
+	for _, sub := range autoSubs {
+		if !excludeSet[sub] && !seen[sub] {
+			finalSubs = append(finalSubs, sub)
+			seen[sub] = true
+		}
+	}
+
+	// Add custom subscriptions (if not excluded)
+	for _, sub := range customSubs {
+		if !excludeSet[sub] && !seen[sub] {
+			finalSubs = append(finalSubs, sub)
+			seen[sub] = true
+		}
+	}
+
+	if jsonOutput {
+		result := map[string]interface{}{
+			"agent":    agentID,
+			"auto":     autoSubs,
+			"custom":   customSubs,
+			"excluded": excludedSubs,
+			"final":    finalSubs,
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	// Human-readable output
+	fmt.Printf("Agent: %s\n\n", agentID)
+
+	fmt.Printf("Auto-subscriptions: %s\n", formatSubscriptionList(autoSubs))
+	fmt.Printf("Custom: %s\n", formatSubscriptionList(customSubs))
+	fmt.Printf("Excluded: %s\n", formatSubscriptionList(excludedSubs))
+	fmt.Printf("Final: %s\n", formatSubscriptionList(finalSubs))
+
+	return nil
+}
+
+// formatSubscriptionList formats a subscription list for display
+func formatSubscriptionList(subs []string) string {
+	if len(subs) == 0 {
+		return "(none)"
+	}
+	return strings.Join(subs, ", ")
 }
 
 // formatTimeOrNil returns the time formatted as RFC3339 or nil if nil
