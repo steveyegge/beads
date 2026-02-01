@@ -45,14 +45,12 @@ Thumbs.db
 .beads/bd.sock
 .beads/.exclusive-lock
 
-# .beads directory files (keep JSONL only)
+# .beads directory files (keep config only)
+.beads/*
+!.beads/config.yaml
 .beads/.gitignore
 .beads/db.sqlite
 .beads/bd.db
-
-# Keep JSONL exports (source of truth for git)
-!.beads/*.jsonl
-!.beads/config.yaml
 !.beads/config.yaml
 
 # 3-way merge snapshot files (local-only, for deletion tracking)
@@ -61,8 +59,7 @@ Thumbs.db
 .beads/beads.base.meta.json
 .beads/beads.left.meta.json
 
-# Note: .beads/deletions.jsonl is intentionally NOT ignored
-# It must be tracked in git for cross-clone deletion propagation (bd-imj)
+# Note: if you want JSONL tracked, remove the .beads/* ignore and add explicit negations.
 
 # Git merge driver temp files (created during conflicts with numbered extensions)
 .beads/*.json[0-9]
@@ -98,6 +95,7 @@ mcp_agent_mail/
 bd-test
 bd-fixed
 .cursor/
+test_project/.beads/
 
 # Python cache files
 __pycache__/
