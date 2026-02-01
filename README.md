@@ -154,8 +154,7 @@ bd close bd-xyz --compact-spec --compact-skills
 | `bd spec volatility --fail-on-high` | CI gate |
 | `bd preflight --check` | Skills + specs + volatility |
 | `bd resume --spec <path>` | Unblock paused issues |
-| `bd pacman` | Pacman mode: dots (ready work), ghosts (blockers), leaderboard |
-| `bd pacman --eat <id>` | Close bead and increment score |
+| `bd pacman` | Pacman mode: dots (ready work), blockers, leaderboard |
 
 ---
 

@@ -25,11 +25,11 @@ type pacmanState struct {
 	Agent       string             `json:"agent"`
 	Score       int                `json:"score"`
 	Dots        []reflectIssueInfo `json:"dots,omitempty"`
-	Ghosts      []pacmanGhost      `json:"ghosts,omitempty"`
+	Blockers    []pacmanBlocker    `json:"blockers,omitempty"`
 	Leaderboard []pacmanLeader     `json:"leaderboard,omitempty"`
 }
 
-type pacmanGhost struct {
+type pacmanBlocker struct {
 	ID        string   `json:"id"`
 	BlockedBy []string `json:"blocked_by,omitempty"`
 }
@@ -50,6 +50,7 @@ Use --eat to close a bead and increment your score.`,
 
 func init() {
 	pacmanCmd.Flags().String("eat", "", "Close a bead and increment your score")
+	_ = pacmanCmd.Flags().MarkHidden("eat")
 	rootCmd.AddCommand(pacmanCmd)
 }
 
@@ -66,7 +67,7 @@ func runPacman(cmd *cobra.Command, args []string) {
 			FatalErrorRespectJSON("%v", err)
 		}
 		if !jsonOutput {
-			fmt.Printf("%s WAKAWAKA: %s\n", ui.RenderPassIcon(), eatID)
+			fmt.Printf("%s Closed %s (score +1)\n", ui.RenderPassIcon(), eatID)
 		}
 	}
 
@@ -138,7 +139,7 @@ func buildPacmanState(agent string) (pacmanState, error) {
 	}
 
 	for _, issue := range blocked {
-		state.Ghosts = append(state.Ghosts, pacmanGhost{
+		state.Blockers = append(state.Blockers, pacmanBlocker{
 			ID:        issue.ID,
 			BlockedBy: issue.BlockedBy,
 		})
@@ -169,15 +170,15 @@ func renderPacmanState(state pacmanState) {
 	}
 
 	fmt.Println()
-	fmt.Println("GHOSTS (blockers):")
-	if len(state.Ghosts) == 0 {
+	fmt.Println("BLOCKERS:")
+	if len(state.Blockers) == 0 {
 		fmt.Printf("  %s None\n", ui.RenderMuted(ui.GetStatusIcon(string(types.StatusBlocked))))
 	} else {
-		for _, ghost := range state.Ghosts {
-			if len(ghost.BlockedBy) > 0 {
-				fmt.Printf("  %s %s blocked by %s\n", ui.GetStatusIcon(string(types.StatusBlocked)), ghost.ID, ghost.BlockedBy[0])
+		for _, blocker := range state.Blockers {
+			if len(blocker.BlockedBy) > 0 {
+				fmt.Printf("  %s %s blocked by %s\n", ui.GetStatusIcon(string(types.StatusBlocked)), blocker.ID, blocker.BlockedBy[0])
 			} else {
-				fmt.Printf("  %s %s blocked\n", ui.GetStatusIcon(string(types.StatusBlocked)), ghost.ID)
+				fmt.Printf("  %s %s blocked\n", ui.GetStatusIcon(string(types.StatusBlocked)), blocker.ID)
 			}
 		}
 	}
