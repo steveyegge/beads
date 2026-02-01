@@ -46,6 +46,28 @@ func getSyncBranchContext(ctx context.Context) *SyncBranchContext {
 	return sbc
 }
 
+// hasUncommittedChanges checks if there are any pending changes to sync.
+// This is a cheap status check to avoid expensive export operations when nothing has changed.
+//
+// For Dolt backends: Uses StatusChecker.HasUncommittedChanges() to query dolt_status.
+// For SQLite backends: Uses GetDirtyIssues() to check if any issues have changed since last export.
+//
+// gt-p1mpqx: Added to reduce sync overhead from defensive agent calls.
+func hasUncommittedChanges(ctx context.Context, s storage.Storage) (bool, error) {
+	// Try StatusChecker interface first (Dolt backend)
+	if sc, ok := storage.AsStatusChecker(s); ok {
+		return sc.HasUncommittedChanges(ctx)
+	}
+
+	// Fall back to GetDirtyIssues for SQLite/other backends
+	dirtyIDs, err := s.GetDirtyIssues(ctx)
+	if err != nil {
+		return false, fmt.Errorf("checking dirty issues: %w", err)
+	}
+
+	return len(dirtyIDs) > 0, nil
+}
+
 // commitAndPushBeads commits and pushes .beads changes using the appropriate method.
 // When sync-branch is configured, uses worktree-based commit/push.
 // Otherwise, uses standard git commit/push on the current branch.
@@ -712,6 +734,9 @@ func writeMergedStateToJSONL(path string, issues []*beads.Issue) error {
 // - dolt-native: Commit and push to Dolt remote (skip JSONL)
 // - belt-and-suspenders: Both JSONL export and Dolt push
 // Does NOT stage or commit to git - that's the user's job.
+//
+// gt-p1mpqx: Added cheap status check to skip export when there are no changes.
+// This reduces overhead when agents call `bd sync` defensively.
 func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) error {
 	if err := ensureStoreActive(); err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
@@ -720,6 +745,18 @@ func doExportSync(ctx context.Context, jsonlPath string, force, dryRun bool) err
 	syncMode := GetSyncMode(ctx, store)
 	shouldExportJSONL := ShouldExportJSONL(ctx, store)
 	shouldUseDolt := ShouldUseDoltRemote(ctx, store)
+
+	// gt-p1mpqx: Cheap status check to skip export when there are no changes.
+	// This significantly reduces overhead when agents call `bd sync` defensively.
+	if !force && !dryRun {
+		hasChanges, err := hasUncommittedChanges(ctx, store)
+		if err != nil {
+			debug.Logf("warning: status check failed: %v (proceeding with export)", err)
+		} else if !hasChanges {
+			fmt.Println("✓ Already synced (no changes)")
+			return nil
+		}
+	}
 
 	if dryRun {
 		if shouldExportJSONL {

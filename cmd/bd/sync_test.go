@@ -938,3 +938,89 @@ func TestConcurrentSyncBlocked(t *testing.T) {
 		t.Log("Lock correctly acquirable after first sync completes")
 	}
 }
+
+// =============================================================================
+// gt-p1mpqx: Tests for sync overhead reduction optimization
+// =============================================================================
+
+// TestHasUncommittedChanges_WithStatusChecker tests hasUncommittedChanges
+// when the store implements StatusChecker (e.g., Dolt backend).
+func TestHasUncommittedChanges_WithStatusChecker(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns true when store has changes", func(t *testing.T) {
+		store := newMockStatusCheckerStore(true)
+		hasChanges, err := hasUncommittedChanges(ctx, store)
+		if err != nil {
+			t.Fatalf("hasUncommittedChanges() error = %v", err)
+		}
+		if !hasChanges {
+			t.Error("expected hasChanges=true when store has uncommitted changes")
+		}
+	})
+
+	t.Run("returns false when store has no changes", func(t *testing.T) {
+		store := newMockStatusCheckerStore(false)
+		hasChanges, err := hasUncommittedChanges(ctx, store)
+		if err != nil {
+			t.Fatalf("hasUncommittedChanges() error = %v", err)
+		}
+		if hasChanges {
+			t.Error("expected hasChanges=false when store has no uncommitted changes")
+		}
+	})
+}
+
+// TestHasUncommittedChanges_FallbackToGetDirtyIssues tests hasUncommittedChanges
+// when the store doesn't implement StatusChecker (falls back to GetDirtyIssues).
+func TestHasUncommittedChanges_FallbackToGetDirtyIssues(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Create a SQLite store that doesn't implement StatusChecker
+	dbPath := filepath.Join(tmpDir, "test.db")
+	testStore, err := sqlite.New(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to create SQLite store: %v", err)
+	}
+	defer testStore.Close()
+
+	// Set issue_prefix to enable CreateIssue
+	if err := testStore.SetConfig(ctx, "issue_prefix", "test"); err != nil {
+		t.Fatalf("failed to set issue_prefix: %v", err)
+	}
+
+	t.Run("returns false when no dirty issues", func(t *testing.T) {
+		hasChanges, err := hasUncommittedChanges(ctx, testStore)
+		if err != nil {
+			t.Fatalf("hasUncommittedChanges() error = %v", err)
+		}
+		if hasChanges {
+			t.Error("expected hasChanges=false when no dirty issues")
+		}
+	})
+
+	t.Run("returns true when there are dirty issues", func(t *testing.T) {
+		// Create an issue to make it dirty
+		now := time.Now()
+		issue := &types.Issue{
+			ID:        "test-1",
+			Title:     "Test issue",
+			Status:    types.StatusOpen,
+			IssueType: types.TypeTask,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := testStore.CreateIssue(ctx, issue, "test-actor"); err != nil {
+			t.Fatalf("failed to create issue: %v", err)
+		}
+
+		hasChanges, err := hasUncommittedChanges(ctx, testStore)
+		if err != nil {
+			t.Fatalf("hasUncommittedChanges() error = %v", err)
+		}
+		if !hasChanges {
+			t.Error("expected hasChanges=true when there are dirty issues")
+		}
+	})
+}
