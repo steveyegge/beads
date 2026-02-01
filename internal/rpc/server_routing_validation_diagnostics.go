@@ -172,7 +172,7 @@ func (s *Server) handleRequest(req *Request) Response {
 	// Update last activity timestamp
 	s.lastActivityTime.Store(time.Now())
 
-	// Check cache for cacheable read operations
+	// Check cache for cacheable read operations (fast path)
 	var cacheKey string
 	if s.queryCache != nil && s.queryCache.IsCacheable(req.Operation) {
 		cacheKey = s.queryCache.MakeKey(req.Operation, req.Args)
@@ -181,6 +181,35 @@ func (s *Server) handleRequest(req *Request) Response {
 		}
 	}
 
+	// Use query deduplication for eligible read operations.
+	// During status-line refresh storms, this coalesces identical queries.
+	var resp Response
+	var wasDeduped bool
+	if DedupableOps[req.Operation] && s.queryDedup != nil {
+		resp, wasDeduped = s.queryDedup.Execute(req.Operation, req.Args, func() Response {
+			return s.executeOperation(req)
+		})
+		_ = wasDeduped // could be used for metrics later
+	} else {
+		resp = s.executeOperation(req)
+	}
+
+	// Record error if request failed
+	if !resp.Success {
+		s.metrics.RecordError(req.Operation)
+	}
+
+	// Cache successful responses for cacheable operations
+	if cacheKey != "" && resp.Success && s.queryCache != nil {
+		s.queryCache.Set(cacheKey, resp)
+	}
+
+	return resp
+}
+
+// executeOperation handles the actual operation dispatch.
+// This is called either directly or through the query deduplicator.
+func (s *Server) executeOperation(req *Request) Response {
 	var resp Response
 	switch req.Operation {
 	case OpPing:
@@ -271,21 +300,10 @@ func (s *Server) handleRequest(req *Request) Response {
 	case OpDecisionList:
 		resp = s.handleDecisionList(req)
 	default:
-		s.metrics.RecordError(req.Operation)
 		return Response{
 			Success: false,
 			Error:   fmt.Sprintf("unknown operation: %s", req.Operation),
 		}
-	}
-
-	// Record error if request failed
-	if !resp.Success {
-		s.metrics.RecordError(req.Operation)
-	}
-
-	// Cache successful responses for cacheable operations
-	if cacheKey != "" && resp.Success && s.queryCache != nil {
-		s.queryCache.Set(cacheKey, resp)
 	}
 
 	return resp

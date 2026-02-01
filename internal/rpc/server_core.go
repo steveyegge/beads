@@ -65,6 +65,8 @@ type Server struct {
 	localMode    bool
 	syncInterval string
 	daemonMode   string
+	// Query deduplication for coalescing identical in-flight queries
+	queryDedup *QueryDeduplicator
 }
 
 // Mutation event types
@@ -153,6 +155,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		recentMutations:   make([]MutationEvent, 0, 100),
 		maxMutationBuffer: 100,
 		queryCache:        NewQueryCache(cacheTTL, cacheMaxSize),
+		queryDedup:        NewQueryDeduplicator(500 * time.Millisecond), // 500ms dedup window
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s
