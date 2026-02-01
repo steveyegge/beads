@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/rpc"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 )
@@ -93,18 +94,38 @@ func buildPacmanState(agent string) (pacmanState, error) {
 		score = entry.Dots
 	}
 
-	if store == nil {
+	if daemonClient == nil && store == nil {
 		return pacmanState{}, fmt.Errorf("beads database not found (run 'bd init')")
 	}
 
-	dots, err := store.GetReadyWork(rootCtx, types.WorkFilter{})
-	if err != nil {
-		return pacmanState{}, err
-	}
+	var dots []*types.Issue
+	var blocked []*types.BlockedIssue
+	if daemonClient != nil {
+		resp, err := daemonClient.Ready(&rpc.ReadyArgs{})
+		if err != nil {
+			return pacmanState{}, err
+		}
+		if err := json.Unmarshal(resp.Data, &dots); err != nil {
+			return pacmanState{}, err
+		}
 
-	blocked, err := store.GetBlockedIssues(rootCtx, types.WorkFilter{})
-	if err != nil {
-		return pacmanState{}, err
+		blockedResp, err := daemonClient.Blocked(&rpc.BlockedArgs{})
+		if err != nil {
+			return pacmanState{}, err
+		}
+		if err := json.Unmarshal(blockedResp.Data, &blocked); err != nil {
+			return pacmanState{}, err
+		}
+	} else {
+		var err error
+		dots, err = store.GetReadyWork(rootCtx, types.WorkFilter{})
+		if err != nil {
+			return pacmanState{}, err
+		}
+		blocked, err = store.GetBlockedIssues(rootCtx, types.WorkFilter{})
+		if err != nil {
+			return pacmanState{}, err
+		}
 	}
 
 	state := pacmanState{
