@@ -15,12 +15,6 @@ type daemonLogger struct {
 	logger *slog.Logger
 }
 
-// log is the backward-compatible logging method (maps to Info level).
-// Use Info(), Warn(), Error(), Debug() for explicit levels.
-func (d *daemonLogger) log(format string, args ...interface{}) {
-	d.logger.Info(format, toSlogArgs(args)...)
-}
-
 // Info logs at INFO level.
 func (d *daemonLogger) Info(msg string, args ...interface{}) {
 	d.logger.Info(msg, toSlogArgs(args)...)

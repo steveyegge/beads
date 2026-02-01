@@ -354,9 +354,9 @@ func runDaemonLoop(interval time.Duration, autoCommit, autoPush, autoPull, local
 	defer func() { _ = os.Remove(pidFile) }()
 
 	if localMode {
-		log.log("Daemon started in LOCAL mode (interval: %v, no git sync)", interval)
+		log.Info("Daemon started in LOCAL mode (interval: %v, no git sync)", interval)
 	} else {
-		log.log("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
+		log.Info("Daemon started (interval: %v, auto-commit: %v, auto-push: %v)", interval, autoCommit, autoPush)
 	}
 
 	// Check for multiple .db files (ambiguity error)
@@ -415,7 +415,7 @@ The daemon will now exit.`, strings.ToUpper(backend))
 				errMsg += "Run 'bd init' to migrate legacy databases or manually remove old databases\n"
 				errMsg += "Or run 'bd doctor' for more diagnostics"
 
-				log.log(errMsg)
+				log.Info(errMsg)
 
 				// Write error to file so user can see it without checking logs
 				errFile := filepath.Join(beadsDir, "daemon-error")

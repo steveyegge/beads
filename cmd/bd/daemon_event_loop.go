@@ -46,13 +46,13 @@ func runEventDrivenLoop(
 
 	// Debounced sync actions
 	exportDebouncer := NewDebouncer(500*time.Millisecond, func() {
-		log.log("Export triggered by mutation events")
+		log.Info("Export triggered by mutation events")
 		doExport()
 	})
 	defer exportDebouncer.Cancel()
 
 	importDebouncer := NewDebouncer(500*time.Millisecond, func() {
-		log.log("Import triggered by file change")
+		log.Info("Import triggered by file change")
 		doAutoImport()
 	})
 	defer importDebouncer.Cancel()
@@ -63,7 +63,7 @@ func runEventDrivenLoop(
 	})
 	var fallbackTicker *time.Ticker
 	if err != nil {
-		log.log("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
+		log.Info("WARNING: File watcher unavailable (%v), using 60s polling fallback", err)
 		watcher = nil
 		// Fallback ticker to check for remote changes when watcher unavailable
 		fallbackTicker = time.NewTicker(60 * time.Second)
@@ -81,10 +81,10 @@ func runEventDrivenLoop(
 			case event, ok := <-mutationChan:
 				if !ok {
 					// Channel closed (should never happen, but handle defensively)
-					log.log("Mutation channel closed; exiting listener")
+					log.Info("Mutation channel closed; exiting listener")
 					return
 				}
-				log.log("Mutation detected: %s %s", event.Type, event.IssueID)
+				log.Info("Mutation detected: %s %s", event.Type, event.IssueID)
 				exportDebouncer.Trigger()
 
 			case <-ctx.Done():
@@ -108,12 +108,12 @@ func runEventDrivenLoop(
 		if remoteSyncInterval > 0 {
 			remoteSyncTicker = time.NewTicker(remoteSyncInterval)
 			defer remoteSyncTicker.Stop()
-			log.log("Auto-pull enabled: checking remote every %v", remoteSyncInterval)
+			log.Info("Auto-pull enabled: checking remote every %v", remoteSyncInterval)
 		} else {
-			log.log("Auto-pull disabled: remote-sync-interval is 0")
+			log.Info("Auto-pull disabled: remote-sync-interval is 0")
 		}
 	} else {
-		log.log("Auto-pull disabled: use 'git pull' manually to sync remote changes")
+		log.Info("Auto-pull disabled: use 'git pull' manually to sync remote changes")
 	}
 
 	// Parent process check (every 10 seconds)
@@ -130,7 +130,7 @@ func runEventDrivenLoop(
 			// Check for dropped mutation events every second
 			dropped := server.ResetDroppedEventsCount()
 			if dropped > 0 {
-				log.log("WARNING: %d mutation events were dropped, triggering export", dropped)
+				log.Info("WARNING: %d mutation events were dropped, triggering export", dropped)
 				exportDebouncer.Trigger()
 			}
 
@@ -148,16 +148,16 @@ func runEventDrivenLoop(
 			// Periodic remote sync to pull updates from other clones
 			// This ensures the daemon sees changes pushed by other clones
 			// even when the local file watcher doesn't trigger
-			log.log("Periodic remote sync: checking for updates")
+			log.Info("Periodic remote sync: checking for updates")
 			doAutoImport()
 
 		case <-parentCheckTicker.C:
 			// Check if parent process is still alive
 			if !checkParentProcessAlive(parentPID) {
-				log.log("Parent process (PID %d) died, shutting down daemon", parentPID)
+				log.Info("Parent process (PID %d) died, shutting down daemon", parentPID)
 				cancel()
 				if err := server.Stop(); err != nil {
-					log.log("Error stopping server: %v", err)
+					log.Info("Error stopping server: %v", err)
 				}
 				return
 			}
@@ -169,41 +169,41 @@ func runEventDrivenLoop(
 			// Never fire if watcher is available
 			return make(chan time.Time)
 		}():
-			log.log("Fallback ticker: checking for remote changes")
+			log.Info("Fallback ticker: checking for remote changes")
 			importDebouncer.Trigger()
 
 		case sig := <-sigChan:
 			if isReloadSignal(sig) {
-				log.log("Received reload signal, ignoring")
+				log.Info("Received reload signal, ignoring")
 				continue
 			}
-			log.log("Received signal %v, shutting down...", sig)
+			log.Info("Received signal %v, shutting down...", sig)
 			cancel()
 			if err := server.Stop(); err != nil {
-				log.log("Error stopping server: %v", err)
+				log.Info("Error stopping server: %v", err)
 			}
 			return
 
 		case <-ctx.Done():
-		log.log("Context canceled, shutting down")
-		if watcher != nil {
-		_ = watcher.Close()
-		}
+			log.Info("Context canceled, shutting down")
+			if watcher != nil {
+				_ = watcher.Close()
+			}
 			if err := server.Stop(); err != nil {
-				log.log("Error stopping server: %v", err)
+				log.Info("Error stopping server: %v", err)
 			}
 			return
 
 		case err := <-serverErrChan:
-		log.log("RPC server failed: %v", err)
-		cancel()
-		if watcher != nil {
-		_ = watcher.Close()
-		}
-		if stopErr := server.Stop(); stopErr != nil {
-			log.log("Error stopping server: %v", stopErr)
-		}
-		return
+			log.Info("RPC server failed: %v", err)
+			cancel()
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+			if stopErr := server.Stop(); stopErr != nil {
+				log.Info("Error stopping server: %v", stopErr)
+			}
+			return
 		}
 	}
 }
@@ -217,7 +217,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 	// Try new key first, fall back to old for migration
 	if _, err := store.GetMetadata(ctx, "jsonl_content_hash"); err != nil {
 		if _, err := store.GetMetadata(ctx, "last_import_hash"); err != nil {
-			log.log("Health check: metadata read failed: %v", err)
+			log.Info("Health check: metadata read failed: %v", err)
 			// Non-fatal: daemon continues but logs the issue
 			// This helps diagnose stuck states in sandboxed environments
 		}
@@ -229,9 +229,9 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 		// Quick integrity check - just verify we can query
 		var result string
 		if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
-			log.log("Health check: database integrity check failed: %v", err)
+			log.Info("Health check: database integrity check failed: %v", err)
 		} else if result != "ok" {
-			log.log("Health check: database integrity issue: %s", result)
+			log.Info("Health check: database integrity issue: %s", result)
 		}
 	}
 
@@ -242,7 +242,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 		if availableMB, ok := checkDiskSpace(dbPath); ok {
 			// Warn if less than 100MB available
 			if availableMB < 100 {
-				log.log("Health check: low disk space warning: %dMB available", availableMB)
+				log.Info("Health check: low disk space warning: %dMB available", availableMB)
 			}
 		}
 	}
@@ -255,7 +255,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 
 	// Warn if heap exceeds 500MB (daemon should be lightweight)
 	if heapMB > 500 {
-		log.log("Health check: high memory usage warning: %dMB heap allocated", heapMB)
+		log.Info("Health check: high memory usage warning: %dMB heap allocated", heapMB)
 	}
 }
 
@@ -275,7 +275,7 @@ func checkDaemonHealth(ctx context.Context, store storage.Storage, log daemonLog
 func getRemoteSyncInterval(log daemonLogger) time.Duration {
 	// config.GetDuration handles both config.yaml and env var (env takes precedence)
 	duration := config.GetDuration("remote-sync-interval")
-	
+
 	// If config returns 0, it could mean:
 	// 1. User explicitly set "0" to disable
 	// 2. Config not found (use default)
@@ -283,7 +283,7 @@ func getRemoteSyncInterval(log daemonLogger) time.Duration {
 	if duration == 0 {
 		// Check if user explicitly set it to 0 via env var
 		if envVal := os.Getenv("BEADS_REMOTE_SYNC_INTERVAL"); envVal == "0" || envVal == "0s" {
-			log.log("Warning: remote-sync-interval is 0, periodic remote sync disabled")
+			log.Info("Warning: remote-sync-interval is 0, periodic remote sync disabled")
 			return 24 * time.Hour * 365
 		}
 		// Otherwise use default
@@ -292,13 +292,13 @@ func getRemoteSyncInterval(log daemonLogger) time.Duration {
 
 	// Minimum 5 seconds to prevent excessive load
 	if duration > 0 && duration < 5*time.Second {
-		log.log("Warning: remote-sync-interval too low (%v), using minimum 5s", duration)
+		log.Info("Warning: remote-sync-interval too low (%v), using minimum 5s", duration)
 		return 5 * time.Second
 	}
 
 	// Log if using non-default value
 	if duration != DefaultRemoteSyncInterval {
-		log.log("Using custom remote sync interval: %v", duration)
+		log.Info("Using custom remote sync interval: %v", duration)
 	}
 	return duration
 }

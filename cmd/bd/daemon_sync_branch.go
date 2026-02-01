@@ -54,7 +54,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		return true, nil // Signal "handled" to prevent fallback to regular git commit
 	}
 
-	log.log("Using sync branch: %s", syncBranch)
+	log.Info("Using sync branch: %s", syncBranch)
 
 	// Get main repo root (for worktrees, this is the main repo, not worktree)
 	repoRoot, err := git.GetMainRepoRoot()
@@ -113,7 +113,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	}
 
 	if !hasChanges {
-		log.log("No changes to commit in sync branch")
+		log.Info("No changes to commit in sync branch")
 		return false, nil
 	}
 
@@ -122,7 +122,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	if err := gitCommitInWorktree(ctx, worktreePath, worktreeJSONLPath, message); err != nil {
 		return false, fmt.Errorf("failed to commit in worktree: %w", err)
 	}
-	log.log("Committed changes to sync branch %s", syncBranch)
+	log.Info("Committed changes to sync branch %s", syncBranch)
 
 	// Push if enabled
 	if autoPush {
@@ -131,7 +131,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		if err := gitPushFromWorktree(ctx, worktreePath, syncBranch, configuredRemote); err != nil {
 			return false, fmt.Errorf("failed to push from worktree: %w", err)
 		}
-		log.log("Pushed sync branch %s to remote", syncBranch)
+		log.Info("Pushed sync branch %s to remote", syncBranch)
 	}
 
 	return true, nil
@@ -338,7 +338,7 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, fmt.Errorf("git pull failed in worktree: %w\n%s", err, output)
 	}
 
-	log.log("Pulled sync branch %s", syncBranch)
+	log.Info("Pulled sync branch %s", syncBranch)
 
 	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
@@ -374,7 +374,7 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log daemonLogger
 		return false, fmt.Errorf("failed to write main JSONL: %w", err)
 	}
 
-	log.log("Synced JSONL from sync branch to main repo")
+	log.Info("Synced JSONL from sync branch to main repo")
 
 	return true, nil
 }
