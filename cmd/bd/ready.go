@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/internal/config"
 	"github.com/steveyegge/beads/internal/rpc"
-	"github.com/steveyegge/beads/internal/storage/factory"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/util"
@@ -284,26 +283,44 @@ var blockedCmd = &cobra.Command{
 	Short: "Show blocked issues",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Use global jsonOutput set by PersistentPreRun (respects config.yaml + env vars)
-		// If daemon is running but doesn't support this command, use direct storage
-		// Use factory to respect backend configuration (bd-m2jr: SQLite fallback fix)
-		ctx := rootCtx
-		if daemonClient != nil && store == nil {
-			var err error
-store, err = factory.NewFromConfig(ctx, getBeadsDir())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to open database: %v\n", err)
+		parentID, _ := cmd.Flags().GetString("parent")
+
+		var blocked []*types.BlockedIssue
+		var err error
+
+		// Prefer daemon if available
+		if daemonClient != nil {
+			blockedArgs := &rpc.BlockedArgs{}
+			if parentID != "" {
+				blockedArgs.ParentID = parentID
+			}
+			resp, rpcErr := daemonClient.Blocked(blockedArgs)
+			if rpcErr != nil {
+				fmt.Fprintf(os.Stderr, "Error: daemon request failed: %v\n", rpcErr)
 				os.Exit(1)
 			}
-			defer func() { _ = store.Close() }()
-		}
-		parentID, _ := cmd.Flags().GetString("parent")
-		var blockedFilter types.WorkFilter
-		if parentID != "" {
-			blockedFilter.ParentID = &parentID
-		}
-		blocked, err := store.GetBlockedIssues(ctx, blockedFilter)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			if !resp.Success {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+				os.Exit(1)
+			}
+			if err := json.Unmarshal(resp.Data, &blocked); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to parse response: %v\n", err)
+				os.Exit(1)
+			}
+		} else if store != nil {
+			// Fall back to direct storage if no daemon
+			ctx := rootCtx
+			var blockedFilter types.WorkFilter
+			if parentID != "" {
+				blockedFilter.ParentID = &parentID
+			}
+			blocked, err = store.GetBlockedIssues(ctx, blockedFilter)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: no daemon or storage available\n")
 			os.Exit(1)
 		}
 		if jsonOutput {

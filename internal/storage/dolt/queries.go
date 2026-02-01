@@ -312,12 +312,16 @@ func (s *DoltStore) GetReadyWork(ctx context.Context, filter types.WorkFilter) (
 }
 
 // GetBlockedIssues returns issues that are blocked by other issues
+// Optimized to use 2 queries instead of N+2 (one for IDs+blockers, one for issue details)
 func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilter) ([]*types.BlockedIssue, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Query 1: Get all blocked issue IDs with their blocker IDs using GROUP_CONCAT
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, COUNT(d.depends_on_id) as blocked_by_count
+		SELECT i.id,
+		       COUNT(d.depends_on_id) as blocked_by_count,
+		       GROUP_CONCAT(d.depends_on_id) as blocker_ids
 		FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		JOIN issues blocker ON d.depends_on_id = blocker.id
@@ -332,50 +336,65 @@ func (s *DoltStore) GetBlockedIssues(ctx context.Context, filter types.WorkFilte
 	}
 	defer rows.Close()
 
-	var results []*types.BlockedIssue
+	// Collect blocked issue metadata
+	type blockedMeta struct {
+		count      int
+		blockerIDs []string
+	}
+	blockedMap := make(map[string]blockedMeta)
+	var issueIDs []string
+
 	for rows.Next() {
 		var id string
 		var count int
-		if err := rows.Scan(&id, &count); err != nil {
+		var blockerIDsStr sql.NullString
+		if err := rows.Scan(&id, &count, &blockerIDsStr); err != nil {
 			return nil, err
 		}
 
-		issue, err := s.GetIssue(ctx, id)
-		if err != nil || issue == nil {
+		var blockerIDs []string
+		if blockerIDsStr.Valid && blockerIDsStr.String != "" {
+			blockerIDs = strings.Split(blockerIDsStr.String, ",")
+		}
+
+		issueIDs = append(issueIDs, id)
+		blockedMap[id] = blockedMeta{count: count, blockerIDs: blockerIDs}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(issueIDs) == 0 {
+		return nil, nil
+	}
+
+	// Query 2: Get all issue details in one batch query
+	issues, err := s.GetIssuesByIDs(ctx, issueIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get blocked issue details: %w", err)
+	}
+
+	// Build results maintaining the original order
+	issueMap := make(map[string]*types.Issue)
+	for _, issue := range issues {
+		issueMap[issue.ID] = issue
+	}
+
+	var results []*types.BlockedIssue
+	for _, id := range issueIDs {
+		issue := issueMap[id]
+		if issue == nil {
 			continue
 		}
-
-		// Get blocker IDs
-		var blockerIDs []string
-		blockerRows, err := s.db.QueryContext(ctx, `
-			SELECT d.depends_on_id
-			FROM dependencies d
-			JOIN issues blocker ON d.depends_on_id = blocker.id
-			WHERE d.issue_id = ?
-			  AND d.type = 'blocks'
-			  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
-		`, id)
-		if err != nil {
-			return nil, err
-		}
-		for blockerRows.Next() {
-			var blockerID string
-			if err := blockerRows.Scan(&blockerID); err != nil {
-				_ = blockerRows.Close() // nolint:gosec // G104: error ignored on early return
-				return nil, err
-			}
-			blockerIDs = append(blockerIDs, blockerID)
-		}
-		_ = blockerRows.Close() // nolint:gosec // G104: rows already read successfully
-
+		meta := blockedMap[id]
 		results = append(results, &types.BlockedIssue{
 			Issue:          *issue,
-			BlockedByCount: count,
-			BlockedBy:      blockerIDs,
+			BlockedByCount: meta.count,
+			BlockedBy:      meta.blockerIDs,
 		})
 	}
 
-	return results, rows.Err()
+	return results, nil
 }
 
 // GetEpicsEligibleForClosure returns epics whose children are all closed
