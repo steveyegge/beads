@@ -138,6 +138,16 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		}
 	}
 
+	// Slow query threshold configuration
+	slowQueryThreshold := DefaultSlowQueryThreshold // 100ms default
+	if env := os.Getenv("BEADS_SLOW_QUERY_THRESHOLD"); env != "" {
+		if threshold, err := time.ParseDuration(env); err == nil && threshold >= 0 {
+			slowQueryThreshold = threshold
+		}
+	}
+
+	metrics := NewMetrics()
+	metrics.SetSlowQueryThreshold(slowQueryThreshold)
 	s := &Server{
 		socketPath:        socketPath,
 		workspacePath:     workspacePath,
@@ -146,7 +156,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		shutdownChan:      make(chan struct{}),
 		doneChan:          make(chan struct{}),
 		startTime:         time.Now(),
-		metrics:           NewMetrics(),
+		metrics:           metrics,
 		maxConns:          maxConns,
 		connSemaphore:     make(chan struct{}, maxConns),
 		requestTimeout:    requestTimeout,
@@ -158,6 +168,13 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		queryDedup:        NewQueryDeduplicator(500 * time.Millisecond), // 500ms dedup window
 	}
 	s.lastActivityTime.Store(time.Now())
+
+	// Set up slow query logging callback
+	s.metrics.SetSlowQueryCallback(func(operation string, latency time.Duration, timestamp time.Time) {
+		fmt.Fprintf(os.Stderr, "SLOW QUERY: operation=%s latency=%s time=%s\n",
+			operation, latency.Round(time.Millisecond), timestamp.Format(time.RFC3339))
+	})
+
 	return s
 }
 
@@ -215,6 +232,16 @@ func (s *Server) emitRichMutation(event MutationEvent) {
 // MutationChan returns the mutation event channel for the daemon to consume
 func (s *Server) MutationChan() <-chan MutationEvent {
 	return s.mutationChan
+}
+
+// PeriodicStatsSummary returns a human-readable summary of metrics for periodic logging
+func (s *Server) PeriodicStatsSummary() string {
+	return s.metrics.PeriodicStatsSummary(int(atomic.LoadInt32(&s.activeConns)))
+}
+
+// GetMetrics returns the server's metrics collector (for direct access)
+func (s *Server) GetMetrics() *Metrics {
+	return s.metrics
 }
 
 // SetConfig sets the daemon configuration for status reporting

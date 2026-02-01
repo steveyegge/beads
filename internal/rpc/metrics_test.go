@@ -236,3 +236,222 @@ func TestMinHelper(t *testing.T) {
 		t.Error("min(7, 7) should be 7")
 	}
 }
+
+func TestSlowQueryProfiling(t *testing.T) {
+	t.Run("slow query detection", func(t *testing.T) {
+		m := NewMetrics()
+		m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+		// Fast query - should not be counted
+		m.RecordRequest("fast_op", 10*time.Millisecond)
+
+		// Slow query - should be counted
+		m.RecordRequest("slow_op", 100*time.Millisecond)
+
+		m.mu.RLock()
+		slowCount := m.slowQueryCounts["slow_op"]
+		fastSlowCount := m.slowQueryCounts["fast_op"]
+		m.mu.RUnlock()
+
+		if slowCount != 1 {
+			t.Errorf("Expected 1 slow query for slow_op, got %d", slowCount)
+		}
+		if fastSlowCount != 0 {
+			t.Errorf("Expected 0 slow queries for fast_op, got %d", fastSlowCount)
+		}
+	})
+
+	t.Run("slow query callback", func(t *testing.T) {
+		m := NewMetrics()
+		m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+		var callbackCalled bool
+		var callbackOp string
+		var callbackLatency time.Duration
+
+		m.SetSlowQueryCallback(func(op string, latency time.Duration, _ time.Time) {
+			callbackCalled = true
+			callbackOp = op
+			callbackLatency = latency
+		})
+
+		// Trigger slow query
+		m.RecordRequest("callback_test", 100*time.Millisecond)
+
+		if !callbackCalled {
+			t.Error("Expected slow query callback to be called")
+		}
+		if callbackOp != "callback_test" {
+			t.Errorf("Expected callback operation 'callback_test', got '%s'", callbackOp)
+		}
+		if callbackLatency != 100*time.Millisecond {
+			t.Errorf("Expected callback latency 100ms, got %v", callbackLatency)
+		}
+	})
+
+	t.Run("recent slow queries tracking", func(t *testing.T) {
+		m := NewMetrics()
+		m.SetSlowQueryThreshold(50 * time.Millisecond)
+		m.maxSlowQueries = 5 // Small size for testing
+
+		// Add more slow queries than max
+		for i := 0; i < 10; i++ {
+			m.RecordRequest("test_op", time.Duration(100+i)*time.Millisecond)
+		}
+
+		m.mu.RLock()
+		recentCount := len(m.recentSlowQueries)
+		m.mu.RUnlock()
+
+		if recentCount != 5 {
+			t.Errorf("Expected 5 recent slow queries (bounded), got %d", recentCount)
+		}
+	})
+
+	t.Run("slow query snapshot", func(t *testing.T) {
+		m := NewMetrics()
+		m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+		// Add some slow queries
+		m.RecordRequest("op1", 100*time.Millisecond)
+		m.RecordRequest("op2", 200*time.Millisecond)
+		m.RecordRequest("op1", 150*time.Millisecond)
+
+		snapshot := m.Snapshot(0)
+
+		if snapshot.SlowQueryThresholdMS != 50.0 {
+			t.Errorf("Expected threshold 50ms, got %f", snapshot.SlowQueryThresholdMS)
+		}
+		if snapshot.TotalSlowQueries != 3 {
+			t.Errorf("Expected 3 total slow queries, got %d", snapshot.TotalSlowQueries)
+		}
+		if len(snapshot.RecentSlowQueries) != 3 {
+			t.Errorf("Expected 3 recent slow queries, got %d", len(snapshot.RecentSlowQueries))
+		}
+	})
+
+	t.Run("disabled slow query tracking", func(t *testing.T) {
+		m := NewMetrics()
+		m.SetSlowQueryThreshold(0) // Disable
+
+		m.RecordRequest("test_op", 1*time.Second)
+
+		m.mu.RLock()
+		slowCount := m.slowQueryCounts["test_op"]
+		m.mu.RUnlock()
+
+		if slowCount != 0 {
+			t.Errorf("Expected 0 slow queries when disabled, got %d", slowCount)
+		}
+	})
+}
+
+func TestTopSlowQueries(t *testing.T) {
+	m := NewMetrics()
+	m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+	// Add slow queries with different latencies
+	m.RecordRequest("slow", 100*time.Millisecond)
+	m.RecordRequest("slower", 200*time.Millisecond)
+	m.RecordRequest("slowest", 300*time.Millisecond)
+
+	top := m.TopSlowQueries(2)
+
+	if len(top) != 2 {
+		t.Errorf("Expected 2 top slow queries, got %d", len(top))
+	}
+
+	// Should be sorted by latency descending
+	if top[0].LatencyMS != 300.0 {
+		t.Errorf("Expected top query to have 300ms latency, got %f", top[0].LatencyMS)
+	}
+	if top[1].LatencyMS != 200.0 {
+		t.Errorf("Expected second query to have 200ms latency, got %f", top[1].LatencyMS)
+	}
+}
+
+func TestSlowQuerySummary(t *testing.T) {
+	m := NewMetrics()
+	m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+	m.RecordRequest("op1", 100*time.Millisecond)
+	m.RecordRequest("op1", 150*time.Millisecond)
+	m.RecordRequest("op2", 200*time.Millisecond)
+
+	summary := m.GetSlowQuerySummary()
+
+	if summary.ThresholdMS != 50.0 {
+		t.Errorf("Expected threshold 50ms, got %f", summary.ThresholdMS)
+	}
+	if summary.TotalSlowQueries != 3 {
+		t.Errorf("Expected 3 total slow queries, got %d", summary.TotalSlowQueries)
+	}
+	if summary.SlowByOperation["op1"] != 2 {
+		t.Errorf("Expected 2 slow queries for op1, got %d", summary.SlowByOperation["op1"])
+	}
+	if summary.SlowByOperation["op2"] != 1 {
+		t.Errorf("Expected 1 slow query for op2, got %d", summary.SlowByOperation["op2"])
+	}
+}
+
+func TestPeriodicStatsSummary(t *testing.T) {
+	m := NewMetrics()
+	m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+	// Add some requests
+	m.RecordRequest("create", 10*time.Millisecond)
+	m.RecordRequest("update", 100*time.Millisecond) // slow
+	m.RecordConnection()
+
+	summary := m.PeriodicStatsSummary(1)
+
+	// Check that the summary contains expected substrings
+	if summary == "" {
+		t.Error("Expected non-empty summary")
+	}
+	if !contains(summary, "STATS:") {
+		t.Error("Expected summary to contain 'STATS:'")
+	}
+	if !contains(summary, "requests=") {
+		t.Error("Expected summary to contain 'requests='")
+	}
+	if !contains(summary, "slow_queries=") {
+		t.Error("Expected summary to contain 'slow_queries='")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || contains(s[1:], substr)))
+}
+
+func TestOperationMetricsSlowQueryCount(t *testing.T) {
+	m := NewMetrics()
+	m.SetSlowQueryThreshold(50 * time.Millisecond)
+
+	// Mix of fast and slow queries for same operation
+	m.RecordRequest("mixed_op", 10*time.Millisecond)  // fast
+	m.RecordRequest("mixed_op", 100*time.Millisecond) // slow
+	m.RecordRequest("mixed_op", 20*time.Millisecond)  // fast
+	m.RecordRequest("mixed_op", 150*time.Millisecond) // slow
+
+	snapshot := m.Snapshot(0)
+
+	var mixedOp *OperationMetrics
+	for i := range snapshot.Operations {
+		if snapshot.Operations[i].Operation == "mixed_op" {
+			mixedOp = &snapshot.Operations[i]
+			break
+		}
+	}
+
+	if mixedOp == nil {
+		t.Fatal("Expected to find 'mixed_op' operation")
+	}
+
+	if mixedOp.TotalCount != 4 {
+		t.Errorf("Expected 4 total requests, got %d", mixedOp.TotalCount)
+	}
+	if mixedOp.SlowQueryCount != 2 {
+		t.Errorf("Expected 2 slow queries, got %d", mixedOp.SlowQueryCount)
+	}
+}

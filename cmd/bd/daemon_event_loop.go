@@ -97,6 +97,17 @@ func runEventDrivenLoop(
 	healthTicker := time.NewTicker(60 * time.Second)
 	defer healthTicker.Stop()
 
+	// Periodic stats logging (every 5 minutes)
+	// Configurable via BEADS_STATS_LOG_INTERVAL env var
+	statsInterval := 5 * time.Minute
+	if env := os.Getenv("BEADS_STATS_LOG_INTERVAL"); env != "" {
+		if interval, err := time.ParseDuration(env); err == nil && interval > 0 {
+			statsInterval = interval
+		}
+	}
+	statsTicker := time.NewTicker(statsInterval)
+	defer statsTicker.Stop()
+
 	// Periodic remote sync to pull updates from other clones
 	// This is essential for multi-clone workflows where the file watcher only
 	// sees local changes but remote may have updates from other clones.
@@ -137,6 +148,10 @@ func runEventDrivenLoop(
 		case <-healthTicker.C:
 			// Periodic health validation (not sync)
 			checkDaemonHealth(ctx, store, log)
+
+		case <-statsTicker.C:
+			// Periodic stats logging
+			log.log(server.PeriodicStatsSummary())
 
 		case <-func() <-chan time.Time {
 			if remoteSyncTicker != nil {

@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -8,6 +9,17 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// SlowQueryCallback is called when a slow query is detected.
+// Parameters: operation name, latency duration, timestamp
+type SlowQueryCallback func(operation string, latency time.Duration, timestamp time.Time)
+
+// SlowQueryRecord captures details of a slow query for analysis
+type SlowQueryRecord struct {
+	Operation string        `json:"operation"`
+	LatencyMS float64       `json:"latency_ms"`
+	Timestamp time.Time     `json:"timestamp"`
+}
 
 // Metrics holds all telemetry data for the daemon
 type Metrics struct {
@@ -23,25 +35,59 @@ type Metrics struct {
 	totalConns    int64
 	rejectedConns int64
 
+	// Slow query profiling
+	slowQueryThreshold time.Duration           // queries exceeding this are logged (0 = disabled)
+	slowQueryCounts    map[string]int64        // operation -> slow query count
+	recentSlowQueries  []SlowQueryRecord       // bounded list of recent slow queries
+	maxSlowQueries     int                     // max recent slow queries to track
+	slowQueryCallback  SlowQueryCallback       // optional callback for slow query logging
+
 	// System start time (for uptime calculation)
 	startTime time.Time
 }
 
+// DefaultSlowQueryThreshold is the default threshold for slow query detection (100ms)
+const DefaultSlowQueryThreshold = 100 * time.Millisecond
+
 // NewMetrics creates a new metrics collector
 func NewMetrics() *Metrics {
 	return &Metrics{
-		requestCounts:  make(map[string]int64),
-		requestErrors:  make(map[string]int64),
-		requestLatency: make(map[string][]time.Duration),
-		maxSamples:     1000, // Keep last 1000 samples per operation
-		startTime:      time.Now(),
+		requestCounts:      make(map[string]int64),
+		requestErrors:      make(map[string]int64),
+		requestLatency:     make(map[string][]time.Duration),
+		maxSamples:         1000, // Keep last 1000 samples per operation
+		slowQueryCounts:    make(map[string]int64),
+		recentSlowQueries:  make([]SlowQueryRecord, 0),
+		maxSlowQueries:     100, // Keep last 100 slow queries
+		slowQueryThreshold: DefaultSlowQueryThreshold,
+		startTime:          time.Now(),
 	}
+}
+
+// SetSlowQueryThreshold sets the threshold for slow query detection.
+// Queries exceeding this duration will be counted and logged.
+// Set to 0 to disable slow query detection.
+func (m *Metrics) SetSlowQueryThreshold(threshold time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.slowQueryThreshold = threshold
+}
+
+// SetSlowQueryCallback sets the callback function for slow query logging.
+// The callback is invoked (outside the lock) when a slow query is detected.
+func (m *Metrics) SetSlowQueryCallback(cb SlowQueryCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.slowQueryCallback = cb
 }
 
 // RecordRequest records a request (successful or failed)
 func (m *Metrics) RecordRequest(operation string, latency time.Duration) {
+	now := time.Now()
+	var callback SlowQueryCallback
+	var isSlow bool
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.requestCounts[operation]++
 
@@ -53,6 +99,34 @@ func (m *Metrics) RecordRequest(operation string, latency time.Duration) {
 	}
 	samples = append(samples, latency)
 	m.requestLatency[operation] = samples
+
+	// Check for slow query
+	if m.slowQueryThreshold > 0 && latency >= m.slowQueryThreshold {
+		isSlow = true
+		m.slowQueryCounts[operation]++
+
+		// Add to recent slow queries (bounded)
+		record := SlowQueryRecord{
+			Operation: operation,
+			LatencyMS: float64(latency) / float64(time.Millisecond),
+			Timestamp: now,
+		}
+		if len(m.recentSlowQueries) >= m.maxSlowQueries {
+			// Drop oldest record
+			m.recentSlowQueries = m.recentSlowQueries[1:]
+		}
+		m.recentSlowQueries = append(m.recentSlowQueries, record)
+
+		// Copy callback reference for use outside lock
+		callback = m.slowQueryCallback
+	}
+
+	m.mu.Unlock()
+
+	// Invoke callback outside the lock to avoid deadlocks
+	if isSlow && callback != nil {
+		callback(operation, latency, now)
+	}
 }
 
 // RecordError records a failed request
@@ -91,6 +165,7 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	countsCopy := make(map[string]int64, len(opsSet))
 	errorsCopy := make(map[string]int64, len(opsSet))
 	latCopy := make(map[string][]time.Duration, len(opsSet))
+	slowCountsCopy := make(map[string]int64, len(m.slowQueryCounts))
 
 	for op := range opsSet {
 		countsCopy[op] = m.requestCounts[op]
@@ -100,6 +175,14 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 			latCopy[op] = append([]time.Duration(nil), samples...)
 		}
 	}
+
+	// Copy slow query data
+	for op, count := range m.slowQueryCounts {
+		slowCountsCopy[op] = count
+	}
+	slowThreshold := m.slowQueryThreshold
+	recentSlowCopy := make([]SlowQueryRecord, len(m.recentSlowQueries))
+	copy(recentSlowCopy, m.recentSlowQueries)
 
 	m.mu.RUnlock()
 
@@ -114,10 +197,13 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 
 	// Calculate per-operation stats
 	operations := make([]OperationMetrics, 0, len(opsSet))
+	var totalSlowQueries int64
 	for op := range opsSet {
 		count := countsCopy[op]
 		errors := errorsCopy[op]
 		samples := latCopy[op]
+		slowCount := slowCountsCopy[op]
+		totalSlowQueries += slowCount
 
 		// Ensure success count is never negative
 		successCount := count - errors
@@ -126,10 +212,11 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 		}
 
 		opMetrics := OperationMetrics{
-			Operation:    op,
-			TotalCount:   count,
-			ErrorCount:   errors,
-			SuccessCount: successCount,
+			Operation:      op,
+			TotalCount:    count,
+			ErrorCount:    errors,
+			SuccessCount:  successCount,
+			SlowQueryCount: slowCount,
 		}
 
 		// Calculate latency percentiles if we have samples
@@ -150,15 +237,18 @@ func (m *Metrics) Snapshot(activeConns int) MetricsSnapshot {
 	runtime.ReadMemStats(&memStats)
 
 	return MetricsSnapshot{
-		Timestamp:      time.Now(),
-		UptimeSeconds:  uptimeSeconds,
-		Operations:     operations,
-		TotalConns:     atomic.LoadInt64(&m.totalConns),
-		ActiveConns:    activeConns,
-		RejectedConns:  atomic.LoadInt64(&m.rejectedConns),
-		MemoryAllocMB:  memStats.Alloc / 1024 / 1024,
-		MemorySysMB:    memStats.Sys / 1024 / 1024,
-		GoroutineCount: runtime.NumGoroutine(),
+		Timestamp:            time.Now(),
+		UptimeSeconds:        uptimeSeconds,
+		Operations:           operations,
+		TotalConns:           atomic.LoadInt64(&m.totalConns),
+		ActiveConns:          activeConns,
+		RejectedConns:        atomic.LoadInt64(&m.rejectedConns),
+		MemoryAllocMB:        memStats.Alloc / 1024 / 1024,
+		MemorySysMB:          memStats.Sys / 1024 / 1024,
+		GoroutineCount:       runtime.NumGoroutine(),
+		SlowQueryThresholdMS: float64(slowThreshold) / float64(time.Millisecond),
+		TotalSlowQueries:     totalSlowQueries,
+		RecentSlowQueries:    recentSlowCopy,
 	}
 }
 
@@ -174,15 +264,20 @@ type MetricsSnapshot struct {
 	MemorySysMB    uint64             `json:"memory_sys_mb"`
 	GoroutineCount int                `json:"goroutine_count"`
 	Cache          *CacheStats        `json:"cache,omitempty"`
+	// Slow query profiling stats
+	SlowQueryThresholdMS float64            `json:"slow_query_threshold_ms"`
+	TotalSlowQueries     int64              `json:"total_slow_queries"`
+	RecentSlowQueries    []SlowQueryRecord  `json:"recent_slow_queries,omitempty"`
 }
 
 // OperationMetrics holds metrics for a single operation type
 type OperationMetrics struct {
-	Operation    string       `json:"operation"`
-	TotalCount   int64        `json:"total_count"`
-	SuccessCount int64        `json:"success_count"`
-	ErrorCount   int64        `json:"error_count"`
-	Latency      LatencyStats `json:"latency,omitempty"`
+	Operation      string       `json:"operation"`
+	TotalCount     int64        `json:"total_count"`
+	SuccessCount   int64        `json:"success_count"`
+	ErrorCount     int64        `json:"error_count"`
+	SlowQueryCount int64        `json:"slow_query_count,omitempty"`
+	Latency        LatencyStats `json:"latency,omitempty"`
 }
 
 // LatencyStats holds latency percentile data in milliseconds
@@ -241,4 +336,103 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TopSlowQueries returns the N slowest queries from recent history, sorted by latency (slowest first)
+func (m *Metrics) TopSlowQueries(n int) []SlowQueryRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.recentSlowQueries) == 0 {
+		return nil
+	}
+
+	// Copy and sort by latency descending
+	result := make([]SlowQueryRecord, len(m.recentSlowQueries))
+	copy(result, m.recentSlowQueries)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LatencyMS > result[j].LatencyMS
+	})
+
+	// Return top N
+	if n > 0 && n < len(result) {
+		return result[:n]
+	}
+	return result
+}
+
+// TopFrequentOperations returns the N most frequent operations, sorted by count (most frequent first)
+func (m *Metrics) TopFrequentOperations(n int) []OperationMetrics {
+	snapshot := m.Snapshot(0)
+	ops := snapshot.Operations // already sorted by frequency
+
+	if n > 0 && n < len(ops) {
+		return ops[:n]
+	}
+	return ops
+}
+
+// SlowQuerySummary returns summary stats about slow queries
+type SlowQuerySummary struct {
+	ThresholdMS      float64          `json:"threshold_ms"`
+	TotalSlowQueries int64            `json:"total_slow_queries"`
+	SlowByOperation  map[string]int64 `json:"slow_by_operation"`
+}
+
+// GetSlowQuerySummary returns a summary of slow query statistics
+func (m *Metrics) GetSlowQuerySummary() SlowQuerySummary {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var total int64
+	byOp := make(map[string]int64, len(m.slowQueryCounts))
+	for op, count := range m.slowQueryCounts {
+		byOp[op] = count
+		total += count
+	}
+
+	return SlowQuerySummary{
+		ThresholdMS:      float64(m.slowQueryThreshold) / float64(time.Millisecond),
+		TotalSlowQueries: total,
+		SlowByOperation:  byOp,
+	}
+}
+
+// PeriodicStatsSummary returns a human-readable summary suitable for periodic logging
+func (m *Metrics) PeriodicStatsSummary(activeConns int) string {
+	snapshot := m.Snapshot(activeConns)
+
+	// Calculate total requests and overall avg latency
+	var totalRequests int64
+	var totalLatencySum float64
+	var opCount int
+	for _, op := range snapshot.Operations {
+		totalRequests += op.TotalCount
+		if op.Latency.AvgMS > 0 {
+			totalLatencySum += op.Latency.AvgMS
+			opCount++
+		}
+	}
+
+	avgLatency := float64(0)
+	if opCount > 0 {
+		avgLatency = totalLatencySum / float64(opCount)
+	}
+
+	// Calculate requests/second
+	requestsPerSec := float64(0)
+	if snapshot.UptimeSeconds > 0 {
+		requestsPerSec = float64(totalRequests) / snapshot.UptimeSeconds
+	}
+
+	return fmt.Sprintf("STATS: requests=%d rate=%.2f/s avg_latency=%.2fms slow_queries=%d threshold=%.0fms conns=%d/%d mem=%dMB",
+		totalRequests,
+		requestsPerSec,
+		avgLatency,
+		snapshot.TotalSlowQueries,
+		snapshot.SlowQueryThresholdMS,
+		activeConns,
+		snapshot.TotalConns,
+		snapshot.MemoryAllocMB,
+	)
 }
