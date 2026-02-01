@@ -174,18 +174,18 @@ $ bd pacman
 PACMAN MODE
 ──────────────────────────────────────────
 YOU: claude
-SCORE: 5 dots
+SCORE: 3 dots
 
 DOTS NEARBY:
-  ○ bd-bw3 ● P2 "Add TUI dashboard"
-  ○ bd-235 ● P2 "Session handoff"
+  ○ bd-abc ● P1 "Implement login flow"
+  ○ bd-xyz ● P2 "Add retry logic"
 
 BLOCKERS:
-  ● None
+  ● bd-123 blocked by bd-456
 
 LEADERBOARD:
-  #1 codex   8 pts
-  #2 claude  5 pts
+  #1 codex   5 pts
+  #2 claude  3 pts
 ```
 
 ### Multi-Agent Scenarios
