@@ -1391,3 +1391,41 @@ func containsLower(s, substr string) bool {
 	}
 	return false
 }
+
+// TestGetStatisticsAfterClose verifies that GetStatistics returns an error instead
+// of panicking when called on a closed store (gt-0pb10c: nil pointer dereference fix)
+func TestGetStatisticsAfterClose(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+
+	ctx, cancel := testContext(t)
+	defer cancel()
+
+	// Verify GetStatistics works before close
+	stats, err := store.GetStatistics(ctx)
+	if err != nil {
+		t.Fatalf("GetStatistics failed before close: %v", err)
+	}
+	if stats == nil {
+		t.Fatal("expected non-nil stats before close")
+	}
+
+	// Close the store - this sets s.db = nil
+	store.Close()
+
+	// Don't run cleanup since we manually closed
+	_ = cleanup
+
+	// GetStatistics should return an error, not panic
+	stats, err = store.GetStatistics(ctx)
+	if err == nil {
+		t.Error("expected error after close, got nil")
+	}
+	if stats != nil {
+		t.Error("expected nil stats after close")
+	}
+
+	// Verify error message mentions the issue
+	if err != nil && !contains(err.Error(), "nil") && !contains(err.Error(), "closed") {
+		t.Errorf("error message should mention nil or closed, got: %v", err)
+	}
+}

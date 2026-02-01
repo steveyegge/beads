@@ -526,6 +526,11 @@ func (s *DoltStore) GetStaleIssues(ctx context.Context, filter types.StaleFilter
 
 // GetStatistics returns summary statistics
 func (s *DoltStore) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	// Guard against nil database connection (can occur if store is closed)
+	if s.db == nil {
+		return nil, fmt.Errorf("database connection is nil (store may be closed)")
+	}
+
 	stats := &types.Statistics{}
 
 	// Get counts (mirror SQLite semantics: exclude tombstones from TotalIssues, report separately).
