@@ -26,6 +26,7 @@ func RegisterBackend(name string, factory BackendFactory) {
 type Options struct {
 	ReadOnly    bool
 	LockTimeout time.Duration
+	OpenTimeout time.Duration // Advisory lock timeout for dolt embedded mode (0 = no lock)
 
 	// Dolt server mode options (federation)
 	ServerMode bool   // Connect to dolt sql-server instead of embedded

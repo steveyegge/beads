@@ -36,12 +36,13 @@ import (
 
 // DoltStore implements the Storage interface using Dolt
 type DoltStore struct {
-	db       *sql.DB
-	dbPath   string       // Path to Dolt database directory
-	closed   atomic.Bool  // Tracks whether Close() has been called
-	connStr  string       // Connection string for reconnection
-	mu       sync.RWMutex // Protects concurrent access
-	readOnly bool         // True if opened in read-only mode
+	db         *sql.DB
+	dbPath     string       // Path to Dolt database directory
+	closed     atomic.Bool  // Tracks whether Close() has been called
+	connStr    string       // Connection string for reconnection
+	mu         sync.RWMutex // Protects concurrent access
+	readOnly   bool         // True if opened in read-only mode
+	accessLock *AccessLock  // Advisory flock preventing concurrent dolt LOCK contention
 
 	// Version control config
 	committerName  string
@@ -60,6 +61,7 @@ type Config struct {
 	ReadOnly       bool          // Open in read-only mode (skip schema init)
 	LockRetries    int           // Number of retries on lock contention (default: 30)
 	LockRetryDelay time.Duration // Initial retry delay (default: 100ms, doubles each retry)
+	OpenTimeout    time.Duration // Advisory lock timeout (0 = no advisory lock)
 
 	// Server mode options (federation)
 	ServerMode     bool   // Connect to dolt sql-server instead of embedded
@@ -134,6 +136,18 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
+	// Acquire advisory lock BEFORE touching the dolt LOCK file (embedded mode only).
+	// This prevents multiple bd processes from blocking inside the dolt driver.
+	var accessLock *AccessLock
+	if !cfg.ServerMode && cfg.OpenTimeout > 0 {
+		exclusive := !cfg.ReadOnly
+		var lockErr error
+		accessLock, lockErr = AcquireAccessLock(cfg.Path, exclusive, cfg.OpenTimeout)
+		if lockErr != nil {
+			return nil, lockErr
+		}
+	}
+
 	var db *sql.DB
 	var connStr string
 	var err error
@@ -143,21 +157,36 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		db, connStr, err = openServerConnection(ctx, cfg)
 	} else {
 		// Embedded mode: use Dolt driver directly
+		// Apply context timeout as defense-in-depth
+		if cfg.OpenTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, cfg.OpenTimeout)
+			defer cancel()
+		}
 		db, connStr, err = openEmbeddedConnection(ctx, cfg)
 	}
 
 	if err != nil {
+		if accessLock != nil {
+			accessLock.Release()
+		}
 		return nil, err
 	}
 
 	// Test connection
 	if err := db.PingContext(ctx); err != nil {
+		if accessLock != nil {
+			accessLock.Release()
+		}
 		return nil, fmt.Errorf("failed to ping Dolt database: %w", err)
 	}
 
 	// Convert to absolute path
 	absPath, err := filepath.Abs(cfg.Path)
 	if err != nil {
+		if accessLock != nil {
+			accessLock.Release()
+		}
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
@@ -170,11 +199,16 @@ func New(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		remote:         cfg.Remote,
 		branch:         "main",
 		readOnly:       cfg.ReadOnly,
+		accessLock:     accessLock,
 	}
 
 	// Initialize schema (skip for read-only mode)
 	if !cfg.ReadOnly {
 		if err := store.initSchema(ctx); err != nil {
+			_ = db.Close()
+			if accessLock != nil {
+				accessLock.Release()
+			}
 			return nil, fmt.Errorf("failed to initialize schema: %w", err)
 		}
 	}
@@ -446,12 +480,19 @@ func isOnlyComments(stmt string) bool {
 	return true
 }
 
-// Close closes the database connection
+// Close closes the database connection and releases the advisory lock.
+// The db is closed first so dolt's internal LOCK file is freed before
+// the advisory lock is released (allows the next process to proceed safely).
 func (s *DoltStore) Close() error {
 	s.closed.Store(true)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.db.Close()
+	err := s.db.Close()
+	if s.accessLock != nil {
+		s.accessLock.Release()
+		s.accessLock = nil
+	}
+	return err
 }
 
 // Path returns the database directory path

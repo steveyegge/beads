@@ -45,13 +45,14 @@ func init() {
 		}
 
 		return dolt.New(ctx, &dolt.Config{
-			Path:       path,
-			Database:   opts.Database,
-			ReadOnly:   opts.ReadOnly,
-			ServerMode: opts.ServerMode,
-			ServerHost: opts.ServerHost,
-			ServerPort: opts.ServerPort,
-			ServerUser: opts.ServerUser,
+			Path:        path,
+			Database:    opts.Database,
+			ReadOnly:    opts.ReadOnly,
+			OpenTimeout: opts.OpenTimeout,
+			ServerMode:  opts.ServerMode,
+			ServerHost:  opts.ServerHost,
+			ServerPort:  opts.ServerPort,
+			ServerUser:  opts.ServerUser,
 		})
 	})
 }
