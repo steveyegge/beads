@@ -131,3 +131,5 @@ bd_test
 # Gas Town (added by gt)
 .beads/
 .logs/
+.claude
+.claude-flow
