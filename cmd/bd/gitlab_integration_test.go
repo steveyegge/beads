@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 // Package main provides the bd CLI commands.
 package main

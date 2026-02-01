@@ -45,7 +45,6 @@
 // - Providing a unified API for common operations
 
 //go:build integration
-// +build integration
 
 package main
 

@@ -4,7 +4,6 @@
 // when the user is detected as a contributor with auto-routing enabled.
 
 //go:build integration
-// +build integration
 
 package main
 
