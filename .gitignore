@@ -143,3 +143,7 @@ reference/
 # Private specs and design docs (thinking space, not committed)
 specs/private/
 specs/active/
+specs/drafts/
+**/YEGGE_*.md
+**/SURVIVAL_*.md
+.beads/reflections.md
