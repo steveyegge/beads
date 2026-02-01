@@ -387,7 +387,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			await_type, await_id, timeout_ns, waiters,
 			hook_bead, role_bead, agent_state, last_activity, role_type, rig,
 			due_at, defer_until, metadata,
-			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
+			advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+			advice_subscriptions, advice_subscriptions_exclude
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -400,7 +401,8 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?, ?
 		)
 	`,
 		issue.ID, issue.ContentHash, issue.Title, issue.Description, issue.Design, issue.AcceptanceCriteria, issue.Notes,
@@ -416,6 +418,7 @@ func insertIssue(ctx context.Context, tx *sql.Tx, issue *types.Issue) error {
 		issue.DueAt, issue.DeferUntil, jsonMetadata(issue.Metadata),
 		// NOTE: advice_target_* columns removed - advice uses labels now
 		issue.AdviceHookCommand, issue.AdviceHookTrigger, issue.AdviceHookTimeout, issue.AdviceHookOnFailure,
+		formatJSONStringArray(issue.AdviceSubscriptions), formatJSONStringArray(issue.AdviceSubscriptionsExclude),
 	)
 	return err
 }
@@ -438,6 +441,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	// NOTE: advice_target_* columns removed - advice uses labels now
 	var adviceHookCommand, adviceHookTrigger, adviceHookOnFailure sql.NullString
 	var adviceHookTimeout sql.NullInt64
+	// Advice subscription fields (gt-w2mh8a.4)
+	var adviceSubscriptions, adviceSubscriptionsExclude sql.NullString
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, content_hash, title, description, design, acceptance_criteria, notes,
@@ -451,7 +456,8 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		       event_kind, actor, target, payload,
 		       due_at, defer_until,
 		       quality_score, work_type, source_system, metadata,
-		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure
+		       advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure,
+		       advice_subscriptions, advice_subscriptions_exclude
 		FROM issues
 		WHERE id = ?
 	`, id).Scan(
@@ -468,6 +474,7 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 		&dueAt, &deferUntil,
 		&qualityScore, &workType, &sourceSystem, &metadata,
 		&adviceHookCommand, &adviceHookTrigger, &adviceHookTimeout, &adviceHookOnFailure,
+		&adviceSubscriptions, &adviceSubscriptionsExclude,
 	)
 
 	if err == sql.ErrNoRows {
@@ -628,6 +635,13 @@ func scanIssue(ctx context.Context, db *sql.DB, id string) (*types.Issue, error)
 	}
 	if adviceHookOnFailure.Valid {
 		issue.AdviceHookOnFailure = adviceHookOnFailure.String
+	}
+	// Advice subscription fields (gt-w2mh8a.4)
+	if adviceSubscriptions.Valid && adviceSubscriptions.String != "" {
+		issue.AdviceSubscriptions = parseJSONStringArray(adviceSubscriptions.String)
+	}
+	if adviceSubscriptionsExclude.Valid && adviceSubscriptionsExclude.String != "" {
+		issue.AdviceSubscriptionsExclude = parseJSONStringArray(adviceSubscriptionsExclude.String)
 	}
 
 	return &issue, nil

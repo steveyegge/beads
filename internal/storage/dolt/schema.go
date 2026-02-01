@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS issues (
     advice_hook_trigger VARCHAR(32) DEFAULT '',
     advice_hook_timeout INT DEFAULT 0,
     advice_hook_on_failure VARCHAR(16) DEFAULT '',
+    -- Advice subscription fields (gt-w2mh8a.4)
+    advice_subscriptions TEXT DEFAULT '',
+    advice_subscriptions_exclude TEXT DEFAULT '',
     INDEX idx_issues_status (status),
     INDEX idx_issues_priority (priority),
     INDEX idx_issues_assignee (assignee),

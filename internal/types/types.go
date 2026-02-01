@@ -150,6 +150,12 @@ type Issue struct {
 	AdviceHookTrigger   string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
 	AdviceHookTimeout   int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds (default: 30, max: 300)
 	AdviceHookOnFailure string `json:"advice_hook_on_failure,omitempty"` // Failure behavior: block, warn, ignore (default: warn)
+
+	// ===== Advice Subscription Fields (gt-w2mh8a.4) =====
+	// These fields allow agents to customize which advice they receive beyond the auto-subscribed
+	// context labels (global, rig:X, role:Y, agent:Z). See docs/design/advice-subscription-model-v2.md
+	AdviceSubscriptions        []string `json:"advice_subscriptions,omitempty"`         // Additional labels to subscribe to
+	AdviceSubscriptionsExclude []string `json:"advice_subscriptions_exclude,omitempty"` // Labels to exclude from receiving advice
 }
 
 // ComputeContentHash creates a deterministic hash of the issue's content.
@@ -253,6 +259,14 @@ func (i *Issue) ComputeContentHash() string {
 	w.str(i.AdviceHookTrigger)
 	w.int(i.AdviceHookTimeout)
 	w.str(i.AdviceHookOnFailure)
+
+	// Advice subscription fields (gt-w2mh8a.4)
+	for _, sub := range i.AdviceSubscriptions {
+		w.str(sub)
+	}
+	for _, exc := range i.AdviceSubscriptionsExclude {
+		w.str(exc)
+	}
 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
