@@ -30,15 +30,23 @@ type sqliteTxStorage struct {
 // preventing deadlocks when multiple goroutines compete for the same lock.
 //
 // Transaction lifecycle:
-//  1. Acquire dedicated connection from pool
-//  2. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
-//  3. Execute user function with Transaction interface
-//  4. On success: COMMIT
-//  5. On error or panic: ROLLBACK
+//  1. Increment active transaction counter (blocks reconnect during active transactions)
+//  2. Acquire dedicated connection from pool
+//  3. Begin IMMEDIATE transaction with retry on SQLITE_BUSY
+//  4. Execute user function with Transaction interface
+//  5. On success: COMMIT
+//  6. On error or panic: ROLLBACK
+//  7. Decrement active transaction counter (via defer)
 //
 // Panic safety: If the callback panics, the transaction is rolled back
 // and the panic is re-raised to the caller.
 func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage.Transaction) error) error {
+	// Increment active transaction count BEFORE acquiring connection.
+	// This blocks reconnect() from closing the connection while we're using it.
+	// The counter is decremented via defer to ensure it always happens.
+	s.activeTxCount.Add(1)
+	defer s.activeTxCount.Add(-1)
+
 	// Acquire a dedicated connection for the transaction.
 	// This ensures all operations in the transaction use the same connection.
 	conn, err := s.db.Conn(ctx)
@@ -48,9 +56,8 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 	defer func() { _ = conn.Close() }()
 
 	// Start IMMEDIATE transaction to acquire write lock early.
-	// BEGIN IMMEDIATE prevents deadlocks by acquiring the write lock upfront.
-	// The connection's busy_timeout pragma (30s) handles retries if locked.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	// Use retry logic with exponential backoff to handle SQLITE_BUSY
+	if err := beginImmediateWithRetry(ctx, conn, 5, 10*time.Millisecond); err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
@@ -88,6 +95,47 @@ func (s *SQLiteStorage) RunInTransaction(ctx context.Context, fn func(tx storage
 	}
 	committed = true
 	return nil
+}
+
+// beginImmediateWithRetry starts a transaction with BEGIN IMMEDIATE, retrying
+// on SQLITE_BUSY errors with exponential backoff.
+//
+// This is more robust than relying solely on busy_timeout because:
+// 1. Some BUSY errors aren't retryable by the busy handler (SQLITE_BUSY_SNAPSHOT)
+// 2. Explicit retries give us control over backoff timing
+// 3. We can log retry attempts for debugging
+func beginImmediateWithRetry(ctx context.Context, conn *sql.Conn, maxRetries int, initialBackoff time.Duration) error {
+	backoff := initialBackoff
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		_, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Check if this is a retryable error (SQLITE_BUSY)
+		errStr := err.Error()
+		if !strings.Contains(errStr, "database is locked") &&
+			!strings.Contains(errStr, "SQLITE_BUSY") {
+			// Not a busy error, don't retry
+			return err
+		}
+
+		// Check context before sleeping
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Sleep with exponential backoff
+		if attempt < maxRetries {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+
+	return fmt.Errorf("failed to begin transaction after %d retries: %w", maxRetries, lastErr)
 }
 
 // CreateIssue creates a new issue within the transaction.
