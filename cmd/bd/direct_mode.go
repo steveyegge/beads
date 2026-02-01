@@ -103,7 +103,7 @@ func ensureStoreActive() error {
 	setStoreActive(true)
 	unlockStore()
 
-	if isAutoImportEnabled() {
+	if isAutoImportEnabled() && ShouldImportJSONL(rootCtx, store) {
 		autoImportIfNewer()
 	}
 

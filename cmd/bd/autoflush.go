@@ -208,6 +208,11 @@ func autoImportIfNewer() {
 		return
 	}
 
+	if !ShouldImportJSONL(rootCtx, store) {
+		debug.Logf("auto-import skipped (dolt-native mode)")
+		return
+	}
+
 	// Find JSONL path
 	jsonlPath := findJSONLPath()
 
@@ -828,7 +833,6 @@ type flushState struct {
 //   - Store already closed (storeActive=false)
 //   - Database not dirty (isDirty=false) AND forceDirty=false
 //   - No dirty issues found (incremental mode only)
-//   - Sync mode is dolt-native (bd-ixip: skip JSONL export)
 func flushToJSONLWithState(state flushState) {
 	// Check if store is still active (not closed) and not nil
 	storeMutex.Lock()
@@ -838,13 +842,7 @@ func flushToJSONLWithState(state flushState) {
 	}
 	storeMutex.Unlock()
 
-	// Check sync mode before JSONL export (bd-ixip: dolt-native mode should skip JSONL)
 	ctx := rootCtx
-	if !ShouldExportJSONL(ctx, store) {
-		debug.Logf("skipping autoflush (dolt-native mode)")
-		return
-	}
-
 	jsonlPath := findJSONLPath()
 
 	// Double-check store is still active before accessing

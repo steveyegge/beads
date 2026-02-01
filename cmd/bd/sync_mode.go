@@ -106,10 +106,21 @@ func GetImportTrigger(ctx context.Context, s storage.Storage) string {
 	return trigger
 }
 
-// ShouldExportJSONL returns true if the current sync mode uses JSONL export.
+// ShouldExportJSONL returns true if the current sync mode uses JSONL export
+// for git sync operations (commit/push/pull on the sync branch).
+// Note: Local JSONL file writes (autoflush) always happen as a safety net,
+// regardless of this setting. This only controls git-based JSONL sync.
 func ShouldExportJSONL(ctx context.Context, s storage.Storage) bool {
 	mode := GetSyncMode(ctx, s)
 	// All modes except dolt-native use JSONL
+	return mode != SyncModeDoltNative
+}
+
+// ShouldImportJSONL returns true if the current sync mode should import from JSONL.
+// In dolt-native mode, imports are disabled to prevent stale JSONL from overwriting
+// dolt data.
+func ShouldImportJSONL(ctx context.Context, s storage.Storage) bool {
+	mode := GetSyncMode(ctx, s)
 	return mode != SyncModeDoltNative
 }
 

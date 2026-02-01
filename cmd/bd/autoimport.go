@@ -51,6 +51,11 @@ func checkAndAutoImport(ctx context.Context, store storage.Storage) bool {
 		return false
 	}
 
+	if !ShouldImportJSONL(ctx, store) {
+		debug.Logf("auto-import skipped (dolt-native mode)")
+		return false
+	}
+
 	// Check if database has any issues
 	stats, err := store.GetStatistics(ctx)
 	if err != nil || stats.TotalIssues > 0 {
