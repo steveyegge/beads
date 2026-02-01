@@ -112,6 +112,7 @@ This is useful for agents executing molecules to see which steps can run next.`,
 		// If daemon is running, use RPC
 		if daemonClient != nil {
 			readyArgs := &rpc.ReadyArgs{
+				Status:          "open", // Only show open issues, not in_progress (matches bd list --ready)
 				Assignee:        assignee,
 				Unassigned:      unassigned,
 				Type:            issueType,
