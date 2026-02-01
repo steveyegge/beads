@@ -55,7 +55,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		return true, nil // Signal "handled" to prevent fallback to regular git commit
 	}
 
-	log.Info("Using sync branch: %s", syncBranch)
+	log.Info("Using sync branch", "branch", syncBranch)
 
 	// Get main repo root (for worktrees, this is the main repo, not worktree)
 	repoRoot, err := git.GetMainRepoRoot()
@@ -123,7 +123,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 	if err := gitCommitInWorktree(ctx, worktreePath, worktreeJSONLPath, message); err != nil {
 		return false, fmt.Errorf("failed to commit in worktree: %w", err)
 	}
-	log.Info("Committed changes to sync branch %s", syncBranch)
+	log.Info("Committed changes to sync branch", "branch", syncBranch)
 
 	// Push if enabled
 	if autoPush {
@@ -132,7 +132,7 @@ func syncBranchCommitAndPushWithOptions(ctx context.Context, store storage.Stora
 		if err := gitPushFromWorktree(ctx, worktreePath, syncBranch, configuredRemote); err != nil {
 			return false, fmt.Errorf("failed to push from worktree: %w", err)
 		}
-		log.Info("Pushed sync branch %s to remote", syncBranch)
+		log.Info("Pushed sync branch to remote", "branch", syncBranch)
 	}
 
 	return true, nil
@@ -339,7 +339,7 @@ func syncBranchPull(ctx context.Context, store storage.Storage, log *slog.Logger
 		return false, fmt.Errorf("git pull failed in worktree: %w\n%s", err, output)
 	}
 
-	log.Info("Pulled sync branch %s", syncBranch)
+	log.Info("Pulled sync branch", "branch", syncBranch)
 
 	// Get the actual JSONL path
 	jsonlPath := findJSONLPath()
