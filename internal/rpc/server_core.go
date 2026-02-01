@@ -56,6 +56,8 @@ type Server struct {
 	recentMutations   []MutationEvent
 	recentMutationsMu sync.RWMutex
 	maxMutationBuffer int
+	// Query result cache for read operations
+	queryCache *QueryCache
 	// Daemon configuration (set via SetConfig after creation)
 	autoCommit   bool
 	autoPush     bool
@@ -119,6 +121,21 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		}
 	}
 
+	// Query cache configuration
+	cacheTTL := 10 * time.Second // default 10 seconds
+	if env := os.Getenv("BEADS_CACHE_TTL"); env != "" {
+		if ttl, err := time.ParseDuration(env); err == nil && ttl > 0 {
+			cacheTTL = ttl
+		}
+	}
+	cacheMaxSize := 1000 // default max entries
+	if env := os.Getenv("BEADS_CACHE_MAX_SIZE"); env != "" {
+		var maxSize int
+		if _, err := fmt.Sscanf(env, "%d", &maxSize); err == nil && maxSize > 0 {
+			cacheMaxSize = maxSize
+		}
+	}
+
 	s := &Server{
 		socketPath:        socketPath,
 		workspacePath:     workspacePath,
@@ -135,6 +152,7 @@ func NewServer(socketPath string, store storage.Storage, workspacePath string, d
 		mutationChan:      make(chan MutationEvent, mutationBufferSize), // Configurable buffer
 		recentMutations:   make([]MutationEvent, 0, 100),
 		maxMutationBuffer: 100,
+		queryCache:        NewQueryCache(cacheTTL, cacheMaxSize),
 	}
 	s.lastActivityTime.Store(time.Now())
 	return s
@@ -156,10 +174,20 @@ func (s *Server) emitMutation(eventType, issueID, title, assignee string) {
 // emitRichMutation sends a pre-built mutation event with optional metadata.
 // Use this for events that include additional context (status changes, bonded events, etc.)
 // Non-blocking: drops event if channel is full (sync will happen eventually).
+// Also invalidates the query cache since data has changed.
 func (s *Server) emitRichMutation(event MutationEvent) {
 	// Always set timestamp if not provided
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
+	}
+
+	// Invalidate query cache on any mutation
+	// This is a conservative approach - we clear the entire cache on any write.
+	// A more sophisticated approach would track which queries are affected by
+	// which mutations, but the simple approach is safer and still provides
+	// significant benefit for repeated identical queries within the TTL window.
+	if s.queryCache != nil {
+		s.queryCache.Invalidate()
 	}
 
 	// Send to mutation channel for daemon

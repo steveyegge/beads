@@ -172,6 +172,15 @@ func (s *Server) handleRequest(req *Request) Response {
 	// Update last activity timestamp
 	s.lastActivityTime.Store(time.Now())
 
+	// Check cache for cacheable read operations
+	var cacheKey string
+	if s.queryCache != nil && s.queryCache.IsCacheable(req.Operation) {
+		cacheKey = s.queryCache.MakeKey(req.Operation, req.Args)
+		if cached, ok := s.queryCache.Get(cacheKey); ok {
+			return cached
+		}
+	}
+
 	var resp Response
 	switch req.Operation {
 	case OpPing:
@@ -272,6 +281,11 @@ func (s *Server) handleRequest(req *Request) Response {
 	// Record error if request failed
 	if !resp.Success {
 		s.metrics.RecordError(req.Operation)
+	}
+
+	// Cache successful responses for cacheable operations
+	if cacheKey != "" && resp.Success && s.queryCache != nil {
+		s.queryCache.Set(cacheKey, resp)
 	}
 
 	return resp
@@ -417,6 +431,12 @@ func (s *Server) handleMetrics(_ *Request) Response {
 	snapshot := s.metrics.Snapshot(
 		int(atomic.LoadInt32(&s.activeConns)),
 	)
+
+	// Include cache stats if available
+	if s.queryCache != nil {
+		stats := s.queryCache.Stats()
+		snapshot.Cache = &stats
+	}
 
 	data, _ := json.Marshal(snapshot)
 	return Response{

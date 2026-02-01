@@ -173,6 +173,7 @@ type MetricsSnapshot struct {
 	MemoryAllocMB  uint64             `json:"memory_alloc_mb"`
 	MemorySysMB    uint64             `json:"memory_sys_mb"`
 	GoroutineCount int                `json:"goroutine_count"`
+	Cache          *CacheStats        `json:"cache,omitempty"`
 }
 
 // OperationMetrics holds metrics for a single operation type
