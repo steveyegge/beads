@@ -26,6 +26,17 @@ const issueColumns = `id, content_hash, title, description, design, acceptance_c
        quality_score, work_type, source_system,
        advice_hook_command, advice_hook_trigger, advice_hook_timeout, advice_hook_on_failure`
 
+// prefixColumns adds a table alias prefix to each column in the issueColumns list.
+// Used for JOIN queries where columns need to be qualified with a table alias.
+func prefixColumns(prefix, columns string) string {
+	// Split by comma, trim whitespace, add prefix, rejoin
+	cols := strings.Split(columns, ",")
+	for i, col := range cols {
+		cols[i] = prefix + strings.TrimSpace(col)
+	}
+	return strings.Join(cols, ", ")
+}
+
 // AddDependency adds a dependency between two issues
 func (s *DoltStore) AddDependency(ctx context.Context, dep *types.Dependency, actor string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -95,34 +106,56 @@ func (s *DoltStore) RemoveDependency(ctx context.Context, issueID, dependsOnID s
 
 // GetDependencies retrieves issues that this issue depends on
 func (s *DoltStore) GetDependencies(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id FROM issues i
+	// Direct SELECT * query - avoids the two-query anti-pattern
+	query := fmt.Sprintf(`
+		SELECT %s FROM issues i
 		JOIN dependencies d ON i.id = d.depends_on_id
 		WHERE d.issue_id = ?
 		ORDER BY i.priority ASC, i.created_at DESC
-	`, issueID)
+	`, prefixColumns("i.", issueColumns))
+
+	rows, err := s.db.QueryContext(ctx, query, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies: %w", err)
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	var issues []*types.Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
 }
 
 // GetDependents retrieves issues that depend on this issue
 func (s *DoltStore) GetDependents(ctx context.Context, issueID string) ([]*types.Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id FROM issues i
+	// Direct SELECT * query - avoids the two-query anti-pattern
+	query := fmt.Sprintf(`
+		SELECT %s FROM issues i
 		JOIN dependencies d ON i.id = d.issue_id
 		WHERE d.depends_on_id = ?
 		ORDER BY i.priority ASC, i.created_at DESC
-	`, issueID)
+	`, prefixColumns("i.", issueColumns))
+
+	rows, err := s.db.QueryContext(ctx, query, issueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependents: %w", err)
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
+	var issues []*types.Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
 }
 
 // GetDependenciesWithMetadata returns dependencies with metadata
@@ -515,11 +548,12 @@ func (s *DoltStore) IsBlocked(ctx context.Context, issueID string) (bool, []stri
 
 // GetNewlyUnblockedByClose finds issues that become unblocked when an issue is closed
 func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID string) ([]*types.Issue, error) {
-	// Find issues that were blocked only by the closed issue
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT d.issue_id
-		FROM dependencies d
-		JOIN issues i ON d.issue_id = i.id
+	// Direct SELECT with full columns - avoids the two-query anti-pattern
+	// (SELECT id then SELECT WHERE id IN) which creates massive IN clauses
+	query := fmt.Sprintf(`
+		SELECT DISTINCT %s
+		FROM issues i
+		JOIN dependencies d ON d.issue_id = i.id
 		WHERE d.depends_on_id = ?
 		  AND d.type = 'blocks'
 		  AND i.status IN ('open', 'blocked')
@@ -531,37 +565,23 @@ func (s *DoltStore) GetNewlyUnblockedByClose(ctx context.Context, closedIssueID 
 			  AND d2.depends_on_id != ?
 			  AND blocker.status IN ('open', 'in_progress', 'blocked', 'deferred', 'hooked')
 		  )
-	`, closedIssueID, closedIssueID)
+	`, prefixColumns("i.", issueColumns))
+
+	rows, err := s.db.QueryContext(ctx, query, closedIssueID, closedIssueID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find newly unblocked: %w", err)
 	}
 	defer rows.Close()
 
-	return s.scanIssueIDs(ctx, rows)
-}
-
-// Helper functions
-
-func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.Issue, error) {
-	// First, collect all IDs
-	var ids []string
+	var issues []*types.Issue
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan issue id: %w", err)
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
 		}
-		ids = append(ids, id)
+		issues = append(issues, issue)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	// Fetch all issues in a single batch query
-	return s.GetIssuesByIDs(ctx, ids)
+	return issues, rows.Err()
 }
 
 // GetIssuesByIDs retrieves multiple issues by ID in a single query.
