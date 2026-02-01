@@ -252,16 +252,18 @@ bd pacman --resume                  # After incident
 $ bd pacman --global
 
 ╭──────────────────────────────────────────────────────────╮
-│  🌍 GLOBAL PACMAN · 7 projects · 486 dots · 80 ghosts    │
+│  🌍 GLOBAL PACMAN · 5 projects · 42 dots · 8 ghosts      │
 ╰──────────────────────────────────────────────────────────╯
 
 YOU: claude
 TOTAL SCORE: 15 dots across all projects
 
 PROJECTS:
-  208○ gastown                   (0 pts) 👻12
-  204○ kite-trading-platform     (5 pts) 👻68
-  ✓    specbeads                 (10 pts)
+  18○ project-alpha              (5 pts) 👻3
+  12○ project-beta               (3 pts) 👻5
+  8○  api-backend                (2 pts)
+  4○  mobile-app                 (5 pts)
+  ✓   my-tool                    (10 pts)
 ```
 
 ### Files (All Git-Tracked)
