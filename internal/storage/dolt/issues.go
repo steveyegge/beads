@@ -254,10 +254,11 @@ func (s *DoltStore) UpdateIssue(ctx context.Context, id string, updates map[stri
 		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", columnName))
 
 		// Handle JSON serialization for array fields stored as TEXT
-		if key == "waiters" {
-			waitersJSON, _ := json.Marshal(value)
-			args = append(args, string(waitersJSON))
-		} else {
+		switch key {
+		case "waiters", "advice_subscriptions", "advice_subscriptions_exclude":
+			jsonData, _ := json.Marshal(value)
+			args = append(args, string(jsonData))
+		default:
 			args = append(args, value)
 		}
 	}
@@ -719,6 +720,7 @@ func isAllowedUpdateField(key string) bool {
 		"event_category": true, "event_actor": true, "event_target": true, "event_payload": true,
 		"due_at": true, "defer_until": true, "await_id": true, "waiters": true,
 		"metadata": true,
+		"advice_subscriptions": true, "advice_subscriptions_exclude": true, // gt-w2mh8a.6
 	}
 	return allowed[key]
 }

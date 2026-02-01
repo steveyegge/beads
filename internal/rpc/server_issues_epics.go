@@ -201,6 +201,13 @@ func updatesFromArgs(a UpdateArgs) (map[string]interface{}, error) {
 	if a.AdviceHookOnFailure != nil {
 		u["advice_hook_on_failure"] = *a.AdviceHookOnFailure
 	}
+	// Advice subscription fields (gt-w2mh8a.6)
+	if len(a.AdviceSubscriptions) > 0 {
+		u["advice_subscriptions"] = a.AdviceSubscriptions
+	}
+	if len(a.AdviceSubscriptionsExclude) > 0 {
+		u["advice_subscriptions_exclude"] = a.AdviceSubscriptionsExclude
+	}
 	return u, nil
 }
 

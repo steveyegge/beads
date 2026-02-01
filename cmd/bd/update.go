@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -195,6 +196,23 @@ create, update, show, or close operation).`,
 		if persistentChanged {
 			updates["wisp"] = false
 		}
+		// Advice subscription flags (gt-w2mh8a.6)
+		if cmd.Flags().Changed("advice-subscriptions") {
+			adviceSubs, _ := cmd.Flags().GetString("advice-subscriptions")
+			if adviceSubs == "" {
+				updates["advice_subscriptions"] = []string{}
+			} else {
+				updates["advice_subscriptions"] = splitCommaSeparated(adviceSubs)
+			}
+		}
+		if cmd.Flags().Changed("advice-subscriptions-exclude") {
+			adviceExclude, _ := cmd.Flags().GetString("advice-subscriptions-exclude")
+			if adviceExclude == "" {
+				updates["advice_subscriptions_exclude"] = []string{}
+			} else {
+				updates["advice_subscriptions_exclude"] = splitCommaSeparated(adviceExclude)
+			}
+		}
 
 		// Get claim flag
 		claimFlag, _ := cmd.Flags().GetBool("claim")
@@ -327,6 +345,13 @@ create, update, show, or close operation).`,
 				// Ephemeral/persistent
 				if wisp, ok := updates["wisp"].(bool); ok {
 					updateArgs.Ephemeral = &wisp
+				}
+				// Advice subscription fields (gt-w2mh8a.6)
+				if adviceSubs, ok := updates["advice_subscriptions"].([]string); ok {
+					updateArgs.AdviceSubscriptions = adviceSubs
+				}
+				if adviceExclude, ok := updates["advice_subscriptions_exclude"].([]string); ok {
+					updateArgs.AdviceSubscriptionsExclude = adviceExclude
 				}
 
 				// Set claim flag for atomic claim operation
@@ -684,6 +709,23 @@ func init() {
 	// Ephemeral/persistent flags
 	updateCmd.Flags().Bool("ephemeral", false, "Mark issue as ephemeral (wisp) - not exported to JSONL")
 	updateCmd.Flags().Bool("persistent", false, "Mark issue as persistent (promote wisp to regular issue)")
+	// Advice subscription flags (gt-w2mh8a.6)
+	updateCmd.Flags().String("advice-subscriptions", "", "Comma-separated labels to subscribe to for advice delivery (empty to clear)")
+	updateCmd.Flags().String("advice-subscriptions-exclude", "", "Comma-separated labels to exclude from advice delivery (empty to clear)")
 	updateCmd.ValidArgsFunction = issueIDCompletion
 	rootCmd.AddCommand(updateCmd)
+}
+
+// splitCommaSeparated splits a comma-separated string into a slice,
+// trimming whitespace from each element.
+func splitCommaSeparated(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }

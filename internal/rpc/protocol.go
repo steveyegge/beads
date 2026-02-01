@@ -201,6 +201,9 @@ type UpdateArgs struct {
 	AdviceHookTrigger   *string `json:"advice_hook_trigger,omitempty"`    // Trigger: session-end, before-commit, before-push, before-handoff
 	AdviceHookTimeout   *int    `json:"advice_hook_timeout,omitempty"`    // Timeout in seconds
 	AdviceHookOnFailure *string `json:"advice_hook_on_failure,omitempty"` // Failure behavior: block, warn, ignore
+	// Advice subscription fields (gt-w2mh8a.6)
+	AdviceSubscriptions        []string `json:"advice_subscriptions,omitempty"`         // Additional labels to subscribe to
+	AdviceSubscriptionsExclude []string `json:"advice_subscriptions_exclude,omitempty"` // Labels to exclude from receiving advice
 }
 
 // CloseArgs represents arguments for the close operation
