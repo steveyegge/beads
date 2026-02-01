@@ -9,6 +9,7 @@ linters:
   enable:
     - errcheck
     - gosec
+    - govet
     - misspell
     - unconvert
     - unparam
