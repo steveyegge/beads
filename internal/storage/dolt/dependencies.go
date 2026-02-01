@@ -548,8 +548,45 @@ func (s *DoltStore) scanIssueIDs(ctx context.Context, rows *sql.Rows) ([]*types.
 	return s.GetIssuesByIDs(ctx, ids)
 }
 
-// GetIssuesByIDs retrieves multiple issues by ID in a single query to avoid N+1 performance issues
+// batchSize is the maximum number of IDs to include in a single IN clause query.
+// Larger values reduce round-trips but create bigger queries that are expensive to parse.
+// 500 is a reasonable balance for Dolt's query parser.
+const batchSize = 500
+
+// GetIssuesByIDs retrieves multiple issues by ID, batching queries to avoid massive IN clauses.
+// With large databases (10K+ issues), unbatched queries create IN clauses with thousands of
+// placeholders which are very expensive for Dolt to parse and execute.
 func (s *DoltStore) GetIssuesByIDs(ctx context.Context, ids []string) ([]*types.Issue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// For small batches, use single query (no batching overhead)
+	if len(ids) <= batchSize {
+		return s.getIssuesByIDsBatch(ctx, ids)
+	}
+
+	// Process in batches to avoid massive IN clauses
+	var allIssues []*types.Issue
+	for i := 0; i < len(ids); i += batchSize {
+		end := i + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[i:end]
+
+		issues, err := s.getIssuesByIDsBatch(ctx, batch)
+		if err != nil {
+			return nil, err
+		}
+		allIssues = append(allIssues, issues...)
+	}
+
+	return allIssues, nil
+}
+
+// getIssuesByIDsBatch retrieves a single batch of issues by ID.
+func (s *DoltStore) getIssuesByIDsBatch(ctx context.Context, ids []string) ([]*types.Issue, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
