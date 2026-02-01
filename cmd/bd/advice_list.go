@@ -172,6 +172,30 @@ func buildAgentSubscriptions(agentID string, existing []string) []string {
 		}
 	}
 
+	// Look up agent bead to read native subscription fields (gt-w2mh8a.5)
+	if store != nil {
+		agent, err := store.GetIssue(rootCtx, agentID)
+		if err == nil && agent != nil {
+			// Add custom subscriptions
+			subs = append(subs, agent.AdviceSubscriptions...)
+
+			// Remove excluded subscriptions
+			if len(agent.AdviceSubscriptionsExclude) > 0 {
+				excludeSet := make(map[string]bool)
+				for _, exc := range agent.AdviceSubscriptionsExclude {
+					excludeSet[exc] = true
+				}
+				filtered := subs[:0]
+				for _, sub := range subs {
+					if !excludeSet[sub] {
+						filtered = append(filtered, sub)
+					}
+				}
+				subs = filtered
+			}
+		}
+	}
+
 	return subs
 }
 

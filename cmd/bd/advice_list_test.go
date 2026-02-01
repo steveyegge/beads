@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage/memory"
 	"github.com/steveyegge/beads/internal/storage/sqlite"
 	"github.com/steveyegge/beads/internal/types"
 )
@@ -642,6 +643,114 @@ func TestBuildAgentSubscriptions(t *testing.T) {
 			for _, want := range tt.want {
 				if !gotSet[want] {
 					t.Errorf("buildAgentSubscriptions(%q) missing subscription %q, got %v", tt.agentID, want, got)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildAgentSubscriptionsWithNativeFields tests that buildAgentSubscriptions
+// reads AdviceSubscriptions and AdviceSubscriptionsExclude from agent beads (gt-w2mh8a.5)
+func TestBuildAgentSubscriptionsWithNativeFields(t *testing.T) {
+	// Use memory store - allows any ID without prefix validation
+	// This is necessary because agent bead IDs are agent paths like "beads/polecats/quartz"
+	memStore := memory.New("")
+
+	// Save original globals and restore after test
+	oldStore := store
+	oldCtx := rootCtx
+	defer func() {
+		store = oldStore
+		rootCtx = oldCtx
+	}()
+
+	// Set up globals for the test
+	store = memStore
+	rootCtx = context.Background()
+
+	tests := []struct {
+		name        string
+		agentID     string
+		subs        []string // AdviceSubscriptions
+		exclude     []string // AdviceSubscriptionsExclude
+		existing    []string // Existing subscriptions passed to function
+		wantInclude []string // Subscriptions that should be present
+		wantExclude []string // Subscriptions that should NOT be present
+	}{
+		{
+			name:        "custom subscriptions are added",
+			agentID:     "beads/polecats/quartz",
+			subs:        []string{"security", "testing"},
+			exclude:     nil,
+			existing:    nil,
+			wantInclude: []string{"global", "rig:beads", "role:polecat", "security", "testing"},
+			wantExclude: nil,
+		},
+		{
+			name:        "excluded subscriptions are removed",
+			agentID:     "beads/polecats/garnet",
+			subs:        nil,
+			exclude:     []string{"global"}, // Opt out of global advice
+			existing:    nil,
+			wantInclude: []string{"rig:beads", "role:polecat", "agent:beads/polecats/garnet"},
+			wantExclude: []string{"global"}, // global should be excluded
+		},
+		{
+			name:        "both custom subscriptions and exclusions",
+			agentID:     "beads/crew/wolf",
+			subs:        []string{"go", "performance"},
+			exclude:     []string{"role:crew"}, // Opt out of role-level advice
+			existing:    nil,
+			wantInclude: []string{"global", "rig:beads", "go", "performance"},
+			wantExclude: []string{"role:crew"},
+		},
+		{
+			name:        "exclusions remove existing subscriptions too",
+			agentID:     "beads/polecats/jade",
+			subs:        nil,
+			exclude:     []string{"testing"},
+			existing:    []string{"testing", "security"}, // existing has testing
+			wantInclude: []string{"global", "security"},
+			wantExclude: []string{"testing"}, // testing should be excluded
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create agent bead with native subscription fields
+			agent := &types.Issue{
+				ID:                         tt.agentID,
+				Title:                      "Agent: " + tt.agentID,
+				IssueType:                  types.TypeTask,
+				Status:                     types.StatusPinned,
+				Priority:                   2,
+				AdviceSubscriptions:        tt.subs,
+				AdviceSubscriptionsExclude: tt.exclude,
+			}
+			if err := memStore.CreateIssue(rootCtx, agent, "test-user"); err != nil {
+				t.Fatalf("Failed to create agent bead: %v", err)
+			}
+
+			// Call buildAgentSubscriptions
+			got := buildAgentSubscriptions(tt.agentID, tt.existing)
+
+			// Build set for easy lookup
+			gotSet := make(map[string]bool)
+			for _, sub := range got {
+				gotSet[sub] = true
+			}
+
+			// Check expected subscriptions are present
+			for _, want := range tt.wantInclude {
+				if !gotSet[want] {
+					t.Errorf("buildAgentSubscriptions(%q) missing expected subscription %q, got %v", tt.agentID, want, got)
+				}
+			}
+
+			// Check excluded subscriptions are NOT present
+			for _, notWant := range tt.wantExclude {
+				if gotSet[notWant] {
+					t.Errorf("buildAgentSubscriptions(%q) should NOT have subscription %q (excluded), got %v", tt.agentID, notWant, got)
 				}
 			}
 		})
