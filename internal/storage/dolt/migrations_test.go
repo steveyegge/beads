@@ -24,10 +24,8 @@ func TestMigrationsIdempotent(t *testing.T) {
 	}
 
 	// Verify all expected columns exist
+	// NOTE: advice_target_* columns removed - those are deprecated (bd-hhbu)
 	expectedColumns := []string{
-		"advice_target_rig",
-		"advice_target_role",
-		"advice_target_agent",
 		"advice_hook_command",
 		"advice_hook_trigger",
 		"advice_hook_timeout",

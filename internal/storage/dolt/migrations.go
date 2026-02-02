@@ -18,8 +18,8 @@ type Migration struct {
 
 // migrations is the ordered list of all migrations to run
 // Migrations are run in order during database initialization
+// NOTE: advice_target_fields migration removed - those columns are deprecated (bd-hhbu)
 var migrations = []Migration{
-	{"advice_target_fields", migrateAdviceTargetFields},
 	{"advice_hook_fields", migrateAdviceHookFields},
 	{"advice_subscription_fields", migrateAdviceSubscriptionFields},
 }
@@ -70,32 +70,6 @@ func addColumnIfNotExists(ctx context.Context, db *sql.DB, table, column, colTyp
 		}
 		return fmt.Errorf("failed to add column %s.%s: %w", table, column, err)
 	}
-	return nil
-}
-
-// migrateAdviceTargetFields adds advice targeting columns to the issues table.
-// These fields enable hierarchical agent targeting for advice beads (gt-epc-advice_schema_storage).
-//
-// New columns:
-//   - advice_target_rig: target rig for the advice
-//   - advice_target_role: target role (polecat, crew, witness, etc.)
-//   - advice_target_agent: specific agent name
-func migrateAdviceTargetFields(ctx context.Context, db *sql.DB) error {
-	columns := []struct {
-		name    string
-		sqlType string
-	}{
-		{"advice_target_rig", "VARCHAR(255) DEFAULT ''"},
-		{"advice_target_role", "VARCHAR(32) DEFAULT ''"},
-		{"advice_target_agent", "VARCHAR(255) DEFAULT ''"},
-	}
-
-	for _, col := range columns {
-		if err := addColumnIfNotExists(ctx, db, "issues", col.name, col.sqlType); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
