@@ -77,7 +77,7 @@ func generateIssueID(prefix string) string {
 	timestamp := time.Now().UnixNano() / 1000000 // milliseconds
 	// Add random bytes to prevent collision on restart
 	randBytes := make([]byte, 4)
-	rand.Read(randBytes)
+	_, _ = rand.Read(randBytes)
 	return fmt.Sprintf("%s-%d-%d-%x", prefix, timestamp, counter, randBytes)
 }
 
