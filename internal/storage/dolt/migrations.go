@@ -1,0 +1,168 @@
+//go:build cgo
+
+// Package dolt - database migrations
+package dolt
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+)
+
+// Migration represents a single database migration
+type Migration struct {
+	Name string
+	Func func(context.Context, *sql.DB) error
+}
+
+// migrations is the ordered list of all migrations to run
+// Migrations are run in order during database initialization
+var migrations = []Migration{
+	{"advice_target_fields", migrateAdviceTargetFields},
+	{"advice_hook_fields", migrateAdviceHookFields},
+	{"advice_subscription_fields", migrateAdviceSubscriptionFields},
+}
+
+// RunMigrations executes all registered migrations in order.
+// Each migration is idempotent - it checks if changes are needed before applying.
+func RunMigrations(ctx context.Context, db *sql.DB) error {
+	for _, migration := range migrations {
+		if err := migration.Func(ctx, db); err != nil {
+			return fmt.Errorf("migration %s failed: %w", migration.Name, err)
+		}
+	}
+	return nil
+}
+
+// columnExists checks if a column exists in the specified table using information_schema
+func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = DATABASE()
+		  AND table_name = ?
+		  AND column_name = ?
+	`, table, column).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check column %s.%s: %w", table, column, err)
+	}
+	return count > 0, nil
+}
+
+// addColumnIfNotExists adds a column to a table if it doesn't already exist
+func addColumnIfNotExists(ctx context.Context, db *sql.DB, table, column, colType string) error {
+	exists, err := columnExists(ctx, db, table, column)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	_, err = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, colType))
+	if err != nil {
+		// Ignore "duplicate column" errors (race condition with another process)
+		if strings.Contains(err.Error(), "Duplicate column") ||
+			strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("failed to add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// migrateAdviceTargetFields adds advice targeting columns to the issues table.
+// These fields enable hierarchical agent targeting for advice beads (gt-epc-advice_schema_storage).
+//
+// New columns:
+//   - advice_target_rig: target rig for the advice
+//   - advice_target_role: target role (polecat, crew, witness, etc.)
+//   - advice_target_agent: specific agent name
+func migrateAdviceTargetFields(ctx context.Context, db *sql.DB) error {
+	columns := []struct {
+		name    string
+		sqlType string
+	}{
+		{"advice_target_rig", "VARCHAR(255) DEFAULT ''"},
+		{"advice_target_role", "VARCHAR(32) DEFAULT ''"},
+		{"advice_target_agent", "VARCHAR(255) DEFAULT ''"},
+	}
+
+	for _, col := range columns {
+		if err := addColumnIfNotExists(ctx, db, "issues", col.name, col.sqlType); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateAdviceHookFields adds advice hook columns to the issues table (hq--uaim).
+// These fields enable advice beads to register stop hooks - commands that run
+// at specific lifecycle points (session-end, before-commit, before-push, before-handoff).
+//
+// New columns:
+//   - advice_hook_command: the shell command to execute
+//   - advice_hook_trigger: when to run (session-end, before-commit, etc.)
+//   - advice_hook_timeout: max execution time in seconds (default: 30)
+//   - advice_hook_on_failure: what to do if hook fails (block, warn, ignore)
+func migrateAdviceHookFields(ctx context.Context, db *sql.DB) error {
+	columns := []struct {
+		name    string
+		sqlType string
+	}{
+		{"advice_hook_command", "TEXT DEFAULT ''"},
+		{"advice_hook_trigger", "VARCHAR(32) DEFAULT ''"},
+		{"advice_hook_timeout", "INT DEFAULT 0"},
+		{"advice_hook_on_failure", "VARCHAR(16) DEFAULT ''"},
+	}
+
+	for _, col := range columns {
+		if err := addColumnIfNotExists(ctx, db, "issues", col.name, col.sqlType); err != nil {
+			return err
+		}
+	}
+
+	// Add index for efficient advice hook queries.
+	// Note: MySQL/Dolt doesn't support partial indexes like SQLite,
+	// so we create a simple index on the trigger column.
+	_, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_issues_advice_hook_trigger
+		ON issues (advice_hook_trigger)
+	`)
+	if err != nil {
+		// Ignore "index already exists" errors
+		if !strings.Contains(err.Error(), "Duplicate key") &&
+			!strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("failed to create advice hooks index: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migrateAdviceSubscriptionFields adds advice subscription columns to the issues table.
+// These fields enable agent-customized advice filtering (gt-w2mh8a.4).
+//
+// New columns:
+//   - advice_subscriptions: comma-separated list of advice tags to subscribe to
+//   - advice_subscriptions_exclude: comma-separated list of advice tags to exclude
+func migrateAdviceSubscriptionFields(ctx context.Context, db *sql.DB) error {
+	columns := []struct {
+		name    string
+		sqlType string
+	}{
+		{"advice_subscriptions", "TEXT DEFAULT ''"},
+		{"advice_subscriptions_exclude", "TEXT DEFAULT ''"},
+	}
+
+	for _, col := range columns {
+		if err := addColumnIfNotExists(ctx, db, "issues", col.name, col.sqlType); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

@@ -368,6 +368,13 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("failed to create blocked_issues view: %w", err)
 	}
 
+	// Run migrations to add any columns missing from existing databases.
+	// This handles the case where a database was created before new columns
+	// were added to the schema definition.
+	if err := RunMigrations(ctx, db); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	return nil
 }
 
